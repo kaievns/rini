@@ -1,0 +1,5 @@
+{"label":"strip","mode":"key","to_pid":1,"to_wid":2,"t0_ns":81234555700000,"still_ms":84.20,"frames":[[-8.3,0.00,0.00],[8.4,0.00,0.00],[116.9,1.20,0.40],[125.2,3.90,1.10],[133.6,4.10,1.20]]}
+{"label":"overlay","t0_ns":81237556100000,"up_ms":90.40,"lift_ms":862.70}
+{"label":"strip","mode":"key","to_pid":1,"to_wid":7,"t0_ns":81237556100000,"still_ms":70.00,"frames":[]}
+{"label":"strip","mode":"key","to_pid":1,"to_wid":2,"t0_ns":81237707500000,"still_ms":null,"frames":[]}
+{"label":"strip","mode":"key","to_pid":1,"to_wid":2,"t0_ns":81230000000000,"still_ms":null,"frames":[]}

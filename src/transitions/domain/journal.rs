@@ -197,8 +197,13 @@ impl Anchor {
     }
 }
 
+/// A burst as it is written: its header, then one line a mark, oldest first.
+pub fn lines<'a>(anchor: &'a Anchor, unix_ms: u64, burst: &'a Burst) -> impl Iterator<Item = String> + 'a {
+    std::iter::once(header(anchor, unix_ms, burst)).chain(burst.marks.iter().map(|stamped| line(anchor, stamped)))
+}
+
 /// The line ahead of a burst's marks: when it was written, on both clocks, and how many marks it lost.
-pub fn header(anchor: &Anchor, unix_ms: u64, burst: &Burst) -> String {
+fn header(anchor: &Anchor, unix_ms: u64, burst: &Burst) -> String {
     #[derive(Serialize)]
     struct Header {
         t: u64,
@@ -210,7 +215,7 @@ pub fn header(anchor: &Anchor, unix_ms: u64, burst: &Burst) -> String {
     json(&Header { t: anchor.uptime_ns, mark: "burst", journal: FORMAT, unix_ms, lost: burst.lost })
 }
 
-pub fn line(anchor: &Anchor, stamped: &Stamped) -> String {
+fn line(anchor: &Anchor, stamped: &Stamped) -> String {
     #[derive(Serialize)]
     struct Line<'a> {
         t: u64,
@@ -1009,6 +1014,116 @@ mod tests {
         let burst = burst.expect("given at the settle");
         assert_eq!(names(&burst.marks[..1]), ["begin"], "from before writing turned on");
         assert_eq!(burst.marks, held(&flights));
+    }
+
+    /// A script of drives, deliveries and presses `us` microseconds from `base`, collecting the bursts
+    /// they give.
+    struct Script {
+        flights: Journalled,
+        base: Instant,
+        bursts: Vec<(Instant, Burst)>,
+    }
+
+    impl Script {
+        fn at(&self, us: i64) -> Instant {
+            let span = Duration::from_micros(us.unsigned_abs());
+            if us < 0 { self.base - span } else { self.base + span }
+        }
+
+        fn press(&mut self, us: i64, what: &'static str) {
+            self.flights.pressed(Cause { at: self.at(us), what });
+        }
+
+        fn drive(&mut self, us: i64, event: Event) {
+            let now = self.at(us);
+            if let Some(burst) = self.flights.drive(event, now).1 {
+                self.bursts.push((now, burst));
+            }
+        }
+
+        fn deliver(&mut self, us: i64, of: Generation, why: Why, sent: i64, pictures: &[(WindowId, ScreenRect, i64)]) {
+            let taken = pictures.iter().map(|&(window, frame, taken)| (window, frame, self.at(taken)));
+            let taken: Vec<_> = taken.collect();
+            self.flights.delivery(self.at(us), of, why, self.at(sent), taken.into_iter());
+        }
+
+        /// A delivery and the pictures the engine offers the coordinator from it, 0.1ms later.
+        fn offer(&mut self, us: i64, of: Generation, why: Why, sent: i64, pictures: &[(WindowId, ScreenRect, i64)]) {
+            self.deliver(us, of, why, sent, pictures);
+            for &(window, frame, _) in pictures {
+                self.drive(us + 100, Event::Picture { generation: of, window, frame, why });
+            }
+        }
+    }
+
+    /// Two bursts as the journal writes them, which `tools/focuslab/test_journal.py` reads, and the
+    /// numbers it must find there. A pan with focus handed over by the target's focused picture; then
+    /// one whose frame zero comes after the patience, a second press merged into it, a stale
+    /// delivery, a window lost and an overdue lift.
+    #[test]
+    fn the_sample_the_tools_read_is_what_the_journal_writes() {
+        let mut script = Script { flights: Journalled::default(), base: Instant::now(), bursts: Vec::new() };
+        script.flights.set_writing(true);
+        let starts = r(3.0, 35.0, 860.0, 1079.0);
+        let left = r(866.0, 35.0, 860.0, 1079.0);
+        let floating = r(224.0, 95.0, 600.0, 400.0);
+        let target = r(3.0, 35.0, 861.0, 1079.0);
+
+        script.press(-2_400, "move_focus");
+        script.drive(0, Event::Begin(pan()));
+        script.drive(6_100, Event::Merge { stage: pan(), moved: false });
+        script.flights.answered();
+        let g = script.flights.coordinator().generation();
+        script.deliver(33_200, g, Why::FrameZero, 31_000, &[(w(1), starts, 1_300), (w(9), floating, 16_500)]);
+        script.drive(33_600, Event::FrameZero(g));
+        script.drive(34_500, Event::Extend(Duration::from_millis(349)));
+        script.offer(95_000, g, Why::Landed, 93_100, &[(w(2), target, 88_400)]);
+        script.offer(112_000, g, Why::Landed, 110_200, &[(w(1), left, 104_000)]);
+        script.offer(141_000, g, Why::FocusChanged, 139_000, &[(w(2), target, 131_500)]);
+        script.offer(160_000, g, Why::Background, 158_400, &[(w(9), floating, 152_000)]);
+        script.drive(273_600, Event::Tick { settled: false, landed: false });
+        script.offer(312_000, g, Why::Final, 309_500, &[(w(1), left, 280_200)]);
+        script.drive(383_700, Event::Tick { settled: true, landed: true });
+        script.drive(783_700, Event::Quiet(g));
+
+        let wider = r(866.0, 35.0, 600.0, 1079.0);
+        let mut resized = pan();
+        resized.tiles[0].end = wider;
+        resized.final_frames[0].1 = wider;
+        script.press(2_998_200, "move_focus");
+        script.drive(3_000_000, Event::Begin(pan()));
+        script.drive(3_005_000, Event::Merge { stage: pan(), moved: false });
+        script.flights.answered();
+        let first = script.flights.coordinator().generation();
+        script.drive(3_080_000, Event::Tick { settled: false, landed: false });
+        script.drive(3_080_900, Event::Extend(Duration::from_millis(349)));
+        let late = [(w(1), starts, 3_002_000), (w(9), floating, 3_002_000)];
+        script.offer(3_096_000, first, Why::FrameZero, 3_093_500, &late);
+        script.drive(3_096_300, Event::FrameZero(first));
+        script.press(3_148_700, "cycle_preset_column_width");
+        script.drive(3_150_000, Event::Merge { stage: resized, moved: true });
+        script.flights.answered();
+        let merged = script.flights.coordinator().generation();
+        script.offer(3_170_000, first, Why::Landed, 3_168_000, &[(w(2), target, 3_141_000)]);
+        script.offer(3_200_000, merged, Why::Landed, 3_197_500, &[(w(2), target, 3_190_000)]);
+        script.drive(3_330_000, Event::Lost { generation: merged, window: w(1) });
+        script.drive(3_390_000, Event::Tick { settled: false, landed: false });
+        script.drive(3_500_100, Event::Tick { settled: true, landed: false });
+        script.drive(3_850_000, Event::Tick { settled: true, landed: false });
+        script.drive(4_250_000, Event::Quiet(merged));
+
+        let anchor = |at: Instant| Anchor { at, uptime_ns: 81_234_560_000_000 + nanos(at - script.base) };
+        let mut written = String::new();
+        for (settled, burst) in &script.bursts {
+            let anchor = anchor(*settled + Duration::from_micros(300));
+            let unix_ms = 1_791_043_200_000 + u64::from(millis(anchor.at - script.base));
+            for text in lines(&anchor, unix_ms, burst) {
+                written.push_str(&text);
+                written.push('\n');
+            }
+        }
+        assert_eq!(script.bursts.len(), 2, "one burst a flight, each at its quiet");
+        assert_eq!(written, include_str!("../../../tools/focuslab/testdata/journal-sample.jsonl"));
     }
 
     /// Run with `CARGO_TARGET_DIR=target-dev cargo test --release --lib a_push_costs -- --ignored

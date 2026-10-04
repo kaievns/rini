@@ -423,12 +423,13 @@ finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
 `src/transitions/platform/engine.rs` is the actor that carries them out. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
-what each line says is `src/transitions/docs/journal.md`. The pictures a flight
-draws are `src/pictures/`: whether one covers and fits its window, the stand-in, the blur, and the
-schedule that holds background capture off while a flight runs in `src/pictures/domain/`; the
-captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs` for the framed capture with
-its blur, `src/pictures/platform/screencapturekit.rs` for the background captures), and the service
-that makes them and keeps the cache, `src/pictures/platform/service.rs`. Measurements are in
-`src/transitions/docs/coordination.md` (when a flight does what), `src/animation/docs/animation-smoothness.md`
-(how it moves), `src/animation/docs/capture-overlay-research.md` (the overlay) and
+what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.
+The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
+stand-in, the blur, and the schedule that holds background capture off while a flight runs in
+`src/pictures/domain/`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
+for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
+captures), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
+Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),
+`src/animation/docs/animation-smoothness.md` (how it moves),
+`src/animation/docs/capture-overlay-research.md` (the overlay) and
 `src/pictures/docs/capture-research.md` (the captures).

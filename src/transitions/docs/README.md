@@ -86,7 +86,7 @@ then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalle
   movements, routing, passes arriving mid-flight and pictures landing in one, focus changing during
   one, the capture work in flight, entrances and holds, the handover and the lift
 - [`journal.md`](journal.md) — the journal: what each mark says, the press, the line format, the
-  clock, the ring and when it is written
+  clock, the ring, when it is written, and how `tools/focuslab/journal.py` reads it
 - [`src/animation/docs/animation-smoothness.md`](../../animation/docs/animation-smoothness.md) — how
   a flight moves once it runs
 

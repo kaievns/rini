@@ -1112,6 +1112,11 @@ rini sees it landed              105.9 /119.4     76.9 / 99.0
 focused picture captured         123.3 /140.7    104.9 /121.4
 ```
 
+rini's own journal gives every row but the target write returns, which only the prototype marked:
+`tools/focuslab/journal.py summary` per flight, and `journal.py probe` joined to a probe's presses
+(`tools/focuslab/README.md`). What each row measures there is "Reading it" in
+`src/transitions/docs/journal.md`.
+
 What moved it: the frame-zero capture starts before the flight is composed; pictures are regions of
 the batched composite drawn through `contentsRect` (a crop handed to Core Animation cost 2-5ms of
 main-thread decode per quarter window, a standalone copy 14ms per flight); a background window

@@ -1,5 +1,6 @@
 //! Where rini keeps its files. The daemon writes them and the CLI reads them, so the answer cannot
-//! live in either; the transitions journal is read after the fact, by whoever debugs a transition.
+//! live in either; the transitions journal is read after the fact by `tools/focuslab/journal.py`,
+//! which names the same path.
 
 use std::path::PathBuf;
 

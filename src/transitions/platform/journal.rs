@@ -11,7 +11,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tracing::warn;
 
-use crate::transitions::domain::journal::{Anchor, Burst, header, line};
+use crate::transitions::domain::journal::{Anchor, Burst, lines};
 
 /// The file is started afresh past this, the one before kept beside it.
 const ROTATE_PAST: u64 = 50 * 1024 * 1024;
@@ -48,8 +48,8 @@ impl Writer {
     }
 }
 
-/// The burst's header and one line a mark, appended to `path` once the file before them is moved
-/// aside if it is past `limit`.
+/// The burst's lines, appended to `path` once the file before them is moved aside if it is past
+/// `limit`.
 fn append(path: &Path, limit: u64, anchor: &Anchor, unix_ms: u64, burst: &Burst) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -58,9 +58,8 @@ fn append(path: &Path, limit: u64, anchor: &Anchor, unix_ms: u64, burst: &Burst)
         fs::rename(path, path.with_extension("1.jsonl"))?;
     }
     let mut file = BufWriter::new(OpenOptions::new().create(true).append(true).open(path)?);
-    writeln!(file, "{}", header(anchor, unix_ms, burst))?;
-    for stamped in &burst.marks {
-        writeln!(file, "{}", line(anchor, stamped))?;
+    for text in lines(anchor, unix_ms, burst) {
+        writeln!(file, "{text}")?;
     }
     file.flush()
 }

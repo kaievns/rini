@@ -89,7 +89,8 @@ clock then, and `lost` how many marks the ring overwrote before they were writte
 is the event's name (below). A window is
 `[pid, idx]`, its `idx` the window server's id; a rect is `[x, y, w, h]` as `f32`; a generation is a
 number; a `why` is `frame_zero`, `landed`, `focus_changed`, `background` or `final`; `null` is none.
-`a_line_is_one_object_with_t_g_and_mark` pins the format.
+`a_line_is_one_object_with_t_g_and_mark` pins the format, and
+`the_sample_the_tools_read_is_what_the_journal_writes` two whole bursts of it (below).
 
 ## The press
 
@@ -163,6 +164,70 @@ thread ends once it has written what it was sent. On starts it, and the ring is 
 the settle of the burst up; what the ring overwrote while off is not counted lost.
 
 A crash loses the marks not yet written: a panic hook cannot reach the engine's state.
+
+## Reading it
+
+`tools/focuslab/journal.py` reads the file and the one before it (`tools/focuslab/README.md`). These
+are the definitions it implements. Its tests check each one on
+`tools/focuslab/testdata/journal-sample.jsonl`, two scripted flights, which
+`the_sample_the_tools_read_is_what_the_journal_writes` pins to what `Journalled` gives and the writer
+writes.
+
+- **A flight starts at its `hold`.** The coordinator holds only at a fresh begin, and the `begin` and
+  the `press` pushed just before it in its generation are its own. It runs to the next flight's start
+  or its burst's end, so its lift, its quiet and its settle are its own too. A mark before a burst's
+  first flight is in none, and a `delivered` whose `delivery` the ring overwrote is dropped.
+- **Capture start** is a `delivered`'s `t - taken_before_us`; **round end** is a `delivery`'s
+  `t - sent_before_us`.
+- **The frame-zero delivery** is the last `delivery {frame_zero}` of the flight's generation before
+  its `show`. Its earliest capture start is the earliest of its pictures', or its round end when it
+  brought none. A `show` with none before it is a **frame-zero timeout**: the patience ran out.
+- **The focus target** is the `begin`'s `focus`.
+- Percentiles are nearest-rank, printed as p50, p90 and p99 with their n.
+
+`summary` splits press to show in order, so the parts of each flight sum to it. It does so for every
+flight with a press and a frame-zero delivery:
+
+| Part | From → to |
+|---|---|
+| reactor | `press` → `begin`: the reactor's work on the event and the hop to the engine |
+| frame zero asked | `begin` → `ask_frame_zero`: one drive, so 0 |
+| service wait | `ask_frame_zero` → the earliest capture start |
+| the SkyLight round | the earliest capture start → round end |
+| engine wait | round end → the frame-zero `delivery`: the hop back and the engine busy. `compose` says how much of it was composing |
+| the show | the frame-zero `delivery` → `show`: the engine putting the pictures on their tiles, and the wait for a second frame-zero ask when a merge made one |
+
+Then the rows of "Where a moving focus change spends its time"
+(`src/animation/docs/capture-overlay-research.md`), in its order, ms after the press, and the rest:
+
+| Row | From → to |
+|---|---|
+| compose | `begin` → the first `merge {moved: false}` of its generation, which is not after the press |
+| frame-zero capture starts | `press` → the earliest capture start |
+| frame-zero pictures ready | `press` → round end |
+| overlay up | `press` → `show` |
+| rini sees it landed | `press` → the capture start of the focus target's first picture under a `delivery {landed}` |
+| focused picture captured | `press` → the capture start of its first under a `delivery {focus_changed}` |
+| show to landed | the start of the generation the flight lifted in (its `show`, or the `merge` that began it) → the last end window's first capture start under a `delivery {landed}` of that generation. None unless as many windows landed as that generation's last `watch` named (`landing` and `awaiting`) |
+| lift; lift to settled | `press` → `lift`; `lift` → the `report_settled` after it, none if another flight began first |
+
+The counts, per flight: merges (the generations after its first), swaps, snaps, stale deliveries
+(`of != g`), `lost` marks, overdue lifts (a `lift` with `at_rest` or `landed` false) and frame-zero
+timeouts. `--csv` writes all of it, one row a flight.
+
+`probe` joins each line a probe wrote to the first `press` within 250ms after the probe's `t0_ns`,
+its key post, and groups the trials by the probe's `label`. A trial whose press joined a flight
+already up gives only post to press. One whose flight has a focus target other than the probe's
+`to_wid` is set aside: a window's `idx` is its window server id, which is what the probe names. For
+the rest it gives:
+
+- post to press: the tap and the reactor's queue;
+- post to show and post to landed;
+- rini's landed against the probe's `still_ms`, when the probe saw the target's server frame final;
+- the focused picture against `look_full`, when the probe saw the titlebar band reach 80% of its
+  final change (`e1.py`'s `look`);
+- for an `overlay.swift` line, its `up_ms` against post to show, which is the window server showing
+  the overlay after `show`, and its `lift_ms` against post to lift.
 
 ## What it does not record yet
 
