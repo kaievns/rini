@@ -1,58 +1,45 @@
-# Animation smoothness: findings and plan
+# Animation smoothness: how a flight moves
 
-An audit of both animation engines, written 2026-08-27. Numbers quoted from code
-comments were measured when those fixes landed; anything marked *estimated* has
-not been measured yet. Companion to `capture-overlay-research.md`, which holds
-the capture measurements this builds on.
-
-## One engine
-
-Every animated movement runs through the overlay engine
-(`src/animation/platform/`: `engine.rs` + `overlay.rs`, geometry in `src/animation/domain/motion/`): window
-bitmaps composited in one opaque overlay window, the real windows placed once
-behind it (see "The apply point"). Layout passes, strip pans, moves along
-the strip, workspace switches, resizes, entrances and the edge bounce are all
-flights of it.
-`AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
-gathers a `PassWindow` per window from the stores, sorts the pass with
-`crate::animation::domain::pass::plan` (moves, unmoved windows the overlay must still
-draw, warm targets), decides whether the overlay flies (no `animations › off` in the
-config, not low power, not a drag, something visibly travels) and places the real windows
-directly when it does not.
-
-The per-frame Accessibility engine that preceded it (`AXPosition`/`AXSize`
-writes into every owning app on every tick, `animation_fps`, the
-`BeginWindowAnimation`/`AnimationFrames`/`EndWindowAnimation` app requests,
-the top-clamped vertical slide) was removed once resizes rode the overlay:
-its cross-app skew (100-150px between neighbouring columns mid-scroll) was
-the mechanism's, not a bug in it, and the overlay never had it. The
-"Endgame" this document set out is done; what follows describes the one
-engine that is left.
+How rini's flights move on the overlay: the containers that carry its rigid pieces, how a pass
+arriving mid-flight merges into them, the curves, the depth bands, the edge bounce and a move's
+nudge, resizes, and the score a flight evaluates to. Begun as an audit of both animation engines on
+2026-08-27 and kept current since. Numbers quoted from code comments were measured when those fixes
+landed; anything marked *estimated* has not been measured yet. When each step of a flight happens is
+`src/transitions/docs/coordination.md`; the overlay's own measurements are
+`capture-overlay-research.md` beside this file, and the pictures it draws are measured in
+`src/pictures/docs/capture-research.md`.
 
 ## The overlay engine: containers carry the rigid pieces
 
 Every overlay flight is a `FlightPlan` (`crate::animation::domain::motion::plan`): a
 set of rigid groups (`RigidGroup`, keyed `GroupKey::Rigid`), a loose set (resizes and entrances), and the
-floating windows. Each group is one `CALayer` container under the overlay's
-root (`TileOverlay::install` in `overlay.rs`). A container's `position` is the
-only animated translation its members get; the tiles inside sit at
-group-relative frames and never move on their own. Resizes and entrances
-are loose tiles under `StripLoose`; floating windows sit in the `Floating`
-container. `fly` hands the whole plan to the render server in ONE
-`CATransaction`: one position animation per moving container, one resize
-per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
+floating windows. The flight's look, chosen as it begins (`Look` in
+`src/animation/domain/choreography.rs`), composes it into the flight's score, which the flight keeps
+(`src/transitions/domain/flight_score.rs`) and the overlay plays: Slide, the default look
+(`src/animation/domain/choreography/slide.rs`). Frame zero is its pose, every group with a drawn
+member a container at the origin, which the overlay builds its tree from (`TileOverlay::pose` in
+`overlay.rs`): each group is one `CALayer` container under the overlay's root. A container's
+`position` is the only animated translation its members get; the tiles inside sit at
+frames in its own points (`Group` in `crates/rini-geometry/docs/README.md`), the overlay's less its
+position, and never move on their own. Resizes and entrances
+are loose tiles in `GroupKey::Loose`; floating windows sit in the `Floating`
+container. As the motion starts the look composes the whole plan as the score's edits, and the
+renderer plays them (`TileOverlay::play`) in ONE `CATransaction`, the one its drain is played in
+(`src/animation/platform/renderer.rs`): one position animation per moving
+container, one resize per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
 while a move steps the strip; see "The move flight"). Model layers jump to their
 destinations; the animations carry the presentation and are removed on
-completion. The tick loop paces only the mid-flight orchestration (frame
-placement at the apply point, the one destination recapture, teardown);
-nothing is drawn on ticks. Every overlay commit is flushed to the render
-server at once (`commit_now`): the overlay shares the main thread with the
-reactor, and an explicit commit nested in the run loop's implicit
-transaction is only sent when that iteration ends, after the reactor's
-synchronous AX and window-server calls. Sent late, a flight skipped its
-first frames. Every leg's animations carry an explicit `beginTime`
-(`Timing`), so the render server's clock and the actor's agree; "flight
-landed" logs how late the last frame was presented (`late_ms`).
+completion. The tick loop paces only the coordinator (frame zero's wait,
+the coalesce window, the hold, the final capture, the lift); nothing is drawn
+on ticks. Every drain's transaction is flushed to the render server at
+once: an explicit commit nested in the run loop's implicit transaction is
+only sent when that pass of the main thread's loop ends, after whatever
+else runs in it. Sent late, a flight skipped its first frames. Every
+animation is installed from a track (`src/animation/domain/motion/score.rs`)
+and carries the track's explicit `beginTime`, which the engine stamps on the
+media clock the renderer read (`MediaClock`) at the instant the coordinator
+was driven, so the render server's clock and the coordinator's agree, and a
+batch played after it was sent plays from where the score already is.
 
 The model has been round the loop twice. The original manual tick loop
 (60Hz `RepeatingTimer` posting into the actor queue) was not vsync-aligned
@@ -69,54 +56,10 @@ keep the continuity (a container carries on from where its own leg has it;
 see "One flight however many presses") and restore rigidity structurally:
 members of a group cannot drift because only the group moves.
 
-The two entry points feed the same `begin_group`:
+How a layout pass and a strip movement start a flight, and which pieces each makes, is "Layout
+changes and strip movements" in `src/transitions/docs/coordination.md`.
 
-- **Layout changes** (`Event::Animate` — window open/close, column reorder,
-  join/unjoin, anything whose windows move by different vectors) start
-  `Coalesced`: the overlay shows at frame zero and the movement begins once
-  the reactor's layout passes settle (25ms), installed by `start_moving`.
-  A pass where nothing drawable moves, drains no exit, and joins no flight
-  is not flown (`worth_flying`): its windows are placed directly, no overlay.
-  A tile starts from the window server's frame when that differs from the
-  request (`resolve_start`). A window displaced to a park, or returning from
-  one, travels by its neighbour's vector: `neighbour_travel` reads the
-  `to - from` of the nearest strip window (by centre x) that is on screen at
-  both ends and moves. Leaving, the tile ends at `start + travel`
-  (`resolve_end`); returning, it starts at `to - travel`. `final_frames`
-  keeps the real park either way. The display edge on the park's side, in
-  the tile's own row (`entry_frame`), is only the fallback when no neighbour
-  moves. Aimed at the edge, the displaced tile covered a different distance
-  from its neighbour under one duration and curve, so it ran at its own speed
-  and overlapped it (seen 2026-09-15). A park is judged from BOTH the
-  requested frame and the server's: apps clamp a park past the 40pt
-  `is_off_screen` threshold (Kiro shows 41pt, Finder 52pt, log 20:35:56),
-  and the server may already report the slot. Judged from the server's frame
-  alone, the tile flew in from, or slid into, the bottom-right corner. The
-  resolved `(start, end)` pairs become a `ReflowPlan` (`reflow_plan`): tiles
-  moving by the same vector within 2pt (`GROUP_TOLERANCE`) share a group,
-  a resize is loose, a floating window is floating, and the still windows
-  are `groups[0]`. The park rule above decides which group a displaced
-  window rides, so it slides with its neighbour by construction. A pass is
-  flown when something drawable moves or a flight is running
-  (`worth_flying`).
-- **Strip movements** (`Event::AnimateSurface` — workspace switches, strip
-  pans and moves along the strip; the wire event the reactor builds from the
-  stacked-workspace geometry in `animation/domain/motion/strip_stack.rs`, carrying
-  `SurfaceWindow`s) start `Immediate`: they arrive once per keystroke and
-  latency is the enemy. `surface_plan` puts every window on the surface in
-  ONE group travelling by the viewport's travel (`surface_travel`,
-  `pan_travel`): one container, one position animation. The exception is a
-  move's swapped columns, which start from their old slots
-  (`SurfaceWindow::from`) and group by their own vectors, but for the column
-  a stepping move passes, which is held at its old slot on the strip; see
-  "The move flight". Pinned (floating) windows stand in the floating
-  container with `from == to`; a switch moves the floating container itself
-  by the same travel (`floating_travel`). Visual destinations are
-  deliberately distinct from `final_frames`: a leaving window animates
-  off-screen while its real frame goes to a park, and a held column is drawn
-  going beneath the moved window while its real window parks.
-
-Mid-flight passes go through `merge_plans` (pure, tested), which retargets
+**Mid-flight passes** go through `merge_plans` (pure, tested), which retargets
 containers, not tiles. A rigid member of the incoming pass votes for its
 group's new position (`p = to - rel`); the largest cluster keeps the
 container, which carries on toward the new destination under the same
@@ -130,34 +73,47 @@ parked the departing row's windows, each of which opened a sideways group
 and swept to the park's edge while the row travelled vertically (the
 zig-zag; log 1:07:36, "member reparented" to (1727,1065) and (-1719,1076)).
 A member of a still container has no motion to ride and leaves on its own
-vector. A rigid member the pass now resizes goes loose (`StripLoose`) at
+vector. A rigid member the pass now resizes goes loose (`GroupKey::Loose`) at
 its presented frame. A newcomer
-joins a group with a matching remaining travel or opens one; joins are
-resolved after the votes, because the votes change the remaining travel. A
+joins a group travelling as it does in this pass or opens one; joins are
+resolved after the votes, because the votes change how far each group
+travels. A
 pan adds its travel to every group and every loose strip tile and changes
 no membership; members the pan does not compose (no usable picture) ride
 their group all the same. A move under a pan is the one exception: the
 members of a group that does not travel with the pan (the columns the move
 swapped that cross it) vote as in an ordinary pass, wherever their destination is,
 and the rest of each group they sit in holds the place the pan gave it. The
-merge reads two positions of every container (`Presented`): where it is drawn,
-any bounce or nudge riding it included, and where its own leg has it. A member
+merge reads two positions of every container (`Presented`), evaluated from the
+flight's score (`Score::presented`): where it is drawn,
+any bounce or nudge riding it included, and where its movement has it. A member
 leaving a container for one of its own starts from the first, so it stays where
 it is drawn and still lands on its destination; pinned by
 `a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`. Remaining
-travel and a newcomer's frame are judged against the second, because every
-destination and every frame a pass carries is a place on the strip: judged
-against the drawn position, a border landing mid-nudge matched no container and
-was left a third of the display from its window; pinned by
-`a_border_arriving_mid_nudge_rides_with_the_moved_window`. A move's step rides
+travel of a member leaving its container is judged against the second. A newcomer is judged
+against neither, but against where the last pass sent each container (the plan's model positions):
+every frame a pass carries is a place on the strip as the last pass left it, which the reactor builds
+from where that pass sends every window. A newcomer rides a group whose travel from there matches its
+own, placed in it where that pass left it, so it starts beside the windows it sits beside wherever
+they are drawn, and an accent riding the group carries it too; of several such groups it takes the
+one holding the window nearest it, a border the one holding the window it traces. Judged against
+where the leg has it, a column a second pan brought mid-leg matched no group's remaining
+travel, opened its own and started where the first pan sends the strip, short of the strip by the
+travel left: of two 863pt pans, the second merged 7ms into the first started its column 759pt short,
+20ms in 591pt (measured with the test that pins it against that rule; not seen on screen); pinned
+by `a_column_a_pan_brings_in_mid_flight_starts_beside_the_strip` and, for every look, by
+`every_look_bends_a_flight_without_a_jump`. Judged against the drawn position, a border landing
+mid-nudge matched no container and was left a third of the display from its window; pinned by
+`a_border_arriving_mid_nudge_rides_with_the_moved_window`. A floating window a switch brings is
+placed in the floating container where the last pass left it, the same way. A move's step rides
 every strip container, so a still window joining mid-step takes the still
 piece and steps with the strip; pinned by
-`a_still_window_joining_mid_step_steps_with_the_strip`. A pass confirming the
-flight's destinations is an empty `PlanDelta`: nothing is
-touched, and rapid presses neither restart nor extend the flight. Any real
-change restarts the orchestration clock so the frame placement and teardown
-cover the newest legs. Reserved entrances still waiting for a picture take
-the pass's slot (`retarget_entrances`).
+`a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded in
+by the same function, every container drawn where frame zero installs it and its leg taken to be where
+the last pass sends it: nothing has moved, and the pass's frames are places on the strip there. That
+is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded plan. What the flight does about a merge,
+the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes" in
+`src/transitions/docs/coordination.md`.
 
 **One flight however many presses.** A retargeted container used to restart
 `MOTION_CURVE` from its presented position. That curve leaves at 6.25x its
@@ -166,30 +122,38 @@ nearly stopped by each press and the restart kicked it: 150ms into a column's
 travel it moves at about 890pt/s, and the restart put it at 15,375pt/s in one
 frame. Reported as a series of jerky movements. Now each container keeps its
 current leg (`Leg` in `src/animation/domain/motion/glide.rs`), and a new
-destination starts a critically damped spring from where the leg is and as fast
-as it is going. The spring's stiffness follows the movement's length, 0.35s times
+destination starts a critically damped spring (`Leg::toward`) from where the
+flight's score draws its movement (`Score::along`) and as fast
+as its leg is going, which Slide keeps. The spring's stiffness follows the movement's length, 0.35s times
 `animations › slowdown`: 97% home
 from rest at half the duration, where the curve is, so a chained leg lands like
 a fresh one. Core Animation cannot take a spring with a starting velocity in
 two dimensions as one timing function, so the leg is handed over as keyframes
-sampled from `Leg` every 1/120s (`leg_animation`); the render server and the
-next retarget read the same motion. The first leg of a flight is still the
-curve. Starting from the leg rather than the presentation layer also keeps an
-edge bounce out of it: the presented position includes the bounce's additive
+sampled from `Leg` every 1/120s (`Leg::track`), which Core Animation joins with
+straight lines. The spring starts on that polyline, not on `Leg::position_at`:
+from rest the first line cuts the corner by up to 10.8pt in its first 1/120s
+(`a_spring_plays_as_the_polyline_of_its_samples`), and a press landing in that
+frame used to jump the strip by the difference. The first leg of a flight is still the
+curve, on which the two agree. Starting from the movement rather than what is drawn also keeps an
+edge bounce out of it: the drawn position includes the bounce's additive
 offset, and a leg begun there carried the bounce twice. A container with no
 leg (a still one, or one placed outright) starts from its model position at
-rest for the same reason (`Leg::toward`): it used to start from its presented
+rest for the same reason: it used to start from its presented
 position, which under a move's nudge is a third of the display out. A container
 a merge opens for a member leaving another carries on the one it left: a spring
 from where the member is drawn, as fast as the old container's leg is going
-(`Leg::leaving`). It used to start the curve from rest, and the column a second
+(`Leg::toward` given that leg). It used to start the curve from rest, and the column a second
 move passes left the strip at 12x the speed it had a frame before, 5,700 to
 53,000pt/s in a full-width burst; pinned by
 `the_column_a_second_move_passes_keeps_its_speed`. The flight's clock covers
-the longest spring (`running.duration`).
+the score: a merge that moves anything restarts it at the pass's length or what is left of the score,
+whichever is longer (`FlightScore::clock`), so the longest spring and a bounce still playing are both
+covered. It used to restart at the longest leg the merge made, and could lift before a bounce came
+home.
 
 Measured 2026-09-29 by tracing where each container is drawn every tick
-(`trace_presented`, enabled with `rini::animation::trace=trace` in `RUST_LOG`)
+(`TileOverlay::trace`, enabled with `rini::animation::trace=trace` in `RUST_LOG`;
+it logs the presentation beside where the replica draws the container, and the gap)
 through one replayed burst of real Ctrl-J/L key events, Right x13 then Left x6,
 60-570ms apart. Speed is only compared within a flight: each new flight re-bases
 its container, so positions jump between flights without anything moving.
@@ -204,15 +168,11 @@ A retarget now accelerates over about 30ms from the speed it was at (210, 4163,
 8489, 9433pt/s on consecutive ticks) instead of jumping. What still reads as
 separate pulses at 300-570ms between presses is separate flights: the first
 leg is 97% home by half time, so the strip is at rest before the next press.
-The same trace showed the engine's thread stalling mid-flight, so a press
-landed after the strip had stopped; reading every window's frame in one query
-when a surface flight starts and at handover took the stalls over 30ms in that
-burst from 14 (909ms in all, longest 178ms) to 9 (424ms, longest 99ms). Most of
-what is left is the two full window lists and the desktop and bar captures a
-new flight takes.
-The engine reads every container's two positions once, for
-`merge_plans`, and the overlay applies the delta in one transaction
-(`retarget`): reparents, container animations, joins, loose retargets.
+
+The look reads every container's two positions once, from the flight's score, for `merge_plans`,
+and turns the delta into the score's edits (`Slide::retarget`), which the overlay plays in one
+transaction: reparents, container animations, joins, loose retargets, and the `Bank` the engine
+appends.
 Without this a pan merging 56ms after an open (log 3:27:20, 22 tiles
 scrolled 574pt) left the newcomer at its pre-pan slot: a tear between the
 active window and its neighbours, then a pop at lift. Cross-container z is a
@@ -221,7 +181,7 @@ between two moving groups is transient, and the group holding focus is drawn
 first.
 
 Depth is banded (`stack` in `animation/domain/motion/z_group.rs`) at the
-container level (`band_plan`, `rebank`), in three bands with the strip always
+container level (`band_plan`, played as the score's `Bank`), in three bands with the strip always
 the middle one: `Lifted` in front of it, `Behind` behind it. Only one set of
 off-strip windows comes forward with a focus, and that set is the focused
 window's APPLICATION — a zoom call is a meeting window and its controls — plus
@@ -231,10 +191,10 @@ the strip nothing is lifted, so the strip leads at zero and the floating
 container is one `GROUP_STRIDE` behind; with focus off it, the strip is one
 stride back and the floating container two.
 
-The floating container therefore has a twin (`TileOverlay::lifted`) in front of
-the strip, and `rebank` moves each floating tile into whichever of the two its
+The floating container therefore has a twin (the overlay's `lifted`) in front of
+the strip, and a `Bank` moves each floating tile into whichever of the two its
 band names. A twin rather than a second plan group: every floating window rides
-one translation, so the twin is created, reset, moved, animated and dropped with
+one translation, so the twin is opened, moved, animated and dropped with
 the floating container (`layers_of`) and a tile moved between them lands where
 it was. It has to be a separate layer at all because tiles are children of their
 container and a container's `zPosition` alone decides its children's order
@@ -255,154 +215,95 @@ depth: that is the structural fix for the 50/50 interleave (the 1.1 case in
 `.kiro/specs/exit-entrance-animation-regressions`). Within a band the
 window server's order is kept; a window the server did not report goes to
 the back of its own band. An entrance carries `server_order: Some(0)`
-because a window is raised on open. A pass that changes any final frame
-after the apply point re-sends the frames (`mark_stale_on_untiled_change`).
-Parked windows have no tile, so a tile-only check missed their moves and
-left them at the old park.
+because a window is raised on open.
 
-A picture landing mid-flight goes to the cache first. It reaches a moving
-tile only if the cache took it and the tile is waiting for it
-(`should_swap_mid_flight`): an entrance's first picture (claimed or
-admitted), a grow's settled reveal, or the focus refresh. A picture the
-cache refuses never reaches a tile, so a flight never draws the grey capture
-of a window whose cached picture carries its blur. A reveal cuts only before
-0.6 progress (`REVEAL_APPLY_BEFORE`), a refresh before 0.9
-(`REFRESH_APPLY_BEFORE`); later landings are cached for the next flight.
-Background captures never reach a tile. They landed mid-flight in 310 of 321
-flights (median 4 per flight), and every cut read as a flicker or a change
-of transparency. On a resizing tile the cut also re-keyed the resize from
-the presented state, which staggered that tile against its neighbours.
+**Holes.** A window wholly under the overlay is not composited, so a window
+that repaints for focus under it shows the change only at the lift ("The
+handover, measured" in `capture-overlay-research.md`). `TileOverlay::set_holes`
+punches a 1pt hole over each window the caller names, a point in from its left
+edge and halfway down its final frame (`hole_in` in
+`src/animation/domain/motion/holes.rs`): one even-odd `CAShapeLayer` mask on
+the content view's layer, the view's bounds and every hole, with the window's
+background clear while it is up: the window's, so `paint_background` sets it
+once the renderer has flushed the mask, outside the transaction like the
+alpha. Each call replaces the holes; `clear_holes`, which a lift and a new
+display frame call, removes the mask, and the black goes back after the flush.
+Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
+`the_mask_leaves_out_exactly_the_holes`. The mask is in the view layer's
+coordinates, flipped as the canvas is; where a hole lands on screen was not
+measured on a window shorter than the display. Which windows get holes, and
+when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
+it watches end wholly on screen, from the show to the lift.
 
-The focus refresh recaptures only on a focus change, only its two ends
-(`refresh_targets`, against the previous flight's `last_focus`): the window
-being switched into and the one being left, so both land in their focus
-rendering. Focus changes a window's rendering without changing its size
-(measured on a 1pt window border: 65 of 255 focused against 42 unfocused).
-`Event::RefreshFocus` recaptures both ends when focus moves outside rini, by
-a click or an app activating itself. A move rini makes returns before it,
-since the layout already holds that focus, so for those the flight's own
-refresh is the only recapture. A flight that moves focus nowhere recaptures
-nothing. It used to recapture the two frontmost tiles by depth on every
-flight; a translucent window's two captures differ by the wallpaper behind
-it, so that cut the two front Ghostty tiles at 0.55 on every strip pan (log
-2026-09-16 2:05).
+**Corners of a baked picture.** A tile cut from a composite of the desktop
+carries the wallpaper in the window's rounded corners, where the window itself
+is transparent. `TileOverlay::set_tile_corner_clip` clips the tile's picture
+layer, crop pieces included, to a rounded rect of the window's radius
+(`cornerRadius` with `masksToBounds`, which follows a resize); the shadow
+caster and the hairline are never clipped, and every install puts the picture back to whole
+(`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
+is in `docs/pictures-motion-transitions.md`. The pictures service bakes them
+(`capture_on_screen`), and the flight engine clips every tile whose picture is
+a SkyLight one of a window the service bakes (`corner_clip`), at every install and swap.
 
-It takes two passes, at 0.25 and 0.55 of the flight (`REFRESH_PASSES_AT`,
-`FocusRefresh`); the second is for an app that repaints its focus late. A
-single pass at 0.5 through the ScreenCaptureKit service never once landed in
-time: asked at 0.53, its pictures landed at 0.82 to 1.16 (debug log
-2026-09-28, two flights, 154ms and 222ms after the ask), past the 0.6 cutoff
-it had then. The window being left kept its focused rendering to the lift
-and changed at rest, which is the flicker reported that day. A pass
-captures a window wholly on a display framed, on a plain thread
-(`capture_framed`), with its blur and its hairline. A window clipped by the
-display edge goes to the service instead, because a framed capture returns
-only the visible sliver ("A clipped destination needs ScreenCaptureKit, not
-SkyLight" in `capture-overlay-research.md`).
-A strip pan places the real windows at frame zero, so by the first pass both
-ends are usually where they land. Usually: the placing is still in progress,
-so a window read as on screen can be past the edge by the time it is
-captured. That pass then gets nothing for it (`framed_coverage`), rather than
-a full-size picture with the off-screen part transparent. One case still changes at rest: a clipped
-window whose picture carries its blur, where the service's grey capture is
-refused by the cache and so never cut in.
+**Tiles snap to the real frame.** A strip pans by a fractional vector and the
+window server rounds each window on its own, so a tile of a rigid group can end
+a point from its window: 861 against 860 wide ("The handover, measured" in
+`capture-overlay-research.md`). A tile snaps when it ends more than a quarter
+point and at most 20pt from its window at any edge (`snap_to`, with the pictures
+service's landing slack `END_SLACK`): under a quarter point nothing shows at the
+lift, and past 20pt the window has not landed where its tile ends. The caller
+decides with `snap_to`, once per window per generation and only once the motion
+has started: before it, the container stands at frame zero and the start would
+move the tile back. A window pictured where it ends before the start, or before a
+merge that can put its tile back on its model, is snapped again then, since a
+delivery comes only with a changed print. `tile::snap` (`src/animation/domain/motion/tile.rs`) makes
+the snap the score's edits, which the flight folds into its score and the overlay plays, without
+checking again. A tile riding its container moves inside it at once, while the container
+carries it on. A tile on a track of its own is given the same track ending on
+the real frame (`Track::ending_at`), its begin, start and curve kept, so it
+lands there with its movement instead of popping at the lift
+(`a_tile_on_its_own_leg_snaps_on_the_same_timing`), drawn stretched or cropped as it was; once the
+track has played only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
+The caller is the coordinator (`src/transitions/domain/lifecycle.rs`); the
+flight engine carries its snaps out.
 
-No likeness test and no same-route test guard the cut any more. A focus
-change is a traffic light and a dimmed title bar, below what a 32x32
-thumbprint resolves, and a cut to an identical picture changes nothing on
-screen. Freshness guards it instead (`FocusRefresh::is_fresh`): a picture
-swaps only if its capture began at or after the refresh asked, and after the
-picture the refresh last cut in. The service skips a request for a window it
-is already capturing, and a capture begun before the flight shows the old
-focus. Both carry an older `taken`, which the service stamps when a capture
-starts, not when it lands. The same-route test answered a race: the service
-and a framed capture both answered every refresh, the two routes' pictures
-failed the thumbprint match against each other, and every refresh target was
-swapped two or three times per flight (log 22:34:04: swaps at 0.539, 0.549,
-0.561 in one pan). Each pass now asks one route per window, so a window
-takes at most one refresh cut per pass. The reveal never had either test; a
-chase's framed reveal is the truth for a grow whatever the cache holds.
-Every cut logs "picture swapped mid-flight" with its reason; that line is
-the acceptance counter, at most two `reason=refresh` per window per flight.
-
-**Capture work in flight.** Between frame zero and lift the window server
-serves only the chases and the focus refresh (`capture_work_allowed`).
-Everything else waits for `finish()`. The reactor's `warm_all_workspaces`
-(about 15 captures per switch, queued 0.3ms after the start) goes to
-`deferred_warm`; the desktop render goes to `deferred_desktop`; hairline
-harvests for landed pictures go to the finish harvest set, once per window
-per flight. Under the old load the refresh took 203ms median (p90 441,
-n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
-271 of 321 desktop renders landed mid-flight. `warm_all_workspaces` stays in
-the reactor's switch handler: the actor knows the flight phase, the reactor
-does not. Separately, a layout pass asks for a picture of each window the
-first time it lays that window out (`pictured_windows`), because a pass warms
-only the windows it moves, and after a restart nothing moves: the saved layout
-already has every window in place. Measured 2026-09-29 over four restarts: no
-picture landed in the first 11s, none at all in 40s with nothing pressed, and
-49% of the flights in the first 30s were missing a window. Asking once per
-display on its first pass was tried first and missed most of them: apps are
-found one by one, and that pass knew one window of 21, so the first switch
-still flew 8 of 16 windows with no picture. After the lift the owed captures wait for a quiet period
-(`SETTLE_BEFORE_CAPTURES`, 400ms; `Event::Quiet`, `after_flight_captures`).
-They used to run the instant the overlay lifted and took 600-800ms (8-15
-window captures and the desktop render), so a press inside that window flew
-the next flight against a busy compositor: frame-difference profiles of a
-screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
-beginning inside the quiet period cancels the timer; the work carries over to
-its own lift. The same quiet period is what `set_on_flight` reports as settled
-(`FlightReport`): `true` when an overlay goes up, `false` at `Event::Quiet`, so
-a burst of flights is one `true` and one `false`. rini's own bar sits above the
-overlay and is never pictured, so with it on a flight looks for no bar at all.
-Another app's bar, under the overlay with rini's off, is recaptured
-`BAR_REFRESH_DELAY` (250ms) after a flight, never at the start of one: a bar
-composite measures 31ms median, and the delay lets the compositor drop the
-hidden overlay from the framebuffer and folds a burst of switches into one
-capture, at the end.
-
-**Real windows land before lift.** Frames go out on-screen destinations
-first, parks last (`frame_send_order`): a park write nobody sees no longer
-delays an arriving window. On 54 switches the leaving window was still on
-screen at lift, 1000-3446pt from its park. The handover metric
-(`handover_report`) excludes off-screen intents. It reports the count over
-2pt, the total measured, and the worst visible error. A park clamped by
-macOS (y=1116 on a 1117pt display, clamped to 1051) had reported 65pt on 180
-flights and masked every smaller error. `finish()` logs "overlay lifted", so
-the placing-to-lift gap can be read from the log. The lift itself waits for
-the render server (`lift_now`, `TileOverlay::settled`): the clock has
-to run out AND every container and picture has to be presented at its model
-position within half a point, or `LIFT_GRACE` (350ms) past the clock. The
-render server runs a frame or so behind the actor's clock, and lifting on
-the clock alone showed the real windows one frame ahead of their tiles: a
-small jerk at the end of every flight. Strip movements send their frames at
-frame zero (`APPLY_FRAMES_AT_PAN` 0.0): 24 of 162 flights had lifted with
-every window 1700-2600pt from its tile because 17 writes across Electron apps
-took longer than half a flight. A park-to-park write is not sent at all
-(`is_park_to_park`, reactor `apply_overlay_frames`): 12 of a pan's 20 frames
-moved windows from one park to another, nothing visible changed, and each
-made its app repaint under the flight. A park is a sliver still touching the
-display; a frame wholly off it is not. A switch leaves its departing row a
-display height below, which macOS clamps to a 41pt band along the bottom
-edge, and the next pass moves that band to the corner. Treating the row as a
-park skipped that write: the band stayed on screen and the windows drifted
-into the active workspace on the next reconciliation. The current frame is
-the window server's, not the model's (`frame_write_needed`, pinned by
-`park_write_is_judged_from_the_real_frame_not_the_model`): a write the app
-dropped leaves the model saying "parked" while the window sits on screen,
-and every later pass would have skipped the repair (a full Ghostty window
-sat on the right half of the display under the strip). Tiles sit on whole points (`whole` in
-the overlay): layout offsets are fractional (4592.67) and the window server
-places windows on whole points, so a tile drawn at the fraction was resampled
-and popped by the fraction at the lift.
+**The hairline.** No capture carries the hairline macOS composites around a
+window ("The hairline is composited outside every capture" in
+`src/pictures/docs/capture-research.md`), so the overlay draws it over every
+tile as a constant (`domain::motion::hairline`). The ring is a `CALayer` with a
+1pt border (`RING_PT`) of white at 0.20 on the focused window and 0.18 on the
+rest (`ring_alpha`), the fit measured there in dark mode; light mode is not
+measured. The outline is a `CAShapeLayer` stroking 0.5pt (`OUTLINE_PT`) of
+black at 0.9 along a rounded rect a quarter point outside the window
+(`outline`), so the stroke covers the half point just past its edge; a border
+layer at a half-point origin landed one pixel too far out ("The handover,
+measured" in `capture-overlay-research.md`). Both round to the window's radius
+as `pictures` measured it (`OverlayTile::radius`, which the flight engine fills
+from `Pictures::knowledge`), else 10pt, never past half the shorter side
+(`corner_radius`). The ring is a third layer beside the picture and the
+caster, an eighth step in front of the picture and under a companion's quarter
+step (`RING_Z`), with the outline as its child: inside the picture, a corner
+clip would cut the outline away (`a_corner_clip_leaves_the_hairline_whole`).
+It rides every move with the picture; a resize carries its bounds on the
+tile's own track and animates its corner and the outline's path between the two
+sizes (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it
+with the tile. Both are laid after the tile's frame, on every placement, or a
+pooled layer's autoresizing carries the old size, and a pooled tile's radius
+can have been measured since its last flight. Companions wear none.
+`TileOverlay::set_tile_focused` switches the ring's white and the shadow's
+depth in a hard cut, for focus handing over mid-flight; the prototype set the
+ring only at install. When focus hands over is the coordinator's
+(`HandOverFocus`).
 
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
-  exponential ease-out. The actor's clock evaluates it by
+  exponential ease-out. A `Leg` and the score evaluate it by
   solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
   and Core Animation gets the same four control points (`timing_function`),
-  so the apply point and the drawn motion agree; pinned by
-  `the_clock_and_the_render_server_run_one_curve`. A flight that steps flies
+  so where a merge bends a container from and what is drawn agree; pinned by
+  `a_leg_the_score_and_the_render_server_run_one_curve`. A flight that steps flies
   its containers on CSS ease-in-out (`EASE_IN_OUT`) instead, the same way:
   `Leg::Curve` carries its curve (see "The move flight"). Progress at quarter,
   half and 70% of the duration: 0.87, 0.97, 0.995. Ease-out cubic
@@ -415,6 +316,12 @@ Mechanics worth remembering:
   durations bypass the animation and draw the final frame directly.
 - `NSValue::valueWithPoint` (the from/to carrier) requires the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
+- **Whole points.** Slide places every container and tile on whole points
+  (`tiles_sit_on_whole_points_like_the_real_windows`): layout offsets are fractional (4592.67) and
+  the window server places windows on whole points, so a tile drawn at the fraction was resampled
+  and popped by the fraction at the lift. A member a merge moves to another container starts at its
+  plan frame and keeps the rounding its tile sat at; placed from the plan frame alone it jumped by up
+  to a point, origin and width (`every_look_bends_a_flight_without_a_jump`).
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits
@@ -426,114 +333,60 @@ sit between it and the bar. During strip pans a floating window deliberately
 stands still (`pinned`); during switches it rides its workspace row in the
 floating container.
 
-Routing. `animate_layout` sends a pass to the strip surface when the strip
-moved on screen (`take_strip_movement`) or the pass carries a move along the
-strip (`EventResponse::moved`, stashed by the reactor for the passes its
-command asked for and taken by the one pass that lays the moved window out,
-`take_move_in`), and no window in it resizes. How far the strip moved is the
-change of where its first column starts, `strip_origin`: the anchor less the
-scroll offset, recorded by `calculate_layout` against the tiling area. The
-scroll offset alone missed a change of anchor. Under niri navigation with
-centre alignment a move clears a column's centring, so the anchor went from the
-centre to the left edge with the offset unchanged: every window moved 576pt on
-a 1728pt display, the pass reported no movement, and the move was drawn as the
-finished layout at frame zero; pinned by
-`a_move_that_drops_the_centring_starts_every_window_where_it_was`. Both are
-taken at the top of every pass, before anything can return early: a pass that
-placed nothing used to leave the movement unconsumed for whichever pass came
-next. A strip movement places only the pass's windows whose frames changed,
-as the per-window path does; a move that scrolled nothing re-placed every
-window on the workspace at frame zero. Still open: both routes land in the same
-machinery, and `take_strip_movement` also feeds the switch's claim on the
-destination's origin, which needs care. The window-voting classifier
-(`strip_pan_delta`) is gone: it only ran when the space had no strip, which is
-when there is nothing to pan.
-
-**Edge bounce.** A command that pushes past an end of the strip (the first/last
-column) or of the workspace stack (next/prev at the bottom/top, which never wraps,
-or nothing further to skip to) used to stop dead, which read
-as a dropped keypress. The layout reports it as `EventResponse::edge_hit`,
-distinct from `boundary_hit`, which is the gesture's threshold crossing. Four
-places report it: `move_focus_internal`'s fallback and `MoveNode`'s, both
-left/right only, and `handle_virtual_workspace_command` and
-`move_window_to_workspace`, both up/down. Moving reports it because moving
-without a cue was indistinguishable from a stuck key — the same reason
-navigating does. A `MoveWindowToWorkspace` naming a workspace outright reports
-nothing: not finding workspace 7 is a request that cannot be honoured, not a
-push against an end, so `workspace_stack_direction` answers only for
-`next`/`prev`. The reactor (`start_edge_bounce`) sends `Event::Bounce` with the
-active workspace's surface and `edge_bounce_overshoot`
-(`src/animation/domain/motion/plan.rs`): `EDGE_BOUNCE_OVERSHOOT` (72pt) the way the
-content would have gone, so going right pulls the strip left and the next
-workspace pulls the row up. It was 36pt and was reported as too small to
-notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a flight with
-no travel when none is running (every tile at rest, `final_frames` the layout
-the windows already sit at) and adds the bounce to whatever is running
-otherwise, extending the clock to cover the return (`clock_for_bounce`). The
-overlay's `out_and_back` with `OutAndBack::Bounce` is one additive
-`CAKeyframeAnimation` per container
-(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; ease-out then ease-in-out) under
+**Edge bounce.** When a push against an end bounces, and what the flight does about it, is "Edge
+bounce" in `src/transitions/docs/coordination.md`. A
+push is one additive track per container that carries it, its `Bounce::track` (`from, overshoot, 0`
+at `0, turn, 1`; the motion curve out, `EASE_IN_OUT` home, the control points of
+`kCAMediaTimingFunctionEaseInEaseOut`), which the overlay installs as a `CAKeyframeAnimation` under
 its own key, so an in-flight movement is neither replaced nor disturbed and
-the model positions stay put; `settled` reads false until it is home, which
-holds the lift. The floating container rides only a vertical bounce
+the model positions stay put; the score's `settled`, every track ended, reads
+false until it is home, which holds the lift. The floating container rides only a vertical bounce
 (`carries_out_and_back`), the rule a pan (pinned) and a switch (carried) already
-follow. Real windows never move. The shape is `bounce_displacement`, pinned
-by `a_bounce_goes_out_once_and_comes_home`. A push while a bounce is still
-playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
-under the same key, so a burst of presses at the wall bounced once per press, and the
-presses the reactor reached late kept bouncing after the pressing had stopped.
-A move's nudge (below) is the other out-and-back, on the same containers by
-the same rule, under its own key and held off only by a nudge still playing
-(`OutAndBacks` in
-`src/animation/domain/timing.rs`, one clock per kind), so neither holds the
-other off; pinned by `a_bounce_and_a_nudge_never_hold_each_other_off` and
+follow. Real windows never move. The shape is `Bounce::from_rest`
+(`src/animation/domain/motion/bounce.rs`), pinned by
+`a_first_push_goes_out_once_and_comes_home`. The overlay installs its track key
+for key and curve for curve (`the_bounce_installed_is_its_track`), so
+`a_bounce_from_rest_is_the_keyframes_the_overlay_installs` pins what is drawn.
+
+Every push re-kicks the bounce. A push while one plays is `Bounce::from_drawn`
+from where it is drawn, the way out shortened by how much of it is already covered
+(never below `SHORTEST_PUSH` of a full one) and the way home a full one, added
+under the same key so it replaces the one playing
+(`a_push_starts_where_the_last_is_drawn`). A burst holds the surface at the wall
+and lets it go home once, within one bounce of the last press
+(`a_burst_holds_the_wall_and_comes_home_after_the_last_press`). It replaced two
+behaviours, both reported in `specs/animation.md`: each press restarting the
+keyframes from rest, which bounced once per press and went on bouncing after the
+pressing stopped (2026-09-29), and the throttle that fixed it by dropping every
+push while one played, which showed nothing for the second and third press of a
+burst (2026-10-03). Each container that carries a push starts it from where
+its own bounce is drawn, read from the flight's score (`push_tracks` in
+`src/animation/domain/motion/accents.rs`): one at rest from rest exactly, and one
+still drawing an older bounce than the last, the floating windows under up,
+sideways, up within one bounce, from that older one. One bounce pushed from the
+engine's record of the last used to be handed to every container, so the floating
+container jumped from the older bounce to rest on the last one's clock. A container a merge opens
+while a bounce plays draws none of it, opened with no tracks, and the next push starts its bounce from rest on a full
+way out while the strip's goes on from where it is drawn on a shortened one: the two stay apart by
+at most the offset the strip drew, until both are home. Handed the record's bounce, it used to jump
+by up to 72pt into phase with the strip. Both are pinned by
+`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. A
+push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
+move's nudge (below) is the other out-and-back, on the same containers by the
+same rule, under its own key. Only a step still playing holds a step off (`steps` in
+`src/animation/domain/motion/accents.rs` says no while the score `plays` one) and the bounce never
+does; pinned by `a_step_is_taken_only_while_none_plays` and
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
 ## The move flight
 
-Reported 2026-09-30 (`specs/animation.md`, "Moving a window along the strip"):
-only the 50/50 pair at the start of a strip showed a move. Every move that
-scrolled the strip took the pan route, which draws the FINAL layout and pans
-the viewport, so the two windows had changed places at frame zero and what
-played was a navigation pan. The pair at the start of the strip is the one
-move that does not scroll. For a full-width column even a per-window flight
-shows nothing: the camera follows the moved window, and the column it passes
-is parked off screen at both ends, so `worth_animating` culls it.
-
-**A move is a strip movement with a swap.** `MoveNode` that swaps two columns
-reports `EventResponse::moved` (not a pull out of a stack, which resizes, not a
-vertical move, not a move onto another display). The reactor routes it to
-`start_strip_pan` with the strip movement, zero when the strip did not move on
-screen, and the surface is built exactly as a pan's, every window at its NEW
-frame. The moved column and the column it passed also get a start (`swap_starts` in
-`src/animation/domain/motion/strip_move.rs`): the two fill the span they fill
-now, in the order they had before. For W of width a and N of width b with gap
-g, moving right, W started at N's new x and N at N's new x + a + g; moving
-left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
-shifts by one amount. `stage_move` puts the pair on the surface: W crosses from
-its start, and N crosses from its own unless the move steps, when it is held
-(below). `surface_plan` groups by travel vector, so the strip is one container
-and each crossing column has its own; the moved window holds focus, so its
-container is drawn first (`band_plan`) and N slides beneath it.
-
-**Which moves step.** Only a moved column that fills the viewport steps
-(`fills_viewport`): its width is the tiling area's, the display's usable width
-less both outer gaps, within a point, whether the full-width toggle or a width
-preset made it so. The view follows such a column, so it does not move on
-screen and nothing else shows the move. A half or two-thirds column is seen
-moving and never steps. The rule was the moved window's own travel on screen
-under a quarter of the viewport (`NUDGE_BELOW`), which stepped every narrower
-move the view followed as well; reported 2026-09-30.
-
-**Which way.** A third of the viewport (`NUDGE_SHARE`) away from where the
-window went, and back (`nudge`): a move right steps the strip left and opens
-the right side, where N was. It went toward where the window went, opening the
-side N was heading for.
+Which moves step, which way, how the pair is staged and where the real windows go is "The move
+flight, staged" in `src/transitions/docs/coordination.md`. This is how it moves.
 
 **The whole strip steps.** It is the edge bounce's mechanism: one additive
 keyframe animation, under its own key (`"rini.group.nudge"`), on every
-container `carries_out_and_back` names (`TileOverlay::out_and_back` with
-`OutAndBack::Nudge`), sampled every 1/120s from `nudge_displacement`,
+container `carries_out_and_back` names (`step_tracks`), sampled every
+1/120s from `nudge_displacement`,
 `sin²(πt)`: at rest and motionless at both ends, furthest out at half time.
 That is every strip container: the moved window's, the strip's, and with them
 every border tracing a strip window, which rides its window's container. The
@@ -545,21 +398,12 @@ container alone. The side it opened showed whatever was under the window, and
 N crossed on `MOTION_CURVE` in about 60ms, so for nearly the whole step that
 was the desktop (a screen recording and the engine's debug log, 2026-09-30).
 
-**The column passed is held.** For a move that steps, `stage_move` gives N its
-old slot as its surface frame and no start of its own, so it rides the strip's
-container: its tile starts where N was on screen and moves only as the strip
-does, W slides over it, and it finishes beneath W, covered. Only the drawing is
-held. N's real window goes to its layout frame, off screen, as for any move:
-`final_frames` are unchanged, the handover compares real windows with them, and
-the stand-in chase judges where the real window lands (`stand_in_chase`). A
-move that does not step keeps both columns crossing.
-
 **The curve.** While it steps, a flight's containers fly on CSS ease-in-out
-(`EASE_IN_OUT`, `(0.42, 0, 0.58, 1)`; `flight_curve`) over the stretched
-duration instead of `MOTION_CURVE`, so N lingers in the side the step opens.
+(`EASE_IN_OUT`, `(0.42, 0, 0.58, 1)`; `flight_curve`) over the step's stretched
+duration, or the flight's own when that is longer, instead of `MOTION_CURVE`, so N lingers in the side the step opens.
 `MOTION_CURVE` is 87% of the way at a quarter of the flight: it carries N
 beneath W before the step is out, and C fills the side instead. `Leg::Curve`
-carries its curve and `fly` hands Core Animation the same four numbers
+carries its curve and the overlay hands Core Animation the same four numbers
 (`timing_function`), so the leg is what the render server draws, and a press
 arriving mid-flight bends it from where it is and as fast as it goes; pinned by
 `a_leg_on_the_ease_in_out_bends_without_a_kick`. A step that starts on a flight
@@ -589,16 +433,7 @@ simulation the design was chosen from, flipping the direction alone, W
 stepping alone and N crossing, left the whole opened side desktop at every t.
 Past the strip's end the opened side shows the desktop: nothing is there.
 
-The step starts only on a flight that moves: one still collecting passes
-recomposes its containers, which drops any additive animation, so a move
-arriving then waits and steps when the flight starts moving (`nudge_admission`,
-`NudgeAdmission::Wait`, `starting_nudge`); it used to be dropped, and a
-full-width move merged into a collecting layout pass showed nothing. The engine
-stretches a flight that steps to `NUDGE_STRETCH` (1.3x) the plain duration,
-when the step starts, so a flight that does not step keeps its length; the
-reactor asked for the stretch with every nudge it sent, stepped or not. The
-clock and lift wait for the step to come home (`clock_for_bounce`, `settled`).
-The bounce's shape was not reused: it leaves at 6.25x its average speed, which
+The nudge does not reuse the bounce's shape: that leaves at 6.25x its average speed, which
 over a third of the viewport is the jerk already reported.
 
 ```
@@ -614,17 +449,17 @@ The nudge's peak is `offset x π / seconds`, at a quarter and three quarters of
 the flight; pinned by `the_nudge_peaks_at_a_moderate_speed`. The viewport is
 the display's usable width, `screen.frame`, not the tiling area.
 
-**A burst.** Each press is its own `AnimateSurface`. The first installs the
+**A burst.** Each press is its own `AnimateSurface`. The first composes the
 flight and starts the step. A press arriving mid-flight merges into it
-(`begin_group`, `merge_plans` with the pan): every container moves by the pan,
+(`merge_group`, Slide's `retarget` over `merge_plans` with the pan): every container moves by the pan,
 the new pair votes as an ordinary pass would, and the moved window keeps its
 container (a camera that follows it again leaves it going where it was, so it
 is not retargeted at all). For a narrower column the newly passed column leaves
 the strip's container at the frame it is drawn at and flies to its slot
 beneath the moved window, and the pair of the earlier press pans on with the
-rest. Containers bend from their legs, never from where they are drawn, and
-the passed column's new container carries on the strip's (`Leg::leaving`), so
-nothing kicks. For a full-width column each press's passed column is held on
+rest. Containers bend from where the score has their movement at their legs'
+speed, never from where they are drawn, and the passed column's new container
+carries on the strip's leg (`Leg::toward`), so nothing kicks. For a full-width column each press's passed column is held on
 the strip, so nothing leaves the strip's container and the step playing carries
 on over all of it (`a_second_full_width_move_mid_flight_holds_its_column_on_the_strip`).
 A column an earlier press held pans on with the strip from beneath the moved
@@ -632,31 +467,11 @@ window, not to its slot: where the columns passed differ in width it ends a
 few points into the outer gap beside the moved window until the lift. A
 container a merge opens after a step began does not carry the rest of it: its
 member leaves from where it is drawn, so it does not jump, but it stops
-stepping, as with the edge bounce. The orchestration clock restarts to cover
-the new legs. A step still playing is not restarted (`OutAndBacks`): one step
-per burst, as presses at the wall bounce once. A press after it has come home,
-455ms at the default duration, starts another. A press at the end of the strip
+stepping, as with the edge bounce. The coordinator's clock restarts to cover
+the score. A step still playing is not restarted (`steps`, `Score::plays`): one step
+per burst. A press after it has come home, 455ms at the default duration,
+starts another. A press at the end of the strip
 bounces as before, on top of whatever is playing.
-
-**Pictures.** The column a full-width move passes is parked at both ends, so a
-cold cache had no picture of it, and the strip surface drew nothing for a
-window with no picture: a hole in the side the step opens. The surface path now
-takes the stand-in the per-window path does (`picture_or_stand_in` in
-`src/animation/domain/admission.rs`, shared by both): a known window parked off
-this display with no picture flies as the dark `--n3` tile, uncached. A window
-on this display with no picture is still placed and not drawn. A strip
-movement starts at once and never holds, so the real picture of a stand-in
-whose window lands on this display, the column a move at the edge brings in
-from its park, is chased once its frame is applied (`stand_in_chase`,
-`chases_stand_in`), and the reveal swap puts it on the same tile mid-flight.
-Where it lands is its real frame: a held column is drawn going beneath the
-moved window while its real window parks, so it is not chased. It used to fly
-dark for the whole flight: nothing asked for its picture. One parked at both
-ends has nothing on screen to capture and keeps the stand-in to lift.
-
-Real windows go to the layout's frames at frame zero, as for any strip
-movement (`APPLY_FRAMES_AT_PAN`), and only the ones whose frames changed; the
-step and the held column are drawn only.
 
 ## Resizes through the overlay
 
@@ -677,362 +492,116 @@ changes is how the picture maps onto it (`content_mode` in
   anchors to the BOTTOM (a terminal's prompt rides the bottom edge), so the
   seam sits just below the title bar; cutting at the bottom instead read as
   the window sliding into a slot. Content never stretches — the moving edges
-  swallow or reveal it — and all four rounded corners plus the harvested
-  hairline ride through intact. A first cut used `contentsCenter` (nine-part
+  swallow or reveal it — and all four rounded corners ride through intact,
+  under a hairline drawn at every size ("The hairline"). A first cut used `contentsCenter` (nine-part
   stretching); it kept the corners but read as the window stretching, which
   it is. Wrong-shaped cached pictures use the same mapping instead of being
   dropped — rapid preset cycling used to drop the resized window's tile
-  because its picture lagged one press behind.
+  because its picture lagged one press behind. A picture that is a region of
+  a batched composite (`src/pictures/domain/region.rs`) is drawn the
+  same way: each piece's contents are composed with the tile's region
+  (`within`), at rest and at both ends of a resize, and the pieces stay inside
+  it however the frame grows, so no piece shows the composite's next window
+  (`a_region_pictures_crop_pieces_show_only_the_region`,
+  `the_crop_grid_of_a_region_stays_in_the_region`). A tile's region is its
+  picture's (`Pixels::unit_rect`), all of the image for anything but a region
+  (`a_crop_drawn_tile_takes_its_region_from_its_picture`).
 - **The animation is Core Animation end to end.** Piece frames and
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
   IS the per-frame crop layout; one transaction installs frame, contentsRect,
-  shadow-path, ring-mask and hairline-band animations on the shared curve.
+  shadow-path, ring-mask, hairline-corner and outline-path animations on the shared curve.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
   seam a few points mid-flight inside the window's own content. A loose
-  tile's retarget continues from the PRESENTED position and size, so rapid
-  preset cycling bends the resize instead of snapping it.
+  tile's retarget continues from the position and size the flight's score
+  draws it at (`Score::sample`), so rapid preset cycling bends the resize
+  instead of snapping it. A retarget that no longer resizes takes away what the
+  resize installed: left, its bounds went on to the old size under the new
+  move and the tile snapped to its model when the old animation ended.
 - **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, so it
   degrades continuously into a plain reveal as a frame approaches zero — no
   seam pops mid-flight, no band ever wider than its frame.
-- **A window that opens travels from its spawn frame.** macOS shows a new
-  window at its own frame about 40ms before rini's first pass (AX
-  `WindowCreated` latency plus the coalesce window); that time is accepted.
-  `start` reads that frame from the window server and takes ONE framed
-  capture there (`capture_via_framed_with_dressing`, 16-24ms), at most
-  `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
-  `Member::Entrance` from the spawn frame to the slot, stretched
-  (`placeholder_mode`) until the reveal chase lands the slot-size picture,
-  which `claim` takes at frame zero (`Claimed::Refreshed`) or the
-  `Swap("reveal")` cut takes before 0.6. No hold: the newcomer's slot alone
-  goes out at frame zero (`frame_zero_work`) so the chase has something to
-  capture, and again with every frame at the apply point, one redundant AX
-  write per open. A frame off this display is not a spawn: a parked window
-  with a cold cache took a 1s off-screen capture and flew in from the park.
-  It used to take the reservation instead, which drew nothing in its slot
-  until a picture landed — a hole in the strip after every restart. It now
-  flies with a stand-in (`stands_in`, `window_snapshot::placeholder`): a
-  dark `--n3` tile, drawn nine-slice from a 42px image so its corners keep the
-  window's radius, moving exactly as its picture would. The stand-in claims
-  to cover nothing, so the flight holds for it and chases it like a grow,
-  `claim` swaps the real picture onto the same tile at frame zero, and the
-  reveal swap takes one mid-flight. It is never cached. Strip movements draw
-  the same stand-in (`picture_or_stand_in`; see "The move flight"), without
-  the hold, since they start `Immediate`: the picture of one landing on this
-  display is chased all the same. A window already at its slot with no
-  picture is captured as a still tile and not chased. Growing from zero
-  width (`entrance_from`; a centred zero-size zoom was tried first and read
-  as the window inflating, which nothing else on the strip does) was the
-  previous entrance and read as a pop then a
-  vanish; it survives only in the reservation fallback below.
-- **The reservation fallback.** With no server frame, a zero frame, an
-  unusable capture or no budget left (`entrance_plan`, reason logged as
-  "entrance reserved"), `entrance_reservation` registers a `PendingEntrance`
-  AND puts the window in `awaiting`, next to any grow. The flight applies
-  EVERY real frame at frame zero, the newcomer's slot included (the overlay
-  already covers them), so the chase captures the window at slot size.
-  Holding the slot back until the picture landed was tried: the chase then
-  captured the window at its SPAWN size, `claim` took it, and drawn top-left
-  in the slot it left the growth as backdrop, a hole in the strip (recording
-  of 2026-09-15 3:28:10). `chase_reveal_pictures` follows the entering
-  window like a grow: the queued SkyLight capture measured 170-300ms under
-  load, most of a flight; the chase's framed capture takes 16-24ms once the
-  app has painted. `claim` requires the fit; a smaller picture is refused
-  and the hold goes on. `claim_reveal` adds the zero-width tile to the
-  frame-zero composition (`install`). The flight starts when the last
-  awaited picture lands or `reveal_hold_limit` passes, so every tile flies
-  in one `fly` transaction. A picture landing after lift-off is admitted
-  (`admit_entrance`, `add_tile` under `StripLoose`) with
-  `late_join_duration`: what is left of the flight. A picture that misses
-  the flight altogether shows when the overlay lifts. A coalescing merge
-  that moves a window whose frame was already applied re-requests the
-  merged frames (`reapply_set`); without that the window sat where the
-  first pass put it until the strip scrolled.
-- **A closed window disappears.** Its survivors' pass is an ordinary
-  reflow: one group sliding by the closed width. Nothing is drawn for the
-  window itself. A shrinking ghost was tried (a resize to zero width from
-  the cached picture, `PendingExit`, `AnimateExit`) and removed: a ghost is
-  a per-tile discontinuity in a flight that is otherwise rigid, and a
-  picture of a window that no longer exists. Under load it ran 25ms ahead
-  of the survivors' clock; on the window-server close path it composed
-  `exits=0` and left a gap (log 2026-09-16 2:05). What stays is
-  `ForgetWindow`, sent once per close on either path: the AX
-  `WindowDestroyed` while the window still exists, or the window-server
-  disappearance through `EventOutcome::forgotten_windows` ahead of the
-  layout events. The gap between the window vanishing and the survivors
-  moving is AX latency plus the coalesce window, and is accepted.
-- **A grow holds, then reveals.** Every fill for the not-yet-rendered region
-  of a grow was tried and rejected by eye: `contentsRect` past the picture's
-  edge extends its outermost pixels (a hole to the backdrop on a translucent
-  window), and stretching the lead reads as stretching, because it is. So the
-  truthful pixels are made to exist first. A pass whose destination outgrows
-  its picture (`outgrows`) applies the real frames IMMEDIATELY: the overlay
-  is already covering the windows, so the app rerenders at its new size
-  behind a still frame. A chase thread polls the real frame every 8ms
-  (`REVEAL_CHASE_INTERVAL`, 125 attempts, about a second in all), a cheap
-  window-server read; SkyLight-capture polling measured 170-300ms per attempt
-  under load and lost the race. Once the size is there it takes ONE framed
-  capture per attempt (`capture_via_framed_with_dressing`): the window plus
-  one ring, hairline included, the picture cropped back out of the same
-  pixels. The frame resizes instantly while the app's pixels lag behind, and
-  a capture taken between the two is a half-painted surface: delivering one
-  flew the whole reveal with garbage. So a capture counts only when settled
-  (`chase_settled`): it matches the previous print (`renderings_match` on
-  32x32 RGBA thumbprints, a sample differing when any channel moves by more
-  than 8, up to 3% of samples allowed so cursors and clocks do not stall it), or it differs from
-  the picture cached before the resize, which means the app has repainted.
-  The second test saves one poll interval on most grows; the first is all an
-  entrance has. When it lands (`claim_reveal`), the tile's grid re-maps to it
-  and the flight begins: the moving edge reveals genuine final-size content,
-  1:1. A shrink crops the picture it has and flies immediately. The hold is
-  capped at 300ms (`HOLD_CAP`; `reveal_hold_limit` is 40%-of-flight with a
-  300ms floor, then the cap, so the cap wins for every duration). The old
-  chase held 235ms median (min 173, max 299; 25ms poll, two framed captures,
-  then a separate harvest), and 22 of about 45 holds timed out at 300ms
-  anyway. A 150ms cap was tried for a blink-length freeze and raised back
-  to 300ms with the fit requirement above: an entrance chase now waits for
-  the real frame to reach slot size before it captures, so it needs the
-  runway a grow's does. *How often 300ms is enough is not measured yet.*
-  An app that misses the cap flies with the old picture STRETCHED over the
-  tile (`placeholder_mode`, `Stretch`): every mode fills the whole frame. A
-  top-left crop that stopped the grid at the picture's edge and showed the
-  backdrop in the growth was tried and read as a hole (3:28:10), the same
-  hole recorded above for `contentsRect` past the edge. If the reveal lands
-  mid-flight after all, it is hard-cut onto the tile before 0.6 progress
-  (`Swap("reveal")`) and `set_tile_picture` re-installs the resize leg on
-  the SAME `Timing` (begin on the media clock plus duration, kept per tile
-  in `resize_leg`): the frame keeps its curve and only the pixels cut.
-  Re-keying from the presented frame over the remaining duration restarted
-  the ease-out and the tile lurched at every swap. Later than 0.6 the
-  picture is cached for the next flight.
-- **A fresh picture or hairline swaps in place.** Rebuilding the dressing on a
-  mid-flight recapture snapped the border to its final layout while the tile
-  was still travelling; a matching harvest now swaps pixels into the existing
-  layers and rides their animations. The match is on harvested pieces only,
-  not on the tile's size: a run with no extent (an entrance dressed at zero
-  width) still gets a zero-size layer, so a tile wears the same 8 pieces at
-  every size. A harvest can still come back short: a corner the alpha check
-  rejects on a partly covered window, or a window caught mid-resize. A
-  mismatched set is never rebuilt while a resize animates
-  (`dressing_rebuild_allowed`, `Tile.resize_until`): the worn ring stays on
-  the resize timeline, the new dressing is already on the cached snapshot,
-  and the next `install` wears it. Rebuilding placed the pieces at the
-  destination rectangle while the picture was still halfway.
-- **The apply point.** Layout passes place the real windows at 0.75
-  (`APPLY_FRAMES_AT`), or at 0.5 (`APPLY_FRAMES_AT_RESIZE`) when any tile
-  resizes: the real resize behind the overlay costs three synchronous AX round
-  trips per window and needs more runway to land before the overlay lifts.
-  Strip movements place at frame zero (`APPLY_FRAMES_AT_PAN`; the
-  measurements are under "The apply point"). Their frames are pure moves,
-  but a switch sends about 17 of them, serialized per app actor and sharing
-  it with window rediscovery. At 0.75 the gap from "placing real windows" to
-  lift measured 90ms median, p90 156, and 0.75 of a 300ms switch leaves 75ms;
-  0.5 was tried next and still lost 24 of 162 flights.
-- A pass containing a resize never becomes a strip pan or a move, even when
-  the strip moved: the strip surface draws final sizes, which would snap the
-  resize. The strip movement and the move are still taken, so the origin
-  bookkeeping stays current and the move reaches no later pass.
 - The caster's ring mask is created once per tile and reshaped in place; a
   resize animates its path and the shadow's silhouette between the two
   endpoint shapes, which interpolate because both are built by the same
   constructors.
 
-## Window borders during animations
+## The score: what Core Animation plays
 
-The long-standing "windows go flat and flicker" complaint took three attempts
-because the border's identity was misdiagnosed twice:
+`src/animation/domain/motion/score.rs` is the movement of a transition as data:
+tracks of keyframes on containers (a position) and tiles (a frame), on three
+channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
+model value each node ends at, which container each tile rides and how deep
+everything is drawn. A score is the fold of its edits (`Edit`: a place, a track
+added or cut, a ride, a drop, a bank; `a_score_is_the_fold_of_its_edits`).
+`Score::sample` is what Core Animation draws at a media time, so a merge bends a
+flight from the score instead of reading the presentation layer back ("Who talks
+to whom" in `docs/pictures-motion-transitions.md`). A look composes the score and bends it
+(`src/animation/domain/choreography.rs`; Slide, the default, in
+`src/animation/domain/choreography/slide.rs`), the flight keeps it
+(`src/transitions/domain/flight_score.rs`), and the overlay plays the same edits,
+folding each into a replica it reads only to install: an accent begun again, a
+crop grid re-keyed (`the_overlay_plays_exactly_its_score`). The overlay installs
+every animation from a track, through one builder (`animation` in `overlay.rs`):
+a track's `Form`, the constructor that made it, names the class
+(`every_track_is_installed_as_itself`), and a tile's track rides every layer of
+the tile, each value mapped from its key's frame
+(`a_tile_track_is_installed_on_every_layer_of_the_tile`); a tile's new leg judges
+its content mode again against its first and last key, set only when it changes, and the leg it is
+on with its end moved, a snap, keeps it drawn as it was
+(`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`): judged again, a grow flying its
+old picture stretched turned crop-drawn when its repainted picture was cut in and it snapped a point
+short of the plan, the content jumping to 1:1 with its seam mid-resize.
+The presentation layer is read only by the trace.
 
-1. A config-driven drawn border (bronze, mirroring the bordersrc) mismatched
-   reality in the other direction — a redrawn border flickers against the
-   real one at the handover just as visibly as no border did.
-2. Companion tiles for JankyBorders' border windows — correct mechanism,
-   wrong target: the `borders` process turned out not to be running at all
-   (`bordersrc` exists, nothing draws it). Live enumeration showed zero
-   border windows.
-3. **The border that actually flickers is macOS's own window outline**: a
-   1pt hairline the window server composites over every window's outermost
-   point, present at rest on every window, absent on every tile mid-flight,
-   because it is drawn outside the app's surface exactly like the shadow.
+Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
+an off-screen window, its presentation read at chosen `timeOffset`s.
 
-A fourth attempt — drawing it as a measured constant (1pt white stroke,
-0.25 alpha focused / 0.16 unfocused) — was pixel-exact on opaque windows
-and wrong by 2x on translucent ones: lossless captures read the focused
-hairline at rgb 80 on an opaque editor but rgb 44-46 on a see-through
-terminal, because the composite depends on the window's own edge pixels
-and translucency. No drawn constant can match every window.
+| What | Core Animation | The score |
+|---|---|---|
+| Outside `[begin, begin + duration)` | draws the model | `Track::at` is none; `sample` is the model |
+| `kCAMediaTimingFunctionEaseInEaseOut` | control points `(0.42, 0, 0.58, 1)` | `EASE_IN_OUT` |
+| 1722pt over 0.35s on `MOTION_CURVE` | within 0.088pt of the exact Bezier | `CubicBezier::ease` |
+| The 72pt bounce over 0.35s | within 0.072pt of `Bounce::at` | `Bounce::track` |
+| Keyframes with no `keyTimes` or `timingFunctions` | evenly spaced, straight lines between | `Track::samples` |
+| `duration` 0 | plays for 0.25s | a cut |
+| `addAnimation:forKey:` on a key in use | the old one goes | `Score::add` replaces |
+| A layer's animations | composed in order of `beginTime`, ties in the order added | `Score::tracks` |
+| A non-additive animation beginning after an additive one, or with it and added later | the additive one is not drawn while it plays | `sample` adds every accent playing |
+| That accent begun again with it: a copy at its `beginTime`, `timeOffset` as far as the accent had got, `repeatDuration` what is left | drawn exactly where it was, to its old end | `sample` adds every accent playing |
 
-So the real composited pixels are harvested instead (`edge_dressing`):
-`CGWindowListCreateImage` is the one capture API that composites framing
-into its output, and a rect-bounded call returns exactly the asked rect
-with the framing composited, at 16-24ms. The framing is two lines — the
-light hairline on the window's outermost point and a near-black outline
-just outside the bounds, which is what separates border from shadow — so
-the harvested band straddles the boundary, one point in and one out. Four
-straight runs plus four corner boxes clipped to the outline's arc, ~200KB
-against the 28MB framed capture they are cropped from, cached on the
-snapshot and worn by the tile as sublayers. It only renders windows
-actually composited, so a parked window harvests transparent pixels and is
-rejected by an alpha check, keeping the ring from when it was last seen:
-the picture cache's own staleness model. The check believes a ring when the
-straight runs' mean alpha is at least 0.5 (`MIN_MEAN_ALPHA`): a parked
-window reads 0, the most translucent real edge measured (a see-through
-terminal) 244 of 255, and a border tool's overlay window fails it without a
-special case. Corner boxes are legitimately transparent outside the arc, so
-only the four runs are judged. The ring is 1pt (`RING_PT`), two device
-pixels at 2x. The harvest runs on a plain thread after `collect`, never
-inside a ScreenCaptureKit completion: on modern macOS
-`CGWindowListCreateImage` is proxied through the same capture machinery, so
-a call from the delivery queue deadlocks its own reply until a ~20s
-timeout and every capture in the process serialises behind it (measured as
-half-minute window switches). The focused ring lands with the
-post-flight harvest of the animated set (`finish`), or with the focus
-refresh's framed capture of a window wholly on a display, which carries
-its hairline and counts as that window's harvest (see "Mid-flight passes").
+A Bezier segment is the one place the score and the screen part, by Core
+Animation's own solver: under 0.1pt. A spring leg is the polyline of its 1/120s
+samples, not `Leg::position_at`: from rest the first line cuts the corner by
+10.8pt at 1722pt and 5.4pt at 861pt (`a_spring_plays_as_the_polyline_of_its_samples`).
+The nudge's polyline is within 0.5pt of `sin²(πt)` at a third of a 1720pt
+viewport (`the_nudge_plays_as_its_samples`).
 
-The companion-tile machinery from attempt 2 stays (`companion_of` /
-`companion_tiles`): it is the right answer for anyone whose border tool IS
-running, carrying real border windows as tiles:
+Two rows are rules for whatever plays a score:
 
-- Detection is geometric and tool-agnostic: an unmanaged window concentric
-  with a managed one (centers within 4pt) and the same size or up to 8pt
-  larger is that window's border. Candidates exclude every window in the
-  pass, so stacked twins cannot match each other; one border window traces
-  one window (`claimed`).
-- The companion rides at its real relative offset from the window's tile,
-  drawn a quarter depth-step in front of it (under the next tile forward,
-  clear of the half-step shadow casters), with no shadow of its own. It
-  records the window it traces and takes that window's band: a floating
-  window's border is floating, in the floating container with it and lifted
-  with it (`border_tile`, `band_plan`). A move's step carries every strip
-  window's border with the strip and never a floating window's (see "The
-  move flight").
-- Captured and cached like any window, keyed by synthetic ids; no picture
-  yet means skipped this flight and warmed for the next. Companions join the
-  post-flight warm set because borders recolor with focus.
-- Nothing rini manages can be a companion (`managed_server_ids`: the pass's
-  windows plus every window the cache holds or owes a picture to), and a
-  parked window never traces or is traced (`companion_of`). Every parked
-  window shares the park's frame, so a window arriving from the park matched
-  another parked window as its "border" and flew in wearing that window's
-  picture: two Chrome windows on different workspaces swapped pictures on
-  every switch between them. The geometric test alone did not catch it
-  because macOS clamps the park to 41pt visible, one past `is_off_screen`'s
-  40. An arriving row's window therefore gets no companion, which is what
-  the real screen does, since the border tool only catches up after the
-  window lands.
-- The mid-flight focus recapture rode the framed route (16-24ms measured,
-  against 170-300ms for SkyLight under animation load) until racing it
-  against the ScreenCaptureKit route was found to swap the tile 2-3 times
-  per flight; it now takes the service route only, and the swap requires
-  the same route as the cached picture (see "Mid-flight passes"). The swap
-  itself is a hard cut ON PURPOSE: a ~120ms crossfade veil was tried and rejected,
-  because stacking two copies of a translucent window pulses its net opacity
-  mid-fade — there is no constant-alpha crossfade with layers. Gratuitous
-  cuts are avoided upstream instead: a swap whose picture renders the same
-  as the one on screen (thumbprint comparison) is skipped entirely.
-- Companions are excluded from the mid-flight destination recapture, which
-  exists for the window the eye is on. They wear no harvested hairline
-  either: a border window's ring is transparent almost everywhere, so the
-  harvest's alpha check rejects it without a special case.
+- **Order.** Core Animation composes a layer's animations in order of their
+  begin times, ties in the order added, and a non-additive one starts over from
+  its own value. A movement replaced mid-flight begins after every accent riding
+  it, so re-adding the accents unchanged leaves them hidden: they sort before it
+  by begin time whatever order they were added in. The score adds every accent
+  to the movement whatever order they came in, so a renderer that replaces a
+  `Base` track begins the node's accents again with it, each a copy as far into
+  its own time as it had got and lasting what is left of it. The overlay does
+  this for every movement it gives a container, from the accents' tracks in its
+  replica (`install_container_track`, pinned by
+  `a_replaced_movement_begins_its_accents_again_from_the_replica` and
+  `core_animation_orders_a_layers_animations_by_begin_time`). Until it did, a
+  merge hid a bounce or nudge riding a retargeted container until the new leg
+  ended.
+- **No length.** A track of no length is a cut in the score and 0.25s in Core
+  Animation, so a renderer places the node, installs nothing, and takes away
+  what played under the track's key, as the score's track replaces it
+  (`a_track_of_no_length_installs_nothing`). Slide makes none: what it would move over no length
+  it places. A reserved entrance admitted once the clock has run out is the case that reaches it
+  ("The reservation fallback" in `src/transitions/docs/coordination.md`).
 
-No configuration in either mechanism: the outline is the platform's, and the
-companions reproduce whatever a border tool draws, or nothing.
-
-**Companion geometry.** A border window is recognised by geometry alone:
-same centre within `COMPANION_CENTER_SLACK` (4pt), and at most
-`COMPANION_EXPANSION` (8pt) larger per axis. JankyBorders draws its stroke
-on a sibling window about twice the stroke width larger than the traced
-one, plus rounding, so 8pt covers any plausible stroke without reaching the
-next column. The companion tests use this machine's bordersrc geometry
-(width 1.5, square: a 865x1087 border at 1,29 around an 859x1081 window at
-4,32).
-
-## Snapshot staleness
-
-Staleness is accepted by construction ("a slightly stale moving image is not
-perceptible", `capture-overlay-research.md`) and the worst case — the
-destination's focus appearance — is patched mid-flight
-(`refresh_destination_among`, at 0.25 and 0.55, the two ends of a focus change). What that
-does not cover: content that changed while parked. Terminal output, chat,
-anything live — warmed only at animation end, focus change, and layout
-passes, so a window that repainted itself while hidden is stale until the
-next switch touches it. Capturing at switch time instead is ruled out by
-measurement: 4 windows cost 94.5ms against a 180ms budget. Warming DURING the
-flight is ruled out too: see "Capture work in flight" above.
-
-Options, in order of expected value:
-
-1. **Low-rate `SCStream` for likely targets.**
-   `SCContentFilter(desktopIndependentWindow:)` works for off-screen windows,
-   and a persistent stream (unlike one-shot `SCScreenshotManager` calls)
-   delivers frames only when the content actually changes. A small pool
-   covering adjacent workspaces keeps the cache continuously fresh with zero
-   work at switch time. Wants a budget (frontmost window of workspace n±1),
-   not every window. *Per-stream overhead unmeasured.*
-2. **Change-signal-driven warming.** Use signals already flowing — AX title
-   changes, the CGS window events `window_notify` subscribes to — as "picture
-   is dirty" triggers. Misses silent repaints; catches most others without
-   polling.
-3. **Aged-cache sweeps.** `WindowSnapshot` is timestamped (`taken`) and
-   `warm_windows` re-warms anything older than `SNAPSHOT_STALE_AFTER` at
-   animation end. A sweep of nearby workspaces on a slow idle timer is not
-   done; it would break the "nothing polls" principle deliberately.
-4. **Widen the mid-flight refresh.** Ruled out by measurement. The refresh
-   runs on its own thread, but the window server does not: with warms, the
-   desktop render and harvests queued behind it, the framed refresh took
-   203ms median against 16-24ms at idle (see "Capture work in flight").
-   Two windows at 0.5 is the cap; more capture work in flight, not less, is
-   what slowed it.
-
-## Structural findings
-
-1. **`animate_layout` is the real strategy point.** The per-window half is
-   now `crate::animation::domain::pass::plan`, a pure step over `PassWindow`s producing
-   a `PassPlan` (moves, unmoved windows, warm targets), tested on its own. The
-   frame-writing half is `app::reactor::present::Present`: two borrows — the window
-   store and the transaction table — instead of `&mut Reactor`, which said nothing
-   about what a layout pass touches. `Present` owns the rule that one application's
-   batch shares ONE transaction id, because the app applies the frames together and a
-   per-window id would have each report matched against a different write. That rule
-   was inline and untested; it has five tests now.
-
-   What is left in `animate_layout` is the flight decision (skip reasons, pan
-   detection) and dispatch. It still takes `&mut Reactor`, and legitimately: it reads
-   the config, the layout engine and the drag state, and sends to the animation actor.
-   Those are the reactor's, not a narrower capability's.
-2. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,
-   `start_strip_pan`, `start_edge_bounce` and `warm_all_workspaces` each
-   repeat the screen-lookup / gaps / `calculate_layout_for_workspace` loop,
-   and `warm_all_workspaces` recomputes every workspace's layout immediately
-   after `start_strip_switch` computed the same layouts.
-
-## Endgame (done)
-
-The overlay learned resizes (anchored, cropped rather than scaled, the real
-resize applied once behind the overlay), then switches, pans, entrances and
-closes, and the AX engine's last job was the `overlay_animations = false`
-fallback. That switch is gone: animation is on or off (`animations › off`), on means
-the overlay, off means placement. The AX resize trial ("Detour" in earlier revisions)
-ended in the overlay's favour.
-
-## Order of attack
-
-1. ~~CA-driven canvas animation~~ — subsumed by 3 and 4.
-2. ~~Steady ticker + matching curve for the AX engine~~ — done, then the
-   engine itself was removed (see "One engine").
-3. ~~CA-driven per-window overlay path~~ — done, see the overlay section.
-4. ~~Dissolve the canvas into per-tile groups~~ — done, then reversed: the
-   per-tile groups teleported on every merge, and containers carry the
-   rigid pieces again (see the overlay section). The group event is
-   `AnimateSurface`, the geometry module `strip_stack`.
-5. Pan routing collapse (`take_strip_movement` and `take_move_in`, routing in
-   `animate_layout`), once the strip visuals are validated; the strip movement
-   also feeds the switch's claim on the destination's origin and needs care.
-   `strip_pan_delta` is already gone.
-6. ~~Shared `motion` module + wire or delete `animation_easing`~~ — the AX
-   engine and `animation_easing` are gone; `MOTION_CURVE` is the curve every
-   movement runs on but a stepping move's.
-7. Staleness: change-driven warming or a stream pool; measure the mid-flight
-   refresh cap first since it is nearly free.
-8. `animate_layout` decomposition: the pass analysis is out (`pass::plan`); the flight decision and dispatch remain, next time selection logic changes anyway.
-9. ~~The resize question again~~ — resizes ride the overlay; AX removed.
+`Score::settled` is every track ended, and the lift waits for the flight's
+(`FlightScore::settled`). The overlay used to compare the presentation with the model within 0.5pt,
+which a `MOTION_CURVE` movement of 1722pt reaches at 87% of its duration; the
+lift also waits for the clock, so the two part only where a track outlasts it,
+and there the score says yes no earlier than the presentation did.

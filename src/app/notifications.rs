@@ -16,7 +16,7 @@ use objc2_foundation::{
 };
 use tracing::{debug, info_span, trace, warn};
 
-use crate::animation::platform::power::{init_power_state, set_low_power_mode_state};
+use crate::app::power::{init_power_state, set_low_power_mode_state};
 use crate::app::hotkeys::{self as wm_controller, WmEvent};
 use crate::displays::platform::spaces;
 use crate::windows::platform::app::NSRunningApplicationExt;

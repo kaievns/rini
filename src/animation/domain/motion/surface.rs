@@ -3,32 +3,35 @@
 //! unless the move holds one on it.
 //! Nothing here knows what the surface holds.
 
-use objc2_core_foundation::{CGPoint, CGRect};
-use rini_core::ids::{WindowId, WindowServerId};
+use rini_core::ids::WindowId;
+use rini_geometry::space::{
+    Overlay, OverlayRect, OverlayVector, Respace, Surface, SurfacePoint, SurfaceRect, Translation,
+};
 
-/// One window's place on a surface. `frame` is where it lands; the viewport moves, and only a window
-/// with a `from` also moves across the surface.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SurfaceWindow {
-    pub window: WindowId,
-    pub server_id: WindowServerId,
-    pub frame: CGRect,
+/// One window's place on a surface, as a strip movement stages it. `frame` is where it lands; the
+/// viewport moves, and only a window with a `from` also moves across the surface. What the reactor
+/// builds is `crate::transitions::domain::request::SurfaceWindow`.
+pub trait SurfaceGeometry {
+    fn window(&self) -> WindowId;
+    fn frame(&self) -> SurfaceRect;
     /// Held still while the surface moves under it.
-    pub pinned: bool,
+    fn pinned(&self) -> bool;
     /// Drawn in the other z-band; see `z_group`.
-    pub floating: bool,
+    fn floating(&self) -> bool;
     /// Where on the surface the window starts, when not at `frame`: a column a move swapped starts
     /// in the slot it held before the move.
-    pub from: Option<CGRect>,
-}
+    fn from(&self) -> Option<SurfaceRect>;
 
-impl SurfaceWindow {
     /// Where the window's tile starts and ends on screen: `surface_travel` of its frame, starting
     /// from `from` when it has one.
-    pub fn travel(&self, from_offset: CGPoint, to_offset: CGPoint) -> (CGRect, CGRect) {
-        let (start, end) = surface_travel(self.frame, from_offset, to_offset, self.pinned);
-        match self.from {
-            Some(from) if !self.pinned => {
+    fn travel(
+        &self,
+        from_offset: SurfacePoint,
+        to_offset: SurfacePoint,
+    ) -> (OverlayRect, OverlayRect) {
+        let (start, end) = surface_travel(self.frame(), from_offset, to_offset, self.pinned());
+        match self.from() {
+            Some(from) if !self.pinned() => {
                 (surface_travel(from, from_offset, to_offset, false).0, end)
             }
             _ => (start, end),
@@ -40,67 +43,52 @@ impl SurfaceWindow {
 /// "the window" is, so this is a description and not a window.
 pub trait TileGeometry {
     fn window(&self) -> WindowId;
-    fn from(&self) -> CGRect;
-    fn to(&self) -> CGRect;
+    fn from(&self) -> OverlayRect;
+    fn to(&self) -> OverlayRect;
     fn floating(&self) -> bool;
     /// For a border window, the window it traces.
     fn companion(&self) -> Option<WindowId>;
 }
 
-/// Where each tile of a strip movement starts and ends on screen, in overlay coordinates.
+/// What the viewport at `offset` shows of the surface: the surface less `offset`.
+pub fn viewport(offset: SurfacePoint) -> Translation<Surface, Overlay> {
+    Translation::new(-offset.x, -offset.y)
+}
+
+/// Where each tile of a strip movement starts and ends on screen.
 ///
 /// The surface is fixed; the viewport travels from `from_offset` to `to_offset`, so every
-/// unpinned window translates by the opposite of that travel. A pinned window stands still — and a
-/// standing tile still has to exist, because the overlay is opaque and anything it omits vanishes.
+/// unpinned window translates by the opposite of that travel. A pinned window stands still where
+/// the final viewport shows it — and a standing tile still has to exist, because the overlay is
+/// opaque and anything it omits vanishes.
 pub fn surface_travel(
-    frame: CGRect,
-    from_offset: CGPoint,
-    to_offset: CGPoint,
+    frame: SurfaceRect,
+    from_offset: SurfacePoint,
+    to_offset: SurfacePoint,
     pinned: bool,
-) -> (CGRect, CGRect) {
+) -> (OverlayRect, OverlayRect) {
+    let end = viewport(to_offset).transform_rect(&frame);
     if pinned {
-        return (frame, frame);
+        return (end, end);
     }
-    let at = |offset: CGPoint| {
-        CGRect::new(
-            CGPoint::new(frame.origin.x - offset.x, frame.origin.y - offset.y),
-            frame.size,
-        )
-    };
-    (at(from_offset), at(to_offset))
+    (viewport(from_offset).transform_rect(&frame), end)
 }
 
 /// How far a strip movement carries every unpinned tile: `surface_travel`'s `to - from`.
-pub fn pan_travel(from_offset: CGPoint, to_offset: CGPoint) -> CGPoint {
-    CGPoint::new(from_offset.x - to_offset.x, from_offset.y - to_offset.y)
-}
-
-/// A snapshot's pixels as packed RGB, downsampled by four in each axis, for the debug dump.
-/// Converts a display-space rect into the overlay's own coordinate space.
-///
-/// The overlay's layer tree has its origin at the overlay's top-left, not the display's, so a window
-/// frame has to have the overlay's origin subtracted. Skipping this puts every tile off by the menu
-/// bar inset, which reads as the whole animation being shifted down.
-pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
-    CGRect::new(
-        CGPoint::new(
-            frame.origin.x - overlay_frame.origin.x,
-            frame.origin.y - overlay_frame.origin.y,
-        ),
-        frame.size,
-    )
+pub fn pan_travel(from_offset: SurfacePoint, to_offset: SurfacePoint) -> OverlayVector {
+    (from_offset - to_offset).respace()
 }
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGSize;
+    use rini_geometry::space::{OverlayPoint, Size};
 
     use super::*;
+    use crate::animation::domain::motion::testing::{Gen, OnSurface, RUNS, VIEWPORT, rect};
 
-    fn window(frame: CGRect, from: Option<CGRect>, pinned: bool) -> SurfaceWindow {
-        SurfaceWindow {
+    fn window(frame: SurfaceRect, from: Option<SurfaceRect>, pinned: bool) -> OnSurface {
+        OnSurface {
             window: WindowId::new(1, 1),
-            server_id: WindowServerId::new(1),
             frame,
             pinned,
             floating: pinned,
@@ -112,20 +100,88 @@ mod tests {
     /// travelling viewport; without a start of its own it is a plain pan.
     #[test]
     fn a_window_with_a_start_of_its_own_travels_from_it() {
-        let frame = CGRect::new(CGPoint::new(864.0, 32.0), CGSize::new(861.0, 1081.0));
-        let old = CGRect::new(CGPoint::new(1728.0, 32.0), frame.size);
-        let (from_offset, to_offset) = (CGPoint::new(-864.0, 0.0), CGPoint::new(0.0, 0.0));
+        let frame: SurfaceRect = rect(864.0, 32.0, 861.0, 1081.0);
+        let old = SurfaceRect::new(SurfacePoint::new(1728.0, 32.0), frame.size);
+        let (from_offset, to_offset) =
+            (SurfacePoint::new(-864.0, 0.0), SurfacePoint::new(0.0, 0.0));
         let (start, end) = window(frame, Some(old), false).travel(from_offset, to_offset);
-        assert_eq!(start.origin, CGPoint::new(2592.0, 32.0));
-        assert_eq!(end, frame);
+        let at_rest = viewport(to_offset).transform_rect(&frame);
+        assert_eq!(start.origin, OverlayPoint::new(2592.0, 32.0));
+        assert_eq!(end, at_rest);
         assert_eq!(
             window(frame, None, false).travel(from_offset, to_offset),
             surface_travel(frame, from_offset, to_offset, false)
         );
         assert_eq!(
             window(frame, Some(old), true).travel(from_offset, to_offset),
-            (frame, frame),
+            (at_rest, at_rest),
             "a pinned window stands still"
         );
+    }
+
+    /// The rigidity property the old canvas layer guaranteed structurally: every unpinned window
+    /// of a strip movement translates by exactly the same vector, so tiles animated per-tile from
+    /// these rects cannot drift apart. If this ever fails, the strip tears.
+    #[test]
+    fn a_strip_movement_translates_every_window_by_the_same_vector() {
+        let from_offset = SurfacePoint::new(0.0, 0.0);
+        let to_offset = SurfacePoint::new(-861.0, 1117.0);
+        let frames: [SurfaceRect; 3] = [
+            rect(4.0, 32.0, 859.0, 1081.0),
+            rect(867.0, 32.0, 859.0, 1081.0),
+            rect(4.0, 1149.0, 1720.0, 1081.0), // the row below, mid-jump
+        ];
+        for frame in frames {
+            let (from, to) = surface_travel(frame, from_offset, to_offset, false);
+            assert_eq!(
+                (from.origin.x, from.origin.y),
+                (frame.origin.x, frame.origin.y),
+                "at rest the viewport offset is zero"
+            );
+            assert_eq!(to.origin.x - from.origin.x, 861.0);
+            assert_eq!(to.origin.y - from.origin.y, -1117.0);
+            assert_eq!(to.size, frame.size.respace(), "a strip movement never resizes");
+        }
+    }
+
+    /// A floating window does not belong to the strip: a pan carries it with the viewport and it
+    /// stands where the viewport ends, and a standing tile still exists, because the overlay is
+    /// opaque and omissions vanish.
+    #[test]
+    fn a_pinned_window_stands_where_the_viewport_ends() {
+        let frame: SurfaceRect = rect(224.0, 95.0, 1280.0, 960.0);
+        let (from, to) = surface_travel(
+            frame,
+            SurfacePoint::new(100.0, 0.0),
+            SurfacePoint::new(-4000.0, 0.0),
+            true,
+        );
+        assert_eq!(from, rect(4224.0, 95.0, 1280.0, 960.0));
+        assert_eq!(to, from);
+        let home =
+            surface_travel(frame, SurfacePoint::new(100.0, 0.0), SurfacePoint::origin(), true);
+        assert_eq!(home, (rect(224.0, 95.0, 1280.0, 960.0), rect(224.0, 95.0, 1280.0, 960.0)));
+    }
+
+    #[test]
+    fn a_pan_translates_a_parked_window_without_remapping_it() {
+        let mut rng = Gen(33);
+        for _ in 0..RUNS {
+            let size = Size::new(rng.pt(400.0, 1720.0), 1081.0);
+            let frame: SurfaceRect = rng.park(size);
+            let from_offset = SurfacePoint::new(rng.pt(-4000.0, 4000.0), 0.0);
+            let to_offset = SurfacePoint::new(rng.pt(-4000.0, 4000.0), 0.0);
+            let (from, to) = surface_travel(frame, from_offset, to_offset, false);
+            assert_eq!(from.origin.x, frame.origin.x - from_offset.x);
+            assert_eq!(to.origin.x, frame.origin.x - to_offset.x);
+            assert_eq!(from.size, frame.size.respace());
+            assert_eq!(to.origin.x - from.origin.x, from_offset.x - to_offset.x);
+            assert_eq!(from.origin.y, frame.origin.y, "a pan keeps the park's row");
+            let park = viewport(SurfacePoint::origin()).transform_rect(&frame);
+            let entry = rini_geometry::park_entry_frame(park, to, VIEWPORT);
+            if from_offset.x.abs() != 1.0 {
+                assert_ne!(from, entry, "the pan path does not consult the park remap");
+            }
+        }
     }
 }

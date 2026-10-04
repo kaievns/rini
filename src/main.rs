@@ -26,6 +26,7 @@ use rini::windows::platform::sub_level::init_window_sub_level_server_port;
 use rini::workspaces::LayoutEngine;
 use rini::workspaces::domain::display_memory::DisplayMemory;
 use rini_core::paths::restore_file;
+use rini_geometry::space::{ScreenRect, ToCg};
 use rini_ipc as ipc;
 use rini_runloop::executor::Executor;
 use rini_skylight_sys::{
@@ -244,10 +245,29 @@ fn main() {
     let window_tx_store = WindowTxStore::new();
     let (gesture_tap_tx, gesture_tap_rx) = rini::app::channels::channel();
     let (cursor_warp_tx, cursor_warp_rx) = rini::app::channels::channel();
-    let (workspace_animation_tx, workspace_animation_rx) = rini::app::channels::channel();
+    let (transitions_tx, transitions_rx) = rini::app::channels::channel();
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
     let (bar_tx, bar_rx) = rini::app::channels::channel();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
+
+    // Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
+    // so the service names neither the flight engine nor the switcher.
+    let pictures = rini::pictures::platform::service::Pictures::start(vec![
+        Box::new({
+            let transitions_tx = transitions_tx.clone();
+            move |landed| {
+                transitions_tx.send(rini::transitions::platform::engine::Event::Pictures(landed))
+            }
+        }),
+        Box::new({
+            let switcher_tx = switcher_tx.clone();
+            move |landed| {
+                if let rini::pictures::event::Event::Taken { window, .. } = landed {
+                    switcher_tx.send(rini::switcher::platform::actor::Event::Landed(window));
+                }
+            }
+        }),
+    ]);
 
     let reactor = Reactor::spawn(
         config.clone(),
@@ -257,7 +277,8 @@ fn main() {
         event_tap_tx.clone(),
         broadcast_tx.clone(),
         Some(cursor_warp_tx.clone()),
-        Some(workspace_animation_tx.clone()),
+        Some(transitions_tx.clone()),
+        Some(pictures.clone()),
         Some(switcher_tx.clone()),
         Some(bar_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
@@ -381,7 +402,7 @@ fn main() {
     let input_settings = rini::input::settings::InputSettings::from(&config);
     let mut event_tap = InputTap::new(
         &input_settings,
-        rini::animation::platform::power::is_low_power_mode_enabled(),
+        rini::app::power::is_low_power_mode_enabled(),
         Box::new(wm_controller_sender.clone()),
         event_tap_rx,
     );
@@ -401,28 +422,50 @@ fn main() {
         cursor_warp_rx,
     );
 
-    // The animation overlay lives on the main thread because Core Animation requires it. It stays
-    // idle until the reactor sends it display geometry and something to animate.
-    let mut flight_engine = rini::animation::platform::engine::FlightEngine::new(
-        workspace_animation_rx,
-        workspace_animation_tx.clone(),
+    // The renderer owns the overlay, on the main thread because Core Animation requires it, and plays
+    // what the flight engine draws. The engine has a thread of its own, and is made there: its timers
+    // run on the loop that makes them. Both stay idle until the reactor sends display geometry and
+    // something to animate.
+    let (render_tx, render_rx) = rini::app::channels::channel();
+    let renderer = rini::animation::platform::renderer::Renderer::new(
+        render_rx,
+        Box::new({
+            let transitions_tx = transitions_tx.clone();
+            move |answer| {
+                transitions_tx.send(rini::transitions::platform::engine::Event::Rendered(answer))
+            }
+        }),
         mtm,
     );
-    flight_engine.set_place_frames(Box::new({
-        let events_tx = events_tx.clone();
-        move |frames| events_tx.send(reactor::Event::ApplyOverlayFrames(frames))
-    }));
-    // The app wires the two features together, so neither has to name the other: the animation engine
-    // lends its pictures and the switcher panel draws them.
-    flight_engine.set_lend_snapshots(Box::new({
-        let switcher_tx = switcher_tx.clone();
-        move |pictures| switcher_tx.send(rini::switcher::platform::actor::Event::Pictures(pictures))
-    }));
-    // The bar stops picturing the menu extras while a flight runs and settles.
-    flight_engine.set_on_flight(Box::new({
-        let bar_tx = bar_tx.clone();
-        move |flying| bar_tx.send(rini::bar::platform::actor::Event::Flight(flying))
-    }));
+    let flight_engine = rini::transitions::platform::engine::Parts {
+        rx: transitions_rx,
+        tx: transitions_tx.clone(),
+        pictures: pictures.clone(),
+        client: rini::pictures::domain::watch::Client(1),
+        draw: Box::new(move |batch| render_tx.send(batch)),
+        place_frames: Box::new({
+            let events_tx = events_tx.clone();
+            move |frames: Vec<(_, ScreenRect)>| {
+                let frames = frames.into_iter().map(|(window, frame)| (window, frame.to_cg()));
+                events_tx.send(reactor::Event::ApplyOverlayFrames(frames.collect()))
+            }
+        }),
+        // The bar stops picturing the menu extras while a flight runs and settles.
+        on_flight: Box::new({
+            let bar_tx = bar_tx.clone();
+            move |flying| bar_tx.send(rini::bar::platform::actor::Event::Flight(flying))
+        }),
+        media: rini::animation::platform::renderer::media_clock(),
+        clock: Box::new(std::time::Instant::now),
+    };
+    std::thread::Builder::new()
+        .name("transitions".into())
+        .spawn(move || {
+            let engine = rini::transitions::platform::engine::FlightEngine::new(flight_engine);
+            Executor::run_interactive(engine.run());
+            panic!("transitions thread exited");
+        })
+        .expect("failed to spawn transitions thread");
 
     // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
     // Animation require it. Idle until a switch opens, and it builds its window on first use.
@@ -435,6 +478,7 @@ fn main() {
             let events_tx = events_tx.clone();
             move |window| events_tx.send(reactor::Event::SwitchPicked(window))
         }),
+        pictures,
     );
 
     // Every display's bar, on the main thread for AppKit. It is sent what it shows by the reactor, and
@@ -487,7 +531,7 @@ fn main() {
             supervise("mc_native", mission_control_native.run()),
             supervise("process_actor", process_actor.run()),
             supervise("cursor_warp", cursor_warp.run()),
-            supervise("flight_engine", flight_engine.run()),
+            supervise("renderer", renderer.run()),
             supervise("switcher", switcher_actor.run()),
             supervise("bar", bar_actor.run()),
         );

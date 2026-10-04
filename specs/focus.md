@@ -148,7 +148,8 @@ The strip is ONE group. Everything on it stacks together, and nothing off it may
 
 ## Where it lives
 
-`src/workspaces/domain/workspace_focus.rs` is the precedence, `src/animation/domain/motion/z_group.rs`
-the stacking rule, `src/windows/domain/raise_order.rs` the raise list,
+`src/workspaces/domain/workspace_focus.rs` is the precedence, `src/windows/domain/raise_order.rs` the
+raise list and the stacking rule for the real windows, `src/animation/domain/motion/z_group.rs` the
+same rule for the tiles a flight draws,
 `src/windows/domain/focus.rs` the main-window tracking. Measurements are in
 `src/windows/docs/multi-display-focus.md` and `src/animation/docs/capture-overlay-research.md`.

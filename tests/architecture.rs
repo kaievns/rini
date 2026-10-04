@@ -7,21 +7,24 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FEATURES: [&str; 8] = [
+const FEATURES: [&str; 10] = [
     "windows",
     "displays",
     "layout",
     "workspaces",
     "input",
+    "pictures",
     "animation",
+    "transitions",
     "switcher",
     "bar",
 ];
 
 /// macOS and FFI surfaces a pure module must not reach for. `objc2_core_foundation` is absent on
-/// purpose: `CGRect`, `CGPoint` and `CGSize` are the arithmetic every layout decision is in, and
-/// `rini-geometry` wraps them. `rini_skylight_sys` is absent too, but only for its plain value types
-/// — see `SKYLIGHT_VALUE_TYPES`.
+/// purpose for the features not yet on rini-geometry's spaces: there `CGRect`, `CGPoint` and `CGSize`
+/// are the arithmetic every layout decision is in, and `rini-geometry` wraps them. The features that
+/// are on the spaces are `TYPED`, and name no CG geometry outside `platform/`. `rini_skylight_sys` is
+/// absent too, but only for its plain value types — see `SKYLIGHT_VALUE_TYPES`.
 const MACOS: [&str; 15] = [
     "objc2::",
     "objc2_app_kit",
@@ -49,6 +52,27 @@ const SKYLIGHT_VALUE_TYPES: [&str; 5] = [
     "CGSEventType",
     "KnownCGSEvent",
 ];
+
+/// The features whose interfaces and `domain/` speak rini-geometry's spaces (`space` in
+/// `crates/rini-geometry`). CG geometry is their boundary, not their arithmetic.
+const TYPED: [&str; 3] = ["pictures", "animation", "transitions"];
+
+/// CG geometry, and the conversions into it and out of it, that a typed feature leaves to its
+/// `platform/`. Bare names, so a conversion called, passed as a path or imported as a trait all count.
+const CG_GEOMETRY: [&str; 8] = [
+    "objc2_core_foundation",
+    "CGRect",
+    "CGPoint",
+    "CGSize",
+    "to_cg",
+    "from_cg",
+    "ToCg",
+    "FromCg",
+];
+
+/// The one place a size or a displacement crosses point spaces: `Respace`'s two impls, each a
+/// `fn respace` line in this file.
+const RESPACE: &str = "crates/rini-geometry/src/space.rs";
 
 /// Still on both sides of the domain/platform line: a pure model mixed with the reads that fill it.
 /// `screen.rs` wants splitting on the `System` trait it is already generic over. Nothing may be added
@@ -175,6 +199,78 @@ fn nothing_outside_platform_touches_macos() {
         broken.is_empty(),
         "macOS lives in `platform/`. A pure module compiles and tests without AppKit, which is the \
          whole return on this layout:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_typed_feature_names_no_cg_geometry_outside_platform() {
+    let mut broken = Vec::new();
+    for feature in TYPED {
+        for path in rust_files(&Path::new("src").join(feature)) {
+            let name = slash(&path);
+            if name.contains("/platform/") {
+                continue;
+            }
+            for (line, code) in code_lines(&path) {
+                for cg in CG_GEOMETRY {
+                    if code.contains(cg) {
+                        broken.push(format!("{name}:{line}: {cg} in {}", code.trim()));
+                    }
+                }
+            }
+        }
+    }
+    for path in rust_files(Path::new("src")).into_iter().chain(rust_files(Path::new("crates"))) {
+        let name = slash(&path);
+        for (line, code) in code_lines(&path) {
+            let respace = name == RESPACE && code.starts_with("fn respace");
+            if code.contains("cast_unit") && !respace {
+                broken.push(format!("{name}:{line}: {}", code.trim()));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "a typed feature speaks rini-geometry's spaces: CG stays in its `platform/`, which converts \
+         a value on the line where it crosses into or out of an interface or `domain/`. A size or a \
+         displacement crosses point spaces through `Respace`, never `cast_unit`. See \
+         crates/rini-geometry/docs/README.md:\n{}",
+        broken.join("\n")
+    );
+}
+
+/// What only the main thread may touch, which `transitions` runs off it: Core Animation, AppKit, the
+/// overlay that holds both, and the renderer's read of the media clock, which the engine is handed.
+const MAIN_THREAD_ONLY: [&str; 8] = [
+    "objc2_quartz_core",
+    "objc2_app_kit",
+    "MainThreadMarker",
+    "MainThreadOnly",
+    "TileOverlay",
+    "CATransaction",
+    "CACurrentMediaTime",
+    "media_clock",
+];
+
+#[test]
+fn transitions_never_touches_core_animation_or_app_kit() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src/transitions")) {
+        let name = slash(&path);
+        for (line, code) in code_lines(&path) {
+            for surface in MAIN_THREAD_ONLY {
+                if code.contains(surface) {
+                    broken.push(format!("{name}:{line}: {surface} in {}", code.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "the flight engine runs on the `transitions` thread, and the overlay on the main one: the \
+         engine reaches it only through `Draw`, and reads the media clock it is handed. See \
+         \"Threads\" in src/transitions/docs/coordination.md:\n{}",
         broken.join("\n")
     );
 }

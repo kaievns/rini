@@ -1,103 +1,13 @@
-# Capture-based overlay animation: measured constraints
+# The capture overlay: measured constraints
 
-Research notes for replacing the Accessibility (AX) animation engine with a
-capture-based overlay. All numbers below come from spikes in `/tmp/sls-spike`
-run on 2026-08-16, against a live 1728x1117 built-in Retina display at 2x
-backing scale, with 35 real app windows across 4 rini workspaces.
+How rini draws a transition: one opaque window of its own above every managed window, holding a
+picture of each window that moves, while the real windows are placed once underneath. Why it is
+built that way, what it does and does not do, and what was measured about the handover. The early
+spikes ran on 2026-08-16 in `/tmp/sls-spike` against a 1728x1117 built-in display at 2x; later
+sections date their own. What the captures it draws cost and return, the spikes' list included
+("Reproducing"), is `src/pictures/docs/capture-research.md`.
 
-Status: the approach is viable. The design is a hybrid: capture on-screen
-windows fresh through SkyLight at switch time, and serve off-strip and
-hidden-workspace windows from a ScreenCaptureKit cache refreshed in the
-background.
-
-## Verdict
-
-| Question                                               | Answer                           | Evidence                       |
-| ------------------------------------------------------ | -------------------------------- | ------------------------------ |
-| Can rini capture a window hidden on another workspace? | Yes, full size, real content     | `sck.swift`, window 45         |
-| Can rini capture a window parked at a 2pt sliver?      | Yes, full size, real content     | `sck.swift`, window 28804      |
-| Which API works?                                       | ScreenCaptureKit only            | `capdecide.swift`, `sck.swift` |
-| Can rini move a foreign window via SLS?                | No, and the calls report success | `tx2.swift`, `mv.swift`        |
-| Can rini set a foreign window's alpha?                 | No                               | `tx2.swift`                    |
-| Can captures be taken on demand at switch time?        | No                               | `cksweep.swift`                |
-| Does lower resolution reduce cost?                     | No                               | `cksweep.swift`                |
-
-## Capture cost
-
-Concurrent capture, median of 5 runs, unbounded concurrency:
-
-```
-windows   2x ms    1x ms
-1          56.5     63.2
-2          71.3     73.1
-4          94.5     93.2
-6         119.4    123.1
-8         145.7    148.0
-12        204.0    199.4
-16        271.6    251.7
-```
-
-The curve is linear: about 40ms fixed cost plus 14.5ms per window. Sequential
-capture of all 35 windows took 1319ms. Concurrent capture of the same 35 took
-540ms and did not improve past a concurrency limit of 4. ScreenCaptureKit
-serialises internally.
-
-Two consequences:
-
-1. **1x costs the same as 2x.** Cost is per-call overhead, not pixel count.
-   Always capture at full 2x. Downscaling saves nothing.
-2. **On-demand capture cannot work.** Even 4 windows cost 94.5ms, which exceeds
-   the whole budget for a 180ms animation. Captures must be warm before the
-   switch key is pressed.
-
-## What ScreenCaptureKit returns
-
-`SCContentFilter(desktopIndependentWindow:)` plus `SCScreenshotManager` returns
-the window's own surface, not a screen region. Verified for 6 windows in 3
-visibility states:
-
-| State                   | Window        | Requested | Returned  | Content |
-| ----------------------- | ------------- | --------- | --------- | ------- |
-| Fully visible           | Ghostty 31648 | 859x1081  | 859x1081  | yes     |
-| Hidden workspace        | Obsidian 45   | 859x1081  | 859x1081  | yes     |
-| Off-strip, 40pt visible | Slack 96      | 859x1081  | 859x1081  | yes     |
-| Off-strip, 40pt visible | Kiro 26995    | 1720x1081 | 1720x1081 | yes     |
-| Parked, 2pt visible     | Zen 28804     | 859x1081  | 859x1081  | yes     |
-| Off-strip, 40pt visible | Chrome 3508   | 1720x1081 | 1720x1081 | yes     |
-
-Content was confirmed two ways. A pixel-difference metric scored 0.995 to 1.000
-against a flat-buffer baseline of 0.000. The images were then inspected
-directly: window 45 shows the correct Obsidian note from the hidden `comms`
-workspace, and window 28804 shows the full Zen browser window.
-
-`SCShareableContent` must be requested with `onScreenWindowsOnly: false`.
-Otherwise hidden windows are not enumerated at all.
-
-## Dead ends, with the reason each one fails
-
-### SLSHWCaptureWindowList captures only the visible portion
-
-This is the SkyLight SPI yabai uses. It works and it is fast, but it grabs the
-framebuffer, not the window surface. A window with 40pt showing returns a
-40x1081 image. A window on a hidden workspace returns 1x28.
-
-Batched behaviour is worth recording because it surprised us. Passing 19 window
-ids returns 1 composited 3456x2170 image of the display, not 19 images, in about
-21ms. That composite is correct and full fidelity for on-screen content. It
-remains useful for anything that only needs what is currently displayed. It
-cannot drive a slide-in, because incoming windows have no pixels yet.
-
-Per-window calls cost about 16ms each, so batching beats them 12 to 1.
-
-### CGWindowListCreateImage is gone
-
-Not deprecated. Unavailable. It is a hard compile error on this SDK: "Please use
-ScreenCaptureKit instead". There is no pre-macOS-14 fallback.
-
-The system tool inherited this. `screencapture -l <windowid>` fails with "could
-not create image from window" even for a fully visible window.
-
-### Window server mutation does not work for foreign windows
+## Window server mutation does not work for foreign windows
 
 Retested on 2026-08-16 with a valid control, which the first attempt lacked. The
 verdict is unchanged but 2 details recorded earlier were wrong. Corrections are
@@ -232,190 +142,11 @@ while every foreign attempt failed.
    ever animates windows that are already fully on screen, so a
    visible-portion-only capture is sufficient for it. rini's incoming windows
    sit off-strip or on a hidden workspace, where that call returns a 40x1081 or
-   1x28 sliver, as measured above. rini therefore needs ScreenCaptureKit, which
-   costs 40ms plus 14.5ms per window against yabai's roughly 16ms per window in
+   1x28 sliver, as measured in `src/pictures/docs/capture-research.md`. rini
+   therefore needs ScreenCaptureKit, which costs 40ms plus 14.5ms per window
+   against yabai's roughly 16ms per window in
    parallel. That difference is exactly why rini needs a warm cache and yabai
    does not.
-
-## Claims tested and rejected
-
-An external analysis proposed that the measured ScreenCaptureKit cost is an
-artefact, and that `SLSHWCaptureWindowList` can capture the whole working set
-fresh at animation start with no cache. Each claim was tested. The useful parts
-are folded into the design section below.
-
-**Rejected: "the cost is a per-shot `SCShareableContent` round trip."** Already
-excluded. `cksweep.swift:77` enumerates once, outside every measured loop.
-
-**Rejected: "issue captures concurrently instead of in a loop."** Already done.
-`cksweep` ran them concurrently and unbounded through a `TaskGroup`.
-
-**Rejected: "the `captureSampleBuffer` / IOSurface route reaches 20-40ms for the
-batch."** Measured head to head against `captureImage`, same windows, same
-scale, interleaved and repeated 5 times, stopping at the `IOSurface` without
-building any image:
-
-```
-windows   captureImage   sampleBuffer   result
-1              38.9ms         37.5ms    no real difference
-2              49.6ms         51.6ms    no real difference
-4              72.6ms         88.0ms    captureImage 21% faster
-6              92.6ms        121.5ms    captureImage 31% faster
-8             129.3ms        150.7ms    captureImage 17% faster
-```
-
-The sample-buffer route is slower once past 2 windows. The cost is the capture
-session `SCScreenshotManager` spins up per call, not image materialisation, so
-no rearrangement of the public API avoids it.
-
-**Rejected: "pass the whole wid array and get a CFArray of CGImages back, so N
-windows costs roughly the same as one."** N windows returns ONE flattened
-composite, at every count tested:
-
-```
-requested 1 -> 1 image,  859x1081pt
-requested 2 -> 1 image, 1720x1081pt
-requested 3 -> 1 image, 1724x1081pt
-requested 5 -> 1 image, 1724x1081pt
-```
-
-The time claim is true and the result claim is not. A flattened composite cannot
-drive per-window animation. yabai agrees: it has exactly 1 call site,
-`window_manager.c:521`, and it passes `window_count = 1`. It never batches.
-
-**Rejected: "capture fresh at animation start, no pre-warming, no cache."** This
-is the load-bearing claim and it does not survive rini's layout. The call
-returns only the visible portion, and the option flags do not change that,
-including yabai's exact flags:
-
-```
-case         own size       options                returned      full?
-visible      859x1081pt     1<<11                  859x1081pt    YES
-visible      859x1081pt     (1<<11)|(1<<8) yabai   859x1081pt    YES
-hidden-ws   1147x1081pt     1<<11                  1x28pt        no
-hidden-ws   1147x1081pt     (1<<11)|(1<<8) yabai   1x28pt        no
-offstrip40   859x1081pt     1<<11                  2x1081pt      no
-offstrip40   859x1081pt     (1<<11)|(1<<8) yabai   2x1081pt      no
-```
-
-`1<<9` is a half-resolution variant and clips identically. The limit is the API,
-not the flags. yabai can skip caching because it only animates windows already
-fully on screen. rini's incoming windows are off-strip or on a hidden workspace,
-which is exactly the case that returns a sliver.
-
-### Confirmed and worth using
-
-- `SLSHWCaptureWindowList` requires the Screen Recording grant, not window
-  ownership. No scripting addition and no SIP disable. Verified working from a
-  plain unprivileged connection.
-- It is much cheaper per window than ScreenCaptureKit: about 16ms against 38 to
-  56ms. Worth using wherever it is sufficient.
-- The transform convention is `CGAffineTransformMakeTranslation(-tx, -ty)`, the
-  negative of the target origin in top-left space. This matches
-  `SLSGetWindowTransform` returning the origin with its sign flipped, measured above.
-- The binding already exists in `crates/rini-skylight-sys/src/lib.rs`
-  (`SLSHWCaptureWindowList`), so reaching it is cheap.
-- Captures exclude the drop shadow, which is why yabai calls
-  `sls_window_disable_shadow` on its proxies to match (`window_manager.c:473`),
-  and it runs `cgimage_restore_alpha` when the source window's alpha is not 1.0
-  (`window_manager.c:521-523`).
-- Check the OS version and fall back to ScreenCaptureKit when the array comes back
-  null.
-
-### The design this actually implies: a hybrid
-
-Use each API where it wins, rather than choosing one.
-
-- **On-screen windows, captured fresh at switch time.** `SLSHWCaptureWindowList`
-  with `window_count = 1` per window, on parallel threads, as yabai does. About
-  16ms each and no staleness.
-- **Off-strip and hidden-workspace windows, served from a warm cache.**
-  ScreenCaptureKit is the only API that returns their full surface, and at 40ms
-  plus 14.5ms per window it cannot run at switch time. Refresh these in the
-  background on focus and resize events.
-
-This keeps fresh pixels for everything the eye is already looking at, and
-accepts staleness only for windows that are currently a 2pt sliver, where
-staleness is unobservable.
-
-## Trap that cost about 40 minutes
-
-Every ScreenCaptureKit capture failed with error -3811, "Failed to start stream
-due to audio/video capture failure". Window enumeration worked and returned 181
-windows with titles, so the Screen Recording grant was clearly present.
-
-The cause was a sleeping display. `SCShareableContent.displays` was empty, and
-`SCScreenshotManager` cannot start a stream with no display behind it. The error
-message names audio and video and does not mention displays at all.
-
-Diagnosis path, for next time:
-
-```
-CGGetOnlineDisplayList  -> 1     display is present
-CGGetActiveDisplayList  -> 0     display is not drawable
-CGDisplayIsAsleep(1)    -> true  root cause
-```
-
-`caffeinate -u -t 3` wakes it, after which all captures succeed.
-
-Two related warnings. `CGGetActiveDisplayList(0, nil, &count)` always yields 0,
-because `maxDisplays: 0` caps the count. Pass a real array. And
-`CGPreflightScreenCaptureAccess` returned true throughout, so it does not
-indicate that capture will succeed.
-
-Bundling is not a factor. A signed `.app` bundle with
-`NSScreenCaptureUsageDescription` behaved identically to the bare binary.
-
-## Consequences for the design
-
-**Warm cache, refreshed in the background.** At switch time rini must capture
-nothing. It composites bitmaps it already holds. This matches the original
-instinct that only on-screen and incoming windows need fresh pixels, and the
-rest can be refreshed occasionally.
-
-**Staleness is acceptable.** The bitmap is on screen for the duration of one
-animation and is replaced by the real window at the end. A slightly stale moving
-image is not perceptible.
-
-**rini needs the Screen Recording grant.** It did not have it when this was
-written. (The rift-inherited overview overlay that first carried a
-ScreenCaptureKit pipeline has since been removed;
-`src/animation/platform/snapshot_service.rs` is the pipeline now.)
-
-**Capture in a background thread.** At 14.5ms per window, refreshing even a few
-windows would blow several frames if it ran on the animation thread.
-
-## Reproducing
-
-Spikes live in `/tmp/sls-spike`. Build them with:
-
-```
-swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight <name>.swift -o <name>
-swiftc -O -framework ScreenCaptureKit <name>.swift -o <name>
-```
-
-| Spike                                                 | Question it answers                                              |
-| ----------------------------------------------------- | ---------------------------------------------------------------- |
-| `capbench.swift`                                      | SkyLight capture latency and batching behaviour                  |
-| `capshape.swift`                                      | What a batched SkyLight capture actually contains                |
-| `capcontent.swift`                                    | Blank buffer against real pixels, measured                       |
-| `capdecide.swift`                                     | Visible-portion limit, against rini's own window states          |
-| `sck.swift`                                           | Full-size capture of hidden, parked and off-strip windows        |
-| `sck2.swift`, `sck3.swift`, `sck4.swift`, `dpy.swift` | The -3811 diagnosis                                              |
-| `tx.swift`                                            | Own-window transform control, proving the call is correct        |
-| `tx2.swift`                                           | Foreign-window transform and alpha, verified by pixels           |
-| `mv.swift`                                            | Whether SLSMoveWindow moves a foreign window (it does not)       |
-| `sbvs.swift`                                          | captureImage against captureSampleBuffer, head to head           |
-| `batch.swift`                                         | Whether a batched SLS capture returns per-window images          |
-| `flags.swift`                                         | Whether capture option flags change the visible-portion clipping |
-| `ckthru.swift`                                        | Concurrency ceiling                                              |
-| `cksweep.swift`                                       | Cost against set size, 2x against 1x                             |
-
-Ground truth for window states comes from `rini-cli query diagnostics`, which
-reports `is_parked`, `visible_width` and `workspace_name` per window. Do not use
-`CGWindowListCopyWindowInfo` with `optionOnScreenOnly` to find hidden windows.
-rini parks windows as 40pt slivers, so CoreGraphics counts them as on-screen and
-that route silently measures the wrong set.
 
 ## Phase 1 result: the overlay works
 
@@ -525,127 +256,6 @@ it cannot hold for a duration. A timed hold needs `run(until:)`. Two coverage
 screenshots were captured against an already dismissed overlay before this was
 spotted.
 
-## The wallpaper is not reliably a window
-
-The overlay draws the desktop behind the moving strips, so the gaps around
-windows look like the desktop rather than a flat colour. That desktop was built
-by compositing every window at or below the desktop level through
-`SLSHWCaptureWindowList`, which worked until a second display was attached.
-
-Measured on the same machine, same desktop, minutes apart:
-
-```
-one display   wid=1056  owner="Wallpaper"  "Offscreen Wallpaper Window"  layer=-2147483625
-              wallpaper window on its own  brightness 17.2
-              composite of 7 desktop windows      brightness 24.7
-
-two displays  NO window owned by "Wallpaper" exists at all
-              composite of 9 desktop windows      brightness  7.8   <- icons on black
-```
-
-`ScreenCaptureKit` does not list a wallpaper window either, in either state.
-
-Measured again with one display attached, and the wallpaper IS a window. It is
-just not owned by anything called "Wallpaper":
-
-```
--2147483626  Window Server  "Display 1 Backstop"                0,0 1728x1117
--2147483624  Dock           "Wallpaper-EEB523A2-7133-497B-..."  0,0 1728x1117
--2147483603  Finder         desktop icons                       0,0 1728x1117
--2147483602  Window Server  "underbelly"                        0,0 1728x94
--2147483601  Notification Center  Featured / Forecast / Month   widgets
-        -20  sketchybar     24 windows across the strip
-```
-
-Two consequences followed, and both have since been fixed in `backdrop.rs`:
-
-- `desktop_backdrop_windows` excluded -2147483624 as `DOCK_LEVEL`, on the earlier
-  reading that the Dock lives there. On this system that level holds the
-  wallpaper, so the composite route dropped the one window it most needs. The
-  ceiling is now `DESKTOP_CEILING` (-2147483600) and everything at or below it
-  counts as desktop, the Dock-owned wallpaper included.
-- `has_wallpaper` looked for an OWNER name containing "Wallpaper". The owner is
-  "Dock" and it is the window NAME that carries the "Wallpaper-" prefix, so the
-  flag was always false. Both keys are now checked.
-
-Together those meant the composite route could not produce a wallpaper here at all,
-and `is_backdrop_worth_drawing` only accepts a wallpaperless composite when nothing
-better exists. So every backdrop was the ScreenCaptureKit display render, and the
-composite route was dead code in practice.
-
-That held until a display change started clearing the held pictures, which reset
-"we already have a good one" and let the wallpaperless composite through. The whole
-background then went almost black for the length of every animation, which is the
-symptom this section predicted.
-
-Both halves are fixed. `is_desktop_layer` includes -2147483624, and the wallpaper is
-recognised by window NAME as well as owner name. Verified: the composite now picks up
-7 windows including `Dock / Wallpaper-`, and its mean brightness is 31.16 against
-29.85 for the same region captured as a display. The remaining 1.3 is the widgets'
-vibrancy, which no capture reproduces.
-
-### Which route serves, and why the render wins
-
-The composite is cheaper and synchronous, so it looked like the natural primary.
-Compared pixel for pixel against the display render of the same desktop, it is not:
-
-```
-mean |difference| per cell, 12 by 8 grid
-row 0 (top 140pt)   17.0  7.2  1.1  18.5  9.3  12.2  26.1  1.4  3.6  10.8  7.3  7.4
-rows 1 to 7          0.0  0.0  0.0   0.0  0.0   0.0   0.0  0.0  0.0   0.0  0.0  0.0
-best alignment: dx 0 dy 0
-```
-
-Identical everywhere below the top band, and up to 26 of 255 inside it. That band is
-the menu bar strip and Notification Center's widgets, whose vibrancy no capture of a
-window's own surface can reproduce. It is also exactly the band that shows through
-the bar, so a composite there changes the moment the overlay appears and the
-background visibly flickers.
-
-The render is the compositor's own output, so it matches by construction. The order
-is therefore: cached render if it spans this display, composite only when no render
-has landed yet, which is the first switch after starting or after moving to another
-display. Observed over five animations from a cold start:
-
-```
-1 backdrop="1728x1117 SkyLight"            the first switch
-4 backdrop="1728x1117 ScreenCaptureKit"    every switch after
-```
-
-Reusing the previous picture instead of asking again is what kept the cold-start
-composite in place forever, so the render never got its turn. Asking every time is
-cheap now: in the steady state `capture_backdrop` clones the cached render and posts
-an asynchronous refresh, and only pays for a composite before the first render lands.
-
-Either way the desktop has to be capturable as a DISPLAY, not only as a set of
-windows:
-
-```
-SCContentFilter(display:excludingWindows:)  excluding every window at layer >= 0
-  -> 3456x2234  brightness 23.4   wallpaper, icons, widgets, no app windows
-```
-
-This is why `snapshot_service.rs` has a desktop path. It costs the usual
-ScreenCaptureKit ~40ms, so it fills a cache in the background and an animation
-draws whatever is in hand; the desktop changes rarely enough that a capture a
-few seconds old is indistinguishable.
-
-### How this presented
-
-Every vertical workspace switch went black for the length of the animation, with
-the desktop icons still drawn and correctly placed. Sampling the same screen
-points in a recording, real frame against overlay frame:
-
-```
-point(pt)     real RGB        overlay RGB
-  600,300     13, 17, 18        0,  0,  0
-  900,900     77, 48, 26        0,  0,  0
- 1100,400     80, 75, 66        0,  0,  0
-```
-
-Pure black, not a dimmed or gamma-shifted wallpaper. The composite simply had
-nothing behind its icons.
-
 ## Two drawing paths must not share one pool of tile layers
 
 Tile layers are pooled per window and reused across animations, because handing
@@ -705,84 +315,6 @@ frames=87  elapsed=1501ms  duration=1500ms  travel="0,1117 -> 0,0"
 ```
 
 60fps in every case, and travel proportional to the number of rows crossed.
-
-## The bar has to be captured on its own, at the union's origin
-
-This is about a bar under the overlay, which rini's own is not; see above.
-
-sketchybar is not one window. Measured here: 24 windows at layer -20 across the
-strip, most 14pt to 131pt wide, plus more parked at -9999,-9999.
-
-`SLSHWCaptureWindowList` composites into an image covering the UNION of the
-windows it is given, so where that union starts matters. Drawn at the overlay's
-top-left instead, the bar landed left of the real one — that was the second bar
-on screen. Placing it at the union's origin fixes the offset.
-
-The reason to capture the bar at all, rather than clipping its rect out of the
-desktop picture the backdrop already holds, is alpha:
-
-```
-24 windows, union 0,0 1728x32   ->  3456x64 px, exactly 2x the union
-body pixels    18,20,23  a=224   sketchybar's 0xe015171a, premultiplied
-alpha          98.3% at 201-254, 1.7% opaque (the glyphs), 0% clear
-```
-
-224 of 255 is the 88% the bar's config asks for, and the RGB does not vary with
-the wallpaper behind it. These are the bar's own pixels, not a composite, and
-the bar's translucency is per-pixel alpha it owns — the one kind of translucency
-a capture keeps.
-
-So the strips show THROUGH the bar as they scroll under it. The alternative,
-which shipped briefly, was to clip the strip out of the desktop picture and draw
-that on top: one bar, aligned by construction, but opaque. Windows sliding up a
-vertical switch were then cut off at the bar's lower edge instead of passing
-under it, which reads as them disappearing INTO the bar.
-
-The bar is therefore excluded from BOTH desktop capture routes. The composite
-route already dropped it, since layer -20 is above the desktop ceiling; the
-ScreenCaptureKit render had to be told, because it excluded only layer 0 and
-above. While the two disagreed, the strip's appearance depended on which route
-served the backdrop for that switch — dark when the composite won, correct when
-the render did. That is the whole of the intermittent "black menu bar on
-horizontal slides, fine on vertical".
-
-SkyLight reads the framebuffer, so the bar can only be captured while the
-overlay is not on top of it. A switch chained onto one still in flight reuses
-the picture the first switch took, and a capture that comes back the wrong size
-for the strip is rejected by the same `fits` test the tiles use. A failed capture
-keeps the previous picture rather than hiding the bar: hiding it let the canvas
-show through the menu bar strip, which is worse than a slightly stale bar.
-
-## A window that was resized keeps a usable picture, and vanishes
-
-Three windows were dropped from every single animation:
-
-```
-canvas animation, requested=20, tiles=17, missing=0, misshapen=3
-  idx=11333 frame="1147x1081" picture="859x1081"
-  idx=19914 frame="1147x1081" picture="859x1081"
-  idx=20205 frame="1720x1081" picture="859x1081"
-```
-
-The overlay is opaque, so a dropped tile is a window-shaped hole for the length of
-the animation. The windows appeared to vanish and come back.
-
-The cause was one word in the warm filter. `warm_windows` skipped any window that
-already had a "usable" picture, and usable means the picture covers the window it
-was taken FROM, not that it fits the window's size NOW. A strip re-fit had widened
-these from 859pt to 1147pt, so their 859pt pictures stayed usable, stayed
-un-refreshed, and failed the fit test on every animation forever. The resize itself
-goes to the Accessibility engine, which does not warm anything, so nothing else
-ever corrected them.
-
-`needs_capture` now asks the question the caller means: does the picture fit the
-size the layout just gave this window. And a picture of the wrong shape is
-stretched onto the frame rather than dropped, because 350ms of a stretched window
-is a great deal better than 350ms of a hole. After both:
-
-```
-canvas animation, requested=20, tiles=20, missing=0, misshapen=0
-```
 
 ## The overlay has to draw everything it covers
 
@@ -849,7 +381,8 @@ after clicking the LEFT terminal (idx 90):
 ```
 
 Settings spans x = 383 to 1106 and idx 91 spans 865 to 1724, so the overlap is real
-and visible. The rule is in `motion::z_group`: focusing any window on the strip puts
+and visible. The rule is in `motion::z_group` for the tiles and in `windows::domain::raise_order`
+for the real windows: focusing any window on the strip puts
 the whole strip in front of everything off it, and focusing something off the strip
 puts ITS APPLICATION in front of the whole strip — not every off-strip window, which
 is what a two-value group once did. Within a band the window server's own order is
@@ -861,7 +394,7 @@ It decides two separate things:
   lifted off-strip windows, the strip, the off-strip windows behind it — with a
   stride between bands wide enough that no window count can make them interleave. Without it, the animation drew the floating
   window over the columns sliding past underneath.
-- **Real order.** `regroup_tiled` returns the strip windows back to front when a
+- **Real order.** `regroup_tiled` (`src/windows/domain/raise_order.rs`) returns the strip windows back to front when a
   floating window is INSIDE the strip — something on the strip in front of it and
   something on the strip behind it — and nothing at all when the order already obeys the
   rule — the common case, and it must cost nothing, because
@@ -934,8 +467,9 @@ snapped them back at the handover. They belong to a workspace but not to its str
 a scroll must leave them alone, while a switch between workspaces must take them
 along.
 
-So a tile can be pinned: `surface_travel` returns `(frame, frame)` for a pinned
-window, so a strip movement carries it nowhere. A pan pins whatever the layout
+So a tile can be pinned: `surface_travel` starts and ends a pinned window where the
+final viewport shows its frame, so a strip movement carries it nowhere. A pan ends
+at viewport (0, 0), where that is the frame itself. A pan pins whatever the layout
 engine calls floating; a switch pins nothing and moves the floating container by
 the strip's own travel (`FlightPlan.floating_travel`).
 
@@ -962,43 +496,6 @@ mid-pan    x=72: lum 52   x=73: lum 36   x=74: lum 27    <- same place
 
 The luminance differs because the tile carries the shadow and the window's content
 is live video. The edge does not move.
-
-## Nothing may be captured on the way in
-
-The design said it from the start: at switch time rini captures nothing, it
-composites bitmaps it already holds. The code had drifted, because a stale or
-unfocused picture looks wrong and the cheapest fix was to grab a fresh one first.
-Measured cost of that, per press:
-
-```
-recaptured on-screen windows, attempts=3, refreshed=3, took_ms=71
-recaptured on-screen windows, attempts=3, refreshed=3, took_ms=59
-recaptured on-screen windows, attempts=3, refreshed=3, took_ms=67
-```
-
-Three SkyLight captures on the main thread, 59ms to 71ms, before the overlay could
-be shown, plus a 35ms desktop composite on the canvas path. So a keypress moved
-nothing for about a tenth of a second, which reads as software that is thinking
-rather than responding, and on a redirection mid-flight it stalls the animation
-already running.
-
-Both are gone. The destination is still recaptured, but only mid-flight and only
-off the main thread, where it costs no frames and arrives as an event that swaps a
-tile's contents without touching its geometry. The desktop is held and refreshed in
-the background. Measured after, command to first frame:
-
-```
-1:04:44.994967  cmd=MoveFocus(Right)
-1:04:44.997095  canvas animation, requested=19, tiles=19, missing=0
-```
-
-2ms, against 56ms to 459ms before, with every tile present because the cache is
-warmed after each animation instead of during the next one.
-
-The trade is honest and worth stating: the destination now animates with whatever
-the cache holds, which for an app that dims when unfocused means it can slide in
-dim and correct itself as the off-thread capture lands. That capture measured 280ms
-on one occasion, which is most of a flight. Snappiness was the explicit preference.
 
 ## One press must move the strip once
 
@@ -1241,9 +738,9 @@ each other. The overlay exists precisely to make that impossible.
 
 The threshold is now the one the overlay already uses to decide whether a cached
 picture still fits a frame, +-0.5%, so the two agree by construction. Rounding is
-no longer a resize. A genuine column resize still goes to the Accessibility
-engine, and still tears; nobody has complained about that yet, and fixing it means
-choosing between a stretched picture and torn motion.
+no longer a resize. A genuine column resize still went to the Accessibility
+engine, and tore, until resizes rode the overlay too ("Resizes through the overlay" in
+`animation-smoothness.md`).
 
 ## macOS will not park a window further off the left edge than 40pt
 
@@ -1341,37 +838,6 @@ an external display's desktop drawn behind a built-in display's strips. The four
 held pictures are one struct now, forgotten as a unit by assignment, so a new one
 cannot be left behind.
 
-## A capture can be usable and still be the wrong shape
-
-Two different questions, and the code only asked the first for a long time:
-
-- Does the capture cover the window it was taken FROM? That is
-  `Coverage::is_usable`, and both sizes in it are recorded at capture time.
-- Does the picture match the frame it is about to be drawn INTO? Nothing asked.
-
-A cached picture routinely fails only the second. A window that was full width
-when captured and half width in the new layout has a perfect picture of the
-wrong shape, and `contentsGravity` defaults to resize, so it is squashed to
-fill. Measured over 1114 logged tiles, 75 were in this state:
-
-```
-drawn into  859x1081  but picture covers 1720x1081   squashed to half width
-drawn into 1499x1656  but picture covers 1720x1081   squashed and stretched at once
-```
-
-`fits_frame` now rejects those. A window left undrawn appears at its destination
-when the overlay lifts, which is far less noticeable than a warped one, and the
-refresh after an animation captures at the frame the window was sent to, so the
-next switch has a correctly shaped picture.
-
-### 1499x1656 is not a frame this display can hold
-
-Worth following up separately. The laptop display is 1728x1117 points, so a tile
-frame 1656pt tall cannot belong to it; it fits the external 3008x1692. Windows
-homed on the other display are turning up in this display's canvas carrying
-their own frames, which is both a stretched tile and a real window being resized
-to a size that does not fit the screen it is on.
-
 ## What the overlay is NOT doing
 
 Recorded because it took a long time to establish and would otherwise be
@@ -1390,7 +856,7 @@ measured and are not the cause:
   against `SCScreenshotManager.captureImage`, which rini does not use. The
   sample buffer path underfills at `.nominal`, and that is precisely what drew
   the content at half size in a corner. See "Nominal capture resolution paints a
-  quarter of the buffer". The lesson generalises: measure the API the code
+  quarter of the buffer" in `src/pictures/docs/capture-research.md`. The lesson generalises: measure the API the code
   actually calls.
 - The backdrop and the bar, which are siblings of the canvas, render 1:1.
 
@@ -1399,339 +865,7 @@ only when it failed. It was a canvas-era safeguard and went with the canvas
 (`d6c4ffe`); nothing checks this at runtime now, so a scale introduced in the
 layer tree would again have to be caught by eye.
 
-## Nominal capture resolution paints a quarter of the buffer
-
-The one that caused "the windows are scaled". `SCStreamConfiguration.width` and
-`.height` are in PIXELS, and the service asks for the window's point size times
-the backing scale. With `captureResolution = .nominal` ScreenCaptureKit renders
-the window at its POINT size into that pixel-sized buffer, so on a 2x display
-the window fills the top-left quarter and the rest is transparent. Measured on
-one window, same buffer each time:
-
-```
-window 859x1081 points, buffer 1718x2162 px
-
-  nominal    painted  859x1081 of 1718x2162    50% x 50%
-  best       painted 1718x2162 of 1718x2162   100% x 100%
-  automatic  painted 1718x2162 of 1718x2162   100% x 100%
-```
-
-A layer handed that surface draws the whole buffer, so the window appears at
-half size pinned to a corner of a tile that is itself exactly the right size.
-Which is precisely what it looked like.
-
-The guard is `content_reaches_edges`: seven samples along the right and bottom
-edges, inset 4px to clear rounded corners, painted meaning alpha above 8
-(`PAINTED_ALPHA`), both edges required since content along one does not rule
-out underfill in the other direction. An underfilled capture is rejected, not
-cached: its coverage would claim the full buffer, pass every fit test, and draw
-the window small in a corner on black. Mid-resize the same underfill has another
-cause: a 1147pt window requested at 572pt (the layout's intended size) came back
-aspect-fitted into a corner, and the tile drew it at two-thirds size on black.
-The buffer is therefore sized from the window's frame at enumeration time;
-`target.size` only decides whether to capture. The check locks the
-`CVPixelBuffer`, not the IOSurface: creating or locking IOSurfaces from parallel
-test threads raced SkyLight's lazy initialisation and aborted the suite in 3% to
-8% of runs ("Cannot form weak reference to instance of class
-SLSWindowManagementFallbackBridge"), so the tests use plain closures and 1x1
-`CGImage` bitmaps.
-
-### Why fixing it in the layer is the wrong fix
-
-`contentsRect` set to the painted quarter does make the window the right size,
-and it is wrong: that quarter holds 859x1081 pixels being stretched over
-1718x2162 backing pixels, so every window renders soft. Measured by eye
-immediately. The capture has to produce the pixels; the layer cannot invent
-them.
-
-### The two paths do not agree, which is what hid it
-
-`SCScreenshotManager.captureImage` returns a tight, fully painted image at
-`.nominal`, so a spike written against the image path measures 100% fill and
-proves nothing about the path in use. rini uses `captureSampleBufferWithFilter`.
-Only that path underfills, and its sample buffers carry no attachments here, so
-there is nothing to read back:
-
-```
-CMSampleBufferGetSampleAttachmentsArray -> NO attachments
-```
-
-The display filter used for the desktop backdrop does NOT underfill at
-`.nominal`, which is why the wallpaper always looked right and only windows were
-affected.
-
-### What ruled the layer out
-
-Recorded because it took several wrong turns. Four squares of identical size,
-each given the same surface and a coloured background, on a 2x display:
-
-```
-baseline, unit contentsRect        75% of the background still showing
-contentsRect 0,0 0.5x0.5          background down to 104 pixels: fills, but soft
-contentsGravity resize, explicit  same as baseline, so gravity is not the lever
-surface inside a child layer      same as baseline, so it is not the parent
-```
-
-`contentsScale` is not the lever either: 1.0 and 2.0 draw identically. Every
-layer property reads correctly, which is why the layer tree looked innocent for
-so long. Tile layers were never wrong: `convertRect:toLayer:` matched the
-requested frame on every tile, and colouring each tile's background showed
-rectangles at exactly the right sizes and positions.
-
-## A picture is not the window, and the differences show at the handover
-
-Three separate reports, one shape: the tile is a picture taken at a different
-moment and in a different context than the real window, so anything the app
-renders differently shows as a flicker when the overlay lifts.
-
-### Stale content
-
-The cache is refreshed after an animation finishes, so a picture shows the
-window as it was at the END of the previous switch. Off screen that is
-invisible. For the window just being typed in it is not: it animates out holding
-content from whenever the workspace was last entered.
-
-Fixed for the windows that are on screen, by recapturing them through SkyLight
-at switch time, frontmost first and capped at three. Measured: one window, 32ms
-to 35ms once warm, against the roughly 400ms that capturing all eighteen used to
-cost.
-
-Not fixed for the window being switched INTO. SkyLight reads the framebuffer and
-the destination workspace's windows are not on screen yet when the animation
-starts.
-
-### Unfocused rendering
-
-Because the destination cannot be recaptured, its picture is whatever it last
-had, and if that was taken while the app was unfocused the tile slides in dimmed
-and snaps to focused at the handover. Ghostty greys out noticeably when
-unfocused.
-
-Fixing it needs a capture after focus has landed, which is either one SkyLight
-capture mid-animation, once the destination is on screen behind the overlay and
-costing a frame or two of jank, or accepting that the first arrival is wrong.
-
-### Translucency is three things, and only one of them is lost
-
-An earlier version of this section claimed translucency is flattened at capture,
-on the strength of a histogram reading 100% opaque. That histogram sampled every
-fourth pixel and rounded, so it missed the corners. Corrected below.
-
-Sampling EVERY pixel of a `.best` capture of a 90%-opacity terminal:
-
-```
-kCGWindowAlpha                       1.000
-every pixel   99.9764% opaque, 0.0064% partial, 0.0172% clear
-top-left corner, row 7, columns 10-11        1, 67
-centre pixel                                   255
-```
-
-**Per-pixel alpha the window owns is preserved.** The corner ramp is right
-there: alpha 0 across the rounded corner, climbing through 1 and 67 as the curve
-ends. The non-opaque share is small only because four corners are a small part
-of a 2294x2162 image. Rounded corners, chromeless windows and genuinely
-transparent regions all come through, given `shouldBeOpaque = false` and a BGRA
-pixel format, both of which the service already sets.
-
-**Window-level alpha is not in play here.** `kCGWindowAlpha` is 1.000. If a
-window were dimmed below 1.0, captured pixels would come back scaled by it and
-the factor could be divided back out, which is what yabai's
-`cgimage_restore_alpha` does.
-
-**Blur-behind material is the one that is lost**, and it is what this terminal's
-`background-opacity = 0.9` actually uses: the centre pixel is fully opaque, so
-the 90% is not in the window's own pixels at all. The server samples what is
-behind the window and blurs it at composite time, and no per-window capture on
-any API can contain that.
-
-Measured on Outlook's vibrancy sidebar, sampling the same patches through all
-three routes with the window on screen and unoccluded:
-
-```
-patch        SkyLight      ScreenCaptureKit   the screen
-50% x 80%    52, 40, 33    52, 40, 33         52, 40, 33     opaque, identical
-25% x 55%    84, 84, 83    84, 84, 83         55, 59, 53     vibrancy
-75% x 35%    79, 70,141    79, 70,141         79, 70,141     opaque, identical
-50% x 95%    82, 82, 81    82, 82, 81         62, 56, 52     vibrancy
-90% x 65%    33, 33, 33    33, 33, 33         33, 33, 33     opaque, identical
-```
-
-The two per-window routes agree with each other EXACTLY and both differ from the
-screen only in the vibrancy regions, where they return a flat neutral grey about
-25 units too bright and missing the colour cast of the wallpaper behind. Opaque
-regions are pixel-identical everywhere. So no choice of capture API changes
-this. The same comparison on a terminal over a dark background differs by 3 to 4
-units, which is why a sidebar shows this and a terminal barely does.
-
-Masking an `NSVisualEffectView` to the fractional-alpha regions is the textbook
-fix and does not work here: the capture is fully opaque exactly where the blur
-belongs, so there is no mask to derive.
-
-What DOES contain the blur is a capture of the window together with what is
-below it, which is what the third column shows. The route this section first
-pointed at was a ScreenCaptureKit display capture cropped to the window; the
-route actually used is cheaper, synchronous, and immune to occlusion — see "A
-composite of the window and what is below it carries the blur" below. yabai
-accepts flat translucency on the bet that nobody notices in 200ms; with blurred
-materials now on most windows' sidebars and toolbars, that bet stopped paying.
-
-### Plain transparency IS capturable, so the blur can be traded away
-
-Measured on two Ghostty windows, one launched with `--background-blur=false` and
-one with the configured `background-blur = macos-glass-regular`, both at
-`background-opacity = 0.9`:
-
-```
-blur off   centre pixel alpha 230   99.16% of pixels partial
-blur on    centre pixel alpha 255   99.98% of pixels opaque
-```
-
-230 is 0.9 of 255. With the material disabled the app draws its background with
-real per-pixel alpha in its own surface, which every capture route preserves,
-and a tile drawn over the desktop backdrop then reproduces the real appearance.
-
-So the blur discrepancy is a choice rather than a wall: an app configured for
-plain transparency animates correctly, and one configured for a system material
-cannot. Worth knowing before building anything elaborate to approximate the
-material.
-
-### A composite of the window and what is below it carries the blur
-
-Measured 2026-09-28 with a titled window holding a `sidebar` visual-effect view,
-over a window of bright vertical stripes, 420x260pt at 2x:
-
-```
-CGWindowListCreateImage option                  result                     cost
-IncludingWindow (the window alone)              flat grey, opaque          1.6ms
-OnScreenBelowWindow | IncludingWindow           the real blur              15.9ms
-OnScreenOnly (the screen)                       the real blur, identical
-```
-
-The same composite with an opaque window placed ABOVE the blurred one, over half
-of it, came back without that window: the option takes the target and everything
-below it, so an overlapping window, the switcher's popup and rini's own overlay
-at level 18 are all left out. At 1720x1081pt the composite cost 13.8ms — the cost
-is fixed overhead, not area.
-
-The composite has no transparency: the rounded corners came back filled with the
-stripes behind them. So it is merged with the window's own capture
-(`animation::domain::translucency`): the window's own pixel wherever it is not
-fully opaque — corners, and real per-pixel transparency, which captures
-correctly on its own (see the next section) — and the composite's wherever it
-is. Opaque content is pixel-identical between the two, so the merge only
-changes the blurred areas, and whether it changed anything is what marks a
-picture as carrying its blur.
-
-It is only taken for a window wholly on a display, and never for every tile at
-the start of a flight: at 14ms a window that would delay the flight.
-
-**And it is only kept if the window is still where it was once the capture
-returns.** The composite is the window and whatever is below it in a RECT. Found
-on the first live run: a workspace switch that raced a harvest parked Messages
-between reading its frame and taking the composite, so the rect held the VS Code
-window that had just moved back under it, and the merge replaced every opaque
-pixel of Messages with VS Code. Far worse than grey. The frame is read again
-after the capture, and a composite of a window that moved or left the display is
-thrown away (`stayed_wholly_on_a_display`).
-
-**The window's own framed capture needs the same check.** The window server
-returns the full requested rect whatever is on screen, with the part off every
-display transparent (a parked window's hairline reads alpha 0, "Window borders
-during animations" in `animation-smoothness.md`), so the image's size says nothing about how much of the window it
-holds. Found on the first live run of the mid-flight focus refresh: a strip pan
-moves the real windows while the flight flies, and a window read as wholly on
-screen was captured half past the edge, or already parked, then cut onto its
-tile as a half or fully missing window. A framed capture now covers the window
-only if it stayed wholly on one display through both captures
-(`framed_coverage`). Otherwise it holds a hairline to harvest and nothing to
-draw. The resize chase and the capture of a new window had the same exposure,
-for a window partly off the display.
-
-One exposure is left as it was: the harvest names a window by the server id
-folded into its `WindowId`. For the rare window Accessibility reports without a
-server id, rini falls back to a counter there, which could name another window.
-The hairline harvest before this had the same exposure. It runs in
-the framed capture (`capture_via_framed_with_dressing`), which the harvest after
-a flight, the resize reveal and the capture of a new window all use. The picture
-bakes in whatever was behind the window at that moment, which differs from the
-live blur only once the window has moved over something else.
-
-A picture carrying its blur is not replaced by a same-sized capture of the
-window alone, which would be grey again (`keeps_blur`). The cost is that a
-blurred window's picture only refreshes while the window is on screen.
-
-### A tile is pixel-identical to its window, except for the shadow and the hairline
-
-Slack, 1720x1081, opaque, on the built-in display, comparing the tile capture
-against the same rect of the screen at native pixels:
-
-```
-region              pixels     mean diff   worst
-outer ring (2px)     22024       0.201     162
-edge band (8px)      66072       0.000       0
-corner box (24px)     2304      12.472     162
-interior           7346880       0.000       0
-```
-
-The interior and the 8px edge band are identical to the value: whatever chrome
-the window draws is in its own surface and comes back in the capture. The corner
-boxes differ only because a tile's corners are TRANSPARENT, being the window's
-own rounded corners, so the comparison there is between a tile pixel and whatever
-the screen has behind the window. On screen that transparency shows the desktop,
-and in the overlay it shows the backdrop, which is a picture of the same desktop.
-
-The outer ring's 0.201 mean diff was originally dismissed as noise. It is not:
-it is the window server's hairline outline, missing from every surface capture.
-See "The hairline is composited outside every capture" below.
-
-### The hairline is composited outside every capture
-
-macOS composites a 1pt hairline over every window's outermost point, and no
-surface capture carries it — not ScreenCaptureKit's per-window filter, not its
-display filter cropped to the window rect, not `SLSHWCaptureWindowList` under
-any option bit probed (0, 1<<4..1<<13, 1<<16, 1<<19). Like the shadow, it is
-drawn at composite time outside the app's surface.
-
-Unlike the shadow it cannot be synthesised as a constant, because its value
-depends on what it lands on. Lossless screenshots of this display, focused
-windows, hairline against the window's own edge pixel:
-
-```
-window                          edge pixel   hairline   white-alpha fit
-Kiro (opaque, dark)              21,23,26    80,81,83   0.25
-Outlook calendar (opaque)        42,42,40    80,80,79   none (0.25 gives 95)
-Ghostty (translucent)            15,16,18    44,45,46   ~0.13 — while focused
-```
-
-A drawn 0.25-alpha white border matched the opaque editor exactly and missed
-the translucent terminal by 2x, which read as a visible pop at the handover.
-
-The one API that composites framing into its output is the obsoleted
-`CGWindowListCreateImage` (alive in the dylib, deprecated since 14.0, removed
-from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
-
-- A rect-bounded call (window's own bounds) returns exactly the window rect,
-  hairline composited opaque on the outermost point of every edge, 16-24ms
-  after warmup. A null rect pads the image with the shadow instead (asymmetric
-  margins), so the rect-bounded form is the useful one.
-- It only renders windows that are actually composited: a parked window (a
-  1pt sliver at the display edge) returns a fully transparent image of the
-  right size. A window with only a couple of points visible has been seen to
-  return full content WITH the hairline, so visibility is necessary but the
-  exact threshold is the compositor's business; the harvest validates alpha
-  instead of guessing geometry.
-- The hairline rides INSIDE the window bounds: the capture's outermost pixel
-  pair at 2x is the hairline over the app's own edge pixel, which is exactly
-  what the screen shows at rest.
-- The framing is TWO lines, not one. Just outside the bounds sits a near-black
-  outline (measured rgb 0,0,0 at alpha 0.95 in the shadow margin of a null-rect
-  capture), and only past it does the soft shadow begin. A tile wearing only
-  the inner hairline had the caster's shadow bleeding straight against it, so
-  the border read darker mid-flight and snapped at the handover; the dressing
-  band therefore straddles the boundary, one point in and one point out
-  (`boundary_layout`), harvested from a capture rect inset by minus one ring.
-
-### Shadows are never in the surface
+## Shadows are never in the surface
 
 On any API. The window server generates a shadow at composite time from the
 window's shape, so a clone has none.
@@ -1841,82 +975,6 @@ shadow on the tile      +2.1     gap AND under the window
 masked caster           +1.2     gap only
 ```
 
-### The outline is captured, but it can be the wrong one
-
-Asked for alongside the shadow. Nothing is missing from the capture: a tile compared
-against the same rect of the screen at native pixels gives
-
-```
-edge band (8px)   mean 0.000    identical to the value
-left edge, pixel by pixel:  tile 21,23,26  screen 21,23,26   diff 0
-```
-
-But a window's border depends on focus. Profiled across the 2pt gap between two
-Ghostty windows, one focused and one not, at 2px per point:
-
-```
-lum 17-18   the focused window's interior
-lum 65      its 1pt border                  <- bright
-lum 1-23    the gap: shadow, then wallpaper
-lum 42      the unfocused window's border   <- dim
-lum 13      its interior
-```
-
-65 against 42 of 255, on a 1pt line, and none of it is a size change. The ordinary
-warm only recaptures a window whose picture no longer FITS its frame, so a capture
-taken while a window was unfocused stayed forever, and its tile popped from the dim
-border to the bright one when the overlay lifted. That is the flicker that prompted
-the request in the first place; the shadow was only half of it.
-
-A focus change now asks for a fresh picture of BOTH windows, the one gaining focus
-and the one losing it, straight to the capture service with no size test in the way.
-Background work, so it costs nothing on the way into an animation.
-
-## A render of the wrong display, drawn at its own size
-
-The wallpaper appeared to zoom in during some animations and not others. Two
-compounding causes, both about a desktop render outliving the display it was taken
-of:
-
-- `SnapshotService::set_scale` was the only invalidation, and it acts on the backing
-  scale. Both displays here are 2x, so moving the overlay between them invalidated
-  nothing, and a render already in flight for one display landed as the cached
-  desktop for the other. `SnapshotService::invalidate_desktop` bumps the desktop
-  render's revision on a display change so such a render cannot land. It first
-  bumped the one revision every capture carried, which dropped every window
-  capture in flight too; a window's picture belongs to no display, and with two
-  displays attached each flight on the other one threw them away (2026-09-29:
-  the first layout passes after a restart asked for 51 pictures, and 14 windows
-  had one 11s later). The engine keeps the backdrop,
-  desktop render and bar picture in one `DisplayPictures` forgotten as a unit: a
-  display change used to clear only the bar, and the overlay drew an external
-  display's 3008x1692 desktop behind a built-in display's strips on a 1728x1117
-  overlay. The per-window path reuses the shown backdrop rather than recapturing:
-  a desktop composite measures 13ms to 36ms, a frame or two of lag on every
-  focus change, while re-applying a held picture is a pointer assignment.
-- `capture_backdrop` size-checked the SkyLight composite but handed the cached
-  ScreenCaptureKit render over unchecked.
-
-The backdrop layer is sized from the picture rather than from the overlay, which is
-what keeps it in register with the real desktop. Given a 3008x1692 render of the
-external display, that lays the wallpaper out at 3008x1692 inside a 1728x1117
-overlay, so only its top-left corner is visible: the wallpaper looks zoomed in until
-the right render arrives, which is exactly the intermittence that was reported.
-
-`spans_display` now guards both routes, and a display change invalidates whatever is
-in flight.
-
-Two things this rules out, both measured while chasing it. The desktop capture fills
-its buffer at nominal resolution, unlike a window capture: painted to 100% x 100%
-through `captureSampleBuffer`, the same API rini uses. And nominal against best for a
-display capture is identical to the value, mean 0.000.
-
-### Keep alpha premultiplied end to end
-
-These captures are premultiplied. Dark halos around a tile's edges mean it was
-premultiplied twice, light halos mean straight alpha was treated as
-premultiplied. That fringe is the fastest way to locate an alpha bug.
-
 ## Three numbers the design rests on
 
 Recorded here because they used to live in source comments, and they are the
@@ -1946,27 +1004,6 @@ Reusing one context did not help, which is what proved the cost was
 rasterisation rather than allocation. A layer-backed `NSWindow` composites on
 the GPU for about 48MB.
 
-### A clipped destination needs ScreenCaptureKit, not SkyLight
-
-The recapture below cannot use SkyLight when the destination is mid-slide,
-because SkyLight reads the framebuffer and returns only what is visible.
-Measured while focusing an adjacent window on a strip:
-
-```
-destination recapture rejected, idx=54, covered="40x1081", wanted="1147x1081"
-```
-
-40pt of a 1147pt window, correctly rejected as a sliver. A workspace switch does
-not hit this, because the destination workspace's windows are already at their
-final positions and simply hidden, which is why the vertical case worked first
-time and focusing an adjacent window still arrived unfocused.
-
-So a clipped destination is routed to ScreenCaptureKit instead, which returns
-the window's own surface at full size whatever its visibility. That path is
-already asynchronous, and a landed capture is now applied straight to the tile
-if an animation is still running, which is how it reaches the screen before the
-handover.
-
 ### Both drawing paths have to dress the overlay
 
 Only the canvas path set the backdrop and the bar. Focusing a window on a strip
@@ -1976,55 +1013,185 @@ vertical slide had filled them, and the last picture afterwards. That matches
 the report exactly, of horizontal slides being almost black until a vertical
 slide, then working for a while.
 
-The per-window path now dresses the overlay too, reusing the held picture rather
-than capturing. A desktop composite measures 13ms to 36ms for 6 windows, which
-is a frame or two of lag on every window focus change, while re-applying a
-picture already in hand is a pointer assignment. The background refresh keeps
-that picture current.
+The per-window path now dresses the overlay too, with the render of the desktop
+the pictures service holds. A desktop composite measures 13ms to 36ms for 6
+windows, which is a frame or two of lag on every window focus change, while
+re-applying a picture already in hand is a pointer assignment. The service renders
+the desktop again at a release when it is missing or stale; until the first render
+of a display lands, a transition there composites it on the `transitions` thread
+("Which route serves, and why the render wins" in
+`src/pictures/docs/capture-research.md`).
 
-### Cached surfaces have to be marked in use
+## Sequencing a focus change behind the overlay
 
-Suspected cause of the other half of the same report, that it works for a few
-minutes and then goes black again. An `IOSurface` whose `CVPixelBuffer` has been
-released is eligible to have its backing store reclaimed, and a layer still
-holding it then draws nothing. The overlay sits at alpha 0 between animations,
-so nothing composites those surfaces for minutes at a time.
+Measured 2026-10-02 with a scratch sequencer (branch `scratch/perf-timing`) that holds rini's raise and
+frame writes and re-issues them in a chosen order, animations off, the overlay held up for 800ms.
+Interleaved ABBA, 64 presses per order, load average 6 to 11 with the endpoint agents busy, so the
+absolute numbers are a loaded machine's; the comparisons hold. Times in ms, p50/p99.
 
-The first fix was `increment_use_count` on every cached capture. It is gone, and
-nothing replaced it directly, because `own_copy` below covers this case too: a
-surface rini allocated itself is not the pool's to reclaim. The reclaim half was
-always reasoned rather than reproduced — purging happens on the system's schedule
-and did not reproduce inside a test session.
+**A window covered by the overlay may stop painting.** Ghostty under the overlay never reached its
+final focused look within 450ms (0 of 24); uncovered it did every time. Chrome kept painting but
+took 181 against 157. Either change below restores both to their uncovered times, 24 of 24:
 
-A use count would have kept a surface from being reclaimed, not from being reused.
-ScreenCaptureKit's sample buffers come from its own pool: once the completion
-returns, the surface is recycled for the next capture, and a layer still holding
-it draws whatever landed there next. Two same-size Chrome windows on different
-workspaces swapped pictures that way. `own_copy` therefore memcpys every capture
-into an IOSurface this process owns, one copy per capture, off the main thread.
+```
+                        Ghostty final look   Chrome final look   (ms after the focus call)
+uncovered               153 / 256            159 / 208
+overlay                 never                181 / 245
+overlay + 1pt hole      159 / 193            157 / 196
+overlay + 8pt hole      155 / 184            159 / 215
+overlay at alpha 0.99   165 / 278            153 / 188
+```
 
-### Recapturing the destination once it is on screen
+The hole is a 1pt transparent square in the overlay over the new window's final frame, so the
+window server counts the window as visible.
 
-The window being switched INTO cannot be recaptured when a movement starts,
-because the destination workspace's windows are not on screen yet. Its picture
-is therefore whatever it last had, and if that was taken while the app was
-unfocused the tile slides in dimmed and snaps to focused at the handover.
-Ghostty greys out noticeably, so this was the most visible flicker left after
-the sizing fixes.
+**Orders**, parked target, overlay with the hole, frame-zero pictures from one batched SkyLight call:
 
-Fixed by recapturing it mid-flight, by which point the reactor has shown the
-workspace and moved focus, so SkyLight returns the focused rendering. The
-window being left is recaptured with it. When and by which route is in
-"Mid-flight passes" in `animation-smoothness.md`.
+```
+order                                   focused    placed    old pic    old pic before   new pic   all three
+                                                                        it moved
+B   frames, then focus                  410/621    200/388   559/579     4/20            428/630   565/638
+PAR focus and frames together           339/634    250/489   525/548     7/20            419/626   530/635
+R   focus, frames on RaiseCompleted     294/465    379/615   294/391     8/20            404/632   454/642
+RW  focus, frames on the focus report   273/438    376/639   377/440    10/20            385/630   440/654
+K   new window's frame, focus, the      345/546    395/529   410/573    20/20            403/605   472/607
+    rest on RaiseCompleted
+```
 
-On the main thread this cost too much. Measured over a 494ms flight, capture
-times of 38ms to 179ms dropped the frame count from 30 to as low as 26. Moving
-it to its own thread removes that entirely: 17ms to 56ms of capture, and 30 of
-30 frames on every switch. `SLSHWCaptureWindowList` is safe off the main thread,
-which yabai relies on as well, capturing on a pthread per window at
-`window_manager.c:666`. The picture arrives back as an event a few frames later
-and replaces contents only, never geometry, so a late arrival cannot disturb the
-movement.
+Only K leaves the old window on screen until it has repainted as inactive, so only K can always take
+the old window's end-state picture with SkyLight. The raise-first orders focus 50-70ms sooner but
+move the old window first half the time. "All three" pairs old picture, new picture and placement
+from different presses, so it is an estimate.
 
-A framed recapture of a window wholly on a display carries its blur too; see
-"A composite of the window and what is below it carries the blur".
+**Queued ScreenCaptureKit work slows every step.** With four captures in flight at the press, the
+frame-zero capture took 92-97 against 26-33, the overlay came up at 176-180 against 84-86, focus
+landed 100-165 later and the windows were placed 140-176 later. A capture already issued cannot be
+stopped, so the queue has to stop issuing before a focus change.
+
+**rini's own work before the raise is 2.4 / 4.9 / 12.6** (p50 / p90 / p99, 506 presses of normal use,
+2026-10-03): the press to the raise's dispatch. The make-key call goes out at 6.5 / 15.6 / 32.2.
+
+## Where a moving focus change spends its time
+
+Measured 2026-10-03 on an idle machine with an outside probe (`tools/focuslab/focuslab.swift`,
+see `tools/focuslab/README.md`): a 1ms poller on `_SLPSGetFrontProcess`, `SLPSGetKeyFocusProcess` and
+`SLSGetWindowBounds`, and an `SCStream` of the titlebar band at 120fps timed by each frame's
+`displayTime`. Raw data in `docs/data/2026-10-03-focus/`, one JSON line per press. What each
+SkyLight capture in it costs is "What a capture costs in a press" in
+`src/pictures/docs/capture-research.md`.
+
+**A focus change with nothing moving is at the floor.** Two half-width windows side by side, the
+focused look visible on screen, ms after the input, p50 / p90:
+
+```
+                                      Chrome          Ghostty
+native click                          69 / 77         62 / 66
+rini key press                        52 / 60         53 / 66
+the make-key call itself, no rini     47 / 68         47 / 54
+```
+
+The window server changes the front process 1.1-1.6ms after the make-key call, with or without
+captures running; the rest is the app activating and repainting.
+
+**The window server has a written frame at once.** For seven apps, a parked window's AX position
+write took 0.4-0.8ms and `SLSGetWindowBounds` showed the new frame 0.04-0.1ms after it returned,
+`CGWindowList` about 1ms after. During a flight it is different: an app still activating applies the
+write late. Ghostty's write returned at 42-47ms and the server showed the move at 62-75ms.
+
+**The breakdown**, strip focus changes on the comms strip, VS Code to Ghostty and back, the two
+builds' flags interleaved in blocks of six in one run, 24 presses each, ms after rini takes the
+press, p50 / p90:
+
+```
+                                  before          after
+frame-zero capture starts         17.6 / 31.6      5.7 / 11.3
+frame-zero pictures ready         70.1 / 83.5     53.0 / 71.5
+overlay up, frames sent           71.5 / 84.2     53.4 / 71.9
+target write returns              78.8 / 97.5     58.4 / 75.9
+rini sees it landed              105.9 /119.4     76.9 / 99.0
+focused picture captured         123.3 /140.7    104.9 /121.4
+```
+
+rini's own journal gives every row but the target write returns, which only the prototype marked:
+`tools/focuslab/journal.py summary` per flight, and `journal.py probe` joined to a probe's presses
+(`tools/focuslab/README.md`). What each row measures there is "Reading it" in
+`src/transitions/docs/journal.md`.
+
+What moved it: the frame-zero capture starts before the flight is composed; pictures are regions of
+the batched composite drawn through `contentsRect` (a crop handed to Core Animation cost 2-5ms of
+main-thread decode per quarter window, a standalone copy 14ms per flight); a background window
+wholly behind an opaque one at frame zero is captured after the overlay is up, not in a second
+frame-zero call; landing is read from `SLSGetWindowBounds` and watched from the moment the frames
+are sent. Making the window key before the raise's Accessibility calls changed nothing measurable.
+
+**The focused look can fly from frame zero.** After every flight the off-screen warm-up recaptures the
+window just left, unfocused, so a parked target's tile showed the unfocused look until its landing
+capture. Keeping each window's last focused picture, dropped once a newer capture shows different
+content below the titlebar, gives the tile the focused look at overlay-up, 48ms.
+
+## The handover, measured: an end-state mirror
+
+Measured 2026-10-02 with a scratch prototype (branch `scratch/handover`, files `proto.rs` and the
+`lab_*` hooks), against the deployed engine, interleaved ABBA, animations on, 64 presses per
+condition on the strip and 32 per swap or resize condition.
+
+**The metric:** the overlay window's own picture (one SkyLight call on the overlay) just before it
+lifts, against the screen just after, over every window that ends wholly on screen. Interior is
+inset 4pt; the edge band is the 1pt either side of the window's outline. Mean RGB difference, p50/p99:
+
+```
+                                  deployed engine            prototype
+strip, focused window   interior  0.35 / 4.28                0.26 / 3.39
+                        edge in   4.79 / 53.13               0.37 / 2.67
+                        edge out  4.30 / 17.54               1.56 / 3.10
+strip, other window     interior  4.14 / 8.15                0.79 / 1.51
+                        edges     16.6-17.7 / 33.7-33.9      1.08-2.26 / 1.23-2.49
+swap, focused window    edges     0.84 / 4.46                0.34 / 1.37
+swap, other window      edge in   5.68 / 24.78               5.30 / 6.07
+resize, focused window  interior  0.11 / 14.23               1.57 / 1.66
+```
+
+This metric, sampled the same way, is `src/pictures/domain/handover.rs`. `animations { journal {
+measure-handover; } }` measures every lift with it, and `tools/focuslab/journal.py handover` prints
+these rows from the journal, the strip's as `pan` (`src/transitions/docs/journal.md`, "The handover,
+measured").
+
+What each part of the prototype fixed:
+
+- **A constant hairline and outline replace the harvest.** A 1pt ring of white at 20% (18%
+  unfocused) inside the edge, and a 0.5pt stroke of black at 90% half a point outside it, drawn
+  as layers over every tile. The harvest left a tile with no outline whenever it had not run,
+  which is the 53-level tail. A border layer at a half-point origin landed one pixel too far out,
+  so the outline is a `CAShapeLayer` stroke; both have to be set after the tile's frame, or a pooled
+  layer's autoresizing carries the old size, and both follow a resize on its own timing.
+- **Every window that ends on screen gets a 1pt hole in the overlay** over its final frame, not only
+  the focused one: the window losing focus is occluded too, and repainted as unfocused only at the
+  lift.
+- **The end-state mirror.** From the overlay up until the lift, the windows that end wholly on
+  screen are captured through SkyLight as they land, so the tile the lift ends on shows the window
+  where it ends rather than a picture taken before it got there. The build measured here captured
+  them back to back and sent every picture on every pass. The one kept captures each window once it
+  is where it ends, the focus target again until its look changes and every one once more 110ms
+  before the clock ends, and swaps a picture in only when its band print differs from the last one
+  delivered (`src/pictures/domain/watch.rs`, "The lifecycle" in
+  `src/transitions/docs/coordination.md`).
+- **Tiles snap to the real frame.** A strip pans by a fractional vector and the window server rounds
+  each window on its own, so a tile in a rigid group ended a point from its window (861 against 860
+  wide). When a window is pictured where it landed, its tile is moved onto the real frame while
+  still in motion.
+- **A window counts as landed when its frame is within 20pt of its target**, and the crop uses the real
+  frame: a terminal shrinking to half width sat at 862 against 860 requested before settling. The build
+  measured here waited for the frame to be stable between two polls; the one kept captures the window
+  at the first `SLSGetWindowBounds` read within the 20pt and crops it at that frame, reading every 1ms
+  until then, which waits out a write an app applies late ("Where a moving focus change spends its
+  time").
+- **A resize places the real windows at frame zero.** The deployed engine applies them at half the
+  flight, which left the app no time to render before the lift; the mirror's picture arrived 50ms
+  after it.
+- **Fresh frame zero:** one batched SkyLight call of the strip windows on screen, 16 / 84ms on the
+  main thread in the build measured here; the one kept makes it on the pictures thread. The cached pictures it replaces differed from the screen by 2.3 / 8.1 levels, 2% / 8%
+  of pixels changed visibly, at an age of 1.6s p50.
+
+Cost: no measurable CPU. Over 16-press sweeps the WindowServer ran 42-46% and rini 14.6-16.4% with
+or without the prototype. A 400ms flight was no better than 350ms. Grows still lift at about 700ms
+because of the frame-zero reveal hold.

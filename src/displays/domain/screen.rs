@@ -32,7 +32,17 @@ pub struct ScreenInfo {
     /// work in English and quietly stop working in any other language.
     #[serde(default)]
     pub is_builtin: bool,
+    /// Pixels per point, as `NSScreen.backingScaleFactor` reports it: what a capture read off this
+    /// display's framebuffer is measured in.
+    #[serde(default = "assumed_scale")]
+    pub scale: f64,
 }
+
+/// The backing scale of a display whose own was never read: one in a recording made before screens
+/// carried it, or one described over IPC.
+pub const ASSUMED_SCALE: f64 = 2.0;
+
+fn assumed_scale() -> f64 { ASSUMED_SCALE }
 
 impl ScreenInfo {
     pub fn display_uuid_opt(&self) -> Option<&str> {

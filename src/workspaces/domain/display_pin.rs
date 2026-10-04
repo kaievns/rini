@@ -62,6 +62,7 @@ mod tests {
             name: None,
             space: None,
             is_builtin,
+            scale: 2.0,
         }
     }
 

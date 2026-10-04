@@ -5,3 +5,4 @@ rini.toml
 src/bin/dev.rs
 .kiro
 .claude
+__pycache__

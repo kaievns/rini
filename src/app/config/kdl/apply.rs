@@ -86,6 +86,15 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         if let Some(slowdown) = animations.slowdown {
             settings.animation_duration = BASE_ANIMATION_SECONDS * slowdown.get();
         }
+        if let Some(journal) = animations.journal {
+            if let Some(Flag(off)) = journal.off {
+                settings.journal.write = !off;
+            }
+            if let Some(Flag(on)) = journal.measure_handover {
+                settings.journal.measure_handover = on;
+            }
+            settings.journal.measure_handover &= settings.journal.write;
+        }
     }
 
     if let Some(gestures) = part.gestures {

@@ -123,11 +123,13 @@ world is what answers those: the enhanced-UI refcount, notification registration
 so the observer is no longer a `State` field), and `isTerminated` (`app_has_quit`, which also removed
 `running_app` from `State` and is what made a test `State` constructible at all).
 
-**The test the seam was worth building for.** A frame write is `set_size`, `set_position`,
-`set_size` — sized twice. It looks redundant enough that a tidy-up would drop one, and nothing
-pinned it, because this file had no tests. AppKit clamps a size against the window's CURRENT
-position, so a window near a screen edge cannot grow until it has moved; the first size is what lets
-the move succeed for a window that has to grow and shift at once. Dropping either one now fails.
+**The test the seam was worth building for.** A frame write that changes the size is `set_size`,
+`set_position`, `set_size` — sized twice. It looks redundant enough that a tidy-up would drop one,
+and nothing pinned it, because this file had no tests. AppKit clamps a size against the window's
+CURRENT position, so a window near a screen edge cannot grow until it has moved; the first size is
+what lets the move succeed for a window that has to grow and shift at once. Dropping either one now
+fails. A move that keeps the size writes the position alone ("Writing a frame" in
+`specs/windows.md`).
 
 Each of the five was checked by breaking what it guards:
 

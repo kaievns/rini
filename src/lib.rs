@@ -11,7 +11,9 @@
 //! src/layout/       the scrolling strip
 //! src/workspaces/   virtual workspaces and their persistence
 //! src/input/        keys, bindings, gestures, drags
-//! src/animation/    movement on screen
+//! src/pictures/     pictures of windows, the desktop and the bar
+//! src/animation/    how things move on screen
+//! src/transitions/  when things happen in a transition
 //! src/switcher/     the window switcher popup
 //! src/bar/          the menu bar across the top of every display
 //! ```
@@ -29,6 +31,8 @@ pub mod bar;
 pub mod displays;
 pub mod input;
 pub mod layout;
+pub mod pictures;
 pub mod switcher;
+pub mod transitions;
 pub mod windows;
 pub mod workspaces;

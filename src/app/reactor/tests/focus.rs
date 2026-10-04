@@ -2,6 +2,7 @@
 //! per-application main window.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
+use rini_geometry::space::OverlayVector;
 use test_log::test;
 
 use super::fixtures::*;
@@ -371,7 +372,7 @@ fn same_app_focus_change_hides_mouse_and_window_server_confirmation_reasserts_it
     ));
 }
 
-/// The strip is one z-order group (`model::z_group`): focus landing on a strip window while a floating
+/// The strip is one z-order group (`raise_order::regroup_tiled`): focus landing on a strip window while a floating
 /// window sits in front of any strip window raises the whole strip over it.
 /// The window an auto workspace switch focuses (`choose_switch_focus`): the window the switch is
 /// for is taken visible or not, because it is parked until the layout lands. A cmd-tab onto Kiro
@@ -460,12 +461,18 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
     }
 }
 
-/// A window renders differently focused, and none of the difference is a size change: measured on a 1pt
-/// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window whose
-/// picture no longer fits its frame, so without this both tiles keep the wrong focus state and the border
-/// pops when the overlay lifts.
+/// Every focus report reaches the pictures service as a hint, rini's own raise's included: the hint
+/// arms the watch on the focus target's look, which is how a flight draws focus handing over. Every
+/// report that changes the key window tells the flight engine both windows whose look it turned, at
+/// their frames, so they are pictured again with nothing flying; a report of the window already key
+/// turns none. The reactor asks for no picture of either itself: the engine knows whether a flight
+/// will picture them.
 #[test]
-fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
+fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_whose_look_turned() {
+    use crate::pictures::domain::schedule::Priority;
+    use crate::pictures::domain::watch::Hint;
+    use crate::pictures::platform::service::Command as Asked;
+    use crate::transitions::platform::engine::Event as Engine;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -475,64 +482,59 @@ fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
+    reactor.main_window_tracker.set_focus_for_test(leaving);
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
+    let (transitions_tx, mut transitions_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(transitions_tx);
 
-    reactor.handle_event(Event::WindowServerFocusChanged(arriving, space));
+    // A click elsewhere, rini's own raise coming back, and the window already key reported again.
+    for window in [arriving, leaving, leaving] {
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
 
-    let mut refreshed = Vec::new();
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::RefreshFocus(target) = event {
-            refreshed.push(target.window);
-        }
+    let asked = pictures_asked(&mut pictures);
+    let hinted: Vec<WindowId> = asked
+        .iter()
+        .filter_map(|command| match command {
+            Asked::Hint(Hint::Focused(window)) => Some(*window),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hinted, [arriving, leaving, leaving]);
+    for priority in [Priority::Focus, Priority::Background] {
+        assert!(asked_at(&asked, priority).is_empty(), "the reactor captures neither end itself: {priority:?}");
     }
     assert!(
-        refreshed.contains(&arriving),
-        "the window gaining focus: {refreshed:?}"
+        !asked.iter().any(|command| matches!(command, Asked::Refresh(_))),
+        "the reactor refreshes neither end itself"
     );
-    assert!(
-        refreshed.contains(&leaving),
-        "the window losing it: {refreshed:?}"
-    );
-}
-
-/// Focus landing where it already is changes no appearance, so it is not worth a capture.
-#[test]
-fn focus_that_does_not_move_asks_for_nothing() {
-    let (mut apps, mut reactor) = test_context();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
-    let space = SpaceId::new(1);
-    let window = WindowId::new(1, 1);
-
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
-    reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
-
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
-    reactor.refresh_focus_pictures(window);
-
-    let mut refreshed = Vec::new();
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::RefreshFocus(target) = event {
-            refreshed.push(target.window);
+    let frame = |window: WindowId| reactor.state.windows.window(window).unwrap().frame_monotonic;
+    let mut turned = Vec::new();
+    while let Ok((_, event)) = transitions_rx.try_recv() {
+        if let Engine::LooksTurned(windows) = event {
+            turned.push(windows);
         }
     }
-    assert_eq!(
-        refreshed,
-        vec![window],
-        "only the window itself, not a phantom second one"
+    let ends: Vec<Vec<WindowId>> =
+        turned.iter().map(|ends| ends.iter().map(|(window, _)| *window).collect()).collect();
+    assert_eq!(ends, vec![vec![arriving, leaving], vec![leaving, arriving]]);
+    assert!(
+        turned
+            .iter()
+            .flatten()
+            .all(|(window, at)| at.size == ScreenSize::from_cg(frame(*window).size)),
+        "each at the frame the reactor has it at: {turned:?}"
     );
 }
 
 /// Pushing past an end bounces the view instead of doing nothing: focus right at the last column
 /// nudges the strip left; the previous workspace at the top of the stack nudges the row up. Focus
-/// stays where it was in both cases. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
+/// stays where it was in both cases. See "Edge bounce" in `src/transitions/docs/coordination.md`.
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
-    use crate::animation::platform::engine::Event as Anim;
+    use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -545,7 +547,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
@@ -559,7 +561,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
+        vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
         "the strip's end: one bounce to the left carrying both columns"
     );
     assert_eq!(
@@ -570,7 +572,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
+        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
         "the top of the stack: one bounce downward"
     );
     assert_eq!(
@@ -589,7 +591,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
 #[test]
 fn moving_a_window_past_an_end_bounces_the_view_too() {
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
-    use crate::animation::platform::engine::Event as Anim;
+    use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -602,7 +604,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
@@ -618,7 +620,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
+        vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
         "the strip's end: one bounce to the left carrying both columns"
     );
     assert_eq!(
@@ -635,7 +637,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     });
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
+        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
         "the top of the stack: one bounce downward"
     );
 
@@ -1086,17 +1088,13 @@ fn the_first_pass_to_lay_a_window_out_pictures_it() {
     reactor.update_layout_or_warn(false, false, None);
     reactor.update_layout_or_warn(false, false, None);
     reactor.pictured_windows.clear();
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
     let mut warmed_by_pass = || {
         reactor.update_layout_or_warn(false, false, None);
-        let mut warmed = Vec::new();
-        while let Ok((_, event)) = animation_rx.try_recv() {
-            if let crate::animation::platform::engine::Event::WarmWindows(targets) = event {
-                warmed.extend(targets.into_iter().map(|target| target.window));
-            }
-        }
-        warmed
+        asked_at(
+            &pictures_asked(&mut pictures),
+            crate::pictures::domain::schedule::Priority::Warm,
+        )
     };
 
     let first = warmed_by_pass();
@@ -1123,26 +1121,24 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
         assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
         reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
     };
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx.clone());
+    let mut asked = reactor.connect_test_pictures();
+    let pictures = reactor.communication_manager.pictures.clone();
     add(&mut reactor, early, 901, workspaces[0]);
     reactor.update_layout_or_warn(false, false, None);
 
-    // The late window arrives and is settled into place with no engine listening.
-    reactor.communication_manager.workspace_animation_tx = None;
+    // The late window arrives and is settled into place with no pictures service listening.
+    reactor.communication_manager.pictures = None;
     add(&mut reactor, late, 902, workspaces[1]);
     reactor.update_layout_or_warn(false, false, None);
     reactor.update_layout_or_warn(false, false, None);
-    while animation_rx.try_recv().is_ok() {}
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    pictures_asked(&mut asked);
+    reactor.communication_manager.pictures = pictures;
 
     reactor.update_layout_or_warn(false, false, None);
-    let mut warmed = Vec::new();
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::WarmWindows(targets) = event {
-            warmed.extend(targets.into_iter().map(|target| target.window));
-        }
-    }
+    let warmed = asked_at(
+        &pictures_asked(&mut asked),
+        crate::pictures::domain::schedule::Priority::Warm,
+    );
     assert!(warmed.contains(&late), "{warmed:?}");
     assert!(!warmed.contains(&early), "pictured once already: {warmed:?}");
 }

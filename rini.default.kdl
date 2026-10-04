@@ -112,12 +112,22 @@ layout {
 
 animations {
     // Every layout change, strip movement and workspace switch is drawn as one Core Animation
-    // flight in an overlay (src/animation/docs/animation-smoothness.md). Uncomment to place
+    // flight in an overlay (src/transitions/docs/coordination.md). Uncomment to place
     // windows at once instead.
     // off
 
     // Multiplies the length of every animation. 1.0 is a 0.35s movement; below 1 is faster.
     slowdown 1.0
+
+    // Every step of every transition is written to ~/Library/Logs/rini/transitions.jsonl once it
+    // has settled (src/transitions/docs/journal.md). Uncomment `off` to stop writing it; the last
+    // steps are kept in memory either way, and written once it is turned back on. Uncomment
+    // `measure-handover` instead to measure each lift against the screen just after it, which
+    // holds each lift up to 60ms.
+    // journal {
+    //     off
+    //     measure-handover
+    // }
 }
 
 gestures {

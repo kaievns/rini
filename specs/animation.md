@@ -30,12 +30,21 @@ only the transitions are missing.
   untouched throughout.
 - A request that simply cannot be honoured — a workspace named by an index that does not exist — is NOT
   an end and MUST NOT bounce. Bouncing would claim the stack has an edge in a direction nobody named.
-- A push against an end while the bounce is still playing MUST NOT start another. Presses at the wall
-  bounce once, not once per press.
+- **Every push against an end MUST show.** One arriving while the bounce plays MUST push the view out
+  again from wherever it is drawn: it MUST NOT be dropped, and MUST NOT start the bounce over from
+  rest. A burst at the wall holds the view there, and the view is home within one bounce of the last
+  press, never later. A push arriving before the motion begins, up to 300ms behind a window opening,
+  MUST wait for it, and the pushes of that wait show once, however many arrive: a CSS animation
+  restarted twice before its first frame shows once.
+
+> **Reported 2026-10-03.** "the only thing that still mildly bugs me is the end of strip/stack
+> animation, it throttles rapid key presses and it feels like a bug. if you can make it react to
+> every single press like a pure CSS based bouncer would, that'd be fantastic." A push while a
+> bounce played was dropped, so the second and third press of a burst showed nothing.
 
 > **Reported 2026-09-29.** "espcecially visible when you hit the end of the strip and it just bounces
-> off the wall several times". Each press at the wall restarted the bounce, and presses the reactor
-> handled late went on bouncing after the pressing stopped.
+> off the wall several times". Each press at the wall restarted the bounce from rest, and presses the
+> reactor handled late went on bouncing after the pressing stopped. Both stay excluded above.
 
 > **Reported 2026-09-24.** "The little bounce animation when navigation reaches an end of strip or
 > workspaces stack is neat but a bit too small, I need a little more swing. Also when I'm moving a window
@@ -111,6 +120,15 @@ only the transitions are missing.
 > inside its row, so a bar-sized strip of desktop showed between workspaces as they scrolled. The
 > overlay covered the whole display, including the band the bar sits in.
 
+- The first switch after rini starts MUST slide like every other, whichever workspace a restored
+  layout opens on. A switch slides from the workspace the display last showed, which is known from
+  the first time rini lays the display out, so it MUST NOT wait for an earlier switch to learn it.
+
+> **Found 2026-10-05, not reported.** The transitions journal showed the first `prev_workspace` press
+> after a restart with no press mark and no flight, and every later switch sliding. The workspace a
+> switch slides from was recorded only by a switch, so the first one on each display had none and
+> cut to the destination.
+
 ## Arriving mid-flight
 
 The layout does not wait for an animation to land, so a second pass can arrive with a different
@@ -130,6 +148,29 @@ destination for a window already moving.
 > at 6.25x its average speed, so a strip that had nearly stopped was thrown forward again: about
 > 890pt/s to 15,375pt/s in one frame at a typical interval between presses.
 - A window the flight has not seen MUST be able to join it.
+- A merged press MUST NOT show a stale, transparent, stretched or zoomed tile. A picture taken for an
+  end its tile no longer has, or of a window more than 20pt from where its tile ends, never reaches a
+  tile: drawn, it is a stale tile, or one stretched or zoomed to the other size.
+- A merged press MUST NOT lose a picture taken for an end its tile still has. Pictures are taken on
+  their own thread and arrive while a press is merged, and none is taken twice.
+- A merged press MUST NOT replace a tile's picture with the cache's: the tile keeps frame zero's, a
+  focused look, or a picture the flight took.
+- A press merged before the flight moves MUST compose with it as one movement from frame zero: the
+  strip, and on a switch every row and floating window, travel together as one piece. Composed window
+  by window from where each tile starts to where the last press sends it, the pieces slid over one
+  another.
+- A window a merged press brings, before the flight moves or while it does, MUST start beside the
+  windows it sits beside in the layout, wherever they are drawn, and travel with them. Before the
+  motion a column the second press brought started under the column the first had brought; once
+  moving, one placed where the last press sends the strip started short of the strip by the travel
+  the strip had left.
+
+> **Reported 2026-10-03.** "rapid press navigation messes things up, i periodically see missing tiles
+> (or they're just transparrent), occasionally i see tiles that are zoomed in." Each picture is now
+> pinned to the end its tile had when it was taken and to the frame its tile ends at; which picture
+> each of those tiles drew was not measured. A press merged before the flight moved also split the
+> strip into pieces that slid over one another, one covering another; it now composes as one
+> movement. Whether either is what was seen is not measured.
 
 ## A window that has just opened
 
@@ -138,6 +179,29 @@ destination for a window already moving.
 - Otherwise the flight holds a place for it and waits for its first picture. Each reason for holding
   MUST be recorded distinctly: "the window appeared without animating" has four causes and the log is
   the only way to tell them apart afterwards.
+
+## The pictures a flight starts with
+
+- A flight MUST start from pictures taken at the press: every window wholly on screen where its tile
+  starts, and the floating windows seen behind them, a pass merged before the overlay is up included.
+  The overlay MUST wait for them no longer than 80ms, and then flies what the cache holds until they
+  come: each then replaces the cache's on its tile, and the flight MUST NOT start again.
+- A real window MUST NOT move before the overlay covering it is on screen, whatever the flight: a
+  write that reaches the app first shows the window jumping to its end while its tile still starts.
+  Every frame MUST be written as soon as the overlay is on screen, so the window has the whole flight
+  to land in.
+- A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
+  window that ends wholly on screen, so the window server counts it visible. Covered wholly, a
+  terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
+  all 24.
+- A floating window seen through a translucent one MUST show its live content while the flight runs,
+  kept fresh behind the strip once the window gaining focus has its look.
+
+> **Reported 2026-10-03.** "the background window images are served stale constantly, it's not a
+> minor issue, because i can see changing content in the background windows during animation with
+> semi-transparrent windows. this won't do." The windows behind the strip flew the cache's pictures,
+> which no capture landing mid-flight replaced; the cache's pictures a flight drew were 1.6s old at
+> the median, measured 2026-10-02.
 
 ## Correctness the user can see
 
@@ -150,6 +214,9 @@ destination for a window already moving.
   before anything flies. After a restart nothing moves, and a pass that moves nothing asked for no
   pictures, so the first flights had none to draw. Per window, not per display: apps are found one
   by one at startup, and the first pass on the display knew one window of 21.
+- A picture read off the screen after a lift, such as the bar's, MUST NOT show the overlay: the bar's
+  is drawn over every flight after it, so one taken with the overlay up draws the overlay where the
+  bar should be.
 - A change of display MUST NOT drop the window pictures being captured. Only the desktop render belongs
   to a display; with a second display attached, every flight on the other one threw the window captures
   in flight away.
@@ -159,13 +226,6 @@ destination for a window already moving.
 > window frame is moving during the animation. i've seen plenty of those during your automated testing
 > too". Over four restarts no picture landed for the first 11s, and 49% of the flights in the first
 > 30s were missing a window; after 2 minutes, 5%. The replays ran seconds after each restart.
-
-## Where it lives
-
-`src/animation/domain/motion/` is the planning, `src/animation/domain/motion/strip_move.rs` the move
-along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
-`src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
-`src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
 
 ## Windows with no picture yet
 
@@ -177,8 +237,8 @@ along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
   as soon as one lands, on the same tile, so nothing else in the flight is disturbed. A flight that does
   not wait for pictures, a strip movement, MUST ask for the picture of a window it brings onto this
   display once the window is placed there.
-- The stand-in MUST NOT be cached. Cached, it would be lent to the switcher as the window's picture and
-  taken for one by the next flight.
+- The stand-in MUST NOT be cached. Cached, the switcher would read it as the window's picture and the
+  next flight would take it for one.
 - A genuinely new window, on this display with no picture, keeps its spawn capture and entrance.
 
 > **Reported 2026-09-28.** "When the initial image is missing (after a restart or whatnot) the
@@ -207,20 +267,102 @@ along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
 > had already been measured returning the same flat grey. The window captured together with what is
 > below it carries the real blur and leaves out anything above it, measured the same day.
 
+## The window's hairline
+
+- Every tile MUST wear the hairline macOS composites around each window, which no capture carries: a
+  1pt ring of white on the window's outermost point, at 20% on the focused window and 18% on any
+  other, and a 0.5pt stroke of black at 90% in the half point just outside it.
+- Both MUST round to the window's own corner radius once `pictures` has measured it, and to 10pt
+  until then, never past half the tile's shorter side.
+- Both MUST follow the tile through a resize, on the tile's own timing, and onto its window's real
+  frame when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
+  its corners.
+- When focus hands over during a flight, the ring MUST follow it: the window gaining focus brighter,
+  the window losing it dimmer.
+
+The ring's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
+applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
+measured. Before it, a tile wore a hairline cut out of a capture of its window, and none until that
+capture had run: the 53-level p99 at the focused window's edge in "The handover, measured"
+(`src/animation/docs/capture-overlay-research.md`).
+
 ## Focus changing during a flight
 
 - When a flight moves focus from one window to another, both MUST land in their new focus rendering:
   the window gaining focus active, the window losing it inactive. The change MUST reach each tile while
   the flight still moves, so nothing changes at rest after the lift.
-- Both ends MUST be recaptured wherever they are: wholly on a display, or clipped by its edge.
-- A picture begun before the flight asked for it MUST NOT reach the tile. It shows the focus as it was,
-  and landing after the flight's own picture it would cut the tile back.
+- The window gaining focus MUST be pictured where it ends from the moment the window server reports it
+  focused until its look changes, and drawn focused from that picture on: its ring and its shadow with
+  it. A look it already had when it landed counts as changed. If no picture shows the change by the
+  last capture before the lift, it MUST be drawn focused from then on all the same, while the flight
+  still moves. Until then the window losing focus MUST be drawn focused, as it was on screen when the
+  flight began, and after it unfocused. Ending wholly on a display, it MUST be pictured again before
+  the lift if its look has changed. Ending clipped by the display's edge, it keeps its picture to the
+  lift, only its ring and its shadow turning unfocused, and its look turns at rest, unless it has a
+  material: then it keeps its blurred picture until a flight next pictures it on screen (below). SkyLight
+  returns only its visible part, and the one ScreenCaptureKit capture below is the window gaining
+  focus's.
+- A focus report that arrives before the flight watches for it MUST still count, and so MUST one that
+  arrives before the request it causes, as a click's or an app activation's does: the window focused
+  before it is the one the flight begins drawn focused.
+- A window gaining focus that starts off the display, where nothing can picture it, MUST fly the last
+  picture taken of it focused, drawn focused from the first frame of the press giving it focus, a press
+  merged into a flight included, unless that picture no longer fits it or a later picture shows its
+  content changed. Its landing MUST NOT replace that picture before focus hands over: it is often taken
+  before the window repaints focused, and would turn it unfocused and back.
+- A picture MUST be kept as a window's focused look only if it shows the window focused: its change
+  pictured as it gains focus, or frame zero's picture of the window focus leaves if that window was
+  the key window as the press went out. A click's report has made its target key before the request it
+  causes, and another application's panel taking the keys, Spotlight's or Raycast's, leaves the
+  layout's window drawn unfocused: kept, that picture flies the window in as its focused look looking
+  unfocused.
+- A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
+  returns only its visible part, so it takes ScreenCaptureKit's one capture.
+- Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the
+  press to the quiet after the lift, but for the screen a measured lift's handover check takes once
+  its overlay is down (`journal { measure-handover; }`, below). With four of its captures out, the
+  capture the overlay waits for at the press took three times as long.
+- A flight that moves focus nowhere MUST NOT recapture through ScreenCaptureKit, and MUST NOT watch for
+  a change of focus: no report comes to arm the watch, and one left waiting holds the windows behind
+  the strip back for the whole flight.
+- Both windows a change of the key window turns, the one that becomes key and the one that stops being,
+  MUST be pictured again for the next flight and the switcher, whoever moved focus: a click, rini's own
+  move, or another application's panel taking the keys. With nothing flying both MUST be asked for at
+  once; in flight, each one no picture of the flight showed after the change MUST be asked for at the
+  quiet after the lift, the window losing focus that ends clipped or parked among them. A focus change
+  alters a window's look and never its size, and a picture that still fits was never taken again for
+  its own sake, so a window kept the look it had until it was resized, and its tile turned at the lift.
+- Pictured again at rest, a window wholly on the overlay's display MUST be pictured with its blur and
+  with its look turned. A capture of the window alone has no blur, and a picture with its blur is never
+  replaced by one without, so a window with a material kept its old look until a flight next pictured
+  it on screen; a capture made as the change is reported shows the look from before the app repaints;
+  and the picture held from before can differ in its title band for reasons other than focus, so the
+  turn is judged only from captures taken after the change.
+- A capture at rest MUST NOT start from a press to the quiet after the lift, as no ScreenCaptureKit
+  capture does: SkyLight serves one call at a time, and one already out delays the one the overlay
+  waits for. A call already out when the press's hold arrives cannot be recalled, so at most one
+  SkyLight call at rest, two for a window never pictured before, MAY be ahead of a frame zero.
+- A window with a material that is not wholly on the overlay's display when it is pictured again at
+  rest, clipped, parked or on another display, keeps its blurred picture, and its look turns when a
+  flight next pictures it on screen: ScreenCaptureKit's capture of it has no blur, and SkyLight's
+  covers only what is on that display ("Known debt" in `src/pictures/docs/README.md`).
+- Once the overlay is up, a tile MUST change its picture only for one the flight took: frame zero's
+  coming after the overlay went up without it, as its window lands, as the window gaining focus
+  changes its look, as a floating window behind the strip is refreshed, or just before the lift. A
+  capture made for anything else shows the window as it was, and cut in after the flight's own it
+  would cut the tile back.
 - A picture the cache refuses MUST NOT reach a tile either. The flight would draw what the next one
   will not.
-- A flight that moves focus nowhere MUST NOT recapture anything.
 - A picture of a window that was not wholly on one display while it was captured MUST NOT be drawn,
   cached as a picture, or cut onto a tile. The capture comes back full-size with the off-screen part
   transparent, and drawn it is a half or fully missing window.
+
+> **Reported 2026-10-03.** "fcache doesn't bother me … windows arrive in focus every single time". The
+> prototype flew a focus target parked off the display with its last focused picture, which can be
+> older than the window's content; asked about that, Kai preferred the window arriving focused.
+
+> **Reported 2026-10-02.** "mostly bugged by the flicker into the active window". The window gaining
+> focus flew its picture from before the change and turned focused only at the lift.
 
 > **Reported 2026-09-28.** "The old window stays in its old active state throughout the entire
 > transition and then flickers in in its inactive state once the animation finished. Would be great if
@@ -267,3 +409,73 @@ along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
 > of the two its band names. A twin rather than one container per application, because only the
 > focused application changes band: every other application keeps the server's order among the rest,
 > which one container behind the strip already expresses.
+
+## Watching transitions: the journal
+
+- rini MUST record every step of a transition: the press that began it, as rini took it, each thing
+  its lifecycle hears and decides, a frame's tick only when it first finds the transition at rest or
+  landed, each delivery of pictures to it with when the pictures service sent it and when each
+  picture's capture started, and each commit of what it draws, all with when, so a glitch seen while
+  moving around can be read back afterwards, and the time from a press to the overlay up, counted to
+  the commit that puts the overlay on screen, split between rini's work on the press, the captures,
+  the time the transition waited to hear of them, the wait for the thread that draws it, and that
+  commit.
+- rini MUST keep the last 8192 steps of its transitions in memory at all times, so a record can be
+  written of a glitch seen with the journal off.
+- Unless the journal is turned off (`animations { journal { off; } }`), rini MUST write each burst of
+  transitions once it has settled, and MUST NOT start a write while a transition is up, so writing
+  adds nothing to the durations it records. The record MUST be at most two files: the current one,
+  started afresh once it passes 50MB, and the one before it.
+- Writing the journal or not MUST NOT change what is drawn or when; only measuring the handover may
+  (below), and `off` turns measuring off with the writing.
+- With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
+  window ending wholly on screen, the mean RGB difference between the overlay's own picture just
+  before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,
+  and over the 1pt either side of its outline, so a lift can be read against the handover measured on
+  2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
+  picture and the quiet after the lift MUST then count from the hide, so the bar is never pictured
+  with the overlay over it. It MUST NOT start a capture once a press has asked for a transition, so
+  that press waits at most for the one capture of the overlay or the screen under way as it lands,
+  and it MUST be off unless asked for.
+- Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial
+  and rini's steps line up with no wall clock between them.
+- CPU and GPU use MAY be recorded only once what reading them costs is measured, and found to slow
+  nothing down.
+
+> **Reported 2026-10-03.** "can you add transitions logs? as in log timing for every transition step,
+> make sure you don't flush until after the transition settles so the disk io didn't add to the
+> durations. i want you to have a record overything as i move around so you could have a postmortem
+> picture for debugging, you can log CPU/GPU utilisation in the moment too if it doesn't cost anything
+> in terms of slowing down". The `scratch/handover` prototype had kept a text journal from about 135
+> call sites, with a lock and an allocation for each mark. This one stamps each press where the
+> reactor takes it, marks the lifecycle where it is driven and each delivery of pictures where the
+> transition hears it, keeps its marks in a ring allocated once, and writes them by default.
+
+## Where it lives
+
+`src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
+depth bands, the edge bounce and the nudge, and the hairline every tile wears. The looks
+(`src/animation/domain/choreography.rs`, Slide the default in
+`src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
+into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
+plays the score on Core Animation on the main thread, on the overlay in
+`src/animation/platform/overlay.rs`. When each step happens is `src/transitions/`:
+`src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
+finds where a moved pair starts and puts the look's staging of it on the strip,
+`src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
+`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
+`src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
+which touches no Core Animation. The journal is kept with the
+lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
+what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.
+A measured lift's handover is compared in `src/pictures/domain/handover.rs`.
+The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
+stand-in, the blur, and the schedule that holds background capture off while a flight runs in
+`src/pictures/domain/`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
+for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
+captures), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
+Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),
+`src/animation/docs/animation-smoothness.md` (how it moves),
+`src/animation/docs/capture-overlay-research.md` (the overlay, and "The handover, measured", which a
+measured lift is sampled as) and
+`src/pictures/docs/capture-research.md` (the captures).

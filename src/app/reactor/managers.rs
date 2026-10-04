@@ -165,7 +165,8 @@ pub struct CommunicationManager {
     pub event_tap_tx: Option<event_tap::Sender>,
     pub gesture_tap_tx: Option<gesture_tap::Sender>,
     pub cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
-    pub workspace_animation_tx: Option<crate::animation::platform::engine::Sender>,
+    pub transitions_tx: Option<crate::transitions::platform::engine::Sender>,
+    pub pictures: Option<crate::pictures::platform::service::Pictures>,
     pub raise_manager_tx: raise_manager::Sender,
     pub event_broadcaster: BroadcastSender,
     pub wm_sender: Option<wm_controller::Sender>,
@@ -354,9 +355,11 @@ impl LayoutManager {
         let mut any_frame_changed = false;
 
         for (space, layout) in layout_result {
+            let movement = reactor.take_workspace_movement(space);
             if is_workspace_switch {
-                any_frame_changed |=
-                    AnimationManager::workspace_switch_layout(reactor, space, &layout, skip_wid);
+                any_frame_changed |= AnimationManager::workspace_switch_layout(
+                    reactor, space, movement, &layout, skip_wid,
+                );
             } else if reactor.workspace_switch_manager.active_workspace_switch.is_some() {
                 any_frame_changed |=
                     AnimationManager::instant_layout(reactor, space, &layout, skip_wid);

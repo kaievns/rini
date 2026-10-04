@@ -362,6 +362,7 @@ fn workspace_switch_layout_falls_back_to_full_frames_for_size_changes() {
         crate::app::reactor::animation::AnimationManager::workspace_switch_layout(
             &mut reactor,
             space,
+            None,
             &[(wid, target)],
             None,
         )
@@ -1251,11 +1252,10 @@ fn a_switch_with_one_entry_opens_no_popup() {
     );
 }
 
-/// The pictures asked for are the cards drawn: each stack's top window and the two behind it, never a
-/// window the stack stands for but does not draw.
+/// The pictures read and asked for are the cards drawn: each stack's top window and the two behind it,
+/// never a window the stack stands for but does not draw.
 #[test]
-fn a_switch_lends_and_warms_only_the_windows_it_draws() {
-    use crate::animation::platform::engine::Event as Engine;
+fn a_switch_reads_and_warms_only_the_windows_it_draws() {
     use crate::input::domain::switch_session::Signal;
 
     let ghostty: Vec<WindowId> = (1..=4).map(|idx| WindowId::new(1, idx)).collect();
@@ -1266,27 +1266,26 @@ fn a_switch_lends_and_warms_only_the_windows_it_draws() {
         &windows,
         &[ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0]],
     );
-    let _popup = reactor.connect_test_switcher();
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut popup = reactor.connect_test_switcher();
+    let mut pictures = reactor.connect_test_pictures();
 
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
     });
 
-    let (mut lent, mut warmed) = (Vec::new(), Vec::new());
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        match event {
-            Engine::LendSnapshots(windows) => lent.extend(windows),
-            Engine::WarmWindows(targets) => {
-                warmed.extend(targets.into_iter().map(|target| target.window))
-            }
-            _ => {}
+    let mut read = Vec::new();
+    while let Ok((_, event)) = popup.try_recv() {
+        if let crate::switcher::platform::actor::Event::Show { rows, .. } = event {
+            read.extend(crate::switcher::platform::panel::drawn_windows(&rows));
         }
     }
+    let warmed = asked_at(
+        &pictures_asked(&mut pictures),
+        crate::pictures::domain::schedule::Priority::Warm,
+    );
     let drawn = vec![ghostty[0], ghostty[1], ghostty[2], slack];
-    assert_eq!(lent, drawn);
+    assert_eq!(read, drawn);
     assert_eq!(warmed, drawn);
 }
 
@@ -1831,6 +1830,116 @@ fn a_workspace_switch_is_not_a_strip_movement() {
         reactor.take_strip_movement(space),
         Some(CGPoint::new(0., 0.)),
         "arriving on another workspace is a vertical switch, not a horizontal pan"
+    );
+}
+
+/// `reactor` just started on one display, with two windows on the workspace it shows, laid out and
+/// settled with the flight engine listening from here on: what the first switch after start meets.
+fn started(
+    mut reactor: Reactor,
+) -> (
+    Apps,
+    Reactor,
+    crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
+) {
+    let mut apps = Apps::new();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+    reactor.config.settings.animate = true;
+    let (animation_tx, animation_rx) = crate::app::channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    (apps, reactor, animation_rx)
+}
+
+/// A reactor started on a layout saved showing the workspace at `showing` of four, restored the way a
+/// launch restores it.
+fn restored_showing(showing: usize) -> Reactor {
+    let mut settings = crate::app::config::VirtualWorkspaceSettings::default();
+    settings.workspace_names = crate::workspaces::settings::numbered_names(4);
+    let layout = crate::app::config::LayoutSettings::default();
+    let space = SpaceId::new(1);
+    let mut memory = DisplayMemory::default();
+    let mut saved = LayoutEngine::new(&settings, &layout);
+    let _ = saved.handle_event(
+        &mut crate::workspaces::domain::window_store::WindowStore::default(),
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728., 1117.)),
+    );
+    let workspace = saved.virtual_workspace_manager_mut().list_workspaces(space)[showing].0;
+    saved.virtual_workspace_manager_mut().set_active_workspace(space, workspace);
+    let path = std::env::temp_dir().join(format!(
+        "rini-first-switch-test-{}-{showing}.ron",
+        std::process::id()
+    ));
+    saved.save(&memory, path.clone()).unwrap();
+    let (mut restored, _) = LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
+    let _ = std::fs::remove_file(path);
+    restored.finish_loading(&settings, &layout);
+    Reactor::new_for_test(restored)
+}
+
+/// Whether any of `requests` writes a window's frame.
+fn writes_a_frame(requests: &[Request]) -> bool {
+    requests.iter().any(|request| {
+        matches!(
+            request,
+            Request::SetWindowFrame(..)
+                | Request::SetBatchWindowFrame(..)
+                | Request::SetWorkspaceSwitchPositions(..)
+        )
+    })
+}
+
+/// The first switch after rini starts slides like every other, where it cut: the origin of a switch
+/// was written only by a switch, so the first one on a space had none. "The vertical workspace
+/// switch" in `specs/animation.md`.
+#[test]
+fn the_first_switch_after_start_slides() {
+    let (mut apps, mut reactor, mut rx) = started(test_reactor_with_workspace_count(4));
+    let pitch = reactor.space_state.screens[0].frame.size.height;
+
+    reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
+
+    let slides = strip_movements(&mut rx);
+    assert_eq!(slides.len(), 1, "one slide down the stack");
+    assert_eq!(
+        (slides[0].from_offset, slides[0].to_offset),
+        (SurfacePoint::origin(), SurfacePoint::new(0., pitch)),
+        "from the first workspace to the second"
+    );
+    let requests = apps.requests();
+    assert!(
+        !writes_a_frame(&requests),
+        "the slide places the windows, not the switch: {requests:?}"
+    );
+}
+
+/// A restored layout shows the workspace it was saved on, and the first switch slides from that one.
+#[test]
+fn a_restored_layout_s_first_switch_slides_from_the_workspace_it_opened_on() {
+    let (mut apps, mut reactor, mut rx) = started(restored_showing(2));
+    let space = SpaceId::new(1);
+    assert_eq!(
+        reactor.test_active_workspace(space),
+        Some(reactor.test_workspace(space, 2))
+    );
+    let pitch = reactor.space_state.screens[0].frame.size.height;
+
+    reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
+
+    let slides = strip_movements(&mut rx);
+    assert_eq!(slides.len(), 1, "one slide up the stack");
+    assert_eq!(
+        (slides[0].from_offset, slides[0].to_offset),
+        (SurfacePoint::new(0., pitch), SurfacePoint::origin()),
+        "from the third workspace to the second"
+    );
+    let requests = apps.requests();
+    assert!(
+        !writes_a_frame(&requests),
+        "the slide places the windows, not the switch: {requests:?}"
     );
 }
 

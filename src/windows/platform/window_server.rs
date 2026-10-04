@@ -11,9 +11,11 @@ use objc2_application_services::AXError;
 use objc2_core_foundation::{
     CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, Type,
 };
+#[cfg(not(test))]
+use objc2_core_graphics::CGWindowListCopyWindowInfo;
 use objc2_core_graphics::{
-    CGError, CGWindowID, CGWindowListCopyWindowInfo, CGWindowListOption, kCGNullWindowID,
-    kCGWindowBounds, kCGWindowLayer, kCGWindowNumber,
+    CGError, CGWindowID, CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
+    kCGWindowNumber,
 };
 use once_cell::sync::Lazy;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
@@ -432,6 +434,18 @@ pub fn window_is_ordered_in(id: WindowServerId) -> bool {
     window_ordered_in(id).unwrap_or(false)
 }
 
+/// A test lists no windows: every listing the desktop, the bar, the menu extras and a flight's border
+/// companions are read from answers none. See "A unit test must not read the live window server" in
+/// `docs/testing.md`.
+#[cfg(test)]
+pub fn get_windows_raw<T: Type>(
+    _options: CGWindowListOption,
+    _relative_to_window: CGWindowID,
+) -> CFRetained<CFArray<T>> {
+    CFArray::empty()
+}
+
+#[cfg(not(test))]
 pub fn get_windows_raw<T: Type>(
     options: CGWindowListOption,
     relative_to_window: CGWindowID,
@@ -498,6 +512,16 @@ pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
         return None;
     }
     window_info_from_query(&query)
+}
+
+/// The frame the window server has for `id` now, answered without asking the app. A parked window's
+/// written frame is there 0.04-0.1ms after the write returns, but an app still activating applies a
+/// write tens of milliseconds late ("Where a moving focus change spends its time" in
+/// `src/animation/docs/capture-overlay-research.md`).
+pub fn server_frame(id: WindowServerId) -> Option<CGRect> {
+    let mut frame = CGRect::default();
+    let read = unsafe { SLSGetWindowBounds(*G_CONNECTION, id.as_u32(), &mut frame) };
+    (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
 }
 
 pub fn get_num(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<i64> {

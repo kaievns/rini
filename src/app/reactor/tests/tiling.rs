@@ -2,12 +2,15 @@
 //!
 //! Named `tiling` rather than `layout` because a module called `layout` inside `tests` shadows the
 //! `layout` alias the siblings use for `crate::workspaces`.
+use std::time::Instant;
+
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::{WindowServerId, pid_t};
 use rini_geometry::SameAs;
 use test_log::test;
 
 use super::fixtures::*;
+use crate::animation::domain::motion::surface::SurfaceGeometry;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::info::WindowInfo;
@@ -734,7 +737,7 @@ mod strip_regroup {
     use test_log::test;
 
     use super::*;
-    use crate::animation::domain::motion::z_group::StackGroup::{Floating, Tiled};
+    use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
     use crate::app::reactor::{StackedWindow, strip_group_to_lift_for};
     use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 
@@ -1160,7 +1163,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     // Two windows moving by opposite vectors, so this is not a strip pan and goes to the per-window
     // path. The third keeps the frame it already has.
@@ -1185,15 +1188,15 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
         None,
     );
 
-    let mut animated: Vec<crate::animation::domain::request::AnimationRequest> = Vec::new();
+    let mut animated: Vec<crate::transitions::domain::request::AnimationRequest> = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::animation::platform::engine::Event::Animate { windows, .. } => {
+            crate::transitions::platform::engine::Event::Animate { windows, .. } => {
                 animated = windows
             }
             // Opposite vectors are not a pan, so this must not reach the strip path: that path takes
             // its windows from the layout and so never had this bug to begin with.
-            crate::animation::platform::engine::Event::AnimateSurface { .. } => {
+            crate::transitions::platform::engine::Event::AnimateSurface { .. } => {
                 panic!("a layout that is not a pan must go to the per-window path")
             }
             _ => {}
@@ -1228,7 +1231,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     let mut layout = Vec::new();
     for idx in 1..=2u32 {
@@ -1254,8 +1257,8 @@ fn a_one_point_move_is_placed_rather_than_animated() {
         assert!(
             !matches!(
                 event,
-                crate::animation::platform::engine::Event::Animate { .. }
-                    | crate::animation::platform::engine::Event::AnimateSurface { .. }
+                crate::transitions::platform::engine::Event::Animate { .. }
+                    | crate::transitions::platform::engine::Event::AnimateSurface { .. }
             ),
             "a one-point move must not run an animation: {event:?}"
         );
@@ -1270,7 +1273,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
 }
 
 /// P-3.13 (`.kiro/specs/exit-entrance-animation-regressions`): with animations off, a
-/// close sends the engine nothing but the forget, and the window state is still removed.
+/// close sends the engine no flight, and the window state is still removed.
 #[test]
 fn a_destroyed_window_does_not_exit_when_animations_are_off() {
     let (mut apps, mut reactor) = test_context();
@@ -1283,7 +1286,7 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     let wid = WindowId::new(1, 1);
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -1292,8 +1295,8 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
         assert!(
             !matches!(
                 event,
-                crate::animation::platform::engine::Event::Animate { .. }
-                    | crate::animation::platform::engine::Event::AnimateSurface { .. }
+                crate::transitions::platform::engine::Event::Animate { .. }
+                    | crate::transitions::platform::engine::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );
@@ -1318,7 +1321,7 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     let mut layout = Vec::new();
     for idx in 1..=3u32 {
@@ -1344,8 +1347,8 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
         assert!(
             !matches!(
                 event,
-                crate::animation::platform::engine::Event::Animate { .. }
-                    | crate::animation::platform::engine::Event::AnimateSurface { .. }
+                crate::transitions::platform::engine::Event::Animate { .. }
+                    | crate::transitions::platform::engine::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );
@@ -1434,6 +1437,7 @@ mod title_bar_zoom {
                 name: None,
                 space: Some(space),
                 is_builtin: false,
+                scale: 2.0,
             }]));
             make_active_app_with_count(&mut apps, &mut reactor, 1, 2, Some(WindowId::new(1, 1)));
             let window = WindowId::new(1, 1);
@@ -1800,7 +1804,7 @@ fn moving_strip(
 ) -> (
     Apps,
     Reactor,
-    crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+    crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
 ) {
     moving_strip_with(ratio, count, |_| {})
 }
@@ -1813,7 +1817,7 @@ fn moving_strip_with(
 ) -> (
     Apps,
     Reactor,
-    crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+    crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
 ) {
     let mut layout = crate::app::config::LayoutSettings::default();
     layout.scrolling.column_width_ratio = ratio;
@@ -1832,44 +1836,148 @@ fn moving_strip_with(
     apps.simulate_until_quiet(&mut reactor);
     reactor.config.settings.animate = true;
     let (animation_tx, animation_rx) = crate::app::channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     (apps, reactor, animation_rx)
 }
 
-/// One strip movement the reactor sent.
-struct SurfaceFlight {
-    windows: Vec<crate::animation::platform::engine::SurfaceWindow>,
-    from_offset: CGPoint,
-    final_frames: Vec<(WindowId, CGRect)>,
-    nudge: Option<CGPoint>,
-    duration: std::time::Duration,
+/// A click or an app activation reaches the reactor as a focus report before the pass it causes, and a
+/// key press as a command before rini's raise is reported: either way the strip movement names the
+/// window focused as the event began, which is still drawn focused on screen at frame zero.
+#[test]
+fn a_strip_movement_names_the_window_focused_as_its_event_began() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let space = SpaceId::new(1);
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let pressed = strip_movements(&mut rx);
+    let flight = pressed.last().expect("the press scrolls the strip");
+    assert_eq!((flight.focus, flight.focused_before), (Some(third), Some(second)));
+
+    // cmd-` onto the column scrolled off: macOS makes it key, and reports it, before the layout moves.
+    reactor.handle_event(Event::WindowServerFocusChanged(first, space));
+    let reported = strip_movements(&mut rx);
+    let flight = reported.last().expect("the report scrolls the strip");
+    assert_eq!((flight.focus, flight.focused_before), (Some(first), Some(third)));
 }
 
-/// Every strip movement the reactor sent since the last look.
-fn strip_movements(
-    rx: &mut crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
-) -> Vec<SurfaceFlight> {
+/// Frame zero pictures the window focus leaves drawn focused only if it was the key window as the
+/// request went out. A key press goes out before rini's raise is reported, so it names the window focus
+/// leaves; another application's panel taking the keys leaves none; a click's report has made its
+/// target key first.
+#[test]
+fn a_strip_movement_names_the_key_window_as_it_went_out() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let space = SpaceId::new(1);
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+    reactor.main_window_tracker.set_focus_for_test(second);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flight = strip_movements(&mut rx).pop().expect("the press scrolls the strip");
+    assert_eq!((flight.focused_before, flight.key), (Some(second), Some(second)));
+
+    reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(2, 90), space));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flight = strip_movements(&mut rx).pop().expect("the press scrolls the strip");
+    assert_eq!((flight.focused_before, flight.key), (Some(third), None), "a panel has the keys");
+
+    reactor.handle_event(Event::WindowServerFocusChanged(first, space));
+    let flight = strip_movements(&mut rx).pop().expect("the report scrolls the strip");
+    assert_eq!(flight.key, Some(first), "the click made its target key before the request");
+}
+
+/// Every request the reactor sent the flight engine since the last look, by kind, with the event it
+/// answers.
+fn causes(
+    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
+) -> Vec<(&'static str, crate::transitions::domain::request::Cause)> {
+    use crate::transitions::platform::engine::Event as Engine;
     let mut out = Vec::new();
     while let Ok((_, event)) = rx.try_recv() {
-        if let crate::animation::platform::engine::Event::AnimateSurface {
-            windows,
-            from_offset,
-            final_frames,
-            nudge,
-            duration,
-            ..
-        } = event
-        {
-            out.push(SurfaceFlight {
-                windows,
-                from_offset,
-                final_frames,
-                nudge,
-                duration,
-            });
-        }
+        out.push(match event {
+            Engine::Animate { cause, .. } => ("pass", cause),
+            Engine::AnimateSurface { cause, .. } => ("movement", cause),
+            Engine::Bounce { cause, .. } => ("bounce", cause),
+            Engine::DebugSlide { cause, .. } => ("slide", cause),
+            _ => continue,
+        });
     }
     out
+}
+
+/// A flight's journal starts at the press: each request names the command it answers, stamped when
+/// the reactor took it, whichever of the five ways it goes to the flight engine. `None` is a press
+/// that may send nothing: the second column is in view.
+#[test]
+fn a_commands_flight_carries_its_cause() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let layout = |command| (Command::Layout(command), None);
+    let sends = |command, request| (Command::Layout(command), Some(request));
+    let cases = [
+        sends(LayoutCommand::MoveFocus(Direction::Left), "bounce"),
+        layout(LayoutCommand::MoveFocus(Direction::Right)),
+        sends(LayoutCommand::MoveFocus(Direction::Right), "movement"),
+        sends(LayoutCommand::ToggleFullscreenWithinGaps, "pass"),
+        sends(LayoutCommand::NextWorkspace(None), "movement"),
+        sends(LayoutCommand::PrevWorkspace(None), "movement"),
+        (
+            Command::Reactor(ReactorCommand::DebugOverlaySlide { dx: 0, dy: 40, duration_ms: 350 }),
+            Some("slide"),
+        ),
+    ];
+    for (command, request) in cases {
+        let what: &'static str = match &command {
+            Command::Layout(command) => command.into(),
+            Command::Reactor(command) => command.into(),
+            Command::Metrics(_) => unreachable!(),
+        };
+        let before = Instant::now();
+        reactor.handle_event(Event::Command(command));
+        let after = Instant::now();
+        let sent = causes(&mut rx);
+        if let Some(request) = request {
+            assert!(sent.iter().any(|(kind, _)| *kind == request), "{what}: {sent:?}");
+        }
+        for (kind, cause) in sent {
+            assert_eq!(cause.what, what, "{kind}");
+            assert!(before <= cause.at && cause.at <= after, "{what}: taken as it was handled");
+        }
+    }
+}
+
+/// An app's frame report that releases a drag handles the mouse up inside it: the mouse up's flight
+/// is its own, and the report's passes after it are the report's again.
+#[test]
+fn a_nested_event_leaves_the_outer_cause() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    reactor.config.settings.animate = true;
+    let (animation_tx, mut rx) = crate::app::channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let window = WindowId::new(1, 1);
+    let frame = reactor.state.windows.window(window).expect("window").frame_monotonic;
+    let dragged = |dx, mouse| {
+        let to = CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y + 50.), frame.size);
+        Event::WindowFrameChanged(window, to, None, Requested(false), Some(mouse))
+    };
+    reactor.handle_event(dragged(200., MouseState::Down));
+    causes(&mut rx);
+
+    let report =
+        crate::transitions::domain::request::Cause { at: Instant::now(), what: "window_frame_changed" };
+    reactor.cause = report;
+    let outcome = reactor.dispatch_workflow(dragged(210., MouseState::Up)).unwrap();
+    assert!(outcome.dispatch_mouse_up, "the release is handled inside the report");
+    reactor.apply_event_outcome(outcome);
+
+    let sent = causes(&mut rx);
+    assert!(!sent.is_empty(), "the mouse up lays the strip out again");
+    assert!(sent.iter().all(|(_, cause)| cause.what == "mouse_up" && cause.at >= report.at), "{sent:?}");
+    assert_eq!(reactor.cause, report, "what the report does after it carries the report");
 }
 
 /// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else
@@ -1904,13 +2012,13 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
     for other in windows.iter().filter(|s| s.window != moved && s.window != passed) {
         assert_eq!(other.from, None, "{:?} only pans", other.window);
     }
-    let (start, end) = w.travel(*from_offset, CGPoint::new(0.0, 0.0));
+    let (start, end) = w.travel(*from_offset, SurfacePoint::origin());
     assert!(
         (end.origin.x - start.origin.x).abs() < 1728.0 / 4.0,
         "the camera followed W: {start:?} to {end:?}"
     );
     assert_eq!(
-        flights[0].nudge, None,
+        flights[0].accent, None,
         "a half-width column is seen moving and never steps"
     );
 
@@ -1919,7 +2027,8 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
     for flight in strip_movements(&mut rx) {
         assert!(flight.windows.iter().all(|w| w.from.is_none()));
-        assert_eq!(flight.nudge, None);
+        assert_eq!(flight.cue, crate::animation::domain::choreography::Cue::Plain);
+        assert_eq!(flight.accent, None);
     }
 }
 
@@ -1927,7 +2036,7 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
 /// A full-size window the camera follows does not move on screen at all, so the move steps the
 /// whole strip a third of the display away from where it went and back, the column it passed held
 /// on the strip beneath it. That column's real window still goes to its layout frame. The reactor
-/// asks for the plain duration: the engine stretches the flight only if it does step.
+/// asks for the plain duration: the look stretches the flight only if it takes the step.
 #[test]
 fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
     for (direction, sign) in [(Direction::Right, -1.0), (Direction::Left, 1.0)] {
@@ -1945,6 +2054,14 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
         let flights = strip_movements(&mut rx);
         assert_eq!(flights.len(), 1, "{direction:?}");
         let flight = &flights[0];
+        assert_eq!(
+            flight.cue,
+            crate::animation::domain::choreography::Cue::Move {
+                window: moved,
+                direction
+            },
+            "the look is told the press"
+        );
         assert!(
             flight.from_offset.x.abs() >= 1.0,
             "{direction:?}: the strip scrolled to follow it"
@@ -1962,9 +2079,10 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             (w_from.origin.x - w.frame.origin.x).abs() >= 1.0,
             "{direction:?}: W starts from its old slot"
         );
-        let display = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
-        let (_, n_end) = n.travel(flight.from_offset, CGPoint::new(0.0, 0.0));
-        let (_, w_end) = w.travel(flight.from_offset, CGPoint::new(0.0, 0.0));
+        let display =
+            ScreenRect::from_cg(CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)));
+        let (_, n_end) = n.travel(flight.from_offset, SurfacePoint::origin());
+        let (_, w_end) = w.travel(flight.from_offset, SurfacePoint::origin());
         assert!(
             n_end.origin.x >= w_end.origin.x && n_end.max().x <= w_end.max().x,
             "{direction:?}: drawn ending beneath W, {n_end:?} under {w_end:?}"
@@ -1976,7 +2094,11 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{direction:?}: its real window goes to the layout's frame, off screen: {real:?}"
         );
 
-        let nudge = flight.nudge.expect("a full-width move steps");
+        let Some(crate::animation::domain::motion::accents::Accent::Step { offset: nudge, seconds }) =
+            flight.accent
+        else {
+            panic!("{direction:?}: a full-width move steps");
+        };
         assert!(
             (nudge.x - sign * 1728.0 / 3.0).abs() < 1e-9,
             "{direction:?}: {nudge:?}"
@@ -1988,6 +2110,7 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{:?}",
             flight.duration
         );
+        assert!((seconds - plain).abs() < 1e-6, "the step runs over its press's length: {seconds}");
     }
 }
 
@@ -2001,7 +2124,7 @@ fn a_narrower_move_never_steps() {
         let flights = strip_movements(&mut rx);
         assert_eq!(flights.len(), 1, "{ratio}");
         let flight = &flights[0];
-        assert_eq!(flight.nudge, None, "{ratio}");
+        assert_eq!(flight.accent, None, "{ratio}");
         assert_eq!(
             flight.windows.iter().filter(|w| w.from.is_some()).count(),
             2,
@@ -2021,7 +2144,7 @@ fn a_move_the_camera_does_not_follow_is_not_nudged() {
     let flight = &flights[0];
     assert_eq!(flight.from_offset.x, 0.0, "the pair was already in view");
     assert_eq!(flight.windows.iter().filter(|w| w.from.is_some()).count(), 2);
-    assert_eq!(flight.nudge, None);
+    assert_eq!(flight.accent, None);
     assert!(
         (flight.duration.as_secs_f64() - reactor.config.settings.animation_duration).abs() < 1e-6
     );
@@ -2078,21 +2201,23 @@ fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
         flight.from_offset
     );
     assert_eq!(flight.windows.len(), 5);
-    let display = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let display =
+            ScreenRect::from_cg(CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)));
+    let viewport = rini_geometry::to_overlay_space(display, display);
     let mut seen = 0;
     for window in &flight.windows {
-        let (start, _) = window.travel(flight.from_offset, CGPoint::new(0.0, 0.0));
+        let (start, _) = window.travel(flight.from_offset, SurfacePoint::origin());
         let (_, before) = was.iter().find(|(w, _)| *w == window.window).unwrap();
-        if rini_geometry::is_off_screen(display, *before) {
+        if rini_geometry::is_off_screen(display, ScreenRect::from_cg(*before)) {
             assert!(
-                rini_geometry::is_off_screen(display, start),
+                rini_geometry::is_off_screen(viewport, start),
                 "{:?} was parked, and is drawn from off screen, not {start:?}",
                 window.window
             );
         } else {
             seen += 1;
             assert_eq!(
-                start.origin, before.origin,
+                start.origin.to_cg(), before.origin,
                 "{:?} is drawn from where it was",
                 window.window
             );
@@ -2100,7 +2225,7 @@ fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
     }
     assert_eq!(seen, 3, "the three columns in view");
     assert_eq!(
-        flight.nudge, None,
+        flight.accent, None,
         "a third-width column is seen moving and never steps"
     );
 }
@@ -2117,6 +2242,6 @@ fn a_navigation_scroll_pans_with_no_swap_and_no_nudge() {
     for flight in flights {
         assert!(flight.from_offset.x.abs() >= 1.0);
         assert!(flight.windows.iter().all(|w| w.from.is_none()));
-        assert_eq!(flight.nudge, None);
+        assert_eq!(flight.accent, None);
     }
 }

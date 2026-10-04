@@ -1,9 +1,5 @@
-//! Flight plans, easing, z-bands, and the decisions the flight engine makes. Pure geometry.
+//! How things move, as pure geometry over ids and rects: the movement itself (`motion`), and the
+//! looks that compose it into a score and bend it (`choreography`).
 
-pub mod admission;
-pub mod flight;
+pub mod choreography;
 pub mod motion;
-pub mod pass;
-pub mod request;
-pub mod timing;
-pub mod translucency;

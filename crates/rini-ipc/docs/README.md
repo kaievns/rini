@@ -24,6 +24,10 @@ command here. The wire enum can be renamed or reshaped without breaking anyone's
 what has to change with it is the lowering, `src/app/hotkeys/lower.rs`, whose table test
 names every action's command.
 
+**A command's name is the wire's.** `LayoutCommand` and `ReactorCommand` give their variant's name
+as a `&'static str` (strum's `IntoStaticStr`, in serde's snake_case), which the transitions journal
+names a press by. `strum_names_are_the_wire_names` holds every variant's to what serde reads.
+
 **`MachServices` is deliberately not enabled** in the launch agent. Letting launchd own
 the port would need `bootstrap_check_in` instead of `bootstrap_register`, and nothing
 needs it. See [`docs/permissions-and-the-launch-agent.md`](../../../docs/permissions-and-the-launch-agent.md).

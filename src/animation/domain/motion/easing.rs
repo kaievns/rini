@@ -1,6 +1,6 @@
-//! The curve every movement runs on, the one the strip crosses on while a move steps it, and the
-//! shapes of the two out-and-backs: the edge bounce and a move's nudge. Core Animation takes the
-//! same control points, so the clock and the render server agree.
+//! The curve every movement runs on, the one the strip crosses on while a move steps it, where the
+//! edge bounce turns, and the shape of a move's nudge. Core Animation takes the same control
+//! points, so a `Leg`, the score and the render server agree.
 
 /// The curve every movement runs on but a stepping move's (`EASE_IN_OUT`), as CSS-style cubic
 /// Bezier control points `(x1, y1, x2, y2)`.
@@ -19,7 +19,7 @@ pub const MOTION_CURVE: CubicBezier = CubicBezier {
 
 /// CSS `ease-in-out`: at rest at both ends, fastest at half time. The strip crosses on it while a
 /// move steps it, so the column the move passed is still in the side the step opens
-/// (`strip_move::flight_curve`).
+/// (`nudge::flight_curve`).
 pub const EASE_IN_OUT: CubicBezier = CubicBezier {
     x1: 0.42,
     y1: 0.0,
@@ -28,8 +28,8 @@ pub const EASE_IN_OUT: CubicBezier = CubicBezier {
 };
 
 /// A CSS-style cubic Bezier timing curve from `(0,0)` to `(1,1)`, evaluated as progress in terms
-/// of time. Core Animation takes the same four numbers (`CAMediaTimingFunction`), so what the
-/// actor's clock computes and what the render server draws are one curve.
+/// of time. Core Animation takes the same four numbers (`CAMediaTimingFunction`), so what a `Leg` and
+/// the score compute and what the render server draws are one curve.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CubicBezier {
     pub x1: f64,
@@ -116,34 +116,9 @@ impl CubicBezier {
     }
 }
 
-/// Progress at time `t` on the motion curve: what the actor's clock uses for the apply point and
-/// what the AX engine interpolates with, so both engines and the render server agree.
-pub fn ease(t: f64) -> f64 {
-    MOTION_CURVE.ease(t)
-}
-
-/// Where the return leg of a bounce begins, as a fraction of its duration. Out fast, back at
-/// leisure: a rubber band snaps taut and eases home.
+/// Where the way home of a bounce from rest begins, as a fraction of its duration. Out fast, back
+/// at leisure: a rubber band snaps taut and eases home. The shape is `bounce::Bounce`.
 pub const BOUNCE_TURN: f64 = 0.35;
-
-/// The displacement of a bounce at progress `t`, for a unit overshoot: out along an ease-out to
-/// the turn, back along an ease-in-out to rest. What `bounce_animation` asks Core Animation to
-/// draw, kept here so the shape can be checked on plain numbers.
-pub fn bounce_displacement(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    if t <= BOUNCE_TURN {
-        ease(t / BOUNCE_TURN)
-    } else {
-        let u = (t - BOUNCE_TURN) / (1.0 - BOUNCE_TURN);
-        // ease-in-out cubic, from 1 down to 0
-        let s = if u < 0.5 {
-            4.0 * u * u * u
-        } else {
-            1.0 - (-2.0 * u + 2.0).powi(3) / 2.0
-        };
-        1.0 - s
-    }
-}
 
 /// The displacement of a move's nudge at progress `t`, for a unit offset: `sin²(πt)`, at
 /// rest and motionless at both ends and furthest out at half time. Why not the bounce's shape is in
@@ -178,15 +153,15 @@ mod tests {
     fn the_slope_is_the_rate_of_progress() {
         for t in [0.05, 0.2, 0.4, 0.7] {
             let h = 1e-6;
-            let numeric = (ease(t + h) - ease(t - h)) / (2.0 * h);
+            let numeric = (MOTION_CURVE.ease(t + h) - MOTION_CURVE.ease(t - h)) / (2.0 * h);
             assert!((MOTION_CURVE.slope(t) - numeric).abs() < 1e-3, "t={t}");
         }
     }
 
     #[test]
     fn easing_is_pinned_at_both_ends() {
-        assert_eq!(ease(0.0), 0.0);
-        assert_eq!(ease(1.0), 1.0);
+        assert_eq!(MOTION_CURVE.ease(0.0), 0.0);
+        assert_eq!(MOTION_CURVE.ease(1.0), 1.0);
     }
 
     /// Why this curve: the motion is nearly done by half time, so the flight reads as finished
@@ -194,10 +169,10 @@ mod tests {
     /// crawled through the last 12.5% for the whole second half, which read as sluggish at 350ms.
     #[test]
     fn the_motion_is_nearly_home_by_half_time() {
-        assert!(ease(0.5) > 0.95, "{}", ease(0.5));
-        assert!(ease(0.25) > 0.8, "{}", ease(0.25));
-        assert!(ease(0.7) > 0.99, "{}", ease(0.7));
-        assert!(ease(0.1) < 0.6, "not a cut: {}", ease(0.1));
+        assert!(MOTION_CURVE.ease(0.5) > 0.95, "{}", MOTION_CURVE.ease(0.5));
+        assert!(MOTION_CURVE.ease(0.25) > 0.8, "{}", MOTION_CURVE.ease(0.25));
+        assert!(MOTION_CURVE.ease(0.7) > 0.99, "{}", MOTION_CURVE.ease(0.7));
+        assert!(MOTION_CURVE.ease(0.1) < 0.6, "not a cut: {}", MOTION_CURVE.ease(0.1));
     }
 
     #[test]
@@ -205,7 +180,7 @@ mod tests {
         // A non-monotonic easing curve makes windows visibly step backwards mid-slide.
         let mut previous = -1.0;
         for i in 0..=100 {
-            let value = ease(i as f64 / 100.0);
+            let value = MOTION_CURVE.ease(i as f64 / 100.0);
             assert!(value >= previous, "easing went backwards at t = {}", i);
             previous = value;
         }
@@ -215,30 +190,8 @@ mod tests {
     fn easing_clamps_out_of_range_input() {
         // A time-based driver can hand over t slightly outside 0..1 when a frame is late, and an
         // unclamped cubic would overshoot the target position.
-        assert_eq!(ease(-0.5), 0.0);
-        assert_eq!(ease(1.5), 1.0);
-    }
-
-    /// A bounce leaves rest, peaks at the turn, and is back at rest at the end, with no
-    /// second hump: out is monotone up to the turn, back is monotone down after it. The turn is
-    /// early, so the snap out is quicker than the settle home.
-    #[test]
-    fn a_bounce_goes_out_once_and_comes_home() {
-        assert_eq!(bounce_displacement(0.0), 0.0);
-        assert!((bounce_displacement(BOUNCE_TURN) - 1.0).abs() < 1e-12);
-        assert!(bounce_displacement(1.0).abs() < 1e-12);
-        let mut previous = 0.0;
-        for i in 1..=1000 {
-            let t = i as f64 / 1000.0;
-            let d = bounce_displacement(t);
-            if t <= BOUNCE_TURN {
-                assert!(d >= previous, "still going out at t={t}");
-            } else {
-                assert!(d <= previous + 1e-12, "coming back at t={t}");
-            }
-            previous = d;
-        }
-        assert!(BOUNCE_TURN < 0.5, "out fast, home at leisure");
+        assert_eq!(MOTION_CURVE.ease(-0.5), 0.0);
+        assert_eq!(MOTION_CURVE.ease(1.5), 1.0);
     }
 
     /// The nudge leaves rest at no speed, is furthest out at half time and back at rest with no speed

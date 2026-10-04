@@ -341,3 +341,54 @@ pub fn set_space_membership(entries: &[(SpaceId, &[u32])]) {
         );
     }
 }
+
+/// One strip movement the reactor sent.
+pub struct SurfaceFlight {
+    pub windows: Vec<crate::transitions::domain::request::SurfaceWindow>,
+    pub from_offset: SurfacePoint,
+    pub to_offset: SurfacePoint,
+    pub final_frames: Vec<(WindowId, ScreenRect)>,
+    pub focus: Option<WindowId>,
+    pub focused_before: Option<WindowId>,
+    pub key: Option<WindowId>,
+    pub cue: crate::animation::domain::choreography::Cue,
+    pub accent: Option<crate::animation::domain::motion::accents::Accent>,
+    pub duration: std::time::Duration,
+}
+
+/// Every strip movement the reactor sent since the last look.
+pub fn strip_movements(
+    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
+) -> Vec<SurfaceFlight> {
+    let mut out = Vec::new();
+    while let Ok((_, event)) = rx.try_recv() {
+        if let crate::transitions::platform::engine::Event::AnimateSurface {
+            windows,
+            from_offset,
+            to_offset,
+            final_frames,
+            focus,
+            focused_before,
+            key,
+            cue,
+            accent,
+            duration,
+            ..
+        } = event
+        {
+            out.push(SurfaceFlight {
+                windows,
+                from_offset,
+                to_offset,
+                final_frames,
+                focus,
+                focused_before,
+                key,
+                cue,
+                accent,
+                duration,
+            });
+        }
+    }
+    out
+}

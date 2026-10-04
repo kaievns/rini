@@ -1460,6 +1460,7 @@ fn arranging_one_setup_does_not_disturb_another() {
         space: Some(space),
         display_uuid: uuid.to_owned(),
         name: None,
+        scale: 2.0,
     };
     let builtin = |space| screen("builtin", 0, builtin_frame, space);
     let studio = |space| screen("studio", 1, external_frame, space);
@@ -1558,6 +1559,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
             display_uuid: uuid.to_owned(),
             name: None,
             is_builtin,
+            scale: 2.0,
         };
     let builtin = |space| screen("builtin", 0, builtin_frame, space, true);
     let studio = |space| screen("studio", 1, external_frame, space, false);
@@ -1628,6 +1630,7 @@ fn a_display_never_seen_before_takes_no_windows() {
         space: Some(space),
         display_uuid: uuid.to_owned(),
         name: None,
+        scale: 2.0,
     };
     let builtin = |space| screen("builtin", 0, builtin_frame, space);
     let studio = |space| screen("studio", 1, external_frame, space);
@@ -2235,11 +2238,11 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
     });
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     reactor.publish_animation_display_for(Some(built_in_space));
     let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::animation::platform::engine::Event::SetDisplay { id, .. } = published else {
+    let crate::transitions::platform::engine::Event::SetDisplay { id, .. } = published else {
         panic!("expected SetDisplay, got {published:?}");
     };
     assert_eq!(
@@ -2249,7 +2252,7 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
 
     reactor.publish_animation_display();
     let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::animation::platform::engine::Event::SetDisplay { id, .. } = published else {
+    let crate::transitions::platform::engine::Event::SetDisplay { id, .. } = published else {
         panic!("expected SetDisplay, got {published:?}");
     };
     assert_eq!(
@@ -2258,8 +2261,46 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
     );
 }
 
+/// A capture read off a display's framebuffer comes back in that display's pixels, so the overlay and
+/// the pictures service are told the scale of the display the overlay flies on rather than an assumed
+/// Retina one: a 1x external made every framed capture there cover half its window.
+#[test]
+fn the_animation_overlay_takes_the_scale_of_its_display() {
+    let (_apps, mut reactor) = test_context();
+    let mut screens = make_screen_snapshots(
+        vec![
+            CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)),
+            CGRect::new(CGPoint::new(1728., 0.), CGSize::new(1920., 1080.)),
+        ],
+        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
+    );
+    screens[1].scale = 1.0;
+    reactor.handle_event(space_state_event_from_screens(screens));
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
+
+    let mut scale_for = |reactor: &mut Reactor, space: u64| {
+        reactor.publish_animation_display_for(Some(SpaceId::new(space)));
+        let overlay = match animation_rx.try_recv().expect("a display should be published").1 {
+            crate::transitions::platform::engine::Event::SetDisplay { scale, .. } => scale,
+            other => panic!("expected SetDisplay, got {other:?}"),
+        };
+        match pictures_asked(&mut pictures).as_slice() {
+            [crate::pictures::platform::service::Command::SetDisplay { display, .. }] => {
+                assert_eq!(display.scale, overlay, "both told the same scale");
+            }
+            other => panic!("expected the display, got {other:?}"),
+        }
+        overlay
+    };
+    assert_eq!(scale_for(&mut reactor, 1), 2.0);
+    assert_eq!(scale_for(&mut reactor, 2), 1.0);
+}
+
 /// With rini's own bar above the overlay there is no bar under it to picture, so a flight spends
-/// nothing looking for one. Turned off, another bar may sit there and is pictured as before.
+/// nothing looking for one. Turned off, another bar may sit there and is pictured as before. Only the
+/// pictures service is told: it pictures the bar, and the overlay draws what it dresses a flight with.
 #[test]
 fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
     let (_apps, mut reactor) = test_context();
@@ -2267,14 +2308,15 @@ fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
         vec![CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.))],
         vec![Some(SpaceId::new(1))],
     ));
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
 
     let mut picture_bar = |reactor: &mut Reactor| {
         reactor.publish_animation_display();
-        match animation_rx.try_recv().expect("a display should be published").1 {
-            crate::animation::platform::engine::Event::SetDisplay { picture_bar, .. } => picture_bar,
-            other => panic!("expected SetDisplay, got {other:?}"),
+        match pictures_asked(&mut pictures).as_slice() {
+            [crate::pictures::platform::service::Command::SetDisplay { picture_bar, .. }] => {
+                *picture_bar
+            }
+            other => panic!("expected the display, got {other:?}"),
         }
     };
     reactor.config.settings.bar.enabled = true;

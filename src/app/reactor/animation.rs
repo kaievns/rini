@@ -1,12 +1,13 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use tracing::{debug, trace};
 
-use crate::animation::domain::motion::travel::travels_visibly;
-use crate::animation::domain::pass::{self, Move, PassPlan, PassWindow};
-use crate::animation::platform::power;
-use crate::animation::platform::window_snapshot::is_a_resize;
+use crate::transitions::domain::travel::travels_visibly;
+use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
+use crate::app::power;
+use rini_geometry::space::{FromCg, ScreenRect, ScreenSize, ToCg};
+use rini_geometry::stretch::is_a_resize;
 use crate::app::reactor::Reactor;
-use crate::app::reactor::present::Present;
+use crate::app::reactor::present::{Present, instant_requests};
 use crate::windows::domain::request::Request;
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, pid_t};
@@ -14,7 +15,7 @@ use rustc_hash::FxHashMap as HashMap;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places
 /// the real windows when it does not. A namespace; it holds no state. The sorting of a pass is
-/// `crate::animation::domain::pass`; this applies the plan to the stores and the apps.
+/// `crate::transitions::domain::pass`; this applies the plan to the stores and the apps.
 pub struct AnimationManager;
 
 impl AnimationManager {
@@ -55,10 +56,11 @@ impl AnimationManager {
                 Some(PassWindow {
                     window: wid,
                     server_id,
-                    current: window.frame_monotonic,
-                    target,
+                    current: ScreenRect::from_cg(window.frame_monotonic),
+                    target: ScreenRect::from_cg(target),
                     pending: server_id
-                        .and_then(|wsid| reactor.transaction_manager.get_target_frame(wsid)),
+                        .and_then(|wsid| reactor.transaction_manager.get_target_frame(wsid))
+                        .map(ScreenRect::from_cg),
                     in_active_workspace: in_active(wid),
                     floating: engine.is_window_floating(wid),
                     app_alive,
@@ -76,7 +78,7 @@ impl AnimationManager {
         m: &Move,
     ) -> crate::windows::domain::transaction::TransactionId {
         Present::new(&mut reactor.state.windows, &reactor.transaction_manager)
-            .commit(m.window, m.to)
+            .commit(m.window, m.to.to_cg())
     }
 
     pub fn animate_layout(
@@ -96,26 +98,27 @@ impl AnimationManager {
         reactor
             .pictured_windows
             .retain(|window| reactor.state.windows.window(*window).is_some());
-        let first_laid_out: Vec<crate::animation::domain::request::SnapshotTarget> = layout
+        let first_laid_out: Vec<crate::pictures::domain::target::PictureTarget> = layout
             .iter()
             .filter(|(window, _)| !reactor.pictured_windows.contains(window))
             .filter_map(|&(window, frame)| {
-                Some(crate::animation::domain::request::SnapshotTarget {
+                Some(crate::pictures::domain::target::PictureTarget {
                     window,
                     server_id: reactor.state.windows.window(window)?.info.sys_id?,
-                    size: frame.size,
+                    size: ScreenSize::from_cg(frame.size),
                 })
             })
             .collect();
         if !first_laid_out.is_empty()
-            && let Some(tx) = &reactor.communication_manager.workspace_animation_tx
+            && let Some(pictures) = &reactor.communication_manager.pictures
         {
             reactor
                 .pictured_windows
                 .extend(first_laid_out.iter().map(|target| target.window));
-            _ = tx.send(crate::animation::platform::engine::Event::WarmWindows(
-                first_laid_out,
-            ));
+            pictures.ask(crate::pictures::domain::schedule::Ask {
+                priority: crate::pictures::domain::schedule::Priority::Warm,
+                targets: first_laid_out,
+            });
         }
         let plan = pass::plan(Self::gather(reactor, space, layout, skip_wid, true));
         // A strip scroll moves every window by the SAME vector: a viewport pan over the one
@@ -137,10 +140,11 @@ impl AnimationManager {
             };
             if m.in_active_workspace {
                 trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Animating visible window");
-                placements.push((handle, m.window, m.to, txid));
+                placements.push((handle, m.window, m.to.to_cg(), txid));
             } else {
                 trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Direct positioning hidden window");
-                if let Err(e) = handle.send(Request::SetWindowFrame(m.window, m.to, txid, true)) {
+                let request = Request::SetWindowFrame(m.window, m.to.to_cg(), txid, true);
+                if let Err(e) = handle.send(request) {
                     debug!(window = ?m.window, ?e, "Failed to send frame request for hidden window");
                 }
             }
@@ -190,7 +194,7 @@ impl AnimationManager {
             .any(|request| is_a_resize(request.from.size, request.to.size));
         let use_overlay = !skip_anim
             && !overlay_requests.is_empty()
-            && reactor.communication_manager.workspace_animation_tx.is_some();
+            && reactor.communication_manager.transitions_tx.is_some();
 
         // A pass that resizes a window is neither a pan nor a move: the strip surface draws final
         // sizes, which would snap the resize. A move along the strip is a strip movement whether or
@@ -212,15 +216,19 @@ impl AnimationManager {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {
             reactor.publish_animation_display_for(Some(space));
-            if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
+            if let Some(tx) = &reactor.communication_manager.transitions_tx {
                 let duration = std::time::Duration::from_secs_f64(
                     reactor.config.settings.animation_duration.max(0.0),
                 );
                 let count = overlay_requests.len();
-                _ = tx.send(crate::animation::platform::engine::Event::Animate {
+                _ = tx.send(crate::transitions::platform::engine::Event::Animate {
                     windows: overlay_requests,
                     focus: reactor.layout_manager.layout_engine.focused_window(),
+                    focused_before: reactor.focused_as_event_began,
+                    key: reactor.main_window_tracker.key_window(),
                     duration,
+                    look: crate::animation::domain::choreography::Look::default(),
+                    cause: reactor.cause,
                 });
                 trace!(count, "handed the layout to the overlay animation engine");
             }
@@ -228,9 +236,12 @@ impl AnimationManager {
 
         // Warm whether or not this pass animated.
         if !warm.is_empty()
-            && let Some(tx) = &reactor.communication_manager.workspace_animation_tx
+            && let Some(pictures) = &reactor.communication_manager.pictures
         {
-            _ = tx.send(crate::animation::platform::engine::Event::WarmWindows(warm));
+            pictures.ask(crate::pictures::domain::schedule::Ask {
+                priority: crate::pictures::domain::schedule::Priority::Warm,
+                targets: warm,
+            });
         }
 
         if !use_overlay {
@@ -258,18 +269,20 @@ impl AnimationManager {
     ///
     /// Workspaces are stacked vertically, so a switch reads as travelling up or down the stack,
     /// as ONE strip movement across every workspace between the two: a jump from 1 to 4 scrolls
-    /// past 2 and 3. Falls back to the position-only instant path when there is no recorded
-    /// direction or animation is off. Kept apart from `instant_layout`: layouts merely
-    /// suppressed during a switch may still change sizes and must use the full-frame request.
+    /// past 2 and 3. `movement` is the pass's, from `Reactor::take_workspace_movement`. Falls back
+    /// to the position-only instant path when there is none or animation is off. Kept apart from
+    /// `instant_layout`: layouts merely suppressed during a switch may still change sizes and must
+    /// use the full-frame request.
     pub fn workspace_switch_layout(
         reactor: &mut Reactor,
         space: SpaceId,
+        movement: Option<(usize, usize)>,
         layout: &[(WindowId, CGRect)],
         skip_wid: Option<WindowId>,
     ) -> bool {
         let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
         if animate
-            && let Some((from_index, to_index)) = reactor.workspace_switch_indices(space)
+            && let Some((from_index, to_index)) = movement
             && reactor.start_strip_switch(space, from_index, to_index, layout, skip_wid)
         {
             // The strip movement owns this movement, including placing the real windows once it covers them.
@@ -301,7 +314,7 @@ impl AnimationManager {
             per_app
                 .entry(m.window.pid)
                 .or_default()
-                .push((m.window, m.to, m.size_unchanged()));
+                .push((m.window, m.to.to_cg(), m.size_unchanged()));
         }
 
         for (pid, frames) in per_app {
@@ -313,7 +326,7 @@ impl AnimationManager {
                 frames.iter().map(|&(wid, to, _)| (wid, to)).collect();
             let txid = Present::new(&mut reactor.state.windows, &reactor.transaction_manager)
                 .commit_app_batch(&destinations);
-            for request in pass::instant_requests(frames, txid, position_only) {
+            for request in instant_requests(frames, txid, position_only) {
                 if let Err(e) = handle.send(request) {
                     debug!(
                         ?pid,

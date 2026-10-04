@@ -2,7 +2,7 @@
 name = "rini-geometry"
 version = "0.1.0"
 edition = "2024"
-description = "Rect arithmetic over CoreGraphics geometry for rini: rounding, tolerance comparison, containment, serde adapters."
+description = "Rect arithmetic and coordinate spaces for rini: typed rects, points, sizes and displacements that name their space, their crossings to and from CoreGraphics, rounding, tolerance comparison, containment, serde adapters."
 license = "Apache-2.0"
 publish = false
 
@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+euclid = { workspace = true }
 objc2-core-foundation = { workspace = true, features = ["CFCGTypes"] }
 serde = { workspace = true, features = ["derive"] }
 serde_with = { workspace = true }

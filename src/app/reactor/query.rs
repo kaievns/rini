@@ -1006,6 +1006,7 @@ mod tests {
                     display_uuid: format!("uuid-{space}"),
                     name: None,
                     space: Some(SpaceId::new(space)),
+                    scale: 2.0,
                 })
                 .collect(),
             ..Default::default()

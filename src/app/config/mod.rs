@@ -43,7 +43,7 @@ pub struct Config {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct Settings {
     /// Layout changes, strip movements and workspace switches are drawn through the overlay
-    /// (`src/animation/docs/animation-smoothness.md`); off places windows at once.
+    /// (`src/transitions/docs/coordination.md`); off places windows at once.
     pub animate: bool,
     /// Seconds, `BASE_ANIMATION_SECONDS` times `animations › slowdown`.
     pub animation_duration: f64,
@@ -65,6 +65,9 @@ pub struct Settings {
     pub gestures: GestureSettings,
     pub switcher: crate::switcher::settings::SwitcherSettings,
     pub bar: crate::bar::settings::BarSettings,
+    /// `animations › journal`: whether every transition's journal is written, and each lift's handover
+    /// measured, which holds a lift's hide for the overlay's own picture.
+    pub journal: crate::transitions::settings::JournalSettings,
     pub window_snapping: WindowSnappingSettings,
     pub run_on_start: Vec<StartupCommand>,
     /// Mark every bar while the config file cannot be used, until it can.
@@ -92,6 +95,7 @@ impl Default for Settings {
             gestures: GestureSettings::default(),
             switcher: Default::default(),
             bar: Default::default(),
+            journal: Default::default(),
             window_snapping: WindowSnappingSettings::default(),
             run_on_start: Vec::new(),
             mark_failed_config: true,

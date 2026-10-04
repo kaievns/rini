@@ -62,8 +62,9 @@ use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
 use crate::switcher::domain::entries::{Entry, entries};
 use crate::switcher::domain::selection::Selection;
+use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
-use crate::windows::domain::raise_order;
+use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
 use crate::windows::domain::rules::AppRuleDecision;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::workspaces::domain::display_affinity::SetupChange;
@@ -75,6 +76,7 @@ use events::{
 };
 use managers::LayoutManager;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_geometry::space::{FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, ToCg};
 pub use replay::{Record, replay};
 use rini_ipc::protocol::SwitchScope;
 use serde::{Deserialize, Serialize};
@@ -173,11 +175,12 @@ impl std::ops::Deref for ReactorHandle {
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum Event {
     /// Place these windows at these frames now, with no animation.
     ///
-    /// Sent by the overlay animation actor once its animation is far enough along that the real
+    /// Sent by the flight engine once its flight is far enough along that the real
     /// windows are safely hidden behind it. Applying them any earlier let the windows visibly jump
     /// into place BEFORE the overlay appeared, so a switch read as a flicker followed by a slide.
     #[serde(skip)]
@@ -437,6 +440,16 @@ impl Event {
         Box::new(move |press| events.send(Event::LeftMouseDown(press)))
     }
 
+    /// What the event was, as a flight's journal names its press: the variant, and for a layout or
+    /// reactor command the command, as the IPC names it.
+    fn what(&self) -> &'static str {
+        match self {
+            Event::Command(Command::Layout(command)) => command.into(),
+            Event::Command(Command::Reactor(command)) => command.into(),
+            event => event.into(),
+        }
+    }
+
     /// The focus edge this event carries, if any. See [`FocusEvent`].
     fn focus_event(&self) -> Option<FocusEvent> {
         Some(match self {
@@ -511,6 +524,14 @@ pub struct Reactor {
     live_spaces: space_affinity::LiveSpaces,
     /// Windows a layout pass has asked a picture of. See `animate_layout`.
     pictured_windows: HashSet<WindowId>,
+    /// The layout's focus as the event being handled began: the window still drawn focused on screen
+    /// when a pass the event asks for flies, which the flight engine draws focused until focus hands
+    /// over. A focus report reaches the reactor before the pass it causes.
+    focused_as_event_began: Option<WindowId>,
+    /// The event being handled, and when the reactor took it: the press every flight it asks for
+    /// carries, where that flight's journal starts. Every request goes to the flight engine while an
+    /// event is handled.
+    cause: Cause,
     /// The strip windows the current event's regroup already raised, so the post-layout judgment does
     /// not raise them a second time. See `regroup_after_layout`.
     regroup_raised: Vec<WindowId>,
@@ -518,9 +539,8 @@ pub struct Reactor {
     workspace_switch_manager: managers::WorkspaceSwitchManager,
     recording_manager: managers::RecordingManager,
     communication_manager: managers::CommunicationManager,
-    /// Last active workspace index per space, so a switch can be recognised without intercepting the
-    /// command that caused it.
-    last_active_workspace: HashMap<SpaceId, usize>,
+    /// The workspace each space's last layout pass drew, where its next switch slides from.
+    drawn_workspace: HashMap<SpaceId, crate::workspaces::VirtualWorkspaceId>,
     notification_manager: managers::NotificationManager,
     transaction_manager: TransactionManager,
     menu_manager: managers::MenuManager,
@@ -555,7 +575,8 @@ impl Reactor {
         event_tap_tx: event_tap::Sender,
         broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
-        workspace_animation_tx: Option<crate::animation::platform::engine::Sender>,
+        transitions_tx: Option<crate::transitions::platform::engine::Sender>,
+        pictures: Option<crate::pictures::platform::service::Pictures>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
@@ -575,7 +596,8 @@ impl Reactor {
         );
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
-        reactor.communication_manager.workspace_animation_tx = workspace_animation_tx;
+        reactor.connect_transitions(transitions_tx);
+        reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
@@ -628,6 +650,8 @@ impl Reactor {
             raise_echo: crate::windows::domain::focus::RaiseEcho::default(),
             live_spaces: space_affinity::LiveSpaces::default(),
             pictured_windows: HashSet::default(),
+            focused_as_event_began: None,
+            cause: Cause { at: std::time::Instant::now(), what: "start" },
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
@@ -645,12 +669,13 @@ impl Reactor {
                 pending_workspace_mouse_warp: None,
             },
             recording_manager: managers::RecordingManager { record },
-            last_active_workspace: HashMap::default(),
+            drawn_workspace: HashMap::default(),
             communication_manager: managers::CommunicationManager {
                 event_tap_tx: None,
                 gesture_tap_tx: None,
                 cursor_warp_tx: None,
-                workspace_animation_tx: None,
+                transitions_tx: None,
+                pictures: None,
                 raise_manager_tx,
                 event_broadcaster: broadcast_tx,
                 wm_sender: None,
@@ -1255,7 +1280,11 @@ impl Reactor {
 
     #[instrument(name = "reactor::handle_event", skip(self), fields(event=?event))]
     fn handle_event(&mut self, event: Event) {
+        let cause = Cause { at: std::time::Instant::now(), what: event.what() };
+        let outer_cause = std::mem::replace(&mut self.cause, cause);
         let previously_focused_window = self.main_window();
+        let began = self.layout_manager.layout_engine.focused_window();
+        let outer = std::mem::replace(&mut self.focused_as_event_began, began);
         match self.dispatch_workflow(event) {
             Ok(mut outcome) => {
                 let focused_window = self.main_window();
@@ -1268,6 +1297,8 @@ impl Reactor {
             }
             Err(error) => warn!(%error, "reactor workflow failed"),
         }
+        self.focused_as_event_began = outer;
+        self.cause = outer_cause;
     }
 
     /// A focus report naming a window rini knows and does not manage is a panel's; see
@@ -1287,6 +1318,28 @@ impl Reactor {
         }
     }
 
+    /// Tells the flight engine whose look the key window turned if it changed, rini's own raise
+    /// included, each managed window at its frame: at rest the engine pictures both afresh, and in
+    /// flight whatever the flight does not picture. See "Focus changing during a flight" in
+    /// `src/transitions/docs/coordination.md`.
+    fn tell_looks_turned(&self, key_before: Option<WindowId>) {
+        let turned = crate::windows::domain::focus::looks_turned(
+            key_before,
+            self.main_window_tracker.key_window(),
+        );
+        let windows: Vec<(WindowId, ScreenRect)> = turned
+            .into_iter()
+            .filter_map(|window| {
+                let state = self.state.windows.window(window)?;
+                let frame = ScreenRect::from_cg(state.frame_monotonic);
+                state.is_effectively_manageable().then_some((window, frame))
+            })
+            .collect();
+        if let (false, Some(tx)) = (windows.is_empty(), &self.communication_manager.transitions_tx) {
+            _ = tx.send(crate::transitions::platform::engine::Event::LooksTurned(windows));
+        }
+    }
+
     fn dispatch_workflow(&mut self, event: Event) -> anyhow::Result<EventOutcome> {
         self.live_spaces.clear();
         self.log_event(&event);
@@ -1303,10 +1356,12 @@ impl Reactor {
                 if self.main_window_tracker.is_globally_frontmost(*pid)
         );
 
+        let key_before = self.main_window_tracker.key_window();
         let raised_window = event
             .focus_event()
             .map(|focus| self.recognise_panel(focus))
             .and_then(|focus| self.main_window_tracker.handle_event(focus));
+        self.tell_looks_turned(key_before);
         match event {
             Event::ApplicationLaunched {
                 pid,
@@ -1611,8 +1666,8 @@ impl Reactor {
         let focus_landed = outcome.focus_landed();
         // Ahead of the layout events, as on the AX path: the closed window's picture goes first.
         for window in outcome.forgotten_windows {
-            if let Some(tx) = &self.communication_manager.workspace_animation_tx {
-                _ = tx.send(crate::animation::platform::engine::Event::ForgetWindow(window));
+            if let Some(pictures) = &self.communication_manager.pictures {
+                pictures.forget(window);
             }
         }
         if !outcome.window_server_updates.is_empty() {
@@ -1820,6 +1875,7 @@ impl Reactor {
             // warp_cursor_between_stacked_displays applies without a restart.
             self.publish_cursor_warp_screens();
             self.publish_animation_display();
+            self.publish_journal();
         }
         for line in outcome.stdout_lines {
             println!("{line}");
@@ -3054,38 +3110,32 @@ impl Reactor {
         let Some(screen) = screen else {
             return;
         };
-        // The windows drawn, not every window the entries stand for: a stack draws three at most.
-        let windows: Vec<WindowId> = rows
-            .iter()
-            .flat_map(|row| std::iter::once(row.window).chain(row.behind.iter().copied()))
-            .collect();
+        let windows = crate::switcher::platform::panel::drawn_windows(&rows);
         tx.send(crate::switcher::platform::actor::Event::Show {
             rows,
             selected: switch.cursor.index(),
             screen,
         });
 
-        // Ask for whatever pictures are already held. A READ, so it costs a hash lookup per window —
-        // capturing here would cost 40ms plus 14.5ms a window and the popup has to appear now.
-        if let Some(anim) = self.communication_manager.workspace_animation_tx.as_ref() {
-            anim.send(crate::animation::platform::engine::Event::LendSnapshots(
-                windows.clone(),
-            ));
-            // And queue captures for the rest, so the NEXT open has them. Background work; nothing is
-            // drawn and no window is touched.
-            let targets: Vec<crate::animation::domain::request::SnapshotTarget> = windows
+        // Queue captures of the cards drawn, so the NEXT open has them, and this one gets those that
+        // land while it is up. Background work; nothing is drawn and no window is touched.
+        if let Some(pictures) = self.communication_manager.pictures.as_ref() {
+            let targets: Vec<crate::pictures::domain::target::PictureTarget> = windows
                 .iter()
                 .filter_map(|window| {
                     let state = self.state.windows.window(*window)?;
-                    Some(crate::animation::domain::request::SnapshotTarget {
+                    Some(crate::pictures::domain::target::PictureTarget {
                         window: *window,
                         server_id: state.info.sys_id?,
-                        size: state.frame_monotonic.size,
+                        size: ScreenSize::from_cg(state.frame_monotonic.size),
                     })
                 })
                 .collect();
             if !targets.is_empty() {
-                anim.send(crate::animation::platform::engine::Event::WarmWindows(targets));
+                pictures.ask(crate::pictures::domain::schedule::Ask {
+                    priority: crate::pictures::domain::schedule::Priority::Warm,
+                    targets,
+                });
             }
         }
     }
@@ -3570,19 +3620,20 @@ impl Reactor {
             .iter()
             .filter_map(|(wid, _)| self.state.windows.window(*wid)?.info.sys_id)
             .collect();
-        let real: HashMap<WindowServerId, CGRect> = window_server::get_windows(&server_ids)
+        let real: HashMap<WindowServerId, ScreenRect> = window_server::get_windows(&server_ids)
             .into_iter()
-            .map(|info| (info.id, info.frame))
+            .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
-        let (writes, skipped) = crate::animation::domain::motion::frame_writes::writes_to_send(
-            frames,
-            display,
+        let (writes, skipped) = crate::transitions::domain::frame_writes::writes_to_send(
+            frames.into_iter().map(|(wid, frame)| (wid, ScreenRect::from_cg(frame))).collect(),
+            ScreenRect::from_cg(display),
             |wid| {
                 let wsid = self.state.windows.window(wid)?.info.sys_id?;
                 real.get(&wsid).copied()
             },
         );
         for (wid, frame) in writes {
+            let frame = frame.to_cg();
             let Some(window) = self.state.windows.window_mut(wid) else {
                 continue;
             };
@@ -3613,10 +3664,10 @@ impl Reactor {
     ///
     /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
     /// it holds unless something better arrives, so this settles rather than re-capturing. During a
-    /// flight the animation actor holds the targets until lift ("Capture work in flight" in
-    /// `src/animation/docs/animation-smoothness.md`), so calling this from the switch handler is safe.
+    /// flight the pictures service holds the targets until it settles ("Capture work in flight" in
+    /// `src/transitions/docs/coordination.md`), so calling this from the switch handler is safe.
     fn warm_all_workspaces(&mut self, space: SpaceId) {
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(pictures) = self.communication_manager.pictures.clone() else {
             return;
         };
         let Some(screen) = self
@@ -3641,7 +3692,7 @@ impl Reactor {
             .gaps
             .effective_for_display(screen.display_uuid_opt());
 
-        let mut targets: Vec<crate::animation::domain::request::SnapshotTarget> = Vec::new();
+        let mut targets: Vec<crate::pictures::domain::target::PictureTarget> = Vec::new();
         for (workspace_id, _) in &workspaces {
             let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
                 &self.state.windows,
@@ -3655,39 +3706,39 @@ impl Reactor {
                     continue;
                 };
                 let Some(server_id) = window.info.sys_id else { continue };
-                targets.push(crate::animation::domain::request::SnapshotTarget {
+                targets.push(crate::pictures::domain::target::PictureTarget {
                     window: wid,
                     server_id,
-                    size: frame.size,
+                    size: ScreenSize::from_cg(frame.size),
                 });
             }
         }
         if targets.is_empty() {
             return;
         }
-        _ = tx.send(crate::animation::platform::engine::Event::WarmWindows(targets));
+        pictures.ask(crate::pictures::domain::schedule::Ask {
+            priority: crate::pictures::domain::schedule::Priority::Warm,
+            targets,
+        });
     }
 
-    /// Which workspace indices this switch is moving between.
+    /// The workspace indices this pass moves the space between, from the one the last pass drew to the
+    /// active one, which is drawn from now on. `None` when it stays on one workspace or has none drawn.
     ///
-    /// Called only from the workspace-switch layout path, so the currently active workspace is already
-    /// the DESTINATION and the previously recorded one is the origin. Recording it here rather than
-    /// intercepting the command means any route into a switch is covered.
-    fn workspace_switch_indices(&mut self, space: SpaceId) -> Option<(usize, usize)> {
+    /// Every pass takes it, not only a switch's: a space has to have an origin before its first switch.
+    fn take_workspace_movement(&mut self, space: SpaceId) -> Option<(usize, usize)> {
         let active = self.layout_manager.layout_engine.active_workspace(space)?;
+        let drawn = self.drawn_workspace.insert(space, active)?;
+        if drawn == active {
+            return None;
+        }
         let workspaces = self
             .layout_manager
             .layout_engine
             .virtual_workspace_manager_mut()
             .list_workspaces(space);
-        let to_index = workspaces.iter().position(|(id, _)| *id == active)?;
-        let previous = self.last_active_workspace.insert(space, to_index);
-        match previous {
-            Some(from_index) if from_index != to_index => Some((from_index, to_index)),
-            // Nothing to move between, but the destination is now recorded so the next switch has an
-            // origin to compare against.
-            _ => None,
-        }
+        let index = |workspace| workspaces.iter().position(|(id, _)| *id == workspace);
+        Some((index(drawn)?, index(active)?))
     }
 
     /// Animates a strip scroll as one horizontal viewport pan, the horizontal twin of a workspace
@@ -3696,11 +3747,12 @@ impl Reactor {
     ///
     /// `delta` is how far the strip moved, zero when it did not. The strip surface holds the whole
     /// active workspace at its final positions, and the viewport starts shifted back by `delta` so
-    /// the strip appears to arrive from where it was, then settles. A `moved` window's column and the
-    /// column it passed start from the slots they held before the move, so the two are seen changing
-    /// places. A moved column that fills the viewport steps the whole strip instead, the column it
-    /// passed held on the strip beneath it (`strip_move::stage_move`). See "The move flight" in
-    /// `src/animation/docs/animation-smoothness.md`.
+    /// the strip appears to arrive from where it was, then settles. A `moved` window is the press's
+    /// cue, and the look stages it (`strip_move::stage_move`): Slide starts the moved column and the
+    /// column it passed from the slots they held before the move, so the two are seen changing
+    /// places, unless the moved column fills the viewport, when the whole strip steps and the column
+    /// it passed is held on the strip beneath it. See "The move flight, staged" in
+    /// `src/transitions/docs/coordination.md`.
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
     /// placed once the surface covers them. A window that did not move is not re-placed, as on the
@@ -3713,7 +3765,7 @@ impl Reactor {
         delta: CGPoint,
         moved: Option<(WindowId, Direction)>,
     ) -> bool {
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return false;
         };
         let Some(screen) = self
@@ -3761,45 +3813,61 @@ impl Reactor {
         //
         // Using -delta started the pan on the wrong side and moved it the wrong way. Chaining then
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
-        let from_offset = CGPoint::new(delta.x, delta.y);
-        let to_offset = CGPoint::new(0.0, 0.0);
-        let nudge = moved.and_then(|(window, direction)| {
-            crate::animation::domain::motion::strip_move::stage_move(
-                &mut windows,
-                window,
-                direction,
-                screen.frame.size.width,
-                gaps.outer.left,
-                gaps.outer.right,
-            )
-        });
-        // The plain duration: the engine stretches the flight only when it does nudge.
+        let from_offset = SurfacePoint::new(delta.x, delta.y);
+        let to_offset = SurfacePoint::origin();
+        use crate::animation::domain::choreography::{Area, Cue, Look};
+        let look = Look::default();
+        let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
+        let area = Area {
+            frame: rini_geometry::to_overlay_space(
+                ScreenRect::from_cg(screen.frame),
+                ScreenRect::from_cg(display_bounds),
+            ),
+            outer_left: gaps.outer.left,
+            outer_right: gaps.outer.right,
+        };
+        // The plain duration: the look stretches the flight only when it takes the step.
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
+        let accent = crate::transitions::domain::strip_move::stage_move(
+            &mut windows,
+            &cue,
+            area,
+            crate::animation::domain::motion::surface::pan_travel(from_offset, to_offset),
+            duration.as_secs_f64(),
+            look,
+        );
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::animation::platform::engine::Event::AnimateSurface {
+        _ = tx.send(crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
-            final_frames,
+            final_frames: final_frames
+                .into_iter()
+                .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+                .collect(),
             focus: self.layout_manager.layout_engine.focused_window(),
+            focused_before: self.focused_as_event_began,
+            key: self.main_window_tracker.key_window(),
             duration,
-            nudge,
+            look,
+            cue,
+            accent,
+            cause: self.cause,
         });
         true
     }
 
     /// The strip surface for one workspace's layout: every window with a server id, at its layout
-    /// frame expressed relative to the display's own origin (the overlay's space). `pin_floating`
-    /// holds floating windows still while the strip moves under them (a pan); a vertical movement
-    /// carries them with their workspace.
+    /// frame on the surface's first row. `pin_floating` holds floating windows still while the strip
+    /// moves under them (a pan); a vertical movement carries them with their workspace.
     fn strip_windows_at(
         &self,
         layout: &[(WindowId, CGRect)],
         display_bounds: CGRect,
         pin_floating: bool,
-    ) -> Vec<crate::animation::platform::engine::SurfaceWindow> {
+    ) -> Vec<crate::transitions::domain::request::SurfaceWindow> {
         let mut windows = Vec::with_capacity(layout.len());
         for (wid, frame) in layout {
             let Some(window) = self.state.windows.window(*wid) else {
@@ -3807,15 +3875,14 @@ impl Reactor {
             };
             let Some(server_id) = window.info.sys_id else { continue };
             let floating = self.layout_manager.layout_engine.is_window_floating(*wid);
-            windows.push(crate::animation::platform::engine::SurfaceWindow {
+            windows.push(crate::transitions::domain::request::SurfaceWindow {
                 window: *wid,
                 server_id,
-                frame: CGRect::new(
-                    CGPoint::new(
-                        frame.origin.x - display_bounds.origin.x,
-                        frame.origin.y - display_bounds.origin.y,
-                    ),
-                    frame.size,
+                frame: crate::transitions::domain::strip_stack::strip_frame(
+                    ScreenRect::from_cg(*frame),
+                    ScreenPoint::from_cg(display_bounds.origin),
+                    0,
+                    0.0,
                 ),
                 pinned: pin_floating && floating,
                 floating,
@@ -3828,14 +3895,14 @@ impl Reactor {
     /// Bounces the view against the end a command ran into: the strip's first or last column
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
-    /// the real windows do not move. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
+    /// the real windows do not move. See "Edge bounce" in `src/transitions/docs/coordination.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
         if !self.config.settings.animate
-            || crate::animation::platform::power::is_low_power_mode_enabled()
+            || crate::app::power::is_low_power_mode_enabled()
         {
             return;
         }
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return;
         };
         let Some(screen) = self
@@ -3877,19 +3944,25 @@ impl Reactor {
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         tracing::debug!(?direction, windows = windows.len(), "edge bounce");
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::animation::platform::engine::Event::Bounce {
+        _ = tx.send(crate::transitions::platform::engine::Event::Bounce {
             windows,
             overshoot,
-            final_frames: layout,
+            final_frames: layout
+                .into_iter()
+                .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+                .collect(),
             focus: self.layout_manager.layout_engine.focused_window(),
             duration,
+            look: crate::animation::domain::choreography::Look::default(),
+            cue: crate::animation::domain::choreography::Cue::Plain,
+            cause: self.cause,
         });
     }
 
     /// Builds and starts a strip-surface animation for a workspace switch, if one is warranted.
     ///
     /// Returns true when the strip surface took over, in which case the caller must not touch the real
-    /// windows: the animation actor asks for them once it is covering them.
+    /// windows: the flight engine asks for them once it is covering them.
     ///
     /// Every workspace between the two is laid out and stacked below the one above it, so a jump from
     /// 1 to 4 scrolls past 2 and 3. Without that, a four-workspace jump looks exactly like a
@@ -3906,7 +3979,7 @@ impl Reactor {
             return false;
         }
         tracing::debug!(from_index, to_index, "strip switch requested");
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return false;
         };
         let Some(screen) = self
@@ -3950,8 +4023,8 @@ impl Reactor {
         let row_pitch = screen.frame.size.height;
         let height = row_pitch;
 
-        let mut windows: Vec<crate::animation::platform::engine::SurfaceWindow> = Vec::new();
-        let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
+        let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
+        let mut final_frames: Vec<(WindowId, ScreenRect)> = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else {
                 continue;
@@ -3966,18 +4039,18 @@ impl Reactor {
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
             let row =
-                crate::animation::domain::motion::strip_stack::row_of(index, from_index, to_index);
+                crate::transitions::domain::strip_stack::row_of(index, from_index, to_index);
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else {
                     continue;
                 };
                 let Some(server_id) = window.info.sys_id else { continue };
-                windows.push(crate::animation::platform::engine::SurfaceWindow {
+                windows.push(crate::transitions::domain::request::SurfaceWindow {
                     window: wid,
                     server_id,
-                    frame: crate::animation::domain::motion::strip_stack::strip_frame(
-                        frame,
-                        display_bounds.origin,
+                    frame: crate::transitions::domain::strip_stack::strip_frame(
+                        ScreenRect::from_cg(frame),
+                        ScreenPoint::from_cg(display_bounds.origin),
                         row,
                         row_pitch,
                     ),
@@ -3996,7 +4069,11 @@ impl Reactor {
         // belonging to other workspaces. Placing only the destination's windows left all the others
         // wherever they happened to be, so windows from one workspace showed up as phantoms on
         // another until something else moved the strip.
-        final_frames = layout.iter().copied().filter(|(wid, _)| Some(*wid) != skip_wid).collect();
+        final_frames = layout
+            .iter()
+            .filter(|(wid, _)| Some(*wid) != skip_wid)
+            .map(|&(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+            .collect();
 
         tracing::debug!(
             from_index,
@@ -4012,7 +4089,7 @@ impl Reactor {
         }
 
         let travel =
-            crate::animation::domain::motion::strip_stack::travel(from_index, to_index, height);
+            crate::transitions::domain::strip_stack::travel(from_index, to_index, height);
         let (from_offset, to_offset) = (travel.from, travel.to);
         let duration = std::time::Duration::from_secs_f64(
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
@@ -4033,7 +4110,7 @@ impl Reactor {
         // than an animation one, and it is silent, so say so.
         if let Some(target) = self.layout_manager.layout_engine.focused_window()
             && let Some(placed) = windows.iter().find(|window| window.window == target)
-            && !crate::animation::domain::motion::strip_stack::lands_in_view(
+            && !crate::transitions::domain::strip_stack::lands_in_view(
                 placed.frame,
                 display_bounds.size.width,
             )
@@ -4047,49 +4124,24 @@ impl Reactor {
         }
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::animation::platform::engine::Event::AnimateSurface {
+        _ = tx.send(crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
+            focused_before: self.focused_as_event_began,
+            key: self.main_window_tracker.key_window(),
             duration,
-            nudge: None,
+            look: crate::animation::domain::choreography::Look::default(),
+            cue: crate::animation::domain::choreography::Cue::Plain,
+            accent: None,
+            cause: self.cause,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
-        // the animation actor defers it until the flight lifts (`src/animation/docs/animation-smoothness.md`).
+        // the pictures service holds a warm until the quiet after the flight (`src/transitions/docs/coordination.md`).
         self.warm_all_workspaces(space);
         true
-    }
-
-    /// Asks for fresh pictures of the window gaining focus and the one losing it.
-    ///
-    /// A window's appearance depends on focus and none of the difference is a size change: measured on a 1pt
-    /// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window
-    /// whose picture no longer FITS, so an unfocused capture stayed forever and its tile popped to the
-    /// focused rendering when the overlay lifted. Background work, so this costs nothing on the way in.
-    fn refresh_focus_pictures(&mut self, gaining: WindowId) {
-        let Some(tx) = &self.communication_manager.workspace_animation_tx else {
-            return;
-        };
-        let losing = self
-            .layout_manager
-            .layout_engine
-            .focused_window()
-            .filter(|previous| *previous != gaining);
-        for window in [Some(gaining), losing].into_iter().flatten() {
-            let Some(state) = self.state.windows.window(window) else {
-                continue;
-            };
-            let Some(server_id) = state.info.sys_id else { continue };
-            _ = tx.send(crate::animation::platform::engine::Event::RefreshFocus(
-                crate::animation::domain::request::SnapshotTarget {
-                    window,
-                    server_id,
-                    size: state.frame_monotonic.size,
-                },
-            ));
-        }
     }
 
     /// How far the ACTIVE workspace's strip has moved on screen since a pass last looked at that strip,
@@ -4132,6 +4184,20 @@ impl Reactor {
         self.publish_animation_display_for(None);
     }
 
+    /// The transitions engine the reactor drives, told at once whether to write its journal and
+    /// measure each lift's handover: it writes nothing until it hears.
+    fn connect_transitions(&mut self, transitions_tx: Option<crate::transitions::platform::engine::Sender>) {
+        self.communication_manager.transitions_tx = transitions_tx;
+        self.publish_journal();
+    }
+
+    /// Tells the transitions engine whether to write its journal and measure each lift's handover.
+    fn publish_journal(&self) {
+        if let Some(tx) = &self.communication_manager.transitions_tx {
+            _ = tx.send(crate::transitions::platform::engine::Event::Journal(self.config.settings.journal));
+        }
+    }
+
     /// Points the animation overlay at the display holding `space`.
     ///
     /// There is one overlay, so it has to sit on the display whose windows are about to move. Choosing the
@@ -4140,9 +4206,6 @@ impl Reactor {
     /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
     /// have no particular display in mind.
     pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) {
-        let Some(tx) = &self.communication_manager.workspace_animation_tx else {
-            return;
-        };
         let wanted = space.or_else(|| self.active_display_space());
         let Some(screen) = self
             .space_state
@@ -4153,16 +4216,25 @@ impl Reactor {
         else {
             return;
         };
-        _ = tx.send(crate::animation::platform::engine::Event::SetDisplay {
-            id: screen.id.as_u32(),
-            frame: objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()),
-            // Backing scale is not carried on ScreenInfo. Every display rini has been run on is
-            // Retina, and a wrong scale only affects bitmap crispness rather than geometry, so 2.0
-            // is a safe default until there is a reason to plumb the real value through.
-            scale: 2.0,
-            picture_bar: !self.config.settings.bar.enabled,
-            top_band: self.config.settings.top_band(),
-        });
+        let frame = ScreenRect::from_cg(objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
+        if let Some(tx) = &self.communication_manager.transitions_tx {
+            _ = tx.send(crate::transitions::platform::engine::Event::SetDisplay {
+                id: screen.id.as_u32(),
+                frame,
+                scale: screen.scale,
+                top_band: self.config.settings.top_band(),
+            });
+        }
+        if let Some(pictures) = &self.communication_manager.pictures {
+            pictures.set_display(
+                crate::pictures::domain::schedule::Display {
+                    id: screen.id.as_u32(),
+                    frame,
+                    scale: screen.scale,
+                },
+                !self.config.settings.bar.enabled,
+            );
+        }
     }
 
     pub fn warp_mouse(&mut self, point: CGPoint) {
@@ -4931,7 +5003,7 @@ impl Reactor {
         });
 
         // The strip goes up as one group. A focus move raises only the window it lands on, which leaves a
-        // floating window in front of the columns beside it. See `model::z_group`.
+        // floating window in front of the columns beside it. See `raise_order::regroup_tiled`.
         if let Some(target) = focus_window
             && let Some(space) = self.affinity().best_space_for_window_id(target)
         {
@@ -4987,15 +5059,8 @@ impl Reactor {
     }
 
     /// Which z-order group a window belongs to.
-    fn stack_group_of(
-        &self,
-        window: WindowId,
-    ) -> crate::animation::domain::motion::z_group::StackGroup {
-        if self.layout_manager.layout_engine.is_window_floating(window) {
-            crate::animation::domain::motion::z_group::StackGroup::Floating
-        } else {
-            crate::animation::domain::motion::z_group::StackGroup::Tiled
-        }
+    fn stack_group_of(&self, window: WindowId) -> StackGroup {
+        StackGroup::of(self.layout_manager.layout_engine.is_window_floating(window))
     }
 
     /// Puts the strip back in front of the windows that are not on it, after focus lands on the strip.
@@ -5775,7 +5840,7 @@ pub(crate) struct StackedWindow {
     pub(crate) window: WindowId,
     /// Front-to-back position, 0 being frontmost.
     pub(crate) depth: usize,
-    pub(crate) group: crate::animation::domain::motion::z_group::StackGroup,
+    pub(crate) group: StackGroup,
 }
 
 /// The windows to raise so the strip is one group in front of the floating windows, in raise order:
@@ -5788,15 +5853,13 @@ pub(crate) struct StackedWindow {
 pub(crate) fn strip_group_to_lift_for(
     order: &[StackedWindow],
     focused: WindowId,
-    focused_group: crate::animation::domain::motion::z_group::StackGroup,
+    focused_group: StackGroup,
 ) -> Vec<WindowId> {
-    use crate::animation::domain::motion::z_group::StackGroup;
-
     if focused_group == StackGroup::Floating {
         return Vec::new();
     }
     let groups: Vec<(WindowId, StackGroup)> = order.iter().map(|s| (s.window, s.group)).collect();
-    let back_to_front = crate::animation::domain::motion::z_group::regroup_tiled(&groups);
+    let back_to_front = regroup_tiled(&groups);
     let mut raise: Vec<WindowId> =
         back_to_front.iter().copied().filter(|wid| *wid != focused).collect();
     if back_to_front.contains(&focused) {

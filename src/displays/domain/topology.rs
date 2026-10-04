@@ -390,6 +390,7 @@ mod tests {
                     display_uuid: format!("uuid-{i}"),
                     name: None,
                     space: Some(SpaceId::new(i as u64 + 1)),
+                    scale: 2.0,
                 })
                 .collect(),
             ..Default::default()

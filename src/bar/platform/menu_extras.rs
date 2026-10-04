@@ -19,11 +19,11 @@ use objc2_core_graphics::{
 use rini_skylight_sys::{G_CONNECTION, SLSCaptureWindowsContentsToRectWithOptions};
 use tracing::debug;
 
-use crate::animation::platform::edge_dressing::rgba_bitmap_context;
 use crate::bar::domain::extras::{self, Command, Composite, Kind, Schedule, Stamp, StatusWindow};
 use crate::bar::domain::ground::Timer;
 use crate::bar::platform::ground::{Ground, picture_ground};
 use crate::displays::screen::active_menu_bar_display_id;
+use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::windows::platform::window_server::{
     bounds_from_dict, get_num, get_string, get_windows_raw,
 };

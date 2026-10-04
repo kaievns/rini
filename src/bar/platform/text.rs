@@ -23,9 +23,9 @@ use objc2_foundation::{NSAttributedString, NSDictionary, NSString};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::warn;
 
-use crate::animation::platform::edge_dressing::rgba_bitmap_context;
 use crate::bar::domain::pieces::Label;
 use crate::bar::domain::placement::{Ink, Sheet, sheet};
+use crate::pictures::platform::bitmap::rgba_bitmap_context;
 
 /// A string drawn around its ink.
 pub struct Picture {

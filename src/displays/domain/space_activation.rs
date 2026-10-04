@@ -278,6 +278,7 @@ mod tests {
             display_uuid: display_uuid.unwrap_or_default().to_string(),
             name: None,
             space: space.map(SpaceId::new),
+            scale: 2.0,
         }
     }
 

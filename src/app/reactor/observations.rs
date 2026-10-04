@@ -446,6 +446,11 @@ impl Reactor {
         window: WindowId,
         reported_space: SpaceId,
     ) -> anyhow::Result<EventOutcome> {
+        // Every report, rini's own raise's included: it arms the pictures service's watch on a
+        // focus target's look.
+        if let Some(pictures) = &self.communication_manager.pictures {
+            pictures.hint(crate::pictures::domain::watch::Hint::Focused(window));
+        }
         if self.layout_manager.layout_engine.focused_window() == Some(window) {
             if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
                 _ = event_tap_tx.send(crate::input::platform::input_tap::Request::EnforceHidden);
@@ -467,9 +472,6 @@ impl Reactor {
             trace!(?window, "ignoring a focus report provoked by rini's own raise");
             return Ok(EventOutcome::default());
         }
-        // Whichever window gains or loses focus renders differently now, so both need a fresh
-        // picture before the next animation draws them.
-        self.refresh_focus_pictures(window);
         // An app activation picked its own window, and it may not be the one the user was in.
         if let Some(redirect) = self.activation_redirect(window, reported_space) {
             return Ok(redirect);
@@ -540,11 +542,11 @@ impl Reactor {
         }
         // A closed window disappears; only its cached picture has to go. Once: the window-server path
         // may have removed the window, and forgotten it, already. See "A closed window disappears" in
-        // `src/animation/docs/animation-smoothness.md`.
+        // `src/transitions/docs/coordination.md`.
         if self.state.windows.window(window).is_some()
-            && let Some(tx) = &self.communication_manager.workspace_animation_tx
+            && let Some(pictures) = &self.communication_manager.pictures
         {
-            _ = tx.send(crate::animation::platform::engine::Event::ForgetWindow(window));
+            pictures.forget(window);
         }
         let mut outcome = window_workflow::handle_window_destroyed(
             &mut self.state,

@@ -104,6 +104,15 @@ pub fn activation_focus_target(
     Some(remembered)
 }
 
+/// The windows whose look turns when the key window goes from `before` to `after`: the one that
+/// became key, then the one that stopped being. Focus changes how a window is drawn, never its size.
+pub fn looks_turned(before: Option<WindowId>, after: Option<WindowId>) -> Vec<WindowId> {
+    if before == after {
+        return Vec::new();
+    }
+    after.into_iter().chain(before).collect()
+}
+
 /// The slice of the application's event stream focus tracking reads. The application builds one
 /// from each of its events; anything else is not a focus edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -322,6 +331,14 @@ impl MainWindowTracker {
         }
     }
 
+    /// The window macOS draws focused, as far as rini has heard: the window server's key window, while
+    /// the application in front owns it. A panel of another application taking the keys, or another
+    /// application coming to the front with none of its windows reported, leaves none, where
+    /// `main_window` still names the front application's own.
+    pub fn key_window(&self) -> Option<WindowId> {
+        self.window_server_focus.filter(|window| Some(window.pid) == self.global_frontmost)
+    }
+
     pub fn is_globally_frontmost(&self, pid: pid_t) -> bool {
         self.global_frontmost == Some(pid)
     }
@@ -351,6 +368,50 @@ impl MainWindowTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod key_window {
+        use super::super::{FocusEvent, MainWindowTracker, looks_turned};
+        use rini_core::ids::WindowId;
+
+        fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId {
+            WindowId::new(pid, idx)
+        }
+
+        /// A panel of another application, Spotlight's or Raycast's, takes the keys while the
+        /// application in front stays in front: its window is no longer drawn focused, though it is
+        /// still that application's main window. Another application coming to the front with no
+        /// window reported leaves none either.
+        #[test]
+        fn the_key_window_is_the_servers_report_while_the_application_in_front_owns_it() {
+            let mut tracker = MainWindowTracker::default();
+            let window = wid(1, 1);
+            let _ = tracker.handle_event(FocusEvent::ApplicationLaunched {
+                pid: 1,
+                is_frontmost: true,
+                main_window: Some(window),
+            });
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(1));
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
+            assert_eq!(tracker.key_window(), Some(window));
+
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(3, 7)));
+            assert_eq!(tracker.key_window(), None, "another application's panel has the keys");
+            assert_eq!(tracker.main_window(), Some(window), "the front application's own main window");
+
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(5));
+            assert_eq!(tracker.key_window(), None, "an application in front with nothing reported");
+        }
+
+        #[test]
+        fn a_change_of_key_window_turns_the_look_of_both_ends_and_no_change_turns_none() {
+            let (a, b) = (wid(1, 1), wid(1, 2));
+            assert_eq!(looks_turned(Some(a), Some(b)), vec![b, a]);
+            assert_eq!(looks_turned(None, Some(b)), vec![b]);
+            assert_eq!(looks_turned(Some(a), None), vec![a]);
+            assert!(looks_turned(Some(a), Some(a)).is_empty());
+        }
+    }
 
     mod focus_order_wiring {
         use super::super::{FocusEvent, MainWindowTracker};

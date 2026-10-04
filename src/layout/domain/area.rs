@@ -21,7 +21,7 @@ pub fn compute_tiling_area(screen: CGRect, gaps: &crate::layout::settings::Gaps)
                 height: (screen.size.height - gaps.outer.top - gaps.outer.bottom).max(0.0),
             },
         }
-        .round()
+        .rounded()
     }
 }
 

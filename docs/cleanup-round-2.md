@@ -8,7 +8,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | # | item | measure | state |
 |---|---|---|---|
 | 1 | the `?elem` FIXME in `trace` | formatting an `AXUIElement` is an AX round-trip; obeyed on the hot path, ignored on the error path | **done** |
-| 2 | `animation/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | **done** — 25 tests |
+| 2 | `transitions/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | **done** — 25 tests |
 | 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | **done** — 35 tests |
 | 4 | `main.rs` | 300-line `main`, no test | **done** — 300 -> 276, 2 rules out |
 | 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | **done** — 261 -> 229, 24 tests |
@@ -17,7 +17,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | **done** — `HeldKeys` out, 12 tests |
 | 9 | `EventOutcome` | 32 fields, 51 references | **done** — `absorb` is compiler-checked, 12 -> 23 tests |
 | 10 | `engine/persistence/tests.rs` | 3,302 lines, 55 tests, one file | **done** — 7 subject files, largest 1,032 |
-| 11 | `animation/platform/engine.rs` | `start` 294, `begin_group` 253 | **done** — `tile_path` out, 7 tests |
+| 11 | `transitions/platform/engine.rs` | `start` 294, `begin_group` 253 | **done** — `tile_path` out, 7 tests |
 
 ## Not on the list, and why
 
@@ -44,10 +44,10 @@ Guarded by `no_accessibility_element_is_ever_logged` in `tests/architecture.rs`,
 did not hold. Reintroducing it at the `watch` failure site fails with the file, line and the offending
 code; reintroducing it in `trace` itself no longer compiles, since there is no element to format.
 
-## 2. `animation/domain/admission.rs`
+## 2. `transitions/domain/admission.rs`
 
 Seven pure functions governing what happens when a layout pass arrives while windows are still
-flying, and no tests at all. Every function is `pub(in crate::animation)`, so `dead_code` could not
+flying, and no tests at all. Every function is `pub(in crate::transitions)`, so `dead_code` could not
 see them either.
 
 25 tests. Three of the rules were probed by breaking them, and each was caught:
@@ -284,7 +284,7 @@ literals, which is why my earlier measurement pass reported one test as 2,461 li
 column-0 item boundaries — with each attribute and doc-comment run belonging to the item below it —
 is exact, and it is the approach to reach for first next time.
 
-## 11. `animation/platform/engine.rs`
+## 11. `transitions/platform/engine.rs`
 
 `travel::tile_path` is the whole geometry decision for one window in a pass: five steps that were
 spread along the head of `start`'s loop, interleaved with snapshot captures and logging. 7 tests,

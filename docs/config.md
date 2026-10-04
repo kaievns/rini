@@ -92,6 +92,8 @@ cursor hiding, take niri's default: off. They were on, and a default-on flag can
 | `recent-windows › binds` | `scope="workspace"` spans every display | a rini workspace is one context across displays; `scope="output"` is refused |
 | `recent-windows › binds` | no defaults | niri's default, Alt+Tab, is `Mod+Tab` under rini's default `mod-key`, which is `focus-workspace-previous`; and Cmd+Tab belongs to the Dock |
 | `config-notification { disable-failed; }` | turns off the bar's `✕ config` marker | niri shows an on-screen notification; rini's bar is where it says things |
+| `animations › journal { off; }` | rini's own: every transition's steps are written to `~/Library/Logs/rini/transitions.jsonl` unless `off` | niri has no journal. Written by default because the record is for the glitch nobody expected (Kai's ask, `specs/animation.md`), so the flag names the non-default |
+| `animations › journal { measure-handover; }` | rini's own: each lift is held up to 60ms for the overlay's own picture and measured against the screen just after it, into the journal; `off` turns it off with the writing | niri has no journal. Off by default because it holds every lift (`src/transitions/docs/journal.md`, "The handover, measured") |
 | `quit` | saves the layout and exits, never asks | so `skip-confirmation=` is refused |
 | `load-config-file` | bindable | IPC-only in niri |
 | `focus-window-or-monitor-down`, `-up` | the only vertical focus | at the column's end it crosses to the display below; niri's `focus-window-down` would not, so it is not offered |

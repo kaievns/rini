@@ -1,5 +1,5 @@
-//! `gestures` and `animations`: the two trackpad swipes, dragging one window onto another, and how
-//! the movements are drawn.
+//! `gestures` and `animations`: the two trackpad swipes, dragging one window onto another, how the
+//! movements are drawn, and whether their journal is written and each lift's handover measured.
 
 use knus::span::Span;
 
@@ -81,4 +81,17 @@ pub struct AnimationsPart {
     pub off: Option<Flag>,
     #[knus(child, unwrap(argument))]
     pub slowdown: Option<Number<Slowdown>>,
+    #[knus(child)]
+    pub journal: Option<JournalPart>,
+}
+
+/// `animations › journal`: the record of every transition, written unless `off`, and each lift
+/// measured with `measure-handover`.
+#[derive(knus::Decode, Debug, Default)]
+#[knus(span_type = Span)]
+pub struct JournalPart {
+    #[knus(child)]
+    pub off: Option<Flag>,
+    #[knus(child)]
+    pub measure_handover: Option<Flag>,
 }

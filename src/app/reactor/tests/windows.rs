@@ -293,9 +293,9 @@ fn switching_away_and_back_returns_to_the_same_window() {
     );
 }
 
-/// A closed window disappears: the reactor sends the engine exactly one `ForgetWindow` for it
-/// and no flight of its own, on the AX path. See "A closed window disappears" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// A closed window disappears: the reactor tells the pictures service to forget it exactly once, and
+/// sends the engine no flight of its own, on the AX path. See "A closed window disappears" in
+/// `src/transitions/docs/coordination.md`.
 #[test]
 fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let (mut apps, mut reactor) = test_context();
@@ -308,24 +308,24 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
 
     let wid = WindowId::new(1, 1);
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    let mut forgotten = 0usize;
+    let forgotten = pictures_asked(&mut pictures)
+        .iter()
+        .filter(|command| {
+            matches!(command, crate::pictures::platform::service::Command::Forget(window) if *window == wid)
+        })
+        .count();
     while let Ok((_, event)) = animation_rx.try_recv() {
-        match event {
-            crate::animation::platform::engine::Event::ForgetWindow(window) if window == wid => {
-                forgotten += 1;
-            }
-            crate::animation::platform::engine::Event::Animate { windows, .. } => {
-                assert!(
-                    windows.iter().all(|request| request.window != wid),
-                    "the closed window is not composed"
-                );
-            }
-            _ => {}
+        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
+            assert!(
+                windows.iter().all(|request| request.window != wid),
+                "the closed window is not composed"
+            );
         }
     }
     assert_eq!(forgotten, 1, "exactly one forget");
@@ -336,8 +336,8 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
 }
 
 /// The window server reports a close ~15ms before AX does. That path removes the window inside a
-/// workflow with no reactor, so the forget rides on the outcome: still exactly one
-/// `ForgetWindow`, and the late AX `WindowDestroyed` finds no window and adds nothing.
+/// workflow with no reactor, so the forget rides on the outcome: still exactly one forget, and the
+/// late AX `WindowDestroyed` finds no window and adds nothing.
 #[test]
 fn a_window_server_promoted_close_is_forgotten_once() {
     let (mut apps, mut reactor) = test_context();
@@ -350,7 +350,8 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
 
     let wid = WindowId::new(1, 1);
     let wsid = reactor.test_window_server_id(wid);
@@ -365,19 +366,18 @@ fn a_window_server_promoted_close_is_forgotten_once() {
 
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    let mut forgotten = 0usize;
+    let forgotten = pictures_asked(&mut pictures)
+        .iter()
+        .filter(|command| {
+            matches!(command, crate::pictures::platform::service::Command::Forget(window) if *window == wid)
+        })
+        .count();
     while let Ok((_, event)) = animation_rx.try_recv() {
-        match event {
-            crate::animation::platform::engine::Event::ForgetWindow(window) if window == wid => {
-                forgotten += 1;
-            }
-            crate::animation::platform::engine::Event::Animate { windows, .. } => {
-                assert!(
-                    windows.iter().all(|request| request.window != wid),
-                    "the closed window is not composed"
-                );
-            }
-            _ => {}
+        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
+            assert!(
+                windows.iter().all(|request| request.window != wid),
+                "the closed window is not composed"
+            );
         }
     }
     assert_eq!(
