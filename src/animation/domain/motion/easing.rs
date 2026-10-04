@@ -1,6 +1,6 @@
 //! The curve every movement runs on, the one the strip crosses on while a move steps it, where the
 //! edge bounce turns, and the shape of a move's nudge. Core Animation takes the same control
-//! points, so the clock and the render server agree.
+//! points, so a `Leg`, the score and the render server agree.
 
 /// The curve every movement runs on but a stepping move's (`EASE_IN_OUT`), as CSS-style cubic
 /// Bezier control points `(x1, y1, x2, y2)`.
@@ -28,8 +28,8 @@ pub const EASE_IN_OUT: CubicBezier = CubicBezier {
 };
 
 /// A CSS-style cubic Bezier timing curve from `(0,0)` to `(1,1)`, evaluated as progress in terms
-/// of time. Core Animation takes the same four numbers (`CAMediaTimingFunction`), so what the
-/// actor's clock computes and what the render server draws are one curve.
+/// of time. Core Animation takes the same four numbers (`CAMediaTimingFunction`), so what a `Leg` and
+/// the score compute and what the render server draws are one curve.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CubicBezier {
     pub x1: f64,

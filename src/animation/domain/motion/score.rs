@@ -388,7 +388,7 @@ mod tests {
     }
 
     /// A Bezier segment is the timing function the overlay hands Core Animation: `ease` of local
-    /// time, the curve `the_clock_and_the_render_server_run_one_curve` pins against its control
+    /// time, the curve `a_leg_the_score_and_the_render_server_run_one_curve` pins against its control
     /// points.
     #[test]
     fn a_bezier_segment_runs_on_its_timing_function() {

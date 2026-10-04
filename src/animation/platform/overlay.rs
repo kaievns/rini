@@ -180,8 +180,8 @@ const TILE_ANIMATION_KEY: &str = "rini.tile.move";
 /// One key per container movement, for the same reason.
 const GROUP_ANIMATION_KEY: &str = "rini.group.move";
 
-/// A curve in Core Animation form, from the four numbers the actor's clock evaluates, so the two
-/// run the same curve.
+/// A curve in Core Animation form, from the four numbers a `Leg` and the score evaluate, so the
+/// render server runs the same curve.
 fn timing_function(c: CubicBezier) -> Retained<CAMediaTimingFunction> {
     CAMediaTimingFunction::functionWithControlPoints(
         c.x1 as f32,
@@ -1144,7 +1144,7 @@ impl TileOverlay {
     }
 
     /// Whether every container and picture is presented within half a point of its model: the
-    /// render server runs behind the actor's clock. See "Real windows land before lift" in `src/transitions/docs/coordination.md`.
+    /// render server runs behind the coordinator's clock. See "Real windows land before lift" in `src/transitions/docs/coordination.md`.
     pub fn settled(&self) -> bool {
         let close = |a: CGPoint, b: CGPoint| (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() < 0.5;
         let same_size = |a: CGSize, b: CGSize| {
@@ -1920,7 +1920,7 @@ mod tests {
     /// they must solve the same Bezier: the motion curve, and the ease-in-out a stepping move's strip
     /// crosses on.
     #[test]
-    fn the_clock_and_the_render_server_run_one_curve() {
+    fn a_leg_the_score_and_the_render_server_run_one_curve() {
         for step in 0..=1000 {
             let s = step as f64 / 1000.0;
             let (x, y) = MOTION_CURVE.at(s);

@@ -324,7 +324,7 @@ the render server and the real windows (the coordinator's tick, `TileOverlay::se
 to run out AND every container and picture has to be presented at its model
 position within half a point AND every window has to be within 2pt of where it was written, or
 `LIFT_GRACE` (350ms) past the clock. The
-render server runs a frame or so behind the actor's clock, and lifting on
+render server runs a frame or so behind the coordinator's clock, and lifting on
 the clock alone showed the real windows one frame ahead of their tiles: a
 small jerk at the end of every flight. Every kind writes its frames as the overlay goes up. Written
 later in the flight they missed the lift: layout passes wrote at 0.75 of it (0.5 when a tile

@@ -269,7 +269,7 @@ Mechanics worth remembering:
   solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
   and Core Animation gets the same four control points (`timing_function`),
   so where a merge bends a container from and what is drawn agree; pinned by
-  `the_clock_and_the_render_server_run_one_curve`. A flight that steps flies
+  `a_leg_the_score_and_the_render_server_run_one_curve`. A flight that steps flies
   its containers on CSS ease-in-out (`EASE_IN_OUT`) instead, the same way:
   `Leg::Curve` carries its curve (see "The move flight"). Progress at quarter,
   half and 70% of the duration: 0.87, 0.97, 0.995. Ease-out cubic
