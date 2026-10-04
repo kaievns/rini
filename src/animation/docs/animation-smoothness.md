@@ -719,7 +719,7 @@ changes is how the picture maps onto it (`content_mode` in
   capture there (`capture_via_framed_with_dressing`, 16-24ms), at most
   `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
   `Member::Entrance` from the spawn frame to the slot, stretched
-  (`placeholder_mode`) until the reveal chase lands the slot-size picture,
+  (`stand_in_mode`) until the reveal chase lands the slot-size picture,
   which `claim` takes at frame zero (`Claimed::Refreshed`) or the
   `Swap("reveal")` cut takes before 0.6. No hold: the newcomer's slot alone
   goes out at frame zero (`frame_zero_work`) so the chase has something to
@@ -728,7 +728,7 @@ changes is how the picture maps onto it (`content_mode` in
   with a cold cache took a 1s off-screen capture and flew in from the park.
   It used to take the reservation instead, which drew nothing in its slot
   until a picture landed — a hole in the strip after every restart. It now
-  flies with a stand-in (`stands_in`, `picture::placeholder`): a
+  flies with a stand-in (`stands_in`, `picture::stand_in_picture`): a
   dark `--n3` tile, drawn nine-slice from a 42px image so its corners keep the
   window's radius, moving exactly as its picture would. The stand-in claims
   to cover nothing, so the flight holds for it and chases it like a grow,
@@ -813,7 +813,7 @@ changes is how the picture maps onto it (`content_mode` in
   the real frame to reach slot size before it captures, so it needs the
   runway a grow's does. *How often 300ms is enough is not measured yet.*
   An app that misses the cap flies with the old picture STRETCHED over the
-  tile (`placeholder_mode`, `Stretch`): every mode fills the whole frame. A
+  tile (`stand_in_mode`, `Stretch`): every mode fills the whole frame. A
   top-left crop that stopped the grid at the picture's edge and showed the
   backdrop in the growth was tried and read as a hole (3:28:10), the same
   hole recorded above for `contentsRect` past the edge. If the reveal lands
@@ -873,12 +873,13 @@ because the border's identity was misdiagnosed twice:
    point, present at rest on every window, absent on every tile mid-flight,
    because it is drawn outside the app's surface exactly like the shadow.
 
-A fourth attempt — drawing it as a measured constant (1pt white stroke,
-0.25 alpha focused / 0.16 unfocused) — was pixel-exact on opaque windows
-and wrong by 2x on translucent ones: lossless captures read the focused
-hairline at rgb 80 on an opaque editor but rgb 44-46 on a see-through
-terminal, because the composite depends on the window's own edge pixels
-and translucency. No drawn constant can match every window.
+A fourth attempt drew it as a constant (a 1pt white stroke at 0.25 alpha focused, 0.16 unfocused,
+fitted from single screenshots): pixel-exact on opaque windows, wrong by 2x on translucent ones.
+Refitted as a blend over each window's own edge pixel instead, a constant does match: white at 20%
+focused and 18% unfocused, within 0.3 levels rms over 27 edges in 11 apps, the translucent terminal
+included ("The hairline is composited outside every capture" in `capture-overlay-research.md`;
+dark mode only). The handover prototype draws that ring and a 0.5pt outline as layers; until it lands
+here, the harvest below is what draws the hairline.
 
 So the real composited pixels are harvested instead (`edge_dressing`):
 `CGWindowListCreateImage` is the one capture API that composites framing
@@ -989,13 +990,16 @@ Options, in order of expected value:
    delivers frames only when the content actually changes. A small pool
    covering adjacent workspaces keeps the cache continuously fresh with zero
    work at switch time. Wants a budget (frontmost window of workspace n±1),
-   not every window. *Per-stream overhead unmeasured.*
+   not every window. Measured since: sixteen streams at 2fps held the window server at 43% CPU against
+   9.5% without them, and a frame's arrival is not a change signal ("Sequencing a focus change behind
+   the overlay" in `capture-overlay-research.md`).
 2. **Change-signal-driven warming.** Use signals already flowing — AX title
    changes, the CGS window events `window_notify` subscribes to — as "picture
-   is dirty" triggers. Misses silent repaints; catches most others without
-   polling.
+   is dirty" triggers. Misses silent repaints. The window server's own
+   `WindowUpdated` (723) delivered nothing in 40s across 128 windows while five
+   changed, so it is not one of them.
 3. **Aged-cache sweeps.** A `Picture` is timestamped (`taken`) and a warm
-   (`wants_warm`) re-captures anything older than `SNAPSHOT_STALE_AFTER`; the
+   (`wants_warm`) re-captures anything older than `PICTURE_STALE_AFTER`; the
    engine warms every window it flew at the quiet after the lift. A sweep of nearby workspaces on a slow idle timer is not
    done; it would break the "nothing polls" principle deliberately.
 4. **Widen the mid-flight refresh.** Ruled out by measurement. The refresh

@@ -136,7 +136,7 @@ pub(in crate::animation) enum TileState {
     NotTiled,
     /// The flight holds for this window's first picture: an entrance reservation.
     Awaiting,
-    /// A grow waiting for its reveal, held or flying the placeholder. `fits`: the landed picture
+    /// A grow waiting for its reveal, held or flying the stand-in. `fits`: the landed picture
     /// covers the destination.
     Reveal { fits: bool },
     /// An ordinary moving tile. `fits`: the picture covers the destination; `resizing`: the tile

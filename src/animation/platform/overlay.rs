@@ -31,7 +31,7 @@ use crate::animation::domain::motion::plan::{
 use crate::animation::domain::motion::strip_move::nudge_samples;
 pub use crate::animation::domain::motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
-    lerp_rect, placeholder_mode, resize_in_flight,
+    lerp_rect, stand_in_mode, resize_in_flight,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::domain::timing::OutAndBack;

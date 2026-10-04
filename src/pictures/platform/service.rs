@@ -25,7 +25,7 @@ use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
 use crate::pictures::event::Event;
 use crate::pictures::platform::desktop::{bar_strip, desktop_backdrop_windows};
 use crate::pictures::platform::edge_dressing::EdgeDressing;
-use crate::pictures::platform::picture::{Picture, placeholder, placeholder_image};
+use crate::pictures::platform::picture::{Picture, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::capture_list_via_skylight;
 
@@ -194,10 +194,10 @@ impl Pictures {
     pub fn stand_in(&self, size: CGSize, scale: f64) -> Option<Picture> {
         let mut shared = self.lock();
         if shared.stand_in.as_ref().is_none_or(|drawn| drawn.scale != scale) {
-            let (image, _) = placeholder_image(scale)?;
+            let (image, _) = stand_in_image(scale)?;
             shared.stand_in = Some(StandIn { scale, image });
         }
-        Some(placeholder(size, shared.stand_in.as_ref()?.image.clone()))
+        Some(stand_in_picture(size, shared.stand_in.as_ref()?.image.clone()))
     }
 
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.

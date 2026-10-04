@@ -8,7 +8,7 @@ const STABLE_MAX_DIFFERING: f64 = 0.03;
 const STABLE_CHANNEL_TOLERANCE: u8 = 8;
 
 /// Whether two consecutive thumbprints show the same rendering.
-pub fn renderings_match(a: &[u8], b: &[u8]) -> bool {
+fn renderings_match(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() || a.is_empty() {
         return false;
     }

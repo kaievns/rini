@@ -124,11 +124,11 @@ pub fn spans_display(covered: (f64, f64), display: (f64, f64)) -> bool {
 /// One flight of staleness at most under continuous use, without re-capturing everything on
 /// every keystroke: the service already dedups in-flight requests, so the steady-state cost is
 /// one capture per animated window per interval.
-const SNAPSHOT_STALE_AFTER: Duration = Duration::from_secs(2);
+const PICTURE_STALE_AFTER: Duration = Duration::from_secs(2);
 
 /// Whether a cached picture's age alone justifies a fresh capture.
 pub fn picture_is_stale(age: Duration) -> bool {
-    age > SNAPSHOT_STALE_AFTER
+    age > PICTURE_STALE_AFTER
 }
 
 #[cfg(test)]

@@ -74,7 +74,7 @@ pub(in crate::animation) fn reveal_hold_limit(duration: Duration) -> Duration {
     duration.mul_f64(0.4).max(Duration::from_millis(300)).min(HOLD_CAP)
 }
 
-/// Time a holding flight still waits before flying the placeholder; `None` once past the deadline.
+/// Time a holding flight still waits before flying the stand-in; `None` once past the deadline.
 pub(in crate::animation) fn hold_wait(
     hold_deadline: Option<Instant>,
     now: Instant,

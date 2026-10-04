@@ -38,7 +38,7 @@ pub fn stretch_region(picture: &Picture) -> CGRect {
     if side < 3.0 {
         return whole;
     }
-    // The stand-in is a square of two corners and a two-pixel middle; see `placeholder_image`.
+    // The stand-in is a square of two corners and a two-pixel middle; see `stand_in_image`.
     let corner = (side - 2.0) / 2.0;
     CGRect::new(
         CGPoint::new(corner / side, corner / side),
@@ -52,7 +52,7 @@ mod tests {
     use objc2_core_foundation::CFRetained;
 
     use super::*;
-    use crate::pictures::platform::picture::{placeholder, placeholder_image, test_snapshot};
+    use crate::pictures::platform::picture::{stand_in_picture, stand_in_image, test_picture};
 
     fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
@@ -84,7 +84,7 @@ mod tests {
     fn a_layer_takes_a_picture_of_either_kind() {
         let layer = CALayer::layer();
 
-        let bitmap = test_snapshot(CGSize::new(1.0, 1.0));
+        let bitmap = test_picture(CGSize::new(1.0, 1.0));
         set_layer_contents(&layer, &bitmap);
         let Pixels::Bitmap(image) = &bitmap.image else {
             unreachable!("a test picture is a bitmap")
@@ -94,7 +94,7 @@ mod tests {
         let surface = test_surface();
         let on_surface = Picture {
             image: Pixels::Surface(surface.clone()),
-            ..test_snapshot(CGSize::new(1.0, 1.0))
+            ..test_picture(CGSize::new(1.0, 1.0))
         };
         set_layer_contents(&layer, &on_surface);
         assert_eq!(contents_address(&layer), Some(&*surface as *const _ as usize));
@@ -104,14 +104,14 @@ mod tests {
     /// picture stretches whole. Written every install, since tile layers are pooled.
     #[test]
     fn only_a_stand_in_stretches_nine_slice() {
-        let (image, _) = placeholder_image(2.0).expect("drawn");
-        let stand_in = placeholder(CGSize::new(859.0, 1081.0), image);
+        let (image, _) = stand_in_image(2.0).expect("drawn");
+        let stand_in = stand_in_picture(CGSize::new(859.0, 1081.0), image);
 
         let region = stretch_region(&stand_in);
         assert!((region.origin.x - 20.0 / 42.0).abs() < 1e-9);
         assert!((region.size.width - 2.0 / 42.0).abs() < 1e-9);
 
-        let whole = stretch_region(&test_snapshot(CGSize::new(859.0, 1081.0)));
+        let whole = stretch_region(&test_picture(CGSize::new(859.0, 1081.0)));
         assert_eq!(whole, CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
     }
 }

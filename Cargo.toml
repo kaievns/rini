@@ -252,7 +252,7 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = [
 objc2-io-surface = { version = "0.3.2", default-features = false, features = [
 	"IOSurfaceRef",
 	# IOSurfaceTypes and libc enable IOSurfaceLock, which the capture copy (`own_copy` in
-	# snapshot_service.rs) needs to read the pool's surface and write ours.
+	# src/pictures/platform/screencapturekit.rs) needs to read the pool's surface and write ours.
 	"IOSurfaceTypes",
 	"libc",
 	"objc2",

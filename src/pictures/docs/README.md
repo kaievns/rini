@@ -21,7 +21,7 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule, the cache and the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, or a covering capture it refused for the blurred one it holds |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap or a surface), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in |
-| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture: one composite of a list of windows (the desktop backdrop, another app's bar), and the framed capture of one window with its hairline and, wholly on a display, its blur |
+| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), and the framed capture of one window with its hairline and, wholly on a display, its blur |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from |
 | **The hairline** | `platform/edge_dressing.rs` — the window's hairline, cut out of a framed capture, and where on a tile it is worn |
@@ -151,3 +151,7 @@ ring and `Picture` carries it, and either would have had `pictures` name `animat
 
 **The bar still captures on its own.** Its menu extras and its ground are pictured on the bar's own
 thread (`src/bar/platform/menu_extras.rs`), with its own pacing and its own pause for flights.
+
+**The capture findings are still in animation's research doc.** `src/animation/docs/capture-overlay-research.md`
+holds both what captures cost and return and how the overlay draws; its capture sections move here when
+step 3 splits the animation docs by owner.

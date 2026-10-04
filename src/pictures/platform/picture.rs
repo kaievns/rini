@@ -71,14 +71,14 @@ impl Picture {
 
 /// `--n3`, the raised plane of the Okibi dark theme: the same stand-in the switcher draws for a row
 /// with no picture.
-const PLACEHOLDER_RGB: (f64, f64, f64) = (0.133, 0.145, 0.153);
+const STAND_IN_RGB: (f64, f64, f64) = (0.133, 0.145, 0.153);
 
 /// The stand-in for a window of `window` size with no picture.
 ///
 /// Claims to cover NOTHING of the window, which is honest and is also what makes a flight treat it as
 /// a picture waiting for its reveal: the reveal chase follows the window, and the real picture replaces
 /// this one before the flight moves or, mid-flight, by the reveal swap.
-pub fn placeholder(window: CGSize, image: CFRetained<CGImage>) -> Picture {
+pub fn stand_in_picture(window: CGSize, image: CFRetained<CGImage>) -> Picture {
     Picture {
         image: Pixels::Bitmap(image),
         coverage: Coverage {
@@ -92,12 +92,12 @@ pub fn placeholder(window: CGSize, image: CFRetained<CGImage>) -> Picture {
     }
 }
 
-/// The placeholder's pixels: a small rounded square in `PLACEHOLDER_RGB`, drawn nine-slice by the
+/// The stand-in's pixels: a small rounded square in `STAND_IN_RGB`, drawn nine-slice by the
 /// overlay so its corners keep the window's radius at any size. `(image, corner)`, the corner in pixels.
 ///
 /// A small image rather than one at the window's size: a full-size bitmap of one flat colour would be
 /// 30MB for a maximised window at 2x.
-pub fn placeholder_image(scale: f64) -> Option<(CFRetained<CGImage>, f64)> {
+pub fn stand_in_image(scale: f64) -> Option<(CFRetained<CGImage>, f64)> {
     use objc2_core_graphics::CGContext;
     let corner = (CORNER_RADIUS * scale).ceil();
     let side = (corner * 2.0 + 2.0) as usize;
@@ -107,7 +107,7 @@ pub fn placeholder_image(scale: f64) -> Option<(CFRetained<CGImage>, f64)> {
         objc2_core_graphics::CGPath::with_rounded_rect(rect, corner, corner, std::ptr::null())
     };
     CGContext::add_path(Some(&ctx), Some(&path));
-    let (r, g, b) = PLACEHOLDER_RGB;
+    let (r, g, b) = STAND_IN_RGB;
     CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, 1.0);
     CGContext::fill_path(Some(&ctx));
     Some((
@@ -187,7 +187,7 @@ pub(crate) fn test_bitmap() -> CFRetained<CGImage> {
 
 /// A usable picture that claims to cover a window of `size`, for tests about geometry.
 #[cfg(test)]
-pub(crate) fn test_snapshot(size: CGSize) -> Picture {
+pub(crate) fn test_picture(size: CGSize) -> Picture {
     Picture {
         image: Pixels::Bitmap(test_bitmap()),
         coverage: Coverage {
@@ -213,7 +213,7 @@ mod tests {
     fn a_stand_in_is_never_cached() {
         let mut cache: PictureCache<Picture> = PictureCache::new();
         let window = WindowId::new(1, 1);
-        assert!(!cache.insert(window, placeholder(CGSize::new(859.0, 1081.0), test_bitmap())));
+        assert!(!cache.insert(window, stand_in_picture(CGSize::new(859.0, 1081.0), test_bitmap())));
         assert!(cache.get(window).is_none());
     }
 
@@ -221,7 +221,7 @@ mod tests {
     /// stretch, so its size does not grow with the window's.
     #[test]
     fn the_stand_in_image_is_two_corners_and_a_middle() {
-        let (image, corner) = placeholder_image(2.0).expect("drawn");
+        let (image, corner) = stand_in_image(2.0).expect("drawn");
         assert_eq!(corner, 20.0, "10pt at 2x");
         assert_eq!(CGImage::width(Some(&image)), 42);
         assert_eq!(CGImage::height(Some(&image)), 42);
@@ -233,12 +233,12 @@ mod tests {
     fn a_picture_with_its_blur_is_kept_over_a_grey_one_of_the_same_size() {
         let mut cache: PictureCache<Picture> = PictureCache::new();
         let window = WindowId::new(1, 1);
-        let mut blurred = test_snapshot(CGSize::new(859.0, 1081.0));
+        let mut blurred = test_picture(CGSize::new(859.0, 1081.0));
         blurred.carries_blur = true;
         assert!(cache.insert(window, blurred), "a first picture is held");
 
         assert!(
-            !cache.insert(window, test_snapshot(CGSize::new(859.0, 1081.0))),
+            !cache.insert(window, test_picture(CGSize::new(859.0, 1081.0))),
             "and the refusal is reported, so a flight in the air does not draw the grey one either"
         );
         assert!(cache.get(window).unwrap().carries_blur, "the blur stays");

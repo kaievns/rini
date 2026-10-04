@@ -155,7 +155,7 @@ struct RunningAnimation {
     /// Windows whose pixels are still rendering, with the size that counts as ready. The flight
     /// holds at frame zero until this empties or `hold_deadline` passes.
     awaiting: Vec<(WindowId, CGSize)>,
-    /// When to stop waiting for reveal pixels and fly the placeholder (`reveal_hold_limit`).
+    /// When to stop waiting for reveal pixels and fly the stand-in (`reveal_hold_limit`).
     hold_deadline: Option<Instant>,
     /// The recapture of the focus change's two ends. See `refresh_destination_among`.
     refresh: FocusRefresh,
@@ -1026,7 +1026,7 @@ impl FlightEngine {
                     debug!(
                         pid = window.pid,
                         idx = window.idx.get(),
-                        "reveal chase gave up; the hold deadline will fly the placeholder"
+                        "reveal chase gave up; the hold deadline will fly the stand-in"
                     );
                 })
                 .ok();
@@ -1948,7 +1948,7 @@ impl FlightEngine {
             let running = self.running.as_mut().expect("checked above");
             warn!(
                 still_waiting = running.awaiting.len(),
-                "reveal pixels did not arrive in time; flying with the placeholder"
+                "reveal pixels did not arrive in time; flying with the stand-in"
             );
             running.awaiting.clear();
         }
@@ -2498,7 +2498,7 @@ mod tests {
     /// each test names the clause it pins.
     mod exploration {
         use super::*;
-        use crate::pictures::platform::picture::test_snapshot;
+        use crate::pictures::platform::picture::test_picture;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -2518,7 +2518,7 @@ mod tests {
                 window,
                 from,
                 to,
-                snapshot: test_snapshot(to.size),
+                snapshot: test_picture(to.size),
                 floating,
                 server_order,
                 depth: 0,
@@ -2836,7 +2836,7 @@ mod tests {
     mod render_stability_fix {
         use super::preservation::{Gen, RUNS};
         use super::*;
-        use crate::pictures::platform::picture::test_snapshot;
+        use crate::pictures::platform::picture::test_picture;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -2870,7 +2870,7 @@ mod tests {
                 window,
                 from,
                 to,
-                snapshot: test_snapshot(to.size),
+                snapshot: test_picture(to.size),
                 floating: false,
                 server_order: None,
                 depth: 0,
@@ -3130,7 +3130,7 @@ mod tests {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let parked = rect(-1720.0, 32.0, 859.0, 1081.0);
             let grown = rect(4.0, 32.0, 1147.0, 1081.0);
-            let picture = test_snapshot(slot.size);
+            let picture = test_picture(slot.size);
             let mut running = flight(None);
             running.tiles.push(tile(wid(1), parked, slot));
             running.tiles.push(tile(wid(2), slot, grown));
@@ -3151,7 +3151,7 @@ mod tests {
                 "a grow's hold"
             );
             assert_eq!(
-                running.tile_state(wid(2), &test_snapshot(grown.size)),
+                running.tile_state(wid(2), &test_picture(grown.size)),
                 TileState::Reveal { fits: true },
                 "a grow's hold, its reveal landing"
             );
@@ -3175,7 +3175,7 @@ mod tests {
             // A refresh target in flight but past its hold is still only the refresh target.
             running.refresh.ask(vec![wid(3), wid(2)], Instant::now());
             assert_eq!(
-                running.tile_state(wid(2), &test_snapshot(grown.size)),
+                running.tile_state(wid(2), &test_picture(grown.size)),
                 TileState::MovingRefreshTarget { fits: true, resizing: true }
             );
         }
@@ -3469,24 +3469,24 @@ mod tests {
             }
         }
 
-        /// 2.4. A placeholder tile is a reveal in waiting after a hold timeout and after a mid-flight join.
+        /// 2.4. A stand-in tile is a reveal in waiting after a hold timeout and after a mid-flight join.
         #[test]
-        fn a_placeholder_tile_takes_its_reveal_early() {
+        fn a_stand_in_tile_takes_its_reveal_early() {
             let small = rect(4.0, 32.0, 859.0, 1081.0);
             let grown = rect(4.0, 32.0, 1147.0, 1081.0);
             let mut running = flight(Some(Instant::now()));
-            let mut placeholder = tile(wid(1), small, grown);
-            placeholder.snapshot = test_snapshot(small.size);
-            running.tiles.push(placeholder);
+            let mut stand_in = tile(wid(1), small, grown);
+            stand_in.snapshot = test_picture(small.size);
+            running.tiles.push(stand_in);
             assert!(running.awaiting.is_empty(), "the deadline cleared the hold");
 
-            let reveal = test_snapshot(grown.size);
+            let reveal = test_picture(grown.size);
             assert_eq!(
                 running.tile_state(wid(1), &reveal),
                 TileState::Reveal { fits: true }
             );
             assert_eq!(
-                running.tile_state(wid(1), &test_snapshot(small.size)),
+                running.tile_state(wid(1), &test_picture(small.size)),
                 TileState::Reveal { fits: false },
                 "a background picture at the old size is not the reveal"
             );
@@ -3561,7 +3561,7 @@ mod tests {
             let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
             running.entrances.push(entrance);
             running.awaiting.extend(waiting);
-            let spawn = test_snapshot(CGSize::new(572.0, 540.0));
+            let spawn = test_picture(CGSize::new(572.0, 540.0));
             assert_eq!(
                 running.claim(newcomer, &spawn),
                 None,
@@ -3570,7 +3570,7 @@ mod tests {
             assert_eq!(running.entrances.len(), 1);
             assert_eq!(running.awaiting.len(), 1);
             assert_eq!(
-                running.claim(newcomer, &test_snapshot(slot.size)),
+                running.claim(newcomer, &test_picture(slot.size)),
                 Some(Claimed::Released),
                 "a slot-size picture is the entrance"
             );
@@ -3585,7 +3585,7 @@ mod tests {
     mod render_stability_preservation {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
-        use crate::pictures::platform::picture::test_snapshot;
+        use crate::pictures::platform::picture::test_picture;
         use crate::pictures::domain::coverage::{needs_capture, outgrows, should_replace};
 
         fn wid(idx: u32) -> WindowId {
@@ -3617,7 +3617,7 @@ mod tests {
 
         /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
         fn clipped(size: CGSize) -> Picture {
-            let mut snapshot = test_snapshot(size);
+            let mut snapshot = test_picture(size);
             snapshot.coverage.covered = (40.0, size.height);
             snapshot
         }
@@ -3748,7 +3748,7 @@ mod tests {
                 let size = rng.on_screen().size;
                 for _ in 0..rng.below(4) + 1 {
                     let incoming = if rng.coin() {
-                        test_snapshot(size)
+                        test_picture(size)
                     } else {
                         clipped(size)
                     };
@@ -3829,7 +3829,7 @@ mod tests {
                     small.size.width + rng.pt(20.0, 800.0),
                     small.size.height,
                 );
-                let snapshot = test_snapshot(small.size);
+                let snapshot = test_picture(small.size);
                 assert!(outgrows(snapshot.coverage.covered, to.size), "seed 91: a grow");
                 // `start`: the outgrown picture puts the window in `awaiting` at its destination size.
                 let awaiting = vec![(wid(1), to.size)];
@@ -3859,7 +3859,7 @@ mod tests {
                 assert_eq!(
                     hold_wait(running.hold_deadline, now + limit),
                     None,
-                    "seed 91: at the deadline the placeholder flies"
+                    "seed 91: at the deadline the stand-in flies"
                 );
                 assert_eq!(
                     running.claim(wid(1), &snapshot),
@@ -3868,7 +3868,7 @@ mod tests {
                 );
                 assert_eq!(running.awaiting, awaiting, "seed 91: the hold stands");
                 assert_eq!(
-                    running.claim(wid(1), &test_snapshot(to.size)),
+                    running.claim(wid(1), &test_picture(to.size)),
                     Some(Claimed::Released),
                     "seed 91: the reveal is claimed"
                 );
@@ -3896,7 +3896,7 @@ mod tests {
                 assert!(cache.usable(wid(1)).is_none(), "seed 95: never captured");
                 assert!(cache.usable(wid(2)).is_none(), "seed 95: a sliver");
                 assert!(cache.usable(wid(3)).is_none());
-                cache.insert(wid(3), test_snapshot(slot.size));
+                cache.insert(wid(3), test_picture(slot.size));
                 assert!(cache.usable(wid(3)).is_some(), "seed 95: the drawn neighbour");
 
                 let (from, to) =
@@ -3919,7 +3919,7 @@ mod tests {
                 let size = (slot.size.width, slot.size.height);
                 assert!(needs_capture(None, size), "seed 95: warmed after the movement");
                 assert!(needs_capture(Some(clipped(slot.size).coverage), size));
-                assert!(!needs_capture(Some(test_snapshot(slot.size).coverage), size));
+                assert!(!needs_capture(Some(test_picture(slot.size).coverage), size));
             }
         }
 
@@ -3953,7 +3953,7 @@ mod tests {
                 assert!(!running.frames_applied, "seed 96: nothing applied at frame zero");
                 assert_eq!(hold_wait(running.hold_deadline, Instant::now()), None, "seed 96");
                 assert_eq!(
-                    running.claim(wid(1), &test_snapshot(CGSize::new(859.0, 1081.0))),
+                    running.claim(wid(1), &test_picture(CGSize::new(859.0, 1081.0))),
                     None
                 );
             }
@@ -3965,7 +3965,7 @@ mod tests {
     mod preservation {
         use super::*;
         use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
-        use crate::pictures::platform::picture::test_snapshot;
+        use crate::pictures::platform::picture::test_picture;
 
         pub(super) const DISPLAY: CGRect = CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
@@ -4031,7 +4031,7 @@ mod tests {
                 window,
                 from,
                 to,
-                snapshot: test_snapshot(to.size),
+                snapshot: test_picture(to.size),
                 floating,
                 server_order,
                 depth: 0,
@@ -4333,7 +4333,7 @@ mod tests {
             let mut cache: crate::pictures::domain::cache::PictureCache<Picture> =
                 crate::pictures::domain::cache::PictureCache::new();
             let size = CGSize::new(859.0, 1081.0);
-            cache.insert(wid(1), test_snapshot(size));
+            cache.insert(wid(1), test_picture(size));
             let held = cache.usable(wid(1)).cloned().expect("inserted");
             cache.forget(wid(1));
             assert!(cache.usable(wid(1)).is_none());
@@ -4612,7 +4612,7 @@ mod tests {
     mod entrance_hold {
         use super::preservation::{Gen, RUNS, stacked};
         use super::*;
-        use crate::pictures::platform::picture::test_snapshot;
+        use crate::pictures::platform::picture::test_picture;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -4687,23 +4687,23 @@ mod tests {
         /// and its real picture replaces the stand-in on the SAME tile when it lands at frame zero.
         #[test]
         fn a_stand_in_takes_its_real_picture_on_the_same_tile() {
-            use crate::pictures::platform::picture::{placeholder, test_bitmap};
+            use crate::pictures::platform::picture::{stand_in_picture, test_bitmap};
             let parked = rect(-1720.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let mut flight = flight(None);
             let mut tile = stacked(wid(3), parked, slot, Some(2), false);
-            tile.snapshot = placeholder(slot.size, test_bitmap());
+            tile.snapshot = stand_in_picture(slot.size, test_bitmap());
             flight.tiles.push(tile);
             flight.awaiting.push((wid(3), slot.size));
 
             assert!(
                 matches!(
-                    flight.tile_state(wid(3), &test_snapshot(slot.size)),
+                    flight.tile_state(wid(3), &test_picture(slot.size)),
                     TileState::Reveal { fits: true }
                 ),
                 "held for like a grow"
             );
-            let claimed = flight.claim(wid(3), &test_snapshot(slot.size));
+            let claimed = flight.claim(wid(3), &test_picture(slot.size));
 
             assert_eq!(claimed, Some(Claimed::Released));
             let tile = flight.tiles.iter().find(|t| t.window == wid(3)).expect("still one tile");
@@ -4724,14 +4724,14 @@ mod tests {
         /// for the next flight.
         #[test]
         fn a_stand_in_mid_flight_is_swapped_for_its_picture() {
-            use crate::pictures::platform::picture::{placeholder, test_bitmap};
+            use crate::pictures::platform::picture::{stand_in_picture, test_bitmap};
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let mut flight = flight(Some(Instant::now()));
             let mut tile = stacked(wid(3), slot, slot, Some(2), false);
-            tile.snapshot = placeholder(slot.size, test_bitmap());
+            tile.snapshot = stand_in_picture(slot.size, test_bitmap());
             flight.tiles.push(tile);
 
-            let state = flight.tile_state(wid(3), &test_snapshot(slot.size));
+            let state = flight.tile_state(wid(3), &test_picture(slot.size));
             assert_eq!(state, TileState::Reveal { fits: true });
             assert_eq!(
                 should_swap_mid_flight(state, true, false, Some(0.3)),
@@ -4748,7 +4748,7 @@ mod tests {
             flight.awaiting.push((wid(1), neighbour.size));
             flight.focus = Some(wid(2));
 
-            let claimed = flight.claim(wid(2), &test_snapshot(slot.size));
+            let claimed = flight.claim(wid(2), &test_picture(slot.size));
 
             assert_eq!(claimed, Some(Claimed::Held), "the grow's hold remains");
             assert!(flight.started.is_none(), "still at frame zero");
@@ -4771,13 +4771,13 @@ mod tests {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut flight = holding_for(wid(2), slot, true);
             assert_eq!(
-                flight.claim(wid(2), &test_snapshot(slot.size)),
+                flight.claim(wid(2), &test_picture(slot.size)),
                 Some(Claimed::Released)
             );
             assert!(flight.awaiting.is_empty());
             assert_eq!(flight.tiles.len(), 1);
             assert_eq!(
-                flight.claim(wid(2), &test_snapshot(slot.size)),
+                flight.claim(wid(2), &test_picture(slot.size)),
                 Some(Claimed::Refreshed),
                 "a repeat refreshes the composed tile's picture and releases nothing"
             );
@@ -4789,7 +4789,7 @@ mod tests {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut flight = holding_for(wid(2), slot, false);
             assert_eq!(
-                flight.claim(wid(2), &test_snapshot(CGSize::new(200.0, 200.0))),
+                flight.claim(wid(2), &test_picture(CGSize::new(200.0, 200.0))),
                 None
             );
             assert_eq!(flight.awaiting.len(), 1, "the hold goes on");
@@ -4801,7 +4801,7 @@ mod tests {
 
             let mut flight = holding_for(wid(2), slot, false);
             flight.started = Some(Instant::now());
-            assert_eq!(flight.claim(wid(2), &test_snapshot(slot.size)), None);
+            assert_eq!(flight.claim(wid(2), &test_picture(slot.size)), None);
             assert!(flight.tiles.is_empty());
         }
 
@@ -4812,11 +4812,11 @@ mod tests {
             let big = rect(4.0, 32.0, 1720.0, 1081.0);
             let mut flight = flight(None);
             let mut tile = stacked(wid(1), small, big, Some(0), false);
-            tile.snapshot = test_snapshot(small.size);
+            tile.snapshot = test_picture(small.size);
             flight.tiles.push(tile);
             flight.awaiting.push((wid(1), big.size));
             assert_eq!(
-                flight.claim(wid(1), &test_snapshot(big.size)),
+                flight.claim(wid(1), &test_picture(big.size)),
                 Some(Claimed::Released)
             );
             assert!(flight.tiles[0].snapshot.fits(big.size));
@@ -4829,16 +4829,16 @@ mod tests {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut flight = holding_for(wid(2), slot, false);
             assert!(
-                flight.admit(wid(2), &test_snapshot(slot.size)).is_none(),
+                flight.admit(wid(2), &test_picture(slot.size)).is_none(),
                 "still holding"
             );
             assert_eq!(flight.entrances.len(), 1);
 
-            // The deadline passed: `start_moving` flew with the placeholder and cleared the hold.
+            // The deadline passed: `start_moving` flew with the stand-in and cleared the hold.
             flight.awaiting.clear();
             flight.started = Some(Instant::now() - flight.duration.mul_f64(0.6));
             let remaining = flight.remaining();
-            let (tile, travel) = flight.admit(wid(2), &test_snapshot(slot.size)).expect("admitted");
+            let (tile, travel) = flight.admit(wid(2), &test_picture(slot.size)).expect("admitted");
             assert_eq!(tile.from, entrance_from(slot));
             assert_eq!(tile.to, slot);
             assert!(travel <= remaining, "{travel:?} outlives {remaining:?}");
@@ -4848,7 +4848,7 @@ mod tests {
             );
             assert!(flight.entrances.is_empty());
             assert!(
-                flight.admit(wid(2), &test_snapshot(slot.size)).is_none(),
+                flight.admit(wid(2), &test_picture(slot.size)).is_none(),
                 "taken once"
             );
         }
@@ -4873,7 +4873,7 @@ mod tests {
                     floating: false,
                 });
                 let to = flight.entrances[0].to;
-                let (_, admitted) = flight.admit(wid(2), &test_snapshot(to.size)).unwrap();
+                let (_, admitted) = flight.admit(wid(2), &test_picture(to.size)).unwrap();
                 assert!(admitted <= flight.duration, "seed 62: {admitted:?}");
             }
             assert_eq!(
@@ -6430,11 +6430,11 @@ mod tests {
 
         #[test]
         fn a_grow_still_enters_awaiting() {
-            use crate::pictures::platform::picture::test_snapshot;
+            use crate::pictures::platform::picture::test_picture;
             use crate::pictures::domain::coverage::outgrows;
             let a = column(0.0);
             let grown = rect(a.origin.x, a.origin.y, a.size.width + 600.0, a.size.height);
-            let snapshot = test_snapshot(a.size);
+            let snapshot = test_picture(a.size);
             assert!(outgrows(snapshot.coverage.covered, grown.size));
             let mut running = RunningAnimation {
                 tiles: Vec::new(),
@@ -6528,7 +6528,7 @@ mod tests {
 
         #[test]
         fn a_spawn_entrance_flies_without_a_hold_and_is_a_reveal_in_waiting() {
-            use crate::pictures::platform::picture::test_snapshot;
+            use crate::pictures::platform::picture::test_picture;
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let spawn = rect(300.0, 200.0, 400.0, 300.0);
             let EntranceDecision::Travel { from, to } =
@@ -6540,7 +6540,7 @@ mod tests {
                 window: wid(9),
                 from,
                 to,
-                snapshot: test_snapshot(spawn.size),
+                snapshot: test_picture(spawn.size),
                 floating: false,
                 server_order: Some(0),
                 depth: 0,
@@ -6579,12 +6579,12 @@ mod tests {
             assert_eq!(running.hold_deadline, None);
             assert!(running.started.is_none() && running.awaiting.is_empty());
             assert_eq!(
-                running.tile_state(wid(9), &test_snapshot(spawn.size)),
+                running.tile_state(wid(9), &test_picture(spawn.size)),
                 TileState::Reveal { fits: false },
                 "the spawn picture does not cover the slot"
             );
             assert_eq!(
-                running.tile_state(wid(9), &test_snapshot(slot.size)),
+                running.tile_state(wid(9), &test_picture(slot.size)),
                 TileState::Reveal { fits: true }
             );
             // The plan calls it an entrance; the tile is a loose resize from spawn to slot.
@@ -6598,7 +6598,7 @@ mod tests {
 
         #[test]
         fn a_spawn_entrances_early_chase_picture_is_taken_without_a_release() {
-            use crate::pictures::platform::picture::test_snapshot;
+            use crate::pictures::platform::picture::test_picture;
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let spawn = rect(300.0, 200.0, 400.0, 300.0);
             let mut running = RunningAnimation {
@@ -6618,19 +6618,19 @@ mod tests {
                 nudge: None,
                 _clock: None,
             };
-            running.tiles[0].snapshot = test_snapshot(spawn.size);
+            running.tiles[0].snapshot = test_picture(spawn.size);
             assert_eq!(
-                running.claim(wid(9), &test_snapshot(spawn.size)),
+                running.claim(wid(9), &test_picture(spawn.size)),
                 None,
                 "still spawn-sized"
             );
             assert_eq!(
-                running.claim(wid(9), &test_snapshot(slot.size)),
+                running.claim(wid(9), &test_picture(slot.size)),
                 Some(Claimed::Refreshed)
             );
             assert!(running.tiles[0].snapshot.fits(slot.size));
             assert_eq!(
-                running.claim(wid(77), &test_snapshot(slot.size)),
+                running.claim(wid(77), &test_picture(slot.size)),
                 None,
                 "no such tile"
             );
@@ -6966,7 +6966,7 @@ mod tests {
         use crate::animation::domain::motion::glide::Leg;
         use crate::animation::domain::motion::strip_move::stage_move;
         use crate::animation::platform::engine::plan::*;
-        use crate::pictures::platform::picture::test_snapshot;
+        use crate::pictures::platform::picture::test_picture;
         use rini_ipc::protocol::Direction;
 
         /// A full-width column and the gap after it.
@@ -7189,7 +7189,7 @@ mod tests {
                     &tile(anchor),
                     real,
                     (window, hug(real)),
-                    test_snapshot(hug(real).size),
+                    test_picture(hug(real).size),
                 )
             };
             let f_border = border(f, settings, wid(70));
@@ -7238,7 +7238,7 @@ mod tests {
                 &stacked(f, from, to, Some(0), true),
                 settings,
                 (wid(70), hug(settings)),
-                test_snapshot(hug(settings).size),
+                test_picture(hug(settings).size),
             );
             plan.adopt(&border);
             let flight = FlightPlan::from(plan);
@@ -7257,12 +7257,12 @@ mod tests {
         /// the moved window while its real window parks, so it is not chased.
         #[test]
         fn a_stand_in_coming_on_screen_is_chased_and_one_staying_parked_is_not() {
-            use crate::pictures::platform::picture::{placeholder, test_bitmap};
+            use crate::pictures::platform::picture::{stand_in_picture, test_bitmap};
             let slot = rect(868.0, 32.0, 860.0, 1081.0);
             let park = rect(1732.0, 32.0, 860.0, 1081.0);
             let stand_in = |window, from: CGRect, to: CGRect| {
                 let mut tile = stacked(window, from, to, Some(1), false);
-                tile.snapshot = placeholder(to.size, test_bitmap());
+                tile.snapshot = stand_in_picture(to.size, test_bitmap());
                 tile
             };
             let held = at(4.0, WIDTH);
@@ -7534,7 +7534,7 @@ mod tests {
             anchor.depth = 0;
             let real = at(4.0, WIDTH);
             let frame = rect(0.0, 28.0, WIDTH + 8.0, 1089.0);
-            let border = border_tile(&anchor, real, (wid(20), frame), test_snapshot(frame.size));
+            let border = border_tile(&anchor, real, (wid(20), frame), test_picture(frame.size));
             incoming.adopt(&border);
 
             let along = halfway(&current);

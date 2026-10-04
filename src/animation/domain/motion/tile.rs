@@ -26,18 +26,18 @@ pub enum ContentMode {
 /// only when picture and frames agree, where stretching is exact.
 pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMode {
     if is_a_resize(from, to) || !fits_frame(covered, (from.width, from.height)) {
-        placeholder_mode(covered, to)
+        stand_in_mode(covered, to)
     } else {
         ContentMode::Stretch
     }
 }
 
 /// How a tile fits a picture that may not cover its destination: the ordinary crop when it can,
-/// stretched when it cannot. The stretch is the placeholder of a grow whose reveal has not landed;
-/// every mode fills the whole frame, so a placeholder never shows the backdrop. A top-left crop
+/// stretched when it cannot. The stretch is the stand-in of a grow whose reveal has not landed;
+/// every mode fills the whole frame, so a stand-in never shows the backdrop. A top-left crop
 /// that left the growth undrawn was tried and read as a hole (see "A grow holds, then reveals"
 /// in `src/animation/docs/animation-smoothness.md`).
-pub fn placeholder_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
+pub fn stand_in_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
     if outgrows(covered, to) {
         ContentMode::Stretch
     } else {
@@ -117,7 +117,7 @@ pub struct CropPiece {
 /// stretches the picture's own content instead of reaching beyond its edge: `contentsRect` past
 /// the edge extends the outermost pixels, near-transparent on a translucent window, so a grow
 /// painted a hole to the backdrop. A picture that cannot cover its destination is not drawn
-/// cropped at all (`placeholder_mode`), so this only covers the frames a fitting picture passes
+/// cropped at all (`stand_in_mode`), so this only covers the frames a fitting picture passes
 /// through.
 pub fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     let pw = picture.width.max(1.0);
@@ -306,7 +306,7 @@ mod tests {
             ),
             ContentMode::Stretch
         );
-        // A horizontal grow past the picture is the placeholder: it stretches until the reveal
+        // A horizontal grow past the picture is the stand-in: it stretches until the reveal
         // lands. A vertical shrink crops.
         assert_eq!(
             content_mode(picture, col, CGSize::new(1720.0, 1081.0)),
@@ -316,7 +316,7 @@ mod tests {
             content_mode(picture, col, CGSize::new(859.0, 540.0)),
             ContentMode::Crop
         );
-        // A stale narrow picture in a wider frame is the placeholder case too: the reveal fills it.
+        // A stale narrow picture in a wider frame is the stand-in case too: the reveal fills it.
         assert_eq!(content_mode((572.0, 1081.0), col, col), ContentMode::Stretch);
         assert_eq!(
             content_mode((918.0, 1081.0), col, col),
@@ -328,22 +328,22 @@ mod tests {
     /// A picture that cannot cover its destination is stretched over it; one that covers it takes
     /// the ordinary crop. Either way the whole frame is drawn.
     #[test]
-    fn a_placeholder_never_shows_backdrop() {
+    fn a_stand_in_never_shows_backdrop() {
         let picture = (859.0, 1081.0);
         assert_eq!(
-            placeholder_mode(picture, CGSize::new(1147.0, 1081.0)),
+            stand_in_mode(picture, CGSize::new(1147.0, 1081.0)),
             ContentMode::Stretch
         );
         assert_eq!(
-            placeholder_mode(picture, CGSize::new(859.0, 1300.0)),
+            stand_in_mode(picture, CGSize::new(859.0, 1300.0)),
             ContentMode::Stretch
         );
         assert_eq!(
-            placeholder_mode(picture, CGSize::new(859.0, 1081.0)),
+            stand_in_mode(picture, CGSize::new(859.0, 1081.0)),
             ContentMode::Crop
         );
         assert_eq!(
-            placeholder_mode(picture, CGSize::new(572.0, 1081.0)),
+            stand_in_mode(picture, CGSize::new(572.0, 1081.0)),
             ContentMode::Crop
         );
         // Both modes fill the frame: the match is exhaustive, so a mode that left part of the
@@ -351,7 +351,7 @@ mod tests {
         for w in (1..=40).map(|i| i as f64 * 50.0) {
             for h in (1..=30).map(|i| i as f64 * 50.0) {
                 let to = CGSize::new(w, h);
-                match placeholder_mode(picture, to) {
+                match stand_in_mode(picture, to) {
                     ContentMode::Stretch => {
                         assert!(outgrows(picture, to), "{to:?}")
                     }

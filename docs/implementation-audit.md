@@ -99,7 +99,7 @@ Six functions, ~89 lines, for two observed properties.
 deleted outright, having no callers left (2026-09-28), and `capture_composite_via_skylight`, left a
 pass-through, went when the captures moved to `src/pictures/platform/skylight.rs` (2026-10-04).
 
-`src/animation/platform/window_snapshot.rs:73` `capture_via_skylight` (31 lines)
+`capture_via_skylight` (31 lines, in the since-split `window_snapshot.rs`)
 and `:204` `capture_composite_via_skylight` (30 lines), 0.83 similar. The
 difference is one window versus a window list.
 
