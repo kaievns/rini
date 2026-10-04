@@ -48,10 +48,14 @@ skipped its first frames.
 
 ## Detail
 
-- [`animation-smoothness.md`](animation-smoothness.md) — the engine as it is, what
-  each earlier model cost, and what is still open
-- [`capture-overlay-research.md`](capture-overlay-research.md) — the capture
-  measurements everything above rests on
+- [`animation-smoothness.md`](animation-smoothness.md) — how a flight moves: containers, merges,
+  curves, depth bands, the bounce and the nudge, resizes and the score, and what each earlier model
+  cost
+- [`capture-overlay-research.md`](capture-overlay-research.md) — the overlay measured: why it is
+  one opaque window, its level and coverage, its shadows, and the handover
+- What the pictures it draws cost and return is
+  [`src/pictures/docs/capture-research.md`](../../pictures/docs/capture-research.md); when a flight
+  does what is [`src/transitions/docs/coordination.md`](../../transitions/docs/coordination.md)
 
 ## Known debt
 

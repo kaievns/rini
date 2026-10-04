@@ -295,7 +295,7 @@ fn switching_away_and_back_returns_to_the_same_window() {
 
 /// A closed window disappears: the reactor tells the pictures service to forget it exactly once, and
 /// sends the engine no flight of its own, on the AX path. See "A closed window disappears" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// `src/transitions/docs/coordination.md`.
 #[test]
 fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let (mut apps, mut reactor) = test_context();

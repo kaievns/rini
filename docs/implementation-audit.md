@@ -297,7 +297,7 @@ that immediately.
 
 `src/app/reactor/animation.rs` and `managers.rs` take `reactor: &mut Reactor`
 rather than `&mut self` on a narrower borrow — 9 signatures. `animate_layout`'s own
-doc (`src/animation/docs/animation-smoothness.md`, "Structural findings") already calls
+doc (`src/transitions/docs/coordination.md`, "Structural findings") already calls
 this out and names the fix: a `present(motion)` boundary.
 
 ### 3.4 `src/displays/screen.rs` straddles domain and platform

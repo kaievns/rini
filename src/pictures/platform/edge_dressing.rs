@@ -2,7 +2,7 @@
 //! sublayers.
 //!
 //! No surface capture carries the hairline. See "The hairline is composited outside every capture" in
-//! `src/animation/docs/capture-overlay-research.md`.
+//! `src/pictures/docs/capture-research.md`.
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
@@ -13,7 +13,7 @@ use objc2_core_graphics::{
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 
 /// Corner radius of a macOS window, measured. See "The hairline is composited outside every
-/// capture" in `src/animation/docs/capture-overlay-research.md`.
+/// capture" in `src/pictures/docs/capture-research.md`.
 pub const CORNER_RADIUS: f64 = 10.0;
 
 /// The corner radius to draw a tile's silhouette with, clamped to half the shorter side because

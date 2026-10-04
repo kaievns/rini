@@ -2,7 +2,7 @@
 //! capture of one window with its hairline and, wholly on a display, its blur.
 //!
 //! SkyLight captures what is on screen, fresh. Constraints and costs:
-//! `src/animation/docs/capture-overlay-research.md`.
+//! `src/pictures/docs/capture-research.md`.
 
 use std::ffi::c_int;
 
@@ -59,7 +59,7 @@ pub fn capture_list_via_skylight(
 }
 
 /// One framed capture that yields the picture and its hairline: the reveal chase's capture, and the
-/// harvest after a flight. See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+/// harvest after a flight. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
 ///
 /// For a window wholly on a display, the picture also gets its blur back: a second capture of the
 /// window with everything below it, merged in by `translucency::merge`. About 14ms, measured, which is

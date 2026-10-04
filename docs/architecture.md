@@ -87,7 +87,8 @@ permission, builds every actor and joins them.
    the domain needs and an adapter fills is a port: it is declared in `domain/`
    and `platform/` imports it. `windows/domain/info.rs` and
    `windows/domain/request.rs` are those ports for `windows`;
-   `pictures/domain/target.rs` for `pictures`; `transitions/domain/request.rs` for `transitions`.
+   `pictures/domain/target.rs` for `pictures`; `animation/domain/motion/surface.rs` (`TileGeometry`,
+   `SurfaceGeometry`) for `animation`; `transitions/domain/request.rs` for `transitions`.
    `objc2_core_foundation`'s `CGRect`/`CGPoint`/`CGSize` are exempt — they are
    the arithmetic every layout decision is in. So are the window server's plain
    value types (`SpaceId`, `WindowServerId`, `DisplayReconfigFlags`), which are

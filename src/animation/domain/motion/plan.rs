@@ -1,5 +1,6 @@
 //! A pass as rigid pieces: the pure half of the container model.
-//! See "The overlay engine" and "Layout changes" in `src/animation/docs/animation-smoothness.md`.
+//! See "The overlay engine" in `src/animation/docs/animation-smoothness.md`, and "Layout changes and
+//! strip movements" in `src/transitions/docs/coordination.md` for what starts a flight.
 
 use std::collections::HashMap;
 
@@ -1916,8 +1917,8 @@ mod tests {
     }
 
     /// A pass as rigid pieces: `reflow_plan`, `surface_plan`, `plan_from_tiles` and what
-    /// `animation_targets` names. See "Layout changes" and "Strip movements" in
-    /// `src/animation/docs/animation-smoothness.md`.
+    /// `animation_targets` names. See "Layout changes and strip movements" in
+    /// `src/transitions/docs/coordination.md`.
     mod pieces {
         use rini_geometry::{SameAs, to_overlay_space};
 

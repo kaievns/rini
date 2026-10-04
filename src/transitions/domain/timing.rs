@@ -2,7 +2,7 @@
 //!
 //! Every constant here was measured rather than chosen, and the comment on each says against what. The
 //! functions are arithmetic over those constants and a progress fraction, so the feel of an animation
-//! is a number in this file. Measurements in `src/animation/docs/animation-smoothness.md`.
+//! is a number in this file. Measurements in `src/transitions/docs/coordination.md`.
 
 use std::time::{Duration, Instant};
 
@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 pub(in crate::transitions) const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// How long to collect the reactor's layout passes before the movement starts.
-/// See "Layout changes" in `src/animation/docs/animation-smoothness.md`.
+/// See "Layout changes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 
 /// Progress at which the focus change's two ends are recaptured: early enough to land and be cut in
 /// while the flight still moves, then again for an app that repaints its focus late.
-/// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const REFRESH_PASSES_AT: [f64; 2] = [0.25, 0.55];
 
 /// A reveal landing at or after this progress is cached only.
@@ -26,25 +26,25 @@ pub(in crate::transitions) const REVEAL_APPLY_BEFORE: f64 = 0.6;
 pub(in crate::transitions) const REFRESH_APPLY_BEFORE: f64 = 0.9;
 
 /// Progress at which a move-only layout flight places the real windows. Resizes and strips place
-/// earlier (`apply_frames_at`). See "The apply point" in `src/animation/docs/animation-smoothness.md`.
+/// earlier (`apply_frames_at`). See "The apply point" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const APPLY_FRAMES_AT: f64 = 0.75;
 
 /// How much larger than the window it traces a border window may be, per axis.
-/// See "Window borders during animations" in `src/animation/docs/animation-smoothness.md`.
+/// See "Border companions" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const COMPANION_EXPANSION: f64 = 8.0;
 
 /// How far the centers may disagree. The border window is centered on what it traces.
 pub(in crate::transitions) const COMPANION_CENTER_SLACK: f64 = 4.0;
 
 /// The earlier apply point when a window resizes: the resize costs three synchronous round trips
-/// into the owning app. See "The apply point" in `src/animation/docs/animation-smoothness.md`.
+/// into the owning app. See "The apply point" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const APPLY_FRAMES_AT_RESIZE: f64 = 0.5;
 
 /// The apply point for a strip movement: frame zero, so a switch's serialized AX writes land
-/// before lift. See "The apply point" in `src/animation/docs/animation-smoothness.md`.
+/// before lift. See "The apply point" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const APPLY_FRAMES_AT_PAN: f64 = 0.0;
 
-/// Which path composed a flight. See "The apply point" in `src/animation/docs/animation-smoothness.md`.
+/// Which path composed a flight. See "The apply point" in `src/transitions/docs/coordination.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::transitions) enum FlightKind {
     /// A per-window layout pass: moves and resizes.
@@ -67,7 +67,7 @@ pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 
 /// How long a flight stands still at frame zero for a reveal: a grow's pixels at its new size, or an
 /// entrance's first picture, whatever the flight's duration.
-/// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+/// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
 
 /// Time a holding flight still waits before flying the stand-in; `None` once past the deadline.
@@ -85,11 +85,11 @@ pub(in crate::transitions) fn late_join_duration(duration: Duration, progress: f
 }
 
 /// How long after a lift the flight's owed captures wait for the user to stop pressing.
-/// See "Capture work in flight" in `src/animation/docs/animation-smoothness.md`.
+/// See "Capture work in flight" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const SETTLE_BEFORE_CAPTURES: Duration = Duration::from_millis(400);
 
 /// How long past its clock a flight waits for the render server and the real windows before
-/// lifting anyway. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
+/// lifting anyway. See "Real windows land before lift" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const LIFT_GRACE: Duration = Duration::from_millis(350);
 
 /// The flight's clock once an out-and-back joins it, an edge bounce or a move's nudge: long enough
@@ -212,7 +212,7 @@ mod tests {
         );
     }
 
-    /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
     #[test]
     fn the_hold_is_capped_at_a_blink() {
         assert_eq!(HOLD_CAP, Duration::from_millis(300));
@@ -223,7 +223,7 @@ mod tests {
         );
     }
 
-    /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
     #[test]
     fn a_hold_is_short_and_settles_on_the_first_repaint() {
         let p = vec![10u8; 64];

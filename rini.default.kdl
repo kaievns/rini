@@ -112,7 +112,7 @@ layout {
 
 animations {
     // Every layout change, strip movement and workspace switch is drawn as one Core Animation
-    // flight in an overlay (src/animation/docs/animation-smoothness.md). Uncomment to place
+    // flight in an overlay (src/transitions/docs/coordination.md). Uncomment to place
     // windows at once instead.
     // off
 

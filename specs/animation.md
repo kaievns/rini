@@ -274,4 +274,6 @@ schedule that holds background capture off while a flight runs in `src/pictures/
 captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs` for the framed capture with
 its blur, `src/pictures/platform/screencapturekit.rs` for the background captures), and the service
 that makes them and keeps the cache, `src/pictures/platform/service.rs`. Measurements are in
-`src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
+`src/transitions/docs/coordination.md` (when a flight does what), `src/animation/docs/animation-smoothness.md`
+(how it moves), `src/animation/docs/capture-overlay-research.md` (the overlay) and
+`src/pictures/docs/capture-research.md` (the captures).

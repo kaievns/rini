@@ -3,7 +3,9 @@
 //! (`crate::pictures::platform::service`) for what it draws. Runs on the main thread because Core
 //! Animation requires it.
 //!
-//! Design in `src/animation/docs/animation-smoothness.md`; measurements in `src/animation/docs/capture-overlay-research.md`.
+//! Design in `src/transitions/docs/coordination.md`; how a flight moves in
+//! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
+//! `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -72,7 +74,7 @@ pub enum Event {
     /// Move the whole strip surface by one travel, as one rigid group; a leaving window animates
     /// off screen while its real frame parks, and the columns a move swapped cross the surface from
     /// their old slots, but for the one passed when the strip steps, which is held on it. See
-    /// "Strip movements" in `src/animation/docs/animation-smoothness.md`.
+    /// "Strip movements" in `src/transitions/docs/coordination.md`.
     AnimateSurface {
         windows: Vec<SurfaceWindow>,
         from_offset: CGPoint,
@@ -86,7 +88,7 @@ pub enum Event {
         nudge: Option<CGPoint>,
     },
     /// Nudge the strip surface by `overshoot` and bring it back; real windows stay put. Rides an
-    /// in-flight movement additively. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
+    /// in-flight movement additively. See "Edge bounce" in `src/transitions/docs/coordination.md`.
     Bounce {
         windows: Vec<SurfaceWindow>,
         overshoot: CGPoint,
@@ -160,7 +162,8 @@ struct RunningAnimation {
     hold_deadline: Option<Instant>,
     /// The recapture of the focus change's two ends. See `refresh_destination_among`.
     refresh: FocusRefresh,
-    /// Windows whose hairline landed this flight, so `finish` harvests nothing twice.
+    /// Windows whose hairline landed this flight, so `after_flight_captures` harvests nothing
+    /// twice.
     harvested: HashSet<WindowId>,
     /// The window gaining focus, from the latest pass that named one; its group is banded in front.
     focus: Option<WindowId>,
@@ -203,8 +206,8 @@ fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
 
 /// The tile of a border window at `border`'s frame tracing `anchor`, whose real frame is `real`: it
 /// follows the anchor's tile at the same offset, at its depth and in its band, a floating window's
-/// border in the floating container with it. See "Window borders during animations" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// border in the floating container with it. See "Border companions" in
+/// `src/transitions/docs/coordination.md`.
 fn border_tile(
     anchor: &OverlayTile,
     real: CGRect,
@@ -355,7 +358,7 @@ fn stacked_windows(
 }
 
 /// Depth for every tile, banded by `z_group::stack`; companions keep their window's depth.
-/// The reactor's regroup matches it. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// The reactor's regroup matches it. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
     let placements =
         crate::animation::domain::motion::z_group::stack(&stacked_windows(tiles), focus);
@@ -525,7 +528,7 @@ impl RunningAnimation {
     }
 
     /// Takes a settled picture for a window this flight is holding for. The picture must fit the
-    /// destination, for entrances too. See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
+    /// destination, for entrances too. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
     fn claim(&mut self, window: WindowId, snapshot: &Picture) -> Option<Claimed> {
         if self.started.is_some() {
             return None;
@@ -858,7 +861,7 @@ impl FlightEngine {
 
     /// Recaptures both ends of a focus change, framed where the window is wholly on a display and by
     /// ScreenCaptureKit where it is clipped, which a framed capture returns only a sliver of.
-    /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+    /// See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
         let current = self.running.as_ref().and_then(|running| running.focus);
         let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
@@ -975,7 +978,7 @@ impl FlightEngine {
     }
 
     /// Chases the first settled picture for a holding grow or entrance, one thread per window.
-    /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
     fn chase_reveal_pictures(&self, awaiting: &[(WindowId, CGSize)]) {
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for (window, size) in awaiting.iter().copied() {
@@ -1092,7 +1095,7 @@ impl FlightEngine {
     }
 
     /// Tiles for the border windows tracing the animated windows; each anchor is the window's real
-    /// frame and its tile. See "Window borders during animations" in the doc.
+    /// frame and its tile. See "Border companions" in `src/transitions/docs/coordination.md`.
     fn companion_tiles(
         &mut self,
         display: CGRect,
@@ -1284,8 +1287,8 @@ impl FlightEngine {
                     starts.push((request.window, start));
                     resolved.push((request.window, start, end, request.floating));
                 }
-                // No picture: almost always a window that just opened. See "A window that opens
-                // travels from its spawn frame" in `src/animation/docs/animation-smoothness.md`.
+                // No picture: almost always a window that just opened. See "A window that opens"
+                // in `src/transitions/docs/coordination.md`.
                 None => {
                     // Only a frame on this display counts as a spawn; capturing off screen is slow.
                     let spawn =
@@ -1493,7 +1496,7 @@ impl FlightEngine {
                 }
             }
             if in_flight {
-                // See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+                // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
                 let Self {
                     overlay,
                     running,
@@ -1738,8 +1741,8 @@ impl FlightEngine {
 
     /// Animates the whole strip surface as one rigid group, one container and one position
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
-    /// move's `nudge` stepping every strip container. See "The move flight" in
-    /// `src/animation/docs/animation-smoothness.md`.
+    /// move's `nudge` stepping every strip container. See "The move flight, staged" in
+    /// `src/transitions/docs/coordination.md`.
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -1795,7 +1798,7 @@ impl FlightEngine {
             match snapshot {
                 Some(snapshot) => {
                     // A wrong-shaped picture is stretched rather than dropped. See "A window that
-                    // was resized keeps a usable picture" in `src/animation/docs/capture-overlay-research.md`.
+                    // was resized keeps a usable picture" in `src/pictures/docs/capture-research.md`.
                     if snapshot.source
                         == crate::pictures::platform::picture::Route::StandIn
                     {
@@ -1890,7 +1893,7 @@ impl FlightEngine {
     }
 
     /// Nudges the strip surface by `overshoot` and back, additively on a running flight or as the
-    /// only motion of a no-travel one. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
+    /// only motion of a no-travel one. See "Edge bounce" in `src/transitions/docs/coordination.md`.
     fn start_bounce(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -2073,7 +2076,7 @@ impl FlightEngine {
     }
 
     /// Logs how many real windows are not where their tiles finished, and the worst of them.
-    /// See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
+    /// See "Real windows land before lift" in `src/transitions/docs/coordination.md`.
     fn report_handover_error(&self) {
         let Some(report) = self.handover() else { return };
         if report.count_over > 0 {

@@ -1,7 +1,7 @@
 //! The animation overlay: one rini-owned opaque window holding a picture of every animating window.
 //! Real windows are placed at their final frames once, underneath it; tiles ride containers, one
 //! per rigid piece of the flight. See "The overlay engine" in `src/animation/docs/animation-smoothness.md` and
-//! the capture measurements in `src/animation/docs/capture-overlay-research.md`.
+//! the overlay's own measurements in `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -152,7 +152,7 @@ const BACKDROP_Z: f64 =
     -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
 
 /// The window server places real windows on whole points; a layer at a fraction is resampled and
-/// pops at the lift. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
+/// pops at the lift. See "Whole points" in `src/animation/docs/animation-smoothness.md`.
 fn whole(rect: CGRect) -> CGRect {
     rect.round()
 }
@@ -424,7 +424,7 @@ pub struct TileOverlay {
     /// captured without its wallpaper beats black.
     backdrop_drawn: bool,
     /// The bar, redrawn on top with its own alpha since the overlay covers the real one. See "The
-    /// bar has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
+    /// bar has to be captured on its own" in `src/pictures/docs/capture-research.md`.
     bar: Retained<CALayer>,
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
@@ -669,7 +669,7 @@ impl TileOverlay {
             }
         } else {
             // A hard cut on purpose: a crossfade pulses a translucent window's net opacity. See
-            // "Window borders during animations" in `src/animation/docs/animation-smoothness.md`.
+            // "Border companions" in `src/transitions/docs/coordination.md`.
             set_layer_contents(&entry.picture, snapshot);
         }
         if snapshot.dressing.is_some() {
@@ -1008,7 +1008,7 @@ impl TileOverlay {
     }
 
     /// Whether every container and picture is presented within half a point of its model: the
-    /// render server runs behind the actor's clock. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
+    /// render server runs behind the actor's clock. See "Real windows land before lift" in `src/transitions/docs/coordination.md`.
     pub fn settled(&self) -> bool {
         let close = |a: CGPoint, b: CGPoint| (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() < 0.5;
         let same_size = |a: CGSize, b: CGSize| {
@@ -1373,7 +1373,7 @@ impl TileOverlay {
 }
 
 /// The bar's picture at the strip's origin, at the size it covers, never stretched. See "The bar
-/// has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
+/// has to be captured on its own" in `src/pictures/docs/capture-research.md`.
 fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
 }
@@ -1390,8 +1390,8 @@ fn dressing_image(
     }
 }
 
-/// Every harvested piece, whatever `size`, so a fresh harvest swaps in place. See "Window borders
-/// during animations" in `src/animation/docs/animation-smoothness.md`.
+/// Every harvested piece, whatever `size`, so a fresh harvest swaps in place. See "A fresh picture
+/// or hairline swaps in place" in `src/animation/docs/animation-smoothness.md`.
 fn dressing_piece_indices(
     dressing: &crate::pictures::platform::edge_dressing::EdgeDressing,
     size: CGSize,

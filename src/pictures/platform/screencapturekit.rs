@@ -3,7 +3,7 @@
 //! Fills a cache rather than capturing on demand: a capture is too slow to run at switch time. Results
 //! are `IOSurface` to keep a warm cache off the heap. When each call is made is the schedule's
 //! (`crate::pictures::domain::schedule`); this only makes it. See
-//! `src/animation/docs/capture-overlay-research.md`.
+//! `src/pictures/docs/capture-research.md`.
 
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ fn edges_are_painted(width: usize, height: usize, alpha_at: impl Fn(usize, usize
 }
 
 /// Does a capture's content reach the far edge of its buffer? `None` means it could not be inspected.
-/// See "Nominal capture resolution paints a quarter of the buffer" in `src/animation/docs/capture-overlay-research.md`.
+/// See "Nominal capture resolution paints a quarter of the buffer" in `src/pictures/docs/capture-research.md`.
 fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<bool> {
     use objc2_core_video::{
         CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
@@ -157,7 +157,7 @@ pub struct Prepared {
 unsafe impl Send for Prepared {}
 
 /// The scale every window is captured at, whatever display it is on: ScreenCaptureKit charges per
-/// call, not per pixel ("Capture cost" in `src/animation/docs/capture-overlay-research.md`), and a
+/// call, not per pixel ("Capture cost" in `src/pictures/docs/capture-research.md`), and a
 /// window captured at 1x would fly soft on a Retina display.
 pub const WINDOW_SCALE: f64 = 2.0;
 
@@ -228,7 +228,7 @@ fn prepare(target: &PictureTarget, window: &SCWindow) -> Prepared {
         // Rounded corners must stay transparent.
         config.setShouldBeOpaque(false);
         // Nominal renders at point size into a pixel-sized buffer. See "Nominal capture resolution
-        // paints a quarter of the buffer" in src/animation/docs/capture-overlay-research.md.
+        // paints a quarter of the buffer" in src/pictures/docs/capture-research.md.
         config.setCaptureResolution(SCCaptureResolutionType::Best);
     }
     Prepared { size, filter, config }
@@ -306,7 +306,7 @@ fn window_picture(
 }
 
 /// Renders `display` with every app window excluded, handing `done` the render. See "The wallpaper is
-/// not reliably a window" in `src/animation/docs/capture-overlay-research.md`.
+/// not reliably a window" in `src/pictures/docs/capture-research.md`.
 pub fn render_desktop(display: Display, done: impl Fn(Option<Picture>) + Send + Sync + 'static) {
     let size = display.frame.size;
     let scale = display.scale;
@@ -328,7 +328,7 @@ pub fn render_desktop(display: Display, done: impl Fn(Option<Picture>) + Send + 
         };
 
         // The bar is excluded too, although below layer 0: the overlay draws it from its own capture.
-        // See "The bar has to be captured on its own" in src/animation/docs/capture-overlay-research.md.
+        // See "The bar has to be captured on its own" in src/pictures/docs/capture-research.md.
         let windows = unsafe { content.windows() };
         let excluded: Vec<Retained<SCWindow>> = windows
             .iter()

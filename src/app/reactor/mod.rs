@@ -3611,7 +3611,7 @@ impl Reactor {
     /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
     /// it holds unless something better arrives, so this settles rather than re-capturing. During a
     /// flight the pictures service holds the targets until it settles ("Capture work in flight" in
-    /// `src/animation/docs/animation-smoothness.md`), so calling this from the switch handler is safe.
+    /// `src/transitions/docs/coordination.md`), so calling this from the switch handler is safe.
     fn warm_all_workspaces(&mut self, space: SpaceId) {
         let Some(pictures) = self.communication_manager.pictures.clone() else {
             return;
@@ -3699,8 +3699,8 @@ impl Reactor {
     /// the strip appears to arrive from where it was, then settles. A `moved` window's column and the
     /// column it passed start from the slots they held before the move, so the two are seen changing
     /// places. A moved column that fills the viewport steps the whole strip instead, the column it
-    /// passed held on the strip beneath it (`strip_move::stage_move`). See "The move flight" in
-    /// `src/animation/docs/animation-smoothness.md`.
+    /// passed held on the strip beneath it (`strip_move::stage_move`). See "The move flight, staged" in
+    /// `src/transitions/docs/coordination.md`.
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
     /// placed once the surface covers them. A window that did not move is not re-placed, as on the
@@ -3828,7 +3828,7 @@ impl Reactor {
     /// Bounces the view against the end a command ran into: the strip's first or last column
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
-    /// the real windows do not move. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
+    /// the real windows do not move. See "Edge bounce" in `src/transitions/docs/coordination.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
         if !self.config.settings.animate
             || crate::app::power::is_low_power_mode_enabled()
@@ -4057,7 +4057,7 @@ impl Reactor {
             nudge: None,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
-        // the pictures service holds a warm until the quiet after the flight (`src/animation/docs/animation-smoothness.md`).
+        // the pictures service holds a warm until the quiet after the flight (`src/transitions/docs/coordination.md`).
         self.warm_all_workspaces(space);
         true
     }

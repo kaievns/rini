@@ -1,11 +1,11 @@
 //! Which window-server levels are the desktop and which are the bar, so the two capture routes agree on
 //! what goes in each picture. See "The wallpaper is not reliably a window" and "The bar has to be
-//! captured on its own" in `src/animation/docs/capture-overlay-research.md`.
+//! captured on its own" in `src/pictures/docs/capture-research.md`.
 
 /// Anything at or below this level is the desktop behind every app window.
 const DESKTOP_CEILING: i64 = -2147483600;
 
-/// Levels measured in `src/animation/docs/capture-overlay-research.md` ("The wallpaper is not reliably
+/// Levels measured in `src/pictures/docs/capture-research.md` ("The wallpaper is not reliably
 /// a window"); the wallpaper at -2147483624 is owned by the Dock process and must count as desktop.
 pub fn is_desktop_layer(layer: i64) -> bool { layer <= DESKTOP_CEILING }
 

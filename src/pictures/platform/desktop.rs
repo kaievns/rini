@@ -1,7 +1,7 @@
 //! The desktop and the bar as the window server lists them: the windows a picture of either is
 //! composited from. The flight overlay draws them behind and over its tiles, and the bar grounds
 //! itself on the desktop. See "The wallpaper is not reliably a window" and "The bar has to be captured
-//! on its own" in `src/animation/docs/capture-overlay-research.md`.
+//! on its own" in `src/pictures/docs/capture-research.md`.
 use objc2_core_foundation::{CFDictionary, CFString, CFType, CGRect};
 use objc2_core_graphics::{
     CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName,
@@ -28,7 +28,7 @@ impl DesktopBackdrop {
     }
 }
 /// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
-/// See "The wallpaper is not reliably a window" in `src/animation/docs/capture-overlay-research.md`.
+/// See "The wallpaper is not reliably a window" in `src/pictures/docs/capture-research.md`.
 pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
     let mut windows = Vec::new();
     let mut wallpaper = Vec::new();
@@ -75,7 +75,7 @@ pub struct BarStrip {
     pub windows: Vec<WindowServerId>,
     /// Union of the windows' bounds, or `None` without a bar. A composite capture covers only this
     /// union, so it must be drawn at the union's origin ("The bar has to be captured on its own" in
-    /// `src/animation/docs/capture-overlay-research.md`).
+    /// `src/pictures/docs/capture-research.md`).
     pub bounds: Option<CGRect>,
 }
 /// The bar sitting in the menu bar strip, with the rect it occupies.

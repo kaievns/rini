@@ -5,7 +5,7 @@
 //! window at composite time, outside the window's surface. Every per-window route returns the same flat
 //! grey there, fully opaque. A capture of the window WITH everything below it does contain the blur,
 //! and leaves out anything above it. See "A composite of the window and what is below it carries the
-//! blur" in `src/animation/docs/capture-overlay-research.md`.
+//! blur" in `src/pictures/docs/capture-research.md`.
 //!
 //! Neither capture is the picture on its own. The composite has no transparency: a rounded corner comes
 //! back filled with whatever was behind it. The window's own capture has the right transparency and the

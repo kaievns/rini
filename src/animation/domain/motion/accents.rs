@@ -45,8 +45,8 @@ impl OutAndBacks {
     }
 }
 
-/// What becomes of a move's nudge. See "The move flight" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// What becomes of a move's nudge. See "The move flight, staged" in
+/// `src/transitions/docs/coordination.md`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NudgeAdmission {
     /// It steps the strip from now, and the flight is stretched to carry it.

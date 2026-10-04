@@ -88,8 +88,9 @@ until a time, or nothing.
 | The desktop is rendered again at a release when missing or stale | asked during a transition it would land mid-flight |
 | The bar is pictured `BAR_REFRESH_DELAY` after the overlay lifts or the display changes, never while it is up | a bar composite costs 31ms; a burst of switches pays it once, after the compositor has dropped the overlay |
 
-The costs are measured in `src/animation/docs/capture-overlay-research.md`: "Capture cost", and the
-listing against a kept filter in "Sequencing a focus change behind the overlay".
+The costs are measured in [`capture-research.md`](capture-research.md) ("Capture cost"), and the
+listing against a kept filter in "Sequencing a focus change behind the overlay" in
+`src/animation/docs/capture-overlay-research.md`.
 
 The flight engine's own captures in flight, the reveal chase, the focus refresh's framed captures, the
 spawn capture and the hairline harvest, are not scheduled here. It takes them on its own threads and
@@ -100,8 +101,7 @@ hands the pictures over through the handle. The focus refresh asks for a clipped
 **Usable is not the same as fitting.** A capture is usable when it covers the window it was taken
 from; it fits when it can be drawn into a frame without visible stretch. A cached picture of a window
 that has since been resized is usable and does not fit, and both checks exist for that case. See "A
-capture can be usable and still be the wrong shape" in
-[`src/animation/docs/capture-overlay-research.md`](../../animation/docs/capture-overlay-research.md).
+capture can be usable and still be the wrong shape" in [`capture-research.md`](capture-research.md).
 
 **The cache never downgrades.** A clipped capture never replaces a usable one, and a capture of a
 window on its own never replaces one of the same size that carries its blur. A stand-in is never
@@ -122,11 +122,11 @@ accepts.
 
 ## Detail
 
-- [`src/animation/docs/capture-overlay-research.md`](../../animation/docs/capture-overlay-research.md)
-  — every capture route measured: cost, what each returns, and why the desktop and the bar are
-  pictured on their own
-- [`src/animation/docs/animation-smoothness.md`](../../animation/docs/animation-smoothness.md) — the
-  capture work a flight does, and when
+- [`capture-research.md`](capture-research.md) — every capture route measured: cost, what each
+  returns, and why the desktop and the bar are pictured on their own; the hairline harvest; how
+  stale a picture may be
+- [`src/transitions/docs/coordination.md`](../../transitions/docs/coordination.md) — the capture
+  work a flight does, and when
 
 ## Known debt
 
@@ -152,6 +152,3 @@ ring and `Picture` carries it, and either would have had `pictures` name `animat
 **The bar still captures on its own.** Its menu extras and its ground are pictured on the bar's own
 thread (`src/bar/platform/menu_extras.rs`), with its own pacing and its own pause for flights.
 
-**The capture findings are still in animation's research doc.** `src/animation/docs/capture-overlay-research.md`
-holds both what captures cost and return and how the overlay draws; its capture sections move here when
-step 3 splits the animation docs by owner.

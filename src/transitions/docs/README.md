@@ -51,9 +51,11 @@ machine: a kind says what it stages, and the coordinator decides only when. Noth
 
 - `docs/pictures-motion-transitions.md` — the three features, the lifecycle's states, and the steps
   still to come
-- [`src/animation/docs/animation-smoothness.md`](../../animation/docs/animation-smoothness.md) — how a
-  flight runs: layout changes and strip movements, passes arriving mid-flight, the capture work in
-  flight, the apply point, the handover and the lift
+- [`coordination.md`](coordination.md) — how a flight runs: layout changes and strip movements,
+  routing, passes arriving mid-flight and pictures landing in one, the capture work in flight, the
+  apply point, entrances and holds, the handover and the lift
+- [`src/animation/docs/animation-smoothness.md`](../../animation/docs/animation-smoothness.md) — how
+  a flight moves once it runs
 
 ## Known debt
 

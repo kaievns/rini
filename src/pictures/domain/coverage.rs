@@ -1,6 +1,6 @@
 //! When a picture covers its window and fits the frame it is drawn into. Sizes only, so every rule
 //! here is testable without an image. Measurements behind the tolerances are in
-//! `src/animation/docs/capture-overlay-research.md`; the stretch tolerance is `rini_geometry::stretch`.
+//! `src/pictures/docs/capture-research.md`; the stretch tolerance is `rini_geometry::stretch`.
 
 use std::time::Duration;
 
@@ -61,7 +61,7 @@ const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
 /// Distinct from [`Coverage::is_usable`], which compares a capture against the window it was taken
 /// FROM. This compares it against the frame it is drawn INTO, which a cached picture routinely no
 /// longer matches. See "A capture can be usable and still be the wrong shape" in
-/// `src/animation/docs/capture-overlay-research.md`.
+/// `src/pictures/docs/capture-research.md`.
 pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
     within_stretch(
         CGSize::new(covered.0, covered.1),
@@ -97,7 +97,7 @@ pub fn needs_capture(cached: Option<Coverage>, size: (f64, f64)) -> bool {
 /// Rejects a composite whose wallpaper window was missing, and one that does not span the display,
 /// since either draws as a black screen for the length of an animation. Rejecting means keeping
 /// whatever is already drawn, so a wallpaperless capture is still accepted when there is nothing to
-/// keep. See "The wallpaper is not reliably a window" in `src/animation/docs/capture-overlay-research.md`.
+/// keep. See "The wallpaper is not reliably a window" in `src/pictures/docs/capture-research.md`.
 pub fn is_backdrop_worth_drawing(
     have_one_already: bool,
     has_wallpaper: bool,

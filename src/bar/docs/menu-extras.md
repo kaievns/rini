@@ -48,7 +48,7 @@ own.
 | ScreenCaptureKit, unsigned probe | `SCStreamError -3811` | ~40ms |
 
 `SLSHWCaptureWindowList` captures only the part of a window that is on screen, as the animation
-engine found (`src/animation/docs/capture-overlay-research.md`), and a hidden menu bar's items are
+engine found (`src/pictures/docs/capture-research.md`), and a hidden menu bar's items are
 all off screen. `SLSCaptureWindowsContentsToRectWithOptions` is what sketchybar 2.24 calls. Its third
 argument is a real count: sketchybar declares it `bool` and passes a 64-bit array, which works only
 because `true` is 1. It returns a `CGError`, where sketchybar declares `void`: 0, 1000 when no image

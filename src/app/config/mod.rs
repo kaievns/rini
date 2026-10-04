@@ -43,7 +43,7 @@ pub struct Config {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct Settings {
     /// Layout changes, strip movements and workspace switches are drawn through the overlay
-    /// (`src/animation/docs/animation-smoothness.md`); off places windows at once.
+    /// (`src/transitions/docs/coordination.md`); off places windows at once.
     pub animate: bool,
     /// Seconds, `BASE_ANIMATION_SECONDS` times `animations › slowdown`.
     pub animation_duration: f64,

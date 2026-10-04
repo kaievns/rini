@@ -266,7 +266,7 @@ fn held(cache: &PictureCache<Picture>, window: WindowId) -> Option<Held> {
 
 /// The desktop of `display` composited from its windows, for a transition before any render of it has
 /// landed. See "Which route serves, and why the render wins" in
-/// `src/animation/docs/capture-overlay-research.md`.
+/// `src/pictures/docs/capture-research.md`.
 fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
     let size = (display.frame.size.width, display.frame.size.height);
     let desktop = desktop_backdrop_windows(display.frame);
@@ -285,7 +285,7 @@ fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
 }
 
 /// The bar of `display`, captured on its own to keep its alpha, and the strip it covers. See "The bar
-/// has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
+/// has to be captured on its own" in `src/pictures/docs/capture-research.md`.
 fn bar_of(display: Display) -> (Option<Picture>, Option<CGRect>) {
     let strip = bar_strip(display.frame);
     let Some(bounds) = strip.bounds else {

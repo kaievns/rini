@@ -1,6 +1,6 @@
 //! When a window has finished painting: two consecutive thumbprints agree, or one differs from the
 //! rendering before the change. See "A grow holds, then reveals" in
-//! `src/animation/docs/animation-smoothness.md`.
+//! `src/transitions/docs/coordination.md`.
 
 /// Share of samples that may differ and still count as the same rendering: forgives a blinking
 /// cursor, not a half-painted surface.

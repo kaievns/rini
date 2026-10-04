@@ -173,7 +173,7 @@ is borrowed.
   swaps the selection's column with its neighbour sets `moved`, the window and
   the way it went, so the flight can draw the two changing places; a move out
   of a stacked column makes a new column instead and sets nothing. See "The
-  move flight" in `src/animation/docs/animation-smoothness.md`.
+  move flight, staged" in `src/transitions/docs/coordination.md`.
 
 ## Joining
 

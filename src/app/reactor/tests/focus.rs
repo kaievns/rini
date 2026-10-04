@@ -522,7 +522,7 @@ fn focus_that_does_not_move_asks_for_the_window_alone() {
 
 /// Pushing past an end bounces the view instead of doing nothing: focus right at the last column
 /// nudges the strip left; the previous workspace at the top of the stack nudges the row up. Focus
-/// stays where it was in both cases. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
+/// stays where it was in both cases. See "Edge bounce" in `src/transitions/docs/coordination.md`.
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;

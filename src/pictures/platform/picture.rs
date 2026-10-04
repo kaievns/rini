@@ -4,7 +4,7 @@
 //!
 //! SkyLight captures what is on screen, fresh (`skylight`); ScreenCaptureKit serves everything else in
 //! the background (`screencapturekit`). Constraints and costs of both:
-//! `src/animation/docs/capture-overlay-research.md`.
+//! `src/pictures/docs/capture-research.md`.
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;

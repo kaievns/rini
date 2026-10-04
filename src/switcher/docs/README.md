@@ -95,7 +95,7 @@ taking a click would activate rini and deactivate the application being switched
 the one thing a switcher exists to do.
 
 **The pictures are read, never captured here.** Capture costs ~40ms plus 14.5ms per window
-(measured, `src/animation/docs/capture-overlay-research.md`), so the panel cannot take one while the
+(measured, `src/pictures/docs/capture-research.md`), so the panel cannot take one while the
 popup is opening. The panel holds a handle to the pictures service and reads its cache at every draw —
 one lock and a hash lookup per card — and keeps no copy of its own, so a closed window's picture is
 gone with the cache's. Only the windows drawn are read and warmed (`panel::drawn_windows`): a stack's

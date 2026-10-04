@@ -4,7 +4,7 @@
 //! belongs to, and whether a picture that arrived mid-flight is worth swapping in. Decided over ids,
 //! frames and progress fractions, with nothing of Core Animation in it. When the pictures service makes
 //! the captures a flight asks for is `crate::pictures::domain::schedule`. Design in
-//! `src/animation/docs/animation-smoothness.md`.
+//! `src/transitions/docs/coordination.md`.
 
 use objc2_core_foundation::CGRect;
 use std::collections::{HashMap, HashSet};
@@ -20,7 +20,7 @@ use super::timing::{
 };
 
 /// Which of `tiles` to recapture mid-flight: the two ends of a focus change, and nothing else.
-/// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn refresh_targets(
     previous: Option<WindowId>,
     current: Option<WindowId>,
@@ -38,7 +38,7 @@ pub(in crate::transitions) fn refresh_targets(
 }
 
 /// A flight's recapture of the two ends of its focus change, in the passes at `REFRESH_PASSES_AT`.
-/// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 #[derive(Debug, Default)]
 pub(in crate::transitions) struct FocusRefresh {
     /// How many of the passes have been taken.
@@ -103,7 +103,7 @@ pub(in crate::transitions) enum GroupStart {
 }
 
 /// The unmanaged window tracing `frame` as its border, if any. A parked window never traces and is
-/// never traced. See "Window borders during animations" in `src/animation/docs/animation-smoothness.md`.
+/// never traced. See "Border companions" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn companion_of(
     frame: CGRect,
     candidates: &[(WindowServerId, CGRect)],
@@ -160,7 +160,7 @@ pub(in crate::transitions) enum SwapDecision {
 }
 
 /// Whether a picture landing mid-flight may change what a tile draws. `progress` is `None`
-/// before the flight starts moving. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// before the flight starts moving. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn should_swap_mid_flight(
     state: TileState,
     settled: bool,
@@ -208,7 +208,8 @@ pub(in crate::transitions) fn harvests_landing(flying: bool, covered: bool) -> b
     !flying && covered
 }
 
-/// Which animated windows `finish` harvests a hairline for: each at most once per flight.
+/// Which animated windows `after_flight_captures` harvests a hairline for: each at most once per
+/// flight.
 pub(in crate::transitions) fn finish_harvest_set(
     animated: &[WindowId],
     harvested: &HashSet<WindowId>,
@@ -229,7 +230,7 @@ pub(in crate::transitions) fn finish_harvest_set(
 }
 
 /// Whether an in-flight merge leaves the already-applied frames stale. A parked window has no
-/// tile, so `frames_changed` counts too. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// tile, so `frames_changed` counts too. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn mark_stale_on_untiled_change(
     changed: bool,
     frames_changed: bool,
@@ -250,7 +251,7 @@ pub(in crate::transitions) struct HandoverReport {
 }
 
 /// Measures every tiled window's real frame against its intended one. Parks are excluded: macOS
-/// clamps them. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
+/// clamps them. See "Real windows land before lift" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn handover_report(
     final_frames: &[(WindowId, CGRect)],
     tiled: &[WindowId],
@@ -298,7 +299,7 @@ pub(in crate::transitions) enum Claimed {
 }
 
 /// Whether a composed pass is worth an overlay flight.
-/// See "Layout changes" in `src/animation/docs/animation-smoothness.md`.
+/// See "Layout changes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn worth_flying(moving_drawable: bool, running: bool) -> bool {
     moving_drawable || running
 }

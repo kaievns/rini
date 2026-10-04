@@ -1,7 +1,7 @@
 //! A window moved along the strip, staged: where the two columns that change places start, which of
 //! them is held on the strip, and whether the move steps the whole strip. The step's shape is
-//! `crate::animation::domain::motion::nudge`. See "The move flight" in
-//! `src/animation/docs/animation-smoothness.md`.
+//! `crate::animation::domain::motion::nudge`. See "The move flight, staged" in
+//! `src/transitions/docs/coordination.md`.
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;

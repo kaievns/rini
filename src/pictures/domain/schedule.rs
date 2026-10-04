@@ -70,7 +70,7 @@ pub struct Held {
 
 /// Whether a warm captures a window drawn at `size`: nothing worth drawing is held, what is held no
 /// longer fits, or it is stale. See "A window that was resized keeps a usable picture" in
-/// `src/animation/docs/capture-overlay-research.md`.
+/// `src/pictures/docs/capture-research.md`.
 pub fn wants_warm(held: Option<Held>, size: CGSize, now: Instant) -> bool {
     needs_capture(held.map(|held| held.coverage), (size.width, size.height))
         || held.is_some_and(|held| picture_is_stale(now.saturating_duration_since(held.taken)))
@@ -82,7 +82,7 @@ pub fn wants_warm(held: Option<Held>, size: CGSize, now: Instant) -> bool {
 pub const SETTLE_BEFORE_LISTING: Duration = Duration::from_millis(50);
 
 /// Concurrent ScreenCaptureKit captures. It serialises internally, so wall clock stops improving past
-/// four. See "Capture cost" in `src/animation/docs/capture-overlay-research.md`.
+/// four. See "Capture cost" in `src/pictures/docs/capture-research.md`.
 pub const MAX_CONCURRENT: usize = 4;
 
 /// How long after the overlay lifts, or the display changes, the bar is pictured: a bar composite is
@@ -91,13 +91,13 @@ pub const MAX_CONCURRENT: usize = 4;
 pub const BAR_REFRESH_DELAY: Duration = Duration::from_millis(250);
 
 /// Chase poll interval and attempt budget for a growing window's real frame (about a second).
-/// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+/// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
 pub const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(8);
 
 pub const REVEAL_CHASE_ATTEMPTS: usize = 125;
 
 /// How many new windows one pass captures synchronously at spawn; the rest take a reservation.
-/// See "A window that opens travels from its spawn frame" in `src/animation/docs/animation-smoothness.md`.
+/// See "A window that opens" in `src/transitions/docs/coordination.md`.
 pub const MAX_SYNC_ENTRANCE_CAPTURES: usize = 4;
 
 /// The service's next call. `P` is what the platform prepared for capturing a window its listing found.

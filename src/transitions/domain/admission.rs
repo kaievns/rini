@@ -9,7 +9,7 @@ use rini_core::ids::WindowId;
 use rini_geometry::{SameAs, to_overlay_space};
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
-/// for it. See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
+/// for it. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
 #[derive(Debug, Clone)]
 pub(in crate::transitions) struct PendingEntrance {
     pub(in crate::transitions) window: WindowId,
@@ -63,7 +63,7 @@ pub(in crate::transitions) fn merge_final_frames(
 }
 
 /// Points a flight's reserved entrances at a later pass's destinations; an entrance has no tile
-/// for `merge_pass` to retarget. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// for `merge_pass` to retarget. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn retarget_entrances(
     entrances: &mut [PendingEntrance],
     final_frames: &[(WindowId, CGRect)],
@@ -85,7 +85,7 @@ pub(in crate::transitions) fn retarget_entrances(
 }
 
 /// The frames a coalescing merge must send again: `step` will not place frame-zero frames twice.
-/// See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
+/// See "The reservation fallback" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn reapply_set(
     frames_applied: bool,
     in_flight: bool,

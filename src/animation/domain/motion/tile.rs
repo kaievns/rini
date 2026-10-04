@@ -36,7 +36,7 @@ pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMod
 /// stretched when it cannot. The stretch is the stand-in of a grow whose reveal has not landed;
 /// every mode fills the whole frame, so a stand-in never shows the backdrop. A top-left crop
 /// that left the growth undrawn was tried and read as a hole (see "A grow holds, then reveals"
-/// in `src/animation/docs/animation-smoothness.md`).
+/// in `src/transitions/docs/coordination.md`).
 pub fn stand_in_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
     if outgrows(covered, to) {
         ContentMode::Stretch

@@ -21,7 +21,9 @@ this crate just to hold a number.
 
 ## Measured behaviour
 
-Levels, capture options and notification semantics are recorded in
+Capture options and the desktop's levels are recorded in
+[`src/pictures/docs/capture-research.md`](../../../src/pictures/docs/capture-research.md), the overlay's level
+and notification semantics in
 [`src/animation/docs/capture-overlay-research.md`](../../../src/animation/docs/capture-overlay-research.md),
 and `SLSCaptureWindowsContentsToRectWithOptions` on the menu extras in
 [`src/bar/docs/menu-extras.md`](../../../src/bar/docs/menu-extras.md).
