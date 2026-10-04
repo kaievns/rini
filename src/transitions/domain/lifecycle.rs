@@ -574,8 +574,9 @@ impl Coordinator {
         out.push(Command::Swap { generation, window });
         extend_latest(&mut f.landed, [(window, frame)].into_iter());
         f.snap(window, frame, out);
-        // The focus target's look changing is the handover; one opened or grown shows it repainted.
-        let handover = why == Why::FocusChanged || f.awaiting.contains(&window);
+        // The focus target's look changing is the handover; one opened or grown shows it repainted;
+        // and the last capture before the lift shows it as it lands, if its change watch ran out first.
+        let handover = matches!(why, Why::FocusChanged | Why::Final) || f.awaiting.contains(&window);
         if f.stage.focus == Some(window) && !f.focus_in && handover {
             f.focus_in = true;
             if why == Why::FocusChanged {
@@ -1194,6 +1195,18 @@ mod tests {
         let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: end, why: Why::Landed }, now);
         assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
         assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })));
+    }
+
+    #[test]
+    fn the_last_capture_of_the_focus_target_hands_focus_over_if_its_change_never_came() {
+        let now = Instant::now();
+        let mut c = running(pan(), now);
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::Final }, now);
+        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "not known to be its focused look");
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
+        assert!(!has(&out, |c| matches!(c, Command::HandOverFocus { .. })), "handed over once");
     }
 
     #[test]

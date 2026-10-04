@@ -4062,41 +4062,6 @@ impl Reactor {
         true
     }
 
-    /// Asks for fresh pictures of the window gaining focus and the one losing it.
-    ///
-    /// A window's appearance depends on focus and none of the difference is a size change: measured on a 1pt
-    /// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window
-    /// whose picture no longer FITS, so an unfocused capture stayed forever and its tile popped to the
-    /// focused rendering when the overlay lifted. Background work, so this costs nothing on the way in.
-    fn refresh_focus_pictures(&mut self, gaining: WindowId) {
-        let Some(pictures) = &self.communication_manager.pictures else {
-            return;
-        };
-        let losing = self
-            .layout_manager
-            .layout_engine
-            .focused_window()
-            .filter(|previous| *previous != gaining);
-        let targets: Vec<crate::pictures::domain::target::PictureTarget> = [Some(gaining), losing]
-            .into_iter()
-            .flatten()
-            .filter_map(|window| {
-                let state = self.state.windows.window(window)?;
-                Some(crate::pictures::domain::target::PictureTarget {
-                    window,
-                    server_id: state.info.sys_id?,
-                    size: state.frame_monotonic.size,
-                })
-            })
-            .collect();
-        if !targets.is_empty() {
-            pictures.ask(crate::pictures::domain::schedule::Ask {
-                priority: crate::pictures::domain::schedule::Priority::Focus,
-                targets,
-            });
-        }
-    }
-
     /// How far the ACTIVE workspace's strip has moved on screen since a pass last looked at that strip,
     /// and remember where it is now: the change of its origin, the anchor less the scroll offset, so a
     /// change of anchor with the offset unchanged is a movement too.

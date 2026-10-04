@@ -14,9 +14,9 @@ Every animated movement runs through the overlay engine
 (the actor `src/transitions/platform/engine.rs`, its decisions in `src/transitions/domain/`; the
 renderer `src/animation/platform/overlay.rs`, the motion in `src/animation/domain/motion/`): window
 bitmaps composited in one opaque overlay window, the real windows placed once
-behind it (see "The apply point"). Layout passes, strip pans, moves along
+behind it (see "Real windows land before lift"). Layout passes, strip pans, moves along
 the strip, workspace switches, resizes, entrances and the edge bounce are all
-flights of it.
+flights of it. When each step of one happens is the coordinator's ("The lifecycle").
 `AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
 `crate::transitions::domain::pass::plan` (moves, unmoved windows the overlay must still
@@ -38,6 +38,37 @@ fallback. That switch is gone: animation is on or off (`animations › off`), on
 the overlay, off means placement. The AX resize trial ("Detour" in earlier revisions)
 ended in the overlay's favour.
 
+## The lifecycle
+
+The engine holds the coordinator (`Coordinator` in `src/transitions/domain/lifecycle.rs`) and decides
+nothing about when: it stages each request, merges each pass and does what the coordinator says. A
+request that finds no transition running opens one from what it alone says, before anything is
+composed (`Event::Begin`): the coordinator holds the pictures service and asks, through SkyLight and
+under the transition's generation, for the strip windows wholly on screen where they start and the
+floating windows seen behind them. Only then is the pass composed from the cache, the overlay
+installed hidden, and the coordinator told what was composed (`Event::Merge`). The overlay goes up
+once those pictures arrive, each put on its tile, or 80ms pass (`FRAME_ZERO_PATIENCE`); the real frames
+are written then and never before, for every kind; a 1pt hole is cut over every window that ends wholly
+on screen, so the window server counts it visible and its app keeps painting; and the end state is
+watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the windows it grows
+or opens to repaint (up to `HOLD_CAP`); a strip movement moves at once.
+
+The end state is four watches, kept and retargeted from one generation to the next (`EndWatches` in the
+engine): every end window, captured as soon as it is where it ends (`Settle::AsSoonAsThere`, watched for
+150ms); a window a pass grew or opened, or one flying as a stand-in, captured once it has repainted
+there (`Settle::Repainted`); the focus target, from its focus report until its look changes (`Change`);
+and the floating windows behind the strip, kept fresh once that change is in (`Live`). One more capture
+of every end window is asked 110ms before the clock ends and never in its first 40ms (`AskFinal`). A
+delivered picture is swapped onto its tile only if its generation is current and its window was within
+20pt of the tile's end in x, y, width and height when it was taken (`END_SLACK`); the tile then snaps onto
+the window's real frame when that is 0.25-20pt off, once per window per generation, once the motion has
+started. A press merged in flight starts the next generation and retargets every watch and the holes,
+and a picture of an older generation is never drawn.
+
+The lift waits for the clock, the tiles presented where they end and the real windows where they were
+written, or for `LIFT_GRACE` past the clock ("Real windows land before lift"). What follows it is
+"Capture work in flight".
+
 ## Layout changes and strip movements
 
 The two entry points feed the same `begin_group`:
@@ -45,7 +76,7 @@ The two entry points feed the same `begin_group`:
 - **Layout changes** (`Event::Animate` — window open/close, column reorder,
   join/unjoin, anything whose windows move by different vectors) start
   `Coalesced`: the overlay shows at frame zero and the movement begins once
-  the reactor's layout passes settle (25ms), installed by `start_moving`.
+  the reactor's layout passes settle (25ms, `COALESCE_WINDOW`).
   A pass where nothing drawable moves, drains no exit, and joins no flight
   is not flown (`worth_flying`): its windows are placed directly, no overlay.
   A tile starts from the window server's frame when that differs from the
@@ -125,80 +156,52 @@ and how its pieces vote and move is "Mid-flight passes" in
 picture landing while it runs, is here.
 
 A pass confirming the flight's destinations is an empty `PlanDelta`: nothing is touched, and rapid
-presses neither restart nor extend the flight. Any real change restarts the orchestration clock so
-the frame placement and teardown cover the newest legs. Reserved entrances still waiting for a
-picture take the pass's slot (`retarget_entrances`).
+presses neither restart nor extend the flight. Any real change restarts the coordinator's clock
+(`Merge { moved }`), so the frame placement and teardown cover the newest legs. A pass arriving before
+the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead:
+the plan is rebuilt from the merged tiles and installed again (`recompose`). Reserved entrances still
+waiting for a picture take the pass's slot (`retarget_entrances`).
 
-A pass that changes any final frame after the apply point re-sends the frames
-(`mark_stale_on_untiled_change`). Parked windows have no tile, so a tile-only check missed their
-moves and left them at the old park.
+A pass merged once the overlay is up writes every final frame it changed, a parked window's included.
+Parked windows have no tile, so a tile-only check missed their moves and left them at the old park.
+Before the overlay is up nothing is written: the show writes the merged frames.
 
-A picture landing mid-flight goes to the cache first. It reaches a moving
-tile only if the cache took it and the tile is waiting for it
-(`should_swap_mid_flight`): an entrance's first picture (claimed or
-admitted), a grow's settled reveal, or the focus refresh. A picture the
-cache refuses never reaches a tile, so a flight never draws the grey capture
-of a window whose cached picture carries its blur. A reveal cuts only before
-0.6 progress (`REVEAL_APPLY_BEFORE`), a refresh before 0.9
-(`REFRESH_APPLY_BEFORE`); later landings are cached for the next flight.
-Background captures never reach a tile. They landed mid-flight in 310 of 321
-flights (median 4 per flight), and every cut read as a flicker or a change
-of transparency. On a resizing tile the cut also re-keyed the resize from
-the presented state, which staggered that tile against its neighbours.
+A picture reaches a tile only as a delivery under the flight's tag: frame zero's, which the tiles take
+before the overlay goes up, and the watches' and the final capture's, which the coordinator swaps in
+("The lifecycle"). Every other capture, a ScreenCaptureKit warm or background picture, goes to the
+cache only, for the next flight. Background captures landed mid-flight in 310 of 321 flights (median 4
+per flight), and every cut of one read as a flicker or a change of transparency. On a resizing tile the
+cut also re-keyed the resize from the presented state, which staggered that tile against its
+neighbours. Every cut logs "picture swapped mid-flight".
 
-The focus refresh recaptures only on a focus change, only its two ends
-(`refresh_targets`, against the previous flight's `last_focus`): the window
-being switched into and the one being left, so both land in their focus
-rendering. Focus changes a window's rendering without changing its size
-(measured on a 1pt window border: 65 of 255 focused against 42 unfocused).
-The reactor asks the pictures service for both ends, at focus priority,
-when focus moves outside rini, by a click or an app activating itself
-(`refresh_focus_pictures`). A move rini makes returns before it,
-since the layout already holds that focus, so for those the flight's own
-refresh is the only recapture. A flight that moves focus nowhere recaptures
-nothing. It used to recapture the two frontmost tiles by depth on every
-flight; a translucent window's two captures differ by the wallpaper behind
-it, so that cut the two front Ghostty tiles at 0.55 on every strip pan (log
-2026-09-16 2:05).
+**Focus changing during a flight.** Focus changes a window's rendering without changing its size
+(measured on a 1pt window border: 65 of 255 focused against 42 unfocused). The reactor passes every
+focus report the window server sends, rini's own raise's included, to the pictures service as a hint and
+to the engine, which takes the window last reported focused as the one focus leaves. Frame zero pictures
+that window focused, and its tile is drawn focused; the focus target's tile is drawn unfocused, unless
+it flies its focused look (below). The target's `Change` watch, armed by its report (one remembered for
+a second arms a watch started after it), captures it where it ends every 15ms, six times at most, until
+its band print changes. That picture is swapped in, kept as its focused look, and focus hands over
+(`HandOverFocus`): the target's ring and shadow are drawn focused and the window left's not
+(`TileOverlay::set_tile_focused`). The window left is pictured again by the final capture, if its look
+has changed by then; so is the target, if its change watch ran out first, and that hands focus over
+too. A target the pass opened, grew or flies as a stand-in hands over with its repainted picture. A
+target clipped by the display edge where it ends takes one ScreenCaptureKit capture through the hold, the
+only one a transition lets through: SkyLight returns only its visible sliver ("A clipped destination
+needs ScreenCaptureKit, not SkyLight" in `src/pictures/docs/capture-research.md`). A flight that moves
+focus nowhere watches no change.
 
-It takes two passes, at 0.25 and 0.55 of the flight (`REFRESH_PASSES_AT`,
-`FocusRefresh`); the second is for an app that repaints its focus late. A
-single pass at 0.5 through the ScreenCaptureKit service never once landed in
-time: asked at 0.53, its pictures landed at 0.82 to 1.16 (debug log
-2026-09-28, two flights, 154ms and 222ms after the ask), past the 0.6 cutoff
-it had then. The window being left kept its focused rendering to the lift
-and changed at rest, which is the flicker reported that day. A pass
-captures a window wholly on a display framed, on a plain thread
-(`capture_framed`), with its blur. A window clipped by the
-display edge goes to the pictures service instead, at focus priority, which
-starts through the flight's hold, because a framed capture returns only the
-visible sliver ("A clipped destination needs ScreenCaptureKit, not
-SkyLight" in `src/pictures/docs/capture-research.md`).
-A strip pan places the real windows at frame zero, so by the first pass both
-ends are usually where they land. Usually: the placing is still in progress,
-so a window read as on screen can be past the edge by the time it is
-captured. That pass then gets nothing for it (`framed_coverage`), rather than
-a full-size picture with the off-screen part transparent. One case still changes at rest: a clipped
-window whose picture carries its blur, where the service's grey capture is
-refused by the cache and so never cut in.
+The recapture this replaced cut both ends of a focus change mid-flight, at 0.25 and 0.55 of the
+flight, through ScreenCaptureKit and a framed capture. Asked at 0.53 through the service, its pictures
+landed at 0.82 to 1.16 of the flight (debug log 2026-09-28, two flights, 154ms and 222ms after the
+ask), and with four ScreenCaptureKit captures out the frame-zero capture took 92-97ms against 26-33.
+The watches capture through SkyLight, one call at a time, as the windows land.
 
-No likeness test and no same-route test guard the cut any more. A focus
-change is a traffic light and a dimmed title bar, below what a 32x32
-thumbprint resolves, and a cut to an identical picture changes nothing on
-screen. Freshness guards it instead (`FocusRefresh::is_fresh`): a picture
-swaps only if its capture began at or after the refresh asked, and after the
-picture the refresh last cut in. The service skips a request for a window it
-is already capturing, and a capture begun before the flight shows the old
-focus. Both carry an older `taken`, which the service stamps when a capture
-starts, not when it lands. The same-route test answered a race: the service
-and a framed capture both answered every refresh, the two routes' pictures
-failed the thumbprint match against each other, and every refresh target was
-swapped two or three times per flight (log 22:34:04: swaps at 0.539, 0.549,
-0.561 in one pan). Each pass now asks one route per window, so a window
-takes at most one refresh cut per pass. The reveal never had either test; a
-chase's framed reveal is the truth for a grow whatever the cache holds.
-Every cut logs "picture swapped mid-flight" with its reason; that line is
-the acceptance counter, at most two `reason=refresh` per window per flight.
+**A parked focus target flies its focused look.** A focus target that starts off the display, where
+frame zero cannot picture it, flies the last picture the pictures service kept of it focused
+(`Pictures::focused`), drawn focused, when that picture fits where its tile starts; the service drops a
+look once a newer capture's body differs. Kai, 2026-10-03: "fcache doesn't bother me … windows arrive
+in focus every single time".
 
 The engine's thread stalled mid-flight, so a press landed after the strip had stopped. Reading
 every window's frame in one query when a surface flight starts and at handover took the stalls over
@@ -209,20 +212,21 @@ takes.
 
 ## Capture work in flight
 
-From frame zero to the quiet after the lift the
+From the begin to the quiet after the lift the
 pictures service holds background capture off (`crate::pictures::domain::schedule`).
-The engine holds it as it composes a flight (`Hold::Transition`), lets the
+The coordinator holds it at the begin, before anything is composed (`Hold::Transition`), lets the
 bar be pictured again at the lift (`Hold::Settling`), and releases it at
-`Event::Quiet` (`Hold::Released`). While it holds, only what the flight waits
-for starts: its frame-zero pictures and a clipped end of the focus refresh.
-The chases and the framed refresh are the engine's own and never ask. The
+the quiet (`Hold::Released`), or at once for a transition it abandons. While it holds, only the
+transition's SkyLight work runs, the frame-zero and final asks and the watches, and one
+ScreenCaptureKit capture of a clipped focus end. A pass's ask for the windows it has no picture of
+is a warm, for the next flight. The
 rest waits and starts at the release, most urgent first. The reactor's
 `warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
 start) waits; so does the desktop render. A warm
 also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: a pass's
 warm is sent just after the flight it starts, and reaches the service before
-that flight's hold. Under the old load the refresh took 203ms median (p90
-441, n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
+that flight's hold. Under the old load a focus recapture through the
+service took 203ms median (p90 441, n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
 271 of 321 desktop renders landed mid-flight. `warm_all_workspaces` stays in
 the reactor's switch handler: the service knows a flight is holding it, the
 reactor does not. Separately, a layout pass asks for a picture of each window the
@@ -234,15 +238,16 @@ picture landed in the first 11s, none at all in 40s with nothing pressed, and
 display on its first pass was tried first and missed most of them: apps are
 found one by one, and that pass knew one window of 21, so the first switch
 still flew 8 of 16 windows with no picture. After the lift the owed captures wait for a quiet period
-(`SETTLE_BEFORE_CAPTURES`, 400ms; `Event::Quiet`, `after_flight_captures`).
+(`SETTLE_BEFORE_CAPTURES`, 400ms; the coordinator's `Event::Quiet`), which warms every window the
+flight drew, across its merged passes, at the frame it last ended at.
 They used to run the instant the overlay lifted and took 600-800ms (8-15
 window captures and the desktop render), so a press inside that window flew
 the next flight against a busy compositor: frame-difference profiles of a
 screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
-beginning inside the quiet period cancels the timer and holds the service
+beginning inside the quiet period holds the service
 again; the work carries over to its own quiet. The same quiet period is what
-`set_on_flight` reports as settled (`FlightReport`): `true` when an overlay
-goes up, `false` at `Event::Quiet`, so a burst of flights is one `true` and
+`set_on_flight` reports as settled (`ReportUp`, `ReportSettled`): `true` when a transition
+begins, `false` at its quiet, so a burst of flights is one `true` and
 one `false`. rini's own bar sits above the overlay and is never pictured, so
 with it on a flight looks for no bar at all. Another app's bar, under the
 overlay with rini's off, is pictured by the service `BAR_REFRESH_DELAY`
@@ -265,17 +270,21 @@ screen at lift, 1000-3446pt from its park. The handover metric
 (`handover_report`) excludes off-screen intents. It reports the count over
 2pt, the total measured, and the worst visible error. A park clamped by
 macOS (y=1116 on a 1117pt display, clamped to 1051) had reported 65pt on 180
-flights and masked every smaller error. `finish()` logs "overlay lifted", so
+flights and masked every smaller error. The lift logs "overlay lifted", so
 the placing-to-lift gap can be read from the log. The lift itself waits for
-the render server (`lift_now`, `TileOverlay::settled`): the clock has
+the render server and the real windows (the coordinator's tick, `TileOverlay::settled`,
+`handover_report`): the clock has
 to run out AND every container and picture has to be presented at its model
-position within half a point, or `LIFT_GRACE` (350ms) past the clock. The
+position within half a point AND every window has to be within 2pt of where it was written, or
+`LIFT_GRACE` (350ms) past the clock. The
 render server runs a frame or so behind the actor's clock, and lifting on
 the clock alone showed the real windows one frame ahead of their tiles: a
-small jerk at the end of every flight. Strip movements send their frames at
-frame zero (`APPLY_FRAMES_AT_PAN` 0.0): 24 of 162 flights had lifted with
-every window 1700-2600pt from its tile because 17 writes across Electron apps
-took longer than half a flight. A park-to-park write is not sent at all
+small jerk at the end of every flight. Every kind writes its frames as the overlay goes up. Written
+later in the flight they missed the lift: layout passes wrote at 0.75 of it (0.5 when a tile
+resized, the real resize costing three synchronous round trips per window), and the gap from
+"placing real windows" to lift measured 90ms median, p90 156, where 0.75 of a 300ms switch leaves 75ms;
+at 0.5, 24 of 162 strip movements lifted with every window 1700-2600pt from its tile, because 17 writes
+across Electron apps, serialized per app actor, took longer than half a flight. A park-to-park write is not sent at all
 (`is_park_to_park`, reactor `apply_overlay_frames`): 12 of a pan's 20 frames
 moved windows from one park to another, nothing visible changed, and each
 made its app repaint under the flight. A park is a sliver still touching the
@@ -311,10 +320,11 @@ active workspace's surface and `edge_bounce_overshoot`
 (`src/animation/domain/motion/plan.rs`): `EDGE_BOUNCE_OVERSHOOT` (72pt) the way the
 content would have gone, so going right pulls the strip left and the next
 workspace pulls the row up. It was 36pt and was reported as too small to
-notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a flight with
-no travel when none is running (every tile at rest, `final_frames` the layout
-the windows already sit at) and adds the bounce to whatever is running
-otherwise, extending the clock to cover the return (`clock_for_bounce`). Every push shows: the
+notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a transition of
+the bounce kind when none is running: every tile at rest, nothing written and nothing watched, the
+bounce played as the motion starts, once frame zero is up. On a flight that moves it adds the bounce at
+once, and on one that does not move yet as it starts; either way the coordinator's clock runs on to cover
+the return (`Event::Extend`). Every push that reaches a moving flight shows: the
 actor keeps the bounce playing and when it began, and a push while it plays starts the next from
 where that one is drawn (`next_bounce`, pinned by
 `every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn`), the clock extended to the new
@@ -369,7 +379,7 @@ container: its tile starts where N was on screen and moves only as the strip
 does, W slides over it, and it finishes beneath W, covered. Only the drawing is
 held. N's real window goes to its layout frame, off screen, as for any move:
 `final_frames` are unchanged, the handover compares real windows with them, and
-the stand-in chase judges where the real window lands (`stand_in_chase`). A
+nothing of it lands on screen to be watched. A
 move that does not step keeps both columns crossing.
 
 The step starts only on a flight that moves: one still collecting passes
@@ -380,7 +390,7 @@ full-width move merged into a collecting layout pass showed nothing. The engine
 stretches a flight that steps to `NUDGE_STRETCH` (1.3x) the plain duration,
 when the step starts, so a flight that does not step keeps its length; the
 reactor asked for the stretch with every nudge it sent, stepped or not. The
-clock and lift wait for the step to come home (`clock_for_bounce`, `settled`).
+clock and lift wait for the step to come home (`Event::Extend`, `settled`).
 
 **Pictures.** The column a full-width move passes is parked at both ends, so a
 cold cache had no picture of it, and the strip surface drew nothing for a
@@ -391,15 +401,14 @@ this display with no picture flies as the dark `--n3` tile, uncached. A window
 on this display with no picture is still placed and not drawn. A strip
 movement starts at once and never holds, so the real picture of a stand-in
 whose window lands on this display, the column a move at the edge brings in
-from its park, is chased once its frame is applied (`stand_in_chase`,
-`chases_stand_in`), and the reveal swap puts it on the same tile mid-flight.
-Where it lands is its real frame: a held column is drawn going beneath the
-moved window while its real window parks, so it is not chased. It used to fly
+from its park, comes from the landing watch once the window is where it ends, and is
+swapped onto the same tile mid-flight. A held column is drawn going beneath the
+moved window while its real window parks, so nothing of it lands. It used to fly
 dark for the whole flight: nothing asked for its picture. One parked at both
 ends has nothing on screen to capture and keeps the stand-in to lift.
 
-Real windows go to the layout's frames at frame zero, as for any strip
-movement (`APPLY_FRAMES_AT_PAN`), and only the ones whose frames changed; the
+Real windows go to the layout's frames as the overlay goes up, as for any
+transition, and only the ones whose frames changed; the
 step and the held column are drawn only.
 
 How the strip steps and on which curve, what the side the step opens shows, and how a burst merges
@@ -414,25 +423,22 @@ window at its own frame about 40ms before rini's first pass (AX
 capture there (`capture_via_framed`, 16-24ms), at most
 `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
 `Member::Entrance` from the spawn frame to the slot, stretched
-(`stand_in_mode`) until the reveal chase lands the slot-size picture,
-which `claim` takes at frame zero (`Claimed::Refreshed`) or the
-`Swap("reveal")` cut takes before 0.6. No hold: the newcomer's slot alone
-goes out at frame zero (`frame_zero_work`) so the chase has something to
-capture, and again with every frame at the apply point, one redundant AX
-write per open. A frame off this display is not a spawn: a parked window
+(`stand_in_mode`) until its picture at the slot is swapped in: the window is
+watched until it has repainted where it ends (`StageSummary::repainting`,
+`Settle::Repainted`) and never held for, and its slot is written with every
+other frame as the overlay goes up. A frame off this display is not a spawn: a parked window
 with a cold cache took a 1s off-screen capture and flew in from the park.
 It used to take the reservation instead, which drew nothing in its slot
 until a picture landed — a hole in the strip after every restart. It now
 flies with a stand-in (`stands_in`, `picture::stand_in_picture`): a
 dark `--n3` tile, drawn nine-slice from a 42px image so its corners keep the
 window's radius, moving exactly as its picture would. The stand-in claims
-to cover nothing, so the flight holds for it and chases it like a grow,
-`claim` swaps the real picture onto the same tile at frame zero, and the
-reveal swap takes one mid-flight. It is never cached. Strip movements draw
+to cover nothing, so the flight holds for it like a grow, and its picture once it
+has repainted where it ends is swapped onto the same tile. It is never cached. Strip movements draw
 the same stand-in (`picture_or_stand_in`; see "The move flight, staged"), without
 the hold, since they start `Immediate`: the picture of one landing on this
-display is chased all the same. A window already at its slot with no
-picture is captured as a still tile and not chased. Growing from zero
+display comes from the landing watch all the same. A window already at its slot with no
+picture is captured as a still tile. Growing from zero
 width (`entrance_from`; a centred zero-size zoom was tried first and read
 as the window inflating, which nothing else on the strip does) was the
 previous entrance and read as a pop then a
@@ -440,29 +446,24 @@ vanish; it survives only in the reservation fallback below.
 
 **The reservation fallback.** With no server frame, a zero frame, an
 unusable capture or no budget left (`entrance_plan`, reason logged as
-"entrance reserved"), `entrance_reservation` registers a `PendingEntrance`
-AND puts the window in `awaiting`, next to any grow. The flight applies
-EVERY real frame at frame zero, the newcomer's slot included (the overlay
-already covers them), so the chase captures the window at slot size.
-Holding the slot back until the picture landed was tried: the chase then
-captured the window at its SPAWN size, `claim` took it, and drawn top-left
-in the slot it left the growth as backdrop, a hole in the strip (recording
-of 2026-09-15 3:28:10). `chase_reveal_pictures` follows the entering
-window like a grow: the queued SkyLight capture measured 170-300ms under
-load, most of a flight, the load being ScreenCaptureKit captures it waits
-behind (27ms alone, 204ms behind four; "SkyLight in parallel" in
-`src/pictures/docs/capture-research.md`); the chase's framed capture takes 16-24ms once the
-app has painted. `claim` requires the fit; a smaller picture is refused
-and the hold goes on. `claim_reveal` adds the zero-width tile to the
-frame-zero composition (`install`). The flight starts when the last
-awaited picture lands or `HOLD_CAP` passes, so every tile flies
-in one `fly` transaction. A picture landing after lift-off is admitted
-(`admit_entrance`, `add_tile` in `GroupKey::Loose`) with
-`late_join_duration`: what is left of the flight. A picture that misses
-the flight altogether shows when the overlay lifts. A coalescing merge
-that moves a window whose frame was already applied re-requests the
-merged frames (`reapply_set`); without that the window sat where the
-first pass put it until the strip scrolled.
+"entrance reserved"), the window becomes a `PendingEntrance`, held for next
+to any grow, which the coordinator sees as a tile from zero width to its slot.
+Every real frame is written as the overlay goes up, the newcomer's slot
+included, so the watch captures the window at slot size. Holding the slot back
+until the picture landed was tried: the capture then caught the window at its
+SPAWN size and, drawn top-left in the slot, left the growth as backdrop, a
+hole in the strip (recording of 2026-09-15 3:28:10). Its first picture once it
+has repainted there, taken within 20pt of the slot, admits it
+(`RunningAnimation::admit`): before the motion starts the zero-width tile
+joins the frame-zero composition (`install`), and the flight starts when the
+last awaited picture lands or `HOLD_CAP` passes, so every tile flies in one
+`fly` transaction; after, it joins the flight in `GroupKey::Loose`
+(`add_tile`) for what is left of the clock. A picture that misses the flight
+altogether shows when the overlay lifts. SkyLight is quick only with nothing
+in front of it: 27ms for one call alone, 170-300ms under load and 204ms behind
+four ScreenCaptureKit captures ("SkyLight in parallel" in
+`src/pictures/docs/capture-research.md`), which is why nothing else captures
+while a transition holds the service.
 
 ## A closed window disappears
 
@@ -487,13 +488,12 @@ of a grow was tried and rejected by eye: `contentsRect` past the picture's
 edge extends its outermost pixels (a hole to the backdrop on a translucent
 window), and stretching the lead reads as stretching, because it is. So the
 truthful pixels are made to exist first. A pass whose destination outgrows
-its picture (`outgrows`) applies the real frames IMMEDIATELY: the overlay
-is already covering the windows, so the app rerenders at its new size
-behind a still frame. A chase thread polls the real frame every 8ms
-(`REVEAL_CHASE_INTERVAL`, 125 attempts, about a second in all), a cheap
-window-server read; SkyLight-capture polling measured 170-300ms per attempt
-behind queued ScreenCaptureKit captures and lost the race. Once the size is there it takes ONE framed
-capture per attempt (`capture_via_framed`) of the window's own rect. The frame resizes instantly
+its picture (`outgrows`) is held for: its frames are written as the overlay
+goes up, so the app rerenders at its new size behind a still frame, and the
+pictures service watches it (`Settle::Repainted`). It reads the window's
+server frame every 1ms until it is within 20pt of where it ends, a cheap
+window-server read, then captures it every 8ms, 125 times at most, about a
+second in all. The frame resizes instantly
 while the app's pixels lag behind, and
 a capture taken between the two is a half-painted surface: delivering one
 flew the whole reveal with garbage. So a capture counts only when settled
@@ -502,8 +502,8 @@ flew the whole reveal with garbage. So a capture counts only when settled
 than 8, up to 3% of samples allowed so cursors and clocks do not stall it), or it differs from
 the picture cached before the resize, which means the app has repainted.
 The second test saves one poll interval on most grows; the first is all an
-entrance has. When it lands (`claim_reveal`), the tile's grid re-maps to it
-and the flight begins: the moving edge reveals genuine final-size content,
+entrance has. When it is delivered, the tile takes it, frame zero is installed
+again with it, and the flight begins: the moving edge reveals genuine final-size content,
 1:1. A shrink crops the picture it has and flies immediately. The hold is
 300ms (`HOLD_CAP`) whatever the flight's duration. A share of the flight
 with a 300ms floor was computed and then capped at 300ms, so it was the cap
@@ -511,35 +511,21 @@ for every duration, and it went. The old
 chase held 235ms median (min 173, max 299; 25ms poll, two framed captures,
 then a separate harvest), and 22 of about 45 holds timed out at 300ms
 anyway. A 150ms cap was tried for a blink-length freeze and raised back
-to 300ms with the fit requirement above: an entrance chase now waits for
+to 300ms with the fit requirement above: an entrance's watch waits for
 the real frame to reach slot size before it captures, so it needs the
 runway a grow's does. *How often 300ms is enough is not measured yet.*
 An app that misses the cap flies with the old picture STRETCHED over the
 tile (`stand_in_mode`, `Stretch`): every mode fills the whole frame. A
 top-left crop that stopped the grid at the picture's edge and showed the
 backdrop in the growth was tried and read as a hole (3:28:10), the same
-hole recorded above for `contentsRect` past the edge. If the reveal lands
-mid-flight after all, it is hard-cut onto the tile before 0.6 progress
-(`Swap("reveal")`) and `set_tile_picture` re-installs the resize leg on
+hole recorded above for `contentsRect` past the edge. If the repainted
+picture lands once the motion has started after all, it is hard-cut onto the tile and
+`set_tile_picture` re-installs the resize leg on
 the SAME `Timing` (begin on the media clock plus duration, kept per tile
 in `leg`, which a plain move keeps too, so a crop-drawn tile on a move
 re-keys the same way): the frame keeps its curve and only the pixels cut.
 Re-keying from the presented frame over the remaining duration restarted
-the ease-out and the tile lurched at every swap. Later than 0.6 the
-picture is cached for the next flight.
-
-## The apply point
-
-Layout passes place the real windows at 0.75
-(`APPLY_FRAMES_AT`), or at 0.5 (`APPLY_FRAMES_AT_RESIZE`) when any tile
-resizes: the real resize behind the overlay costs three synchronous AX round
-trips per window and needs more runway to land before the overlay lifts.
-Strip movements place at frame zero (`APPLY_FRAMES_AT_PAN`; the
-measurements are under "Real windows land before lift"). Their frames are pure moves,
-but a switch sends about 17 of them, serialized per app actor and sharing
-it with window rediscovery. At 0.75 the gap from "placing real windows" to
-lift measured 90ms median, p90 156, and 0.75 of a 300ms switch leaves 75ms;
-0.5 was tried next and still lost 24 of 162 flights.
+the ease-out and the tile lurched at every swap.
 
 ## Border companions
 
@@ -575,21 +561,14 @@ running, carrying real border windows as tiles:
   40. An arriving row's window therefore gets no companion, which is what
   the real screen does, since the border tool only catches up after the
   window lands.
-- The mid-flight focus recapture rode the framed route (16-24ms measured,
-  against 170-300ms for SkyLight behind queued ScreenCaptureKit captures; the
-  animation itself does not slow it, 22.7ms median during a slide) until racing it
-  against the ScreenCaptureKit route was found to swap the tile 2-3 times
-  per flight; each pass now asks one route per window, framed where it is
-  wholly on a display and ScreenCaptureKit where it is clipped (see
-  "Mid-flight passes"). The swap itself is a hard cut ON PURPOSE: a ~120ms
-  crossfade veil was tried and rejected, because stacking two copies of a
-  translucent window pulses its net opacity mid-fade — there is no
-  constant-alpha crossfade with layers. Gratuitous cuts are avoided upstream
-  instead: freshness guards the cut (`FocusRefresh::is_fresh`), and one route
-  per window per pass is at most one refresh cut per pass.
-- Companions are excluded from the mid-flight destination recapture, which
-  exists for the window the eye is on. They wear no hairline either: the
-  window a companion traces wears its own.
+- A swap is a hard cut ON PURPOSE: a ~120ms crossfade veil was tried and
+  rejected, because stacking two copies of a translucent window pulses its net
+  opacity mid-fade — there is no constant-alpha crossfade with layers.
+  Gratuitous cuts are avoided upstream instead: a watch delivers only a picture
+  whose band print is news.
+- Companions are never asked for or watched: frame zero, the watches and the
+  final capture picture the windows they trace. They wear no hairline either:
+  the window a companion traces wears its own.
 
 No configuration: the companions reproduce whatever a border tool draws, or nothing, and the
 outline is the platform's.

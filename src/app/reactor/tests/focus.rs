@@ -460,12 +460,14 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
     }
 }
 
-/// A window renders differently focused, and none of the difference is a size change: measured on a 1pt
-/// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window whose
-/// picture no longer fits its frame, so without this both tiles keep the wrong focus state and the border
-/// pops when the overlay lifts.
+/// Every focus report reaches the pictures service as a hint and the flight engine as the window focus
+/// is on, rini's own raise's included: the hint arms the watch on the focus target's look, which is
+/// how a flight draws focus handing over, and nothing is captured through ScreenCaptureKit for it.
 #[test]
-fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
+fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine() {
+    use crate::pictures::domain::watch::Hint;
+    use crate::pictures::platform::service::Command as Asked;
+    use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -477,47 +479,35 @@ fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
 
     let mut pictures = reactor.connect_test_pictures();
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let focused = |rx: &mut channels::Receiver<Anim>| {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|(_, event)| if let Anim::Focused(window) = event { Some(window) } else { None })
+            .collect::<Vec<_>>()
+    };
 
+    // A click elsewhere, and rini's own raise coming back.
+    for window in [arriving, leaving] {
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, arriving));
     reactor.handle_event(Event::WindowServerFocusChanged(arriving, space));
 
-    let refreshed = asked_at(
-        &pictures_asked(&mut pictures),
-        crate::pictures::domain::schedule::Priority::Focus,
-    );
+    let asked = pictures_asked(&mut pictures);
+    let hinted: Vec<WindowId> = asked
+        .iter()
+        .filter_map(|command| match command {
+            Asked::Hint(Hint::Focused(window)) => Some(*window),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hinted, [arriving, leaving, arriving]);
     assert!(
-        refreshed.contains(&arriving),
-        "the window gaining focus: {refreshed:?}"
+        asked_at(&asked, crate::pictures::domain::schedule::Priority::Focus).is_empty(),
+        "no ScreenCaptureKit capture of either end"
     );
-    assert!(
-        refreshed.contains(&leaving),
-        "the window losing it: {refreshed:?}"
-    );
-}
-
-/// Focus landing where it already is has no window losing it: only the window itself is asked for.
-#[test]
-fn focus_that_does_not_move_asks_for_the_window_alone() {
-    let (mut apps, mut reactor) = test_context();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
-    let space = SpaceId::new(1);
-    let window = WindowId::new(1, 1);
-
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
-    reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
-
-    let mut pictures = reactor.connect_test_pictures();
-    reactor.refresh_focus_pictures(window);
-
-    let refreshed = asked_at(
-        &pictures_asked(&mut pictures),
-        crate::pictures::domain::schedule::Priority::Focus,
-    );
-    assert_eq!(
-        refreshed,
-        vec![window],
-        "only the window itself, not a phantom second one"
-    );
+    assert_eq!(focused(&mut animation_rx), [arriving, leaving, arriving]);
 }
 
 /// Pushing past an end bounces the view instead of doing nothing: focus right at the last column

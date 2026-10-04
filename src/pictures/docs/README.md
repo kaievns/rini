@@ -104,9 +104,9 @@ until a time, or nothing.
 The costs are measured in [`capture-research.md`](capture-research.md): "Capture cost", and the
 listing against a kept filter in "What a capture costs in a press".
 
-The flight engine's own captures in flight, the reveal chase, the focus refresh's framed captures and
-the spawn capture, are not scheduled here. It takes them on its own threads and
-hands the pictures over through the handle. The focus refresh asks for a clipped end at focus priority.
+The flight engine's spawn capture, one framed capture of a window that has just opened, is not
+scheduled here: it takes it on the main thread as it composes and hands the picture over through the
+handle. Every other picture a transition draws it asks for or watches.
 
 ## The watches
 
@@ -124,7 +124,7 @@ release: it is what a transition waits on.
 | `Settle::Repainted` keeps capturing every 8ms, 125 times at most once there, until `chase_settled`, and delivers that capture whatever its band print; out of tries it is `Lost` | a grow or an entrance is not painted at its new size yet; the flight holds for it, so the picture must come or the hold must hear it will not |
 | `Change` starts at the window's focus report, captures it where it ends every 15ms, six times at most, and stops at the first band print that differs from the last picture delivered of it; with none delivered, the first capture is delivered as landed and the change judged from it; it spends no try before the window is there | a focus change shows in the title band; with nothing to compare, a first capture cannot be called a change |
 | A focus report is remembered for a second, and a `Change` watch created after it starts armed | the report came before the watch in 136 of 225 flights of the prototype, and 135 of those never captured the focus (D1) |
-| A `Change` window whose frame is where it ends but cut by the display's edge takes one ScreenCaptureKit capture, at focus priority, through the hold, delivered as its focus change; one already out is followed by its own | SkyLight captures only what is on a display, and `specs/animation.md` has both ends of a focus change recaptured even clipped (`docs/pictures-motion-transitions.md`) |
+| A `Change` window whose frame is where it ends but cut by the display's edge takes one ScreenCaptureKit capture, at focus priority, through the hold, delivered as its focus change; one already out is followed by its own | SkyLight captures only what is on a display, and `specs/animation.md` has the window gaining focus recaptured even clipped (`docs/pictures-motion-transitions.md`) |
 | `Live` refreshes every 16ms at most, never while a landing is pending or a change capture is due within 8ms, and only once its `after` watch is done, but once at `initial` regardless; every capture is delivered | refreshing ahead of the focus capture held it up 31ms; content behind the strip changes below the band, which a band print would not see |
 | Landing, change and final deliveries carry only band prints that are news to the client; frame zero starts the client's prints afresh | a picture the tile already shows is not swapped again; a window flying the cache's picture this time gets its landing whatever it looked like last time |
 | A retarget keeps a window landed where it still ends and a focus already seen, and watches the rest from now | a merged press moves some ends and not others; a window new to the watch is watched too, which the prototype missed |
@@ -209,21 +209,12 @@ only where the cache still holds the picture it was made of.
 
 ## Known debt
 
-**The flight engine still takes its in-flight pictures itself.** The reveal chase, the focus refresh
-and the spawn capture run on the engine's own threads or on the main thread, and hand their pictures
-over through the handle. Step 4 of the plan replaces them with the end-state
-captures the coordinator asks the service for.
+**Nothing hints a window placed.** `Hint::Placed` reads a window's frame at once rather than at the
+next poll; nothing sends it yet, so a landing is seen at the next 1ms poll.
 
-**Nothing asks for windows on screen or watches them yet.** The frame-zero and final asks, the
-watches, the hints and the focused looks are exercised by their tests only, until the coordinator is
-wired to them (`docs/pictures-motion-transitions.md`, step 4). Until then the engine ignores the
-deliveries and the lost windows every sink hears.
-
-**ScreenCaptureKit's frame-zero and focus asks still start through a hold.** The engine asks for the
-pictures a flight has none of at frame zero, and the reactor for both ends of a focus change, through
-ScreenCaptureKit. Once the coordinator asks frame zero of SkyLight and the reactor's focus change
-becomes a `Focused` hint, the clipped focus end is the only ScreenCaptureKit capture a hold lets
-through.
+**Frame zero's ScreenCaptureKit priority has no client.** The flight engine asks for the windows a
+flight has no picture of as warms, and the reactor hints a focus change instead of asking for both of
+its ends; `Priority::FrameZero` is asked by nothing, and `Priority::Focus` only by the clipped focus end.
 
 **The cache is a registry too.** A border companion may never be a window rini manages, and the engine
 learns which those are from `Pictures::windows`, the windows with a picture held or owed. The managed

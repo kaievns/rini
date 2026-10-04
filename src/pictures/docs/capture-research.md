@@ -194,8 +194,9 @@ below it carries the blur").
 It must never be called inside a ScreenCaptureKit completion. On modern macOS it is
 proxied through the same capture machinery, so a call from the delivery queue deadlocks
 its own reply until a ~20s timeout, and every capture in the process serialises behind it
-(measured as half-minute window switches). The engine's framed captures run on a plain
-thread (`capture_framed` in the flight engine).
+(measured as half-minute window switches). The engine's one framed capture, of a window
+that has just opened, runs on the main thread as it composes; the service's SkyLight calls run on
+its own thread.
 
 The system tool inherited this. `screencapture -l <windowid>` fails with "could
 not create image from window" even for a fully visible window.
@@ -602,9 +603,10 @@ nothing for about a tenth of a second, which reads as software that is thinking
 rather than responding, and on a redirection mid-flight it stalls the animation
 already running.
 
-Both are gone. The destination is still recaptured, but only mid-flight and only
-off the main thread, where it costs no frames and arrives as an event that swaps a
-tile's contents without touching its geometry. The desktop is held and refreshed in
+Both are gone from the main thread. The windows on screen are captured at the press on the
+pictures service's thread, while the overlay waits for them at most 80ms, and again as they
+land behind it, each arriving as an event that swaps a tile's contents without touching its
+geometry. The desktop is held and refreshed in
 the background. Measured after, command to first frame:
 
 ```
@@ -747,17 +749,18 @@ Recapturing the windows on screen through SkyLight at switch time, frontmost fir
 and capped at three, fixed it for a while: one window, 32ms to 35ms once warm, against
 the roughly 400ms that capturing all eighteen used to cost. It held every press back
 by 59ms to 71ms and went ("Nothing may be captured on the way in"). The cache is now
-refreshed at the quiet after each flight, a focus change recaptures both of its ends,
-and a warm recaptures a picture older than `PICTURE_STALE_AFTER` ("Snapshot staleness").
+refreshed at the quiet after each flight, a flight pictures its windows on screen at the
+press and as they land and its focus target once its focus changes, and a warm recaptures a
+picture older than `PICTURE_STALE_AFTER` ("Snapshot staleness").
 
 The window being switched INTO cannot be recaptured as the movement starts: SkyLight
 reads the framebuffer and the destination workspace's windows are not on screen yet.
 
 ### Unfocused rendering
 
-Because the destination cannot be recaptured, its picture is whatever it last
-had, and if that was taken while the app was unfocused the tile slides in dimmed
-and snaps to focused at the handover. Ghostty greys out noticeably when
+Because the destination cannot be recaptured, its picture is its focused look when
+the service kept one, else whatever it last had, and if that was taken while the app
+was unfocused the tile slides in dimmed and snaps to focused at the handover. Ghostty greys out noticeably when
 unfocused.
 
 It takes a capture after focus has landed: mid-flight, off the main thread, once the
@@ -1123,9 +1126,10 @@ Ghostty greys out noticeably, so this was the most visible flicker left after
 the sizing fixes.
 
 Fixed by recapturing it mid-flight, by which point the reactor has shown the
-workspace and moved focus, so SkyLight returns the focused rendering. The
-window being left is recaptured with it. When and by which route is in
-"Mid-flight passes" in `src/transitions/docs/coordination.md`.
+workspace and moved focus, so SkyLight returns the focused rendering: once its focus is
+reported, until its look changes. The window being left is pictured again by the last
+capture before the lift. When and by which route is "Focus changing during a flight" in
+`src/transitions/docs/coordination.md`.
 
 On the main thread this cost too much. Measured over a 494ms flight, capture
 times of 38ms to 179ms dropped the frame count from 30 to as low as 26. Moving
@@ -1172,8 +1176,8 @@ every tile ("The hairline" in `src/animation/docs/animation-smoothness.md`).
 
 Staleness is accepted by construction ("a slightly stale moving image is not
 perceptible", "Consequences for the design" above) and the worst case — the
-destination's focus appearance — is patched mid-flight
-(`refresh_destination_among`, at 0.25 and 0.55, the two ends of a focus change). What that
+destination's focus appearance — is patched mid-flight (the focus target's change watch, and its
+focused look when it starts parked). What that
 does not cover: content that changed while parked. Terminal output, chat,
 anything live — warmed only at animation end, focus change, and layout
 passes, so a window that repainted itself while hidden is stale until the
@@ -1201,10 +1205,9 @@ Options, in order of expected value:
    (`wants_warm`) re-captures anything older than `PICTURE_STALE_AFTER`; the
    engine warms every window it flew at the quiet after the lift. A sweep of nearby workspaces on a slow idle timer is not
    done; it would break the "nothing polls" principle deliberately.
-4. **Widen the mid-flight refresh.** Ruled out by measurement. The refresh
+4. **Recapture more windows mid-flight.** Ruled out by measurement. A recapture
    runs on its own thread, but the window server does not: with warms, the
-   desktop render and other framed captures queued behind it, the framed refresh took
+   desktop render and other framed captures queued behind it, the old framed focus refresh took
    203ms median against 16-24ms at idle (see "Capture work in flight" in
-   `src/transitions/docs/coordination.md`).
-   Two windows at 0.5 is the cap; more capture work in flight, not less, is
-   what slowed it.
+   `src/transitions/docs/coordination.md`). More capture work in flight, not less, is
+   what slowed it; the watches capture only what lands, one SkyLight call at a time.

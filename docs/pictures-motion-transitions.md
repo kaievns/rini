@@ -14,7 +14,7 @@ This section goes when the last row is done.
 | 1 | `pictures`: capture, cache and layer helpers out of `animation`; switcher and bar its clients | done |
 | 2 | The pictures service: the capture schedule and its thread, the cache and the ScreenCaptureKit captures moved in; the engine, the reactor and the switcher its clients | done |
 | 3 | `transitions`: the coordinator's decisions out of `animation`; the lifecycle as a pure state machine | done |
-| 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | in progress: `pictures`' side done (region pictures, knowledge, the batched capture, frame-zero and final asks, the `Landing`, `Change` and `Live` watches, hints, focused looks), not yet wired to the coordinator; the renderer's constant hairline, drawn on every tile, and the harvest it replaced deleted; its holes, tile snap, corner clip, region crop grid and focus switch, which nothing calls yet |
+| 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | in progress: the coordinator drives every transition: frame zero asked before composing, writes at the show, holes, the `Landing`, `Change` and `Live` watches and the final ask under each generation, snaps, corner clips, the focus handover and parked targets' focused looks, the lift and the quiet; the mid-flight refresh, the reveal chase, the apply points and the harvest deleted; the specs for frame zero, holes, merged presses, live background and writes at the show still to write |
 | 5 | `animation` plays a `Score`; choreographies and accents produce one | in progress: the pure `Score` and its tracks; the bounce drawn from its track and re-kicked by every push; accents kept through a retarget |
 | 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | |
 | 7 | The coordinator on its own thread; the main thread renders only | |
@@ -96,7 +96,7 @@ a press arriving in flight.
 The coordinator is one lifecycle for every kind, as a pure state machine (`on(event, now) -> commands`):
 
 ```
-Idle ─request─▶ Preparing ─frame-zero pictures, or 80ms─▶ Playing ─clock done, end state in─▶ Landing ─lift─▶ Settling ─quiet─▶ Idle
+Idle ─request─▶ Preparing ─frame-zero pictures, or 80ms─▶ (Coalescing, Holding) ─▶ Playing ─clock done─▶ Landing ─tiles and windows where they end, or 350ms─▶ lift ─▶ Settling ─quiet─▶ Idle
 ```
 
 It owns generations: every tag carries one, a press merging in flight starts the next, and a picture
@@ -109,7 +109,7 @@ service remembers it for a second.
 | Decision | Why | Alternative |
 |---|---|---|
 | Make-key stays after the raise's Accessibility calls (the prototype's `mkfirst` is not carried) | it measured no gain, and making the window key before the cancellation checks breaks `specs/focus.md` | carry it behind the raise mutex |
-| A focus end clipped by the display edge takes one ScreenCaptureKit capture through the hold | keeps `specs/animation.md`'s rule that both ends of a focus change are recaptured | let a clipped end change at rest |
+| A focus target clipped by the display edge takes one ScreenCaptureKit capture through the hold | keeps `specs/animation.md`'s rule that the window gaining focus is recaptured wherever it ends | let a clipped end change at rest |
 | Baked pictures are clipped to the window's measured corner radius | a crop of a desktop composite fills the rounded corners with wallpaper | capture the corners' alpha separately |
 | The bar's menu-extras thread stays in `bar` for now | it has its own pacing and pauses for flights already | move it behind the pictures thread |
 | A transition's hold has three states: up at compose, settling at the lift, released at the quiet after it | the bar is pictured 250ms after the lift, as it always was, while the warms the flight held wait for the quiet, which keeps a burst of presses off a busy compositor | release at the lift, and picture the bar 250ms after the quiet instead |

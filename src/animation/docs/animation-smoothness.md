@@ -23,9 +23,9 @@ container. `fly` hands the whole plan to the render server in ONE
 per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
 while a move steps the strip; see "The move flight"). Model layers jump to their
 destinations; the animations carry the presentation and are removed on
-completion. The tick loop paces only the mid-flight orchestration (frame
-placement at the apply point, the one destination recapture, teardown);
-nothing is drawn on ticks. Every overlay commit is flushed to the render
+completion. The tick loop paces only the coordinator (frame zero's wait,
+the coalesce window, the hold, the final capture, the lift); nothing is drawn
+on ticks. Every overlay commit is flushed to the render
 server at once (`commit_now`): the overlay shares the main thread with the
 reactor, and an explicit commit nested in the run loop's implicit
 transaction is only sent when that iteration ends, after the reactor's
@@ -119,7 +119,8 @@ from where the member is drawn, as fast as the old container's leg is going
 move passes left the strip at 12x the speed it had a frame before, 5,700 to
 53,000pt/s in a full-width burst; pinned by
 `the_column_a_second_move_passes_keeps_its_speed`. The flight's clock covers
-the longest spring (`running.duration`).
+the longest spring: the coordinator restarts it with the merge's duration, at least as long as the
+longest leg `retarget` returns.
 
 Measured 2026-09-29 by tracing where each container is drawn every tick
 (`trace_presented`, enabled with `rini::animation::trace=trace` in `RUST_LOG`)
@@ -197,9 +198,9 @@ which `hide` and a new display frame call, removes the mask and puts the black
 back. Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
 `the_mask_leaves_out_exactly_the_holes`. The mask is in the view layer's
 coordinates, flipped as the canvas is; where a hole lands on screen was not
-measured on a window shorter than the display. Nothing calls it yet: which
-windows get holes, and when, is the coordinator's (step 4 of
-`docs/pictures-motion-transitions.md`).
+measured on a window shorter than the display. Which windows get holes, and
+when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
+it watches end wholly on screen, from the show to the lift.
 
 **Corners of a baked picture.** A tile cut from a composite of the desktop
 carries the wallpaper in the window's rounded corners, where the window itself
@@ -209,7 +210,8 @@ layer, crop pieces included, to a rounded rect of the window's radius
 caster and the hairline are never clipped, and every install puts the picture back to whole
 (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
 is in `docs/pictures-motion-transitions.md`. The pictures service bakes them
-(`capture_on_screen`), and nothing asks it for one yet.
+(`capture_on_screen`), and the flight engine clips every tile whose picture is
+a SkyLight one of a window the service bakes (`corner_clip`), at every install and swap.
 
 **Tiles snap to the real frame.** A strip pans by a fractional vector and the
 window server rounds each window on its own, so a tile of a rigid group can end
@@ -229,8 +231,8 @@ start and curve, ending on the real frame, so it lands there with the leg
 instead of popping at the lift
 (`a_tile_on_its_own_leg_snaps_on_the_same_timing`); once the leg has played
 only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
-The caller is the coordinator (`src/transitions/domain/lifecycle.rs`), and
-nothing carries out its snaps yet.
+The caller is the coordinator (`src/transitions/domain/lifecycle.rs`); the
+flight engine carries its snaps out.
 
 **The hairline.** No capture carries the hairline macOS composites around a
 window ("The hairline is composited outside every capture" in
@@ -257,8 +259,8 @@ pooled layer's autoresizing carries the old size, and a pooled tile's radius
 can have been measured since its last flight. Companions wear none.
 `TileOverlay::set_tile_focused` switches the ring's white and the shadow's
 depth in a hard cut, for focus handing over mid-flight; the prototype set the
-ring only at install. Nothing calls it yet: when focus hands over is the
-coordinator's.
+ring only at install. When focus hands over is the coordinator's
+(`HandOverFocus`).
 
 Mechanics worth remembering:
 
@@ -266,7 +268,7 @@ Mechanics worth remembering:
   exponential ease-out. The actor's clock evaluates it by
   solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
   and Core Animation gets the same four control points (`timing_function`),
-  so the apply point and the drawn motion agree; pinned by
+  so the actor's motion and the drawn one agree; pinned by
   `the_clock_and_the_render_server_run_one_curve`. A flight that steps flies
   its containers on CSS ease-in-out (`EASE_IN_OUT`) instead, the same way:
   `Leg::Curve` carries its curve (see "The move flight"). Progress at quarter,
@@ -421,7 +423,7 @@ window, not to its slot: where the columns passed differ in width it ends a
 few points into the outer gap beside the moved window until the lift. A
 container a merge opens after a step began does not carry the rest of it: its
 member leaves from where it is drawn, so it does not jump, but it stops
-stepping, as with the edge bounce. The orchestration clock restarts to cover
+stepping, as with the edge bounce. The coordinator's clock restarts to cover
 the new legs. A step still playing is not restarted (`NudgePlaying`): one step
 per burst. A press after it has come home, 455ms at the default duration,
 starts another. A press at the end of the strip

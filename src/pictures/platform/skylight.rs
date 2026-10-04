@@ -253,12 +253,6 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
     })
 }
 
-/// Whether `window` lies wholly on one display now, which is when a framed capture of it is whole.
-pub fn is_wholly_on_a_display(window: WindowServerId) -> bool {
-    crate::windows::platform::window_server::get_window(window)
-        .is_some_and(|info| fully_on_a_display(info.frame, &active_display_bounds()))
-}
-
 /// The window and everything below it on screen, cropped to `rect`. Leaves out every window above it,
 /// so neither an overlapping window nor rini's own overlay can end up in the picture.
 fn capture_below_and_including(
