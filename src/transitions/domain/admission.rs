@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
 use rini_geometry::{SameAs, to_overlay_space};
 use tracing::debug;
@@ -16,6 +16,7 @@ use tracing::debug;
 use crate::animation::domain::motion::accents::{NudgeAdmission, NudgePlaying, nudge_admission};
 use crate::animation::domain::motion::bounce::Bounce;
 use crate::animation::domain::motion::nudge::NUDGE_STRETCH;
+use crate::pictures::domain::coverage::outgrows;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
@@ -80,6 +81,36 @@ pub(in crate::transitions) enum EntranceDecision {
     Travel { from: CGRect, to: CGRect },
     /// No usable picture at spawn: a reservation held for the first picture, with the reason.
     Reserve(&'static str),
+}
+
+/// How a window's picture where it ends is waited for. See "A grow holds, then reveals" and "A window
+/// that opens" in `src/transitions/docs/coordination.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::transitions) enum EndPicture {
+    /// Held for, overlay up, and watched until it has repainted where it ends.
+    Awaited,
+    /// Watched until it has repainted where it ends, and never held for.
+    Repainting,
+    /// Captured once it is where it ends.
+    Lands,
+}
+
+impl EndPicture {
+    /// A window drawn from a picture covering `covered`: a grow its picture cannot cover at `to`, or a
+    /// stand-in, which covers nothing, is awaited.
+    pub(in crate::transitions) fn of_picture(covered: (f64, f64), to: CGSize) -> Self {
+        if outgrows(covered, to) { Self::Awaited } else { Self::Lands }
+    }
+
+    /// A window that just opened: one flying from where it opened repaints where it ends, one already
+    /// at its slot lands there, and a reservation is awaited.
+    pub(in crate::transitions) fn of_entrance(entrance: EntranceDecision) -> Self {
+        match entrance {
+            EntranceDecision::Travel { from, to } if from.same_as(to) => Self::Lands,
+            EntranceDecision::Travel { .. } => Self::Repainting,
+            EntranceDecision::Reserve(_) => Self::Awaited,
+        }
+    }
 }
 
 /// `Travel` iff the server reports a sized frame, the spawn capture is usable and budget remains.
@@ -363,6 +394,27 @@ mod tests {
 
 
 
+
+    /// A grow its picture cannot cover and a stand-in are held for; a picture that covers lands.
+    #[test]
+    fn a_grow_and_a_stand_in_are_awaited_and_a_picture_that_covers_lands() {
+        let column = CGSize::new(859.0, 1081.0);
+        assert_eq!(EndPicture::of_picture((859.0, 1081.0), CGSize::new(1720.0, 1081.0)), EndPicture::Awaited, "a grow");
+        assert_eq!(EndPicture::of_picture((0.0, 0.0), column), EndPicture::Awaited, "a stand-in covers nothing");
+        assert_eq!(EndPicture::of_picture((859.0, 1081.0), column), EndPicture::Lands);
+        assert_eq!(EndPicture::of_picture((1720.0, 1081.0), column), EndPicture::Lands, "a shrink crops");
+    }
+
+    /// A window that opened flies from where it opened and repaints at its slot, never held for; one
+    /// already at its slot, a cold cache rather than an open, lands; a reservation is held for.
+    #[test]
+    fn an_entrance_that_travels_repaints_one_standing_lands_and_a_reservation_is_awaited() {
+        let slot = rect(867.0, 32.0, 859.0, 1081.0);
+        let spawn = rect(400.0, 200.0, 700.0, 500.0);
+        assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }), EndPicture::Repainting);
+        assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }), EndPicture::Lands);
+        assert_eq!(EndPicture::of_entrance(EntranceDecision::Reserve("capture budget")), EndPicture::Awaited);
+    }
 
     #[test]
     fn entrance_plan_travels_from_spawn_or_reserves_with_a_reason() {

@@ -149,6 +149,16 @@ struct RunningAnimation {
     bounce: Option<(CGPoint, Duration)>,
 }
 
+/// What a swapped-in picture became.
+enum Took {
+    /// A reserved entrance's tile, joining the flight.
+    Entrance(OverlayTile),
+    /// The picture on the window's tile, which ends at this size.
+    Tile { size: CGSize },
+    /// Nothing draws the window.
+    Nothing,
+}
+
 /// Writes every tile's destination back from the merged plan: a member the pass did not compose
 /// rides its group all the same.
 fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
@@ -405,6 +415,22 @@ impl RunningAnimation {
         self.merge(entrance_tile(&entrance, picture));
         restack(&mut self.tiles, self.focus);
         self.tiles.iter().find(|t| t.window == window).cloned()
+    }
+
+    /// A picture swapped in for `window`: a reserved entrance joins with it, else its tile takes it in
+    /// place, a stand-in's included, moving on as it was and flying no focused look from now.
+    fn take_picture(&mut self, window: WindowId, picture: &Picture) -> Took {
+        if let Some(tile) = self.admit(window, picture) {
+            return Took::Entrance(tile);
+        }
+        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) else {
+            return Took::Nothing;
+        };
+        tile.snapshot = picture.clone();
+        if self.focused_look == Some(window) {
+            self.focused_look = None;
+        }
+        Took::Tile { size: tile.to.size }
     }
 
     /// `target`'s tile flies `look`, drawn focused, if it fits where the tile starts. Whether it does.
@@ -876,16 +902,11 @@ impl FlightEngine {
         }
         let Some((_, picture)) = self.delivered.remove(&window) else { return };
         let Some(running) = self.running.as_mut() else { return };
-        if running.focused_look == Some(window) {
-            running.focused_look = None;
-        }
-        if running.entrances.iter().any(|e| e.window == window) {
-            self.admit_entrance(window, &picture, now);
-            return;
-        }
-        let Some(tile) = running.tiles.iter_mut().find(|t| t.window == window) else { return };
-        tile.snapshot = picture.clone();
-        let size = tile.to.size;
+        let size = match running.take_picture(window, &picture) {
+            Took::Entrance(tile) => return self.admit_entrance(tile, now),
+            Took::Tile { size } => size,
+            Took::Nothing => return,
+        };
         debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, flown = running.flown, "picture swapped mid-flight");
         if !running.flown {
             self.reinstall();
@@ -899,12 +920,11 @@ impl FlightEngine {
         }
     }
 
-    /// A reserved entrance's first picture: its tile joins frame zero, or the flight for what is
-    /// left of it.
-    fn admit_entrance(&mut self, window: WindowId, picture: &Picture, now: Instant) {
+    /// A reserved entrance's tile, with its first picture: it joins frame zero, or the flight for what
+    /// is left of it.
+    fn admit_entrance(&mut self, tile: OverlayTile, now: Instant) {
         let Some(running) = self.running.as_mut() else { return };
-        let Some(tile) = running.admit(window, picture) else { return };
-        debug!(pid = window.pid, idx = window.idx.get(), flown = running.flown, "entrance admitted");
+        debug!(pid = tile.window.pid, idx = tile.window.idx.get(), flown = running.flown, "entrance admitted");
         if !running.flown {
             self.recompose();
             return;
@@ -1162,6 +1182,11 @@ impl FlightEngine {
         let mut entrances: Vec<PendingEntrance> = Vec::new();
         let mut awaiting: Vec<WindowId> = Vec::new();
         let mut repainting: Vec<WindowId> = Vec::new();
+        let mut waits = |window, end: EndPicture| match end {
+            EndPicture::Awaited => awaiting.push(window),
+            EndPicture::Repainting => repainting.push(window),
+            EndPicture::Lands => {}
+        };
         // Newly opened windows travelling from their spawn frame.
         let mut spawn_entrances: Vec<(WindowId, CGRect, CGRect)> = Vec::new();
         let mut sync_captures = 0usize;
@@ -1234,13 +1259,7 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    // A grow whose picture cannot cover the destination holds for the reveal.
-                    if crate::pictures::domain::coverage::outgrows(
-                        snapshot.coverage.covered,
-                        request.to.size,
-                    ) {
-                        awaiting.push(request.window);
-                    }
+                    waits(request.window, EndPicture::of_picture(snapshot.coverage.covered, request.to.size));
                     tiles.push(OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
@@ -1273,7 +1292,9 @@ impl FlightEngine {
                             capture_via_framed(request.server_id, scale)
                         });
                     let usable = picture.as_ref().is_some_and(|p| p.is_usable());
-                    match entrance_plan(spawn, request.to, usable, budget_left) {
+                    let entrance = entrance_plan(spawn, request.to, usable, budget_left);
+                    waits(request.window, EndPicture::of_entrance(entrance));
+                    match entrance {
                         EntranceDecision::Travel { from, to } => {
                             let snapshot = picture.expect("usable implies a picture");
                             debug!(
@@ -1317,7 +1338,6 @@ impl FlightEngine {
                                 resolved.push((request.window, from, to, request.floating));
                             } else {
                                 spawn_entrances.push((request.window, from_o, to_o));
-                                repainting.push(request.window);
                             }
                         }
                         EntranceDecision::Reserve(reason) => {
@@ -1333,7 +1353,6 @@ impl FlightEngine {
                                 to: to_overlay_space(request.to, display_frame),
                                 floating: request.floating,
                             });
-                            awaiting.push(request.window);
                         }
                     }
                 }
@@ -2327,6 +2346,46 @@ mod tests {
             assert!(running.admit(wid(2), &test_picture(slot.size)).is_none(), "taken once");
             assert!(running.admit(wid(1), &test_picture(slot.size)).is_none(), "not an entrance");
             assert_eq!(running.tiles.len(), 2, "no second tile");
+        }
+
+        /// A stand-in covers nothing, so its window is awaited like a grow; its real picture, once
+        /// swapped in, goes onto the same tile, which moves on as it was.
+        #[test]
+        fn a_stand_in_takes_its_real_picture_on_the_same_tile() {
+            use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
+            let park = rect(1727.0, 32.0, 859.0, 1081.0);
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let (image, _) = stand_in_image(2.0).expect("drawn");
+            let stand_in = stand_in_picture(slot.size, image);
+            assert_eq!(EndPicture::of_picture(stand_in.coverage.covered, slot.size), EndPicture::Awaited);
+            let mut running = flight();
+            let mut tile = stacked(wid(1), park, slot, Some(0), false);
+            tile.snapshot = stand_in;
+            running.tiles.push(tile);
+            let real = test_picture(slot.size);
+            assert!(matches!(running.take_picture(wid(1), &real), Took::Tile { size } if size == slot.size));
+            assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
+            let tile = &running.tiles[0];
+            assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
+            assert_ne!(tile.snapshot.source, Route::StandIn);
+            assert!(running.entrances.is_empty());
+        }
+
+        /// A reserved entrance joins with its picture; a window with a tile takes it in place, and
+        /// stops flying a focused look; a window nothing draws takes nothing.
+        #[test]
+        fn a_swapped_in_picture_admits_an_entrance_or_goes_onto_its_windows_tile() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
+            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
+            running.focused_look = Some(wid(1));
+            let picture = test_picture(slot.size);
+            assert!(matches!(running.take_picture(wid(2), &picture), Took::Entrance(tile) if tile.from == entrance_from(slot)));
+            assert!(matches!(running.take_picture(wid(1), &picture), Took::Tile { .. }));
+            assert_eq!(running.focused_look, None);
+            assert!(matches!(running.take_picture(wid(3), &picture), Took::Nothing));
+            assert_eq!(running.tiles.len(), 2);
         }
 
         #[test]
