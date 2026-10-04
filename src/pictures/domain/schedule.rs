@@ -77,11 +77,12 @@ pub fn wants_warm(held: Option<Held>, size: CGSize, now: Instant) -> bool {
         || held.is_some_and(|held| picture_is_stale(now.saturating_duration_since(held.taken)))
 }
 
-/// How long a background or warm ask waits before it is listed. A pass's warm is sent just after the
-/// flight it starts, and so reaches the service before that flight's hold does; listed at once, it
-/// would put ScreenCaptureKit to work at the flight's frame zero. A flight that composites its desktop
-/// on the main thread can hold later than this; what is listed meanwhile is listed again at the
-/// release (`hold`).
+/// How long a background or warm ask waits before it is listed. The reactor sends a pass's warm
+/// straight here just after the request for its flight, so it usually arrives before that flight's
+/// hold, which the flight engine sends as it takes the request; listed at once, it would put
+/// ScreenCaptureKit to work at the flight's frame zero. A flight whose request waits behind other work
+/// on the main thread holds later than this; what is listed meanwhile is listed again at the release
+/// (`hold`).
 pub const SETTLE_BEFORE_LISTING: Duration = Duration::from_millis(50);
 
 /// Concurrent ScreenCaptureKit captures. It serialises internally, so wall clock stops improving past
@@ -588,8 +589,8 @@ mod tests {
         assert_eq!(started, 5);
     }
 
-    /// A pass's warm reaches the service before the hold of the flight that pass started, so it waits
-    /// long enough for that hold to arrive, and then out the flight.
+    /// A pass's warm usually reaches the service before the hold of the flight that pass started, so
+    /// it waits long enough for that hold to arrive, and then out the flight.
     #[test]
     fn a_warm_asked_just_before_its_flight_holds_waits_out_the_flight() {
         let now = Instant::now();

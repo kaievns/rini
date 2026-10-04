@@ -223,9 +223,11 @@ is a warm, for the next flight. The
 rest waits and starts at the release, most urgent first. The reactor's
 `warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
 start) waits; so does the desktop render. A warm
-also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: a pass's
-warm is sent just after the flight it starts, and reaches the service before
-that flight's hold. Under the old load a focus recapture through the
+also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: the reactor
+sends a pass's warm straight to the service just after the request for its
+flight, so it usually arrives before the hold the engine sends as it takes that
+request, and one listed before a later hold is listed again at the release.
+Under the old load a focus recapture through the
 service took 203ms median (p90 441, n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
 271 of 321 desktop renders landed mid-flight. `warm_all_workspaces` stays in
 the reactor's switch handler: the service knows a flight is holding it, the

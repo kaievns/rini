@@ -900,14 +900,14 @@ screen was captured half past the edge, or already parked, then cut onto its
 tile as a half or fully missing window. A framed capture now covers the window
 only if it stayed wholly on one display through both captures
 (`framed_coverage`). Otherwise it holds nothing to
-draw. The resize chase and the capture of a new window had the same exposure,
-for a window partly off the display.
+draw. The capture of a new window at its spawn frame has the same exposure, for a
+window partly off the display.
 
 One exposure is left as it was: the engine's framed captures name a window by the
 server id folded into its `WindowId`. For the rare window Accessibility reports
 without a server id, rini falls back to a counter there, which could name another
-window. The composite runs in the framed capture (`capture_via_framed`), which the
-resize reveal, the focus refresh and the capture of a new window all use. The picture
+window. The composite runs in the framed capture (`capture_via_framed`), which only
+the flight engine's capture of a new window at its spawn frame uses. The picture
 bakes in whatever was behind the window at that moment, which differs from the
 live blur only once the window has moved over something else.
 
@@ -1046,10 +1046,11 @@ of:
   bar picture of one display, replaced together when the display changes, and a
   transition reads them only for the display it flies on: a display change used
   to clear only the bar, and the overlay drew an external display's 3008x1692
-  desktop behind a built-in display's strips on a 1728x1117 overlay. With nothing
-  new in hand the overlay keeps the backdrop it already shows rather than
-  recapturing: a desktop composite measures 13ms to 36ms, a frame or two of lag on
-  every focus change, while keeping a held picture costs nothing.
+  desktop behind a built-in display's strips on a 1728x1117 overlay. A transition is
+  dressed with the render the service holds; without one it composites the desktop
+  on the main thread, 13ms to 36ms, a frame or two of lag, and keeps the backdrop it
+  already shows only when that composite is refused. Re-applying a held render costs
+  nothing.
 - The composite was size-checked, but the cached ScreenCaptureKit render was handed
   over unchecked.
 
@@ -1179,9 +1180,9 @@ perceptible", "Consequences for the design" above) and the worst case — the
 destination's focus appearance — is patched mid-flight (the focus target's change watch, and its
 focused look when it starts parked). What that
 does not cover: content that changed while parked. Terminal output, chat,
-anything live — warmed only at animation end, focus change, and layout
-passes, so a window that repainted itself while hidden is stale until the
-next switch touches it. Capturing at switch time instead is ruled out by
+anything live — warmed only at the quiet after a flight and at layout
+passes, and pictured at a press only while it is on screen, so a window that
+repainted itself while hidden is stale until the next switch touches it. Capturing at switch time instead is ruled out by
 measurement: 4 windows cost 94.5ms against a 180ms budget. Warming DURING the
 flight is ruled out too: see "Capture work in flight" in `src/transitions/docs/coordination.md`.
 

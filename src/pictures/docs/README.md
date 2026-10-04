@@ -46,9 +46,9 @@ with a sink per client; the flight engine, the reactor and the switcher each hol
 | asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it |
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
-| holds | `hold` at a transition's compose, `Settling` at its lift, `Released` at its quiet |
-| reads | `usable`, `usable_many`, `get`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
-| hands over | `insert`, for what the flight engine's own captures take in flight |
+| holds | `hold` at a transition's begin, before anything is composed, `Settling` at its lift, `Released` at its quiet |
+| reads | `usable`, `usable_many`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
+| hands over | `insert`, for the flight engine's one capture of its own, of a window that has just opened |
 
 Asks, watches, hints, holds and forgets are messages, applied in order on the thread, every one already
 queued before the next call is made, so the newest wins. Reads are not: they lock the shared state and
@@ -91,7 +91,7 @@ until a time, or nothing.
 |---|---|
 | While a transition holds the service, only a focus capture starts, of a focus target clipped by the display's edge | ScreenCaptureKit work queued at a focus change slows every step of it: with four captures out the frame-zero capture took 92-97ms against 26-33; what the transition waits for is the exception |
 | What waited starts at the release, most urgent first: focus, background, warm | a capture of a focus end is never queued behind warms |
-| A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | a pass's warm is sent just after the flight it starts, and usually reaches the service before that flight's hold |
+| A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | the reactor sends a pass's warm just after the request for its flight, which the engine holds for as it takes it: the settle usually covers the gap, and what it does not is listed again at the release (below) |
 | A capture listed and unable to start through a hold is listed again at the release, as is one asked again at another size | the buffer a listing prepares is the size it found the window at, and the transition may resize it |
 | A warm is dropped where the picture held fits and is fresh (`wants_warm`) | re-capturing every animated window per keystroke is churn |
 | One listing serves every window that may start; at most `MAX_CONCURRENT` captures are out | a fresh listing costs about 83ms against 26ms for the capture; ScreenCaptureKit serialises past four |
