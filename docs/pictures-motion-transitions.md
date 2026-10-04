@@ -13,7 +13,7 @@ This section goes when the last row is done.
 | 1 | `pictures`: capture, cache and layer helpers out of `animation`; switcher and bar its clients | done |
 | 2 | The pictures service: the capture schedule and its thread, the cache and the ScreenCaptureKit captures moved in; the engine, the reactor and the switcher its clients | done |
 | 3 | `transitions`: the coordinator's decisions out of `animation`; the lifecycle as a pure state machine | |
-| 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | |
+| 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | in progress: `pictures`' side done (region pictures, knowledge, the batched capture, frame-zero and final asks, the `Landing`, `Change` and `Live` watches, hints, focused looks), not yet wired to the coordinator |
 | 5 | `animation` plays a `Score`; choreographies and accents produce one | in progress: the pure `Score` and its tracks |
 | 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | |
 | 7 | The coordinator on its own thread; the main thread renders only | |

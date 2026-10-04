@@ -9,7 +9,9 @@ pub const BAND_PRINT: (usize, usize) = (96, 8);
 
 /// The band print of the picture last delivered for a window, against a new one: a delivery that
 /// carries an unchanged print is no news. With none delivered, every print is new.
-pub fn print_changed(last: Option<&[u8]>, print: &[u8]) -> bool { last != Some(print) }
+pub fn print_changed(last: Option<&[u8]>, print: &[u8]) -> bool {
+    last != Some(print)
+}
 
 /// The grid a picture's body is sampled on, per side.
 pub const BODY_GRID: usize = 40;
@@ -22,8 +24,11 @@ const BODIES_DIFFER_ABOVE: f64 = 3.0;
 
 /// The unit-space points a body is sampled at, row by row: the centre of each cell of the grid.
 pub fn body_points() -> impl Iterator<Item = (f64, f64)> {
-    let at = |(from, to): (f64, f64), i: usize| from + (to - from) * (i as f64 + 0.5) / BODY_GRID as f64;
-    (0..BODY_GRID).flat_map(move |row| (0..BODY_GRID).map(move |col| (at(BODY_ACROSS, col), at(BODY_DOWN, row))))
+    let at =
+        |(from, to): (f64, f64), i: usize| from + (to - from) * (i as f64 + 0.5) / BODY_GRID as f64;
+    (0..BODY_GRID).flat_map(move |row| {
+        (0..BODY_GRID).map(move |col| (at(BODY_ACROSS, col), at(BODY_DOWN, row)))
+    })
 }
 
 /// Whether two pictures' bodies, sampled at [`body_points`] as RGB, show different content. Samples
@@ -56,12 +61,18 @@ mod tests {
     fn the_body_is_sampled_on_a_grid_below_the_band() {
         let points: Vec<(f64, f64)> = body_points().collect();
         assert_eq!(points.len(), BODY_GRID * BODY_GRID);
-        assert!(points.iter().all(|(u, v)| (0.04..=0.96).contains(u) && (0.08..=0.96).contains(v)));
+        assert!(
+            points
+                .iter()
+                .all(|(u, v)| (0.04..=0.96).contains(u) && (0.08..=0.96).contains(v))
+        );
         assert!(points[0].1 < points[BODY_GRID].1, "row by row, top first");
         assert!(points[0].0 < points[1].0, "left to right");
     }
 
-    fn flat(level: u8) -> Vec<[u8; 3]> { vec![[level; 3]; BODY_GRID * BODY_GRID] }
+    fn flat(level: u8) -> Vec<[u8; 3]> {
+        vec![[level; 3]; BODY_GRID * BODY_GRID]
+    }
 
     /// More than three levels on average is different content; a cursor or a clock is not.
     #[test]

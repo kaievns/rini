@@ -24,7 +24,9 @@ pub struct Knowledge {
 
 impl Knowledge {
     /// Nothing behind the window shows through it: measured opaque, and no material.
-    pub fn is_opaque(&self) -> bool { self.translucent == Some(false) && self.material == Some(false) }
+    pub fn is_opaque(&self) -> bool {
+        self.translucent == Some(false) && self.material == Some(false)
+    }
 
     /// Which call a window is captured in first.
     pub fn first_call(&self) -> Call {
@@ -58,7 +60,7 @@ pub enum Call {
 }
 
 /// Every window's knowledge, by window server id.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Learned {
     windows: HashMap<WindowServerId, Knowledge>,
 }
@@ -83,7 +85,9 @@ impl Learned {
     }
 
     /// A window that is gone: its id may be handed to another.
-    pub fn forget(&mut self, window: WindowServerId) { self.windows.remove(&window); }
+    pub fn forget(&mut self, window: WindowServerId) {
+        self.windows.remove(&window);
+    }
 }
 
 /// The side of the square a picture is drawn into to judge its translucency, and the inset of the grid
@@ -100,7 +104,8 @@ pub fn is_translucent(rgba: &[u8], stride: usize) -> bool {
     for y in TRANSLUCENCY_INSET..TRANSLUCENCY_SIDE - TRANSLUCENCY_INSET {
         for x in TRANSLUCENCY_INSET..TRANSLUCENCY_SIDE - TRANSLUCENCY_INSET {
             samples += 1;
-            clear += (rgba.get(y * stride + x * 4 + 3).copied().unwrap_or(0) < CLEAR_BELOW) as usize;
+            clear +=
+                (rgba.get(y * stride + x * 4 + 3).copied().unwrap_or(0) < CLEAR_BELOW) as usize;
         }
     }
     clear * 5 > samples
@@ -173,7 +178,9 @@ pub fn has_material(alone: &[u8], baked: &[u8], stride: usize) -> bool {
 mod tests {
     use super::*;
 
-    fn id(n: u32) -> WindowServerId { WindowServerId::new(n) }
+    fn id(n: u32) -> WindowServerId {
+        WindowServerId::new(n)
+    }
 
     fn known(translucent: Option<bool>, material: Option<bool>) -> Knowledge {
         Knowledge {
@@ -267,7 +274,10 @@ mod tests {
         assert!(!is_translucent(&square(|_, y| (4..12).contains(&y)), stride));
         assert!(is_translucent(&square(|_, y| (4..13).contains(&y)), stride));
         let corners = |x: usize, y: usize| x < 4 || y < 4 || x >= 44 || y >= 44;
-        assert!(!is_translucent(&square(corners), stride), "only what is outside the grid");
+        assert!(
+            !is_translucent(&square(corners), stride),
+            "only what is outside the grid"
+        );
         let mut almost = square(|_, _| false);
         for at in (3..almost.len()).step_by(4) {
             almost[at] = 249;
@@ -292,8 +302,12 @@ mod tests {
     fn the_corner_radius_is_measured_from_where_each_row_turns_opaque() {
         for (radius_pt, scale) in [(10.0, 2.0), (16.0, 1.0), (16.0, 2.0), (26.0, 2.0)] {
             let side = (CORNER_SIDE_PT * scale) as usize;
-            let measured = corner_radius(side, side, scale, corner(radius_pt * scale)).expect("a radius");
-            assert!((measured - radius_pt).abs() < 1.0, "{radius_pt}pt at {scale}x: {measured}");
+            let measured =
+                corner_radius(side, side, scale, corner(radius_pt * scale)).expect("a radius");
+            assert!(
+                (measured - radius_pt).abs() < 1.0,
+                "{radius_pt}pt at {scale}x: {measured}"
+            );
         }
     }
 
@@ -302,10 +316,18 @@ mod tests {
     #[test]
     fn no_radius_without_enough_of_a_corner() {
         assert_eq!(corner_radius(48, 48, 1.0, corner(10.0)), None, "10pt at 1x");
-        assert_eq!(corner_radius(96, 96, 2.0, |_, _| 255), None, "square: every row starts at 0");
+        assert_eq!(
+            corner_radius(96, 96, 2.0, |_, _| 255),
+            None,
+            "square: every row starts at 0"
+        );
         assert_eq!(corner_radius(96, 3, 2.0, corner(20.0)), None, "two rows");
         assert_eq!(corner_radius(96, 96, 2.0, |_, _| 0), None, "nothing opaque");
-        assert_eq!(corner_radius(96, 96, 1.0, corner(45.0)), None, "45pt: past the range");
+        assert_eq!(
+            corner_radius(96, 96, 1.0, corner(45.0)),
+            None,
+            "45pt: past the range"
+        );
     }
 
     fn flat(side: usize, rgb: [u8; 3]) -> Vec<u8> {
@@ -319,8 +341,14 @@ mod tests {
         let stride = MATERIAL_SIDE * 4;
         let alone = flat(MATERIAL_SIDE, [100, 100, 100]);
         assert!(!has_material(&alone, &alone, stride), "the same");
-        assert!(!has_material(&alone, &flat(MATERIAL_SIDE, [102, 102, 102]), stride), "two levels");
-        assert!(has_material(&alone, &flat(MATERIAL_SIDE, [103, 103, 103]), stride), "three");
+        assert!(
+            !has_material(&alone, &flat(MATERIAL_SIDE, [102, 102, 102]), stride),
+            "two levels"
+        );
+        assert!(
+            has_material(&alone, &flat(MATERIAL_SIDE, [103, 103, 103]), stride),
+            "three"
+        );
         let mut border_only = alone.clone();
         for y in 0..MATERIAL_SIDE {
             for x in 0..MATERIAL_SIDE {
@@ -329,6 +357,9 @@ mod tests {
                 }
             }
         }
-        assert!(!has_material(&alone, &border_only, stride), "only the border differs");
+        assert!(
+            !has_material(&alone, &border_only, stride),
+            "only the border differs"
+        );
     }
 }

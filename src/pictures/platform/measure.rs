@@ -30,7 +30,12 @@ pub fn band_print(picture: &Picture) -> Option<Vec<u8>> {
         CGSize::new(width, (BAND_PT * scale).round().min(height)),
     );
     let band = CGImage::with_image_in_rect(Some(&image), band)?;
-    let (bytes, _) = drawn(&band, BAND_PRINT.0, BAND_PRINT.1, CGInterpolationQuality::Default)?;
+    let (bytes, _) = drawn(
+        &band,
+        BAND_PRINT.0,
+        BAND_PRINT.1,
+        CGInterpolationQuality::Default,
+    )?;
     Some(bytes)
 }
 
@@ -91,8 +96,13 @@ fn surface_samples(surface: &IOSurfaceRef) -> Option<Vec<[u8; 3]>> {
 /// What a window's first picture, `crop` at `scale`, says of it: whether it is translucent, from the
 /// picture drawn small, and its corner radius, from its top-left corner alone.
 pub fn first_sight(crop: &CGImage, scale: f64) -> (bool, Option<f64>) {
-    let translucent = drawn(crop, TRANSLUCENCY_SIDE, TRANSLUCENCY_SIDE, CGInterpolationQuality::Default)
-        .is_some_and(|(bytes, stride)| is_translucent(&bytes, stride));
+    let translucent = drawn(
+        crop,
+        TRANSLUCENCY_SIDE,
+        TRANSLUCENCY_SIDE,
+        CGInterpolationQuality::Default,
+    )
+    .is_some_and(|(bytes, stride)| is_translucent(&bytes, stride));
     let side = (CORNER_SIDE_PT * scale).round();
     let corner = CGImage::with_image_in_rect(
         Some(crop),
@@ -109,7 +119,14 @@ pub fn first_sight(crop: &CGImage, scale: f64) -> (bool, Option<f64>) {
 /// Whether a window has a material: its picture `alone` and `baked` over what is behind it, both drawn
 /// small, differ.
 pub fn shows_material(alone: &CGImage, baked: &CGImage) -> bool {
-    let draw = |image| drawn(image, MATERIAL_SIDE, MATERIAL_SIDE, CGInterpolationQuality::Default);
+    let draw = |image| {
+        drawn(
+            image,
+            MATERIAL_SIDE,
+            MATERIAL_SIDE,
+            CGInterpolationQuality::Default,
+        )
+    };
     match (draw(alone), draw(baked)) {
         (Some((alone, stride)), Some((baked, _))) => has_material(&alone, &baked, stride),
         _ => false,
@@ -137,7 +154,10 @@ fn drawn(
     }
     let stride = CGBitmapContextGetBytesPerRow(Some(&ctx));
     // SAFETY: the context owns `stride * height` bytes and outlives this copy.
-    Some((unsafe { std::slice::from_raw_parts(data, stride * height) }.to_vec(), stride))
+    Some((
+        unsafe { std::slice::from_raw_parts(data, stride * height) }.to_vec(),
+        stride,
+    ))
 }
 
 #[cfg(test)]
@@ -161,7 +181,9 @@ mod tests {
         CGContext::fill_rect(Some(ctx), rect);
     }
 
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect { CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)) }
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
 
     /// A window of `size` points at `scale`: grey, with a 20pt title band of `band` colour across its
     /// top, inside the 8% the body leaves out.
@@ -170,14 +192,15 @@ mod tests {
         let pixels = image(w, h, |ctx| {
             fill(ctx, rect(0.0, 0.0, w as f64, h as f64), (0.5, 0.5, 0.5, 1.0));
             let band_px = 20.0 * scale;
-            fill(ctx, rect(0.0, h as f64 - band_px, w as f64, band_px), (band.0, band.1, band.2, 1.0));
+            fill(
+                ctx,
+                rect(0.0, h as f64 - band_px, w as f64, band_px),
+                (band.0, band.1, band.2, 1.0),
+            );
         });
         Picture {
             image: Pixels::Bitmap(pixels),
-            coverage: Coverage {
-                covered: size,
-                window: size,
-            },
+            coverage: Coverage { covered: size, window: size },
             ..test_picture(CGSize::new(size.0, size.1))
         }
     }
@@ -192,7 +215,9 @@ mod tests {
         assert_ne!(focused, unfocused);
 
         let mut changed_below = window((400.0, 300.0), 2.0, (0.9, 0.9, 0.9));
-        let Pixels::Bitmap(base) = &changed_below.image else { unreachable!() };
+        let Pixels::Bitmap(base) = &changed_below.image else {
+            unreachable!()
+        };
         let base = base.clone();
         changed_below.image = Pixels::Bitmap(image(800, 600, |ctx| {
             CGContext::draw_image(Some(ctx), rect(0.0, 0.0, 800.0, 600.0), Some(&base));
@@ -207,7 +232,8 @@ mod tests {
     fn the_band_is_forty_points_at_the_pictures_own_scale() {
         let at_1x = band_print(&window((400.0, 300.0), 1.0, (0.9, 0.9, 0.9))).unwrap();
         let at_2x = band_print(&window((400.0, 300.0), 2.0, (0.9, 0.9, 0.9))).unwrap();
-        let difference = at_1x.iter().zip(&at_2x).map(|(a, b)| a.abs_diff(*b) as u32).max().unwrap();
+        let difference =
+            at_1x.iter().zip(&at_2x).map(|(a, b)| a.abs_diff(*b) as u32).max().unwrap();
         assert!(difference <= 2, "{difference}");
     }
 
@@ -222,7 +248,9 @@ mod tests {
     #[test]
     fn a_region_prints_as_its_crop() {
         let whole = window((400.0, 300.0), 2.0, (0.9, 0.9, 0.9));
-        let Pixels::Bitmap(pixels) = &whole.image else { unreachable!() };
+        let Pixels::Bitmap(pixels) = &whole.image else {
+            unreachable!()
+        };
         let composite = image(1600, 600, |ctx| {
             CGContext::draw_image(Some(ctx), rect(800.0, 0.0, 800.0, 600.0), Some(pixels));
         });
@@ -243,7 +271,10 @@ mod tests {
         let grey = window((400.0, 300.0), 2.0, (0.9, 0.9, 0.9));
         let a = body_samples(&grey).unwrap();
         assert_eq!(a.len(), BODY_GRID * BODY_GRID);
-        assert!(a.iter().all(|rgb| rgb.iter().all(|c| c.abs_diff(128) <= 1)), "grey body");
+        assert!(
+            a.iter().all(|rgb| rgb.iter().all(|c| c.abs_diff(128) <= 1)),
+            "grey body"
+        );
 
         let mut surface = test_picture(CGSize::new(400.0, 300.0));
         surface.image = Pixels::Surface(test_surface(800, 600, [128, 128, 128, 255]));
@@ -251,7 +282,13 @@ mod tests {
 
         surface.image = Pixels::Surface(test_surface(800, 600, [20, 20, 20, 255]));
         assert!(bodies_differ(&a, &body_samples(&surface).unwrap()));
-        assert!(!bodies_differ(&a, &body_samples(&window((400.0, 300.0), 2.0, (0.1, 0.1, 0.1))).unwrap()), "the band is not the body");
+        assert!(
+            !bodies_differ(
+                &a,
+                &body_samples(&window((400.0, 300.0), 2.0, (0.1, 0.1, 0.1))).unwrap()
+            ),
+            "the band is not the body"
+        );
     }
 
     /// First sight of an opaque window with rounded corners, and of a translucent one.
@@ -277,13 +314,17 @@ mod tests {
         let measured = measured.expect("a radius");
         assert!((measured - 10.0).abs() < 1.0, "20px at 2x is 10pt: {measured}");
 
-        let glass = image(w, h, |ctx| fill(ctx, rect(0.0, 0.0, w as f64, h as f64), (0.1, 0.1, 0.1, 0.6)));
+        let glass = image(w, h, |ctx| {
+            fill(ctx, rect(0.0, 0.0, w as f64, h as f64), (0.1, 0.1, 0.1, 0.6))
+        });
         assert!(first_sight(&glass, 2.0).0, "translucent");
     }
 
     #[test]
     fn a_material_shows_as_the_baked_picture_differing_from_the_window_alone() {
-        let alone = image(200, 200, |ctx| fill(ctx, rect(0.0, 0.0, 200.0, 200.0), (0.5, 0.5, 0.5, 1.0)));
+        let alone = image(200, 200, |ctx| {
+            fill(ctx, rect(0.0, 0.0, 200.0, 200.0), (0.5, 0.5, 0.5, 1.0))
+        });
         let blurred = image(200, 200, |ctx| {
             fill(ctx, rect(0.0, 0.0, 200.0, 200.0), (0.5, 0.5, 0.5, 1.0));
             fill(ctx, rect(0.0, 0.0, 60.0, 200.0), (0.2, 0.4, 0.7, 1.0));
@@ -297,7 +338,11 @@ mod tests {
         use objc2_io_surface::{kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfaceWidth};
         let keys: [&CFString; 3] =
             unsafe { [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement] };
-        let values = [CFNumber::new_i64(width), CFNumber::new_i64(height), CFNumber::new_i64(4)];
+        let values = [
+            CFNumber::new_i64(width),
+            CFNumber::new_i64(height),
+            CFNumber::new_i64(4),
+        ];
         let value_refs: [&CFNumber; 3] = std::array::from_fn(|i| &*values[i]);
         // SAFETY: the three keys an IOSurface needs, each with a number.
         let surface =
@@ -306,7 +351,10 @@ mod tests {
         let [r, g, b, a] = bgra_of_rgba;
         // SAFETY: locked for writing, within `stride * height`.
         unsafe {
-            assert_eq!(surface.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()), 0);
+            assert_eq!(
+                surface.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()),
+                0
+            );
             let base = surface.base_address().as_ptr() as *mut u8;
             let stride = surface.bytes_per_row();
             for y in 0..height as usize {

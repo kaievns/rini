@@ -24,7 +24,10 @@ pub fn pixel_rect(frame: CGRect, origin: CGPoint, scale: f64) -> CGRect {
             ((frame.origin.x - origin.x) * scale).round(),
             ((frame.origin.y - origin.y) * scale).round(),
         ),
-        CGSize::new((frame.size.width * scale).round(), (frame.size.height * scale).round()),
+        CGSize::new(
+            (frame.size.width * scale).round(),
+            (frame.size.height * scale).round(),
+        ),
     )
 }
 
@@ -55,7 +58,8 @@ pub fn composite_scale(frame: CGRect, size: (f64, f64)) -> Option<f64> {
     }
     let across = size.0 / frame.size.width;
     let down = size.1 / frame.size.height;
-    let shaped = (across - down).abs() <= SCALE_SLACK && (across - across.round()).abs() <= SCALE_SLACK;
+    let shaped =
+        (across - down).abs() <= SCALE_SLACK && (across - across.round()).abs() <= SCALE_SLACK;
     (shaped && across.round() >= 1.0).then_some(across)
 }
 
@@ -78,17 +82,32 @@ pub fn within(outer: CGRect, inner: CGRect) -> CGRect {
             outer.origin.x + inner.origin.x * outer.size.width,
             outer.origin.y + inner.origin.y * outer.size.height,
         ),
-        CGSize::new(inner.size.width * outer.size.width, inner.size.height * outer.size.height),
+        CGSize::new(
+            inner.size.width * outer.size.width,
+            inner.size.height * outer.size.height,
+        ),
     )
+}
+
+/// `frames` in groups none of which holds two that overlap, in the order given: windows that overlap
+/// in one composite put one over the other, and the crop of the one behind shows the one in front.
+/// Each group is one call.
+pub fn apart(frames: &[CGRect]) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (at, frame) in frames.iter().enumerate() {
+        let overlaps = |other: &usize| frames[*other].intersection(frame).area() > 0.0;
+        match groups.iter_mut().find(|group| !group.iter().any(overlaps)) {
+            Some(group) => group.push(at),
+            None => groups.push(vec![at]),
+        }
+    }
+    groups
 }
 
 /// The whole of an image, in unit space.
 pub const WHOLE: CGRect = CGRect {
     origin: CGPoint { x: 0.0, y: 0.0 },
-    size: CGSize {
-        width: 1.0,
-        height: 1.0,
-    },
+    size: CGSize { width: 1.0, height: 1.0 },
 };
 
 #[cfg(test)]
@@ -101,10 +120,7 @@ mod tests {
 
     const LAPTOP: CGRect = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
-        size: CGSize {
-            width: 1728.0,
-            height: 1117.0,
-        },
+        size: CGSize { width: 1728.0, height: 1117.0 },
     };
 
     #[test]
@@ -118,18 +134,33 @@ mod tests {
         let size = (3440.0, 2162.0);
         assert!(contains(size, rect(0.0, 0.0, 3440.0, 2162.0)));
         assert!(contains(size, rect(1721.0, 0.0, 1719.5, 2162.5)), "rounding");
-        assert!(!contains(size, rect(1721.0, 0.0, 1720.0, 2162.0)), "a pixel past the edge");
-        assert!(!contains(size, rect(-1.0, 0.0, 100.0, 100.0)), "before the corner");
+        assert!(
+            !contains(size, rect(1721.0, 0.0, 1720.0, 2162.0)),
+            "a pixel past the edge"
+        );
+        assert!(
+            !contains(size, rect(-1.0, 0.0, 100.0, 100.0)),
+            "before the corner"
+        );
     }
 
     /// The composite of windows wholly on the display is their union; of one past its edge, what the
     /// display holds of it, which is all SkyLight returns.
     #[test]
     fn a_composite_covers_the_union_of_what_each_window_has_on_the_display() {
-        let strip = [rect(4.0, 32.0, 859.0, 1081.0), rect(865.0, 32.0, 859.0, 1081.0)];
-        assert_eq!(composite_frame(&strip, LAPTOP), Some(rect(4.0, 32.0, 1720.0, 1081.0)));
+        let strip = [
+            rect(4.0, 32.0, 859.0, 1081.0),
+            rect(865.0, 32.0, 859.0, 1081.0),
+        ];
+        assert_eq!(
+            composite_frame(&strip, LAPTOP),
+            Some(rect(4.0, 32.0, 1720.0, 1081.0))
+        );
         let past_the_edge = [rect(1300.0, 32.0, 859.0, 1081.0)];
-        assert_eq!(composite_frame(&past_the_edge, LAPTOP), Some(rect(1300.0, 32.0, 428.0, 1081.0)));
+        assert_eq!(
+            composite_frame(&past_the_edge, LAPTOP),
+            Some(rect(1300.0, 32.0, 428.0, 1081.0))
+        );
         assert_eq!(composite_frame(&[rect(2000.0, 0.0, 10.0, 10.0)], LAPTOP), None);
         assert_eq!(composite_frame(&[], LAPTOP), None);
     }
@@ -140,11 +171,27 @@ mod tests {
     fn a_composite_of_the_wrong_shape_has_no_scale() {
         let union = rect(4.0, 32.0, 1720.0, 1081.0);
         assert_eq!(composite_scale(union, (3440.0, 2162.0)), Some(2.0));
-        assert_eq!(composite_scale(union, (1720.0, 1081.0)), Some(1.0), "a 1x display");
-        assert_eq!(composite_scale(union, (3440.0, 2140.0)), None, "shorter than wide");
+        assert_eq!(
+            composite_scale(union, (1720.0, 1081.0)),
+            Some(1.0),
+            "a 1x display"
+        );
+        assert_eq!(
+            composite_scale(union, (3440.0, 2140.0)),
+            None,
+            "shorter than wide"
+        );
         assert_eq!(composite_scale(union, (2580.0, 1621.5)), None, "a scale of 1.5");
-        assert_eq!(composite_scale(union, (3480.0, 2187.0)), None, "2.02 both ways: no whole scale");
-        assert_eq!(composite_scale(union, (3460.0, 2175.0)), Some(3460.0 / 1720.0), "2.01: rounding");
+        assert_eq!(
+            composite_scale(union, (3480.0, 2187.0)),
+            None,
+            "2.02 both ways: no whole scale"
+        );
+        assert_eq!(
+            composite_scale(union, (3460.0, 2175.0)),
+            Some(3460.0 / 1720.0),
+            "2.01: rounding"
+        );
         assert_eq!(composite_scale(rect(0.0, 0.0, 0.0, 10.0), (10.0, 10.0)), None);
     }
 
@@ -156,7 +203,30 @@ mod tests {
         let union = composite_frame(&[window, LAPTOP], LAPTOP).unwrap();
         assert_eq!(union, LAPTOP);
         assert_eq!(composite_scale(union, (3456.0, 2234.0)), Some(2.0));
-        assert_eq!(composite_scale(union, (1718.0, 2162.0)), None, "the window alone came back");
+        assert_eq!(
+            composite_scale(union, (1718.0, 2162.0)),
+            None,
+            "the window alone came back"
+        );
+    }
+
+    /// A floating window under two tiled ones put 60% of the pixels off in one composite: windows
+    /// that overlap go in calls of their own; side by side, they share one.
+    #[test]
+    fn overlapping_windows_are_never_in_one_call() {
+        let left = rect(4.0, 32.0, 859.0, 1081.0);
+        let right = rect(865.0, 32.0, 859.0, 1081.0);
+        let floating = rect(600.0, 200.0, 500.0, 400.0);
+        assert_eq!(apart(&[left, right]), vec![vec![0, 1]]);
+        assert_eq!(apart(&[left, right, floating]), vec![vec![0, 1], vec![2]]);
+        assert_eq!(apart(&[floating, left, right]), vec![vec![0], vec![1, 2]]);
+        let touching = rect(863.0, 32.0, 859.0, 1081.0);
+        assert_eq!(
+            apart(&[left, touching]),
+            vec![vec![0, 1]],
+            "edges touching do not overlap"
+        );
+        assert!(apart(&[]).is_empty());
     }
 
     #[test]
@@ -171,8 +241,14 @@ mod tests {
     #[test]
     fn a_piece_within_a_region_lands_inside_the_region() {
         let region = rect(0.5, 0.0, 0.5, 1.0);
-        assert_eq!(within(region, rect(0.0, 0.0, 0.5, 0.5)), rect(0.5, 0.0, 0.25, 0.5));
-        assert_eq!(within(region, rect(0.5, 0.5, 0.5, 0.5)), rect(0.75, 0.5, 0.25, 0.5));
+        assert_eq!(
+            within(region, rect(0.0, 0.0, 0.5, 0.5)),
+            rect(0.5, 0.0, 0.25, 0.5)
+        );
+        assert_eq!(
+            within(region, rect(0.5, 0.5, 0.5, 0.5)),
+            rect(0.75, 0.5, 0.25, 0.5)
+        );
         assert_eq!(within(region, WHOLE), region);
         assert_eq!(within(WHOLE, rect(0.2, 0.3, 0.4, 0.5)), rect(0.2, 0.3, 0.4, 0.5));
     }

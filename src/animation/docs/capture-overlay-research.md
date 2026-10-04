@@ -2255,21 +2255,24 @@ What each part of the prototype fixed:
   the focused one: the window losing focus is occluded too, and repainted as unfocused only at the
   lift.
 - **The end-state mirror.** From frame zero until the lift, the windows that end wholly on screen
-  are captured back to back in one batched SkyLight call with the desktop windows after them, and
-  every pass re-asserts its pictures, so a picture swapped in meanwhile (a reveal chase's framed one,
-  hairline baked in) is not what the lift lands on.
+  are captured back to back in one batched SkyLight call with the desktop windows after them, so a
+  picture swapped in meanwhile (a reveal chase's framed one, hairline baked in) is not what the lift
+  lands on. The build measured here sent every picture on every pass; the one kept sends a window's
+  picture only when its band print differs from the last one sent (`src/pictures/domain/watch.rs`).
 - **Tiles snap to the real frame.** A strip pans by a fractional vector and the window server rounds
   each window on its own, so a tile in a rigid group ended a point from its window (861 against 860
   wide). When the mirror sees a window land, its tile is moved onto the real frame while still in
   motion.
-- **A window counts as landed when its frame is stable between two polls and within 20pt of its
-  target**, and the crop uses the real frame: a terminal shrinking to half width sat at 862 against 860
-  requested before settling.
+- **A window counts as landed when its frame is within 20pt of its target**, and the crop uses the real
+  frame: a terminal shrinking to half width sat at 862 against 860 requested before settling. The build
+  measured here waited for the frame to be stable between two polls; the one kept takes one
+  `SLSGetWindowBounds` read, which has the written frame within 0.1ms ("Where a moving focus change
+  spends its time").
 - **A resize places the real windows at frame zero.** The deployed engine applies them at half the
   flight, which left the app no time to render before the lift; the mirror's picture arrived 50ms
   after it.
 - **Fresh frame zero:** one batched SkyLight call of the strip windows on screen, 16 / 84ms on the
-  main thread. The cached pictures it replaces differed from the screen by 2.3 / 8.1 levels, 2% / 8%
+  main thread in the build measured here; the one kept makes it on the pictures thread. The cached pictures it replaces differed from the screen by 2.3 / 8.1 levels, 2% / 8%
   of pixels changed visibly, at an age of 1.6s p50.
 
 Cost: no measurable CPU. Over 16-press sweeps the WindowServer ran 42-46% and rini 14.6-16.4% with

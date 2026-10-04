@@ -1,7 +1,8 @@
 //! What a picture is worth, decided over sizes, levels and thumbprints: whether it covers its window
 //! and fits the frame it is drawn into, what the cache keeps, where a window lies in a batched
-//! composite, when a window has settled, when a window flies a stand-in, and which capture the service
-//! makes next. Also the blur merge, over plain bytes.
+//! composite, what is known of each window, when a window has settled, when a window flies a stand-in,
+//! and which capture the service makes next, the windows on screen a transition watches among them.
+//! Also the blur merge, over plain bytes.
 
 pub mod backdrop;
 pub mod cache;
@@ -14,3 +15,4 @@ pub mod settle;
 pub mod stand_in;
 pub mod target;
 pub mod translucency;
+pub mod watch;

@@ -4,7 +4,7 @@
 use objc2_core_foundation::CGSize;
 use rini_core::ids::{WindowId, WindowServerId};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PictureTarget {
     pub window: WindowId,
     pub server_id: WindowServerId,

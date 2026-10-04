@@ -768,6 +768,10 @@ impl FlightEngine {
         let (window, taken) = match landed {
             crate::pictures::event::Event::Taken { window, picture } => (window, Some(picture)),
             crate::pictures::event::Event::Refused { window } => (window, None),
+            // Asked for by watches and asks of windows on screen, which the engine makes none of.
+            crate::pictures::event::Event::Delivered { .. } | crate::pictures::event::Event::Lost { .. } => {
+                return;
+            }
         };
         let covered = taken.as_ref().is_none_or(Picture::is_usable);
         if harvests_landing(self.running.is_some(), covered) {
