@@ -215,7 +215,12 @@ and every request names the window the layout had focused as the event asking fo
 pass it causes, so the window last reported focused is the target by then; taken as the one focus
 leaves, it had focus move nowhere, and nothing watched the target's look. Frame zero pictures that
 window focused, and its tile is drawn focused; the focus target's tile is drawn unfocused, unless
-it flies its focused look (below). The target's `Change` watch, armed by its report (one remembered for
+it flies its focused look (below). Frame zero's picture of it is kept as its focused look only if it
+was the key window as the request went out (the request's `key`, from `MainWindowTracker::key_window`;
+`frame_zero_look`): a click's report has made its target key before the request it causes, and another
+application's panel taking the keys, Spotlight's or Raycast's, leaves the window drawn unfocused while
+the layout still has it focused. Kept, either picture flew the window in as its focused look looking
+unfocused. Its tile is still drawn focused until focus hands over ("Known debt" in `src/transitions/docs/README.md`). The target's `Change` watch, armed by its report (one remembered for
 a second arms a watch started after it), captures it where it ends every 15ms, six times at most, until
 its band print differs from what the engine was delivered of it as the watch started, frame zero's for
 a window on screen at the press. It is judged from that, not from the latest delivery: the landing

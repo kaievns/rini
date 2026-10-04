@@ -57,6 +57,9 @@ pub enum Event {
         focus: Option<WindowId>,
         /// The window focused as the pass began: what frame zero pictures focused.
         focused_before: Option<WindowId>,
+        /// The key window as the pass went out, as far as the reactor has heard: whether frame zero
+        /// pictures `focused_before` drawn focused.
+        key: Option<WindowId>,
         duration: Duration,
     },
     /// Display geometry for the overlay: the display's whole bounds. Whether a bar under the
@@ -89,6 +92,8 @@ pub enum Event {
         focus: Option<WindowId>,
         /// The window focused as the movement began: what frame zero pictures focused.
         focused_before: Option<WindowId>,
+        /// The key window as the movement went out, as for `Animate`.
+        key: Option<WindowId>,
         duration: Duration,
         /// The whole strip's step away from where a moved window went and back; drawn only.
         nudge: Option<CGPoint>,
@@ -136,6 +141,8 @@ struct RunningAnimation {
     focus: Option<WindowId>,
     /// The window drawn focused until focus hands over: the one focused as the flight began.
     shown_focus: Option<WindowId>,
+    /// The key window as the flight's first pass went out.
+    key: Option<WindowId>,
     /// The focus target whose tile flies its focused look, until a picture is swapped onto it.
     focused_look: Option<WindowId>,
     /// The flight as rigid pieces: what `install` composed and `fly` animates.
@@ -331,6 +338,8 @@ struct Pass {
     entrances: Vec<PendingEntrance>,
     /// The focus it names, and the window focused as it began.
     focus: (Option<WindowId>, Option<WindowId>),
+    /// The key window as it went out.
+    key: Option<WindowId>,
     pan: Option<CGPoint>,
     plan: plan::ReflowPlan,
     nudge: Option<CGPoint>,
@@ -343,6 +352,7 @@ fn summary(
     focus: Option<WindowId>,
     losing_focus: Option<WindowId>,
     focused_look: Option<WindowId>,
+    key: Option<WindowId>,
     shape: Shape,
     display: CGRect,
     opaque: &dyn Fn(WindowId) -> bool,
@@ -354,6 +364,7 @@ fn summary(
         final_frames,
         focus,
         losing_focus,
+        key,
         focused_look,
         awaiting: shape.awaiting,
         repainting: shape.repainting,
@@ -392,6 +403,7 @@ impl RunningAnimation {
             self.focus,
             losing_focus(self.focus, self.shown_focus),
             self.focused_look,
+            self.key,
             shape,
             display,
             opaque,
@@ -770,8 +782,8 @@ impl FlightEngine {
                 scale,
                 top_band,
             } => self.set_display(id, frame, scale, top_band),
-            Event::Animate { windows, focus, focused_before, duration } => {
-                self.start(windows, focus, focused_before, duration)
+            Event::Animate { windows, focus, focused_before, key, duration } => {
+                self.start(windows, (focus, focused_before), key, duration)
             }
             Event::AnimateSurface {
                 windows,
@@ -780,6 +792,7 @@ impl FlightEngine {
                 final_frames,
                 focus,
                 focused_before,
+                key,
                 duration,
                 nudge,
             } => self.start_surface(
@@ -788,6 +801,7 @@ impl FlightEngine {
                 to_offset,
                 final_frames,
                 (focus, focused_before),
+                key,
                 duration,
                 nudge,
                 None,
@@ -1100,6 +1114,7 @@ impl FlightEngine {
         tiles: Vec<TileSummary>,
         final_frames: Vec<(WindowId, CGRect)>,
         (focus, focused_before): (Option<WindowId>, Option<WindowId>),
+        key: Option<WindowId>,
         shape: Shape,
     ) -> bool {
         let Some((display, _)) = self.display else { return false };
@@ -1109,6 +1124,7 @@ impl FlightEngine {
             focus,
             losing_focus(focus, focused_before),
             None,
+            key,
             shape,
             display,
             &|window| self.pictures.knowledge(WindowServerId::from(window)).is_opaque(),
@@ -1163,8 +1179,8 @@ impl FlightEngine {
     fn start(
         &mut self,
         windows: Vec<AnimationRequest>,
-        focus: Option<WindowId>,
-        focused_before: Option<WindowId>,
+        (focus, focused_before): (Option<WindowId>, Option<WindowId>),
+        key: Option<WindowId>,
         duration: Duration,
     ) {
         if windows.is_empty() {
@@ -1200,7 +1216,7 @@ impl FlightEngine {
                     companion: false,
                 })
                 .collect();
-            if !self.begin(requested, final_frames.clone(), (focus, focused_before), shape.clone()) {
+            if !self.begin(requested, final_frames.clone(), (focus, focused_before), key, shape.clone()) {
                 return;
             }
         }
@@ -1445,6 +1461,7 @@ impl FlightEngine {
             },
             entrances,
             focus: (focus, focused_before),
+            key,
             pan: None,
             plan,
             nudge: None,
@@ -1493,6 +1510,7 @@ impl FlightEngine {
             entrances: pass.entrances,
             focus,
             shown_focus: losing.or(focus),
+            key: pass.key,
             focused_look: None,
             plan: plan::FlightPlan::from(pass.plan),
             flown: false,
@@ -1678,6 +1696,7 @@ impl FlightEngine {
         to_offset: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
         focus: (Option<WindowId>, Option<WindowId>),
+        key: Option<WindowId>,
         duration: Duration,
         nudge: Option<CGPoint>,
         kind: Option<Kind>,
@@ -1707,7 +1726,7 @@ impl FlightEngine {
                     }
                 })
                 .collect();
-            if !self.begin(requested, final_frames.clone(), focus, shape.clone()) {
+            if !self.begin(requested, final_frames.clone(), focus, key, shape.clone()) {
                 return;
             }
         }
@@ -1818,6 +1837,7 @@ impl FlightEngine {
             shape,
             entrances: Vec::new(),
             focus,
+            key,
             pan: Some(pan_travel(from_offset, to_offset)),
             plan,
             nudge,
@@ -1846,6 +1866,7 @@ impl FlightEngine {
                 at_rest,
                 final_frames,
                 (focus, None),
+                None,
                 duration,
                 None,
                 Some(Kind::Bounce),
@@ -2069,7 +2090,7 @@ impl FlightEngine {
             })
             .collect();
         debug!(count = requests.len(), dx, dy, "running debug slide");
-        self.start(requests, None, None, duration);
+        self.start(requests, (None, None), None, duration);
     }
 }
 
@@ -2133,6 +2154,7 @@ mod tests {
             entrances: Vec::new(),
             focus: None,
             shown_focus: None,
+            key: None,
             focused_look: None,
             plan: plan::FlightPlan::empty(),
             flown: false,

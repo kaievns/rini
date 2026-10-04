@@ -288,6 +288,12 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   merged into a flight included, unless that picture no longer fits it or a later picture shows its
   content changed. Its landing MUST NOT replace that picture before focus hands over: it is often taken
   before the window repaints focused, and would turn it unfocused and back.
+- A picture MUST be kept as a window's focused look only if it shows the window focused: its change
+  pictured as it gains focus, or frame zero's picture of the window focus leaves if that window was
+  the key window as the press went out. A click's report has made its target key before the request it
+  causes, and another application's panel taking the keys, Spotlight's or Raycast's, leaves the
+  layout's window drawn unfocused: kept, that picture flies the window in as its focused look looking
+  unfocused.
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
 - Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the

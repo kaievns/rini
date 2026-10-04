@@ -113,8 +113,12 @@ pub struct StageSummary {
     /// Where the real windows go: every moving window, drawn or not.
     pub final_frames: Vec<(WindowId, CGRect)>,
     pub focus: Option<WindowId>,
-    /// The window focus leaves, when focus moves. Its frame-zero picture still shows it focused.
+    /// The window focus leaves, when focus moves. Its frame-zero picture still shows it focused if it
+    /// was the key window (`key`).
     pub losing_focus: Option<WindowId>,
+    /// The key window as the flight's first request went out, as far as the reactor had heard: what
+    /// frame zero pictures drawn focused.
+    pub key: Option<WindowId>,
     /// The focus target, when its tile flies its focused look (`parked_focus`).
     pub focused_look: Option<WindowId>,
     /// Windows this pass opens or grows, not painted at their new frames yet: watched until they
@@ -134,10 +138,17 @@ pub struct StageSummary {
 
 /// Whether `window`'s tile is drawn focused until focus hands over: the window focus is on as the
 /// flight begins, and the focus target only when focus is not moving to it. What frame zero pictures
-/// of either shows the same. A focus target flying its focused look (`StageSummary::parked_focus`)
-/// is drawn focused with it.
+/// of either shows the same, unless another application's panel had the keys (`frame_zero_look`). A
+/// focus target flying its focused look (`StageSummary::parked_focus`) is drawn focused with it.
 pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Option<WindowId>) -> bool {
     losing_focus == Some(window) || focus == Some(window) && losing_focus.is_none()
+}
+
+/// The window whose frame-zero picture is its focused look: the one focus leaves, if it was the key
+/// window as the press went out. A click's report has made its target key before the request it
+/// causes, and another application's panel taking the keys leaves the layout's window drawn unfocused.
+pub fn frame_zero_look(losing_focus: Option<WindowId>, key: Option<WindowId>) -> Option<WindowId> {
+    losing_focus.filter(|window| key == Some(*window))
 }
 
 /// The window focus leaves when focus moves to `focus`: `shown`, the one drawn focused now, if not that
@@ -498,7 +509,7 @@ impl Coordinator {
                     if f.frame_zero_owed > 0 {
                         return out;
                     }
-                    if let Some(window) = f.stage.losing_focus {
+                    if let Some(window) = frame_zero_look(f.stage.losing_focus, f.stage.key) {
                         out.push(Command::KeepFocusedLook { generation, window });
                     }
                     show(f, now, &mut out);
@@ -663,7 +674,7 @@ impl Coordinator {
             // older, wherever the tile ends now.
             if generation == f.began && !matches!(f.phase, Phase::Preparing { .. }) && near(frame, tile.start, END_SLACK) {
                 out.push(Command::Swap { generation, window });
-                if f.stage.losing_focus == Some(window) {
+                if frame_zero_look(f.stage.losing_focus, f.stage.key) == Some(window) {
                     out.push(Command::KeepFocusedLook { generation, window });
                 }
             }
@@ -959,6 +970,7 @@ mod tests {
             final_frames: vec![(w(1), a_end), (w(2), b_end)],
             focus: Some(w(2)),
             losing_focus: Some(w(1)),
+            key: Some(w(1)),
             focused_look: None,
             awaiting: Vec::new(),
             repainting: Vec::new(),
@@ -1069,6 +1081,33 @@ mod tests {
             |c| matches!(c, Command::Swap { .. })), "wherever its tile ends now");
         assert!(c.on(Event::Picture { generation: Generation(g.0 - 1), window: w(1), frame: start, why: Why::FrameZero }, late).is_empty(),
             "another flight's");
+    }
+
+    /// Frame zero's picture of the window focus leaves is kept as its focused look only if that window
+    /// was the key window as the press went out: a click has made its target key first, and another
+    /// application's panel taking the keys leaves the layout's window drawn unfocused.
+    #[test]
+    fn frame_zero_keeps_the_window_focus_leaves_as_its_focused_look_only_if_it_was_key() {
+        assert_eq!(frame_zero_look(Some(w(1)), Some(w(1))), Some(w(1)));
+        assert_eq!(frame_zero_look(Some(w(1)), Some(w(2))), None, "the click's target is key");
+        assert_eq!(frame_zero_look(Some(w(1)), None), None, "a panel has the keys");
+        assert_eq!(frame_zero_look(None, Some(w(1))), None, "focus moves nowhere");
+
+        let now = Instant::now();
+        let mut panel = pan();
+        panel.key = None;
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(panel.clone()), now);
+        let out = c.on(Event::FrameZero(c.generation()), now);
+        assert!(has(&out, |c| *c == Command::Show));
+        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "{out:?}");
+
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(panel), now);
+        let g = c.generation();
+        c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE);
+        let late = Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].start, why: Why::FrameZero };
+        assert_eq!(c.on(late, now + FRAME_ZERO_PATIENCE), vec![Command::Swap { generation: g, window: w(1) }], "swapped in, not kept");
     }
 
     /// A pass merged while frame zero is out that brings a window on screen where its tile starts: frame

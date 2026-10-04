@@ -137,7 +137,7 @@ press" (frame zero's cost, the kept filter).
 
 **Focused looks.** A client says which picture it was delivered shows a window focused
 (`keep_focused(tag, window)`): the focus target's once its change was delivered, and the frame-zero
-picture of the window losing focus. `focused(window)` returns it, so a parked focus target flies its
+picture of the window losing focus when it was the key window as the press went out. `focused(window)` returns it, so a parked focus target flies its
 focused look from its first frame. After a release, never during a hold, a newer capture of the window
 whose body differs from it (a 40x40 grid over 0.04-0.96 across and 0.08-0.96 down, more than three
 levels apart on average) drops it, and forgetting the window drops it with everything else known of

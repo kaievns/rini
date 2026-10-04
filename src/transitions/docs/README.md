@@ -30,10 +30,10 @@ while a flight runs merges into it instead of starting another, which is how a b
 as one movement.
 
 **The reactor asks, and hears two things back.** It sends a layout pass (`Event::Animate`), a strip
-movement (`Event::AnimateSurface`), each naming the window focused as it began, a bounce, the
-windows whose look each change of the key window turned (`Event::LooksTurned`), and the display the
-overlay flies on; the pictures service's sink, wired in `src/main.rs`, tells the engine
-what it delivered under the engine's tag. The engine answers through
+movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as
+it went out, a bounce, the windows whose look each change of the key window turned
+(`Event::LooksTurned`), and the display the overlay flies on; the pictures service's sink, wired in
+`src/main.rs`, tells the engine what it delivered under the engine's tag. The engine answers through
 the callbacks `src/main.rs` installs: the frames to write (`PlaceFrames`, back to the reactor) and
 whether a flight is up (`OnFlight`, to the bar). The reactor never learns more of a flight than that.
 
@@ -74,6 +74,15 @@ and which focused look a parked target flies are methods on `RunningAnimation` a
 (`platform/engine.rs`, grouped by unit) move to `domain/` once a tile holds a picture handle instead.
 `summary`, which assembles the coordinator's `StageSummary` from them and from what the pictures
 service knows, is the actor's glue rather than a rule.
+
+**A panel's keys are seen only as far as rini hears of them.** The window focus leaves is taken to
+look focused at frame zero when it was the key window as the request went out, and the key window is
+the window server's report while the application in front owns it. A panel of another application
+that takes the keys is seen only if the report names it, and the report names the key-focus process's
+frontmost document window, or if its application comes to the front: neither is measured for
+Spotlight or Raycast. Unseen, the window under it is still taken as key and its frame-zero picture
+kept as its focused look. Seen, its tile is still drawn focused until focus hands over, ring and shadow
+over an unfocused picture.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
 `start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's

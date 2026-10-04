@@ -3816,6 +3816,7 @@ impl Reactor {
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
             focused_before: self.focused_as_event_began,
+            key: self.main_window_tracker.key_window(),
             duration,
             nudge,
         });
@@ -4086,6 +4087,7 @@ impl Reactor {
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
             focused_before: self.focused_as_event_began,
+            key: self.main_window_tracker.key_window(),
             duration,
             nudge: None,
         });
