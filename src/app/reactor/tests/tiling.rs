@@ -2,6 +2,8 @@
 //!
 //! Named `tiling` rather than `layout` because a module called `layout` inside `tests` shadows the
 //! `layout` alias the siblings use for `crate::workspaces`.
+use std::time::Instant;
+
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::{WindowServerId, pid_t};
 use rini_geometry::SameAs;
@@ -1932,6 +1934,98 @@ fn a_strip_movement_names_the_key_window_as_it_went_out() {
     reactor.handle_event(Event::WindowServerFocusChanged(first, space));
     let flight = strip_movements(&mut rx).pop().expect("the report scrolls the strip");
     assert_eq!(flight.key, Some(first), "the click made its target key before the request");
+}
+
+/// Every request the reactor sent the flight engine since the last look, by kind, with the event it
+/// answers.
+fn causes(
+    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
+) -> Vec<(&'static str, crate::transitions::domain::request::Cause)> {
+    use crate::transitions::platform::engine::Event as Engine;
+    let mut out = Vec::new();
+    while let Ok((_, event)) = rx.try_recv() {
+        out.push(match event {
+            Engine::Animate { cause, .. } => ("pass", cause),
+            Engine::AnimateSurface { cause, .. } => ("movement", cause),
+            Engine::Bounce { cause, .. } => ("bounce", cause),
+            Engine::DebugSlide { cause, .. } => ("slide", cause),
+            _ => continue,
+        });
+    }
+    out
+}
+
+/// A flight's journal starts at the press: each request names the command it answers, stamped when
+/// the reactor took it, whichever of the five ways it goes to the flight engine. `None` is a press
+/// that may send nothing: the second column is in view, and the first switch has no origin yet.
+#[test]
+fn a_commands_flight_carries_its_cause() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let layout = |command| (Command::Layout(command), None);
+    let sends = |command, request| (Command::Layout(command), Some(request));
+    let cases = [
+        sends(LayoutCommand::MoveFocus(Direction::Left), "bounce"),
+        layout(LayoutCommand::MoveFocus(Direction::Right)),
+        sends(LayoutCommand::MoveFocus(Direction::Right), "movement"),
+        sends(LayoutCommand::ToggleFullscreenWithinGaps, "pass"),
+        layout(LayoutCommand::NextWorkspace(None)),
+        sends(LayoutCommand::PrevWorkspace(None), "movement"),
+        (
+            Command::Reactor(ReactorCommand::DebugOverlaySlide { dx: 0, dy: 40, duration_ms: 350 }),
+            Some("slide"),
+        ),
+    ];
+    for (command, request) in cases {
+        let what: &'static str = match &command {
+            Command::Layout(command) => command.into(),
+            Command::Reactor(command) => command.into(),
+            Command::Metrics(_) => unreachable!(),
+        };
+        let before = Instant::now();
+        reactor.handle_event(Event::Command(command));
+        let after = Instant::now();
+        let sent = causes(&mut rx);
+        if let Some(request) = request {
+            assert!(sent.iter().any(|(kind, _)| *kind == request), "{what}: {sent:?}");
+        }
+        for (kind, cause) in sent {
+            assert_eq!(cause.what, what, "{kind}");
+            assert!(before <= cause.at && cause.at <= after, "{what}: taken as it was handled");
+        }
+    }
+}
+
+/// An app's frame report that releases a drag handles the mouse up inside it: the mouse up's flight
+/// is its own, and the report's passes after it are the report's again.
+#[test]
+fn a_nested_event_leaves_the_outer_cause() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    reactor.config.settings.animate = true;
+    let (animation_tx, mut rx) = crate::app::channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let window = WindowId::new(1, 1);
+    let frame = reactor.state.windows.window(window).expect("window").frame_monotonic;
+    let dragged = |dx, mouse| {
+        let to = CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y + 50.), frame.size);
+        Event::WindowFrameChanged(window, to, None, Requested(false), Some(mouse))
+    };
+    reactor.handle_event(dragged(200., MouseState::Down));
+    causes(&mut rx);
+
+    let report =
+        crate::transitions::domain::request::Cause { at: Instant::now(), what: "window_frame_changed" };
+    reactor.cause = report;
+    let outcome = reactor.dispatch_workflow(dragged(210., MouseState::Up)).unwrap();
+    assert!(outcome.dispatch_mouse_up, "the release is handled inside the report");
+    reactor.apply_event_outcome(outcome);
+
+    let sent = causes(&mut rx);
+    assert!(!sent.is_empty(), "the mouse up lays the strip out again");
+    assert!(sent.iter().all(|(_, cause)| cause.what == "mouse_up" && cause.at >= report.at), "{sent:?}");
+    assert_eq!(reactor.cause, report, "what the report does after it carries the report");
 }
 
 /// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else

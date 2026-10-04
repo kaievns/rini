@@ -1,8 +1,9 @@
-//! The transitions journal: every event the lifecycle takes, every command it gives and every delivery
-//! of pictures to it, a mark in a ring kept with the coordinator, and the JSON lines a burst of marks
-//! is written as. Pure: the engine drives the lifecycle and tells it each delivery through
-//! [`Journalled`], and hands each burst it gives to the writer (`crate::transitions::platform::journal`).
-//! The marks, the clock and when a burst is given: `src/transitions/docs/journal.md`.
+//! The transitions journal: the press each request answers, every event the lifecycle takes, every
+//! command it gives and every delivery of pictures to it, a mark in a ring kept with the coordinator,
+//! and the JSON lines a burst of marks is written as. Pure: the engine drives the lifecycle, tells it
+//! each request's press and each delivery through [`Journalled`], and hands each burst it gives to the
+//! writer (`crate::transitions::platform::journal`). The marks, the clock and when a burst is given:
+//! `src/transitions/docs/journal.md`.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -13,6 +14,7 @@ use serde::{Serialize, Serializer};
 use serde_with::{SerializeAs, serde_as};
 
 use super::lifecycle::{Command, Coordinator, Event, Generation, Kind, Start};
+use super::request::Cause;
 use crate::pictures::domain::watch::Why;
 
 /// How many marks the ring holds.
@@ -21,12 +23,16 @@ pub const RING: usize = 8192;
 /// The line format's version, in every burst's header.
 const FORMAT: u32 = 1;
 
-/// One step of a transition: an event the coordinator took, a command it gave, or a delivery of
-/// pictures to it.
+/// One step of a transition: the press a request answers, an event the coordinator took, a command
+/// it gave, or a delivery of pictures to it.
 #[serde_as]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(tag = "mark", rename_all = "snake_case")]
 pub enum Mark {
+    /// The event a request answers, stamped when the reactor took it.
+    Press {
+        what: &'static str,
+    },
     Begin {
         kind: Kind,
         coalesced: bool,
@@ -417,6 +423,12 @@ impl Journal {
         }
     }
 
+    /// A request's press, stamped when the reactor took it and with the generation its first drive
+    /// left.
+    fn press(&mut self, cause: Cause, generation: Generation) {
+        self.push(cause.at, generation, Mark::Press { what: cause.what });
+    }
+
     fn push(&mut self, at: Instant, generation: Generation, mark: Mark) {
         if self.ring.len() == RING {
             self.ring.pop_front();
@@ -444,9 +456,9 @@ impl Journal {
     }
 }
 
-/// The lifecycle with its journal, driven as one: every event the coordinator takes, every command it
-/// gives and every delivery of pictures the engine hears is marked, and while the journal is written a
-/// burst is given once it settles.
+/// The lifecycle with its journal, driven as one: the press each request answers, every event the
+/// coordinator takes, every command it gives and every delivery of pictures the engine hears is marked,
+/// and while the journal is written a burst is given once it settles.
 #[derive(Default)]
 pub struct Journalled {
     coordinator: Coordinator,
@@ -454,6 +466,8 @@ pub struct Journalled {
     writing: bool,
     /// Between a `ReportUp` and its `ReportSettled`, when nothing is written.
     up: bool,
+    /// The press of the request being handled, until its first drive marks it.
+    pressed: Option<Cause>,
 }
 
 impl Journalled {
@@ -466,11 +480,27 @@ impl Journalled {
     pub fn drive(&mut self, event: Event, now: Instant) -> (Vec<Command>, Option<Burst>) {
         let pending = Journal::before(&event, self.coordinator.wants_landing(now));
         let commands = self.coordinator.on(event, now);
-        self.journal.after(now, self.coordinator.generation(), pending, &commands);
+        let generation = self.coordinator.generation();
+        if let Some(cause) = self.pressed.take() {
+            self.journal.press(cause, generation);
+        }
+        self.journal.after(now, generation, pending, &commands);
         let settled = commands.contains(&Command::ReportSettled);
         self.up = (self.up || commands.contains(&Command::ReportUp)) && !settled;
         let burst = if self.writing && settled { self.journal.unwritten() } else { None };
         (commands, burst)
+    }
+
+    /// The engine takes a request answering `cause`: its next drive marks the press, ahead of that
+    /// event's own marks.
+    pub fn pressed(&mut self, cause: Cause) {
+        self.pressed = Some(cause);
+    }
+
+    /// The engine is done with the request: a press no drive marked, a request it declined, is
+    /// dropped.
+    pub fn answered(&mut self) {
+        self.pressed = None;
     }
 
     /// A delivery of the pictures service under the engine's tag, heard `now`, before the engine turns
@@ -534,10 +564,21 @@ mod tests {
         flights.journal.ring.iter().copied().collect()
     }
 
-    /// The pan from its begin to its quiet, landing as soon as the clock runs out: every burst each
+    /// A press the reactor took `before` `at`.
+    fn pressed(at: Instant, before: Duration) -> Cause {
+        Cause { at: at - before, what: "move_focus" }
+    }
+
+    fn presses(marks: &[Stamped]) -> Vec<Stamped> {
+        marks.iter().copied().filter(|stamped| matches!(stamped.mark, Mark::Press { .. })).collect()
+    }
+
+    /// The pan from its press to its quiet, landing as soon as the clock runs out: every burst each
     /// drive gave, in order.
     fn fly(flights: &mut Journalled, now: Instant) -> Vec<Option<Burst>> {
+        flights.pressed(pressed(now, Duration::from_millis(3)));
         let mut bursts = vec![flights.drive(Event::Begin(pan()), now).1];
+        flights.answered();
         let g = flights.coordinator().generation();
         bursts.push(flights.drive(Event::FrameZero(g), now).1);
         bursts.push(flights.drive(Event::Tick { settled: true, landed: true }, now + PLAYS).1);
@@ -732,6 +773,19 @@ mod tests {
     }
 
     #[test]
+    fn a_press_is_stamped_when_the_reactor_took_it() {
+        let now = Instant::now();
+        let mut journal = Journal::default();
+        journal.push(now, Generation(1), extend(5));
+        let cause = pressed(now, Duration::from_millis(4));
+        journal.press(cause, Generation(2));
+        let press = *journal.ring.back().unwrap();
+        let mark = Mark::Press { what: "move_focus" };
+        assert_eq!(press, Stamped { at: cause.at, generation: Generation(2), mark });
+        assert!(press.at < journal.ring[0].at, "pushed after a mark it came before: `t` is unsorted");
+    }
+
+    #[test]
     fn the_ring_keeps_the_last_8192_and_counts_what_it_overwrote_unwritten() {
         let now = Instant::now();
         let mut journal = Journal::default();
@@ -799,6 +853,10 @@ mod tests {
         );
         assert_eq!(line(&anchor, &stamped(Mark::Hold)), r#"{"t":81234567895123,"g":42,"mark":"hold"}"#);
         assert_eq!(
+            line(&anchor, &stamped(Mark::Press { what: "focus_window" })),
+            r#"{"t":81234567895123,"g":42,"mark":"press","what":"focus_window"}"#
+        );
+        assert_eq!(
             line(&anchor, &stamped(Mark::HandOverFocus { to: w(2), from: None })),
             r#"{"t":81234567895123,"g":42,"mark":"hand_over_focus","to":[1,2],"from":null}"#
         );
@@ -857,7 +915,53 @@ mod tests {
         let found: Vec<String> = names(&marks).into_iter().filter(|name| order.contains(&name.as_str())).collect();
         assert_eq!(found, order);
         assert!(marks.iter().all(|stamped| stamped.generation == Generation(1)), "one generation: {marks:?}");
-        assert_eq!(names(&marks[..4]), ["begin", "hold", "ask_frame_zero", "report_up"], "the event, then its commands");
+        assert_eq!(
+            names(&marks[..5]),
+            ["press", "begin", "hold", "ask_frame_zero", "report_up"],
+            "the press, the event, then its commands"
+        );
+    }
+
+    #[test]
+    fn a_press_is_marked_once_ahead_of_its_requests_first_drive() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        let cause = pressed(now, Duration::from_millis(2));
+        flights.pressed(cause);
+        flights.drive(Event::Begin(pan()), now);
+        flights.drive(Event::FrameZero(flights.coordinator().generation()), now);
+        flights.answered();
+        let first = flights.coordinator().generation();
+        let marks = held(&flights);
+        assert_eq!(names(&marks[..2]), ["press", "begin"]);
+        let mark = Mark::Press { what: "move_focus" };
+        assert_eq!(presses(&marks), [Stamped { at: cause.at, generation: first, mark }]);
+
+        flights.drive(Event::Tick { settled: false, landed: false }, now + PLAYS);
+        let before = held(&flights).len();
+        flights.pressed(pressed(now + PLAYS, Duration::from_millis(1)));
+        flights.drive(Event::Merge { stage: pan(), moved: false }, now + PLAYS);
+        flights.drive(Event::Extend(Duration::from_millis(5)), now + PLAYS);
+        flights.answered();
+        let merged = flights.coordinator().generation();
+        assert_ne!(first, merged);
+        let marks = &held(&flights)[before..];
+        assert_eq!(names(&marks[..2]), ["press", "merge"]);
+        assert_eq!(presses(marks).len(), 1, "once, by the first of the request's drives");
+        assert_eq!(marks[0].generation, merged, "in the generation its drive left");
+    }
+
+    #[test]
+    fn a_request_answered_with_no_drive_marks_no_press() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        flights.pressed(pressed(now, Duration::from_millis(1)));
+        flights.answered();
+        flights.drive(Event::LooksTurned(vec![(w(1), r(0.0, 0.0, 200.0, 200.0))]), now);
+        flights.drive(Event::Begin(pan()), now);
+        let marks = held(&flights);
+        assert!(presses(&marks).is_empty(), "{marks:?}");
+        assert_eq!(names(&marks[..1]), ["looks_turned"]);
     }
 
     #[test]

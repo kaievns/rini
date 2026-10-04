@@ -49,6 +49,7 @@ impl Reactor {
                 dx: dx as f64,
                 dy: dy as f64,
                 duration: std::time::Duration::from_millis(duration_ms),
+                cause: self.cause,
             },
             format!("overlay slide requested: dx {dx}, dy {dy}, {duration_ms}ms"),
         ))

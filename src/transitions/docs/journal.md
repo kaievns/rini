@@ -8,21 +8,25 @@ moving around can be read back afterwards. Kai's ask, and what rini must do abou
 
 ## Where a mark comes from
 
-`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at two
+`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at three
 seams. Its one call into the lifecycle, `FlightEngine::drive`, goes through `Journalled::drive`: it
 reads the event's own marks, the coordinator takes the event, and then those marks and one for each
 command it gave are pushed, every one stamped with the drive's `now` and the generation the drive
-left (`g`). Its pictures inbox hands each delivery under its tag to `Journalled::delivery` as it
-comes, before turning it into `FrameZero` and `Picture` events: a `delivery` mark, then a `delivered`
-mark for each picture in it, stamped with when the engine heard it and the generation the coordinator
-is in. No mark call sits anywhere else, and the engine never reads the journal back: of what a drive
-returns, it carries out the commands and sends the writer the burst, if one is due.
+left (`g`). Its inbox hands each request's press to `Journalled::pressed` before handling the request
+and calls `Journalled::answered` after: the request's first drive pushes a `press` mark ahead of that
+event's own, in the generation that drive left, and a request declined before any drive has none.
+Its pictures inbox hands each delivery under its tag to `Journalled::delivery` as it comes, before
+turning it into `FrameZero` and `Picture` events: a `delivery` mark, then a `delivered` mark for each
+picture in it, stamped with when the engine heard it and the generation the coordinator is in. No mark
+call sits anywhere else, and the engine never reads the journal back: of what a drive returns, it
+carries out the commands and sends the writer the burst, if one is due.
 
 Both matches, over `Event` and over `Command`, have no `_` arm, so a new variant does not compile
 until it has a mark.
 
 | Source | Mark | Fields |
 |---|---|---|
+| a request's first drive, ahead of that event's own marks | `press`, stamped when the reactor took the event the request answers | `what` |
 | `Event::Begin(stage)` | `begin` | `kind`, `coalesced` (the stage waits for the reactor's follow-up passes), `tiles`, `awaiting`, `repainting`, `focus`, `losing_focus`, `key`, `duration_ms` |
 | `Event::Merge { stage, moved }` | `merge` | `kind`, `moved`, `tiles`, `awaiting`, `repainting`, `focus`, `focused_look`, `duration_ms` |
 | `Event::Extend(d)` / `Abandon` / `Quiet(g)` | `extend` / `abandon` / `quiet` | `ms` / none / `of` |
@@ -57,9 +61,11 @@ How to read them:
   marks nothing.
 - **A command's mark says the coordinator gave it,** stamped with its drive's `now`. Carrying it out
   is not timed.
-- **Marks are in the order they were pushed:** a delivery's as the engine hears it, an event's and
-  its commands' as its drive runs. A drive nested in carrying out a command (`StartMoving`'s `Extend`)
-  comes after every command of the drive it is nested in. Group by `g`.
+- **Marks are in the order they were pushed, and `t` is not:** a delivery's as the engine hears it, an
+  event's and its commands' as its drive runs. A `press` carries when the reactor took the event, so
+  it can come before marks the engine pushed while the request waited for it. A drive nested in
+  carrying out a command (`StartMoving`'s `Extend`) comes after every command of the drive it is
+  nested in. Group by `g`, and never assume `t` is sorted.
 - **`Picture` and `FrameZero` have no mark:** they restate a delivery of the pictures service, which is
   marked whole where the engine hears it. An empty frame-zero delivery is a `delivery` with no
   `delivered` after it.
@@ -70,6 +76,7 @@ One JSON object a line. Each burst opens with a header, then one line a mark, ol
 
 ```
 {"t":81235020000000,"mark":"burst","journal":1,"unix_ms":1791043200123,"lost":0}
+{"t":81234561290123,"g":42,"mark":"press","what":"move_focus"}
 {"t":81234567890123,"g":42,"mark":"begin","kind":"pan","coalesced":false,"tiles":3,"awaiting":0,"repainting":0,"focus":[812,3104],"losing_focus":[812,3090],"key":[812,3090],"duration_ms":350}
 {"t":81234567890123,"g":42,"mark":"hold"}
 {"t":81234598190123,"g":42,"mark":"delivery","of":42,"why":"frame_zero","pictures":1,"sent_before_us":4100}
@@ -78,10 +85,25 @@ One JSON object a line. Each burst opens with a header, then one line a mark, ol
 ```
 
 The header's `t` is when the burst was written, `journal` the format's version (1), `unix_ms` the wall
-clock then, and `lost` how many marks the ring overwrote before they were written. A window is
+clock then, and `lost` how many marks the ring overwrote before they were written. A press's `what`
+is the event's name (below). A window is
 `[pid, idx]`, its `idx` the window server's id; a rect is `[x, y, w, h]` as `f32`; a generation is a
 number; a `why` is `frame_zero`, `landed`, `focus_changed`, `background` or `final`; `null` is none.
 `a_line_is_one_object_with_t_g_and_mark` pins the format.
+
+## The press
+
+Every request the reactor sends the engine (a layout pass, a strip movement, a bounce, the debug
+slide) carries its `Cause`: when the reactor took the event it answers and what that event was.
+`Reactor::handle_event` stamps it as it takes each event, before anything else, and puts the outer
+one back as it returns: a frame report that releases a drag handles the mouse up inside it, and the
+report's passes after it are the report's again. `what` is the event's variant, `window_frame_changed`
+or `mouse_up`, and for a layout or reactor command the command as the IPC names it, `move_focus`,
+`switch_space` or `focus_window`. Every pass a command asks for carries the command.
+
+So `press` to `begin` is the reactor's work on the event and the hop to the engine, and `press` is
+where the time from a press to the overlay up starts, as the research measured it ("ms after rini
+takes the press"). It is not the key-down: the tap and the reactor's queue come before it.
 
 ## A delivery's times
 
@@ -144,7 +166,8 @@ A crash loses the marks not yet written: a panic hook cannot reach the engine's 
 
 ## What it does not record yet
 
-- The press: when the reactor took the event a request answers.
+- The key-down's own time (its `CGEvent` timestamp), which would split the tap and the reactor's
+  queue from the reactor's work.
 - How long carrying out a drive's commands takes.
 - CPU and GPU use. Kai allowed it if it costs nothing; what the IOKit read costs is not measured, so
   it waits for that measurement.

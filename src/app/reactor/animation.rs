@@ -228,6 +228,7 @@ impl AnimationManager {
                     key: reactor.main_window_tracker.key_window(),
                     duration,
                     look: crate::animation::domain::choreography::Look::default(),
+                    cause: reactor.cause,
                 });
                 trace!(count, "handed the layout to the overlay animation engine");
             }

@@ -3,10 +3,20 @@
 //! The port into `crate::transitions::platform`: the reactor builds these, `domain::pass` and
 //! `domain::strip_move` stage a transition in these terms, and the engine carries them out.
 
+use std::time::Instant;
+
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{ScreenRect, SurfaceRect};
 
 use crate::animation::domain::motion::surface::SurfaceGeometry;
+
+/// When the reactor took the event a request answers, and what it was: where the request's journal
+/// starts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cause {
+    pub at: Instant,
+    pub what: &'static str,
+}
 
 /// One window of a layout pass.
 #[derive(Debug, Clone)]

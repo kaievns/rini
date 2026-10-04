@@ -7,8 +7,10 @@ use crate::{
     WorkspaceSelector,
 };
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, strum::IntoStaticStr)]
+#[cfg_attr(test, derive(strum::VariantNames))]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum LayoutCommand {
     NextWindow,
     PrevWindow,
@@ -60,8 +62,10 @@ pub enum LayoutCommand {
     SwapWindows(WindowId, WindowId),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, strum::IntoStaticStr)]
+#[cfg_attr(test, derive(strum::VariantNames))]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ReactorCommand {
     Debug,
     /// Slide every visible window in from an offset using the capture-based overlay.
@@ -172,4 +176,55 @@ pub enum Command {
     Layout(LayoutCommand),
     Metrics(MetricsCommand),
     Reactor(ReactorCommand),
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::de::{self, Deserializer, Visitor};
+    use strum::VariantNames;
+
+    use super::*;
+
+    /// The names serde reads `T`'s variants by: what a client sends.
+    fn wire_names<'de, T: Deserialize<'de>>() -> &'static [&'static str] {
+        struct Names(&'static [&'static str]);
+        impl<'de> Deserializer<'de> for &mut Names {
+            type Error = de::value::Error;
+
+            fn deserialize_any<V: Visitor<'de>>(self, _: V) -> Result<V::Value, Self::Error> {
+                Err(de::Error::custom("not an enum"))
+            }
+
+            fn deserialize_enum<V: Visitor<'de>>(
+                self,
+                _: &'static str,
+                variants: &'static [&'static str],
+                _: V,
+            ) -> Result<V::Value, Self::Error> {
+                self.0 = variants;
+                Err(de::Error::custom("read"))
+            }
+
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes byte_buf
+                option unit unit_struct newtype_struct seq tuple tuple_struct map struct identifier
+                ignored_any
+            }
+        }
+        let mut names = Names(&[]);
+        let _ = T::deserialize(&mut names);
+        names.0
+    }
+
+    #[test]
+    fn strum_names_are_the_wire_names() {
+        assert_eq!(LayoutCommand::VARIANTS, wire_names::<LayoutCommand>());
+        assert_eq!(ReactorCommand::VARIANTS, wire_names::<ReactorCommand>());
+        let named = |command: &LayoutCommand| -> &'static str { command.into() };
+        assert_eq!(named(&LayoutCommand::MoveFocus(Direction::Left)), "move_focus");
+        let named = |command: &ReactorCommand| -> &'static str { command.into() };
+        let window_id = WindowId { pid: 1, idx: 2 };
+        let focus = ReactorCommand::FocusWindow { window_id, window_server_id: None };
+        assert_eq!(named(&focus), "focus_window");
+    }
 }

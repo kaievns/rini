@@ -52,7 +52,7 @@ use crate::transitions::domain::lifecycle::{
     self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
     extend_latest, losing_focus,
 };
-use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
+use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::timing::*;
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 use crate::transitions::platform::journal::Writer;
@@ -74,6 +74,8 @@ pub enum Event {
         duration: Duration,
         /// How the flight moves, if this pass begins one.
         look: Look,
+        /// The event the pass answers, where its journal starts.
+        cause: Cause,
     },
     /// Display geometry for the overlay: the display's whole bounds. Whether a bar under the
     /// overlay is drawn over flights is the pictures service's, which the reactor tells.
@@ -90,6 +92,7 @@ pub enum Event {
         dx: f64,
         dy: f64,
         duration: Duration,
+        cause: Cause,
     },
     /// Move the whole strip surface by one travel, as one rigid group; a leaving window animates
     /// off screen while its real frame parks, and the columns a move swapped cross the surface from
@@ -115,6 +118,8 @@ pub enum Event {
         /// What rides the movement, as the look staged it: a move's step, the whole strip away from
         /// where the moved window went and back, drawn only.
         accent: Option<Accent>,
+        /// The event the movement answers, where its journal starts.
+        cause: Cause,
     },
     /// Nudge the strip surface by `overshoot` and bring it back; real windows stay put. Rides an
     /// in-flight movement additively. See "Edge bounce" in `src/transitions/docs/coordination.md`.
@@ -128,6 +133,8 @@ pub enum Event {
         look: Look,
         /// The press, for the look.
         cue: Cue,
+        /// The event the push answers, where its journal starts.
+        cause: Cause,
     },
     /// One frame of the clock that runs from a transition's begin to its lift. Posted by its timer.
     Tick,
@@ -807,6 +814,7 @@ impl FlightEngine {
         }
     }
 
+    /// One event. A request's press goes to the journal first, for the request's first drive to mark.
     fn handle(&mut self, event: Event) {
         match event {
             Event::SetDisplay {
@@ -815,7 +823,8 @@ impl FlightEngine {
                 scale,
                 top_band,
             } => self.set_display(id, frame, scale, top_band),
-            Event::Animate { windows, focus, focused_before, key, duration, look } => {
+            Event::Animate { windows, focus, focused_before, key, duration, look, cause } => {
+                self.flights.pressed(cause);
                 self.start(windows, (focus, focused_before), key, duration, look)
             }
             Event::AnimateSurface {
@@ -830,17 +839,21 @@ impl FlightEngine {
                 look,
                 cue,
                 accent,
-            } => self.start_surface(
-                windows,
-                from_offset,
-                to_offset,
-                final_frames,
-                (focus, focused_before),
-                key,
-                duration,
-                (look, cue, accent),
-                None,
-            ),
+                cause,
+            } => {
+                self.flights.pressed(cause);
+                self.start_surface(
+                    windows,
+                    from_offset,
+                    to_offset,
+                    final_frames,
+                    (focus, focused_before),
+                    key,
+                    duration,
+                    (look, cue, accent),
+                    None,
+                )
+            }
             Event::Bounce {
                 windows,
                 overshoot,
@@ -849,8 +862,15 @@ impl FlightEngine {
                 duration,
                 look,
                 cue,
-            } => self.start_bounce(windows, overshoot, final_frames, focus, duration, (look, cue)),
-            Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
+                cause,
+            } => {
+                self.flights.pressed(cause);
+                self.start_bounce(windows, overshoot, final_frames, focus, duration, (look, cue))
+            }
+            Event::DebugSlide { dx, dy, duration, cause } => {
+                self.flights.pressed(cause);
+                self.debug_slide(dx, dy, duration)
+            }
             Event::Tick => self.tick(),
             Event::Quiet(generation) => {
                 if self.quiet.as_ref().is_some_and(|(armed, _)| *armed == generation) {
@@ -862,6 +882,7 @@ impl FlightEngine {
             Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
             Event::Journal(settings) => self.set_journal(settings),
         }
+        self.flights.answered();
     }
 
     /// Tells the coordinator `event`, carries out what it says, and sends the writer the burst due.

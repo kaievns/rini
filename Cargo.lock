@@ -1700,6 +1700,7 @@ dependencies = [
  "rini-runloop",
  "serde",
  "serde_json",
+ "strum",
  "thiserror",
  "tokio",
  "tracing",

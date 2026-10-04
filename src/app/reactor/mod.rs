@@ -62,6 +62,7 @@ use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
 use crate::switcher::domain::entries::{Entry, entries};
 use crate::switcher::domain::selection::Selection;
+use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
 use crate::windows::domain::rules::AppRuleDecision;
@@ -174,7 +175,8 @@ impl std::ops::Deref for ReactorHandle {
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum Event {
     /// Place these windows at these frames now, with no animation.
     ///
@@ -438,6 +440,16 @@ impl Event {
         Box::new(move |press| events.send(Event::LeftMouseDown(press)))
     }
 
+    /// What the event was, as a flight's journal names its press: the variant, and for a layout or
+    /// reactor command the command, as the IPC names it.
+    fn what(&self) -> &'static str {
+        match self {
+            Event::Command(Command::Layout(command)) => command.into(),
+            Event::Command(Command::Reactor(command)) => command.into(),
+            event => event.into(),
+        }
+    }
+
     /// The focus edge this event carries, if any. See [`FocusEvent`].
     fn focus_event(&self) -> Option<FocusEvent> {
         Some(match self {
@@ -516,6 +528,10 @@ pub struct Reactor {
     /// when a pass the event asks for flies, which the flight engine draws focused until focus hands
     /// over. A focus report reaches the reactor before the pass it causes.
     focused_as_event_began: Option<WindowId>,
+    /// The event being handled, and when the reactor took it: the press every flight it asks for
+    /// carries, where that flight's journal starts. Every request goes to the flight engine while an
+    /// event is handled.
+    cause: Cause,
     /// The strip windows the current event's regroup already raised, so the post-layout judgment does
     /// not raise them a second time. See `regroup_after_layout`.
     regroup_raised: Vec<WindowId>,
@@ -637,6 +653,7 @@ impl Reactor {
             live_spaces: space_affinity::LiveSpaces::default(),
             pictured_windows: HashSet::default(),
             focused_as_event_began: None,
+            cause: Cause { at: std::time::Instant::now(), what: "start" },
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
@@ -1265,6 +1282,8 @@ impl Reactor {
 
     #[instrument(name = "reactor::handle_event", skip(self), fields(event=?event))]
     fn handle_event(&mut self, event: Event) {
+        let cause = Cause { at: std::time::Instant::now(), what: event.what() };
+        let outer_cause = std::mem::replace(&mut self.cause, cause);
         let previously_focused_window = self.main_window();
         let began = self.layout_manager.layout_engine.focused_window();
         let outer = std::mem::replace(&mut self.focused_as_event_began, began);
@@ -1281,6 +1300,7 @@ impl Reactor {
             Err(error) => warn!(%error, "reactor workflow failed"),
         }
         self.focused_as_event_began = outer;
+        self.cause = outer_cause;
     }
 
     /// A focus report naming a window rini knows and does not manage is a panel's; see
@@ -3839,6 +3859,7 @@ impl Reactor {
             look,
             cue,
             accent,
+            cause: self.cause,
         });
         true
     }
@@ -3939,6 +3960,7 @@ impl Reactor {
             duration,
             look: crate::animation::domain::choreography::Look::default(),
             cue: crate::animation::domain::choreography::Cue::Plain,
+            cause: self.cause,
         });
     }
 
@@ -4119,6 +4141,7 @@ impl Reactor {
             look: crate::animation::domain::choreography::Look::default(),
             cue: crate::animation::domain::choreography::Cue::Plain,
             accent: None,
+            cause: self.cause,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
         // the pictures service holds a warm until the quiet after the flight (`src/transitions/docs/coordination.md`).
