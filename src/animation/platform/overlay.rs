@@ -163,6 +163,10 @@ const BOUNCE_ANIMATION_KEY: &str = "rini.group.bounce";
 /// One key for a move's nudge, apart from the bounce's so neither stops the other.
 const NUDGE_ANIMATION_KEY: &str = "rini.group.nudge";
 
+/// The log target `TileOverlay::trace` writes under, which the engine asks is on before it sends a
+/// `Render::Trace`.
+pub const TRACE_TARGET: &str = "rini::animation::trace";
+
 /// The key a container's track on `channel` is installed under.
 fn container_key(channel: Channel) -> &'static str {
     match channel {
@@ -818,7 +822,7 @@ impl TileOverlay {
     }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
-    /// between them, under `rini::animation::trace` at trace level: the measurement behind "One
+    /// between them, under `TRACE_TARGET` at trace level: the measurement behind "One
     /// flight however many presses" in `src/animation/docs/animation-smoothness.md`. Asked for only
     /// while that target is on. The one read of the presentation layer left, and nothing is decided
     /// by it.
@@ -834,7 +838,7 @@ impl TileOverlay {
             };
             let gap = (presented.x - drawn.x).abs().max((presented.y - drawn.y).abs());
             tracing::trace!(
-                target: "rini::animation::trace",
+                target: TRACE_TARGET,
                 key = format!("{key:?}"),
                 x = format!("{:.1}", presented.x),
                 y = format!("{:.1}", presented.y),

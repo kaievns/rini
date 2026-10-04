@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use objc2::MainThreadMarker;
 use objc2_quartz_core::CATransaction;
-use rini_core::ids::WindowId;
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{OverlayRect, ScreenRect};
 use rini_runloop::channel::Receiver;
 use tracing::warn;
@@ -43,7 +43,7 @@ pub enum Render {
     Show,
     /// The overlay down, its holes filled and its tiles let go.
     Lift,
-    /// Where each container is presented, logged; sent only while `rini::animation::trace` is on.
+    /// Where each container is presented, logged; sent only while `TRACE_TARGET` is on at trace level.
     Trace,
 }
 
@@ -79,6 +79,25 @@ pub fn in_order(woke: Batch, mut queued: Vec<Batch>) -> Drained {
         _ => None,
     });
     Drained { commands, seq, sent, shown }
+}
+
+/// Whether `command` makes the overlay when there is none: it dresses or poses a flight.
+fn needs_overlay(command: &Render) -> bool { matches!(command, Render::Dress { .. } | Render::Stage { .. }) }
+
+/// What a drain comes to, given the overlay after it and its window's number: not drawn when it
+/// `needed` the overlay and there is none, else committed, any drain with no overlay included, with
+/// the window's number once the window server has numbered it.
+fn answer(
+    seq: u64,
+    needed: bool,
+    overlay: Option<Option<WindowServerId>>,
+    shown: Option<bool>,
+    (sent, began, flushed): (Instant, Instant, Instant),
+) -> Event {
+    match overlay {
+        None if needed => Event::Unavailable { seq },
+        overlay => Event::Committed { seq, overlay: overlay.flatten(), shown, sent, began, flushed },
+    }
 }
 
 /// Core Animation's media clock against `Instant`, read now: what the engine begins every track on.
@@ -126,8 +145,7 @@ impl Renderer {
     fn play(&mut self, drained: Drained) -> Event {
         let began = Instant::now();
         let Drained { commands, seq, sent, shown } = drained;
-        let draws_a_flight =
-            commands.iter().any(|command| matches!(command, Render::Dress { .. } | Render::Stage { .. }));
+        let needed = commands.iter().any(needs_overlay);
         if shown == Some(false)
             && let Some(overlay) = self.overlay.as_mut()
         {
@@ -141,25 +159,21 @@ impl Renderer {
         CATransaction::commit();
         CATransaction::flush();
         let flushed = Instant::now();
-        let Some(overlay) = self.overlay.as_mut() else {
-            return if draws_a_flight {
-                Event::Unavailable { seq }
-            } else {
-                Event::Committed { seq, overlay: None, shown, sent, began, flushed }
-            };
-        };
-        overlay.paint_background();
-        if shown == Some(true) {
-            overlay.show();
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.paint_background();
+            if shown == Some(true) {
+                overlay.show();
+            }
         }
-        Event::Committed { seq, overlay: overlay.server_id(), shown, sent, began, flushed }
+        let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
+        answer(seq, needed, overlay, shown, (sent, began, flushed))
     }
 
     fn apply(&mut self, command: Render) {
         if let Render::Display { frame, top_band, scale } = command {
             self.display = Some((frame, top_band, scale));
         }
-        if matches!(command, Render::Dress { .. } | Render::Stage { .. }) {
+        if needs_overlay(&command) {
             self.make_overlay();
         }
         let Some(overlay) = self.overlay.as_mut() else { return };
@@ -204,6 +218,7 @@ mod tests {
     use rini_geometry::space::{Point, Size};
 
     use super::*;
+    use crate::pictures::platform::picture::test_picture;
 
     fn holes(x: f64) -> Render {
         Render::Holes(vec![OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0))])
@@ -244,6 +259,47 @@ mod tests {
         assert_eq!(shown(batch(1, at, 0, vec![holes(1.0), Render::Show, holes(2.0)]), Vec::new()), Some(true));
         assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![Render::Lift])]), Some(false), "never shown");
         assert_eq!(shown(batch(1, at, 0, vec![Render::Lift, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
+    }
+
+    #[test]
+    fn only_a_dress_or_a_stage_makes_the_overlay() {
+        let window = WindowId::new(7, 1);
+        let display = ScreenRect::new(Point::new(0.0, 0.0), Size::new(1728.0, 1117.0));
+        let commands = [
+            ("display", Render::Display { frame: display, top_band: 32.0, scale: 2.0 }),
+            ("dress", Render::Dress { desktop: None, bar: None, strip: None }),
+            ("stage", Render::Stage { score: Score::default(), tiles: Vec::new() }),
+            ("play", Render::Play { edits: Vec::new(), tiles: Vec::new() }),
+            ("swap", Render::Swap { window, picture: test_picture(display.size) }),
+            ("corner", Render::Corner { window, radius: None }),
+            ("focus", Render::Focus { window, focused: true }),
+            ("holes", holes(1.0)),
+            ("show", Render::Show),
+            ("lift", Render::Lift),
+            ("trace", Render::Trace),
+        ];
+        let making: Vec<&str> =
+            commands.iter().filter(|(_, command)| needs_overlay(command)).map(|(name, _)| *name).collect();
+        assert_eq!(making, ["dress", "stage"]);
+    }
+
+    #[test]
+    fn a_drain_that_needed_the_overlay_and_has_none_is_not_drawn() {
+        let at = Instant::now();
+        assert_eq!(answer(3, true, None, Some(true), (at, at, at)), Event::Unavailable { seq: 3 });
+    }
+
+    #[test]
+    fn every_other_drain_is_committed_with_the_windows_number_once_it_has_one() {
+        let at = Instant::now();
+        let times = (at, at + std::time::Duration::from_millis(1), at + std::time::Duration::from_millis(2));
+        let (sent, began, flushed) = times;
+        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, sent, began, flushed };
+        let numbered = WindowServerId(4_242);
+        assert_eq!(answer(3, false, None, None, times), committed(None), "a display or holes, no overlay");
+        assert_eq!(answer(3, true, Some(None), None, times), committed(None), "made, not numbered yet");
+        assert_eq!(answer(3, true, Some(Some(numbered)), None, times), committed(Some(numbered)));
+        assert_eq!(answer(3, false, Some(Some(numbered)), None, times), committed(Some(numbered)), "every drain");
     }
 
     #[test]

@@ -37,7 +37,7 @@ use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::score::{Edit, MediaClock, Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
-use crate::animation::platform::overlay::{OverlayTile, same_layout, window_origin};
+use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
 use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
@@ -2180,7 +2180,7 @@ impl FlightEngine {
             };
             self.drive(lifecycle::Event::Tick { settled, landed });
         }
-        if tracing::enabled!(target: "rini::animation::trace", tracing::Level::TRACE) {
+        if tracing::enabled!(target: TRACE_TARGET, tracing::Level::TRACE) {
             self.render(Render::Trace);
         }
     }
