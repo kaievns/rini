@@ -24,6 +24,7 @@ use objc2::rc::Retained;
 use objc2_app_kit::NSRunningApplication;
 
 use crate::windows::domain::info::{WindowInfo, WindowServerInfo};
+use crate::windows::platform::window_server;
 
 use super::element::{AXUIElement, Error as AxError};
 use super::enhanced_ui::EnhancedUi;
@@ -89,6 +90,12 @@ pub trait AxWorld {
     /// Absent for a window Accessibility knows about before the window server does, which is the
     /// ordinary case for a window that has just been created.
     fn window_server_id(&self, elem: &Self::Element) -> Option<WindowServerId>;
+
+    /// The frame the window server has for `id` now, read without asking the app.
+    ///
+    /// On the world so a fake answers it: a test asking the real window server would read whichever
+    /// window holds that id on the machine running it.
+    fn server_frame(&self, id: WindowServerId) -> Option<CGRect>;
 
     /// Start delivering `notification` for `elem`, carrying `data` back to the callback.
     fn watch(
@@ -232,6 +239,10 @@ impl AxWorld for MacAx {
         WindowServerId::try_from(elem).ok()
     }
 
+    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> {
+        window_server::server_frame(id)
+    }
+
     fn watch(
         &self,
         elem: &AXUIElement,
@@ -281,11 +292,17 @@ pub struct FakeAx {
     pub app: u32,
     pub windows: Vec<u32>,
     pub frames: std::collections::HashMap<u32, CGRect>,
+    /// Frames a window answers one read at a time before it answers `frames` again: an app that
+    /// changes a window's frame while it is written.
+    pub frame_reads:
+        std::cell::RefCell<std::collections::HashMap<u32, std::collections::VecDeque<CGRect>>>,
     pub roles: std::collections::HashMap<u32, String>,
     pub subroles: std::collections::HashMap<u32, String>,
     pub titles: std::collections::HashMap<u32, String>,
     pub minimized: std::collections::HashMap<u32, bool>,
     pub server_ids: std::collections::HashMap<u32, WindowServerId>,
+    /// What the window server has for each id; an id with nothing recorded cannot be read.
+    pub server_frames: std::collections::HashMap<WindowServerId, CGRect>,
     pub main_window: Option<u32>,
     pub frontmost: bool,
     /// Elements whose `AXTitleUIElement` cannot be read.
@@ -380,6 +397,12 @@ impl AxWorld for FakeAx {
     }
 
     fn frame(&self, elem: &u32) -> Result<CGRect, AxError> {
+        if !self.busy
+            && let Some(frame) =
+                self.frame_reads.borrow_mut().get_mut(elem).and_then(|reads| reads.pop_front())
+        {
+            return Ok(frame);
+        }
         self.read(&self.frames, elem)
     }
 
@@ -464,6 +487,10 @@ impl AxWorld for FakeAx {
 
     fn window_server_id(&self, elem: &u32) -> Option<WindowServerId> {
         self.server_ids.get(elem).copied()
+    }
+
+    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> {
+        self.server_frames.get(&id).copied()
     }
 
     fn watch(&self, elem: &u32, notification: &'static str, _data: usize) -> Result<(), AxError> {
