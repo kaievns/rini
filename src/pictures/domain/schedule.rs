@@ -90,11 +90,11 @@ pub fn wants_warm(held: Option<Held>, size: ScreenSize, now: Instant) -> bool {
 /// request for its flight, and the flight engine a click's refresh just before the request for the
 /// flight the click starts, so either usually arrives before that flight's hold, which the engine sends
 /// as it takes the request; started at once, it would put ScreenCaptureKit to work at the flight's
-/// frame zero, or a SkyLight call ahead of it. A flight whose request waits behind other work on the
-/// main thread holds later than this, and so does one a press starts with no look turned: what is
-/// listed meanwhile is listed again at the release (`hold`), and a refresh's SkyLight call already out
-/// cannot be recalled, so at most that one call, two for a window seen for the first time, is ahead of
-/// frame zero.
+/// frame zero, or a SkyLight call ahead of it. A flight whose request waits behind the engine's own
+/// work on the `transitions` thread, such as a compose, holds later than this, and so does one a press
+/// starts with no look turned: what is listed meanwhile is listed again at the release (`hold`), and a
+/// refresh's SkyLight call already out cannot be recalled, so at most that one call, two for a window
+/// seen for the first time, is ahead of frame zero.
 pub const SETTLE_BEFORE_STARTING: Duration = Duration::from_millis(50);
 
 /// Concurrent ScreenCaptureKit captures. It serialises internally, so wall clock stops improving past

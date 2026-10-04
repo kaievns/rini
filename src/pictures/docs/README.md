@@ -3,8 +3,8 @@
 Every capture rini draws. A flight draws a picture of every window it moves, the desktop behind them
 and, under `bar { off; }`, another app's bar above; the switcher draws a picture of every window it
 offers; the bar grounds itself on a picture of the wallpaper. This feature takes those pictures,
-decides what each is worth, keeps them, and hands them to layers. The plan it is part of, and the
-steps still to come, are in `docs/pictures-motion-transitions.md`.
+decides what each is worth, keeps them, and hands them to layers. The plan it is part of is in
+`docs/pictures-motion-transitions.md`.
 
 ## What it owns
 

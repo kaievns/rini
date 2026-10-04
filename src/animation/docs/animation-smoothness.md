@@ -498,7 +498,7 @@ changes is how the picture maps onto it (`content_mode` in
   it is. Wrong-shaped cached pictures use the same mapping instead of being
   dropped — rapid preset cycling used to drop the resized window's tile
   because its picture lagged one press behind. A picture that is a region of
-  a composite (step 4 of `docs/pictures-motion-transitions.md`) is drawn the
+  a batched composite (`src/pictures/domain/region.rs`) is drawn the
   same way: each piece's contents are composed with the tile's region
   (`within`), at rest and at both ends of a resize, and the pieces stay inside
   it however the frame grows, so no piece shows the composite's next window
@@ -535,8 +535,8 @@ model value each node ends at, which container each tile rides and how deep
 everything is drawn. A score is the fold of its edits (`Edit`: a place, a track
 added or cut, a ride, a drop, a bank; `a_score_is_the_fold_of_its_edits`).
 `Score::sample` is what Core Animation draws at a media time, so a merge bends a
-flight from the score instead of reading the presentation layer back (step 5 of
-`docs/pictures-motion-transitions.md`). A look composes the score and bends it
+flight from the score instead of reading the presentation layer back ("Who talks
+to whom" in `docs/pictures-motion-transitions.md`). A look composes the score and bends it
 (`src/animation/domain/choreography.rs`; Slide, the default, in
 `src/animation/domain/choreography/slide.rs`), the flight keeps it
 (`src/transitions/domain/flight_score.rs`), and the overlay plays the same edits,

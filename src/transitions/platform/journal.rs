@@ -1,6 +1,6 @@
 //! The journal's writer: the `journal` thread, which appends each burst the engine sends it as JSON
-//! lines, its marks' instants on the uptime clock. Formatting and IO happen here, never on the main
-//! thread. See `src/transitions/docs/journal.md`.
+//! lines, its marks' instants on the uptime clock. Formatting and IO happen here, never on the
+//! `transitions` thread the engine sends from. See `src/transitions/docs/journal.md`.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Write};
