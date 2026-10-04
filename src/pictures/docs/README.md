@@ -59,11 +59,14 @@ picture taken at 1x flies soft on a Retina display. What is read off a display's
 desktop and the bar, is taken at that display's own scale.
 
 **The desktop and the bar belong to their display.** The service keeps one display's pictures, and a
-read names the display it is for, so a transition can never be dressed with the display left behind.
-The first transition after a start or a display change finds none held, and `dressing` composites them
-on the caller's thread, which is what rini always did: without them that transition draws black, or the
-other display's wallpaper at its own size. Every later one draws what the service took in the
-background.
+read names the display it is for, so a transition can never be dressed with the display left behind;
+which display that is, only the schedule records. A transition is dressed with a desktop composited on
+the caller's thread until the first render of its display lands, which is what rini always did:
+without one it draws black, or the other display's wallpaper at its own size. That render starts only
+once the service is released, at the quiet after a flight, so a burst of transitions on a newly
+entered display composites the desktop on every one, and a render that comes back empty or the wrong
+size is asked again at the next quiet. The bar is composited once per display and kept, and read for
+presence on every transition, so a bar that has gone is not drawn.
 
 **SkyLight reads the framebuffer.** A bar read while the overlay goes up has the overlay in it. The
 handle counts every `hold(Transition)` as it is asked, ahead of the message, and the thread drops a bar
@@ -79,7 +82,8 @@ until a time, or nothing.
 |---|---|
 | While a transition holds the service, only frame-zero and focus captures start | ScreenCaptureKit work queued at a focus change slows every step of it; what the transition waits for is the exception |
 | What waited starts at the release, most urgent first: frame zero, focus, background, warm | a capture of a focus end is never queued behind warms |
-| A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | a pass's warm is sent just after the flight it starts, and reaches the service before that flight's hold |
+| A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | a pass's warm is sent just after the flight it starts, and usually reaches the service before that flight's hold |
+| A capture listed and unable to start through a hold is listed again at the release, as is one asked again at another size | the buffer a listing prepares is the size it found the window at, and the transition may resize it |
 | A warm is dropped where the picture held fits and is fresh (`wants_warm`) | re-capturing every animated window per keystroke is churn |
 | One listing serves every window that may start; at most `MAX_CONCURRENT` captures are out | a fresh listing costs about 83ms against 26ms for the capture; ScreenCaptureKit serialises past four |
 | A window owed a capture is not asked twice; a forgotten one is captured no further | a burst of events cannot queue one window twice, and a closed window's capture is not kept |
@@ -105,7 +109,7 @@ capture can be usable and still be the wrong shape" in
 
 **The cache never downgrades.** A clipped capture never replaces a usable one, and a capture of a
 window on its own never replaces one of the same size that carries its blur. A stand-in is never
-cached: cached, it would be lent to the switcher as a picture and taken for one by the next flight.
+cached: cached, the switcher would read it as a picture and the next flight would take it for one.
 
 **Two routes, chosen by visibility.** SkyLight is fresh and cheap but captures only what is on screen;
 ScreenCaptureKit captures a window anywhere but costs about 40ms, so it fills the cache in the

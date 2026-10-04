@@ -368,9 +368,12 @@ overlay with rini's off, is pictured by the service `BAR_REFRESH_DELAY`
 (250ms) after the overlay lifts, never while it is up: a bar composite
 measures 31ms median, and the delay lets the compositor drop the hidden
 overlay from the framebuffer and folds a burst of switches into one capture,
-at the end. Only the first flight after a start or a display change
-composites the bar and the desktop on the main thread, before the service
-holds any picture of that display.
+at the end. A flight on a display before its first desktop render lands
+composites the desktop on the main thread: the render starts only once the
+service is released, at the quiet after a flight, so a burst of flights on a
+newly entered display composites on every one, and a render that comes back
+empty or the wrong size is asked again at the next quiet. The bar is
+composited once per display and kept.
 
 **Real windows land before lift.** Frames go out on-screen destinations
 first, parks last (`frame_send_order`): a park write nobody sees no longer

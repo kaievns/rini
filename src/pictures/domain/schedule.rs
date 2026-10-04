@@ -78,7 +78,9 @@ pub fn wants_warm(held: Option<Held>, size: CGSize, now: Instant) -> bool {
 
 /// How long a background or warm ask waits before it is listed. A pass's warm is sent just after the
 /// flight it starts, and so reaches the service before that flight's hold does; listed at once, it
-/// would put ScreenCaptureKit to work at the flight's frame zero.
+/// would put ScreenCaptureKit to work at the flight's frame zero. A flight that composites its desktop
+/// on the main thread can hold later than this; what is listed meanwhile is listed again at the
+/// release (`hold`).
 pub const SETTLE_BEFORE_LISTING: Duration = Duration::from_millis(50);
 
 /// Concurrent ScreenCaptureKit captures. It serialises internally, so wall clock stops improving past
@@ -162,7 +164,8 @@ enum Stage<P> {
 #[derive(Default)]
 struct Desktop {
     wanted: bool,
-    rendering: Option<Display>,
+    /// A render is out.
+    rendering: bool,
     /// When the render held for the current display was taken.
     taken: Option<Instant>,
 }
@@ -183,7 +186,8 @@ impl<P> Default for Schedule<P> {
 
 impl<P> Schedule<P> {
     /// Owes each target a capture at `ask.priority`. A window already owed one is not asked twice: it
-    /// keeps the more urgent priority, and the latest size while it still waits.
+    /// keeps the more urgent priority, and the latest size while it still waits. One listed at another
+    /// size is listed again: what the listing prepared is a buffer of the size it found.
     pub fn ask(&mut self, ask: Ask, now: Instant) {
         for target in ask.targets {
             self.asked += 1;
@@ -191,8 +195,14 @@ impl<P> Schedule<P> {
                 Some(job) => {
                     job.priority = job.priority.min(ask.priority);
                     job.forgotten = false;
-                    if matches!(job.stage, Stage::Waiting) {
-                        job.target = target;
+                    let resized = job.target.size != target.size;
+                    match job.stage {
+                        Stage::Waiting => job.target = target,
+                        Stage::Listed(_) if resized => {
+                            job.target = target;
+                            job.stage = Stage::Waiting;
+                        }
+                        _ => {}
                     }
                 }
                 None => self.jobs.push(Job {
@@ -207,8 +217,17 @@ impl<P> Schedule<P> {
         }
     }
 
+    /// A capture listed before a hold and unable to start through it is listed again at the release:
+    /// the transition may resize its window, and the buffer the listing prepared would not fit it.
     pub fn hold(&mut self, hold: Hold, now: Instant) {
         self.hold = hold;
+        if hold != Hold::Released {
+            for job in &mut self.jobs {
+                if matches!(job.stage, Stage::Listed(_)) && !job.priority.wanted_now() {
+                    job.stage = Stage::Waiting;
+                }
+            }
+        }
         match hold {
             Hold::Transition => self.bar_due = None,
             Hold::Settling => self.arm_bar(now),
@@ -256,12 +275,15 @@ impl<P> Schedule<P> {
     }
 
     /// What the listing found of `window`: what it prepared for the capture, or `None` when the window
-    /// was not listed.
+    /// was not listed. A listing that returns into a hold its capture cannot start through is listed
+    /// again at the release, like one listed before the hold.
     pub fn listed(&mut self, window: WindowId, prepared: Option<P>) {
         let Some(at) = self.position(window, |stage| matches!(stage, Stage::Listing)) else {
             return;
         };
+        let held = self.hold != Hold::Released && !self.jobs[at].priority.wanted_now();
         match prepared {
+            Some(_) if held && !self.jobs[at].forgotten => self.jobs[at].stage = Stage::Waiting,
             Some(prepared) if !self.jobs[at].forgotten => {
                 self.jobs[at].stage = Stage::Listed(prepared);
             }
@@ -282,13 +304,16 @@ impl<P> Schedule<P> {
     /// A render of `display`'s desktop came back, taken at `taken`, or not at all. Whether it may be
     /// kept: only a render of the display the overlay is on now.
     pub fn desktop_rendered(&mut self, display: Display, taken: Option<Instant>) -> bool {
-        self.desktop.rendering = None;
+        self.desktop.rendering = false;
         let kept = self.display == Some(display) && taken.is_some();
         if kept {
             self.desktop.taken = taken;
         }
         kept
     }
+
+    /// The display the overlay flies on, whose desktop and bar the service holds.
+    pub fn display(&self) -> Option<Display> { self.display }
 
     /// Every window owed a capture or with one out, but for those forgotten.
     pub fn owed(&self) -> impl Iterator<Item = WindowId> + '_ {
@@ -339,11 +364,11 @@ impl<P> Schedule<P> {
 
         if hold == Hold::Released
             && self.desktop.wanted
-            && self.desktop.rendering.is_none()
+            && !self.desktop.rendering
             && let Some(display) = self.display
         {
             self.desktop.wanted = false;
-            self.desktop.rendering = Some(display);
+            self.desktop.rendering = true;
             return Next::Desktop(display);
         }
 
@@ -523,7 +548,7 @@ mod tests {
     }
 
     /// A capture listed before the transition does not start inside it either: ScreenCaptureKit work
-    /// queued at a focus change slows every step of it.
+    /// queued at a focus change slows every step of it. It is listed again at the release.
     #[test]
     fn a_capture_listed_before_the_transition_waits_for_its_release() {
         let now = Instant::now();
@@ -537,6 +562,102 @@ mod tests {
         assert!(matches!(schedule.next(now, nothing_held), Next::Idle));
         schedule.hold(Hold::Released, now);
         assert_eq!(captures(&mut schedule, now).len(), MAX_CONCURRENT);
+    }
+
+    /// The reported case: a warm listed just before a flight sat through it with a buffer sized at
+    /// the listing, so a window the flight resized was captured into the old size at the release, and
+    /// the warm the flight asked for it was folded into that stale job. Held, it is listed again.
+    #[test]
+    fn a_capture_listed_before_a_hold_is_listed_again_at_the_release() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
+        schedule.listed(wid(1), Some(()));
+        schedule.hold(Hold::Transition, now);
+        schedule.ask(
+            Ask {
+                priority: Priority::Warm,
+                targets: vec![target(1, 1147.0)],
+            },
+            now,
+        );
+        schedule.hold(Hold::Released, now);
+        let Next::List(targets) = schedule.next(now, nothing_held) else { panic!("a listing") };
+        let asked: Vec<(WindowId, f64)> = targets.iter().map(|t| (t.window, t.size.width)).collect();
+        assert_eq!(asked, vec![(wid(1), 1147.0)], "listed again, at the size asked last");
+    }
+
+    /// A listing that returns once the hold is up has prepared a buffer the flight may outgrow too.
+    #[test]
+    fn a_listing_that_returns_into_a_hold_is_listed_again_at_the_release() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        let _ = schedule.next(now, nothing_held);
+        schedule.hold(Hold::Transition, now);
+        schedule.listed(wid(1), Some(()));
+        assert!(matches!(schedule.next(now, nothing_held), Next::Idle), "held");
+        schedule.hold(Hold::Released, now);
+        assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
+    }
+
+    /// Asked again at another size, a listed window is listed again; at the same size its listing
+    /// still serves.
+    #[test]
+    fn a_listed_window_asked_for_at_another_size_is_listed_again() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.ask(ask(Priority::Warm, &[1, 2]), settled_by(now));
+        let _ = schedule.next(now, nothing_held);
+        schedule.listed(wid(1), Some(()));
+        schedule.listed(wid(2), Some(()));
+        schedule.ask(
+            Ask {
+                priority: Priority::Warm,
+                targets: vec![target(1, 1147.0), target(2, 859.0)],
+            },
+            settled_by(now),
+        );
+        let Next::List(targets) = schedule.next(now, nothing_held) else { panic!("a listing") };
+        assert_eq!(
+            targets.iter().map(|t| (t.window, t.size.width)).collect::<Vec<_>>(),
+            vec![(wid(1), 1147.0)]
+        );
+        assert!(matches!(schedule.next(now, nothing_held), Next::Capture { target, .. } if target.window == wid(2)));
+    }
+
+    /// A warm owed when the focus moves is not asked twice: it takes the focus priority, and starts
+    /// through the hold the warm alone would wait out. Whether it waits or is listed already.
+    #[test]
+    fn a_held_warm_asked_again_at_focus_starts_through_the_hold() {
+        let now = Instant::now();
+        let mut waiting = Schedule::<()>::default();
+        waiting.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        waiting.hold(Hold::Transition, now);
+        waiting.ask(ask(Priority::Focus, &[1]), now);
+        assert_eq!(captures(&mut waiting, now), vec![wid(1)], "waiting");
+
+        let mut listed = Schedule::<()>::default();
+        listed.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        let _ = listed.next(now, nothing_held);
+        listed.listed(wid(1), Some(()));
+        listed.hold(Hold::Transition, now);
+        listed.ask(ask(Priority::Focus, &[1]), now);
+        assert_eq!(captures(&mut listed, now), vec![wid(1)], "listed");
+    }
+
+    /// Forgotten while its capture was out and asked for again, a window's capture is kept after all.
+    #[test]
+    fn a_forgotten_window_asked_for_again_keeps_its_capture() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
+        schedule.forget(wid(1));
+        schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        assert!(schedule.owed().any(|window| window == wid(1)));
+        assert!(schedule.captured(wid(1)));
     }
 
     /// A window asked for twice while it waits is captured once, at the size asked for last.

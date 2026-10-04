@@ -170,8 +170,8 @@ destination for a window already moving.
   as soon as one lands, on the same tile, so nothing else in the flight is disturbed. A flight that does
   not wait for pictures, a strip movement, MUST ask for the picture of a window it brings onto this
   display once the window is placed there.
-- The stand-in MUST NOT be cached. Cached, it would be lent to the switcher as the window's picture and
-  taken for one by the next flight.
+- The stand-in MUST NOT be cached. Cached, the switcher would read it as the window's picture and the
+  next flight would take it for one.
 - A genuinely new window, on this display with no picture, keeps its spawn capture and entrance.
 
 > **Reported 2026-09-28.** "When the initial image is missing (after a restart or whatnot) the

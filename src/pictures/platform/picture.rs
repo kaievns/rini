@@ -143,8 +143,8 @@ impl CarriesOver for Picture {
         )
     }
 
-    /// A stand-in is drawn and never kept: cached, it would be lent to the switcher as a picture and
-    /// taken for one by the next flight.
+    /// A stand-in is drawn and never kept: cached, the switcher would read it as a picture and the next
+    /// flight would take it for one.
     fn cacheable(&self) -> bool {
         self.source != Route::StandIn
     }
@@ -208,7 +208,7 @@ mod tests {
     use super::*;
     use crate::pictures::domain::cache::PictureCache;
 
-    /// A stand-in never enters the cache, where it would be lent to the switcher as a picture.
+    /// A stand-in never enters the cache, where the switcher would read it as a picture.
     #[test]
     fn a_stand_in_is_never_cached() {
         let mut cache: PictureCache<Picture> = PictureCache::new();
