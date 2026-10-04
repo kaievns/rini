@@ -492,11 +492,7 @@ impl<W: AxWorld> State<W> {
                     },
                 };
 
-                self.write_frame(&elem, server_id, desired);
-
-                let frame = match self
-                    .handle_ax_result(wid, trace("frame", wid, || self.ax.frame(&elem)))?
-                {
+                let frame = match self.write_frame(wid, &elem, server_id, desired)? {
                     Some(frame) => frame,
                     None => return Ok(false),
                 };
@@ -527,11 +523,7 @@ impl<W: AxWorld> State<W> {
                         },
                     };
 
-                    self.write_frame(&elem, server_id, desired);
-
-                    let frame = match self
-                        .handle_ax_result(wid, trace("frame", wid, || self.ax.frame(&elem)))?
-                    {
+                    let frame = match self.write_frame(wid, &elem, server_id, desired)? {
                         Some(frame) => frame,
                         None => continue,
                     };
@@ -591,18 +583,30 @@ impl<W: AxWorld> State<W> {
         Ok(false)
     }
 
-    fn write_frame(&self, elem: &W::Element, server_id: Option<WindowServerId>, desired: CGRect) {
+    /// Puts the window at `desired` and answers the frame read back after the last write.
+    fn write_frame(
+        &mut self,
+        wid: WindowId,
+        elem: &W::Element,
+        server_id: Option<WindowServerId>,
+        desired: CGRect,
+    ) -> Result<Option<CGRect>, AxError> {
         let current = server_id.and_then(|id| self.ax.server_frame(id)).map(|frame| frame.size);
-        match frame_write(current, desired.size) {
-            FrameWrite::PositionOnly => {
-                let _ = self.ax.set_position(elem, desired.origin);
-            }
-            FrameWrite::SizePositionSize => {
-                let _ = self.ax.set_size(elem, desired.size);
-                let _ = self.ax.set_position(elem, desired.origin);
-                let _ = self.ax.set_size(elem, desired.size);
+        if frame_write(current, desired.size) == FrameWrite::PositionOnly {
+            let _ = self.ax.set_position(elem, desired.origin);
+            let Some(landed) =
+                self.handle_ax_result(wid, trace("frame", wid, || self.ax.frame(elem)))?
+            else {
+                return Ok(None);
+            };
+            if frame_write(Some(landed.size), desired.size) == FrameWrite::PositionOnly {
+                return Ok(Some(landed));
             }
         }
+        let _ = self.ax.set_size(elem, desired.size);
+        let _ = self.ax.set_position(elem, desired.origin);
+        let _ = self.ax.set_size(elem, desired.size);
+        self.handle_ax_result(wid, trace("frame", wid, || self.ax.frame(elem)))
     }
 
     #[instrument(skip_all, fields(pid = ?self.pid, ?notif))]
@@ -1690,6 +1694,57 @@ mod tests {
             state.ax.positions.borrow().as_slice(),
             &[(window, desired.origin)],
             "moved once"
+        );
+    }
+
+    /// A same-size move whose read-back size is off is written again in full, and the reactor hears
+    /// the frame read after that, not the one the move left.
+    #[test]
+    fn a_same_size_move_that_lands_at_another_size_is_written_in_full() {
+        let window = 7;
+        let (mut state, sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 800., 600.)));
+        state
+            .ax
+            .server_frames
+            .insert(WindowServerId::new(window), rect(0., 0., 800., 600.));
+        let wid = state
+            .register_window(window, peer(window, rect(0., 0., 800., 600.)))
+            .expect("the window registers")
+            .1;
+        state.ax.positions.borrow_mut().clear();
+        state.ax.sizes.borrow_mut().clear();
+        sink.0.borrow_mut().clear();
+
+        let desired = rect(2000., 0., 800., 600.);
+        let clamped = rect(2000., 0., 640., 600.);
+        state.ax.frame_reads.borrow_mut().insert(window, [clamped, desired].into());
+        state
+            .handle_request(Request::SetWindowFrame(
+                wid,
+                desired,
+                TransactionId::default(),
+                false,
+            ))
+            .expect("the write succeeds");
+
+        assert_eq!(
+            state.ax.positions.borrow().as_slice(),
+            &[(window, desired.origin), (window, desired.origin)],
+            "moved alone, then moved again between the two sizings"
+        );
+        assert_eq!(
+            state.ax.sizes.borrow().as_slice(),
+            &[(window, desired.size), (window, desired.size)],
+            "sized twice once the move came back at another size"
+        );
+        let announced = sink.0.borrow();
+        assert!(
+            matches!(
+                announced.as_slice(),
+                [Event::WindowFrameChanged(w, frame, ..)] if *w == wid && *frame == desired
+            ),
+            "{announced:?}"
         );
     }
 

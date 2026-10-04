@@ -292,6 +292,10 @@ pub struct FakeAx {
     pub app: u32,
     pub windows: Vec<u32>,
     pub frames: std::collections::HashMap<u32, CGRect>,
+    /// Frames a window answers one read at a time before it answers `frames` again: an app that
+    /// changes a window's frame while it is written.
+    pub frame_reads:
+        std::cell::RefCell<std::collections::HashMap<u32, std::collections::VecDeque<CGRect>>>,
     pub roles: std::collections::HashMap<u32, String>,
     pub subroles: std::collections::HashMap<u32, String>,
     pub titles: std::collections::HashMap<u32, String>,
@@ -393,6 +397,12 @@ impl AxWorld for FakeAx {
     }
 
     fn frame(&self, elem: &u32) -> Result<CGRect, AxError> {
+        if !self.busy
+            && let Some(frame) =
+                self.frame_reads.borrow_mut().get_mut(elem).and_then(|reads| reads.pop_front())
+        {
+            return Ok(frame);
+        }
         self.read(&self.frames, elem)
     }
 

@@ -15,7 +15,8 @@ pub enum FrameWrite {
 /// Closer than this in both width and height, the window's size is the desired one.
 pub const SAME_SIZE: f64 = 0.5;
 
-/// The writes that give a window `desired`, from the size the window server has for it now.
+/// The writes that give a window `desired`, from the size it is known to have now: the window
+/// server's before a write, or the one read back after a position written alone.
 ///
 /// A size that cannot be read is a size that may change, so it takes all three.
 pub fn frame_write(current: Option<CGSize>, desired: CGSize) -> FrameWrite {

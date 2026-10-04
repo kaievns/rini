@@ -75,10 +75,14 @@ as visible rather than absent. The reverse — an id the server does not report 
 
 ## Writing a frame
 
-- A same-size move writes the position alone. When the window server already has the window less
-  than 0.5pt off the desired width and the desired height, the write MUST NOT send a size. A size write costs the app
-  1-60ms even when the size does not change, and a move that keeps the size gains nothing from it.
-  The size is read from the window server, not the app, so the check asks nothing of the app.
+- A same-size move writes the position alone, and falls back to size, position, size when the size it
+  reads back has changed. When the window server already has the window less than 0.5pt off the
+  desired width and the desired height, the write MUST NOT send a size. A size write costs the app
+  2-60ms even when the size does not change, against 0.4-3ms for a position write. The size is read
+  from the window server, not the app, so the check asks nothing of the app.
+- When the frame read back after that position write is 0.5pt or more off the desired size in
+  either axis, size, position, size MUST follow, and the frame reported MUST be the one read after
+  it. Nothing else puts the size back if the app changed it on the move.
 - Any other frame write is size, then position, then size AGAIN, and so is one whose window-server
   size cannot be read. AppKit clamps a size against the window's current position, so a window near
   a screen edge cannot grow until it has moved; the first size is what lets the move succeed for a
@@ -86,9 +90,13 @@ as visible rather than absent. The reverse — an id the server does not report 
 - Enhanced User Interface MUST be suppressed for the duration of a burst of writes, not per write.
   AppKit re-lays-out a window while it is on, which fights the write.
 
-> **Found 2026-10-03, not reported.** Measured in the handover prototype: an Accessibility size write
-> cost the app 1-60ms even when the size did not change. The prototype wrote the position alone for a
-> move that kept the size.
+> **Found 2026-10-03, not reported.** Measured in the handover prototype's research run on
+> 2026-10-03: an Accessibility size write cost the app 2-60ms even when the size did not change, a
+> position write 0.4-3ms. The prototype wrote the position alone for a move that kept the size.
+>
+> The read-back fallback was added in review, not measured. It guards a move the app resizes on the
+> way, a window constrained to a smaller display for one, which a position written alone would leave
+> at the wrong size.
 
 ## Where it lives
 
