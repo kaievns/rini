@@ -13,7 +13,6 @@ use objc2_core_foundation::{
 use rini_core::ids::WindowId;
 use rini_core::ids::pid_t;
 use rini_skylight_sys::_AXUIElementCreateWithRemoteToken;
-use rini_skylight_sys::{CGSGetWindowBounds, G_CONNECTION};
 
 pub const AX_WINDOW_ROLE: &str = "AXWindow";
 pub const AX_STANDARD_WINDOW_SUBROLE: &str = "AXStandardWindow";
@@ -190,16 +189,6 @@ impl AXUIElement {
         let value = self.copy_required_attribute("AXFrame")?;
         let ax_value = self.downcast::<AXValue>(value)?;
         rect_from_axvalue(&ax_value)
-    }
-
-    pub fn fast_frame(&self, wid: WindowId) -> Result<CGRect> {
-        let mut frame = CGRect::default();
-        let result = unsafe { CGSGetWindowBounds(*G_CONNECTION, wid.idx.get(), &mut frame) };
-        if result == 0 {
-            Ok(frame)
-        } else {
-            Err(Error::Ax(AXError(result)))
-        }
     }
 
     pub fn role(&self) -> Result<String> {

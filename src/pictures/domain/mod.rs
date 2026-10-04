@@ -6,6 +6,8 @@
 pub mod backdrop;
 pub mod cache;
 pub mod coverage;
+pub mod knowledge;
+pub mod print;
 pub mod region;
 pub mod schedule;
 pub mod settle;

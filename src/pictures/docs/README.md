@@ -13,6 +13,8 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **Coverage and fit** | `domain/coverage.rs` — `Coverage`, whether a capture is usable, whether it fits a frame, whether a grow outgrows it, whether a warm must recapture, whether a desktop picture spans its display, when a picture is stale |
 | **The cache's rules** | `domain/cache.rs` — `PictureCache`: never downgrade a usable picture, keep a blurred one over a grey one of the same size, carry the hairline over, put a copy back only over the picture it was made of |
 | **Regions** | `domain/region.rs` — where a window lies in a batched composite: its pixel rect, whether the composite holds it, whether the composite is the shape of what it was asked for, its unit rect, and a crop piece's rect within a region |
+| **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, its corner radius; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
+| **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
 | **Settled** | `domain/settle.rs` — when a chase's capture is the window's settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
@@ -22,9 +24,10 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule, the cache and the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, or a covering capture it refused for the blurred one it holds |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
-| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), and the framed capture of one window with its hairline and, wholly on a display, its blur |
+| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, and the framed capture of one window with its hairline and, wholly on a display, its blur |
+| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency and corner, and whether its baked picture shows a material |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
-| **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from |
+| **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
 | **The hairline** | `platform/edge_dressing.rs` — the window's hairline, cut out of a framed capture, and where on a tile it is worn |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
 | **Layers** | `platform/layer.rs` — handing a picture to a layer, a region through `contentsRect`, and the stand-in's nine-slice region |
@@ -115,6 +118,27 @@ cached: cached, the switcher would read it as a picture and the next flight woul
 **Two routes, chosen by visibility.** SkyLight is fresh and cheap but captures only what is on screen;
 ScreenCaptureKit captures a window anywhere but costs about 40ms, so it fills the cache in the
 background and is never waited on.
+
+**One SkyLight call, two ways of making it.** `SLSHWCaptureWindowList` with several ids returns one
+composite of them, the first listed in front, covering what each has on its display, and calls are
+served one at a time (27ms for one, 122ms for four at once). A batch of windows on screen, none
+overlapping another, is captured in up to two calls (`capture_on_screen`):
+
+| call | lists | takes | why |
+|---|---|---|---|
+| alpha | the windows alone | translucent windows, unknown ones, and opaque ones with no material | the window keeps its own alpha, so the overlay draws what is really behind it |
+| baked | the opaque windows, then `behind`, then the display's desktop windows | opaque windows with a material, and an opaque window of unknown material after its alpha capture | a material carries the blur of what is composited after it: 0.5 levels from the screen, against 24.9 for the window alone |
+
+A window seen for the first time is measured from its alpha crop: translucent when more than a fifth
+of a 40x40 interior grid of a 48x48 draw is below alpha 250; its corner radius from where each row of
+its 48pt top-left corner turns opaque (`r = x + y + sqrt(2xy)` at pixel centres, the median of at
+least four rows, 4-40pt). An opaque one is baked too, and has a material when the two crops drawn
+64x64 differ by more than two levels away from their border. A baked picture of a window with a
+material carries its blur (`carries_blur`), so the cache keeps it over a grey capture of the window
+alone. Each composite is checked against the shape of what it listed, the desktop windows included
+for the baked one, and a misshapen one yields no picture: a frame read is wrong, or a listed window
+has gone. The measurements are in "SLSHWCaptureWindowList captures only the visible portion" and
+"Translucency is three things" in `src/animation/docs/capture-overlay-research.md`.
 
 **One place turns a picture into layer contents.** The flight overlay, the switcher's cards and the
 bar all go through `platform/layer.rs`, so a bitmap and a surface are handed over the one way objc2
