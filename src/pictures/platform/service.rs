@@ -4,8 +4,8 @@
 //! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`) and makes the
 //! service's own calls: its SkyLight captures, one at a time, and its ScreenCaptureKit asks, whose
 //! completions post back to it. A transition's dressing is composited on the caller's thread until its
-//! display's first render lands, and the flight engine still takes its framed captures on its own
-//! threads (Known debt in `src/pictures/docs/README.md`).
+//! display's first render lands, and the flight engine takes its spawn capture of a window that has
+//! just opened on the main thread as it composes (Known debt in `src/pictures/docs/README.md`).
 //! A client asks, watches, hints, holds and forgets through a channel, reads from any thread through
 //! one lock, and hears of what lands through the sink it was started with. See "The service" in
 //! `src/pictures/docs/README.md`.
@@ -317,7 +317,7 @@ struct StandIn {
 unsafe impl Send for StandIn {}
 
 impl Pictures {
-    /// Starts the service on its own thread. Every sink hears of every picture that lands.
+    /// Starts the service on its own thread. Every sink hears of every picture the cache takes.
     pub fn start(sinks: Vec<Sink>) -> Self {
         let (commands, requests) = channel::channel();
         let (done_tx, done) = channel::channel();

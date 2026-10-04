@@ -1721,10 +1721,10 @@ mod tests {
         assert!(watches.next(start + ms(100)).is_none(), "once");
     }
 
-    /// Windows behind the strip refresh every 16ms, every capture delivered: content changes below the
-    /// band, which a band print would never see.
+    /// Windows behind the strip refresh every 16ms, every capture the cache took delivered whatever its
+    /// band print: content changes below the band, which a band print would never see.
     #[test]
-    fn the_background_refreshes_every_sixteen_milliseconds_and_delivers_each_capture() {
+    fn the_background_refreshes_every_sixteen_milliseconds_and_delivers_each_capture_the_cache_took() {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.ask(frame_zero(&[], &[(4, LEFT)]));
@@ -1738,7 +1738,11 @@ mod tests {
             "unchanged, delivered"
         );
         assert!(watches.next(start + ms(15)).is_none());
-        assert!(round(&mut watches, start + ms(16), |_| Some(LEFT), |_| Some(1)).is_some());
+        let (_, outcome) =
+            round_of(&mut watches, start + ms(16), |_| Some(LEFT), |_| Capture::Refused).unwrap();
+        assert!(outcome.deliveries.is_empty(), "refused: not delivered");
+        let (_, outcome) = round(&mut watches, start + ms(32), |_| Some(LEFT), |_| Some(1)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::Background, vec![wid(4)])]);
     }
 
     /// The background waits for what the transition waits on: a window still landing, and a change
