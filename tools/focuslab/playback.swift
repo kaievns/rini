@@ -101,3 +101,24 @@ CATransaction.commit(); CATransaction.flush()
 print("move replaced, keys", layer.animationKeys() ?? [], "at 10.75:", drawn(10.75), "bump alone would add 37.5")
 install(CGPoint(x: 1000, y: 0), [("bump", bump), ("move", basic(pt(0), pt(1000), 10, 1, linear))])
 print("bump then move, at 10.5:", drawn(10.5))
+
+// Order is begin time, not the order added: an accent begun before the movement and added after it.
+install(CGPoint(x: 1000, y: 0), [("move", basic(pt(0), pt(1000), 10, 1, linear)),
+                                 ("bump", basic(pt(0, 0), pt(0, 50), 9.5, 2, linear, additive: true))])
+print("move at 10, then bump begun at 9.5, keys", layer.animationKeys() ?? [], "at 10.5:", drawn(10.5),
+      "bump alone would add 25")
+
+// The accent begun again with the movement that replaced the one it rode: a copy beginning at the
+// new movement's begin, that far into its own time, for what is left of it.
+install(CGPoint(x: 1000, y: 0), [("move", basic(pt(0), pt(1000), 10, 1, linear)), ("bump", bump)])
+CATransaction.begin(); CATransaction.setDisableActions(true)
+layer.position = CGPoint(x: 2000, y: 0)
+layer.add(basic(pt(500), pt(2000), 10.5, 1, linear), forKey: "move")
+let again = layer.animation(forKey: "bump")!.copy() as! CAAnimation
+again.timeOffset = 10.5 - again.beginTime
+again.repeatDuration = again.beginTime + again.duration - 10.5
+again.beginTime = 10.5
+layer.add(again, forKey: "bump")
+CATransaction.commit(); CATransaction.flush()
+print("bump begun again with the move, keys", layer.animationKeys() ?? [],
+      "y at 10.75, 10.9 and 11.25:", [10.75, 10.9, 11.25].map { drawn($0).y }, "expect [37.5, 45, 0]")

@@ -13,10 +13,10 @@ use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
+use objc2_foundation::{NSArray, NSCopying, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
-    CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
-    CATransaction, kCAMediaTimingFunctionLinear,
+    CAAnimation, CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming,
+    CAMediaTimingFunction, CATransaction, kCAMediaTimingFunctionLinear,
 };
 
 use crate::animation::domain::motion::bounce::Bounce;
@@ -335,6 +335,72 @@ fn nudge_animation(offset: CGPoint, timing: Timing) -> Retained<CAKeyframeAnimat
     animation.setDuration(timing.seconds);
     animation.setBeginTime(timing.begin);
     animation
+}
+
+/// The accents a container's movement carries, each under its own key.
+const ACCENT_KEYS: [&str; 2] = [BOUNCE_ANIMATION_KEY, NUDGE_ANIMATION_KEY];
+
+/// When an animation plays on the media clock: from `begin`, `offset` into its own time, for
+/// `active` seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Playing {
+    begin: f64,
+    offset: f64,
+    active: f64,
+}
+
+impl Playing {
+    fn of(animation: &CAAnimation) -> Self {
+        let repeat = animation.repeatDuration();
+        Playing {
+            begin: animation.beginTime(),
+            offset: animation.timeOffset(),
+            active: if repeat > 0.0 {
+                repeat
+            } else {
+                animation.duration()
+            },
+        }
+    }
+
+    fn apply(self, animation: &CAAnimation) {
+        animation.setBeginTime(self.begin);
+        animation.setTimeOffset(self.offset);
+        animation.setRepeatDuration(self.active);
+    }
+
+    /// The same animation begun again at `at`, as far into its own time as it has got, for what is
+    /// left of it. None when it begins after `at` already, or has ended.
+    fn again_at(self, at: f64) -> Option<Playing> {
+        let ends = self.begin + self.active;
+        (self.begin <= at && at < ends).then(|| Playing {
+            begin: at,
+            offset: self.offset + (at - self.begin),
+            active: ends - at,
+        })
+    }
+}
+
+/// Gives a container `movement` under the movement's key, and begins its accents again with it so
+/// they go on where they were. Core Animation composes a layer's animations in order of their begin
+/// times, ties in the order added, and a non-additive movement hides every additive one before it
+/// until it ends; see "The score" in `src/animation/docs/animation-smoothness.md`.
+fn add_movement(layer: &CALayer, movement: &CAAnimation) {
+    layer.addAnimation_forKey(movement, Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+    let begin = movement.beginTime();
+    for key in ACCENT_KEYS {
+        let key = NSString::from_str(key);
+        // SAFETY: the layer's own animation, read and copied; the copy is what changes.
+        let Some(accent) = (unsafe { layer.animationForKey(&key) }) else {
+            continue;
+        };
+        let Some(again) = Playing::of(&accent).again_at(begin) else {
+            continue;
+        };
+        let copy = accent.copy();
+        again.apply(&copy);
+        layer.addAnimation_forKey(&copy, Some(&key));
+    }
 }
 
 /// An animation between two rect-valued endpoints of `key_path` ("bounds", "contentsRect").
@@ -877,11 +943,7 @@ impl TileOverlay {
                     for layer in self.layers_of(key) {
                         layer.setPosition(to);
                         if !duration.is_zero() {
-                            let animation = position_animation(from, to, timing);
-                            layer.addAnimation_forKey(
-                                &animation,
-                                Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                            );
+                            add_movement(&layer, &position_animation(from, to, timing));
                         }
                     }
                     self.record_leg(key, from, to, timing, duration);
@@ -1158,11 +1220,7 @@ impl TileOverlay {
             for layer in self.layers_of(key) {
                 layer.setPosition(to);
                 if !duration.is_zero() {
-                    let animation = leg_animation(&leg);
-                    layer.addAnimation_forKey(
-                        &animation,
-                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                    );
+                    add_movement(&layer, &leg_animation(&leg));
                 }
             }
             if duration.is_zero() {
@@ -1181,10 +1239,7 @@ impl TileOverlay {
                 let leg = Leg::leaving(carried.get(&key), install, to, now, omega);
                 for layer in self.layers_of(key) {
                     layer.setPosition(to);
-                    layer.addAnimation_forKey(
-                        &leg_animation(&leg),
-                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                    );
+                    add_movement(&layer, &leg_animation(&leg));
                 }
                 longest = longest.max(Duration::from_secs_f64(leg.samples(LEG_STEP).1));
                 self.legs.insert(key, leg);
@@ -1193,11 +1248,7 @@ impl TileOverlay {
             for layer in self.layers_of(key) {
                 layer.setPosition(to);
                 if !duration.is_zero() && !install.same_as(to) {
-                    let animation = position_animation(install, to, timing);
-                    layer.addAnimation_forKey(
-                        &animation,
-                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                    );
+                    add_movement(&layer, &position_animation(install, to, timing));
                 }
             }
             self.record_leg(key, install, to, timing, duration);
@@ -2078,5 +2129,150 @@ mod tests {
         );
         let sideways = Bounce::from_rest(left, plays);
         assert_eq!(container_bounce(GroupKey::Floating, &sideways, Some(left)), None);
+    }
+
+    fn animation_keys(layer: &CALayer) -> Vec<String> {
+        layer
+            .animationKeys()
+            .map(|keys| keys.iter().map(|key| key.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    fn playing(layer: &CALayer, key: &str) -> Playing {
+        // SAFETY: a read of the layer's own animation.
+        let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) };
+        Playing::of(&animation.expect("an animation under the key"))
+    }
+
+    /// A container riding its movement from 5.0, a bounce from 5.1 and a nudge from 5.2.
+    fn accented_container() -> Retained<CALayer> {
+        let layer = CALayer::layer();
+        let timing = Timing {
+            begin: 5.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let wall = CGPoint::new(-72.0, 0.0);
+        let bounce = Bounce::from_rest(wall, Duration::from_millis(350));
+        add_movement(&layer, &position_animation(CGPoint::new(0.0, 0.0), wall, timing));
+        layer.addAnimation_forKey(
+            &bounce_animation(&bounce, GroupKey::STILL, 5.1),
+            Some(&NSString::from_str(BOUNCE_ANIMATION_KEY)),
+        );
+        let nudge = Timing {
+            begin: 5.2,
+            seconds: 0.455,
+            ..timing
+        };
+        layer.addAnimation_forKey(
+            &nudge_animation(CGPoint::new(-576.0, 0.0), nudge),
+            Some(&NSString::from_str(NUDGE_ANIMATION_KEY)),
+        );
+        layer
+    }
+
+    fn new_leg(begin: f64) -> Retained<CABasicAnimation> {
+        let leg = Timing {
+            begin,
+            seconds: 0.4,
+            curve: MOTION_CURVE,
+        };
+        position_animation(CGPoint::new(-30.0, 0.0), CGPoint::new(-861.0, 0.0), leg)
+    }
+
+    fn close(a: Playing, b: Playing) -> bool {
+        (a.begin - b.begin).abs() < 1e-9
+            && (a.offset - b.offset).abs() < 1e-9
+            && (a.active - b.active).abs() < 1e-9
+    }
+
+    /// A retarget gives a container a new leg, which begins after the bounce and the nudge riding
+    /// it and so would hide them until it ends. They begin again with it, each as far into its own
+    /// time as it had got and for what is left of it, so they go on where they were.
+    #[test]
+    fn after_a_retarget_a_containers_keys_are_its_movement_then_its_accents() {
+        let layer = accented_container();
+        add_movement(&layer, &new_leg(5.3));
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                GROUP_ANIMATION_KEY,
+                BOUNCE_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY
+            ]
+        );
+        assert_eq!(playing(&layer, GROUP_ANIMATION_KEY).begin, 5.3);
+        let bounce = Playing {
+            begin: 5.3,
+            offset: 0.2,
+            active: 5.1 + 0.35 - 5.3,
+        };
+        let nudge = Playing {
+            begin: 5.3,
+            offset: 0.1,
+            active: 5.2 + 0.455 - 5.3,
+        };
+        assert!(close(playing(&layer, BOUNCE_ANIMATION_KEY), bounce));
+        assert!(close(playing(&layer, NUDGE_ANIMATION_KEY), nudge));
+
+        add_movement(&layer, &new_leg(5.4));
+        let again = Playing {
+            begin: 5.4,
+            offset: 0.3,
+            active: 5.1 + 0.35 - 5.4,
+        };
+        assert!(
+            close(playing(&layer, BOUNCE_ANIMATION_KEY), again),
+            "begun again a second time, still where it was"
+        );
+    }
+
+    /// An accent that begins after the new movement already sorts after it; one that has ended is
+    /// left for Core Animation to remove.
+    #[test]
+    fn an_accent_begun_after_the_movement_or_ended_is_left_alone() {
+        let accent = Playing {
+            begin: 5.1,
+            offset: 0.0,
+            active: 0.35,
+        };
+        assert_eq!(accent.again_at(5.0), None);
+        assert_eq!(accent.again_at(5.45), None);
+        let tie = accent.again_at(5.1).expect("begun with the movement, added again after it");
+        assert!(close(tie, accent), "a tie sorts in the order added");
+    }
+
+    /// What `add_movement` answers: a layer's animations sort by begin time, not by the order they
+    /// were added, so a movement added plainly goes after accents that began before it.
+    #[test]
+    fn core_animation_orders_a_layers_animations_by_begin_time() {
+        let layer = accented_container();
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                GROUP_ANIMATION_KEY,
+                BOUNCE_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY
+            ]
+        );
+        layer.addAnimation_forKey(&new_leg(5.3), Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                BOUNCE_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY,
+                GROUP_ANIMATION_KEY
+            ]
+        );
+        layer.addAnimation_forKey(&new_leg(5.15), Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                BOUNCE_ANIMATION_KEY,
+                GROUP_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY
+            ],
+            "added last, sorted between"
+        );
     }
 }

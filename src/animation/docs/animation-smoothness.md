@@ -1029,8 +1029,10 @@ an off-screen window, its presentation read at chosen `timeOffset`s.
 | The 72pt bounce over 0.35s | within 0.072pt of `Bounce::at` | `Bounce::track` |
 | Keyframes with no `keyTimes` or `timingFunctions` | evenly spaced, straight lines between | `Track::samples` |
 | `duration` 0 | plays for 0.25s | a cut |
-| `addAnimation:forKey:` on a key in use | the old one goes; the new one is last | `Score::add` replaces |
-| A non-additive animation after an additive one | the additive one is not drawn while it plays | `sample` adds every accent playing |
+| `addAnimation:forKey:` on a key in use | the old one goes | `Score::add` replaces |
+| A layer's animations | composed in order of `beginTime`, ties in the order added | `Score::tracks` |
+| A non-additive animation beginning after an additive one, or with it and added later | the additive one is not drawn while it plays | `sample` adds every accent playing |
+| That accent begun again with it: a copy at its `beginTime`, `timeOffset` as far as the accent had got, `repeatDuration` what is left | drawn exactly where it was, to its old end | `sample` adds every accent playing |
 
 A Bezier segment is the one place the score and the screen part, by Core
 Animation's own solver: under 0.1pt. A spring leg is the polyline of its 1/120s
@@ -1041,14 +1043,19 @@ viewport (`the_nudge_plays_as_its_samples`).
 
 Two rows are rules for whatever plays a score:
 
-- **Order.** Core Animation composes a layer's animations in the order they were
-  added, and a non-additive one starts over from its own value. The score adds
-  every accent to the movement whatever order they came in, so a renderer that
-  replaces a `Base` track adds the node's accents again after it, in
-  `Score::tracks` order. The overlay does not: `retarget` adds `rini.group.move`
-  again on each retargeted container, after any bounce or nudge riding it, so
-  those are not drawn until the new leg ends. Inferred from the probe, not
-  reproduced in rini.
+- **Order.** Core Animation composes a layer's animations in order of their
+  begin times, ties in the order added, and a non-additive one starts over from
+  its own value. A movement replaced mid-flight begins after every accent riding
+  it, so re-adding the accents unchanged leaves them hidden: they sort before it
+  by begin time whatever order they were added in. The score adds every accent
+  to the movement whatever order they came in, so a renderer that replaces a
+  `Base` track begins the node's accents again with it, each a copy as far into
+  its own time as it had got and lasting what is left of it. The overlay does
+  this for every movement it gives a container (`add_movement`, pinned by
+  `after_a_retarget_a_containers_keys_are_its_movement_then_its_accents` and
+  `core_animation_orders_a_layers_animations_by_begin_time`). Until it did,
+  `retarget` hid a bounce or nudge riding a retargeted container until the new
+  leg ended.
 - **No length.** A track of no length is a cut in the score and 0.25s in Core
   Animation, so a renderer places the node and installs nothing.
 
