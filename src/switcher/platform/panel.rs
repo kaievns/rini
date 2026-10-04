@@ -40,6 +40,7 @@ use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::platform::layer::{set_contents, set_layer_contents};
 use crate::pictures::platform::picture::Picture;
+use crate::pictures::platform::service::Pictures;
 use crate::switcher::domain::entries::{BEHIND, CardBehind, Entry, cards_behind};
 use crate::switcher::domain::layout::{Metrics, Strip, Tile, lay_out};
 use crate::switcher::domain::motion::{GLIDE_SECONDS, glides};
@@ -195,6 +196,14 @@ impl Row {
     }
 }
 
+/// Every window `rows` draw a card of, top cards and those behind, which are the pictures a switch
+/// reads and warms; never a window a stack stands for but does not draw.
+pub fn drawn_windows(rows: &[Row]) -> Vec<rini_core::ids::WindowId> {
+    rows.iter()
+        .flat_map(|row| std::iter::once(row.window).chain(row.behind.iter().copied()))
+        .collect()
+}
+
 /// What a draw does to the layers' geometry.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Move {
@@ -249,15 +258,13 @@ pub struct SwitcherPanel {
     /// Configured icon files already read, by path. `None` is cached too, so a missing file is warned
     /// about once rather than on every redraw.
     file_icons: HashMap<std::path::PathBuf, Option<Retained<objc2_core_graphics::CGImage>>>,
-    /// Pictures handed over by the animation engine, by window.
-    ///
-    /// Kept across opens: a picture that was good enough to draw last time is still better than a grey
-    /// box, and the engine only ever sends more.
-    pictures: HashMap<rini_core::ids::WindowId, Picture>,
+    /// Where the cards' pictures are read, at every draw. Nothing is kept here: a window's picture is
+    /// whatever the cache holds of it now.
+    pictures: Pictures,
 }
 
 impl SwitcherPanel {
-    pub fn new(mtm: MainThreadMarker, on_pick: OnPick) -> Option<Self> {
+    pub fn new(mtm: MainThreadMarker, on_pick: OnPick, pictures: Pictures) -> Option<Self> {
         // A placeholder frame: every open recomputes it from the screen it is showing on.
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(600.0, 200.0));
         let window: Retained<NSPanel> = unsafe {
@@ -361,7 +368,7 @@ impl SwitcherPanel {
             metrics,
             visible: false,
             scale,
-            pictures: HashMap::default(),
+            pictures,
             app_icons: HashMap::default(),
             file_icons: HashMap::default(),
             last: None,
@@ -431,8 +438,8 @@ impl SwitcherPanel {
 
     /// Draw the strip again with whatever is now known, if the panel is up.
     ///
-    /// The pictures arrive after the popup has already appeared — the engine is asked on the open and
-    /// answers a moment later — so without this the first open of a switch would stay grey.
+    /// The pictures warmed on the open land after the popup has already appeared, so without this the
+    /// first open of a switch would stay grey.
     pub fn redraw(&mut self) {
         if !self.visible {
             return;
@@ -444,16 +451,9 @@ impl SwitcherPanel {
         self.place(&last.strip, &last.rows, last.selected, Move::Leave);
     }
 
-    /// Take the pictures the animation engine holds, and redraw if the panel is up.
-    pub fn set_pictures(&mut self, pictures: Vec<(rini_core::ids::WindowId, Picture)>) {
-        for (window, snapshot) in pictures {
-            self.pictures.insert(window, snapshot);
-        }
-    }
-
-    /// Whether a window already has a picture, so the caller knows what is worth warming.
-    pub fn has_picture(&self, window: rini_core::ids::WindowId) -> bool {
-        self.pictures.contains_key(&window)
+    /// Whether the last draw has a card of `window`.
+    pub fn draws(&self, window: rini_core::ids::WindowId) -> bool {
+        self.last.as_ref().is_some_and(|last| drawn_windows(&last.rows).contains(&window))
     }
 
     /// Order the panel out. Ordering rather than fading: an alpha-0 window still hit-tests, and this
@@ -620,13 +620,17 @@ impl SwitcherPanel {
         rows: &[Row],
         badges: &[Option<Retained<objc2_core_graphics::CGImage>>],
     ) {
+        // `usable`, not `get`: the cheap capture route returns a sliver for exactly the windows a
+        // switcher exists to show. Age is no reason to refuse one.
+        let pictures: HashMap<rini_core::ids::WindowId, Picture> =
+            self.pictures.usable_many(&drawn_windows(rows)).into_iter().collect();
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for (index, row) in rows.iter().enumerate() {
             if let Some(tile) = self.tiles.get(index) {
                 // Scaled to fit rather than cropped: a cropped thumbnail of a browser is a rectangle
                 // of text.
-                self.draw_picture(tile, row.window, unsafe {
+                draw_picture(tile, pictures.get(&row.window), unsafe {
                     objc2_quartz_core::kCAGravityResizeAspect
                 });
             }
@@ -637,7 +641,7 @@ impl SwitcherPanel {
                         card.setHidden(false);
                         // Filled and cropped: only the card's top edge shows, and a fitted picture in
                         // a narrower card would leave that edge a band of placeholder.
-                        self.draw_picture(card, window, unsafe {
+                        draw_picture(card, pictures.get(&window), unsafe {
                             objc2_quartz_core::kCAGravityResizeAspectFill
                         });
                     }
@@ -663,21 +667,6 @@ impl SwitcherPanel {
         CATransaction::commit();
     }
 
-    fn draw_picture(
-        &self,
-        card: &CALayer,
-        window: rini_core::ids::WindowId,
-        gravity: &CALayerContentsGravity,
-    ) {
-        match self.pictures.get(&window) {
-            Some(snapshot) => {
-                card.setContentsGravity(gravity);
-                set_layer_contents(card, snapshot);
-            }
-            // Left as the placeholder slab. A card with no picture still reads as a card.
-            None => unsafe { card.setContents(None) },
-        }
-    }
 
     /// Where each row SITS, and where the selection's ring sits.
     ///
@@ -762,6 +751,17 @@ fn caption_text(row: &Row) -> String {
     format!("{}\n{}", row.app_name, detail)
 }
 
+fn draw_picture(card: &CALayer, picture: Option<&Picture>, gravity: &CALayerContentsGravity) {
+    match picture {
+        Some(picture) => {
+            card.setContentsGravity(gravity);
+            set_layer_contents(card, picture);
+        }
+        // Left as the placeholder slab. A card with no picture still reads as a card.
+        None => unsafe { card.setContents(None) },
+    }
+}
+
 /// The backing scale to draw at.
 ///
 /// 2.0 rather than the display's own: the panel is built once and shown on whichever display a
@@ -788,6 +788,28 @@ mod tests {
             icon: None,
             behind: Vec::new(),
         }
+    }
+
+    /// A switch reads and warms the cards it draws: each row's top window, then those behind it.
+    #[test]
+    fn the_windows_drawn_are_each_rows_cards_in_order() {
+        let lone = Row {
+            window: WindowId::new(2, 1),
+            ..row("Slack", "general")
+        };
+        let stack = Row {
+            behind: vec![WindowId::new(1, 2), WindowId::new(1, 3)],
+            ..row("Ghostty", "~")
+        };
+        assert_eq!(
+            drawn_windows(&[stack, lone]),
+            vec![
+                WindowId::new(1, 1),
+                WindowId::new(1, 2),
+                WindowId::new(1, 3),
+                WindowId::new(2, 1)
+            ]
+        );
     }
 
     fn ghostty(idx: u32, width: f64) -> Candidate {

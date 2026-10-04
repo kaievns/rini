@@ -18,6 +18,7 @@ use objc2_core_foundation::CGRect;
 
 use rini_runloop::channel;
 
+use crate::pictures::platform::service::Pictures;
 use crate::switcher::domain::reveal::{Draw, Reveal};
 use crate::switcher::platform::panel::{OnPick, Row, SwitcherPanel};
 
@@ -37,13 +38,9 @@ pub enum Event {
     },
     /// Take the panel off screen.
     Hide,
-    /// Pictures the animation engine already held. Drawn on the next `Show`, and kept for later ones.
-    Pictures(
-        Vec<(
-            rini_core::ids::WindowId,
-            crate::pictures::platform::picture::Picture,
-        )>,
-    ),
+    /// The pictures service took a picture of this window: drawn at once if the popup is up with a
+    /// card of it, without moving anything.
+    Landed(rini_core::ids::WindowId),
 }
 
 /// Owns the panel and pumps the channel.
@@ -60,10 +57,12 @@ pub struct SwitcherActor {
     on_pick: OnPick,
     /// The latest draw asked for while the hold is being waited out, drawn when it is up.
     waiting: Option<(Vec<Row>, usize, CGRect)>,
+    /// Where the panel reads its cards' pictures.
+    pictures: Pictures,
 }
 
 impl SwitcherActor {
-    pub fn new(requests: Receiver, mtm: MainThreadMarker, on_pick: OnPick) -> Self {
+    pub fn new(requests: Receiver, mtm: MainThreadMarker, on_pick: OnPick, pictures: Pictures) -> Self {
         Self {
             requests,
             panel: None,
@@ -72,6 +71,7 @@ impl SwitcherActor {
             reveal: Reveal::default(),
             on_pick,
             waiting: None,
+            pictures,
         }
     }
 
@@ -102,15 +102,13 @@ impl SwitcherActor {
                         panel.hide();
                     }
                 }
-                Event::Pictures(pictures) => {
-                    // Only if a panel exists. Pictures arriving before the first switch have nowhere
-                    // to go, and building a window to hold them would pay 112ms for nothing.
-                    if let Some(panel) = self.panel.as_mut() {
-                        let count = pictures.len();
-                        panel.set_pictures(pictures);
-                        if count > 0 {
-                            panel.redraw();
-                        }
+                Event::Landed(window) => {
+                    // Only a panel that draws the window. A picture landing before the first switch
+                    // has nowhere to go, and building a window for it would pay 112ms for nothing.
+                    if let Some(panel) = self.panel.as_mut()
+                        && panel.draws(window)
+                    {
+                        panel.redraw();
                     }
                 }
             }
@@ -139,7 +137,7 @@ impl SwitcherActor {
     /// so the first popup does not pay it either.
     fn ensure_panel(&mut self) {
         if self.panel.is_none() {
-            self.panel = SwitcherPanel::new(self.mtm, self.on_pick.clone());
+            self.panel = SwitcherPanel::new(self.mtm, self.on_pick.clone(), self.pictures.clone());
             if self.panel.is_none() {
                 if !self.warned {
                     warn!("could not create the switcher panel; switching will work without it");

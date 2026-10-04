@@ -660,9 +660,10 @@ display. Observed over five animations from a cold start:
 ```
 
 Reusing the previous picture instead of asking again is what kept the cold-start
-composite in place forever, so the render never got its turn. Asking every time is
-cheap now: in the steady state `capture_backdrop` clones the cached render and posts
-an asynchronous refresh, and only pays for a composite before the first render lands.
+composite in place forever, so the render never got its turn. The pictures service now
+renders the desktop whenever the display changes, and again at the quiet after a flight
+that found it stale, and a transition is dressed with the render it holds; only a
+transition before the first render of its display lands pays for a composite.
 
 Either way the desktop has to be capturable as a DISPLAY, not only as a set of
 windows:
@@ -814,7 +815,7 @@ canvas animation, requested=20, tiles=17, missing=0, misshapen=3
 The overlay is opaque, so a dropped tile is a window-shaped hole for the length of
 the animation. The windows appeared to vanish and come back.
 
-The cause was one word in the warm filter. `warm_windows` skipped any window that
+The cause was one word in the warm filter. It skipped any window that
 already had a "usable" picture, and usable means the picture covers the window it
 was taken FROM, not that it fits the window's size NOW. A strip re-fit had widened
 these from 859pt to 1147pt, so their 859pt pictures stayed usable, stayed
@@ -1450,7 +1451,7 @@ layer tree would again have to be caught by eye.
 
 The one that caused "the windows are scaled". `SCStreamConfiguration.width` and
 `.height` are in PIXELS, and the service asks for the window's point size times
-the backing scale. With `captureResolution = .nominal` ScreenCaptureKit renders
+the scale it captures at, 2x. With `captureResolution = .nominal` ScreenCaptureKit renders
 the window at its POINT size into that pixel-sized buffer, so on a 2x display
 the window fills the top-left quarter and the rest is transparent. Measured on
 one window, same buffer each time:
@@ -1923,8 +1924,8 @@ border to the bright one when the overlay lifted. That is the flicker that promp
 the request in the first place; the shadow was only half of it.
 
 A focus change now asks for a fresh picture of BOTH windows, the one gaining focus
-and the one losing it, straight to the capture service with no size test in the way.
-Background work, so it costs nothing on the way into an animation.
+and the one losing it, at focus priority: no size test in the way, and through a
+flight's hold. Background work, so it costs nothing on the way into an animation.
 
 ## A render of the wrong display, drawn at its own size
 
@@ -1932,24 +1933,28 @@ The wallpaper appeared to zoom in during some animations and not others. Two
 compounding causes, both about a desktop render outliving the display it was taken
 of:
 
-- `ScreenCaptureKitQueue::set_scale` was the only invalidation, and it acts on the backing
-  scale. Both displays here are 2x, so moving the overlay between them invalidated
-  nothing, and a render already in flight for one display landed as the cached
-  desktop for the other. `ScreenCaptureKitQueue::invalidate_desktop` bumps the desktop
-  render's revision on a display change so such a render cannot land. It first
-  bumped the one revision every capture carried, which dropped every window
+- A change of backing scale was the only invalidation. Both displays here are 2x,
+  so moving the overlay between them invalidated nothing, and a render already in
+  flight for one display landed as the cached desktop for the other. A render now
+  belongs to the display it was asked for: the capture schedule refuses one of a
+  display the overlay has left, and renders the new display's after it. The first
+  fix bumped one revision every capture carried, which dropped every window
   capture in flight too; a window's picture belongs to no display, and with two
   displays attached each flight on the other one threw them away (2026-09-29:
   the first layout passes after a restart asked for 51 pictures, and 14 windows
-  had one 11s later). The engine keeps the backdrop,
-  desktop render and bar picture in one `DisplayPictures` forgotten as a unit: a
-  display change used to clear only the bar, and the overlay drew an external
-  display's 3008x1692 desktop behind a built-in display's strips on a 1728x1117
-  overlay. The per-window path reuses the shown backdrop rather than recapturing:
-  a desktop composite measures 13ms to 36ms, a frame or two of lag on every
-  focus change, while re-applying a held picture is a pointer assignment.
-- `capture_backdrop` size-checked the SkyLight composite but handed the cached
-  ScreenCaptureKit render over unchecked.
+  had one 11s later). The second asked for the new display's render before it
+  invalidated the old one, so the render it asked for was the one thrown away and
+  every flight after a display change fell back to the composite on the main
+  thread, until 2026-10-04. The pictures service keeps the desktop render and the
+  bar picture of one display, replaced together when the display changes, and a
+  transition reads them only for the display it flies on: a display change used
+  to clear only the bar, and the overlay drew an external display's 3008x1692
+  desktop behind a built-in display's strips on a 1728x1117 overlay. With nothing
+  new in hand the overlay keeps the backdrop it already shows rather than
+  recapturing: a desktop composite measures 13ms to 36ms, a frame or two of lag on
+  every focus change, while keeping a held picture costs nothing.
+- The composite was size-checked, but the cached ScreenCaptureKit render was handed
+  over unchecked.
 
 The backdrop layer is sized from the picture rather than from the overlay, which is
 what keeps it in register with the real desktop. Given a 3008x1692 render of the
@@ -1957,7 +1962,8 @@ external display, that lays the wallpaper out at 3008x1692 inside a 1728x1117
 overlay, so only its top-left corner is visible: the wallpaper looks zoomed in until
 the right render arrives, which is exactly the intermittence that was reported.
 
-`spans_display` now guards both routes, and a display change invalidates whatever is
+`spans_display` now guards both routes: a render is kept only if it spans its display,
+and a composite is drawn only if it does. A display change refuses whatever render is
 in flight.
 
 Two things this rules out, both measured while chasing it. The desktop capture fills

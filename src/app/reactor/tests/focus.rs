@@ -476,17 +476,14 @@ fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
 
     reactor.handle_event(Event::WindowServerFocusChanged(arriving, space));
 
-    let mut refreshed = Vec::new();
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::RefreshFocus(target) = event {
-            refreshed.push(target.window);
-        }
-    }
+    let refreshed = asked_at(
+        &pictures_asked(&mut pictures),
+        crate::pictures::domain::schedule::Priority::Focus,
+    );
     assert!(
         refreshed.contains(&arriving),
         "the window gaining focus: {refreshed:?}"
@@ -497,9 +494,9 @@ fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
     );
 }
 
-/// Focus landing where it already is changes no appearance, so it is not worth a capture.
+/// Focus landing where it already is has no window losing it: only the window itself is asked for.
 #[test]
-fn focus_that_does_not_move_asks_for_nothing() {
+fn focus_that_does_not_move_asks_for_the_window_alone() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -509,16 +506,13 @@ fn focus_that_does_not_move_asks_for_nothing() {
     apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
     reactor.refresh_focus_pictures(window);
 
-    let mut refreshed = Vec::new();
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::RefreshFocus(target) = event {
-            refreshed.push(target.window);
-        }
-    }
+    let refreshed = asked_at(
+        &pictures_asked(&mut pictures),
+        crate::pictures::domain::schedule::Priority::Focus,
+    );
     assert_eq!(
         refreshed,
         vec![window],
@@ -1086,17 +1080,13 @@ fn the_first_pass_to_lay_a_window_out_pictures_it() {
     reactor.update_layout_or_warn(false, false, None);
     reactor.update_layout_or_warn(false, false, None);
     reactor.pictured_windows.clear();
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut pictures = reactor.connect_test_pictures();
     let mut warmed_by_pass = || {
         reactor.update_layout_or_warn(false, false, None);
-        let mut warmed = Vec::new();
-        while let Ok((_, event)) = animation_rx.try_recv() {
-            if let crate::animation::platform::engine::Event::WarmWindows(targets) = event {
-                warmed.extend(targets.into_iter().map(|target| target.window));
-            }
-        }
-        warmed
+        asked_at(
+            &pictures_asked(&mut pictures),
+            crate::pictures::domain::schedule::Priority::Warm,
+        )
     };
 
     let first = warmed_by_pass();
@@ -1123,26 +1113,24 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
         assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
         reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
     };
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx.clone());
+    let mut asked = reactor.connect_test_pictures();
+    let pictures = reactor.communication_manager.pictures.clone();
     add(&mut reactor, early, 901, workspaces[0]);
     reactor.update_layout_or_warn(false, false, None);
 
-    // The late window arrives and is settled into place with no engine listening.
-    reactor.communication_manager.workspace_animation_tx = None;
+    // The late window arrives and is settled into place with no pictures service listening.
+    reactor.communication_manager.pictures = None;
     add(&mut reactor, late, 902, workspaces[1]);
     reactor.update_layout_or_warn(false, false, None);
     reactor.update_layout_or_warn(false, false, None);
-    while animation_rx.try_recv().is_ok() {}
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    pictures_asked(&mut asked);
+    reactor.communication_manager.pictures = pictures;
 
     reactor.update_layout_or_warn(false, false, None);
-    let mut warmed = Vec::new();
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::WarmWindows(targets) = event {
-            warmed.extend(targets.into_iter().map(|target| target.window));
-        }
-    }
+    let warmed = asked_at(
+        &pictures_asked(&mut asked),
+        crate::pictures::domain::schedule::Priority::Warm,
+    );
     assert!(warmed.contains(&late), "{warmed:?}");
     assert!(!warmed.contains(&early), "pictured once already: {warmed:?}");
 }

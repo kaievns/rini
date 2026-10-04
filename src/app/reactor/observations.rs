@@ -542,9 +542,9 @@ impl Reactor {
         // may have removed the window, and forgotten it, already. See "A closed window disappears" in
         // `src/animation/docs/animation-smoothness.md`.
         if self.state.windows.window(window).is_some()
-            && let Some(tx) = &self.communication_manager.workspace_animation_tx
+            && let Some(pictures) = &self.communication_manager.pictures
         {
-            _ = tx.send(crate::animation::platform::engine::Event::ForgetWindow(window));
+            pictures.forget(window);
         }
         let mut outcome = window_workflow::handle_window_destroyed(
             &mut self.state,

@@ -19,11 +19,11 @@ edge bounce are all flights of the same thing.
 | `domain/motion/strip_move.rs` | A window moved along the strip: where the two columns changing places start, which moves step the whole strip, and the column such a move holds on it |
 | `domain/timing.rs`, `flight.rs`, `admission.rs` | When work happens, what a flight is, and how a mid-flight request is admitted |
 | `domain/pass.rs` | Sorting a layout pass into moves, unmoved windows and warm targets |
-| `platform/engine.rs` | `FlightEngine`: the actor. The overlay, the timer, and for now the picture cache and the ScreenCaptureKit queue |
+| `platform/engine.rs` | `FlightEngine`: the actor. The overlay, the timer, and the captures a flight takes in the air; a client of the pictures service for the rest |
 | `platform/overlay.rs` | `TileOverlay`: the `CALayer` tree and the one `CATransaction` per flight |
 
-Capturing the pictures a flight draws, judging them, and which capture work a flight
-permits are `pictures`' (`src/pictures/docs/README.md`).
+Capturing the pictures a flight draws, judging them, keeping them, and holding background capture
+off while a flight runs are `pictures`' (`src/pictures/docs/README.md`).
 
 ## The shape that matters
 

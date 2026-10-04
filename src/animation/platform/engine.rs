@@ -1,5 +1,5 @@
-//! Drives the capture-based animation overlay: owns the overlay, and for now the picture cache and
-//! the ScreenCaptureKit queue, both `crate::pictures`'.
+//! Drives the capture-based animation overlay: owns the overlay, and is a client of the pictures
+//! service (`crate::pictures::platform::service`) for what it draws.
 //! Runs on the main thread because Core Animation requires it.
 //!
 //! Design in `src/animation/docs/animation-smoothness.md`; measurements in `src/animation/docs/capture-overlay-research.md`.
@@ -8,7 +8,10 @@ use crate::animation::domain::admission::*;
 use crate::animation::domain::flight::*;
 use crate::animation::domain::request::AnimationRequest;
 use crate::animation::domain::timing::*;
-use crate::pictures::domain::schedule::*;
+use crate::pictures::domain::schedule::{
+    Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority, REVEAL_CHASE_ATTEMPTS,
+    REVEAL_CHASE_INTERVAL,
+};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -17,12 +20,11 @@ use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
-use crate::pictures::domain::cache::PictureCache;
 use crate::pictures::domain::settle::chase_settled;
 use crate::pictures::domain::stand_in::picture_or_stand_in;
-use crate::pictures::domain::target::PictureTarget;
+use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
 use crate::pictures::platform::picture::Picture;
-use crate::pictures::platform::screencapturekit::ScreenCaptureKitQueue;
+use crate::pictures::platform::service::Pictures;
 use crate::pictures::platform::skylight::{
     capture_via_framed_with_dressing, is_wholly_on_a_display,
 };
@@ -59,8 +61,6 @@ pub enum Event {
         /// Points to leave clear at the top for the bar; the overlay window starts below it.
         top_band: f64,
     },
-    /// Drop snapshots for windows that no longer exist, so the cache cannot grow without bound.
-    ForgetWindow(WindowId),
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide {
@@ -99,8 +99,8 @@ pub enum Event {
     StartMoving,
     /// No flight began for `SETTLE_BEFORE_CAPTURES` after a lift; run the owed captures.
     Quiet,
-    /// A background capture has landed. Posted by the ScreenCaptureKit queue.
-    SnapshotsReady,
+    /// A background capture has landed. Posted by the pictures service.
+    Pictures(crate::pictures::event::Event),
     /// A framed recapture has landed. `settled` (`chase_settled`) means the window has repainted;
     /// only settled pictures may satisfy a reveal hold or replace a resizing tile's picture.
     PictureReady {
@@ -108,31 +108,12 @@ pub enum Event {
         snapshot: Picture,
         settled: bool,
     },
-    /// A hairline harvest finished. Harvested off the capture service's completion queue, which
-    /// the framed capture behind it would deadlock (see `screencapturekit`).
+    /// A hairline harvest finished. Harvested off ScreenCaptureKit's completion queue, which the
+    /// framed capture behind it would deadlock (see `screencapturekit`).
     DressingReady {
         window: WindowId,
         dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
     },
-    /// Recapture the bar, now that nothing is animating over it. Posted by the refresh timer.
-    RefreshBar,
-    /// Recapture this window because focus moved to or from it: focus changes the rendering
-    /// without changing the size, so the ordinary warm's size test cannot see it.
-    RefreshFocus(PictureTarget),
-    /// Warm the cache for these windows. Only queues background work.
-    /// Targets come from the reactor because only it knows each window's real [`WindowId`].
-    WarmWindows(Vec<PictureTarget>),
-    /// Warm from the window server rather than rini's window table. Debug command only.
-    WarmCache,
-    /// Hand out the pictures already cached for these windows, to whoever installed `lend_snapshots`.
-    ///
-    /// A READ. It captures nothing and queues nothing, so it costs a hash lookup per window and is
-    /// safe to send on a keypress — which is the point, since the switcher popup cannot afford the
-    /// 40ms plus 14.5ms per window a capture costs.
-    ///
-    /// Answered through an installed callback rather than a reply channel, the way `place_frames`
-    /// already is: the animation feature must not name whoever is asking.
-    LendSnapshots(Vec<WindowId>),
 }
 
 /// Called with real-window frames to apply while the overlay covers them.
@@ -141,12 +122,6 @@ pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, CGRect)>)>;
 /// Called with `true` when an overlay goes up and `false` once flying has settled; see
 /// `domain::flight::FlightReport`.
 pub type OnFlight = Box<dyn Fn(bool)>;
-
-/// Called with the pictures this engine holds for the windows `LendSnapshots` asked about.
-///
-/// Only windows with a picture worth drawing appear; the rest are absent rather than present and
-/// empty, so the caller does not have to know what makes a snapshot usable.
-pub type LendSnapshots = Box<dyn Fn(Vec<(WindowId, Picture)>)>;
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
@@ -196,17 +171,6 @@ struct RunningAnimation {
     nudge: Option<(CGPoint, Duration)>,
     /// Dropped when the animation ends, which invalidates the timer.
     _clock: Option<RepeatingTimer>,
-}
-
-/// Whether `finish` should ask for a new desktop render: missing, for another display, or stale.
-fn desktop_render_wanted(render: Option<(Duration, (f64, f64))>, display: (f64, f64)) -> bool {
-    match render {
-        None => true,
-        Some((age, covered)) => {
-            !crate::pictures::domain::coverage::spans_display(covered, display)
-                || crate::pictures::domain::coverage::picture_is_stale(age)
-        }
-    }
 }
 
 /// The thumbprint of a snapshot's bitmap; `None` for a surface, which cannot be compared.
@@ -482,23 +446,20 @@ impl RunningAnimation {
         self.duration.mul_f64((1.0 - self.progress()).max(0.0))
     }
 
-    fn phase(&self) -> FlightPhase {
-        match (self.started.is_some(), self.awaiting.is_empty()) {
-            (true, _) => FlightPhase::Moving,
-            (false, false) => FlightPhase::Holding,
-            (false, true) => FlightPhase::FrameZero,
-        }
-    }
-
     /// `progress` as `should_swap_mid_flight` wants it: `None` until the flight starts moving.
     fn progress_if_started(&self) -> Option<f64> {
         self.started.map(|_| self.progress())
     }
 
-    /// Whether a focus refresh pass is due at `progress`; takes it when it is.
+    /// Whether a focus refresh pass is due at `progress`; takes it when it is. Only a moving flight
+    /// refreshes: a hold has nothing in flight to cut a picture onto.
     fn take_refresh(&mut self, progress: f64) -> bool {
-        let allowed = capture_work_allowed(self.phase(), CaptureKind::Refresh);
-        self.refresh.take_pass(progress, allowed)
+        self.refresh.take_pass(progress, self.started.is_some())
+    }
+
+    /// What this flight asks for the windows a pass has no picture of.
+    fn missing_pictures(&self) -> Priority {
+        missing_pictures_priority(self.started.is_some(), !self.awaiting.is_empty())
     }
 
     /// What `window` is doing in this flight when a picture of it lands, for `should_swap_mid_flight`.
@@ -676,39 +637,16 @@ impl RunningAnimation {
     }
 }
 
-/// The pictures that only make sense for the display the overlay is on; forgotten as a unit.
-/// See "A render of the wrong display" in `src/animation/docs/capture-overlay-research.md`.
-#[derive(Default)]
-struct DisplayPictures {
-    /// Whatever the backdrop is currently showing; reused rather than recaptured.
-    shown: Option<Picture>,
-    /// The desktop as ScreenCaptureKit rendered it: the only source that reliably has the wallpaper.
-    desktop: Option<Picture>,
-    /// The last usable picture of the bar; capturable only while the overlay is not covering it.
-    bar: Option<Picture>,
-    /// Whether a usable desktop has ever been drawn; until then a wallpaper-less capture beats black.
-    drawn_once: bool,
-}
-
-impl DisplayPictures {
-    /// Assigns the whole struct so a new field cannot be left behind.
-    fn forget(&mut self) {
-        *self = Self::default();
-    }
-}
-
 pub struct FlightEngine {
     rx: Receiver,
     /// Timers post back into this actor's own queue through it.
     tx: Sender,
     mtm: MainThreadMarker,
     overlay: Option<TileOverlay>,
-    cache: PictureCache<Picture>,
-    /// Full-size captures for windows SkyLight cannot serve. Results go through `cache`, never
-    /// straight to a tile.
-    service: ScreenCaptureKitQueue,
+    /// Every picture the flight draws, and the background captures that fill it.
+    pictures: Pictures,
     display: Option<(CGRect, f64)>,
-    /// Which display the overlay is on, for the desktop capture.
+    /// Which display the overlay is on, for the pictures of it.
     display_id: Option<u32>,
     /// Points reserved at the top of the display for the bar. The overlay window starts below it,
     /// while its coordinates stay the full display's, so a captured desktop and the tiles keep their
@@ -723,51 +661,28 @@ pub struct FlightEngine {
     after_flight: Option<AfterFlight>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
     last_animated: Vec<PictureTarget>,
-    /// Warms asked for during a flight, one per window, requested at `finish`.
-    deferred_warm: Vec<PictureTarget>,
-    /// Whether the desktop render was missing or stale at composition; re-rendered at `finish`.
-    deferred_desktop: bool,
     /// The focus the previous flight landed on, for `refresh_targets`. Kept across a flight that
     /// names no focus.
     last_focus: Option<WindowId>,
-    /// Everything held that is a picture of one particular display.
-    pictures: DisplayPictures,
-    /// Fires once after an animation, to recapture the bar away from the critical path.
-    bar_refresh: Option<RepeatingTimer>,
     /// Whether a bar under the overlay is pictured; see `Event::SetDisplay`.
     picture_bar: bool,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
-    lend_snapshots: Option<LendSnapshots>,
     on_flight: Option<OnFlight>,
     flight_report: FlightReport,
-    /// The stand-in's pixels and the scale they were drawn at, made once and redrawn only if the
-    /// display's scale changes.
-    placeholder_image: Option<(
-        f64,
-        objc2_core_foundation::CFRetained<objc2_core_graphics::CGImage>,
-    )>,
     /// When the edge bounce and the move nudge playing now come home.
     out_and_backs: OutAndBacks,
 }
 
 impl FlightEngine {
-    pub fn new(rx: Receiver, tx: Sender, mtm: MainThreadMarker) -> Self {
-        // The service completes on a background queue and wakes this actor through its channel.
-        let notify_tx = tx.clone();
-        let service = ScreenCaptureKitQueue::new(
-            2.0,
-            std::sync::Arc::new(move || {
-                _ = notify_tx.send(Event::SnapshotsReady);
-            }),
-        );
+    /// `pictures` tells this engine what lands through its sink, as `Event::Pictures`.
+    pub fn new(rx: Receiver, tx: Sender, mtm: MainThreadMarker, pictures: Pictures) -> Self {
         Self {
             rx,
             tx,
             mtm,
             overlay: None,
-            cache: PictureCache::new(),
-            service,
+            pictures,
             display: None,
             display_id: None,
             top_band: 0.0,
@@ -776,23 +691,13 @@ impl FlightEngine {
             quiet: None,
             after_flight: None,
             last_animated: Vec::new(),
-            deferred_warm: Vec::new(),
-            deferred_desktop: false,
             last_focus: None,
-            pictures: DisplayPictures::default(),
-            bar_refresh: None,
             picture_bar: true,
             place_frames: None,
-            lend_snapshots: None,
             on_flight: None,
             flight_report: FlightReport::default(),
-            placeholder_image: None,
             out_and_backs: OutAndBacks::default(),
         }
-    }
-
-    pub fn set_lend_snapshots(&mut self, lend: LendSnapshots) {
-        self.lend_snapshots = Some(lend);
     }
 
     pub fn set_place_frames(&mut self, place: PlaceFrames) {
@@ -850,78 +755,32 @@ impl FlightEngine {
                 focus,
                 duration,
             } => self.start_bounce(windows, overshoot, final_frames, focus, duration),
-            Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
             Event::StartMoving => self.start_moving(),
             Event::Quiet => self.after_flight_captures(),
-            Event::RefreshBar => {
-                // One shot: dropping the timer stops it repeating.
-                self.bar_refresh = None;
-                self.refresh_bar();
-            }
-            Event::SnapshotsReady => self.collect_snapshots(),
+            Event::Pictures(landed) => self.pictures_landed(landed),
             Event::PictureReady { window, snapshot, settled } => {
                 self.picture_ready(window, snapshot, settled)
             }
             Event::DressingReady { window, dressing } => self.dressing_ready(window, dressing),
-            Event::WarmCache => self.warm_cache(),
-            Event::LendSnapshots(windows) => self.lend_snapshots(windows),
-            Event::WarmWindows(targets) => {
-                self.warm_windows(targets);
-            }
-            // Straight to the service, with no size test in the way.
-            Event::RefreshFocus(target) => self.service.request(vec![target]),
         }
     }
 
-    /// Moves completed background captures into the cache.
-    fn collect_snapshots(&mut self) {
-        if let Some(desktop) = self.service.take_desktop() {
-            debug!(
-                covered = format!(
-                    "{:.0}x{:.0}",
-                    desktop.coverage.covered.0, desktop.coverage.covered.1
-                ),
-                "desktop capture landed"
-            );
-            self.pictures.desktop = Some(desktop);
+    /// Takes a background capture the pictures service landed: at rest its window's hairline is
+    /// harvested, and a picture the cache took is offered to the running flight.
+    fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
+        let (window, taken) = match landed {
+            crate::pictures::event::Event::Taken { window, picture } => (window, Some(picture)),
+            crate::pictures::event::Event::Refused { window } => (window, None),
+        };
+        let covered = taken.as_ref().is_none_or(Picture::is_usable);
+        if harvests_landing(self.running.is_some(), covered) {
+            self.harvest_dressings(vec![window]);
         }
-        let landed = self.service.collect();
-        if landed.is_empty() {
-            return;
-        }
-        // Mid-flight the batch is cached without a hairline; `finish` harvests instead.
-        if capture_work_allowed(self.phase(), CaptureKind::Harvest) {
-            let harvested = self.running.as_ref().map(|running| &running.harvested);
-            let to_dress: Vec<WindowId> = landed
-                .iter()
-                .filter(|(window, snapshot)| {
-                    snapshot.is_usable() && !harvested.is_some_and(|done| done.contains(window))
-                })
-                .map(|(window, _)| *window)
-                .collect();
-            self.harvest_dressings(to_dress);
-        }
-        for (window, snapshot) in landed {
-            debug!(
-                pid = window.pid,
-                idx = window.idx.get(),
-                covered = format!(
-                    "{:.0}x{:.0}",
-                    snapshot.coverage.covered.0, snapshot.coverage.covered.1
-                ),
-                window_size = format!(
-                    "{:.0}x{:.0}",
-                    snapshot.coverage.window.0, snapshot.coverage.window.1
-                ),
-                usable = snapshot.is_usable(),
-                "background snapshot landed"
-            );
-            // Background captures are never settled: the service knows sizes, not paint states.
-            if self.cache.insert(window, snapshot.clone()) && snapshot.is_usable() {
-                self.offer_mid_flight(window, &snapshot, false);
-            }
+        // Background captures are never settled: the service knows sizes, not paint states.
+        if let Some(picture) = taken.filter(Picture::is_usable) {
+            self.offer_mid_flight(window, &picture, false);
         }
     }
 
@@ -964,108 +823,21 @@ impl FlightEngine {
         }
     }
 
-    /// Queues background captures for windows the reactor identified; during a flight they wait
-    /// in `deferred_warm` for `finish`. Returns the windows requested now.
-    fn warm_windows(&mut self, targets: Vec<PictureTarget>) -> Vec<WindowId> {
-        if !capture_work_allowed(self.phase(), CaptureKind::Warm) {
-            defer_warm(&mut self.deferred_warm, targets);
-            return Vec::new();
-        }
-        let wanted: Vec<PictureTarget> = targets
-            .into_iter()
-            // A usable picture of the wrong size, or a stale one, is recaptured. See "A window
-            // that was resized keeps a usable picture" in `src/animation/docs/capture-overlay-research.md`.
-            .filter(|target| {
-                let cached = self.cache.usable(target.window);
-                crate::pictures::domain::coverage::needs_capture(
-                    cached.map(|snapshot| snapshot.coverage),
-                    (target.size.width, target.size.height),
-                ) || cached.is_some_and(|snapshot| {
-                    crate::pictures::domain::coverage::picture_is_stale(
-                        snapshot.taken.elapsed(),
-                    )
-                })
-            })
-            .collect();
-        if wanted.is_empty() {
-            return Vec::new();
-        }
-        debug!(
-            count = wanted.len(),
-            "warming snapshots for reactor-supplied windows"
-        );
-        let requested = wanted.iter().map(|target| target.window).collect();
-        self.service.request(wanted);
-        requested
-    }
-
-    /// Queues background captures for every visible window on the display. Cheap to repeat.
-    /// Hand out what is already cached for `windows`, in the order asked.
-    ///
-    /// `usable` rather than `get`: the SkyLight route returns a sliver for exactly the off-screen and
-    /// inactive-workspace windows a switcher exists to show — measured at 40x1081 for an off-strip
-    /// window and 1x28 for one on a hidden workspace — and stretching a sliver across a row is worse
-    /// than showing no picture.
-    ///
-    /// Age is deliberately NOT a reason to refuse one. A ten-minute-old picture of a window beats a
-    /// grey box; staleness is a reason to warm, not to withhold.
-    fn lend_snapshots(&self, windows: Vec<WindowId>) {
-        let Some(lend) = &self.lend_snapshots else {
-            return;
-        };
-        let held: Vec<(WindowId, Picture)> = windows
-            .into_iter()
-            .filter_map(|window| self.cache.usable(window).cloned().map(|snap| (window, snap)))
-            .collect();
-        lend(held);
-    }
-
-    fn warm_cache(&mut self) {
-        let Some((display_frame, _)) = self.display else {
-            warn!("no display geometry yet; cannot warm the snapshot cache");
-            return;
-        };
-        let windows =
-            crate::windows::platform::window_server::visible_windows_on_display(display_frame);
-        let targets: Vec<PictureTarget> = windows
-            .into_iter()
-            .map(|(server_id, frame)| PictureTarget {
-                window: synthetic_window_id(server_id),
-                server_id,
-                size: frame.size,
-            })
-            .collect();
-        if targets.is_empty() {
-            return;
-        }
-        debug!(count = targets.len(), "warming the snapshot cache");
-        self.service.request(targets);
-    }
-
+    /// The overlay's geometry. The pictures of the display are the service's, told by the reactor.
     fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, picture_bar: bool, top_band: f64) {
-        if !picture_bar {
-            self.pictures.bar = None;
-        }
         self.picture_bar = picture_bar;
-        let first = self.display.is_none();
-        let changed = self.display != Some((frame, scale))
-            || self.display_id != Some(id)
-            || self.top_band != top_band;
         self.display = Some((frame, scale));
         self.display_id = Some(id);
         self.top_band = top_band;
-        self.service.set_scale(scale);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_frame(frame, top_band, scale);
         }
-        if first || changed {
-            self.warm_cache();
-            self.warm_desktop();
-            // The desktop render in flight belongs to the display just left; window captures do not.
-            self.service.invalidate_desktop();
-            self.pictures.forget();
-            self.arm_bar_refresh();
-        }
+    }
+
+    /// The display the overlay is on, as the pictures of it are keyed.
+    fn picture_display(&self) -> Option<Display> {
+        let ((frame, scale), id) = (self.display?, self.display_id?);
+        Some(Display { id, frame, scale })
     }
 
     /// Creates the overlay on first use and keeps it forever: creation is too slow to pay per
@@ -1085,7 +857,7 @@ impl FlightEngine {
     }
 
     /// Recaptures both ends of a focus change, framed where the window is wholly on a display and by
-    /// the service where it is clipped, which a framed capture returns only a sliver of.
+    /// ScreenCaptureKit where it is clipped, which a framed capture returns only a sliver of.
     /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
         let current = self.running.as_ref().and_then(|running| running.focus);
@@ -1117,7 +889,12 @@ impl FlightEngine {
                 })
             },
         );
-        self.service.request(clipped);
+        if !clipped.is_empty() {
+            self.pictures.ask(Ask {
+                priority: Priority::Focus,
+                targets: clipped,
+            });
+        }
     }
 
     /// Harvests hairlines for `windows`. Results come back as `DressingReady`, or as a whole
@@ -1172,9 +949,7 @@ impl FlightEngine {
         window: WindowId,
         dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
     ) {
-        if let Some(snapshot) = self.cache.get_mut(window) {
-            snapshot.dressing = Some(dressing.clone());
-        }
+        self.pictures.set_dressing(window, dressing.clone());
         let Some(running) = self.running.as_mut() else { return };
         running.harvested.insert(window);
         if let Some(overlay) = self.overlay.as_mut() {
@@ -1189,7 +964,7 @@ impl FlightEngine {
                 running.harvested.insert(window);
             }
         }
-        if self.cache.insert(window, snapshot.clone()) {
+        if self.pictures.insert(window, snapshot.clone()) {
             self.offer_mid_flight(window, &snapshot, settled);
         }
     }
@@ -1199,23 +974,16 @@ impl FlightEngine {
         self.running.as_ref().map(RunningAnimation::remaining)
     }
 
-    fn phase(&self) -> FlightPhase {
-        self.running.as_ref().map_or(FlightPhase::Idle, RunningAnimation::phase)
-    }
-
     /// Chases the first settled picture for a holding grow or entrance, one thread per window.
     /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
     fn chase_reveal_pictures(&self, awaiting: &[(WindowId, CGSize)]) {
-        if !capture_work_allowed(self.phase(), CaptureKind::Chase) {
-            return;
-        }
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for (window, size) in awaiting.iter().copied() {
             let server_id = WindowServerId::from(window);
             let tx = self.tx.clone();
             // The picture the tile flies from; a capture that no longer renders like it is the
             // app's repaint. An entrance has none.
-            let pre_resize = self.cache.get(window).and_then(bitmap_thumbprint);
+            let pre_resize = self.pictures.get(window).as_ref().and_then(bitmap_thumbprint);
             std::thread::Builder::new()
                 .name("reveal-chase".to_string())
                 .spawn(move || {
@@ -1323,25 +1091,6 @@ impl FlightEngine {
         true
     }
 
-    /// A stand-in for a window of `size`, never cached. `None` only if the pixels cannot be drawn.
-    fn placeholder_for(&mut self, size: CGSize, scale: f64) -> Option<Picture> {
-        if self.placeholder_image.as_ref().is_none_or(|(at, _)| *at != scale) {
-            let (image, _) = crate::pictures::platform::picture::placeholder_image(scale)?;
-            self.placeholder_image = Some((scale, image));
-        }
-        let (_, image) = self.placeholder_image.as_ref()?;
-        Some(crate::pictures::platform::picture::placeholder(
-            size,
-            image.clone(),
-        ))
-    }
-
-    /// The snapshot to draw for one window: any usable cached picture, whatever its shape; a
-    /// wrong-shaped one is drawn cropped. See "Resizes through the overlay" in the doc.
-    fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<Picture> {
-        self.cache.usable(request.window).cloned()
-    }
-
     /// Tiles for the border windows tracing the animated windows; each anchor is the window's real
     /// frame and its tile. See "Window borders during animations" in the doc.
     fn companion_tiles(
@@ -1357,11 +1106,8 @@ impl FlightEngine {
         // Every window rini manages is excluded, not only the pass's: parked windows share a frame.
         let managed = managed_server_ids(
             exclude,
-            self.cache.iter().map(|(window, _)| *window),
-            self.deferred_warm
-                .iter()
-                .chain(self.after_flight.iter().flat_map(|a| a.targets.iter()))
-                .map(|t| t.window),
+            self.pictures.windows().into_iter(),
+            self.after_flight.iter().flat_map(|a| a.targets.iter()).map(|t| t.window),
         );
         let candidates: Vec<(WindowServerId, CGRect)> =
             crate::windows::platform::window_server::visible_windows_on_display(display)
@@ -1393,7 +1139,7 @@ impl FlightEngine {
                 server_id,
                 size: frame.size,
             });
-            match self.cache.usable(window).cloned() {
+            match self.pictures.usable(window) {
                 Some(snapshot) => tiles.push(border_tile(anchor, real, (window, frame), snapshot)),
                 None => needs_capture.push(PictureTarget {
                     window,
@@ -1487,19 +1233,16 @@ impl FlightEngine {
                 );
                 continue;
             };
-            let snapshot = self.snapshot_for(request);
-            // Queued now so the next switch has pixels, even if this one does not.
-            if snapshot.as_ref().is_none_or(|s| {
-                s.source == crate::pictures::platform::picture::Route::SkyLight
-                    && !s.is_usable()
-            }) {
+            // Any usable picture, whatever its shape; a wrong-shaped one is drawn cropped. See
+            // "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
+            let snapshot = self.pictures.usable(request.window);
+            if snapshot.is_none() {
+                // Asked for now so the next switch has pixels, even if this one does not.
                 needs_capture.push(PictureTarget {
                     window: request.window,
                     server_id: request.server_id,
                     size: request.from.size,
                 });
-            }
-            if snapshot.is_none() {
                 debug!(
                     pid = request.window.pid,
                     idx = request.window.idx.get(),
@@ -1516,7 +1259,7 @@ impl FlightEngine {
                         .map(|info| info.frame)
                 },
                 display_frame,
-                || self.placeholder_for(request.to.size, scale),
+                || self.pictures.stand_in(request.to.size, scale),
             );
             match snapshot {
                 Some(snapshot) => {
@@ -1575,7 +1318,7 @@ impl FlightEngine {
                                 capture_ms = captured_at.elapsed().as_millis() as u64,
                                 "entrance from spawn"
                             );
-                            self.cache.insert(request.window, snapshot.clone());
+                            self.pictures.insert(request.window, snapshot.clone());
                             let from_o = to_overlay_space(from, display_frame);
                             let to_o = to_overlay_space(to, display_frame);
                             // Already at its slot (a cold cache, not an open): a still tile, no chase.
@@ -1637,18 +1380,7 @@ impl FlightEngine {
         let (companions, companion_targets) =
             self.companion_tiles(display_frame, &anchors, &exclude, &mut needs_capture);
         tiles.extend(companions);
-        if !needs_capture.is_empty() {
-            // Frame zero: the overlay is not up yet. A pass merging into a flight defers instead.
-            if capture_work_allowed(self.phase(), CaptureKind::NeedsCapture) {
-                debug!(
-                    count = needs_capture.len(),
-                    "queueing background captures for windows SkyLight could not serve"
-                );
-                self.service.request(needs_capture);
-            } else {
-                defer_warm(&mut self.deferred_warm, needs_capture);
-            }
-        }
+        self.ask_missing(needs_capture);
         debug!(
             requested = windows.len(),
             tiles = tiles.len(),
@@ -1678,8 +1410,7 @@ impl FlightEngine {
         if !worth_flying(moving_drawable, self.running.is_some()) {
             self.request_frames(final_frames);
             // Warm anyway, or the cache never fills: it only filled when an animation completed.
-            let targets = std::mem::take(&mut self.last_animated);
-            self.warm_windows(targets);
+            self.warm_last_animated();
             return;
         }
 
@@ -1910,29 +1641,41 @@ impl FlightEngine {
         if tiles.is_empty() {
             self.request_frames(final_frames);
             // Warm anyway, or the cache never fills.
-            let targets = std::mem::take(&mut self.last_animated);
-            self.warm_windows(targets);
+            self.warm_last_animated();
             return;
         }
 
         // A flight beginning inside the quiet period carries the owed captures to its own lift.
         self.quiet = None;
-        let held = self.pictures.shown.is_some();
-        let backdrop = self.capture_backdrop().or_else(|| self.pictures.shown.clone());
-        if backdrop.is_some() {
-            self.pictures.shown = backdrop.clone();
-        }
-        let (bar, strip) = self.bar_picture();
-        Self::log_dressing(label, backdrop.as_ref(), bar.as_ref(), strip, held);
+        let backdrop_drawn = self.overlay.as_ref().is_some_and(TileOverlay::backdrop_drawn);
+        let dressing = self
+            .picture_display()
+            .map(|display| self.pictures.dressing(display, self.picture_bar, backdrop_drawn));
+        let display_origin = self.display.map(|(frame, _)| frame.origin).unwrap_or_default();
         let Some(overlay) = self.ensure_overlay() else {
             self.request_frames(final_frames);
             return;
         };
         restack(&mut tiles, focus);
-        overlay.set_backdrop(backdrop.as_ref());
-        overlay.set_bar(bar.as_ref(), strip);
+        if let Some(dressing) = &dressing {
+            let strip = dressing.strip.map(|strip| {
+                CGRect::new(
+                    CGPoint::new(
+                        strip.origin.x - display_origin.x,
+                        strip.origin.y - display_origin.y,
+                    ),
+                    strip.size,
+                )
+            });
+            log_dressing(label, dressing, strip);
+            overlay.set_backdrop(dressing.desktop.as_ref());
+            overlay.set_bar(dressing.bar.as_ref(), strip);
+        }
         let plan = plan::FlightPlan::from(plan);
         overlay.install(&plan, &tiles, &band_plan(&plan, &tiles, focus));
+        // Held before the overlay shows: a bar read off the framebuffer from here on has it in.
+        self.pictures.hold(Hold::Transition);
+        let Some(overlay) = self.overlay.as_mut() else { return };
         // Shown at once, so the real windows can be placed underneath without a visible jump.
         overlay.show();
         let edge = self.flight_report.overlay_up();
@@ -2037,7 +1780,7 @@ impl FlightEngine {
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for window in &windows {
             let (from, to) = window.travel(from_offset, to_offset);
-            let cached = self.cache.usable(window.window).cloned();
+            let cached = self.pictures.usable(window.window);
             // A known window parked off this display with no picture flies as the stand-in, as on
             // the per-window path; see `stands_in`.
             let snapshot = match display_frame {
@@ -2045,7 +1788,7 @@ impl FlightEngine {
                     cached,
                     || real_frames.get(&window.server_id).copied(),
                     display,
-                    || self.placeholder_for(window.frame.size, scale),
+                    || self.pictures.stand_in(window.frame.size, scale),
                 ),
                 None => cached,
             };
@@ -2099,14 +1842,7 @@ impl FlightEngine {
         };
         tiles.extend(companions);
         self.last_animated.extend(companion_targets);
-        if !needs_capture.is_empty() {
-            // Frame zero unless this switch chains onto a flight; then it waits for `finish`.
-            if capture_work_allowed(self.phase(), CaptureKind::NeedsCapture) {
-                self.service.request(needs_capture);
-            } else {
-                defer_warm(&mut self.deferred_warm, needs_capture);
-            }
-        }
+        self.ask_missing(needs_capture);
         debug!(
             requested = windows.len(),
             tiles = tiles.len(),
@@ -2381,163 +2117,32 @@ impl FlightEngine {
         ))
     }
 
-    /// Asks for a fresh desktop render in the background, or defers it to `finish` while a flight
-    /// is up. Cheap to repeat.
-    fn warm_desktop(&mut self) {
-        if !capture_work_allowed(self.phase(), CaptureKind::Desktop) {
-            self.deferred_desktop = true;
+    /// Asks the pictures service for the windows a pass has no picture of: at frame zero if they can
+    /// still serve this flight, else as warms for the next.
+    fn ask_missing(&self, targets: Vec<PictureTarget>) {
+        if targets.is_empty() {
             return;
         }
-        let (Some((frame, _)), Some(id)) = (self.display, self.display_id) else {
-            return;
-        };
-        self.service.request_desktop(id, frame.size);
-    }
-
-    /// The desktop to draw behind the strips: the ScreenCaptureKit render when in hand, else a
-    /// SkyLight composite. See "The wallpaper is not reliably a window" in the research doc.
-    fn capture_backdrop(&mut self) -> Option<Picture> {
-        let (display_frame, scale) = self.display?;
-        let display_size = (display_frame.size.width, display_frame.size.height);
-
-        // A render asked for here would land mid-flight; `finish` asks instead.
-        let in_hand = self
-            .pictures
-            .desktop
+        let priority = self
+            .running
             .as_ref()
-            .map(|render| (render.taken.elapsed(), render.coverage.covered));
-        if desktop_render_wanted(in_hand, display_size) {
-            self.deferred_desktop = true;
-        }
-
-        // Size-checked: a render for the other display can land after a display change. See "A
-        // render of the wrong display, drawn at its own size" in `src/animation/docs/capture-overlay-research.md`.
-        if let Some(rendered) = self.pictures.desktop.clone().filter(|rendered| {
-            crate::pictures::domain::coverage::spans_display(
-                rendered.coverage.covered,
-                display_size,
-            )
-        }) {
-            self.pictures.drawn_once = true;
-            return Some(rendered);
-        }
-
-        // No render yet: the synchronous composite covers the gap rather than leaving the overlay black.
-        let desktop = crate::pictures::platform::desktop::desktop_backdrop_windows(display_frame);
-        let composite = crate::pictures::platform::skylight::capture_list_via_skylight(
-            &desktop.windows,
-            display_size,
-            scale,
-        );
-        let usable = composite.filter(|snapshot| {
-            crate::pictures::domain::coverage::is_backdrop_worth_drawing(
-                self.pictures.drawn_once,
-                desktop.has_wallpaper(),
-                snapshot.coverage.covered,
-                display_size,
-            )
-        });
-        match usable {
-            Some(snapshot) => {
-                self.pictures.drawn_once = true;
-                Some(snapshot)
-            }
-            None => {
-                debug!(
-                    windows = desktop.windows.len(),
-                    has_wallpaper = desktop.has_wallpaper(),
-                    wanted = format!("{:.0}x{:.0}", display_size.0, display_size.1),
-                    "no drawable desktop yet; keeping whatever the backdrop already holds"
-                );
-                None
-            }
-        }
-    }
-
-    /// Records what the overlay was dressed with; a black backdrop is only diagnosable after the fact.
-    fn log_dressing(
-        path: &str,
-        backdrop: Option<&Picture>,
-        bar: Option<&Picture>,
-        strip: Option<CGRect>,
-        held: bool,
-    ) {
+            .map_or(Priority::FrameZero, RunningAnimation::missing_pictures);
         debug!(
-            path,
-            held,
-            backdrop = backdrop
-                .map(|b| format!(
-                    "{:.0}x{:.0} {:?}",
-                    b.coverage.covered.0, b.coverage.covered.1, b.source
-                ))
-                .unwrap_or_else(|| "NONE".to_string()),
-            bar = bar
-                .map(|b| format!("{:.0}x{:.0}", b.coverage.covered.0, b.coverage.covered.1))
-                .unwrap_or_else(|| "NONE".to_string()),
-            strip = strip
-                .map(|r| format!(
-                    "{:.0},{:.0} {:.0}x{:.0}",
-                    r.origin.x, r.origin.y, r.size.width, r.size.height
-                ))
-                .unwrap_or_else(|| "none".to_string()),
-            "overlay dressed"
+            count = targets.len(),
+            ?priority,
+            "asking for pictures the flight has none of"
         );
+        self.pictures.ask(Ask { priority, targets });
     }
 
-    /// The bar's held picture and where it sits in overlay coordinates. Only the very first call
-    /// captures inline; [`Self::refresh_bar`] pays for the rest after an animation.
-    fn bar_picture(&mut self) -> (Option<Picture>, Option<CGRect>) {
-        let Some((display_frame, _)) = self.display.filter(|_| self.picture_bar) else {
-            return (None, None);
-        };
-        let strip = crate::pictures::platform::desktop::bar_strip(display_frame);
-        let Some(bounds) = strip.bounds else {
-            return (None, None);
-        };
-        if self.pictures.bar.is_none() {
-            self.refresh_bar();
-        }
-        let at = CGRect::new(
-            CGPoint::new(
-                bounds.origin.x - display_frame.origin.x,
-                bounds.origin.y - display_frame.origin.y,
-            ),
-            bounds.size,
-        );
-        (self.pictures.bar.clone(), Some(at))
-    }
-
-    /// Asks for the bar to be recaptured after `BAR_REFRESH_DELAY`: a capture taken as the overlay
-    /// hides still reads the overlay's own pixels out of the framebuffer.
-    fn arm_bar_refresh(&mut self) {
-        if !self.picture_bar {
-            return;
-        }
-        let tx = self.tx.clone();
-        self.bar_refresh = RepeatingTimer::every(BAR_REFRESH_DELAY, move || {
-            _ = tx.send(Event::RefreshBar);
-        });
-    }
-
-    /// Recaptures the bar on its own, keeping its alpha; a no-op while the overlay covers it.
-    /// See "The bar has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
-    fn refresh_bar(&mut self) {
-        let Some((display_frame, scale)) = self.display else {
-            return;
-        };
-        if self.overlay.as_ref().is_some_and(TileOverlay::is_visible) {
-            return;
-        }
-        let strip = crate::pictures::platform::desktop::bar_strip(display_frame);
-        let Some(bounds) = strip.bounds else { return };
-        let fresh = crate::pictures::platform::skylight::capture_list_via_skylight(
-            &strip.windows,
-            (bounds.size.width, bounds.size.height),
-            scale,
-        )
-        .filter(|snapshot| snapshot.fits(bounds.size));
-        if fresh.is_some() {
-            self.pictures.bar = fresh;
+    /// Warms the windows of the pass just composed, which is not flying.
+    fn warm_last_animated(&mut self) {
+        let targets = std::mem::take(&mut self.last_animated);
+        if !targets.is_empty() {
+            self.pictures.ask(Ask {
+                priority: Priority::Warm,
+                targets,
+            });
         }
     }
 
@@ -2578,6 +2183,7 @@ impl FlightEngine {
             debug!(windows, "overlay lifted");
             overlay.release_tiles();
         }
+        self.pictures.hold(Hold::Settling);
         let (harvested, focus) = self
             .running
             .take()
@@ -2587,7 +2193,6 @@ impl FlightEngine {
             self.last_focus = focus;
         }
         self.coalesce = None;
-        self.arm_bar_refresh();
 
         // The owed captures run after `SETTLE_BEFORE_CAPTURES`; a flight beginning first carries them over.
         let targets = std::mem::take(&mut self.last_animated);
@@ -2615,17 +2220,26 @@ impl FlightEngine {
         }
         let edge = self.flight_report.settled();
         self.report_flight(edge);
+        self.pictures.hold(Hold::Released);
         let Some(after) = self.after_flight.take() else { return };
         let animated: Vec<WindowId> = after.targets.iter().map(|target| target.window).collect();
-        let requested = if after.targets.is_empty() {
-            Vec::new()
-        } else {
-            self.warm_windows(after.targets)
-        };
+        // The windows the warm captures are harvested when their capture lands.
+        let requested: Vec<WindowId> = after
+            .targets
+            .iter()
+            .filter(|target| self.pictures.wants_warm(target))
+            .map(|target| target.window)
+            .collect();
+        if !after.targets.is_empty() {
+            self.pictures.ask(Ask {
+                priority: Priority::Warm,
+                targets: after.targets,
+            });
+        }
         let dressed: HashSet<WindowId> = animated
             .iter()
             .copied()
-            .filter(|window| self.cache.get(*window).is_some_and(|s| s.dressing.is_some()))
+            .filter(|window| self.pictures.get(*window).is_some_and(|s| s.dressing.is_some()))
             .collect();
         self.harvest_dressings(finish_harvest_set(
             &animated,
@@ -2633,13 +2247,6 @@ impl FlightEngine {
             &requested,
             &dressed,
         ));
-        let deferred = std::mem::take(&mut self.deferred_warm);
-        if !deferred.is_empty() {
-            self.warm_windows(deferred);
-        }
-        if std::mem::take(&mut self.deferred_desktop) {
-            self.warm_desktop();
-        }
     }
 
     /// Slides every window on screen in from an offset; touches no real window.
@@ -2683,6 +2290,37 @@ fn live_frame(server_id: WindowServerId) -> Option<CGRect> {
     crate::windows::platform::window_server::get_window(server_id)
         .map(|info| info.frame)
         .filter(|frame| frame.size.width > 0.0 && frame.size.height > 0.0)
+}
+
+/// Records what the overlay was dressed with; a black backdrop is only diagnosable after the fact.
+fn log_dressing(
+    path: &str,
+    dressing: &crate::pictures::platform::service::Dressing,
+    strip: Option<CGRect>,
+) {
+    debug!(
+        path,
+        backdrop = dressing
+            .desktop
+            .as_ref()
+            .map(|b| format!(
+                "{:.0}x{:.0} {:?}",
+                b.coverage.covered.0, b.coverage.covered.1, b.source
+            ))
+            .unwrap_or_else(|| "NONE".to_string()),
+        bar = dressing
+            .bar
+            .as_ref()
+            .map(|b| format!("{:.0}x{:.0}", b.coverage.covered.0, b.coverage.covered.1))
+            .unwrap_or_else(|| "NONE".to_string()),
+        strip = strip
+            .map(|r| format!(
+                "{:.0},{:.0} {:.0}x{:.0}",
+                r.origin.x, r.origin.y, r.size.width, r.size.height
+            ))
+            .unwrap_or_else(|| "none".to_string()),
+        "overlay dressed"
+    );
 }
 
 #[cfg(test)]
@@ -2793,24 +2431,6 @@ mod tests {
             Admitted::Retargeted
         );
         assert_eq!(merge_action(None, to), Admitted::Joined);
-    }
-
-    #[test]
-    fn forgetting_a_display_leaves_no_picture_behind() {
-        let mut pictures = DisplayPictures {
-            shown: None,
-            desktop: None,
-            bar: None,
-            drawn_once: true,
-        };
-        pictures.forget();
-        assert!(pictures.shown.is_none());
-        assert!(pictures.desktop.is_none());
-        assert!(pictures.bar.is_none());
-        assert!(
-            !pictures.drawn_once,
-            "a display we have never drawn has no backdrop to keep"
-        );
     }
 
     mod refresh {
@@ -3112,27 +2732,6 @@ mod tests {
                 decision,
                 SwapDecision::CacheOnly,
                 "a refresh at 0.98 cut onto the tile: {decision:?}"
-            );
-        }
-
-        /// T3 (1.2).
-        #[test]
-        fn no_capture_work_starts_between_frame_zero_and_lift() {
-            let cases = [
-                (FlightPhase::Moving, CaptureKind::Warm),
-                (FlightPhase::Moving, CaptureKind::Desktop),
-                (FlightPhase::Holding, CaptureKind::Refresh),
-                (FlightPhase::Moving, CaptureKind::Harvest),
-            ];
-            let allowed: Vec<String> = cases
-                .iter()
-                .filter(|(phase, kind)| capture_work_allowed(*phase, *kind))
-                .map(|(phase, kind)| format!("{phase:?}/{kind:?}"))
-                .collect();
-            assert!(
-                allowed.is_empty(),
-                "capture work allowed in flight: {}",
-                allowed.join(", ")
             );
         }
 
@@ -3581,127 +3180,6 @@ mod tests {
             );
         }
 
-        const PHASES: [FlightPhase; 4] = [
-            FlightPhase::Idle,
-            FlightPhase::FrameZero,
-            FlightPhase::Holding,
-            FlightPhase::Moving,
-        ];
-        const KINDS: [CaptureKind; 6] = [
-            CaptureKind::Warm,
-            CaptureKind::Desktop,
-            CaptureKind::Refresh,
-            CaptureKind::Chase,
-            CaptureKind::Harvest,
-            CaptureKind::NeedsCapture,
-        ];
-
-        /// The rule in 2.2, spelled out independently of the implementation.
-        fn expected_allowed(phase: FlightPhase, kind: CaptureKind) -> bool {
-            match (phase, kind) {
-                (FlightPhase::Idle, _) => true,
-                (_, CaptureKind::Chase) => true,
-                (FlightPhase::FrameZero, CaptureKind::NeedsCapture) => true,
-                (FlightPhase::Moving, CaptureKind::Refresh) => true,
-                _ => false,
-            }
-        }
-
-        fn target(idx: u32, width: f64) -> PictureTarget {
-            PictureTarget {
-                window: wid(idx),
-                server_id: WindowServerId::new(idx),
-                size: CGSize::new(width, 1081.0),
-            }
-        }
-
-        /// 2.2. The full table over phase x kind.
-        #[test]
-        fn capture_work_allowed_full_table() {
-            let mut allowed = 0usize;
-            for phase in PHASES {
-                for kind in KINDS {
-                    let got = capture_work_allowed(phase, kind);
-                    assert_eq!(got, expected_allowed(phase, kind), "{phase:?}/{kind:?}");
-                    allowed += got as usize;
-                }
-            }
-            // Idle 6, frame zero 2, holding 1, moving 2.
-            assert_eq!(allowed, 11);
-        }
-
-        /// 2.2. Seed 96, 200 runs.
-        #[test]
-        fn in_flight_capture_work_is_only_a_chase_or_the_refresh() {
-            let mut rng = Gen(96);
-            let mut allowed = 0usize;
-            for _ in 0..RUNS {
-                let phase = PHASES[rng.below(PHASES.len() as u64) as usize];
-                let kind = KINDS[rng.below(KINDS.len() as u64) as usize];
-                if phase == FlightPhase::Idle {
-                    assert!(
-                        capture_work_allowed(phase, kind),
-                        "seed 96: idle refused {kind:?}"
-                    );
-                    continue;
-                }
-                if capture_work_allowed(phase, kind) {
-                    allowed += 1;
-                    assert!(
-                        matches!(kind, CaptureKind::Chase | CaptureKind::Refresh)
-                            || (phase == FlightPhase::FrameZero
-                                && kind == CaptureKind::NeedsCapture),
-                        "seed 96: {kind:?} allowed at {phase:?}"
-                    );
-                    if kind == CaptureKind::Refresh {
-                        assert_eq!(phase, FlightPhase::Moving, "seed 96: a refresh while holding");
-                    }
-                }
-            }
-            assert!(allowed > 0, "generator sanity: nothing allowed in {RUNS} runs");
-        }
-
-        /// 2.2, 3.4.
-        #[test]
-        fn a_mid_flight_warm_is_deferred_once_per_window_and_drained_once() {
-            let mut deferred: Vec<PictureTarget> = Vec::new();
-            defer_warm(&mut deferred, vec![target(1, 859.0), target(2, 859.0)]);
-            defer_warm(&mut deferred, vec![target(1, 1147.0), target(3, 859.0)]);
-            let windows: Vec<WindowId> = deferred.iter().map(|t| t.window).collect();
-            assert_eq!(windows, vec![wid(1), wid(2), wid(3)], "one entry per window");
-            assert_eq!(
-                deferred[0].size.width, 1147.0,
-                "the later request replaces the earlier"
-            );
-
-            let drained = std::mem::take(&mut deferred);
-            assert_eq!(drained.len(), 3);
-            assert!(deferred.is_empty(), "a second drain has nothing");
-
-            // The desktop flag drains the same way.
-            let mut deferred_desktop = true;
-            assert!(std::mem::take(&mut deferred_desktop));
-            assert!(!std::mem::take(&mut deferred_desktop), "drained once");
-        }
-
-        /// 2.2.
-        #[test]
-        fn the_desktop_render_is_wanted_when_missing_misfit_or_stale() {
-            let display = (1728.0, 1117.0);
-            let fresh = Duration::from_millis(500);
-            let stale = Duration::from_secs(3);
-            assert!(desktop_render_wanted(None, display), "missing");
-            assert!(
-                desktop_render_wanted(Some((fresh, (2560.0, 1440.0))), display),
-                "misfit"
-            );
-            assert!(desktop_render_wanted(Some((stale, display)), display), "stale");
-            assert!(
-                !desktop_render_wanted(Some((fresh, display)), display),
-                "in hand"
-            );
-        }
-
         /// 2.2.
         #[test]
         fn finish_harvests_each_animated_window_at_most_once() {
@@ -3729,7 +3207,10 @@ mod tests {
         fn a_flight_starts_with_nothing_harvested() {
             let running = flight(None);
             assert!(running.harvested.is_empty());
-            assert!(!capture_work_allowed(running.phase(), CaptureKind::Harvest));
+            assert!(
+                !harvests_landing(true, true),
+                "a flight in the air harvests nothing"
+            );
         }
 
         const DISPLAY: CGRect = CGRect {
@@ -4240,24 +3721,19 @@ mod tests {
             assert_eq!(apply_frames_at_old(true), 0.5);
         }
 
-        /// P-3.4. `finish` drops the flight before it warms `last_animated`.
+        /// P-3.4. A flight at frame zero asks for its missing pictures at frame zero; holding or
+        /// moving, they are warms for the next flight, which the pictures service holds until the
+        /// quiet after the lift.
         #[test]
-        fn warming_and_the_desktop_render_are_allowed_once_the_flight_is_dropped() {
-            assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::Warm));
-            assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::Desktop));
-            assert!(capture_work_allowed(
-                FlightPhase::Idle,
-                CaptureKind::NeedsCapture
-            ));
-
+        fn missing_pictures_serve_the_flight_only_at_frame_zero() {
             let mut running = flight(None);
-            assert_eq!(running.phase(), FlightPhase::FrameZero);
+            assert_eq!(running.missing_pictures(), Priority::FrameZero);
             running.awaiting.push((wid(1), CGSize::new(859.0, 1081.0)));
-            assert_eq!(running.phase(), FlightPhase::Holding);
+            assert_eq!(running.missing_pictures(), Priority::Warm, "holding");
             running.started = Some(Instant::now());
-            assert_eq!(running.phase(), FlightPhase::Moving);
+            assert_eq!(running.missing_pictures(), Priority::Warm, "moving");
             running.awaiting.clear();
-            assert_eq!(running.phase(), FlightPhase::Moving);
+            assert_eq!(running.missing_pictures(), Priority::Warm, "moving");
         }
 
         /// P-3.5.
@@ -4267,7 +3743,8 @@ mod tests {
             let mut refused = 0usize;
             let mut decisions: Vec<SwapDecision> = Vec::new();
             for _ in 0..RUNS {
-                let mut cache: PictureCache<Picture> = PictureCache::new();
+                let mut cache: crate::pictures::domain::cache::PictureCache<Picture> =
+                crate::pictures::domain::cache::PictureCache::new();
                 let size = rng.on_screen().size;
                 for _ in 0..rng.below(4) + 1 {
                     let incoming = if rng.coin() {
@@ -4335,7 +3812,7 @@ mod tests {
             assert!(
                 refresh_targets(Some(wid(1)), Some(wid(2)), &[wid(1), wid(2), wid(3)]).len() <= 2
             );
-            assert!(capture_work_allowed(FlightPhase::Moving, CaptureKind::Refresh));
+            assert!(!fired.is_empty(), "a moving flight refreshes");
             // A second sweep on the same flight fires nothing: the slots are spent.
             assert!(!(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)));
         }
@@ -4370,7 +3847,10 @@ mod tests {
                 running.awaiting = awaiting.clone();
                 running.frames_applied = holding;
                 running.hold_deadline = Some(now + limit);
-                assert_eq!(running.phase(), FlightPhase::Holding, "seed 91");
+                assert!(
+                    running.started.is_none() && !running.awaiting.is_empty(),
+                    "seed 91: holding"
+                );
                 assert_eq!(
                     hold_wait(running.hold_deadline, now),
                     Some(limit.max(Duration::from_millis(10))),
@@ -4396,9 +3876,8 @@ mod tests {
                     running.tiles[0].snapshot.fits(to.size),
                     "seed 91: drawn from the reveal"
                 );
-                assert_eq!(
-                    running.phase(),
-                    FlightPhase::FrameZero,
+                assert!(
+                    running.started.is_none() && running.awaiting.is_empty(),
                     "seed 91: released, not moving"
                 );
             }
@@ -4411,7 +3890,8 @@ mod tests {
             let mut rng = Gen(95);
             for _ in 0..RUNS {
                 let slot = rng.on_screen();
-                let mut cache: PictureCache<Picture> = PictureCache::new();
+                let mut cache: crate::pictures::domain::cache::PictureCache<Picture> =
+                    crate::pictures::domain::cache::PictureCache::new();
                 cache.insert(wid(2), clipped(slot.size));
                 assert!(cache.usable(wid(1)).is_none(), "seed 95: never captured");
                 assert!(cache.usable(wid(2)).is_none(), "seed 95: a sliver");
@@ -4466,7 +3946,10 @@ mod tests {
                     running.awaiting.is_empty() && running.entrances.is_empty(),
                     "seed 96"
                 );
-                assert_eq!(running.phase(), FlightPhase::FrameZero, "seed 96");
+                assert!(
+                    running.started.is_none() && running.awaiting.is_empty(),
+                    "seed 96: at frame zero"
+                );
                 assert!(!running.frames_applied, "seed 96: nothing applied at frame zero");
                 assert_eq!(hold_wait(running.hold_deadline, Instant::now()), None, "seed 96");
                 assert_eq!(
@@ -4847,7 +4330,8 @@ mod tests {
         /// P-3.10.
         #[test]
         fn forgetting_a_window_empties_the_cache_even_while_a_clone_is_held() {
-            let mut cache: PictureCache<Picture> = PictureCache::new();
+            let mut cache: crate::pictures::domain::cache::PictureCache<Picture> =
+                crate::pictures::domain::cache::PictureCache::new();
             let size = CGSize::new(859.0, 1081.0);
             cache.insert(wid(1), test_snapshot(size));
             let held = cache.usable(wid(1)).cloned().expect("inserted");
@@ -7093,7 +6577,7 @@ mod tests {
             assert!(running.awaiting.is_empty());
             assert!(!chase_set.is_empty());
             assert_eq!(running.hold_deadline, None);
-            assert_eq!(running.phase(), FlightPhase::FrameZero);
+            assert!(running.started.is_none() && running.awaiting.is_empty());
             assert_eq!(
                 running.tile_state(wid(9), &test_snapshot(spawn.size)),
                 TileState::Reveal { fits: false },

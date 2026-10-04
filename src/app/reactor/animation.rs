@@ -108,14 +108,15 @@ impl AnimationManager {
             })
             .collect();
         if !first_laid_out.is_empty()
-            && let Some(tx) = &reactor.communication_manager.workspace_animation_tx
+            && let Some(pictures) = &reactor.communication_manager.pictures
         {
             reactor
                 .pictured_windows
                 .extend(first_laid_out.iter().map(|target| target.window));
-            _ = tx.send(crate::animation::platform::engine::Event::WarmWindows(
-                first_laid_out,
-            ));
+            pictures.ask(crate::pictures::domain::schedule::Ask {
+                priority: crate::pictures::domain::schedule::Priority::Warm,
+                targets: first_laid_out,
+            });
         }
         let plan = pass::plan(Self::gather(reactor, space, layout, skip_wid, true));
         // A strip scroll moves every window by the SAME vector: a viewport pan over the one
@@ -228,9 +229,12 @@ impl AnimationManager {
 
         // Warm whether or not this pass animated.
         if !warm.is_empty()
-            && let Some(tx) = &reactor.communication_manager.workspace_animation_tx
+            && let Some(pictures) = &reactor.communication_manager.pictures
         {
-            _ = tx.send(crate::animation::platform::engine::Event::WarmWindows(warm));
+            pictures.ask(crate::pictures::domain::schedule::Ask {
+                priority: crate::pictures::domain::schedule::Priority::Warm,
+                targets: warm,
+            });
         }
 
         if !use_overlay {

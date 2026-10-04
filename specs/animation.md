@@ -266,8 +266,9 @@ destination for a window already moving.
 `src/animation/domain/motion/` is the planning, `src/animation/domain/motion/strip_move.rs` the move
 along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
 `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. The pictures a flight
-draws are `src/pictures/`: whether one covers and fits its window, the stand-in, the blur and the
-capture work a flight permits in `src/pictures/domain/`, the captures in `src/pictures/platform/`
-(`src/pictures/platform/skylight.rs` for the framed capture with its blur,
-`src/pictures/platform/screencapturekit.rs` for the background queue). Measurements are in
+draws are `src/pictures/`: whether one covers and fits its window, the stand-in, the blur, and the
+schedule that holds background capture off while a flight runs in `src/pictures/domain/`; the
+captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs` for the framed capture with
+its blur, `src/pictures/platform/screencapturekit.rs` for the background captures), and the service
+that makes them and keeps the cache, `src/pictures/platform/service.rs`. Measurements are in
 `src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.

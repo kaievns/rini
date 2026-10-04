@@ -173,6 +173,13 @@ impl Reactor {
         rx
     }
 
+    /// Wire in a pictures service that only records what it is asked, returning the record.
+    pub fn connect_test_pictures(&mut self) -> PicturesAsked {
+        let (pictures, asked) = crate::pictures::platform::service::Pictures::detached();
+        self.communication_manager.pictures = Some(pictures);
+        asked
+    }
+
     /// Click a popup row the way the switcher panel does, returning the outcome.
     pub(crate) fn dispatch_test_pick(&mut self, window: WindowId) -> EventOutcome {
         self.dispatch_workflow(Event::SwitchPicked(window))
@@ -361,6 +368,31 @@ pub fn test_reactor_with_workspace_count(count: usize) -> Reactor {
     let mut settings = crate::app::config::VirtualWorkspaceSettings::default();
     settings.workspace_names = crate::workspaces::settings::numbered_names(count);
     test_reactor_with_workspace_settings(&settings)
+}
+
+/// What a test pictures service was asked; see `Reactor::connect_test_pictures`.
+pub type PicturesAsked = channels::Receiver<crate::pictures::platform::service::Command>;
+
+/// Everything the test pictures service was asked since it was last read.
+pub fn pictures_asked(asked: &mut PicturesAsked) -> Vec<crate::pictures::platform::service::Command> {
+    std::iter::from_fn(|| asked.try_recv().ok().map(|(_, command)| command)).collect()
+}
+
+/// The windows asked for at `priority`, in the order asked.
+pub fn asked_at(
+    commands: &[crate::pictures::platform::service::Command],
+    priority: crate::pictures::domain::schedule::Priority,
+) -> Vec<WindowId> {
+    commands
+        .iter()
+        .filter_map(|command| match command {
+            crate::pictures::platform::service::Command::Ask(ask) if ask.priority == priority => {
+                Some(ask.targets.iter().map(|target| target.window))
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect()
 }
 
 pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) -> Vec<ScreenInfo> {

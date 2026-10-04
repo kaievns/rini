@@ -421,6 +421,9 @@ pub struct TileOverlay {
     lifted: Option<Retained<CALayer>>,
     /// The real desktop, drawn behind everything and held still.
     backdrop: Retained<CALayer>,
+    /// Whether the backdrop holds a picture of the display the overlay is on: until then a desktop
+    /// captured without its wallpaper beats black.
+    backdrop_drawn: bool,
     /// The bar, redrawn on top with its own alpha since the overlay covers the real one. See "The
     /// bar has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
     bar: Retained<CALayer>,
@@ -537,6 +540,7 @@ impl TileOverlay {
             backdrop,
             bar,
             bar_drawn: false,
+            backdrop_drawn: false,
             containers: HashMap::new(),
             legs: HashMap::new(),
             lifted: None,
@@ -590,12 +594,11 @@ impl TileOverlay {
         self.backdrop.setContentsScale(self.scale);
         set_layer_contents(&self.backdrop, snapshot);
         self.backdrop.setHidden(false);
+        self.backdrop_drawn = true;
         commit_now();
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.visible
-    }
+    pub fn backdrop_drawn(&self) -> bool { self.backdrop_drawn }
 
     /// Repoints the overlay at a different display, a resolution change, or a change of the band the
     /// bar reserves at the top, and puts its window back wherever macOS has moved it.
@@ -613,6 +616,7 @@ impl TileOverlay {
         self.frame = frame;
         self.top_band = top_band;
         self.scale = scale;
+        self.backdrop_drawn = false;
         if let Some(view) = self.window.contentView() {
             view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size));
         }

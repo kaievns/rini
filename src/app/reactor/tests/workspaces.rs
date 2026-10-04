@@ -1251,11 +1251,10 @@ fn a_switch_with_one_entry_opens_no_popup() {
     );
 }
 
-/// The pictures asked for are the cards drawn: each stack's top window and the two behind it, never a
-/// window the stack stands for but does not draw.
+/// The pictures read and asked for are the cards drawn: each stack's top window and the two behind it,
+/// never a window the stack stands for but does not draw.
 #[test]
-fn a_switch_lends_and_warms_only_the_windows_it_draws() {
-    use crate::animation::platform::engine::Event as Engine;
+fn a_switch_reads_and_warms_only_the_windows_it_draws() {
     use crate::input::domain::switch_session::Signal;
 
     let ghostty: Vec<WindowId> = (1..=4).map(|idx| WindowId::new(1, idx)).collect();
@@ -1266,27 +1265,26 @@ fn a_switch_lends_and_warms_only_the_windows_it_draws() {
         &windows,
         &[ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0]],
     );
-    let _popup = reactor.connect_test_switcher();
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut popup = reactor.connect_test_switcher();
+    let mut pictures = reactor.connect_test_pictures();
 
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
     });
 
-    let (mut lent, mut warmed) = (Vec::new(), Vec::new());
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        match event {
-            Engine::LendSnapshots(windows) => lent.extend(windows),
-            Engine::WarmWindows(targets) => {
-                warmed.extend(targets.into_iter().map(|target| target.window))
-            }
-            _ => {}
+    let mut read = Vec::new();
+    while let Ok((_, event)) = popup.try_recv() {
+        if let crate::switcher::platform::actor::Event::Show { rows, .. } = event {
+            read.extend(crate::switcher::platform::panel::drawn_windows(&rows));
         }
     }
+    let warmed = asked_at(
+        &pictures_asked(&mut pictures),
+        crate::pictures::domain::schedule::Priority::Warm,
+    );
     let drawn = vec![ghostty[0], ghostty[1], ghostty[2], slack];
-    assert_eq!(lent, drawn);
+    assert_eq!(read, drawn);
     assert_eq!(warmed, drawn);
 }
 

@@ -556,6 +556,7 @@ impl Reactor {
         broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
         workspace_animation_tx: Option<crate::animation::platform::engine::Sender>,
+        pictures: Option<crate::pictures::platform::service::Pictures>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
@@ -576,6 +577,7 @@ impl Reactor {
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.communication_manager.workspace_animation_tx = workspace_animation_tx;
+        reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
@@ -651,6 +653,7 @@ impl Reactor {
                 gesture_tap_tx: None,
                 cursor_warp_tx: None,
                 workspace_animation_tx: None,
+                pictures: None,
                 raise_manager_tx,
                 event_broadcaster: broadcast_tx,
                 wm_sender: None,
@@ -1611,8 +1614,8 @@ impl Reactor {
         let focus_landed = outcome.focus_landed();
         // Ahead of the layout events, as on the AX path: the closed window's picture goes first.
         for window in outcome.forgotten_windows {
-            if let Some(tx) = &self.communication_manager.workspace_animation_tx {
-                _ = tx.send(crate::animation::platform::engine::Event::ForgetWindow(window));
+            if let Some(pictures) = &self.communication_manager.pictures {
+                pictures.forget(window);
             }
         }
         if !outcome.window_server_updates.is_empty() {
@@ -3054,25 +3057,16 @@ impl Reactor {
         let Some(screen) = screen else {
             return;
         };
-        // The windows drawn, not every window the entries stand for: a stack draws three at most.
-        let windows: Vec<WindowId> = rows
-            .iter()
-            .flat_map(|row| std::iter::once(row.window).chain(row.behind.iter().copied()))
-            .collect();
+        let windows = crate::switcher::platform::panel::drawn_windows(&rows);
         tx.send(crate::switcher::platform::actor::Event::Show {
             rows,
             selected: switch.cursor.index(),
             screen,
         });
 
-        // Ask for whatever pictures are already held. A READ, so it costs a hash lookup per window —
-        // capturing here would cost 40ms plus 14.5ms a window and the popup has to appear now.
-        if let Some(anim) = self.communication_manager.workspace_animation_tx.as_ref() {
-            anim.send(crate::animation::platform::engine::Event::LendSnapshots(
-                windows.clone(),
-            ));
-            // And queue captures for the rest, so the NEXT open has them. Background work; nothing is
-            // drawn and no window is touched.
+        // Queue captures of the cards drawn, so the NEXT open has them, and this one gets those that
+        // land while it is up. Background work; nothing is drawn and no window is touched.
+        if let Some(pictures) = self.communication_manager.pictures.as_ref() {
             let targets: Vec<crate::pictures::domain::target::PictureTarget> = windows
                 .iter()
                 .filter_map(|window| {
@@ -3085,7 +3079,10 @@ impl Reactor {
                 })
                 .collect();
             if !targets.is_empty() {
-                anim.send(crate::animation::platform::engine::Event::WarmWindows(targets));
+                pictures.ask(crate::pictures::domain::schedule::Ask {
+                    priority: crate::pictures::domain::schedule::Priority::Warm,
+                    targets,
+                });
             }
         }
     }
@@ -3613,10 +3610,10 @@ impl Reactor {
     ///
     /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
     /// it holds unless something better arrives, so this settles rather than re-capturing. During a
-    /// flight the animation actor holds the targets until lift ("Capture work in flight" in
+    /// flight the pictures service holds the targets until it settles ("Capture work in flight" in
     /// `src/animation/docs/animation-smoothness.md`), so calling this from the switch handler is safe.
     fn warm_all_workspaces(&mut self, space: SpaceId) {
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(pictures) = self.communication_manager.pictures.clone() else {
             return;
         };
         let Some(screen) = self
@@ -3665,7 +3662,10 @@ impl Reactor {
         if targets.is_empty() {
             return;
         }
-        _ = tx.send(crate::animation::platform::engine::Event::WarmWindows(targets));
+        pictures.ask(crate::pictures::domain::schedule::Ask {
+            priority: crate::pictures::domain::schedule::Priority::Warm,
+            targets,
+        });
     }
 
     /// Which workspace indices this switch is moving between.
@@ -4069,7 +4069,7 @@ impl Reactor {
     /// whose picture no longer FITS, so an unfocused capture stayed forever and its tile popped to the
     /// focused rendering when the overlay lifted. Background work, so this costs nothing on the way in.
     fn refresh_focus_pictures(&mut self, gaining: WindowId) {
-        let Some(tx) = &self.communication_manager.workspace_animation_tx else {
+        let Some(pictures) = &self.communication_manager.pictures else {
             return;
         };
         let losing = self
@@ -4077,18 +4077,23 @@ impl Reactor {
             .layout_engine
             .focused_window()
             .filter(|previous| *previous != gaining);
-        for window in [Some(gaining), losing].into_iter().flatten() {
-            let Some(state) = self.state.windows.window(window) else {
-                continue;
-            };
-            let Some(server_id) = state.info.sys_id else { continue };
-            _ = tx.send(crate::animation::platform::engine::Event::RefreshFocus(
-                crate::pictures::domain::target::PictureTarget {
+        let targets: Vec<crate::pictures::domain::target::PictureTarget> = [Some(gaining), losing]
+            .into_iter()
+            .flatten()
+            .filter_map(|window| {
+                let state = self.state.windows.window(window)?;
+                Some(crate::pictures::domain::target::PictureTarget {
                     window,
-                    server_id,
+                    server_id: state.info.sys_id?,
                     size: state.frame_monotonic.size,
-                },
-            ));
+                })
+            })
+            .collect();
+        if !targets.is_empty() {
+            pictures.ask(crate::pictures::domain::schedule::Ask {
+                priority: crate::pictures::domain::schedule::Priority::Focus,
+                targets,
+            });
         }
     }
 
@@ -4140,9 +4145,6 @@ impl Reactor {
     /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
     /// have no particular display in mind.
     pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) {
-        let Some(tx) = &self.communication_manager.workspace_animation_tx else {
-            return;
-        };
         let wanted = space.or_else(|| self.active_display_space());
         let Some(screen) = self
             .space_state
@@ -4153,13 +4155,27 @@ impl Reactor {
         else {
             return;
         };
-        _ = tx.send(crate::animation::platform::engine::Event::SetDisplay {
-            id: screen.id.as_u32(),
-            frame: objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()),
-            scale: screen.scale,
-            picture_bar: !self.config.settings.bar.enabled,
-            top_band: self.config.settings.top_band(),
-        });
+        let frame = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let picture_bar = !self.config.settings.bar.enabled;
+        if let Some(tx) = &self.communication_manager.workspace_animation_tx {
+            _ = tx.send(crate::animation::platform::engine::Event::SetDisplay {
+                id: screen.id.as_u32(),
+                frame,
+                scale: screen.scale,
+                picture_bar,
+                top_band: self.config.settings.top_band(),
+            });
+        }
+        if let Some(pictures) = &self.communication_manager.pictures {
+            pictures.set_display(
+                crate::pictures::domain::schedule::Display {
+                    id: screen.id.as_u32(),
+                    frame,
+                    scale: screen.scale,
+                },
+                picture_bar,
+            );
+        }
     }
 
     pub fn warp_mouse(&mut self, point: CGPoint) {

@@ -94,14 +94,16 @@ hit-tests. So the panel orders in and out instead, at ~14ms a gesture.
 taking a click would activate rini and deactivate the application being switched away from — inverting
 the one thing a switcher exists to do.
 
-**The pictures are borrowed, never captured here.** Capture costs ~40ms plus 14.5ms per window
+**The pictures are read, never captured here.** Capture costs ~40ms plus 14.5ms per window
 (measured, `src/animation/docs/capture-overlay-research.md`), so the panel cannot take one while the
-popup is opening. The flight engine already keeps the picture cache for the overlay, and
-`Event::LendSnapshots` is a READ of it — a hash lookup per window. The engine answers through an
-installed callback that the APP wires to this actor, so the switcher never names `animation`. It names
-`pictures`, whose `Picture` it is lent and whose `platform/layer.rs` sets its cards' contents
-(`src/pictures/docs/README.md`). Only the windows drawn are lent and warmed, a stack's top card and the
-two behind it, and opening a switch queues warms for those with no picture, so the next open has them.
+popup is opening. The panel holds a handle to the pictures service and reads its cache at every draw —
+one lock and a hash lookup per card — and keeps no copy of its own, so a closed window's picture is
+gone with the cache's. Only the windows drawn are read and warmed (`panel::drawn_windows`): a stack's
+top card and the two behind it. Opening a switch has the reactor queue warms for them, and each one
+that lands while the popup is up reaches this actor through the sink the APP wires
+(`Event::Landed`), which redraws without moving anything. The switcher names `pictures` and nothing
+of `animation`: `pictures`' handle, its `Picture`, and its `platform/layer.rs`, which sets the cards'
+contents (`src/pictures/docs/README.md`).
 
 **`usable`, not `get`.** The cheap capture route returns a sliver for exactly the off-screen and
 hidden-workspace windows this feature exists to show, and a sliver stretched across a row is worse than

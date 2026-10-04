@@ -2,14 +2,17 @@
 //!
 //! One pass over the layout becomes a flight: which windows move as a rigid group, which z-band each
 //! belongs to, and whether a picture that arrived mid-flight is worth swapping in. Decided over ids,
-//! frames and progress fractions, with nothing of Core Animation in it. Which capture work a flight
-//! permits is `crate::pictures::domain::schedule`. Design in `src/animation/docs/animation-smoothness.md`.
+//! frames and progress fractions, with nothing of Core Animation in it. When the pictures service makes
+//! the captures a flight asks for is `crate::pictures::domain::schedule`. Design in
+//! `src/animation/docs/animation-smoothness.md`.
 
 use objc2_core_foundation::CGRect;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use rini_core::ids::{WindowId, WindowServerId};
+
+use crate::pictures::domain::schedule::Priority;
 
 use super::timing::{
     COMPANION_CENTER_SLACK, COMPANION_EXPANSION, HANDOVER_THRESHOLD_PT, REFRESH_APPLY_BEFORE,
@@ -188,6 +191,23 @@ pub(in crate::animation) fn should_swap_mid_flight(
     }
 }
 
+/// What a pass asks for the windows it has no picture of. Frame zero while its flight has not yet
+/// begun holding or moving, since a capture landing then can still serve it; otherwise a warm, which
+/// waits out the flight for the next one.
+pub(in crate::animation) fn missing_pictures_priority(started: bool, holding: bool) -> Priority {
+    if started || holding {
+        Priority::Warm
+    } else {
+        Priority::FrameZero
+    }
+}
+
+/// Whether a background capture landing now has its window's hairline harvested: only at rest, since
+/// in flight the quiet after the lift harvests instead, and only for a capture that covered its window.
+pub(in crate::animation) fn harvests_landing(flying: bool, covered: bool) -> bool {
+    !flying && covered
+}
+
 /// Which animated windows `finish` harvests a hairline for: each at most once per flight.
 pub(in crate::animation) fn finish_harvest_set(
     animated: &[WindowId],
@@ -327,14 +347,6 @@ impl FlightReport {
     }
 }
 
-/// A stable [`WindowId`] derived from a window server id. Pid 0 keeps it clear of real ids.
-pub(in crate::animation) fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
-    WindowId {
-        pid: 0,
-        idx: std::num::NonZeroU32::new(server_id.as_u32().max(1)).unwrap(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,6 +418,22 @@ mod tests {
         assert!(!refresh.is_fresh(window(1), after(base, 90)));
         assert!(refresh.is_target(window(1)));
         assert!(!refresh.is_target(window(2)));
+    }
+
+    /// At a fresh composition, or merging into a flight still coalescing, the missing pictures may still
+    /// serve it; holding or moving, they are for the next flight.
+    #[test]
+    fn a_pass_asks_frame_zero_pictures_only_before_its_flight_holds_or_moves() {
+        assert_eq!(missing_pictures_priority(false, false), Priority::FrameZero);
+        assert_eq!(missing_pictures_priority(false, true), Priority::Warm, "holding");
+        assert_eq!(missing_pictures_priority(true, false), Priority::Warm, "moving");
+    }
+
+    #[test]
+    fn a_landing_is_harvested_only_at_rest_and_only_if_it_covered_its_window() {
+        assert!(harvests_landing(false, true));
+        assert!(!harvests_landing(true, true), "in flight");
+        assert!(!harvests_landing(false, false), "a sliver");
     }
 
     #[test]

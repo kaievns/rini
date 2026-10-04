@@ -278,8 +278,9 @@ The focus refresh recaptures only on a focus change, only its two ends
 being switched into and the one being left, so both land in their focus
 rendering. Focus changes a window's rendering without changing its size
 (measured on a 1pt window border: 65 of 255 focused against 42 unfocused).
-`Event::RefreshFocus` recaptures both ends when focus moves outside rini, by
-a click or an app activating itself. A move rini makes returns before it,
+The reactor asks the pictures service for both ends, at focus priority,
+when focus moves outside rini, by a click or an app activating itself
+(`refresh_focus_pictures`). A move rini makes returns before it,
 since the layout already holds that focus, so for those the flight's own
 refresh is the only recapture. A flight that moves focus nowhere recaptures
 nothing. It used to recapture the two frontmost tiles by depth on every
@@ -296,8 +297,9 @@ it had then. The window being left kept its focused rendering to the lift
 and changed at rest, which is the flicker reported that day. A pass
 captures a window wholly on a display framed, on a plain thread
 (`capture_framed`), with its blur and its hairline. A window clipped by the
-display edge goes to the service instead, because a framed capture returns
-only the visible sliver ("A clipped destination needs ScreenCaptureKit, not
+display edge goes to the pictures service instead, at focus priority, which
+starts through the flight's hold, because a framed capture returns only the
+visible sliver ("A clipped destination needs ScreenCaptureKit, not
 SkyLight" in `capture-overlay-research.md`).
 A strip pan places the real windows at frame zero, so by the first pass both
 ends are usually where they land. Usually: the placing is still in progress,
@@ -325,17 +327,24 @@ chase's framed reveal is the truth for a grow whatever the cache holds.
 Every cut logs "picture swapped mid-flight" with its reason; that line is
 the acceptance counter, at most two `reason=refresh` per window per flight.
 
-**Capture work in flight.** Between frame zero and lift the window server
-serves only the chases and the focus refresh (`capture_work_allowed`).
-Everything else waits for `finish()`. The reactor's `warm_all_workspaces`
-(about 15 captures per switch, queued 0.3ms after the start) goes to
-`deferred_warm`; the desktop render goes to `deferred_desktop`; hairline
-harvests for landed pictures go to the finish harvest set, once per window
-per flight. Under the old load the refresh took 203ms median (p90 441,
-n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
+**Capture work in flight.** From frame zero to the quiet after the lift the
+pictures service holds background capture off (`crate::pictures::domain::schedule`).
+The engine holds it as it composes a flight (`Hold::Transition`), lets the
+bar be pictured again at the lift (`Hold::Settling`), and releases it at
+`Event::Quiet` (`Hold::Released`). While it holds, only what the flight waits
+for starts: its frame-zero pictures and a clipped end of the focus refresh.
+The chases and the framed refresh are the engine's own and never ask. The
+rest waits and starts at the release, most urgent first. The reactor's
+`warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
+start) waits; so does the desktop render; hairline harvests for landed
+pictures go to the finish harvest set, once per window per flight. A warm
+also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: a pass's
+warm is sent just after the flight it starts, and reaches the service before
+that flight's hold. Under the old load the refresh took 203ms median (p90
+441, n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
 271 of 321 desktop renders landed mid-flight. `warm_all_workspaces` stays in
-the reactor's switch handler: the actor knows the flight phase, the reactor
-does not. Separately, a layout pass asks for a picture of each window the
+the reactor's switch handler: the service knows a flight is holding it, the
+reactor does not. Separately, a layout pass asks for a picture of each window the
 first time it lays that window out (`pictured_windows`), because a pass warms
 only the windows it moves, and after a restart nothing moves: the saved layout
 already has every window in place. Measured 2026-09-29 over four restarts: no
@@ -349,16 +358,19 @@ They used to run the instant the overlay lifted and took 600-800ms (8-15
 window captures and the desktop render), so a press inside that window flew
 the next flight against a busy compositor: frame-difference profiles of a
 screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
-beginning inside the quiet period cancels the timer; the work carries over to
-its own lift. The same quiet period is what `set_on_flight` reports as settled
-(`FlightReport`): `true` when an overlay goes up, `false` at `Event::Quiet`, so
-a burst of flights is one `true` and one `false`. rini's own bar sits above the
-overlay and is never pictured, so with it on a flight looks for no bar at all.
-Another app's bar, under the overlay with rini's off, is recaptured
-`BAR_REFRESH_DELAY` (250ms) after a flight, never at the start of one: a bar
-composite measures 31ms median, and the delay lets the compositor drop the
-hidden overlay from the framebuffer and folds a burst of switches into one
-capture, at the end.
+beginning inside the quiet period cancels the timer and holds the service
+again; the work carries over to its own quiet. The same quiet period is what
+`set_on_flight` reports as settled (`FlightReport`): `true` when an overlay
+goes up, `false` at `Event::Quiet`, so a burst of flights is one `true` and
+one `false`. rini's own bar sits above the overlay and is never pictured, so
+with it on a flight looks for no bar at all. Another app's bar, under the
+overlay with rini's off, is pictured by the service `BAR_REFRESH_DELAY`
+(250ms) after the overlay lifts, never while it is up: a bar composite
+measures 31ms median, and the delay lets the compositor drop the hidden
+overlay from the framebuffer and folds a burst of switches into one capture,
+at the end. Only the first flight after a start or a display change
+composites the bar and the desktop on the main thread, before the service
+holds any picture of that display.
 
 **Real windows land before lift.** Frames go out on-screen destinations
 first, parks last (`frame_send_order`): a park write nobody sees no longer
@@ -762,8 +774,8 @@ changes is how the picture maps onto it (`content_mode` in
   a per-tile discontinuity in a flight that is otherwise rigid, and a
   picture of a window that no longer exists. Under load it ran 25ms ahead
   of the survivors' clock; on the window-server close path it composed
-  `exits=0` and left a gap (log 2026-09-16 2:05). What stays is
-  `ForgetWindow`, sent once per close on either path: the AX
+  `exits=0` and left a gap (log 2026-09-16 2:05). What stays is the
+  pictures service's forget, sent once per close on either path: the AX
   `WindowDestroyed` while the window still exists, or the window-server
   disappearance through `EventOutcome::forgotten_windows` ahead of the
   layout events. The gap between the window vanishing and the survivors
@@ -931,13 +943,14 @@ running, carrying real border windows as tiles:
   against 170-300ms for SkyLight behind queued ScreenCaptureKit captures; the
   animation itself does not slow it, 22.7ms median during a slide) until racing it
   against the ScreenCaptureKit route was found to swap the tile 2-3 times
-  per flight; it now takes the service route only, and the swap requires
-  the same route as the cached picture (see "Mid-flight passes"). The swap
-  itself is a hard cut ON PURPOSE: a ~120ms crossfade veil was tried and rejected,
-  because stacking two copies of a translucent window pulses its net opacity
-  mid-fade — there is no constant-alpha crossfade with layers. Gratuitous
-  cuts are avoided upstream instead: a swap whose picture renders the same
-  as the one on screen (thumbprint comparison) is skipped entirely.
+  per flight; each pass now asks one route per window, framed where it is
+  wholly on a display and ScreenCaptureKit where it is clipped (see
+  "Mid-flight passes"). The swap itself is a hard cut ON PURPOSE: a ~120ms
+  crossfade veil was tried and rejected, because stacking two copies of a
+  translucent window pulses its net opacity mid-fade — there is no
+  constant-alpha crossfade with layers. Gratuitous cuts are avoided upstream
+  instead: freshness guards the cut (`FocusRefresh::is_fresh`), and one route
+  per window per pass is at most one refresh cut per pass.
 - Companions are excluded from the mid-flight destination recapture, which
   exists for the window the eye is on. They wear no harvested hairline
   either: a border window's ring is transparent almost everywhere, so the
@@ -981,9 +994,9 @@ Options, in order of expected value:
    changes, the CGS window events `window_notify` subscribes to — as "picture
    is dirty" triggers. Misses silent repaints; catches most others without
    polling.
-3. **Aged-cache sweeps.** A `Picture` is timestamped (`taken`) and
-   `warm_windows` re-warms anything older than `SNAPSHOT_STALE_AFTER` at
-   animation end. A sweep of nearby workspaces on a slow idle timer is not
+3. **Aged-cache sweeps.** A `Picture` is timestamped (`taken`) and a warm
+   (`wants_warm`) re-captures anything older than `SNAPSHOT_STALE_AFTER`; the
+   engine warms every window it flew at the quiet after the lift. A sweep of nearby workspaces on a slow idle timer is not
    done; it would break the "nothing polls" principle deliberately.
 4. **Widen the mid-flight refresh.** Ruled out by measurement. The refresh
    runs on its own thread, but the window server does not: with warms, the

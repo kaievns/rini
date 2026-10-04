@@ -54,11 +54,17 @@ impl Reactor {
         ))
     }
 
+    /// The display is published first, since the service pictures the windows on screen on it.
     pub(super) fn on_debug_warm_snapshots(&mut self) -> anyhow::Result<EventOutcome> {
-        Ok(self.ask_animation_actor(
-            engine::Event::WarmCache,
-            "snapshot cache warm requested".to_string(),
-        ))
+        self.publish_animation_display();
+        let line = match &self.communication_manager.pictures {
+            Some(pictures) => {
+                pictures.warm_visible();
+                "snapshot cache warm requested".to_string()
+            }
+            None => "the pictures service is not running".to_string(),
+        };
+        Ok(EventOutcome::no_change().with_stdout_line(line))
     }
 
     pub(super) fn on_restore_layout(

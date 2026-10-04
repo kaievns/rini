@@ -203,15 +203,17 @@ switcher answers "every window I have, wherever it is".
   window, measured, and the popup has to appear at once. The panel draws what is already cached and
   nothing else.
 - A card with no picture MUST still read as a card. It keeps a placeholder rather than leaving a hole.
-- A picture arriving after the popup is already up MUST be drawn. The cache is asked on the open and
-  answers a moment later, so the first open of a switch would otherwise stay blank.
+- A picture landing after the popup is already up MUST be drawn, on the card already there. The
+  pictures the open warms land a moment after it, so the first open of a switch would otherwise stay
+  blank until the next step.
 - A picture MUST be refused if it does not cover its window. The cheap capture route returns a sliver
   for exactly the off-screen and hidden-workspace windows a switcher exists to show — measured at
   40x1081 and 1x28 — and a sliver stretched across a row is worse than no picture.
 - Age MUST NOT be a reason to refuse one. A ten-minute-old picture of a window beats a grey box;
   staleness is a reason to capture again, not to withhold.
-- Opening a switch MAY queue captures for the windows it draws that have none, so the next open has
-  them. That work MUST be in the background and MUST NOT touch any window.
+- Opening a switch MAY queue captures for the windows it draws that have none, or whose picture no
+  longer fits or has gone stale, so this open draws them as they land and the next has them. That work
+  MUST be in the background and MUST NOT touch any window.
 - Each row MUST carry its application's icon as a small badge, as a cue that is readable faster than a
   thumbnail or a title.
 - An application's badge MUST be replaceable by an image named in the config's `recent-windows › icons`,
@@ -390,4 +392,5 @@ application's stack,
 `src/switcher/domain/selection.rs` the cursor, `src/switcher/domain/trigger.rs` which binding holds a
 switch open, and `src/input/domain/switch_session.rs` the tap's side of it. The focus order itself is a fact about focus and lives
 with the rest of it, in `src/windows/domain/focus_order.rs`. Reaching a window anywhere is
-`Reactor::focus_window_anywhere`. Design notes are in `src/switcher/docs/README.md`.
+`Reactor::focus_window_anywhere`. The cards' pictures are read from the pictures service,
+`src/pictures/platform/service.rs`. Design notes are in `src/switcher/docs/README.md`.

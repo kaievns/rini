@@ -11,9 +11,9 @@ This section goes when the last row is done.
 | # | Step | State |
 |---|---|---|
 | 1 | `pictures`: capture, cache and layer helpers out of `animation`; switcher and bar its clients | done |
-| 2 | Region pictures, batched SkyLight with per-window knowledge, the capture schedule and its thread | |
+| 2 | The pictures service: the capture schedule and its thread, the cache and the ScreenCaptureKit captures moved in; the engine, the reactor and the switcher its clients | done |
 | 3 | `transitions`: the coordinator's decisions out of `animation`; the lifecycle as a pure state machine | |
-| 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; the mid-flight refresh and the harvest deleted | |
+| 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | |
 | 5 | `animation` plays a `Score`; choreographies and accents produce one | in progress: the pure `Score` and its tracks |
 | 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | |
 | 7 | The coordinator on its own thread; the main thread renders only | |
@@ -109,4 +109,8 @@ tile's end. A focus report arriving while Preparing is kept for Playing.
 | A focus end clipped by the display edge takes one ScreenCaptureKit capture through the hold | keeps `specs/animation.md`'s rule that both ends of a focus change are recaptured | let a clipped end change at rest |
 | Baked pictures are clipped to the window's measured corner radius | a crop of a desktop composite fills the rounded corners with wallpaper | capture the corners' alpha separately |
 | The bar's menu-extras thread stays in `bar` for now | it has its own pacing and pauses for flights already | move it behind the pictures thread |
+| A transition's hold has three states: up at compose, settling at the lift, released at the quiet after it | the bar is pictured 250ms after the lift, as it always was, while the warms the flight held wait for the quiet, which keeps a burst of presses off a busy compositor | release at the lift, and picture the bar 250ms after the quiet instead |
+| The first transition on a display is dressed with a desktop and a bar composited on the main thread | the service holds no picture of a display the reactor names just before the flight on it; drawn without one, that transition shows black or the other display's wallpaper | let the first transition fly without them until step 4's coordinator waits for frame-zero pictures |
+| A warm or background ask settles 50ms before it is listed | the reactor sends a pass's warm just after the flight it starts, so it reaches the service before that flight's hold | have the reactor route those warms through the engine, which holds first |
+| Window captures stay at 2x on every display; the display's own scale is for what is read off its framebuffer | ScreenCaptureKit charges per call, a 1x capture flies soft on a Retina display, and a scale change no longer throws away window captures in flight | capture each window at the scale of the display the overlay is on |
 | The hairline harvest moved into `pictures` in step 1 with the captures, though step 4 deletes it | the framed capture harvests the ring and a `Picture` carries it, so left in `animation` it would have had `pictures` name `animation` | leave it in `animation` and accept a two-way edge until step 4 |

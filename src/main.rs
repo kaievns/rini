@@ -249,6 +249,25 @@ fn main() {
     let (bar_tx, bar_rx) = rini::app::channels::channel();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
 
+    // Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
+    // so the service names neither the flight engine nor the switcher.
+    let pictures = rini::pictures::platform::service::Pictures::start(vec![
+        Box::new({
+            let workspace_animation_tx = workspace_animation_tx.clone();
+            move |landed| {
+                workspace_animation_tx.send(rini::animation::platform::engine::Event::Pictures(landed))
+            }
+        }),
+        Box::new({
+            let switcher_tx = switcher_tx.clone();
+            move |landed| {
+                if let rini::pictures::event::Event::Taken { window, .. } = landed {
+                    switcher_tx.send(rini::switcher::platform::actor::Event::Landed(window));
+                }
+            }
+        }),
+    ]);
+
     let reactor = Reactor::spawn(
         config.clone(),
         layout,
@@ -258,6 +277,7 @@ fn main() {
         broadcast_tx.clone(),
         Some(cursor_warp_tx.clone()),
         Some(workspace_animation_tx.clone()),
+        Some(pictures.clone()),
         Some(switcher_tx.clone()),
         Some(bar_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
@@ -407,16 +427,11 @@ fn main() {
         workspace_animation_rx,
         workspace_animation_tx.clone(),
         mtm,
+        pictures.clone(),
     );
     flight_engine.set_place_frames(Box::new({
         let events_tx = events_tx.clone();
         move |frames| events_tx.send(reactor::Event::ApplyOverlayFrames(frames))
-    }));
-    // The app wires the two features together, so neither has to name the other: the animation engine
-    // lends its pictures and the switcher panel draws them.
-    flight_engine.set_lend_snapshots(Box::new({
-        let switcher_tx = switcher_tx.clone();
-        move |pictures| switcher_tx.send(rini::switcher::platform::actor::Event::Pictures(pictures))
     }));
     // The bar stops picturing the menu extras while a flight runs and settles.
     flight_engine.set_on_flight(Box::new({
@@ -435,6 +450,7 @@ fn main() {
             let events_tx = events_tx.clone();
             move |window| events_tx.send(reactor::Event::SwitchPicked(window))
         }),
+        pictures,
     );
 
     // Every display's bar, on the main thread for AppKit. It is sent what it shows by the reactor, and
