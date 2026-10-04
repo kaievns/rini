@@ -272,6 +272,8 @@ pub struct Watches {
     watches: Vec<(WatchId, Watching)>,
     focused: Vec<(WindowId, Instant)>,
     prints: HashMap<(Client, WindowId), Vec<u8>>,
+    /// The tag whose frame zero each client's prints were last started afresh by.
+    started: HashMap<Client, Tag>,
     plan: Plan,
 }
 
@@ -628,7 +630,8 @@ impl Watches {
 
         for ask in plan.asks {
             let client = ask.tag.client;
-            if ask.moment == Moment::FrameZero {
+            // A transition's frame zero asked again, for what a merge brought on screen, adds to it.
+            if ask.moment == Moment::FrameZero && self.started.insert(client, ask.tag) != Some(ask.tag) {
                 self.prints.retain(|(held, _), _| *held != client);
             }
             let mut delivered = Vec::new();
@@ -1274,6 +1277,27 @@ mod tests {
         );
         let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(7)).unwrap();
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
+    }
+
+    /// Frame zero asked again under the same tag, for windows a merged pass brought on screen, adds to
+    /// the prints the first started rather than starting them afresh again.
+    #[test]
+    fn frame_zero_asked_again_under_its_tag_keeps_the_prints_the_first_started() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.ask(frame_zero(&[(1, LEFT)], &[]));
+        round(&mut watches, start, |_| Some(LEFT), |_| Some(7)).unwrap();
+        watches.ask(frame_zero(&[(2, RIGHT)], &[]));
+        round(&mut watches, start, |_| Some(RIGHT), |_| Some(7)).unwrap();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
+            start,
+            &none,
+        );
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        let (_, outcome) = round(&mut watches, start, at, |_| Some(7)).unwrap();
+        assert!(outcome.deliveries.is_empty(), "neither is news: {outcome:?}");
     }
 
     /// A window not where it ends by the deadline is reported lost, once.

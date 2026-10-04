@@ -13,7 +13,7 @@ use rini_core::ids::WindowId;
 use rini_geometry::is_off_screen;
 
 use crate::animation::domain::motion::tile::snap_to;
-use crate::pictures::domain::watch::{END_SLACK, Why, near, wholly_on};
+use crate::pictures::domain::watch::{Accept, END_SLACK, Why, near, wholly_on};
 
 use super::timing::{COALESCE_WINDOW, HOLD_CAP, LIFT_GRACE};
 
@@ -311,6 +311,10 @@ struct Flight {
     clock: Option<(Instant, Duration)>,
     /// The background was left out of frame zero.
     background_later: bool,
+    /// Every window frame zero was asked for, where it was expected...
+    asked: Vec<(WindowId, CGRect)>,
+    /// ... and how many of those asks have not delivered yet.
+    frame_zero_owed: usize,
     /// The focus target's focused look came in: focus has handed over.
     focus_in: bool,
     final_asked: bool,
@@ -429,6 +433,10 @@ impl Coordinator {
                     && f.began == generation
                     && matches!(f.phase, Phase::Preparing { .. })
                 {
+                    f.frame_zero_owed = f.frame_zero_owed.saturating_sub(1);
+                    if f.frame_zero_owed > 0 {
+                        return out;
+                    }
                     if let Some(window) = f.stage.losing_focus {
                         out.push(Command::KeepFocusedLook { generation, window });
                     }
@@ -489,13 +497,10 @@ impl Coordinator {
         self.generation.0 += 1;
         let generation = self.generation;
         let (background, background_later) = stage.background_at_frame_zero();
+        let strip = stage.frame_zero_strip();
+        let asked = strip.iter().chain(&background).copied().collect();
         out.push(Command::Hold);
-        out.push(Command::AskFrameZero {
-            generation,
-            strip: stage.frame_zero_strip(),
-            background,
-            behind: stage.behind(),
-        });
+        out.push(Command::AskFrameZero { generation, strip, background, behind: stage.behind() });
         let mut animated = owed;
         extend_latest(&mut animated, stage.ends());
         let mut awaiting = stage.awaiting.clone();
@@ -510,6 +515,8 @@ impl Coordinator {
             phase: Phase::Preparing { deadline: now + FRAME_ZERO_PATIENCE },
             clock: None,
             background_later,
+            asked,
+            frame_zero_owed: 1,
             focus_in: false,
             final_asked: false,
             snapped: HashSet::new(),
@@ -536,8 +543,10 @@ impl Coordinator {
         let newcomers = stage.awaiting.clone();
         let before = std::mem::replace(&mut f.stage, stage);
         if matches!(f.phase, Phase::Preparing { .. }) {
-            // Nothing is shown or written yet: the show takes the merged stage as it is.
+            // Nothing is shown or written yet: the show takes the merged stage as it is, and waits for
+            // frame zero to picture what the merge brought on screen too.
             f.end_since = ended_since(&f.end_since, Some(&before), &f.stage, f.generation);
+            ask_frame_zero_again(f, out);
             return;
         }
         self.generation.0 += 1;
@@ -653,6 +662,29 @@ impl Coordinator {
             }
         }
     }
+}
+
+/// Frame zero asked again for the windows a merge brought where the tiles start, on screen, that no ask
+/// expected there: the show waits for that ask too, up to the patience the begin set.
+fn ask_frame_zero_again(f: &mut Flight, out: &mut Vec<Command>) {
+    let display = f.stage.display;
+    let unasked = |windows: Vec<(WindowId, CGRect)>, asked: &[(WindowId, CGRect)]| -> Vec<(WindowId, CGRect)> {
+        windows
+            .into_iter()
+            .filter(|(w, start)| {
+                !asked.iter().any(|(a, at)| a == w && Accept::Origin { at: at.origin }.accepts(*start, display))
+            })
+            .collect()
+    };
+    let strip = unasked(f.stage.frame_zero_strip(), &f.asked);
+    let background = unasked(f.stage.background_at_frame_zero().0, &f.asked);
+    if !strip.is_empty() || !background.is_empty() {
+        f.asked.extend(strip.iter().chain(&background).copied());
+        f.frame_zero_owed += 1;
+        out.push(Command::AskFrameZero { generation: f.began, strip, background, behind: f.stage.behind() });
+    }
+    let asked = &f.asked;
+    f.background_later = f.stage.background().iter().any(|(w, _)| !asked.iter().any(|(a, _)| a == w));
 }
 
 /// The overlay goes up: the real windows are written behind it, and the end state is watched.
@@ -929,6 +961,36 @@ mod tests {
             |c| matches!(c, Command::Swap { .. })), "wherever its tile ends now");
         assert!(c.on(Event::Picture { generation: Generation(g.0 - 1), window: w(1), frame: start, why: Why::FrameZero }, late).is_empty(),
             "another flight's");
+    }
+
+    /// A pass merged while frame zero is out that brings a window on screen where its tile starts: frame
+    /// zero pictures it too, and the overlay waits for both asks, never past the patience the begin set.
+    #[test]
+    fn a_pass_merged_before_the_show_has_frame_zero_picture_what_it_brought_on_screen() {
+        let now = Instant::now();
+        let third = r(866.0, 35.0, 860.0, 1079.0);
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(pan()), now);
+        let g = c.generation();
+        let mut more = pan();
+        more.tiles.push(tile(w(3), third, third));
+        let out = c.on(Event::Merge { stage: more.clone(), moved: false }, now + Duration::from_millis(5));
+        assert_eq!(out, vec![Command::AskFrameZero { generation: g, strip: vec![(w(3), third)], background: Vec::new(), behind: vec![w(9)] }]);
+        assert!(c.on(Event::Merge { stage: more.clone(), moved: false }, now + Duration::from_millis(6)).is_empty(), "asked once");
+        assert!(c.on(Event::FrameZero(g), now + Duration::from_millis(30)).is_empty(), "one ask still out");
+        assert!(!c.is_shown());
+        assert_eq!(c.on(Event::FrameZero(g), now + Duration::from_millis(40)).first(), Some(&Command::KeepFocusedLook { generation: g, window: w(1) }));
+        assert!(c.is_shown());
+
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(pan()), now);
+        let mut moved = pan();
+        moved.tiles[0].start.origin.x += 3.0;
+        let out = c.on(Event::Merge { stage: moved, moved: false }, now);
+        assert!(matches!(out.as_slice(), [Command::AskFrameZero { strip, .. }] if strip.len() == 1), "a start no ask expected: {out:?}");
+        c.on(Event::FrameZero(c.generation()), now);
+        assert_eq!(c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE).first(), Some(&Command::Show),
+            "the patience is the begin's");
     }
 
     #[test]

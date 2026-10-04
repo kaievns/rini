@@ -170,8 +170,13 @@ A pass confirming the flight's destinations is an empty `PlanDelta`: nothing is 
 presses neither restart nor extend the flight. Any real change restarts the coordinator's clock
 (`Merge { moved }`), so the frame placement and teardown cover the newest legs. A pass arriving before
 the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead:
-the plan is rebuilt from the merged tiles and installed again (`recompose`). Reserved entrances still
-waiting for a picture take the pass's slot (`retarget_entrances`).
+the plan is rebuilt from the merged tiles and installed again (`recompose`). Behind the frame-zero
+wait, frame zero is asked again for every window the pass brought wholly on screen where its tile
+starts that no ask expected there, under the same generation, and the overlay waits for that ask too,
+never past the 80ms the begin set. The request alone is what the first ask knew: a window rejoining
+the pass, or one a layout pass starts from the window server's frame rather than the request's, would
+otherwise fly the cache's picture to its landing. Reserved entrances still waiting for a picture take
+the pass's slot (`retarget_entrances`).
 
 A pass merged once the overlay is up writes every final frame it changed, a parked window's included.
 Parked windows have no tile, so a tile-only check missed their moves and left them at the old park.

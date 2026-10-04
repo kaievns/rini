@@ -159,9 +159,9 @@ destination for a window already moving.
 ## The pictures a flight starts with
 
 - A flight MUST start from pictures taken at the press: every window wholly on screen where its tile
-  starts, and the floating windows seen behind them. The overlay MUST wait for them no longer than
-  80ms, and then flies what the cache holds until they come: each then replaces the cache's on its
-  tile, and the flight MUST NOT start again.
+  starts, and the floating windows seen behind them, a pass merged before the overlay is up included.
+  The overlay MUST wait for them no longer than 80ms, and then flies what the cache holds until they
+  come: each then replaces the cache's on its tile, and the flight MUST NOT start again.
 - A real window MUST NOT be written before the overlay is up, whatever the flight: written earlier, it
   jumps on screen before the overlay hides it. Every frame MUST be written as the overlay goes up.
 - A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
