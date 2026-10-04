@@ -13,27 +13,27 @@ use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
+use objc2_foundation::{NSArray, NSCopying, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
-    CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
-    CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
+    CAAnimation, CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming,
+    CAMediaTimingFunction, CATransaction, kCAMediaTimingFunctionLinear,
 };
 
-use crate::animation::domain::motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE};
+use crate::animation::domain::motion::bounce::Bounce;
+use crate::animation::domain::motion::easing::{CubicBezier, MOTION_CURVE};
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
+use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::plan::{
-    AnimationTarget, animation_targets, carries_out_and_back,
-};
-use crate::animation::domain::motion::plan::{
-    Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented, group_relative,
-    stale_overlay_layers,
+    AnimationTarget, Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented,
+    animation_targets, carries_out_and_back, group_relative, overlay_of, stale_overlay_layers,
 };
 use crate::animation::domain::motion::nudge::nudge_samples;
+use crate::animation::domain::motion::score::{Curve, Value};
 use crate::animation::domain::motion::tile::{
-    ContentMode, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed, resize_in_flight,
+    ContentMode, DressingAction, WHOLE, content_mode, crop_pieces, dressing_rebuild_allowed,
+    resize_in_flight, snap_to, within,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
-use crate::animation::domain::motion::accents::OutAndBack;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::platform::edge_dressing::{boundary_layout, tile_corner_radius};
@@ -209,6 +209,11 @@ impl Timing {
         animation.setBeginTime(self.begin);
     }
 
+    /// Whether the leg is still playing at `now` on the media clock.
+    fn plays_at(&self, now: f64) -> bool {
+        self.begin <= now && now < self.begin + self.seconds
+    }
+
     /// When the leg ends, on the wall clock.
     fn ends_at(&self) -> Instant {
         let left = self.begin + self.seconds - objc2_quartz_core::CACurrentMediaTime();
@@ -257,31 +262,62 @@ fn leg_animation(leg: &Leg) -> Retained<CAKeyframeAnimation> {
 /// One key per container bounce, separate from the movement's so the two compose.
 const BOUNCE_ANIMATION_KEY: &str = "rini.group.bounce";
 
-/// An additive position animation out to `overshoot` and back, so it rides a movement in flight
-/// and leaves the model position alone.
-fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAnimation> {
+/// The bounce on the container `key` from `begin`, as `Bounce::track` has it: its keys at their key
+/// times and a curve per way, additive so it rides a movement in flight and leaves the model
+/// position alone.
+fn bounce_animation(bounce: &Bounce, key: GroupKey, begin: f64) -> Retained<CAKeyframeAnimation> {
+    let track = bounce.track(key, begin);
     let animation =
         CAKeyframeAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
-    let rest = CGPoint::new(0.0, 0.0);
     // SAFETY: NSValues holding CGPoints are the value type Core Animation expects for "position".
     unsafe {
-        let values: Vec<Retained<objc2::runtime::AnyObject>> = [rest, overshoot, rest]
-            .into_iter()
+        let values: Vec<Retained<objc2::runtime::AnyObject>> = track
+            .keys()
+            .iter()
+            .map(|(_, value)| match value {
+                Value::Point(p) => *p,
+                Value::Rect(_) => unreachable!("a container's track holds points"),
+            })
             .map(|p| Retained::into_super(Retained::into_super(NSValue::valueWithPoint(p))))
             .collect();
         animation.setValues(Some(&NSArray::from_retained_slice(&values)));
     }
     let key_times: Vec<Retained<NSNumber>> =
-        [0.0, BOUNCE_TURN, 1.0].into_iter().map(NSNumber::numberWithDouble).collect();
+        track.keys().iter().map(|(t, _)| NSNumber::numberWithDouble(*t)).collect();
     animation.setKeyTimes(Some(&NSArray::from_retained_slice(&key_times)));
-    animation.setTimingFunctions(Some(&NSArray::from_retained_slice(&[
-        timing_function(MOTION_CURVE),
-        CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseInEaseOut }),
-    ])));
-    animation.setAdditive(true);
-    animation.setDuration(timing.seconds);
-    animation.setBeginTime(timing.begin);
+    let curves: Vec<Retained<CAMediaTimingFunction>> =
+        track.curves().iter().map(|curve| curve_function(*curve)).collect();
+    animation.setTimingFunctions(Some(&NSArray::from_retained_slice(&curves)));
+    animation.setAdditive(track.channel().is_additive());
+    animation.setDuration(track.seconds());
+    animation.setBeginTime(track.begin());
     animation
+}
+
+/// A score segment's curve as the timing function Core Animation runs it on.
+fn curve_function(curve: Curve) -> Retained<CAMediaTimingFunction> {
+    match curve {
+        Curve::Bezier(c) => timing_function(c),
+        // SAFETY: Core Animation's own timing function name.
+        Curve::Linear => {
+            CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionLinear })
+        }
+    }
+}
+
+/// The bounce the container `key` plays when `bounce` replaces one of overshoot `before`: none if it
+/// does not carry this one, from rest if it did not carry that one.
+fn container_bounce(key: GroupKey, bounce: &Bounce, before: Option<CGPoint>) -> Option<Bounce> {
+    if !carries_out_and_back(key, bounce.overshoot) {
+        return None;
+    }
+    if before.is_some_and(|before| carries_out_and_back(key, before)) {
+        return Some(*bounce);
+    }
+    Some(Bounce {
+        from: CGPoint::new(0.0, 0.0),
+        ..*bounce
+    })
 }
 
 /// One key for a move's nudge, apart from the bounce's so neither stops the other.
@@ -305,6 +341,72 @@ fn nudge_animation(offset: CGPoint, timing: Timing) -> Retained<CAKeyframeAnimat
     animation.setDuration(timing.seconds);
     animation.setBeginTime(timing.begin);
     animation
+}
+
+/// The accents a container's movement carries, each under its own key.
+const ACCENT_KEYS: [&str; 2] = [BOUNCE_ANIMATION_KEY, NUDGE_ANIMATION_KEY];
+
+/// When an animation plays on the media clock: from `begin`, `offset` into its own time, for
+/// `active` seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Playing {
+    begin: f64,
+    offset: f64,
+    active: f64,
+}
+
+impl Playing {
+    fn of(animation: &CAAnimation) -> Self {
+        let repeat = animation.repeatDuration();
+        Playing {
+            begin: animation.beginTime(),
+            offset: animation.timeOffset(),
+            active: if repeat > 0.0 {
+                repeat
+            } else {
+                animation.duration()
+            },
+        }
+    }
+
+    fn apply(self, animation: &CAAnimation) {
+        animation.setBeginTime(self.begin);
+        animation.setTimeOffset(self.offset);
+        animation.setRepeatDuration(self.active);
+    }
+
+    /// The same animation begun again at `at`, as far into its own time as it has got, for what is
+    /// left of it. None when it begins after `at` already, or has ended.
+    fn again_at(self, at: f64) -> Option<Playing> {
+        let ends = self.begin + self.active;
+        (self.begin <= at && at < ends).then(|| Playing {
+            begin: at,
+            offset: self.offset + (at - self.begin),
+            active: ends - at,
+        })
+    }
+}
+
+/// Gives a container `movement` under the movement's key, and begins its accents again with it so
+/// they go on where they were. Core Animation composes a layer's animations in order of their begin
+/// times, ties in the order added, and a non-additive movement hides every additive one before it
+/// until it ends; see "The score" in `src/animation/docs/animation-smoothness.md`.
+fn add_movement(layer: &CALayer, movement: &CAAnimation) {
+    layer.addAnimation_forKey(movement, Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+    let begin = movement.beginTime();
+    for key in ACCENT_KEYS {
+        let key = NSString::from_str(key);
+        // SAFETY: the layer's own animation, read and copied; the copy is what changes.
+        let Some(accent) = (unsafe { layer.animationForKey(&key) }) else {
+            continue;
+        };
+        let Some(again) = Playing::of(&accent).again_at(begin) else {
+            continue;
+        };
+        let copy = accent.copy();
+        again.apply(&copy);
+        layer.addAnimation_forKey(&copy, Some(&key));
+    }
 }
 
 /// An animation between two rect-valued endpoints of `key_path` ("bounds", "contentsRect").
@@ -333,13 +435,14 @@ fn path_animation(
     timing: Timing,
 ) -> Retained<CABasicAnimation> {
     let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
+    // As objects: a `CGPath` pointer handed to `msg_send!` encodes as a struct pointer, which objc2
+    // refuses for `setFromValue:` in any build with debug assertions.
+    let (from, to): (&objc2_core_foundation::CFType, &objc2_core_foundation::CFType) = (from, to);
     // SAFETY: a CGPath is the value type Core Animation expects for path-valued key paths, and
     // the animation retains what it is given.
     unsafe {
-        let from_raw: *const objc2_core_graphics::CGPath = from;
-        let to_raw: *const objc2_core_graphics::CGPath = to;
-        let _: () = msg_send![&*animation, setFromValue: from_raw];
-        let _: () = msg_send![&*animation, setToValue: to_raw];
+        animation.setFromValue(Some(from.as_ref()));
+        animation.setToValue(Some(to.as_ref()));
     }
     timing.apply(&animation);
     animation
@@ -385,10 +488,15 @@ struct Tile {
     crop_grid: Option<CropGrid>,
     /// Size in points of the picture the crop pieces show; `None` when stretching.
     crop_of: Option<CGSize>,
+    /// The part of the contents image that is the tile's picture, in unit coordinates, which the
+    /// crop pieces' contents are composed with: all of it until a picture is a region of a
+    /// composite.
+    region: CGRect,
     /// When the installed resize animation ends; a mismatched hairline is deferred until then.
     resize_until: Option<Instant>,
-    /// The resize leg the tile is riding, so a picture swap re-installs it on the same timing.
-    resize_leg: Option<(CGRect, CGRect, Timing)>,
+    /// The leg the tile was last given, a move or a resize, so a picture swap or a snap
+    /// re-installs it on the same timing.
+    leg: Option<(CGRect, CGRect, Timing)>,
     /// The container the layers hang under; layer frames are in its space.
     key: Option<GroupKey>,
     companion: bool,
@@ -453,6 +561,31 @@ fn window_rect(frame: CGRect, top_band: f64) -> CGRect {
 /// downward and a negative origin lifts the content.
 fn canvas_rect(frame: CGRect, top_band: f64) -> CGRect {
     CGRect::new(CGPoint::new(0.0, -top_band), frame.size)
+}
+
+/// A rect in the overlay's coordinates, the full display, in the view's: the canvas sits a band
+/// above the view's top edge.
+fn in_view(rect: CGRect, top_band: f64) -> CGRect {
+    CGRect::new(CGPoint::new(rect.origin.x, rect.origin.y - top_band), rect.size)
+}
+
+/// A mask covering `bounds` but for `holes`: one rect and the holes, filled even-odd, so each hole
+/// is left out.
+fn holes_mask(bounds: CGRect, holes: &[CGRect]) -> Retained<objc2_quartz_core::CAShapeLayer> {
+    let path = objc2_core_graphics::CGMutablePath::new();
+    // SAFETY: a null transform means the rects are taken as given.
+    unsafe {
+        objc2_core_graphics::CGMutablePath::add_rect(Some(&path), std::ptr::null(), bounds);
+        for hole in holes {
+            objc2_core_graphics::CGMutablePath::add_rect(Some(&path), std::ptr::null(), *hole);
+        }
+    }
+    let mask = objc2_quartz_core::CAShapeLayer::layer();
+    mask.setFrame(bounds);
+    mask.setPath(Some(&path));
+    // SAFETY: Core Animation's own fill-rule constant.
+    mask.setFillRule(unsafe { objc2_quartz_core::kCAFillRuleEvenOdd });
+    mask
 }
 
 impl TileOverlay {
@@ -612,6 +745,7 @@ impl TileOverlay {
         {
             return;
         }
+        self.clear_holes();
         self.frame = frame;
         self.top_band = top_band;
         self.scale = scale;
@@ -652,7 +786,7 @@ impl TileOverlay {
             layout_crop_grid(entry, final_rect.size);
             // Re-installed on the same timing when riding a leg, so only the pixels cut.
             if remaining.is_some_and(|left| !left.is_zero()) {
-                rekey = Some(match entry.resize_leg {
+                rekey = Some(match entry.leg {
                     Some((from, to, timing)) => (from, to, timing),
                     None => {
                         // SAFETY: `presentationLayer` returns a read-only copy of the layer.
@@ -678,8 +812,21 @@ impl TileOverlay {
             apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale, true, resizing);
         }
         if let Some((from, to, timing)) = rekey {
-            self.animate_tile_resize(window, from, to, timing);
+            animate_tile_resize(entry, from, to, timing);
         }
+        commit_now();
+    }
+
+    /// Clips a tile's picture to a rounded rect of `radius`, for a picture whose corners carry what
+    /// was behind its window, as a crop of a composite of the desktop does; `None` draws it whole,
+    /// which every install starts from.
+    pub fn set_tile_corner_clip(&mut self, window: WindowId, radius: Option<f64>) {
+        let Some(entry) = self.tile_layers.get(&window) else {
+            return;
+        };
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        clip_corners(&entry.picture, radius);
         commit_now();
     }
 
@@ -851,11 +998,7 @@ impl TileOverlay {
                     for layer in self.layers_of(key) {
                         layer.setPosition(to);
                         if !duration.is_zero() {
-                            let animation = position_animation(from, to, timing);
-                            layer.addAnimation_forKey(
-                                &animation,
-                                Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                            );
+                            add_movement(&layer, &position_animation(from, to, timing));
                         }
                     }
                     self.record_leg(key, from, to, timing, duration);
@@ -881,24 +1024,39 @@ impl TileOverlay {
         commit_now();
     }
 
+    /// Plays `bounce` on every container that carries it, replacing the bounce playing there, so a
+    /// push starts from where that one is drawn. `before` is the overshoot of the bounce it
+    /// replaces: a container that did not carry that one is at rest and starts from there. See "Edge
+    /// bounce" in `src/animation/docs/animation-smoothness.md`.
+    pub fn bounce(&mut self, bounce: &Bounce, before: Option<CGPoint>) {
+        if bounce.duration.is_zero() {
+            return;
+        }
+        let begin = objc2_quartz_core::CACurrentMediaTime();
+        let key_name = NSString::from_str(BOUNCE_ANIMATION_KEY);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        let keys: Vec<GroupKey> = self.containers.keys().copied().collect();
+        for key in keys {
+            let Some(own) = container_bounce(key, bounce, before) else {
+                continue;
+            };
+            for layer in self.layers_of(key) {
+                layer.addAnimation_forKey(&bounce_animation(&own, key, begin), Some(&key_name));
+            }
+        }
+        commit_now();
+    }
+
     /// Takes every container `carries_out_and_back` names out to `offset` and back, additively, on
-    /// top of any movement in flight, under a key of the kind's own: the edge bounce's shape or the
-    /// nudge's. See "Edge bounce" and "The move flight" in
+    /// top of any movement in flight, under the nudge's own key. See "The move flight" in
     /// `src/animation/docs/animation-smoothness.md`.
-    pub fn out_and_back(
-        &mut self,
-        kind: OutAndBack,
-        offset: CGPoint,
-        duration: Duration,
-    ) {
+    pub fn nudge(&mut self, offset: CGPoint, duration: Duration) {
         if duration.is_zero() {
             return;
         }
         let timing = Timing::starting_now(duration);
-        let key_name = NSString::from_str(match kind {
-            OutAndBack::Bounce => BOUNCE_ANIMATION_KEY,
-            OutAndBack::Nudge => NUDGE_ANIMATION_KEY,
-        });
+        let key_name = NSString::from_str(NUDGE_ANIMATION_KEY);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let keys: Vec<GroupKey> = self.containers.keys().copied().collect();
@@ -907,11 +1065,7 @@ impl TileOverlay {
                 continue;
             }
             for layer in self.layers_of(key) {
-                let animation = match kind {
-                    OutAndBack::Bounce => bounce_animation(offset, timing),
-                    OutAndBack::Nudge => nudge_animation(offset, timing),
-                };
-                layer.addAnimation_forKey(&animation, Some(&key_name));
+                layer.addAnimation_forKey(&nudge_animation(offset, timing), Some(&key_name));
             }
         }
         commit_now();
@@ -948,7 +1102,9 @@ impl TileOverlay {
         entry.key = key;
         entry.companion = tile.companion.is_some();
         entry.picture.setContentsScale(self.scale);
+        clip_corners(&entry.picture, None);
         entry.resize_until = None;
+        entry.leg = None;
         let covered = tile.snapshot.coverage.covered;
         let mode = content_mode(covered, tile.from.size, tile.to.size);
         set_tile_content(entry, &tile.snapshot, mode, tile.from.size, self.scale);
@@ -1121,11 +1277,7 @@ impl TileOverlay {
             for layer in self.layers_of(key) {
                 layer.setPosition(to);
                 if !duration.is_zero() {
-                    let animation = leg_animation(&leg);
-                    layer.addAnimation_forKey(
-                        &animation,
-                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                    );
+                    add_movement(&layer, &leg_animation(&leg));
                 }
             }
             if duration.is_zero() {
@@ -1144,10 +1296,7 @@ impl TileOverlay {
                 let leg = Leg::leaving(carried.get(&key), install, to, now, omega);
                 for layer in self.layers_of(key) {
                     layer.setPosition(to);
-                    layer.addAnimation_forKey(
-                        &leg_animation(&leg),
-                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                    );
+                    add_movement(&layer, &leg_animation(&leg));
                 }
                 longest = longest.max(Duration::from_secs_f64(leg.samples(LEG_STEP).1));
                 self.legs.insert(key, leg);
@@ -1156,11 +1305,7 @@ impl TileOverlay {
             for layer in self.layers_of(key) {
                 layer.setPosition(to);
                 if !duration.is_zero() && !install.same_as(to) {
-                    let animation = position_animation(install, to, timing);
-                    layer.addAnimation_forKey(
-                        &animation,
-                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                    );
+                    add_movement(&layer, &position_animation(install, to, timing));
                 }
             }
             self.record_leg(key, install, to, timing, duration);
@@ -1250,87 +1395,25 @@ impl TileOverlay {
             return;
         };
         place_tile(entry, to, z);
-        let timing = Timing::starting_now(duration);
-        // Proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move.
-        if !rini_geometry::stretch::is_a_resize(from.size, to.size) {
-            entry.resize_leg = None;
-            // addAnimation copies, so one instance serves picture and shadow.
-            let animation = position_animation(from.origin, to.origin, timing);
-            let key = NSString::from_str(TILE_ANIMATION_KEY);
-            entry.picture.addAnimation_forKey(&animation, Some(&key));
-            entry.shadow.addAnimation_forKey(&animation, Some(&key));
-            return;
-        }
-        self.animate_tile_resize(window, from, to, timing);
+        animate_tile_leg(entry, from, to, Timing::starting_now(duration));
     }
 
-    /// The resize: every layer of the tile rides its own pair of endpoint geometries on the shared
-    /// curve. See "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
-    fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, timing: Timing) {
-        let Some(entry) = self.tile_layers.get_mut(&window) else {
-            return;
+    /// Moves a tile onto its window's real frame, `real` in the overlay's coordinates, when the
+    /// tile ends 0.25 to 20pt off it (`snap_to`), and says whether it moved. A tile riding a leg of
+    /// its own goes on along it, on the same timing, to the real frame; one riding its container
+    /// moves inside it at once. Shadow, mask, crop pieces and hairline follow. When to snap, once per
+    /// window per generation, is the caller's. See "Tiles snap to the real frame" in
+    /// `src/animation/docs/animation-smoothness.md`.
+    pub fn snap_tile(&mut self, window: WindowId, real: CGRect) -> bool {
+        let offset = self.tile_layers.get(&window).map(|entry| self.container_position(entry.key));
+        let Some((entry, offset)) = self.tile_layers.get_mut(&window).zip(offset) else {
+            return false;
         };
-        entry.resize_until = Some(timing.ends_at());
-        entry.resize_leg = Some((from, to, timing));
-
-        // Same key prefix as the plain move, or a move retargeted into a resize leaves its old
-        // position animation fighting this one.
-        animate_layer_frame(&entry.picture, from, to, timing, "rini.tile");
-        animate_layer_frame(&entry.shadow, from, to, timing, "rini.tile");
-
-        let origin = CGPoint::new(0.0, 0.0);
-        let shadow_path = path_animation(
-            "shadowPath",
-            &silhouette_path(from.size, origin),
-            &silhouette_path(to.size, origin),
-            timing,
-        );
-        entry
-            .shadow
-            .addAnimation_forKey(&shadow_path, Some(&NSString::from_str("rini.tile.shadow.path")));
-        animate_layer_frame(
-            &entry.shadow_mask,
-            shadow_mask_frame(from.size),
-            shadow_mask_frame(to.size),
-            timing,
-            "rini.tile.mask",
-        );
-        let mask_path = path_animation("path", &ring_path(from.size), &ring_path(to.size), timing);
-        entry
-            .shadow_mask
-            .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
-
-        if let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) {
-            let from_pieces = crop_pieces(picture, from.size);
-            let to_pieces = crop_pieces(picture, to.size);
-            for ((layer, a), b) in grid.pieces.iter().zip(from_pieces).zip(to_pieces) {
-                animate_layer_frame(layer, a.frame, b.frame, timing, "rini.piece");
-                let contents = rect_animation("contentsRect", a.contents, b.contents, timing);
-                layer.addAnimation_forKey(
-                    &contents,
-                    Some(&NSString::from_str("rini.piece.contents")),
-                );
-            }
-        }
-
-        if let (Some(from_layout), Some(to_layout)) =
-            (boundary_layout(from.size), boundary_layout(to.size))
-        {
-            let rect_at = |layout: &crate::pictures::platform::edge_dressing::DressingLayout,
-                           index: usize| {
-                if index < 4 {
-                    layout.strips[index]
-                } else {
-                    layout.corners[index - 4]
-                }
-            };
-            for (index, layer) in &entry.dressing {
-                let a = rect_at(&from_layout, *index);
-                let b = rect_at(&to_layout, *index);
-                layer.setFrame(b);
-                animate_layer_frame(layer, a, b, timing, "rini.dressing");
-            }
-        }
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        let snapped = snap_onto(entry, offset, real, objc2_quartz_core::CACurrentMediaTime());
+        commit_now();
+        snapped
     }
 
     /// Shows the overlay; only an alpha change.
@@ -1345,11 +1428,50 @@ impl TileOverlay {
 
     /// Hides the overlay, revealing the real windows already sitting at their final frames.
     pub fn hide(&mut self) {
+        self.clear_holes();
         if !self.visible {
             return;
         }
         self.window.setAlphaValue(0.0);
         self.visible = false;
+    }
+
+    /// Punches a hole through the overlay over each window ending at one of `ends`, in the
+    /// overlay's coordinates, replacing the holes there were, and clears the window's background so
+    /// the holes show what is below. The caller names the windows that end wholly on screen. See
+    /// "Holes" in `src/animation/docs/animation-smoothness.md`.
+    pub fn set_holes(&mut self, ends: &[CGRect]) {
+        if ends.is_empty() {
+            self.clear_holes();
+            return;
+        }
+        let Some(clip) = self.window.contentView().and_then(|view| view.layer()) else {
+            return;
+        };
+        let holes: Vec<CGRect> =
+            ends.iter().map(|end| in_view(hole_in(*end), self.top_band)).collect();
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        // SAFETY: a shape layer we just made, as the mask of the view's own layer.
+        unsafe { clip.setMask(Some(&holes_mask(clip.bounds(), &holes))) };
+        commit_now();
+        self.window.setBackgroundColor(Some(&NSColor::clearColor()));
+    }
+
+    /// Fills the holes in again and puts the window's black background back.
+    pub fn clear_holes(&mut self) {
+        let Some(clip) = self.window.contentView().and_then(|view| view.layer()) else {
+            return;
+        };
+        if clip.mask().is_none() {
+            return;
+        }
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        // SAFETY: removing the mask this overlay set.
+        unsafe { clip.setMask(None) };
+        commit_now();
+        self.window.setBackgroundColor(Some(&NSColor::blackColor()));
     }
 
     /// Frees the tile contents without destroying the overlay.
@@ -1370,6 +1492,92 @@ impl TileOverlay {
         commit_now();
         let _ = self.mtm;
     }
+}
+
+/// Carries a tile from `from` to `to` on `timing`, its model already at `to`: a plain move, or a
+/// resize when the sizes differ by more than a re-fit. Callers hold the transaction.
+fn animate_tile_leg(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timing) {
+    // Proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move.
+    if rini_geometry::stretch::is_a_resize(from.size, to.size) {
+        animate_tile_resize(entry, from, to, timing);
+        return;
+    }
+    entry.leg = Some((from, to, timing));
+    // addAnimation copies, so one instance serves picture and shadow.
+    let animation = position_animation(from.origin, to.origin, timing);
+    let key = NSString::from_str(TILE_ANIMATION_KEY);
+    entry.picture.addAnimation_forKey(&animation, Some(&key));
+    entry.shadow.addAnimation_forKey(&animation, Some(&key));
+}
+
+/// The resize: every layer of the tile rides its own pair of endpoint geometries on the shared
+/// curve. See "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
+fn animate_tile_resize(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timing) {
+    entry.resize_until = Some(timing.ends_at());
+    entry.leg = Some((from, to, timing));
+
+    // Same key prefix as the plain move, or a move retargeted into a resize leaves its old
+    // position animation fighting this one.
+    animate_layer_frame(&entry.picture, from, to, timing, "rini.tile");
+    animate_layer_frame(&entry.shadow, from, to, timing, "rini.tile");
+
+    let origin = CGPoint::new(0.0, 0.0);
+    let shadow_path = path_animation(
+        "shadowPath",
+        &silhouette_path(from.size, origin),
+        &silhouette_path(to.size, origin),
+        timing,
+    );
+    entry
+        .shadow
+        .addAnimation_forKey(&shadow_path, Some(&NSString::from_str("rini.tile.shadow.path")));
+    animate_layer_frame(
+        &entry.shadow_mask,
+        shadow_mask_frame(from.size),
+        shadow_mask_frame(to.size),
+        timing,
+        "rini.tile.mask",
+    );
+    let mask_path = path_animation("path", &ring_path(from.size), &ring_path(to.size), timing);
+    entry
+        .shadow_mask
+        .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
+
+    animate_crop_grid(entry, from.size, to.size, timing);
+
+    if let (Some(from_layout), Some(to_layout)) =
+        (boundary_layout(from.size), boundary_layout(to.size))
+    {
+        let rect_at = |layout: &crate::pictures::platform::edge_dressing::DressingLayout,
+                       index: usize| {
+            if index < 4 {
+                layout.strips[index]
+            } else {
+                layout.corners[index - 4]
+            }
+        };
+        for (index, layer) in &entry.dressing {
+            let a = rect_at(&from_layout, *index);
+            let b = rect_at(&to_layout, *index);
+            layer.setFrame(b);
+            animate_layer_frame(layer, a, b, timing, "rini.dressing");
+        }
+    }
+}
+
+/// Moves a tile under a container at `offset` onto `real`, both in the overlay's coordinates, when
+/// `snap_to` says it ends off it; on its leg's own timing while that plays at `now`. Callers hold
+/// the transaction.
+fn snap_onto(entry: &mut Tile, offset: CGPoint, real: CGRect, now: f64) -> bool {
+    let Some(real) = snap_to(overlay_of(entry.picture.frame(), offset), real) else {
+        return false;
+    };
+    let to = group_relative(real, offset);
+    place_tile(entry, to, entry.picture.zPosition());
+    if let Some((from, _, timing)) = entry.leg.filter(|(_, _, timing)| timing.plays_at(now)) {
+        animate_tile_leg(entry, from, to, timing);
+    }
+    true
 }
 
 /// The bar's picture at the strip's origin, at the size it covers, never stretched. See "The bar
@@ -1451,8 +1659,9 @@ fn apply_edge_dressing(
     }
 }
 
-/// A tile: the picture, plus a caster behind it holding the shadow. No `masksToBounds`: it would
-/// clip the layer's own shadow, and contents cannot spill anyway.
+/// A tile: the picture, plus a caster behind it holding the shadow. No `masksToBounds` on the
+/// caster, which would clip its own shadow; the picture's contents cannot spill, and it clips only
+/// to round its corners (`clip_corners`).
 fn new_tile(container: &CALayer) -> Tile {
     let shadow = CALayer::layer();
     shadow.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -1482,11 +1691,19 @@ fn new_tile(container: &CALayer) -> Tile {
         dressing: Vec::new(),
         crop_grid: None,
         crop_of: None,
+        region: WHOLE,
         resize_until: None,
-        resize_leg: None,
+        leg: None,
         key: None,
         companion: false,
     }
+}
+
+/// Clips `picture`, with the crop pieces under it, to a rounded rect of `radius`, or not at all.
+/// The clip follows the bounds through a resize.
+fn clip_corners(picture: &CALayer, radius: Option<f64>) {
+    picture.setCornerRadius(radius.unwrap_or(0.0));
+    picture.setMasksToBounds(radius.is_some());
 }
 
 /// Puts both of a tile's layers at `frame`, with the caster half a step behind the picture. The
@@ -1607,7 +1824,25 @@ fn layout_crop_grid(entry: &Tile, frame: CGSize) {
     };
     for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
         layer.setFrame(piece.frame);
-        layer.setContentsRect(piece.contents);
+        layer.setContentsRect(within(entry.region, piece.contents));
+    }
+}
+
+/// Carries a crop-drawn tile's pieces between the grids of two frame sizes on `timing`.
+fn animate_crop_grid(entry: &Tile, from: CGSize, to: CGSize, timing: Timing) {
+    let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) else {
+        return;
+    };
+    let pieces = crop_pieces(picture, from).into_iter().zip(crop_pieces(picture, to));
+    for (layer, (a, b)) in grid.pieces.iter().zip(pieces) {
+        animate_layer_frame(layer, a.frame, b.frame, timing, "rini.piece");
+        let contents = rect_animation(
+            "contentsRect",
+            within(entry.region, a.contents),
+            within(entry.region, b.contents),
+            timing,
+        );
+        layer.addAnimation_forKey(&contents, Some(&NSString::from_str("rini.piece.contents")));
     }
 }
 
@@ -1651,7 +1886,7 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::animation::domain::motion::easing::ease;
+    use crate::animation::domain::motion::easing::{EASE_IN_OUT, ease};
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the
@@ -1700,7 +1935,6 @@ mod tests {
     /// crosses on.
     #[test]
     fn the_clock_and_the_render_server_run_one_curve() {
-        use crate::animation::domain::motion::easing::EASE_IN_OUT;
         for step in 0..=1000 {
             let s = step as f64 / 1000.0;
             let (x, y) = MOTION_CURVE.at(s);
@@ -1922,5 +2156,553 @@ mod tests {
         assert_ne!(NUDGE_ANIMATION_KEY, BOUNCE_ANIMATION_KEY);
         assert_ne!(NUDGE_ANIMATION_KEY, GROUP_ANIMATION_KEY);
         assert_ne!(BOUNCE_ANIMATION_KEY, GROUP_ANIMATION_KEY);
+    }
+
+    /// The `float[2]` a control point is written into: passed as a pointer, encoded as the array.
+    #[repr(transparent)]
+    struct Pair(*mut f32);
+
+    // SAFETY: a C array parameter is passed as a pointer to its first element.
+    unsafe impl objc2::encode::Encode for Pair {
+        const ENCODING: objc2::encode::Encoding =
+            objc2::encode::Encoding::Array(2, &<f32 as objc2::encode::Encode>::ENCODING);
+    }
+
+    /// The four numbers Core Animation runs a timing function on.
+    fn control_points(function: &CAMediaTimingFunction) -> [f32; 4] {
+        let (mut first, mut second) = ([0.0_f32; 2], [0.0_f32; 2]);
+        // SAFETY: indices 1 and 2 are the two control points, each written as two floats.
+        unsafe {
+            let _: () = msg_send![function, getControlPointAtIndex: 1_usize, values: Pair(first.as_mut_ptr())];
+            let _: () = msg_send![function, getControlPointAtIndex: 2_usize, values: Pair(second.as_mut_ptr())];
+        }
+        [first[0], first[1], second[0], second[1]]
+    }
+
+    fn bezier_points(curve: Curve) -> [f32; 4] {
+        match curve {
+            Curve::Bezier(c) => [c.x1 as f32, c.y1 as f32, c.x2 as f32, c.y2 as f32],
+            Curve::Linear => [0.0, 0.0, 1.0, 1.0],
+        }
+    }
+
+    /// What `bounce_animation` hands Core Animation is `Bounce::track`, key for key and curve for
+    /// curve, from rest and pushed mid-way, so the domain's tests pin what is drawn.
+    #[test]
+    fn the_bounce_installed_is_its_track() {
+        let wall = CGPoint::new(-72.0, 0.0);
+        let plays = Duration::from_millis(350);
+        let first = Bounce::from_rest(wall, plays);
+        for bounce in [first, first.pushed(Duration::from_millis(90), wall, plays)] {
+            let track = bounce.track(GroupKey::STILL, 7.0);
+            let animation = bounce_animation(&bounce, GroupKey::STILL, 7.0);
+            assert_eq!(
+                animation.keyPath().map(|k| k.to_string()),
+                Some("position".into())
+            );
+            let values = animation.values().expect("values");
+            let drawn: Vec<CGPoint> = values
+                .iter()
+                .map(|value| {
+                    let value = value.downcast_ref::<NSValue>().expect("an NSValue");
+                    // SAFETY: every value was made from a point.
+                    unsafe { value.pointValue() }
+                })
+                .collect();
+            let key_times: Vec<f64> = animation
+                .keyTimes()
+                .expect("key times")
+                .iter()
+                .map(|t| t.doubleValue())
+                .collect();
+            let keys: Vec<(f64, Value)> =
+                key_times.into_iter().zip(drawn.into_iter().map(Value::Point)).collect();
+            assert_eq!(keys, track.keys());
+            let curves: Vec<[f32; 4]> = animation
+                .timingFunctions()
+                .expect("timing functions")
+                .iter()
+                .map(|f| control_points(&f))
+                .collect();
+            let expected: Vec<[f32; 4]> =
+                track.curves().iter().map(|c| bezier_points(*c)).collect();
+            assert_eq!(curves, expected);
+            assert!(animation.isAdditive());
+            assert_eq!(
+                (animation.beginTime(), animation.duration()),
+                (7.0, track.seconds())
+            );
+        }
+    }
+
+    #[test]
+    fn a_linear_segment_runs_on_the_linear_function() {
+        assert_eq!(
+            control_points(&curve_function(Curve::Linear)),
+            bezier_points(Curve::Linear)
+        );
+        assert_eq!(
+            control_points(&curve_function(Curve::Bezier(EASE_IN_OUT))),
+            bezier_points(Curve::Bezier(EASE_IN_OUT))
+        );
+    }
+
+    /// A push replaces the bounce on every container that carries it. One that carried the bounce
+    /// before goes on from where that is drawn; one that did not, the floating windows under a
+    /// sideways bounce, is at rest and starts there; one that does not carry this one plays none.
+    #[test]
+    fn a_container_that_did_not_carry_the_last_bounce_starts_from_rest() {
+        let plays = Duration::from_millis(350);
+        let (up, left) = (CGPoint::new(0.0, -72.0), CGPoint::new(-72.0, 0.0));
+        let pushed_up = Bounce::from_rest(up, plays).pushed(Duration::from_millis(90), up, plays);
+        let strip = GroupKey::STILL;
+        assert_eq!(container_bounce(strip, &pushed_up, Some(up)), Some(pushed_up));
+        assert_eq!(container_bounce(strip, &pushed_up, Some(left)), Some(pushed_up));
+        assert_eq!(
+            container_bounce(GroupKey::Floating, &pushed_up, Some(up)),
+            Some(pushed_up)
+        );
+        let from_rest = container_bounce(GroupKey::Floating, &pushed_up, Some(left)).unwrap();
+        assert_eq!(from_rest.from, CGPoint::new(0.0, 0.0));
+        assert_eq!(
+            (from_rest.overshoot, from_rest.turn, from_rest.duration),
+            (pushed_up.overshoot, pushed_up.turn, pushed_up.duration),
+            "on the same clock as the rest"
+        );
+        assert_eq!(
+            container_bounce(GroupKey::Floating, &pushed_up, None).map(|b| b.from),
+            Some(CGPoint::new(0.0, 0.0))
+        );
+        let sideways = Bounce::from_rest(left, plays);
+        assert_eq!(container_bounce(GroupKey::Floating, &sideways, Some(left)), None);
+    }
+
+    fn animation_keys(layer: &CALayer) -> Vec<String> {
+        layer
+            .animationKeys()
+            .map(|keys| keys.iter().map(|key| key.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    fn playing(layer: &CALayer, key: &str) -> Playing {
+        // SAFETY: a read of the layer's own animation.
+        let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) };
+        Playing::of(&animation.expect("an animation under the key"))
+    }
+
+    /// A container riding its movement from 5.0, a bounce from 5.1 and a nudge from 5.2.
+    fn accented_container() -> Retained<CALayer> {
+        let layer = CALayer::layer();
+        let timing = Timing {
+            begin: 5.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let wall = CGPoint::new(-72.0, 0.0);
+        let bounce = Bounce::from_rest(wall, Duration::from_millis(350));
+        add_movement(&layer, &position_animation(CGPoint::new(0.0, 0.0), wall, timing));
+        layer.addAnimation_forKey(
+            &bounce_animation(&bounce, GroupKey::STILL, 5.1),
+            Some(&NSString::from_str(BOUNCE_ANIMATION_KEY)),
+        );
+        let nudge = Timing {
+            begin: 5.2,
+            seconds: 0.455,
+            ..timing
+        };
+        layer.addAnimation_forKey(
+            &nudge_animation(CGPoint::new(-576.0, 0.0), nudge),
+            Some(&NSString::from_str(NUDGE_ANIMATION_KEY)),
+        );
+        layer
+    }
+
+    fn new_leg(begin: f64) -> Retained<CABasicAnimation> {
+        let leg = Timing {
+            begin,
+            seconds: 0.4,
+            curve: MOTION_CURVE,
+        };
+        position_animation(CGPoint::new(-30.0, 0.0), CGPoint::new(-861.0, 0.0), leg)
+    }
+
+    fn close(a: Playing, b: Playing) -> bool {
+        (a.begin - b.begin).abs() < 1e-9
+            && (a.offset - b.offset).abs() < 1e-9
+            && (a.active - b.active).abs() < 1e-9
+    }
+
+    /// A retarget gives a container a new leg, which begins after the bounce and the nudge riding
+    /// it and so would hide them until it ends. They begin again with it, each as far into its own
+    /// time as it had got and for what is left of it, so they go on where they were.
+    #[test]
+    fn after_a_retarget_a_containers_keys_are_its_movement_then_its_accents() {
+        let layer = accented_container();
+        add_movement(&layer, &new_leg(5.3));
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                GROUP_ANIMATION_KEY,
+                BOUNCE_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY
+            ]
+        );
+        assert_eq!(playing(&layer, GROUP_ANIMATION_KEY).begin, 5.3);
+        let bounce = Playing {
+            begin: 5.3,
+            offset: 0.2,
+            active: 5.1 + 0.35 - 5.3,
+        };
+        let nudge = Playing {
+            begin: 5.3,
+            offset: 0.1,
+            active: 5.2 + 0.455 - 5.3,
+        };
+        assert!(close(playing(&layer, BOUNCE_ANIMATION_KEY), bounce));
+        assert!(close(playing(&layer, NUDGE_ANIMATION_KEY), nudge));
+
+        add_movement(&layer, &new_leg(5.4));
+        let again = Playing {
+            begin: 5.4,
+            offset: 0.3,
+            active: 5.1 + 0.35 - 5.4,
+        };
+        assert!(
+            close(playing(&layer, BOUNCE_ANIMATION_KEY), again),
+            "begun again a second time, still where it was"
+        );
+    }
+
+    /// An accent that begins after the new movement already sorts after it; one that has ended is
+    /// left for Core Animation to remove.
+    #[test]
+    fn an_accent_begun_after_the_movement_or_ended_is_left_alone() {
+        let accent = Playing {
+            begin: 5.1,
+            offset: 0.0,
+            active: 0.35,
+        };
+        assert_eq!(accent.again_at(5.0), None);
+        assert_eq!(accent.again_at(5.45), None);
+        let tie = accent.again_at(5.1).expect("begun with the movement, added again after it");
+        assert!(close(tie, accent), "a tie sorts in the order added");
+    }
+
+    /// What `add_movement` answers: a layer's animations sort by begin time, not by the order they
+    /// were added, so a movement added plainly goes after accents that began before it.
+    #[test]
+    fn core_animation_orders_a_layers_animations_by_begin_time() {
+        let layer = accented_container();
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                GROUP_ANIMATION_KEY,
+                BOUNCE_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY
+            ]
+        );
+        layer.addAnimation_forKey(&new_leg(5.3), Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                BOUNCE_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY,
+                GROUP_ANIMATION_KEY
+            ]
+        );
+        layer.addAnimation_forKey(&new_leg(5.15), Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+        assert_eq!(
+            animation_keys(&layer),
+            [
+                BOUNCE_ANIMATION_KEY,
+                GROUP_ANIMATION_KEY,
+                NUDGE_ANIMATION_KEY
+            ],
+            "added last, sorted between"
+        );
+    }
+
+    /// The canvas starts a band above the view, so a hole moves up by the band into the view's
+    /// coordinates.
+    #[test]
+    fn a_hole_moves_into_the_view_by_the_band() {
+        assert_eq!(
+            in_view(rect(869.0, 572.5, 1.0, 1.0), 32.0),
+            rect(869.0, 540.5, 1.0, 1.0)
+        );
+        assert_eq!(
+            in_view(rect(869.0, 572.5, 1.0, 1.0), 0.0),
+            rect(869.0, 572.5, 1.0, 1.0)
+        );
+    }
+
+    /// The mask covers the whole view but for each hole: filled even-odd, a point in a hole is left
+    /// out and every other point is kept.
+    #[test]
+    fn the_mask_leaves_out_exactly_the_holes() {
+        let bounds = rect(0.0, 0.0, 1728.0, 1085.0);
+        let ends = [
+            rect(868.0, 32.0, 856.0, 1081.0),
+            rect(4.0, 32.0, 856.0, 1081.0),
+        ];
+        let holes: Vec<CGRect> = ends.iter().map(|end| in_view(hole_in(*end), 32.0)).collect();
+        let mask = holes_mask(bounds, &holes);
+        // SAFETY: Core Animation's own fill-rule constant.
+        assert_eq!(*mask.fillRule(), *unsafe {
+            objc2_quartz_core::kCAFillRuleEvenOdd
+        });
+        assert_eq!(mask.frame(), bounds);
+        let path = mask.path().expect("a path");
+        // SAFETY: a null transform means the point is taken as given.
+        let kept = |x: f64, y: f64| unsafe {
+            objc2_core_graphics::CGPath::contains_point(
+                Some(&path),
+                std::ptr::null(),
+                CGPoint::new(x, y),
+                true,
+            )
+        };
+        for hole in &holes {
+            assert!(!kept(hole.origin.x + 0.5, hole.origin.y + 0.5), "{hole:?}");
+            assert!(kept(hole.origin.x + 2.0, hole.origin.y + 0.5), "beside {hole:?}");
+            assert!(kept(hole.origin.x + 0.5, hole.origin.y - 1.0), "above {hole:?}");
+        }
+        assert!(kept(10.0, 10.0));
+        assert!(kept(1700.0, 1080.0));
+    }
+
+    /// A crop-drawn tile whose picture is a region of a composite shows that region in every
+    /// piece: each piece's contents composed with it, at rest and at both ends of a resize.
+    #[test]
+    fn a_region_pictures_crop_pieces_show_only_the_region() {
+        let container = CALayer::layer();
+        let mut tile = new_tile(&container);
+        tile.crop_grid = Some(new_crop_grid(&tile.picture));
+        let picture = CGSize::new(856.0, 1081.0);
+        tile.crop_of = Some(picture);
+        tile.region = rect(0.5, 0.0, 0.5, 1.0);
+        let frame = CGSize::new(600.0, 1081.0);
+        layout_crop_grid(&tile, frame);
+        let grid = tile.crop_grid.as_ref().unwrap();
+        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+            assert_eq!(layer.contentsRect(), within(tile.region, piece.contents));
+            assert!(
+                layer.contentsRect().origin.x >= 0.5,
+                "{:?}",
+                layer.contentsRect()
+            );
+        }
+        let timing = Timing {
+            begin: 5.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let to = CGSize::new(300.0, 1081.0);
+        animate_crop_grid(&tile, frame, to, timing);
+        let ends = crop_pieces(picture, frame).into_iter().zip(crop_pieces(picture, to));
+        for (layer, (a, b)) in grid.pieces.iter().zip(ends) {
+            // SAFETY: a read of the layer's own animation.
+            let animation =
+                unsafe { layer.animationForKey(&NSString::from_str("rini.piece.contents")) }
+                    .expect("the contents ride the resize");
+            let animation = animation.downcast::<CABasicAnimation>().expect("a basic animation");
+            let value = |v: Option<Retained<objc2::runtime::AnyObject>>| {
+                let v = v.expect("a value");
+                // SAFETY: the value was made from a rect.
+                unsafe { v.downcast_ref::<NSValue>().expect("an NSValue").rectValue() }
+            };
+            assert_eq!(value(animation.fromValue()), within(tile.region, a.contents));
+            assert_eq!(value(animation.toValue()), within(tile.region, b.contents));
+        }
+        tile.region = WHOLE;
+        layout_crop_grid(&tile, frame);
+        let grid = tile.crop_grid.as_ref().unwrap();
+        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+            assert_eq!(
+                layer.contentsRect(),
+                piece.contents,
+                "a whole picture is unchanged"
+            );
+        }
+    }
+
+    /// A baked picture's corners are clipped to the window's radius, and only the picture is: the
+    /// shadow caster behind it is never clipped. Without a radius the picture draws whole.
+    #[test]
+    fn a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not() {
+        let container = CALayer::layer();
+        let tile = new_tile(&container);
+        assert!(!tile.picture.masksToBounds(), "whole by default");
+        clip_corners(&tile.picture, Some(12.0));
+        assert_eq!(tile.picture.cornerRadius(), 12.0);
+        assert!(tile.picture.masksToBounds());
+        assert!(!tile.shadow.masksToBounds());
+        assert_eq!(tile.shadow.cornerRadius(), 0.0);
+        clip_corners(&tile.picture, None);
+        assert_eq!(tile.picture.cornerRadius(), 0.0);
+        assert!(!tile.picture.masksToBounds());
+    }
+
+    /// A resize animates the shadow's silhouette and its mask's ring as paths. Handed over as
+    /// pointers they failed objc2's encoding check, so a debug build panicked on the first resize.
+    #[test]
+    fn a_resize_hands_its_paths_to_core_animation_as_objects() {
+        let timing = Timing {
+            begin: 100.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let (from, to) = (CGSize::new(1200.0, 1081.0), CGSize::new(861.0, 1081.0));
+        let origin = CGPoint::new(0.0, 0.0);
+        let animation = path_animation(
+            "shadowPath",
+            &silhouette_path(from, origin),
+            &silhouette_path(to, origin),
+            timing,
+        );
+        let path = |value: Option<Retained<objc2::runtime::AnyObject>>| {
+            let value = value.expect("a path");
+            // SAFETY: the value was made from a CGPath, which is what it is read back as.
+            let path: &objc2_core_graphics::CGPath =
+                unsafe { &*(Retained::as_ptr(&value) as *const objc2_core_graphics::CGPath) };
+            objc2_core_graphics::CGPath::bounding_box(Some(path)).size
+        };
+        assert_eq!(path(animation.fromValue()), from);
+        assert_eq!(path(animation.toValue()), to);
+    }
+
+    fn animation_value<T>(layer: &CALayer, key: &str, read: impl Fn(&NSValue) -> T) -> (T, T, f64) {
+        // SAFETY: a read of the layer's own animation.
+        let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) }
+            .expect("an animation under the key")
+            .downcast::<CABasicAnimation>()
+            .expect("a basic animation");
+        let value = |v: Option<Retained<objc2::runtime::AnyObject>>| {
+            read(v.expect("a value").downcast_ref::<NSValue>().expect("an NSValue"))
+        };
+        (
+            value(animation.fromValue()),
+            value(animation.toValue()),
+            animation.beginTime(),
+        )
+    }
+
+    fn point_of(value: &NSValue) -> CGPoint {
+        // SAFETY: the value was made from a point.
+        unsafe { value.pointValue() }
+    }
+
+    fn rect_of(value: &NSValue) -> CGRect {
+        // SAFETY: the value was made from a rect.
+        unsafe { value.rectValue() }
+    }
+
+    /// The strip's container, model at -861: a tile at 865 in it ends at 4 on screen.
+    const STRIP_AT: CGPoint = CGPoint { x: -861.0, y: 0.0 };
+
+    fn strip_tile(frame: CGRect) -> Tile {
+        let container = CALayer::layer();
+        let tile = new_tile(&container);
+        place_tile(&tile, frame, 0.0);
+        tile
+    }
+
+    /// The measured case, a tile 861 wide over a window 860 wide, riding its container: it is
+    /// moved inside the container at once, its shadow, mask and silhouette with it.
+    #[test]
+    fn a_tile_riding_its_container_snaps_onto_its_window_at_once() {
+        let mut tile = strip_tile(rect(865.0, 32.0, 861.0, 1081.0));
+        let real = rect(4.0, 32.0, 860.0, 1081.0);
+        assert!(snap_onto(&mut tile, STRIP_AT, real, 100.0));
+        let snapped = rect(865.0, 32.0, 860.0, 1081.0);
+        assert_eq!(tile.picture.frame(), snapped);
+        assert_eq!(tile.shadow.frame(), snapped);
+        assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size));
+        let silhouette = tile.shadow.shadowPath().expect("a silhouette");
+        assert_eq!(
+            objc2_core_graphics::CGPath::bounding_box(Some(&silhouette)).size,
+            snapped.size
+        );
+        assert!(tile.picture.animationKeys().is_none_or(|keys| keys.count() == 0));
+    }
+
+    /// A tile on a move of its own goes on along it to the window's frame: the same begin and
+    /// start, a new end.
+    #[test]
+    fn a_tile_on_its_own_leg_snaps_on_the_same_timing() {
+        let from = rect(1726.0, 32.0, 861.0, 1081.0);
+        let to = rect(865.0, 32.0, 861.0, 1081.0);
+        let timing = Timing {
+            begin: 100.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let mut tile = strip_tile(to);
+        animate_tile_leg(&mut tile, from, to, timing);
+        assert!(snap_onto(
+            &mut tile,
+            STRIP_AT,
+            rect(5.0, 32.0, 861.0, 1081.0),
+            100.2
+        ));
+        let snapped = rect(866.0, 32.0, 861.0, 1081.0);
+        assert_eq!(tile.picture.frame(), snapped);
+        for layer in [&tile.picture, &tile.shadow] {
+            assert_eq!(
+                animation_value(layer, TILE_ANIMATION_KEY, point_of),
+                (from.origin, snapped.origin, 100.0)
+            );
+        }
+        assert_eq!(tile.leg, Some((from, snapped, timing)));
+
+        let resized_from = rect(1726.0, 32.0, 1200.0, 1081.0);
+        let mut tile = strip_tile(to);
+        animate_tile_leg(&mut tile, resized_from, to, timing);
+        let real = rect(4.0, 32.0, 860.0, 1081.0);
+        assert!(snap_onto(&mut tile, STRIP_AT, real, 100.2));
+        let (start, end, begin) = animation_value(&tile.picture, "rini.tile.size", rect_of);
+        assert_eq!(
+            (start.size, end.size, begin),
+            (resized_from.size, real.size, 100.0)
+        );
+    }
+
+    /// Once its leg has played, the tile's model moves and nothing is installed again.
+    #[test]
+    fn a_tile_whose_leg_has_ended_snaps_by_its_model() {
+        let from = rect(1726.0, 32.0, 861.0, 1081.0);
+        let to = rect(865.0, 32.0, 861.0, 1081.0);
+        let timing = Timing {
+            begin: 100.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let mut tile = strip_tile(to);
+        animate_tile_leg(&mut tile, from, to, timing);
+        assert!(snap_onto(
+            &mut tile,
+            STRIP_AT,
+            rect(5.0, 32.0, 861.0, 1081.0),
+            100.5
+        ));
+        assert_eq!(tile.picture.frame().origin, CGPoint::new(866.0, 32.0));
+        assert_eq!(
+            animation_value(&tile.picture, TILE_ANIMATION_KEY, point_of).1,
+            to.origin,
+            "the leg that played is left as it was"
+        );
+    }
+
+    #[test]
+    fn a_tile_on_its_window_or_far_from_it_does_not_snap() {
+        let frame = rect(865.0, 32.0, 861.0, 1081.0);
+        for real in [
+            rect(4.1, 32.0, 861.0, 1081.0),
+            rect(40.0, 32.0, 861.0, 1081.0),
+        ] {
+            let mut tile = strip_tile(frame);
+            assert!(!snap_onto(&mut tile, STRIP_AT, real, 100.0), "{real:?}");
+            assert_eq!(tile.picture.frame(), frame);
+        }
     }
 }

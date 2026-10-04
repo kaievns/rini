@@ -61,9 +61,10 @@ impl Bounce {
     }
 
     /// A push arriving `elapsed` into this bounce: out again from where it is drawn, the way out
-    /// shortened by how much of it is already covered, the way home a full one.
+    /// shortened by how much of it is already covered, the way home a full one. One of no length
+    /// is a cut, drawn at rest.
     pub fn pushed(&self, elapsed: Duration, overshoot: CGPoint, duration: Duration) -> Self {
-        if self.is_home(elapsed) {
+        if self.is_home(elapsed) || duration.is_zero() {
             return Bounce::from_rest(overshoot, duration);
         }
         let from = self.at(elapsed);
@@ -141,7 +142,7 @@ mod tests {
     }
 
     /// A push mid-bounce starts the next one from exactly where the last is drawn, so nothing
-    /// jumps. Dropping the push instead read as a throttle (reported 2026-10-03).
+    /// jumps.
     #[test]
     fn a_push_starts_where_the_last_is_drawn() {
         let first = Bounce::from_rest(WALL, PLAYS);
@@ -195,6 +196,17 @@ mod tests {
         assert_eq!(first.pushed(PLAYS, WALL, PLAYS), Bounce::from_rest(WALL, PLAYS));
     }
 
+    /// A zero bounce duration is a configuration, not an error: a push of no length mid-bounce is
+    /// drawn at rest and makes a track Core Animation is handed nothing for.
+    #[test]
+    fn a_push_of_no_length_is_a_cut() {
+        let cut = Bounce::from_rest(WALL, PLAYS).pushed(ms(100), WALL, Duration::ZERO);
+        assert!(cut.turn.is_finite(), "{cut:?}");
+        assert_eq!(cut.duration, Duration::ZERO);
+        assert!(close(cut.at(Duration::ZERO), CGPoint::new(0.0, 0.0)));
+        assert_eq!(cut.track(GroupKey::STILL, 7.0).seconds(), 0.0);
+    }
+
     /// The other end pushed mid-bounce: out toward it from where the surface is.
     #[test]
     fn a_push_the_other_way_starts_from_where_it_is() {
@@ -220,9 +232,8 @@ mod tests {
         }
     }
 
-    /// From rest, the track is what `bounce_animation` installs today: `0, overshoot, 0` at `0,
-    /// BOUNCE_TURN, 1`, the motion curve out and `kCAMediaTimingFunctionEaseInEaseOut` home, whose
-    /// control points Core Animation reports as `EASE_IN_OUT`'s.
+    /// From rest, the track the overlay installs: `0, overshoot, 0` at `0, BOUNCE_TURN, 1`, the
+    /// motion curve out and `EASE_IN_OUT` home.
     #[test]
     fn a_bounce_from_rest_is_the_keyframes_the_overlay_installs() {
         let track = Bounce::from_rest(WALL, PLAYS).track(GroupKey::STILL, 7.0);

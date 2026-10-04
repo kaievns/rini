@@ -17,7 +17,8 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, evaluating to what Core Animation draws |
 | `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving mid-bounce, and its track |
 | `domain/motion/nudge.rs` | A move's nudge: the step's share and stretch, its keyframes and track, and the curve a stepping flight flies on |
-| `domain/motion/accents.rs` | Which accent may start: one bounce and one nudge at a time, and a nudge waiting for its flight to move |
+| `domain/motion/accents.rs` | Which accent may start: one nudge at a time, a nudge waiting for its flight to move, and the bounce never held off |
+| `domain/motion/holes.rs` | Where the overlay is holed over a window that ends on screen, so the window keeps painting |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/tile.rs` | How a tile fits its picture to its frame: stretch or crop, the crop pieces, the stand-in's mode |
 | `platform/overlay.rs` | `TileOverlay`, the renderer: the `CALayer` tree and the one `CATransaction` per flight |

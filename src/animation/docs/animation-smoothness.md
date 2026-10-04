@@ -185,6 +185,46 @@ window server's order is kept; a window the server did not report goes to
 the back of its own band. An entrance carries `server_order: Some(0)`
 because a window is raised on open.
 
+**Holes.** A window wholly under the overlay is not composited, so a window
+that repaints for focus under it shows the change only at the lift ("The
+handover, measured" in `capture-overlay-research.md`). `TileOverlay::set_holes`
+punches a 1pt hole over each window the caller names, a point in from its left
+edge and halfway down its final frame (`hole_in` in
+`src/animation/domain/motion/holes.rs`): one even-odd `CAShapeLayer` mask on
+the content view's layer, the view's bounds and every hole, with the window's
+background clear while it is up. Each call replaces the holes; `clear_holes`,
+which `hide` and a new display frame call, removes the mask and puts the black
+back. Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
+`the_mask_leaves_out_exactly_the_holes`. The mask is in the view layer's
+coordinates, flipped as the canvas is; where a hole lands on screen was not
+measured on a window shorter than the display. Nothing calls it yet: which
+windows get holes, and when, is the coordinator's (step 4 of
+`docs/pictures-motion-transitions.md`).
+
+**Corners of a baked picture.** A tile cut from a composite of the desktop
+carries the wallpaper in the window's rounded corners, where the window itself
+is transparent. `TileOverlay::set_tile_corner_clip` clips the tile's picture
+layer, crop pieces included, to a rounded rect of the window's radius
+(`cornerRadius` with `masksToBounds`, which follows a resize); the shadow
+caster is never clipped, and every install puts the picture back to whole
+(`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
+is in `docs/pictures-motion-transitions.md`; nothing bakes a picture yet.
+
+**Tiles snap to the real frame.** A strip pans by a fractional vector and the
+window server rounds each window on its own, so a tile of a rigid group can end
+a point from its window: 861 against 860 wide ("The handover, measured" in
+`capture-overlay-research.md`). `TileOverlay::snap_tile` takes the window's real
+frame and moves the tile onto it when the two are 0.25 to 20pt apart at any edge
+(`snap_to`): under a quarter point nothing shows at the lift, and past 20pt the
+window has not landed where its tile ends. A tile riding its container moves
+inside it at once, while the container carries it on. A tile on a leg of its
+own is given the same leg, its begin, start and curve, ending on the real frame,
+so it lands there with the leg instead of popping at the lift
+(`a_tile_on_its_own_leg_snaps_on_the_same_timing`); once the leg has played
+only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
+Nothing calls it yet: when to snap, once per window per generation, is the
+coordinator's.
+
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
@@ -222,28 +262,39 @@ floating container.
 
 **Edge bounce.** When a push against an end bounces, and what the flight does about it, is "Edge
 bounce" in `src/transitions/docs/coordination.md`. The
-overlay's `out_and_back` with `OutAndBack::Bounce` is one additive
-`CAKeyframeAnimation` per container
-(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; the motion curve out,
-`kCAMediaTimingFunctionEaseInEaseOut` home) under
+overlay's `bounce` is one additive `CAKeyframeAnimation` per container, built
+from `Bounce::track` (`from, overshoot, 0` at `0, turn, 1`; the motion curve
+out, `EASE_IN_OUT` home, the control points of
+`kCAMediaTimingFunctionEaseInEaseOut`) under
 its own key, so an in-flight movement is neither replaced nor disturbed and
 the model positions stay put; `settled` reads false until it is home, which
 holds the lift. The floating container rides only a vertical bounce
 (`carries_out_and_back`), the rule a pan (pinned) and a switch (carried) already
 follow. Real windows never move. The shape is `Bounce::from_rest`
 (`src/animation/domain/motion/bounce.rs`), pinned by
-`a_first_push_goes_out_once_and_comes_home`, and `Bounce::track` is those
-keyframes as a score track (`a_bounce_from_rest_is_the_keyframes_the_overlay_installs`).
-`Bounce::pushed` is the handover prototype's re-kick, a new bounce from wherever
-the last is drawn; the engine does not play it. A push while a bounce is still
-playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
-under the same key, so a burst of presses at the wall bounced once per press, and the
-presses the reactor reached late kept bouncing after the pressing had stopped.
-A move's nudge (below) is the other out-and-back, on the same containers by
-the same rule, under its own key and held off only by a nudge still playing
-(`OutAndBacks` in
-`src/animation/domain/motion/accents.rs`, one clock per kind), so neither holds the
-other off; pinned by `a_bounce_and_a_nudge_never_hold_each_other_off` and
+`a_first_push_goes_out_once_and_comes_home`. The overlay installs its track key
+for key and curve for curve (`the_bounce_installed_is_its_track`), so
+`a_bounce_from_rest_is_the_keyframes_the_overlay_installs` pins what is drawn.
+
+Every push re-kicks the bounce. A push while one plays is `Bounce::pushed` from
+where it is drawn, the way out shortened by how much of it is already covered
+(never below `SHORTEST_PUSH` of a full one) and the way home a full one, added
+under the same key so it replaces the one playing
+(`a_push_starts_where_the_last_is_drawn`). A burst holds the surface at the wall
+and lets it go home once, within one bounce of the last press
+(`a_burst_holds_the_wall_and_comes_home_after_the_last_press`). It replaced two
+behaviours, both reported in `specs/animation.md`: each press restarting the
+keyframes from rest, which bounced once per press and went on bouncing after the
+pressing stopped (2026-09-29), and the throttle that fixed it by dropping every
+push while one played, which showed nothing for the second and third press of a
+burst (2026-10-03). A container that did not carry the bounce playing, the
+floating windows under a sideways one, starts this one from rest on the same
+clock (`a_container_that_did_not_carry_the_last_bounce_starts_from_rest`). A
+push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
+move's nudge (below) is the other out-and-back, on the same containers by the
+same rule, under its own key. Only a nudge still playing holds a nudge off
+(`NudgePlaying` in `src/animation/domain/motion/accents.rs`) and the bounce
+never does; pinned by
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
 ## The move flight
@@ -253,8 +304,8 @@ flight, staged" in `src/transitions/docs/coordination.md`. This is how it moves.
 
 **The whole strip steps.** It is the edge bounce's mechanism: one additive
 keyframe animation, under its own key (`"rini.group.nudge"`), on every
-container `carries_out_and_back` names (`TileOverlay::out_and_back` with
-`OutAndBack::Nudge`), sampled every 1/120s from `nudge_displacement`,
+container `carries_out_and_back` names (`TileOverlay::nudge`), sampled every
+1/120s from `nudge_displacement`,
 `sin²(πt)`: at rest and motionless at both ends, furthest out at half time.
 That is every strip container: the moved window's, the strip's, and with them
 every border tracing a strip window, which rides its window's container. The
@@ -336,9 +387,9 @@ few points into the outer gap beside the moved window until the lift. A
 container a merge opens after a step began does not carry the rest of it: its
 member leaves from where it is drawn, so it does not jump, but it stops
 stepping, as with the edge bounce. The orchestration clock restarts to cover
-the new legs. A step still playing is not restarted (`OutAndBacks`): one step
-per burst, as presses at the wall bounce once. A press after it has come home,
-455ms at the default duration, starts another. A press at the end of the strip
+the new legs. A step still playing is not restarted (`NudgePlaying`): one step
+per burst. A press after it has come home, 455ms at the default duration,
+starts another. A press at the end of the strip
 bounces as before, on top of whatever is playing.
 
 ## Resizes through the overlay
@@ -365,7 +416,14 @@ changes is how the picture maps onto it (`content_mode` in
   stretching); it kept the corners but read as the window stretching, which
   it is. Wrong-shaped cached pictures use the same mapping instead of being
   dropped — rapid preset cycling used to drop the resized window's tile
-  because its picture lagged one press behind.
+  because its picture lagged one press behind. A picture that is a region of
+  a composite (step 4 of `docs/pictures-motion-transitions.md`) is drawn the
+  same way: each piece's contents are composed with the tile's region
+  (`within`), at rest and at both ends of a resize, and the pieces stay inside
+  it however the frame grows, so no piece shows the composite's next window
+  (`a_region_pictures_crop_pieces_show_only_the_region`,
+  `the_crop_grid_of_a_region_stays_in_the_region`). Until pictures are regions
+  the region is the whole picture.
 - **The animation is Core Animation end to end.** Piece frames and
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
@@ -404,8 +462,9 @@ channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
 model value each node ends at. `Score::sample` is what Core Animation draws at a
 media time, so a merge can bend a flight from the score instead of reading the
 presentation layer back (step 5 of `docs/pictures-motion-transitions.md`).
-Nothing plays a score yet: the overlay still builds its animations itself, and
-`Leg::track`, `nudge_track` and `Bounce::track` are the tracks it installs today.
+Nothing plays a score yet. The overlay builds the bounce from `Bounce::track`,
+and a spring leg and the nudge from the samples `Leg::track` and `nudge_track`
+are made of (`Leg::samples`, `nudge_samples`).
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
 an off-screen window, its presentation read at chosen `timeOffset`s.
@@ -418,8 +477,10 @@ an off-screen window, its presentation read at chosen `timeOffset`s.
 | The 72pt bounce over 0.35s | within 0.072pt of `Bounce::at` | `Bounce::track` |
 | Keyframes with no `keyTimes` or `timingFunctions` | evenly spaced, straight lines between | `Track::samples` |
 | `duration` 0 | plays for 0.25s | a cut |
-| `addAnimation:forKey:` on a key in use | the old one goes; the new one is last | `Score::add` replaces |
-| A non-additive animation after an additive one | the additive one is not drawn while it plays | `sample` adds every accent playing |
+| `addAnimation:forKey:` on a key in use | the old one goes | `Score::add` replaces |
+| A layer's animations | composed in order of `beginTime`, ties in the order added | `Score::tracks` |
+| A non-additive animation beginning after an additive one, or with it and added later | the additive one is not drawn while it plays | `sample` adds every accent playing |
+| That accent begun again with it: a copy at its `beginTime`, `timeOffset` as far as the accent had got, `repeatDuration` what is left | drawn exactly where it was, to its old end | `sample` adds every accent playing |
 
 A Bezier segment is the one place the score and the screen part, by Core
 Animation's own solver: under 0.1pt. A spring leg is the polyline of its 1/120s
@@ -430,14 +491,19 @@ viewport (`the_nudge_plays_as_its_samples`).
 
 Two rows are rules for whatever plays a score:
 
-- **Order.** Core Animation composes a layer's animations in the order they were
-  added, and a non-additive one starts over from its own value. The score adds
-  every accent to the movement whatever order they came in, so a renderer that
-  replaces a `Base` track adds the node's accents again after it, in
-  `Score::tracks` order. The overlay does not: `retarget` adds `rini.group.move`
-  again on each retargeted container, after any bounce or nudge riding it, so
-  those are not drawn until the new leg ends. Inferred from the probe, not
-  reproduced in rini.
+- **Order.** Core Animation composes a layer's animations in order of their
+  begin times, ties in the order added, and a non-additive one starts over from
+  its own value. A movement replaced mid-flight begins after every accent riding
+  it, so re-adding the accents unchanged leaves them hidden: they sort before it
+  by begin time whatever order they were added in. The score adds every accent
+  to the movement whatever order they came in, so a renderer that replaces a
+  `Base` track begins the node's accents again with it, each a copy as far into
+  its own time as it had got and lasting what is left of it. The overlay does
+  this for every movement it gives a container (`add_movement`, pinned by
+  `after_a_retarget_a_containers_keys_are_its_movement_then_its_accents` and
+  `core_animation_orders_a_layers_animations_by_begin_time`). Until it did,
+  `retarget` hid a bounce or nudge riding a retargeted container until the new
+  leg ended.
 - **No length.** A track of no length is a cut in the score and 0.25s in Core
   Animation, so a renderer places the node and installs nothing.
 

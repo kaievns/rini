@@ -312,8 +312,13 @@ workspace pulls the row up. It was 36pt and was reported as too small to
 notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a flight with
 no travel when none is running (every tile at rest, `final_frames` the layout
 the windows already sit at) and adds the bounce to whatever is running
-otherwise, extending the clock to cover the return (`clock_for_bounce`). How the bounce is drawn,
-and which bounce may start, is "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
+otherwise, extending the clock to cover the return (`clock_for_bounce`). Every push shows: the
+actor keeps the bounce playing and when it began, and a push while it plays starts the next from
+where that one is drawn (`next_bounce`, pinned by
+`every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn`), the clock extended to the new
+one's return. The record goes at the lift and when frame zero is installed again, which removes the
+animations it describes. How the bounce is drawn, and how a push re-kicks it, is "Edge bounce" in
+`src/animation/docs/animation-smoothness.md`.
 
 ## The move flight, staged
 
@@ -516,7 +521,8 @@ hole recorded above for `contentsRect` past the edge. If the reveal lands
 mid-flight after all, it is hard-cut onto the tile before 0.6 progress
 (`Swap("reveal")`) and `set_tile_picture` re-installs the resize leg on
 the SAME `Timing` (begin on the media clock plus duration, kept per tile
-in `resize_leg`): the frame keeps its curve and only the pixels cut.
+in `leg`, which a plain move keeps too, so a crop-drawn tile on a move
+re-keys the same way): the frame keeps its curve and only the pixels cut.
 Re-keying from the presented frame over the remaining duration restarted
 the ease-out and the tile lurched at every swap. Later than 0.6 the
 picture is cached for the next flight.

@@ -146,6 +146,55 @@ pub fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
         piece(bodyw, band, band, bodyh, pw - band, ph - tailh, band, tailh),
     ]
 }
+
+/// The whole of a picture, in its unit coordinates.
+pub const WHOLE: CGRect = CGRect {
+    origin: CGPoint { x: 0.0, y: 0.0 },
+    size: CGSize { width: 1.0, height: 1.0 },
+};
+
+/// `inner`, a rect in a picture's unit coordinates, in the unit coordinates of the image that
+/// `outer` cuts the picture from: a crop piece's `contents` composed with a picture that is a region
+/// of a larger composite.
+pub fn within(outer: CGRect, inner: CGRect) -> CGRect {
+    CGRect::new(
+        CGPoint::new(
+            outer.origin.x + inner.origin.x * outer.size.width,
+            outer.origin.y + inner.origin.y * outer.size.height,
+        ),
+        CGSize::new(
+            inner.size.width * outer.size.width,
+            inner.size.height * outer.size.height,
+        ),
+    )
+}
+
+/// Off by less than this, a tile and its window agree: under a quarter point nothing shows at the
+/// lift.
+pub const SNAP_FROM: f64 = 0.25;
+
+/// Off by more than this, the window has not landed where its tile ends: the slack a landing is
+/// judged within. See "Tiles snap to the real frame" in
+/// `src/animation/docs/animation-smoothness.md`.
+pub const SNAP_UP_TO: f64 = 20.0;
+
+/// Where a tile ending at `model` goes when its window really landed at `real`: onto `real` when
+/// an edge or a side is `SNAP_FROM` to `SNAP_UP_TO` off, nowhere otherwise. A strip pans by a
+/// fractional vector and the window server rounds each window on its own, so a tile of a rigid
+/// group can end a point from its window.
+pub fn snap_to(model: CGRect, real: CGRect) -> Option<CGRect> {
+    let off = [
+        real.origin.x - model.origin.x,
+        real.origin.y - model.origin.y,
+        real.size.width - model.size.width,
+        real.size.height - model.size.height,
+    ]
+    .into_iter()
+    .map(f64::abs)
+    .fold(0.0, f64::max);
+    (SNAP_FROM..=SNAP_UP_TO).contains(&off).then_some(real)
+}
+
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
 /// that looks almost right, which is much harder to debug than one that is obviously broken.
 pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
@@ -471,5 +520,82 @@ mod tests {
         assert_eq!(crop_band(CGSize::new(859.0, 1081.0)), 40.0);
         assert!((crop_band(CGSize::new(60.0, 1081.0)) - 27.0).abs() < 1e-9);
         assert_eq!(crop_band(CGSize::new(0.0, 1081.0)), 0.0);
+    }
+
+    #[test]
+    fn within_the_whole_picture_a_rect_is_itself() {
+        let piece = rect(0.25, 0.0, 0.5, 0.04);
+        assert_eq!(within(WHOLE, piece), piece);
+        assert_eq!(within(piece, WHOLE), piece);
+    }
+
+    /// A picture that is the right half of a composite, from a quarter down: its unit rects land
+    /// in that half, scaled to it.
+    #[test]
+    fn a_rect_of_a_region_lands_in_the_region() {
+        let region = rect(0.5, 0.25, 0.5, 0.5);
+        assert_eq!(within(region, rect(0.0, 0.0, 1.0, 1.0)), region);
+        assert_eq!(
+            within(region, rect(0.5, 0.5, 0.5, 0.5)),
+            rect(0.75, 0.5, 0.25, 0.25)
+        );
+        assert_eq!(
+            within(region, rect(0.0, 0.9, 1.0, 0.1)),
+            rect(0.5, 0.7, 0.5, 0.05)
+        );
+    }
+
+    /// Every crop piece of a region picture stays inside the region, scaled to it, growing or
+    /// shrinking: a piece reaching past the region would show the composite's next window.
+    #[test]
+    fn the_crop_grid_of_a_region_stays_in_the_region() {
+        let region = rect(0.125, 0.5, 0.25, 0.5);
+        let picture = CGSize::new(856.0, 1081.0);
+        for frame in [
+            CGSize::new(856.0, 1081.0),
+            CGSize::new(428.0, 1081.0),
+            CGSize::new(856.0, 540.0),
+            CGSize::new(1200.0, 1300.0),
+        ] {
+            for piece in crop_pieces(picture, frame) {
+                let whole = piece.contents;
+                let cut = within(region, whole);
+                let eps = 1e-12;
+                assert!(cut.origin.x >= region.origin.x - eps, "{frame:?}: {cut:?}");
+                assert!(cut.origin.y >= region.origin.y - eps, "{frame:?}: {cut:?}");
+                assert!(cut.origin.x + cut.size.width <= region.origin.x + region.size.width + eps);
+                assert!(
+                    cut.origin.y + cut.size.height <= region.origin.y + region.size.height + eps
+                );
+                assert!((cut.size.width - whole.size.width * region.size.width).abs() < eps);
+            }
+        }
+    }
+
+    /// The measured case: a rigid pan ended a tile 861 wide against its window's 860.
+    #[test]
+    fn a_tile_a_point_off_its_window_snaps_onto_it() {
+        let model = rect(4.0, 32.0, 861.0, 1081.0);
+        let real = rect(4.0, 32.0, 860.0, 1081.0);
+        assert_eq!(snap_to(model, real), Some(real));
+        let moved = rect(3.0, 32.0, 861.0, 1081.0);
+        assert_eq!(snap_to(model, moved), Some(moved));
+    }
+
+    #[test]
+    fn a_tile_snaps_only_from_a_quarter_point_to_twenty_points_off() {
+        let model = rect(4.0, 32.0, 861.0, 1081.0);
+        let off = |d: f64| rect(4.0 + d, 32.0, 861.0, 1081.0);
+        for d in [0.25, -0.25, 1.0, 19.5, 20.0, -20.0] {
+            assert_eq!(snap_to(model, off(d)), Some(off(d)), "{d}");
+        }
+        for d in [0.0, 0.2, -0.24, 20.5, -21.0, 400.0] {
+            assert_eq!(snap_to(model, off(d)), None, "{d}");
+        }
+        assert_eq!(
+            snap_to(model, rect(4.5, 32.0, 861.0, 1111.0)),
+            None,
+            "half a point across but 30 taller: judged by the furthest edge"
+        );
     }
 }

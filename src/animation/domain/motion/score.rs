@@ -241,10 +241,10 @@ impl Score {
         self.tracks.get(&(node, channel))
     }
 
-    /// `node`'s tracks in the order Core Animation must be handed them. It composes a layer's
-    /// animations in the order they were added, a non-additive one replacing whatever came before
-    /// it, and a same-key replacement goes last: a renderer that replaces a `Base` track adds the
-    /// node's other tracks again after it.
+    /// `node`'s tracks in the order Core Animation must draw them. It composes a layer's
+    /// animations in order of their begin times, ties in the order added, a non-additive one
+    /// replacing whatever came before it: a renderer that replaces a `Base` track begins the node's
+    /// other tracks again with it, as far into their own time as they have got.
     pub fn tracks(&self, node: Node) -> impl Iterator<Item = &Track> {
         Channel::ALL.into_iter().filter_map(move |channel| self.track(node, channel))
     }

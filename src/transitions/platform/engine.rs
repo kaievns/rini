@@ -18,9 +18,8 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
-use crate::animation::domain::motion::accents::{
-    NudgeAdmission, OutAndBack, OutAndBacks, nudge_admission,
-};
+use crate::animation::domain::motion::accents::{NudgeAdmission, NudgePlaying, nudge_admission};
+use crate::animation::domain::motion::bounce::Bounce;
 use crate::animation::domain::motion::nudge::{NUDGE_STRETCH, flight_curve};
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
@@ -267,7 +266,7 @@ fn stand_in_chase(
 fn nudge_waiting(
     nudge: Option<CGPoint>,
     duration: Duration,
-    playing: &OutAndBacks,
+    playing: &NudgePlaying,
     now: Instant,
 ) -> Option<(CGPoint, Duration)> {
     let nudge = nudge?;
@@ -284,7 +283,7 @@ fn nudge_waiting(
 /// when it is skipped.
 fn starting_nudge(
     waiting: Option<(CGPoint, Duration)>,
-    playing: &OutAndBacks,
+    playing: &NudgePlaying,
     now: Instant,
 ) -> Option<(CGPoint, Duration)> {
     let (nudge, plain) = waiting?;
@@ -309,14 +308,30 @@ fn admitted(nudge: CGPoint, admission: NudgeAdmission) -> Option<CGPoint> {
 fn nudge_on(
     overlay: &mut TileOverlay,
     running: &mut RunningAnimation,
-    playing: &mut OutAndBacks,
+    playing: &mut NudgePlaying,
     offset: CGPoint,
     duration: Duration,
 ) {
-    playing.start(OutAndBack::Nudge, Instant::now(), duration);
+    playing.start(Instant::now(), duration);
     running.duration = clock_for_bounce(running.started, running.duration, duration);
-    overlay.out_and_back(OutAndBack::Nudge, offset, duration);
+    overlay.nudge(offset, duration);
     debug!(offset = format!("{:.0},{:.0}", offset.x, offset.y), "move nudge");
+}
+
+/// The bounce a push at `now` plays: from rest with none playing, else pushed from where the one
+/// playing is drawn.
+fn next_bounce(
+    playing: Option<(Instant, Bounce)>,
+    now: Instant,
+    overshoot: CGPoint,
+    duration: Duration,
+) -> Bounce {
+    match playing {
+        Some((began, bounce)) => {
+            bounce.pushed(now.saturating_duration_since(began), overshoot, duration)
+        }
+        None => Bounce::from_rest(overshoot, duration),
+    }
 }
 
 /// The capture work a lift leaves for the quiet period.
@@ -673,8 +688,11 @@ pub struct FlightEngine {
     place_frames: Option<PlaceFrames>,
     on_flight: Option<OnFlight>,
     flight_report: FlightReport,
-    /// When the edge bounce and the move nudge playing now come home.
-    out_and_backs: OutAndBacks,
+    /// When the move nudge playing now comes home.
+    nudge_playing: NudgePlaying,
+    /// The edge bounce drawn on the containers now and when it began. None at the lift, so every
+    /// flight starts with none, and when frame zero is installed again.
+    bounce: Option<(Instant, Bounce)>,
 }
 
 impl FlightEngine {
@@ -699,7 +717,8 @@ impl FlightEngine {
             place_frames: None,
             on_flight: None,
             flight_report: FlightReport::default(),
-            out_and_backs: OutAndBacks::default(),
+            nudge_playing: NudgePlaying::default(),
+            bounce: None,
         }
     }
 
@@ -1059,7 +1078,7 @@ impl FlightEngine {
 
     /// Frame zero again, for a flight still collecting passes: the plan is rebuilt and installed.
     fn recompose(&mut self) {
-        let Self { overlay, running, .. } = self;
+        let Self { overlay, running, bounce, .. } = self;
         let Some(running) = running.as_mut() else { return };
         let mut rebuilt = plan::plan_from_tiles(&running.tiles);
         // A tile only knows it resizes; the plan remembers which of those are entrances.
@@ -1069,6 +1088,7 @@ impl FlightEngine {
         if let Some(overlay) = overlay.as_mut() {
             let banding = band_plan(&running.plan, &running.tiles, running.focus);
             overlay.install(&running.plan, &running.tiles, &banding);
+            *bounce = None;
         }
     }
 
@@ -1490,7 +1510,7 @@ impl FlightEngine {
                 running.merge_pass(tiles, focus);
                 if !in_flight
                     && let Some(waiting) =
-                        nudge_waiting(nudge, duration, &self.out_and_backs, Instant::now())
+                        nudge_waiting(nudge, duration, &self.nudge_playing, Instant::now())
                 {
                     running.nudge = Some(waiting);
                 }
@@ -1500,7 +1520,7 @@ impl FlightEngine {
                 let Self {
                     overlay,
                     running,
-                    out_and_backs,
+                    nudge_playing,
                     ..
                 } = self;
                 let running = running.as_mut().expect("checked above");
@@ -1524,7 +1544,7 @@ impl FlightEngine {
                 sync_tiles_to_plan(&mut running.tiles, &running.plan);
                 let now = Instant::now();
                 let nudge = nudge
-                    .and_then(|nudge| admitted(nudge, nudge_admission(out_and_backs, now, true)));
+                    .and_then(|nudge| admitted(nudge, nudge_admission(nudge_playing, now, true)));
                 // A flight carrying the nudge is stretched, its new legs with it.
                 let duration = if nudge.is_some() {
                     duration.mul_f64(NUDGE_STRETCH)
@@ -1594,7 +1614,7 @@ impl FlightEngine {
                 }
                 running.absorb_in_flight_change(changed, frames_changed);
                 if let (Some(nudge), Some(overlay)) = (nudge, overlay.as_mut()) {
-                    nudge_on(overlay, running, out_and_backs, nudge, duration);
+                    nudge_on(overlay, running, nudge_playing, nudge, duration);
                 }
                 // A grow joining mid-flight cannot hold; its chase lands as `Swap("reveal")`.
                 let (_, chase_set, _) = frame_zero_work(&awaiting, &chase, &[], &[]);
@@ -1715,7 +1735,7 @@ impl FlightEngine {
             harvested: HashSet::new(),
             focus,
             plan,
-            nudge: nudge_waiting(nudge, duration, &self.out_and_backs, Instant::now()),
+            nudge: nudge_waiting(nudge, duration, &self.nudge_playing, Instant::now()),
             _clock: clock,
         });
 
@@ -1892,8 +1912,10 @@ impl FlightEngine {
         );
     }
 
-    /// Nudges the strip surface by `overshoot` and back, additively on a running flight or as the
-    /// only motion of a no-travel one. See "Edge bounce" in `src/transitions/docs/coordination.md`.
+    /// Pushes the strip surface out by `overshoot` and back, additively on a running flight or as
+    /// the only motion of a no-travel one. Every push shows: one arriving while a bounce plays
+    /// starts the next from where that one is drawn. See "Edge bounce" in
+    /// `src/transitions/docs/coordination.md`.
     fn start_bounce(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -1903,28 +1925,22 @@ impl FlightEngine {
         duration: Duration,
     ) {
         let now = Instant::now();
-        if !self.out_and_backs.admits(OutAndBack::Bounce, now) {
-            debug!("edge bounce skipped: one is still playing");
-            return;
-        }
         if self.running.is_none() {
             let at_rest = CGPoint::new(0.0, 0.0);
             self.start_surface(windows, at_rest, at_rest, final_frames, focus, duration, None);
         }
-        let Self {
-            overlay,
-            running,
-            out_and_backs,
-            ..
-        } = self;
+        let Self { overlay, running, bounce, .. } = self;
         let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
             return;
         };
-        out_and_backs.start(OutAndBack::Bounce, now, duration);
-        running.duration = clock_for_bounce(running.started, running.duration, duration);
-        overlay.out_and_back(OutAndBack::Bounce, overshoot, duration);
+        let before = bounce.map(|(_, playing)| playing.overshoot);
+        let next = next_bounce(*bounce, now, overshoot, duration);
+        *bounce = Some((now, next));
+        running.duration = clock_for_bounce(running.started, running.duration, next.duration);
+        overlay.bounce(&next, before);
         debug!(
             overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
+            from = format!("{:.1},{:.1}", next.from.x, next.from.y),
             joined = running.started.is_some(),
             "edge bounce"
         );
@@ -1965,7 +1981,7 @@ impl FlightEngine {
         );
         let now = Instant::now();
         running.started = Some(now);
-        let nudge = starting_nudge(running.nudge.take(), &self.out_and_backs, now);
+        let nudge = starting_nudge(running.nudge.take(), &self.nudge_playing, now);
         // A flight carrying the nudge is stretched, and crosses on the curve that keeps the column
         // the move passed in the side the step opens.
         if let Some((_, stretched)) = nudge {
@@ -1992,7 +2008,7 @@ impl FlightEngine {
         if let Some((nudge, stretched)) = nudge
             && let (Some(overlay), Some(running)) = (self.overlay.as_mut(), self.running.as_mut())
         {
-            nudge_on(overlay, running, &mut self.out_and_backs, nudge, stretched);
+            nudge_on(overlay, running, &mut self.nudge_playing, nudge, stretched);
         }
     }
 
@@ -2195,6 +2211,7 @@ impl FlightEngine {
         if focus.is_some() {
             self.last_focus = focus;
         }
+        self.bounce = None;
         self.coalesce = None;
 
         // The owed captures run after `SETTLE_BEFORE_CAPTURES`; a flight beginning first carries them over.
@@ -4035,20 +4052,45 @@ mod tests {
             let step = CGPoint::new(-576.0, 0.0);
             let plain = Duration::from_millis(350);
             let now = Instant::now();
-            let idle = OutAndBacks::default();
+            let idle = NudgePlaying::default();
             let waiting = nudge_waiting(Some(step), plain, &idle, now);
             assert_eq!(waiting, Some((step, plain)));
             let started = starting_nudge(waiting, &idle, now);
             assert_eq!(started, Some((step, plain.mul_f64(NUDGE_STRETCH))));
             assert_eq!(flight_curve(started.is_some()), EASE_IN_OUT);
 
-            let mut playing = OutAndBacks::default();
-            playing.start(OutAndBack::Nudge, now, plain.mul_f64(NUDGE_STRETCH));
+            let mut playing = NudgePlaying::default();
+            playing.start(now, plain.mul_f64(NUDGE_STRETCH));
             let soon = now + Duration::from_millis(100);
             assert_eq!(nudge_waiting(Some(step), plain, &playing, soon), None);
             assert_eq!(starting_nudge(Some((step, plain)), &playing, soon), None);
             assert_eq!(flight_curve(false), MOTION_CURVE);
             assert_eq!(nudge_waiting(None, plain, &idle, now), None);
+        }
+    }
+
+    /// The edge bounce: every push against an end shows, re-kicked from where the last is drawn.
+    mod bounce {
+        use super::*;
+
+        /// A push while a bounce plays is not dropped: it starts a bounce from where the last is
+        /// drawn. One after it came home, or with none playing, starts from rest.
+        #[test]
+        fn every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn() {
+            let plays = Duration::from_millis(350);
+            let wall = CGPoint::new(-72.0, 0.0);
+            let began = Instant::now();
+            let first = next_bounce(None, began, wall, plays);
+            assert_eq!(first, Bounce::from_rest(wall, plays));
+            let later = began + Duration::from_millis(60);
+            let second = next_bounce(Some((began, first)), later, wall, plays);
+            assert_eq!(second.from, first.at(Duration::from_millis(60)));
+            assert_ne!(second.from, CGPoint::new(0.0, 0.0), "not over from rest");
+            let home = began + plays;
+            assert_eq!(
+                next_bounce(Some((began, first)), home, wall, plays),
+                Bounce::from_rest(wall, plays)
+            );
         }
     }
 
