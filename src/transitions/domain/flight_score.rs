@@ -469,30 +469,23 @@ mod tests {
         assert_eq!(flight.score.score(), &flight.replica);
     }
 
-    /// The lift drops the flight and its score, accents and all: a flight begun after it has nothing
-    /// playing and nothing waiting, and takes a step at once where a step still playing in the one
-    /// before would have held it off.
+    /// A flight's score begins with nothing playing and nothing waiting, and a step waited for its
+    /// motion is taken as it starts. Every accent is the flight's own, so the lift drops it with the
+    /// flight; the engine keeps none between flights.
     #[test]
-    fn a_lift_drops_the_score_and_every_accent_with_it() {
-        let step = Accent::Step {
-            offset: CGPoint::new(-576.0, 0.0),
-            seconds: PLAIN,
-        };
-        let mut lifted = Flight::posed(&strip(1, 2, 1.0, -863.0));
-        lifted.score.wait(step);
-        lifted.start();
-        assert!(lifted.score.score().plays(Channel::Nudge, BEGIN + 0.1));
-        drop(lifted);
-
-        let mut next = Flight::posed(&strip(1, 2, 1.0, -863.0));
-        assert!(!next.score.score().plays(Channel::Nudge, BEGIN));
-        let plain = next.start();
+    fn a_fresh_flight_has_nothing_playing_or_waiting_and_takes_a_waited_step() {
+        let mut plain = Flight::posed(&strip(1, 2, 1.0, -863.0));
+        assert!(!plain.score.score().plays(Channel::Nudge, BEGIN));
+        let edits = plain.start();
         assert!(
-            plain.iter().all(|e| !matches!(e, Edit::Add(t) if t.channel() != Channel::Base)),
+            edits.iter().all(|e| !matches!(e, Edit::Add(t) if t.channel() != Channel::Base)),
             "nothing waited"
         );
         let mut stepping = Flight::posed(&strip(1, 2, 1.0, -863.0));
-        stepping.score.wait(step);
+        stepping.score.wait(Accent::Step {
+            offset: CGPoint::new(-576.0, 0.0),
+            seconds: PLAIN,
+        });
         let edits = stepping.start();
         assert!(
             edits.iter().any(|e| matches!(e, Edit::Add(t) if t.channel() == Channel::Nudge)),

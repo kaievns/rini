@@ -2672,9 +2672,11 @@ mod tests {
         }
 
         /// What the tree draws is exactly its replica: a container and a tile layer for every node,
-        /// each tile under its container, every track installed as itself under its key (an accent a
-        /// later movement begins again as far into its own time as it had got), and no `rini.*` key
-        /// the replica has no track for.
+        /// each tile under its container, a floating one lifted in front of the strip under the
+        /// floating container's twin, every container and tile at the depth the replica's banding
+        /// gives it, every track installed as itself under its key (an accent a later movement
+        /// begins again as far into its own time as it had got), and no `rini.*` key the replica
+        /// has no track for.
         fn plays_exactly(tree: &Tree) {
             let replica = &tree.replica;
             let mut containers: Vec<String> =
@@ -2685,13 +2687,38 @@ mod tests {
             placed.sort();
             assert_eq!(containers, placed);
             assert_eq!(tree.tile_layers.len(), replica.tiles().count());
+            let banding = replica.banding();
+            let off = banding.focus_off_strip;
             for (window, key) in replica.tiles() {
                 let entry = &tree.tile_layers[&window];
                 let parent = entry.picture.superlayer().expect("hung under its container");
+                let lifted = key == GroupKey::Floating && banding.lifted.contains(&window);
+                let under = match lifted {
+                    true => tree.lifted.as_ref().expect("the twin"),
+                    false => &tree.containers[&key],
+                };
                 assert!(
-                    std::ptr::eq(&*parent, &*tree.containers[&key]),
-                    "{window:?} under {key:?}"
+                    std::ptr::eq(&*parent, &**under),
+                    "{window:?} under {key:?}, lifted {lifted}"
                 );
+                let within = banding.within.get(&window).copied().unwrap_or(0);
+                let z = -(within as f64) + if entry.companion { 0.25 } else { 0.0 };
+                assert_eq!(entry.picture.zPosition(), z, "{window:?}");
+                assert_eq!(entry.shadow.zPosition(), z - 0.5, "{window:?}");
+            }
+            for (key, layer) in &tree.containers {
+                let z = match key {
+                    GroupKey::Floating => container_z(Band::Behind, off),
+                    key => {
+                        let order = &banding.group_order;
+                        let index = order.iter().position(|k| k == key).unwrap_or(order.len());
+                        container_z(Band::Strip, off) - index as f64 * 0.25
+                    }
+                };
+                assert_eq!(layer.zPosition(), z, "{key:?}");
+            }
+            if let Some(twin) = tree.lifted.as_ref() {
+                assert_eq!(twin.zPosition(), container_z(Band::Lifted, off));
             }
             for key in replica.containers() {
                 let node = Node::Container(key);
@@ -2792,10 +2819,15 @@ mod tests {
                 cue: Cue::Plain,
                 accents: &[],
             });
-            score.apply(&Edit::Bank(banding(&windows, &plan)));
+            score.apply(&Edit::Bank(Banding {
+                focus_off_strip: true,
+                lifted: vec![e],
+                ..banding(&windows, &plan)
+            }));
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size, 2.0);
             tree.pose(&score, &tiles);
             assert_eq!(tree.replica, score);
+            assert!(tree.lifted.is_some(), "e is drawn in front of the strip");
             plays_exactly(&tree);
 
             let steps = [Accent::Step {
