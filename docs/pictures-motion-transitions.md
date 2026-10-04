@@ -58,6 +58,7 @@ evaluates to exactly what the render server draws, so the coordinator retargets 
   pictures ride warm);
 - `ask_on_screen` windows on screen under a tag, at frame zero or for the last capture before the
   lift (`Moment::FrameZero`, `Moment::Final`);
+- `refresh` windows whose look has just turned, wherever they are, once no transition holds it;
 - `watch` windows: until each lands where it ends or is lost (`Landing`, its deadline the watch's
   `until`), until a window's look changes from a print (`Change`), or kept fresh at a rate (`Live`);
   `retarget` or `stop` a watch;
@@ -75,7 +76,8 @@ per-window knowledge, the cache policy; and on the platform side the SkyLight an
 backends, first-sight measurement, and the service thread. Rules the schedule keeps, each a test:
 frame zero first; a focus capture never queued behind a background or warm ask; a landing read from
 the window server's own frame; windows that overlap a translucent one never share a composite;
-ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end.
+ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end; a
+refresh only while none does, through SkyLight where its window is wholly on the display.
 
 ## `animation`
 
@@ -132,5 +134,6 @@ service remembers it for a second.
 | `set_tile_focused` switches the shadow's depth with the ring's white | a tile drawn with one focus and a shadow of the other matches neither end of the handover | switch the ring alone |
 | A tile's corner radius is read from `pictures` when the flight composes it | the tile is described once, like its focus; a window first measured by the frame-zero capture flies that flight at 10pt | an overlay setter the coordinator calls when a window's knowledge lands |
 | The radius a window is drawn with until its own is measured, `CORNER_RADIUS`, is `pictures`' (`domain::knowledge`); the hairline's geometry is `animation`'s (`domain::motion::hairline`) | the stand-in draws its corners with that radius, and `pictures` may not name `animation` | one constant in each feature |
-| A change of the key window reaches the engine as the two looks it turned; at rest both are asked for at once, in flight what the flight does not picture is asked for at its quiet, at background priority either way | the engine alone knows whether a flight will picture them, and background priority waits through a hold, so a click that also starts a flight starts no ScreenCaptureKit capture under it | the reactor asks both ends at focus priority whenever no flight is reported up: a report just ahead of the request it causes starts both captures under that flight's frame zero, and one the quiet would have covered is asked twice |
+| A change of the key window reaches the engine as the two looks it turned; at rest both are refreshed at once, in flight what the flight does not picture is refreshed at its quiet | the engine alone knows whether a flight will picture them, and a refresh waits through a hold, so a click that also starts a flight starts no capture under it | the reactor asks both ends at focus priority whenever no flight is reported up: a report just ahead of the request it causes starts both captures under that flight's frame zero, and one the quiet would have covered is asked twice |
+| A refresh is split by the pictures service, by where the window server has each window as it is looked at: SkyLight wholly on the display, ScreenCaptureKit anywhere else | the switcher and an exposé want the same rule, and the frame a capture is taken at is the server's then, not the one the reactor sent | `Command::Refresh` split by the coordinator over the frames it carries |
 | The end state is an on-screen ask at `Moment::Final`, not a priority of `ask` | on-screen captures are tagged, batched SkyLight calls with delivery rules of their own: only what is news, under the asker's generation | an end-state priority on `ask` |

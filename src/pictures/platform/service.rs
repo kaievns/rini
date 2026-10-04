@@ -46,6 +46,7 @@ use crate::windows::platform::window_server::server_frame;
 pub enum Command {
     Ask(Ask),
     AskOnScreen(OnScreen),
+    Refresh(Vec<PictureTarget>),
     Watch(WatchId, Watch),
     Retarget(WatchId, Watch),
     Stop(WatchId),
@@ -364,6 +365,12 @@ impl Pictures {
     /// Windows on screen, captured now through SkyLight and delivered under the ask's tag.
     pub fn ask_on_screen(&self, ask: OnScreen) { self.commands.send(Command::AskOnScreen(ask)) }
 
+    /// Fresh pictures of windows whose look has just turned, whatever the cache holds of them, once
+    /// nothing holds the service: through SkyLight, blur and all, where the window server has a window
+    /// wholly on the display, until its look shows the turn; through ScreenCaptureKit at background
+    /// priority anywhere else.
+    pub fn refresh(&self, targets: Vec<PictureTarget>) { self.commands.send(Command::Refresh(targets)) }
+
     /// Starts `watch`, which runs until stopped.
     pub fn watch(&self, watch: Watch) -> WatchId {
         let id = WatchId(self.watches.fetch_add(1, Ordering::AcqRel) + 1);
@@ -493,6 +500,10 @@ fn held_print(cache: &PictureCache<Picture>, window: WindowId) -> Option<Vec<u8>
     picture_thumbprint(cache.get(window)?)
 }
 
+/// The band print of what the cache holds of `window`, which a refresh judges its turn against; `None`
+/// for a surface.
+fn held_band(cache: &PictureCache<Picture>, window: WindowId) -> Option<Vec<u8>> { band_print(cache.get(window)?) }
+
 /// A picture's thumbprint; `None` for a surface.
 fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> { thumbprint(&*picture.image.bitmap()?) }
 
@@ -582,6 +593,10 @@ impl Service {
         match command {
             Command::Ask(ask) => shared.schedule.ask(ask, now),
             Command::AskOnScreen(ask) => shared.schedule.ask_on_screen(ask),
+            Command::Refresh(targets) => {
+                let Shared { cache, schedule, .. } = &mut *shared;
+                schedule.refresh(targets, now, &|window| held_band(cache, window));
+            }
             Command::Watch(id, watch) => {
                 let Shared { cache, schedule, .. } = &mut *shared;
                 schedule.watch(id, watch, now, &|window| held_print(cache, window));
@@ -1454,6 +1469,33 @@ mod tests {
         assert!(delivered_of(&shared, 2), "differs from the picture held when it was first watched");
     }
 
+    /// A refresh judges its window's turn against the picture the cache held when it was asked, not
+    /// against what the cache holds as each capture lands: a capture showing the band held then is
+    /// looked at again, and the first that differs is the turned look, whatever was put in the cache
+    /// since.
+    #[test]
+    fn a_refresh_is_judged_against_the_picture_held_when_it_was_asked() {
+        let now = Instant::now();
+        let (mut service, shared) = detached_service();
+        {
+            let mut shared = shared.lock().unwrap();
+            shared.schedule.set_display(built_in(), false, now);
+            shared.cache.insert(wid(1), flat(0.5, now));
+        }
+        service.apply(Command::Refresh(vec![target(1)]));
+        let later = Instant::now() + Duration::from_secs(1);
+        let refreshed = |service: &mut Service, picture: Picture| {
+            let looks = sky(shared.lock().unwrap().schedule.next(later, |_| None));
+            service.put_round(found(&looks, Some(frame())), with_prints(&looks, vec![(wid(1), picture)]), None, false);
+        };
+        let owed = || shared.lock().unwrap().schedule.owed().collect::<Vec<_>>();
+        refreshed(&mut service, flat(0.5, now));
+        assert_eq!(owed(), vec![wid(1)], "not turned yet");
+        shared.lock().unwrap().cache.insert(wid(1), flat(0.1, now));
+        refreshed(&mut service, flat(0.1, now));
+        assert!(owed().is_empty(), "turned from the band held when it was asked");
+    }
+
     /// An ask on screen, a stop and a focus hint reach the schedule as they are applied.
     #[test]
     fn an_ask_on_screen_a_stop_and_a_focus_hint_reach_the_schedule() {
@@ -1484,6 +1526,7 @@ mod tests {
         pictures.stop(WatchId(3));
         pictures.hint(Hint::Placed(wid(1)));
         pictures.keep_focused(tag(2), wid(1));
+        pictures.refresh(vec![target(2)]);
         let sent: Vec<Command> =
             std::iter::from_fn(|| commands.try_recv().ok().map(|(_, command)| command)).collect();
         assert!(matches!(&sent[..], [
@@ -1492,7 +1535,9 @@ mod tests {
             Command::Stop(WatchId(3)),
             Command::Hint(Hint::Placed(placed)),
             Command::KeepFocused(kept, focused),
-        ] if ask.moment == Moment::Final && *placed == wid(1) && *kept == tag(2) && *focused == wid(1)));
+            Command::Refresh(refreshed),
+        ] if ask.moment == Moment::Final && *placed == wid(1) && *kept == tag(2) && *focused == wid(1)
+            && *refreshed == vec![target(2)]));
 
         let now = Instant::now();
         {

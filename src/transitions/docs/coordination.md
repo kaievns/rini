@@ -269,11 +269,12 @@ window kept the look it had until it was resized, in the switcher and in the nex
 owes them to the quiet, and any picture the flight is delivered of one after the turn, a landing, its
 focus change or the final capture, pays that one off, since the cache holds it. What is left, the
 window losing focus that ends clipped or parked and a target whose change no capture saw, is asked for
-at the quiet after the warm; a press inside the quiet carries it to its own. A refresh is a
-ScreenCaptureKit capture at background priority, which waits through any hold: a click whose report
-reaches the engine just before the request for the flight it starts would otherwise have started two
-captures under that flight's frame zero, as focus priority does. A window whose picture carries its blur
-keeps it, since the capture is of the window alone ("Known debt" in `src/pictures/docs/README.md`).
+at the quiet after the warm; a press inside the quiet carries it to its own. The pictures service
+decides how each is pictured (`Pictures::refresh`): a window the window server has wholly on the
+display through SkyLight, its blur baked in, captured until its title band shows the turn; any other
+through ScreenCaptureKit at background priority ("The schedule" in `src/pictures/docs/README.md`).
+Neither starts through a hold: a click whose report reaches the engine just before the request for the
+flight it starts would otherwise have put captures under that flight's frame zero.
 
 The recapture this replaced cut both ends of a focus change mid-flight, at 0.25 and 0.55 of the
 flight, through ScreenCaptureKit and a framed capture. Asked at 0.53 through the service, its pictures
@@ -314,7 +315,7 @@ is a warm, for the next flight. The
 rest waits and starts at the release, most urgent first. The reactor's
 `warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
 start) waits; so does the desktop render. A warm
-also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: the reactor
+also settles `SETTLE_BEFORE_STARTING` (50ms) before it is listed: the reactor
 sends a pass's warm straight to the service just after the request for its
 flight, so it usually arrives before the hold the engine sends as it takes that
 request, and one listed before a later hold is listed again at the release.
