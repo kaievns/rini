@@ -1,6 +1,6 @@
 //! What the pictures service tells its clients: every capture the cache took, for any window, whoever
 //! asked for it; and to each client, under its tag, the pictures it asked for or watched, and the
-//! windows that never landed.
+//! landings whose picture will not come.
 
 use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowId;
