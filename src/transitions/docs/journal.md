@@ -8,22 +8,25 @@ moving around can be read back afterwards. Kai's ask, and what rini must do abou
 
 ## Where a mark comes from
 
-`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at three
+`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at four
 seams. Its one call into the lifecycle, `FlightEngine::drive`, goes through `Journalled::drive`: it
 reads the event's own marks, the coordinator takes the event, and then those marks and one for each
 command it gave are pushed, every one stamped with the drive's `now` and the generation the drive
-left (`g`). Its inbox hands each request's press to `Journalled::pressed` before handling the request
-and calls `Journalled::answered` after: the request's first drive pushes a `press` mark ahead of that
-event's own, in the generation that drive left, and a request declined before any drive has none.
-Its pictures inbox hands each delivery under its tag to `Journalled::delivery` as it comes, before
-turning it into `FrameZero` and `Picture` events: a `delivery` mark, then a `delivered` mark for each
-picture in it, stamped with when the engine heard it and the generation the coordinator is in. The
-same inbox hands a measured lift's handover to `Journalled::handover`, a `handover` mark for each
-window, and a lift the engine holds for the overlay's picture is told to `Journalled::lifted`, with
-what it hears after to `Journalled::heard`, a `hide` mark when it comes down (below). No mark call
-sits anywhere else, and the engine never reads the journal back: of what a drive returns, it carries
-out the commands and sends the writer the burst, if one is due, and of `heard` it reads whether the
-held lift hides now.
+left (`g`). Its inbox hands each request's press to `Journalled::pressed` before handling the
+request and calls `Journalled::answered` after: the request's first drive pushes a `press` mark
+ahead of that event's own, in the generation that drive left, and a request declined before any
+drive has none. Its pictures inbox hands each delivery under its tag to `Journalled::delivery` as it
+comes, before turning it into `FrameZero` and `Picture` events: a `delivery` mark, then a
+`delivered` mark for each picture in it, stamped with when the engine heard it and the generation
+the coordinator is in. The same inbox hands a measured lift's handover to `Journalled::handover`, a
+`handover` mark for each window, and a lift the engine holds for the overlay's picture is told to
+`Journalled::lifted`, with what it hears after to `Journalled::heard`, a `hide` mark when it comes
+down (below). Its inbox hands each commit the renderer reports (`Rendered(Committed)`) to
+`Journalled::drawn` before what that commit releases is carried out: a `drawn` mark, stamped with
+when the engine heard it, so the real frames, the bar's picture and the quiet a commit releases go
+out at its `t`. No mark call sits anywhere else, and the engine never reads the journal back: of
+what a drive returns, it carries out the commands and sends the writer the burst, if one is due, and
+of `heard` it reads whether the held lift hides now.
 
 Both matches, over `Event` and over `Command`, have no `_` arm, so a new variant does not compile
 until it has a mark.
@@ -51,6 +54,7 @@ until it has a mark.
 | `HandOverFocus { to, from }` | `hand_over_focus` | `to`, `from` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
+| the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `queued_us`, `applied_us`, `flushed_before_us` |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
 | a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out` (levels, and a share for `interior_over`) |
 
@@ -61,12 +65,21 @@ How to read them:
 - **A delivery carries its times as ages,** in microseconds before its own `t`: `sent_before_us` is
   when the service sent it, and each `delivered`'s `taken_before_us` when that picture's capture
   started (below).
+- **A `drawn` carries the renderer's times:** `queued_us` from the oldest batch in the drain being
+  sent to the renderer beginning to play it, its wait on the main thread behind whatever ran there
+  first; `applied_us` from there to its transaction's flush, the commands played, committed and
+  flushed; and `flushed_before_us`, the flush's age at the mark, the way back to the engine. On the
+  probe's clock the drain was flushed at `t - flushed_before_us` and began `applied_us` before that.
+  The window's alpha goes to 1 just after the flush ("One transaction a drain, flushed" in
+  `src/animation/docs/README.md`), and the window server shows it after that, which only a probe sees
+  (`journal.py probe`, below).
 - **`at_rest` and `landed` are the lift's condition, not when each window landed.** The engine reads
   where the tiles are drawn and where the windows are only once the clock has run out
   (`Coordinator::wants_landing`) and tells the coordinator `false` before, so a tick before then
   marks nothing.
 - **A command's mark says the coordinator gave it,** stamped with its drive's `now`. Carrying it out
-  is not timed.
+  is not timed, but for what the renderer draws: the `drawn` covering the batch a command's render
+  commands went in says when they were committed, and what waited for them went out at its `t`.
 - **Marks are in the order they were pushed, and `t` is not:** a delivery's as the engine hears it, an
   event's and its commands' as its drive runs. A `press` carries when the reactor took the event, so
   it can come before marks the engine pushed while the request waited for it. A drive nested in
@@ -237,11 +250,16 @@ writes.
 - **The frame-zero delivery** is the last `delivery {frame_zero}` of the flight's generation before
   its `show`. Its earliest capture start is the earliest of its pictures', or its round end when it
   brought none. A `show` with none before it is a **frame-zero timeout**: the patience ran out.
+- **The overlay drawn** is the first `drawn {shown: true}` after the flight's `show`: up at its flush,
+  `t - flushed_before_us`, from a drain begun `applied_us` before that. The `show` is the coordinator's
+  decision, a hop and a transaction before the overlay is up. A flight with no `drawn` mark at all,
+  written before the renderer's commits were journalled, is drawn at its `show`; one with `drawn`
+  marks and none showing it after its `show` never had the overlay up.
 - **The focus target** is the `begin`'s `focus`.
 - Percentiles are nearest-rank, printed as p50, p90 and p99 with their n.
 
-`summary` splits press to show in order, so the parts of each flight sum to it. It does so for every
-flight with a press and a frame-zero delivery:
+`summary` splits press to overlay up in order, so the parts of each flight sum to it. It does so for
+every flight with a press, a frame-zero delivery and the overlay drawn:
 
 | Part | From → to |
 |---|---|
@@ -251,6 +269,8 @@ flight with a press and a frame-zero delivery:
 | the SkyLight round | the earliest capture start → round end |
 | engine wait | round end → the frame-zero `delivery`: the hop back and the engine busy. `compose` says how much of it was composing |
 | the show | the frame-zero `delivery` → `show`: the engine putting the pictures on their tiles, and the wait for a second frame-zero ask when a merge made one |
+| the hop to the renderer | `show` → the overlay drawn's drain begun: the rest of the event that gave the show, and its batch's wait for the renderer |
+| the show's commit | that drain begun → its flush: its `applied_us` |
 
 Then the rows of "Where a moving focus change spends its time"
 (`src/animation/docs/capture-overlay-research.md`), in its order, ms after the press, and the rest:
@@ -260,11 +280,15 @@ Then the rows of "Where a moving focus change spends its time"
 | compose | `begin` → the first `merge {moved: false}` of its generation, which is not after the press |
 | frame-zero capture starts | `press` → the earliest capture start |
 | frame-zero pictures ready | `press` → round end |
-| overlay up | `press` → `show` |
+| show given | `press` → `show` |
+| overlay up | `press` → the overlay drawn's flush |
 | rini sees it landed | `press` → the capture start of the focus target's first picture under a `delivery {landed}` |
 | focused picture captured | `press` → the capture start of its first under a `delivery {focus_changed}` |
 | show to landed | the start of the generation the flight lifted in (its `show`, or the `merge` that began it) → the last end window's first capture start under a `delivery {landed}` of that generation. None unless as many windows landed as that generation's last `watch` named (`landing` and `awaiting`) |
 | lift; lift to settled | `press` → `lift`; `lift` → the `report_settled` after it, none if another flight began first |
+
+Then each drain drawn, every `drawn` mark of the flights: `queued_us`, `applied_us` and
+`flushed_before_us`, in ms.
 
 The counts, per flight: merges (the generations after its first), swaps, snaps, stale deliveries
 (`of != g`), `lost` marks, overdue lifts (a `lift` with `at_rest` or `landed` false) and frame-zero
@@ -277,12 +301,13 @@ already up gives only post to press. One whose flight has a focus target other t
 the rest it gives:
 
 - post to press: the tap and the reactor's queue;
-- post to show and post to landed;
+- post to show given and post to landed;
 - rini's landed against the probe's `still_ms`, when the probe saw the target's server frame final;
 - the focused picture against `look_full`, when the probe saw the titlebar band reach 80% of its
   final change (`e1.py`'s `look`);
-- for an `overlay.swift` line, its `up_ms` against post to show, which is the window server showing
-  the overlay after `show`, and its `lift_ms` against post to lift.
+- for an `overlay.swift` line, its `up_ms` against post to show given, which is the hop to the
+  renderer, the show's commit and the window server showing the overlay after `show`, and its
+  `lift_ms` against post to lift.
 
 `handover` reads every `handover` mark. Each window takes the kind and focus target of the generation
 that lifted, as the last `begin` or `merge` in it says, and is the focused window when it is that
@@ -295,6 +320,7 @@ handover, measured" in `src/animation/docs/capture-overlay-research.md`.
 
 - The key-down's own time (its `CGEvent` timestamp), which would split the tap and the reactor's
   queue from the reactor's work.
-- How long carrying out a drive's commands takes.
+- How long the engine takes to carry out a drive's commands. What the renderer draws of them is
+  timed by `drawn`.
 - CPU and GPU use. Kai allowed it if it costs nothing; what the IOKit read costs is not measured, so
   it waits for that measurement.

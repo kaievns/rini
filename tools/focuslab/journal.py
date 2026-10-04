@@ -31,12 +31,15 @@ SPLIT = [
     ("skylight_round", "the SkyLight round"),
     ("engine_wait", "engine wait"),
     ("the_show", "the show"),
-    ("press_to_show", "press to show"),
+    ("to_renderer", "the hop to the renderer"),
+    ("show_commit", "the show's commit"),
+    ("press_to_up", "press to overlay up"),
 ]
 ROWS = [
     ("compose", "compose"),
     ("frame_zero_capture_starts", "frame-zero capture starts"),
     ("frame_zero_pictures_ready", "frame-zero pictures ready"),
+    ("show_given", "show given"),
     ("overlay_up", "overlay up"),
     ("rini_sees_it_landed", "rini sees it landed"),
     ("focused_picture_captured", "focused picture captured"),
@@ -53,9 +56,14 @@ COUNTS = [
     ("overdue_lifts", "overdue lifts"),
     ("frame_zero_timeouts", "frame-zero timeouts"),
 ]
+DRAINS = [
+    ("queued", "waiting for the renderer"),
+    ("applied", "played to its flush"),
+    ("heard", "flushed to heard"),
+]
 PROBE = [
     ("post_to_press", "post to press"),
-    ("post_to_show", "post to show"),
+    ("post_to_show", "post to show given"),
     ("post_to_landed", "post to landed"),
     ("landed_after_still", "landed after the probe's still"),
     ("post_to_look", "post to focused picture"),
@@ -130,6 +138,10 @@ def round_end(delivery):
     return delivery["t"] - delivery["sent_before_us"] * 1000
 
 
+def flushed(drawn):
+    return drawn["t"] - drawn["flushed_before_us"] * 1000
+
+
 def ms(later, earlier):
     return None if later is None or earlier is None else (later - earlier) / 1e6
 
@@ -173,6 +185,20 @@ class Flight:
                  if index < shown and delivery["why"] == "frame_zero" and delivery["of"] == self.g]
         return found[-1] if found else None
 
+    def overlay_drawn(self):
+        """When the drain that put the overlay up began and was flushed: the first `drawn {shown: true}`
+        after the show. A flight with no `drawn` mark, written before the renderer's commits were
+        journalled, is drawn at its show."""
+        shown, show = self.find("show")
+        if show is None:
+            return None
+        if not self.count("drawn"):
+            return show["t"], show["t"]
+        _, up = self.find("drawn", lambda mark: mark["shown"] is True, start=shown)
+        if up is None:
+            return None
+        return flushed(up) - up["applied_us"] * 1000, flushed(up)
+
     def target_capture(self, why):
         """When the focus target's first picture under a `delivery {why}` started its capture."""
         for _, delivery, pictures in self.deliveries:
@@ -209,6 +235,7 @@ class Flight:
         lifted, lift = self.find("lift")
         settled = at(self.find("report_settled", start=lifted)[1]) if lifted is not None else None
         compose = self.first("merge", lambda mark: not mark["moved"] and mark["g"] == self.g)
+        began, up = self.overlay_drawn() or (None, None)
         row = {key: None for key, _ in SPLIT + ROWS}
         if self.frame_zero:
             delivery, pictures = self.frame_zero
@@ -222,12 +249,15 @@ class Flight:
                     skylight_round=ms(ready, starts),
                     engine_wait=ms(delivery["t"], ready),
                     the_show=ms(show, delivery["t"]),
-                    press_to_show=ms(show, press),
+                    to_renderer=ms(began, show),
+                    show_commit=ms(up, began),
+                    press_to_up=ms(up, press),
                 )
             row.update(frame_zero_capture_starts=ms(starts, press), frame_zero_pictures_ready=ms(ready, press))
         row.update(
             compose=ms(at(compose), begin),
-            overlay_up=ms(show, press),
+            show_given=ms(show, press),
+            overlay_up=ms(up, press),
             rini_sees_it_landed=ms(self.target_capture("landed"), press),
             focused_picture_captured=ms(self.target_capture("focus_changed"), press),
             show_to_landed=self.show_to_landed(),
@@ -270,6 +300,14 @@ def table(title, rows, keys, digits=1):
     return lines
 
 
+def drains(found):
+    """Every drain the renderer committed in `found`: how long its oldest batch waited for the
+    renderer, how long playing it took to its flush, and the way back to the engine, in ms."""
+    return [{"queued": mark["queued_us"] / 1000, "applied": mark["applied_us"] / 1000,
+             "heard": mark["flushed_before_us"] / 1000}
+            for flight in found for mark in flight.marks if mark["mark"] == "drawn"]
+
+
 def summary(found, bursts):
     rows = [flight.times() for flight in found]
     kinds = defaultdict(int)
@@ -284,9 +322,11 @@ def summary(found, bursts):
         f" {lost} marks lost",
         "",
     ]
-    lines += table("press to show, in order (ms)", rows, SPLIT)
+    lines += table("press to overlay up, in order (ms)", rows, SPLIT)
     lines += [""]
     lines += table("ms after the press", rows, ROWS)
+    lines += [""]
+    lines += table("each drain drawn (ms)", drains(found), DRAINS, digits=2)
     lines += ["", f"{'counts':34s}  total  flights"]
     for key, label in COUNTS:
         total, flights_with = sum(row[key] for row in rows), sum(1 for row in rows if row[key])
@@ -338,7 +378,7 @@ def probe_row(trial, post_to_press, times):
     minus = lambda a, b: None if a is None or b is None else a - b
     row = {
         "post_to_press": post_to_press,
-        "post_to_show": after_post("overlay_up"),
+        "post_to_show": after_post("show_given"),
         "post_to_landed": after_post("rini_sees_it_landed"),
         "post_to_look": after_post("focused_picture_captured"),
         "post_to_lift": after_post("lift"),

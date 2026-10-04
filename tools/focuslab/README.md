@@ -46,8 +46,8 @@ parked, off-screen window by a point and back.
 given:
 
 - `journal.py summary [--kind pan] [--csv flights.csv]`: where the time from a press to the overlay up
-  goes, the research doc's rows after the press, show to landed and the counts per flight; `--csv`
-  writes one row a flight.
+  goes, the research doc's rows after the press, show to landed, each drain the renderer committed and
+  the counts per flight; `--csv` writes one row a flight.
 - `journal.py probe <probe.jsonl>`: each line `focuslab` or `overlay` wrote, joined to the press it
   caused on the one clock, grouped by its label.
 - `journal.py handover`: with `animations { journal { measure-handover; } }`, each lift's overlay

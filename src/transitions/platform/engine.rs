@@ -768,8 +768,9 @@ pub struct FlightEngine {
     /// Timers post back into this actor's own queue through it.
     tx: Sender,
     draw: Draw,
-    /// The render commands of the event being handled, handed to the renderer as one batch at its end.
-    batch: Option<Batch>,
+    /// The render commands of the event being handled and the batch number they go under, handed to
+    /// the renderer as one batch at its end.
+    batch: Option<(u64, Vec<Render>)>,
     /// What waits for a batch to be drawn.
     drawn: Drawn,
     /// The batch the latest `Render::Show` went in, which the real frames are written after.
@@ -1041,9 +1042,9 @@ impl FlightEngine {
     /// `command` into the event's batch, numbered as its first command goes in: that batch's number.
     fn render(&mut self, command: Render) -> u64 {
         let Self { batch, drawn, .. } = self;
-        let batch = batch.get_or_insert_with(|| Batch { seq: drawn.batch(), commands: Vec::new() });
-        batch.commands.push(command);
-        batch.seq
+        let (seq, commands) = batch.get_or_insert_with(|| (drawn.batch(), Vec::new()));
+        commands.push(command);
+        *seq
     }
 
     /// The score's `edits` played, every tile of the flight handed with them.
@@ -1079,19 +1080,20 @@ impl FlightEngine {
         }
     }
 
-    /// The event's batch to the renderer, if it drew anything.
+    /// The event's batch to the renderer, if it drew anything, stamped as it is sent.
     fn send_batch(&mut self) {
-        if let Some(batch) = self.batch.take() {
-            (self.draw)(batch);
+        if let Some((seq, commands)) = self.batch.take() {
+            (self.draw)(Batch { seq, sent: self.now(), commands });
         }
     }
 
-    /// The renderer's answer: a commit releases what waited for it, and with no overlay to draw on the
-    /// flight is abandoned, everything it owed dropped, since its `Abandon` writes the final frames at
-    /// once: a show sent since draws nothing either.
+    /// The renderer's answer: a commit is journalled, then releases what waited for it, and with no
+    /// overlay to draw on the flight is abandoned, everything it owed dropped, since its `Abandon`
+    /// writes the final frames at once: a show sent since draws nothing either.
     fn rendered(&mut self, answer: crate::animation::event::Event) {
         match answer {
-            crate::animation::event::Event::Committed { seq, overlay } => {
+            crate::animation::event::Event::Committed { seq, overlay, shown, sent, began, flushed } => {
+                self.flights.drawn(self.now(), seq, shown, sent, began, flushed);
                 if overlay.is_some() {
                     self.overlay = overlay;
                 }
@@ -3926,6 +3928,7 @@ mod tests {
         use crate::animation::domain::motion::score::Score;
         use crate::animation::event::Event::{Committed, Unavailable};
         use crate::pictures::platform::service::Command as Asked;
+        use crate::transitions::domain::journal::{Burst, Mark, Stamped};
 
         const CLIENT: Client = Client(1);
         /// The overlay's window, as the renderer reports the window server numbers it.
@@ -3978,6 +3981,8 @@ mod tests {
             engine: FlightEngine,
             outbox: Arc<Mutex<Outbox>>,
             now: Arc<Mutex<Instant>>,
+            /// What writing the real frames costs on the clock: nothing unless a test says.
+            placing: Arc<Mutex<Duration>>,
             media: MediaClock,
         }
 
@@ -3989,6 +3994,7 @@ mod tests {
                 let outbox = Arc::new(Mutex::new(Outbox { asked, sent: Vec::new() }));
                 let begun = Instant::now();
                 let now = Arc::new(Mutex::new(begun));
+                let placing = Arc::new(Mutex::new(Duration::ZERO));
                 let media = MediaClock::anchored(begun, 5_000.0);
                 let (tx, rx) = channel::channel();
                 let engine = FlightEngine::new(Parts {
@@ -3997,7 +4003,13 @@ mod tests {
                     pictures,
                     client: CLIENT,
                     draw: Box::new(sink(&outbox, Sent::Drawn)),
-                    place_frames: Box::new(sink(&outbox, Sent::Placed)),
+                    place_frames: Box::new({
+                        let (place, now, placing) = (sink(&outbox, Sent::Placed), now.clone(), placing.clone());
+                        move |frames| {
+                            *now.lock().unwrap() += *placing.lock().unwrap();
+                            place(frames)
+                        }
+                    }),
                     on_flight: Box::new(sink(&outbox, Sent::Flying)),
                     media,
                     clock: Box::new({
@@ -4005,9 +4017,10 @@ mod tests {
                         move || *now.lock().unwrap()
                     }),
                 });
-                let mut harness = Harness { engine, outbox, now, media };
+                let mut harness = Harness { engine, outbox, now, placing, media };
                 let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
-                harness.step(Event::Rendered(Committed { seq: only_batch(&display).seq, overlay: None }));
+                let committed = harness.committed(only_batch(&display).seq, None);
+                harness.step(committed);
                 harness
             }
 
@@ -4019,14 +4032,17 @@ mod tests {
             }
 
             /// The journal written through a writer whose bursts the test reads, as `Event::Journal`
-            /// turning writing on would start the real one.
-            fn writing(&mut self) -> Bursts<crate::transitions::domain::journal::Burst> {
+            /// turning writing on would start the real one. What the ring holds is written at once, the
+            /// display's commit, and read off here.
+            fn writing(&mut self) -> Bursts<Burst> {
                 let (writer, bursts) = Writer::detached();
                 if let Some(burst) = self.engine.flights.set_writing(true) {
                     writer.send(burst);
                 }
                 self.engine.writer = Some(writer);
                 self.engine.journal = Some(JournalSettings { write: true, measure_handover: false });
+                let ring = bursts.try_recv().expect("the ring, at once");
+                assert!(matches!(ring.marks[..], [Stamped { mark: Mark::Drawn { .. }, .. }]), "{ring:?}");
                 bursts
             }
 
@@ -4044,9 +4060,16 @@ mod tests {
                 std::mem::take(&mut outbox.sent)
             }
 
+            /// The renderer's answer that every batch up to `seq` is committed, at once.
+            fn committed(&self, seq: u64, overlay: Option<WindowServerId>) -> Event {
+                let now = self.at();
+                Event::Rendered(Committed { seq, overlay, shown: None, sent: now, began: now, flushed: now })
+            }
+
             /// The renderer committed every batch up to `seq`.
             fn commit(&mut self, seq: u64) -> Vec<Sent> {
-                self.step(Event::Rendered(Committed { seq, overlay: Some(OVERLAY) }))
+                let committed = self.committed(seq, Some(OVERLAY));
+                self.step(committed)
             }
 
             /// A pan bringing `wid(1)` from `start` to `end`, pressed now.
@@ -4393,6 +4416,39 @@ mod tests {
             }
             let running = h.engine.running.as_ref().expect("flying");
             assert_eq!(&replica, running.score.score());
+        }
+
+        /// The journal says when a commit released what waited for it: the commit is marked as the
+        /// engine hears it, before the writes it releases take their time.
+        #[test]
+        fn a_committed_batch_is_journalled_before_what_it_releases() {
+            let mut h = Harness::new();
+            let bursts = h.writing();
+            *h.placing.lock().unwrap() = Duration::from_millis(3);
+            let pan = h.pan();
+            h.step(pan);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let sent = h.step(frame_zero);
+            let (shown, handed) = (only_batch(&sent).seq, only_batch(&sent).sent);
+            assert_eq!(handed, h.at(), "stamped as it is sent");
+            h.advance(Duration::from_micros(1_500));
+            let heard = h.at();
+            let at = |us| handed + Duration::from_micros(us);
+            let answer = Committed { seq: shown, overlay: Some(OVERLAY), shown: Some(true), sent: handed, began: at(400), flushed: at(700) };
+            assert_eq!(placed(&h.step(Event::Rendered(answer))), [vec![(wid(1), end())]]);
+            assert_eq!(h.at(), heard + Duration::from_millis(3), "the writes took their time");
+
+            h.advance(Duration::from_millis(400));
+            let lift = lift_batch(&h.step(Event::Tick)).expect("lifted").seq;
+            h.commit(lift);
+            h.step(Event::Quiet(Generation(h.generation())));
+            let burst = bursts.try_recv().expect("the settled burst");
+            let drawn: Vec<_> = burst.marks.iter().filter(|stamped| matches!(stamped.mark, Mark::Drawn { seq, .. } if seq == shown)).collect();
+            assert_eq!(drawn.len(), 1, "{:?}", burst.marks);
+            assert_eq!(drawn[0].at, heard, "before the writes it released");
+            let mark = Mark::Drawn { seq: shown, shown: Some(true), queued_us: 400, applied_us: 300, flushed_before_us: 800 };
+            assert_eq!(drawn[0].mark, mark);
         }
 
         #[test]

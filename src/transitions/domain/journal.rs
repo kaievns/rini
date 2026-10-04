@@ -1,12 +1,14 @@
 //! The transitions journal: the press each request answers, every command the lifecycle gives and
 //! every event it takes but a picture and frame zero, which their delivery marks, a tick only by the
-//! first `at_rest` and `landed` it reads in a generation; every delivery of pictures to it, and each
-//! held lift's hide and handover. Each is a mark in a ring kept with the coordinator, and a
-//! burst of marks is written as JSON lines. While the handover is measured, it also says which lifts
-//! are held for the overlay's own picture ([`measures`]) and when one hides. Pure: the engine drives the lifecycle, tells it each request's press, each
-//! delivery, each lift it holds, what that lift hears and each handover through [`Journalled`], and
-//! hands each burst it gives to the writer (`crate::transitions::platform::journal`). The marks, the
-//! clock and when a burst is given: `src/transitions/docs/journal.md`.
+//! first `at_rest` and `landed` it reads in a generation; every delivery of pictures to it, each
+//! drain of render commands the renderer committed, and each held lift's hide and handover. Each is a
+//! mark in a ring kept with the coordinator, and a burst of marks is written as JSON lines. While the
+//! handover is measured, it also says which lifts are held for the overlay's own picture
+//! ([`measures`]) and when one hides. Pure: the engine drives the lifecycle, tells it each request's
+//! press, each delivery, each commit, each lift it holds, what that lift hears and each handover
+//! through [`Journalled`], and hands each burst it gives to the writer
+//! (`crate::transitions::platform::journal`). The marks, the clock and when a burst is given:
+//! `src/transitions/docs/journal.md`.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -28,7 +30,8 @@ pub const RING: usize = 8192;
 const FORMAT: u32 = 1;
 
 /// One step of a transition: the press a request answers, an event the coordinator took, a command
-/// it gave, a delivery of pictures to it, or a held lift's hide or one window of its handover.
+/// it gave, a delivery of pictures to it, a drain the renderer committed, or a held lift's hide or
+/// one window of its handover.
 #[serde_as]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(tag = "mark", rename_all = "snake_case")]
@@ -168,6 +171,17 @@ pub enum Mark {
     Hide {
         measured: bool,
         waited_us: u32,
+    },
+    /// A drain of render commands the renderer committed, as the engine heard it: the highest batch
+    /// in it, whether it put the overlay up or down (`None`: neither), how long its oldest batch
+    /// waited for the renderer, how long playing it took to its flush, and how long before this mark
+    /// it was flushed.
+    Drawn {
+        seq: u64,
+        shown: Option<bool>,
+        queued_us: u32,
+        applied_us: u32,
+        flushed_before_us: u32,
     },
     /// A window of a measured lift: the screen just after it against the overlay just before.
     Handover {
@@ -490,9 +504,10 @@ impl Journal {
 
 /// The lifecycle with its journal, driven as one: the press each request answers, every command the
 /// coordinator gives, every event it takes but a picture and frame zero, a tick only by the first
-/// `at_rest` and `landed` it reads in a generation, and every delivery of pictures the engine hears is
-/// marked, and while the journal is written a burst is given once it settles. While the handover is measured, it decides when the lift the engine holds hides, and marks
-/// its hide and its handover.
+/// `at_rest` and `landed` it reads in a generation, every delivery of pictures the engine hears and
+/// every commit the renderer reports is marked, and while the journal is written a burst is given
+/// once it settles. While the handover is measured, it decides when the lift the engine holds hides,
+/// and marks its hide and its handover.
 #[derive(Default)]
 pub struct Journalled {
     coordinator: Coordinator,
@@ -553,6 +568,20 @@ impl Journalled {
         pictures: impl ExactSizeIterator<Item = (WindowId, ScreenRect, Instant)>,
     ) {
         self.journal.delivery(now, self.coordinator.generation(), of, why, sent, pictures);
+    }
+
+    /// The renderer committed the drain up to batch `seq`, heard `now`, before what it releases is
+    /// carried out: `sent` when its oldest batch was sent, `began` when the renderer began playing it,
+    /// `flushed` when it was flushed, and `shown` whether it put the overlay up or down.
+    pub fn drawn(&mut self, now: Instant, seq: u64, shown: Option<bool>, sent: Instant, began: Instant, flushed: Instant) {
+        let mark = Mark::Drawn {
+            seq,
+            shown,
+            queued_us: micros(began.saturating_duration_since(sent)),
+            applied_us: micros(flushed.saturating_duration_since(began)),
+            flushed_before_us: micros(now.saturating_duration_since(flushed)),
+        };
+        self.journal.push(now, self.coordinator.generation(), mark);
     }
 
     /// The engine holds `generation`'s lift, from `now`, for the overlay's own picture.
@@ -892,6 +921,20 @@ mod tests {
         assert_eq!(marks.iter().map(|stamped| stamped.mark).collect::<Vec<_>>(), [
             Mark::Delivery { of: g, why: Why::FrameZero, pictures: 0, sent_before_us: 2_000 },
         ]);
+    }
+
+    #[test]
+    fn a_drawn_batch_is_marked_with_its_hop_and_its_commit() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        flights.drive(Event::Begin(pan()), now);
+        let g = flights.coordinator().generation();
+        let sent = now + Duration::from_micros(200);
+        let at = |us| sent + Duration::from_micros(us);
+        let before = held(&flights).len();
+        flights.drawn(at(2_000), 4, Some(true), sent, at(1_300), at(1_700));
+        let mark = Mark::Drawn { seq: 4, shown: Some(true), queued_us: 1_300, applied_us: 400, flushed_before_us: 300 };
+        assert_eq!(held(&flights)[before..], [Stamped { at: at(2_000), generation: g, mark }], "stamped when the engine heard it");
     }
 
     #[test]
@@ -1358,6 +1401,12 @@ mod tests {
             self.flights.handover(self.at(us), of, windows.iter().copied());
         }
 
+        /// The renderer's commit of the drain up to `seq`, heard at `us`.
+        fn drawn(&mut self, us: i64, seq: u64, shown: Option<bool>, (sent, began, flushed): (i64, i64, i64)) {
+            let (sent, began, flushed) = (self.at(sent), self.at(began), self.at(flushed));
+            self.flights.drawn(self.at(us), seq, shown, sent, began, flushed);
+        }
+
         /// A delivery and the pictures the engine offers the coordinator from it, 0.1ms later.
         fn offer(&mut self, us: i64, of: Generation, why: Why, sent: i64, pictures: &[(WindowId, ScreenRect, i64)]) {
             self.deliver(us, of, why, sent, pictures);
@@ -1371,7 +1420,8 @@ mod tests {
     /// `tools/focuslab/test_journal.py` reads, and the numbers it must find there. A pan with focus
     /// handed over by the target's focused picture, its lift measured; then one whose frame zero comes
     /// after the patience, a second press merged into it, a stale delivery, a window lost and an
-    /// overdue lift, which hid unmeasured.
+    /// overdue lift, which hid unmeasured. The renderer's commits of each show and each hide are
+    /// marked, and of the first press's composed flight before its show.
     #[test]
     fn the_sample_the_tools_read_is_what_the_journal_writes() {
         let mut script = Script { flights: Journalled::default(), base: Instant::now(), bursts: Vec::new() };
@@ -1385,10 +1435,12 @@ mod tests {
         script.drive(0, Event::Begin(pan()));
         script.drive(6_100, Event::Merge { stage: pan(), moved: false });
         script.flights.answered();
+        script.drawn(7_000, 2, None, (6_200, 6_400, 6_800));
         let g = script.flights.coordinator().generation();
         script.deliver(33_200, g, Why::FrameZero, 31_000, &[(w(1), starts, 1_300), (w(9), floating, 16_500)]);
         script.drive(33_600, Event::FrameZero(g));
         script.drive(34_500, Event::Extend(Duration::from_millis(349)));
+        script.drawn(35_500, 3, Some(true), (34_600, 34_900, 35_200));
         script.offer(95_000, g, Why::Landed, 93_100, &[(w(2), target, 88_400)]);
         script.offer(112_000, g, Why::Landed, 110_200, &[(w(1), left, 104_000)]);
         script.offer(141_000, g, Why::FocusChanged, 139_000, &[(w(2), target, 131_500)]);
@@ -1398,6 +1450,7 @@ mod tests {
         script.drive(383_700, Event::Tick { settled: true, landed: true });
         script.lifted(383_700, g);
         script.heard(415_100, Heard::OverlayTaken { generation: g, taken: true });
+        script.drawn(416_000, 9, Some(false), (415_200, 415_400, 415_700));
         let diff = |interior, interior_over, edge_in, edge_out| HandoverDiff { interior, interior_over, edge_in, edge_out };
         let measured = [(w(2), diff(0.26, 0.0012, 0.37, 1.56)), (w(1), diff(0.79, 0.004, 1.08, 2.26))];
         script.handover(480_300, g, &measured);
@@ -1414,6 +1467,7 @@ mod tests {
         let first = script.flights.coordinator().generation();
         script.drive(3_080_000, Event::Tick { settled: false, landed: false });
         script.drive(3_080_900, Event::Extend(Duration::from_millis(349)));
+        script.drawn(3_082_300, 12, Some(true), (3_081_000, 3_081_400, 3_081_900));
         let late = [(w(1), starts, 3_002_000), (w(9), floating, 3_002_000)];
         script.offer(3_096_000, first, Why::FrameZero, 3_093_500, &late);
         script.drive(3_096_300, Event::FrameZero(first));
@@ -1429,6 +1483,7 @@ mod tests {
         script.drive(3_850_000, Event::Tick { settled: true, landed: false });
         script.lifted(3_850_000, merged);
         script.heard(3_910_000, Heard::Patience);
+        script.drawn(3_911_000, 17, Some(false), (3_910_100, 3_910_300, 3_910_700));
         script.drive(4_250_000, Event::Quiet(merged));
 
         let anchor = |at: Instant| Anchor { at, uptime_ns: 81_234_560_000_000 + nanos(at - script.base) };

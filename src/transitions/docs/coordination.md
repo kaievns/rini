@@ -45,13 +45,14 @@ ended in the overlay's favour.
 
 The engine and the renderer are two actors, and talk only by message. The engine hands the renderer
 what each event draws as one numbered batch of render commands (`Draw`); an event that draws nothing
-sends none, so a tick is no transaction. The renderer (`Renderer::run`) wakes on a batch, takes every
-batch queued behind it, plays them in order as one drain in one `CATransaction`, flushed, and answers
-once, with the highest number (`Event::Rendered`): a busy main thread costs one late commit, never a
-backlog of them. The answer is `Committed`, with the overlay's window number once the window server
-has numbered it, or `Unavailable` when the drain dressed or posed a flight and there is no overlay to
-draw it on. The engine then abandons the flight, whose `Abandon` writes the final frames at once:
-nothing waits for a show sent since, which draws nothing either.
+sends none, so a tick is no transaction. The renderer (`Renderer::run`) wakes on a batch, takes
+every batch queued behind it, plays them in order as one drain in one `CATransaction`, flushed, and
+answers once, with the highest number (`Event::Rendered`): a busy main thread costs one late commit,
+never a backlog of them. The answer is `Committed`, with the overlay's window number once the window
+server has numbered it and the drain's times, which the journal marks (`drawn` in `journal.md`)
+before what the commit releases goes out, or `Unavailable` when the drain dressed or posed a flight
+and there is no overlay to draw it on. The engine then abandons the flight, whose `Abandon` writes
+the final frames at once: nothing waits for a show sent since, which draws nothing either.
 
 What must not happen before the overlay's change is on screen waits for the batch that carries it
 (`src/transitions/domain/drawn.rs`): the real frames for the `Show`'s, since a window written before

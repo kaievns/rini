@@ -47,32 +47,38 @@ pub enum Render {
     Trace,
 }
 
-/// The render commands one event of the engine gave, numbered.
+/// The render commands one event of the engine gave, numbered, and when the engine sent them.
 pub struct Batch {
     pub seq: u64,
+    pub sent: Instant,
     pub commands: Vec<Render>,
 }
 
-/// The batches queued, played as one: their commands in order, the highest number, and whether the
-/// overlay ends the drain up (`Some(true)`), down (`Some(false)`) or as it was.
+/// The batches queued, played as one: their commands in order, the highest number, when the oldest
+/// was sent, and whether the overlay ends the drain up (`Some(true)`), down (`Some(false)`) or as it
+/// was.
 pub struct Drained {
     pub commands: Vec<Render>,
     pub seq: u64,
+    pub sent: Instant,
     pub shown: Option<bool>,
 }
 
-/// The batches queued, as one drain: whether the overlay is up after it is the last `Show` or
-/// `Lift` in it, so a drain that shows and then lifts never shows.
-pub fn in_order(mut batches: Vec<Batch>) -> Drained {
-    batches.sort_by_key(|batch| batch.seq);
-    let seq = batches.last().map_or(0, |batch| batch.seq);
-    let commands: Vec<Render> = batches.into_iter().flat_map(|batch| batch.commands).collect();
+/// The batch the renderer woke on and the ones queued behind it, as one drain: whether the overlay
+/// is up after it is the last `Show` or `Lift` in it, so a drain that shows and then lifts never
+/// shows.
+pub fn in_order(woke: Batch, mut queued: Vec<Batch>) -> Drained {
+    let seq = queued.iter().fold(woke.seq, |seq, batch| seq.max(batch.seq));
+    let sent = queued.iter().fold(woke.sent, |sent, batch| sent.min(batch.sent));
+    queued.push(woke);
+    queued.sort_by_key(|batch| batch.seq);
+    let commands: Vec<Render> = queued.into_iter().flat_map(|batch| batch.commands).collect();
     let shown = commands.iter().rev().find_map(|command| match command {
         Render::Show => Some(true),
         Render::Lift => Some(false),
         _ => None,
     });
-    Drained { commands, seq, shown }
+    Drained { commands, seq, sent, shown }
 }
 
 /// Core Animation's media clock against `Instant`, read now: what the engine begins every track on.
@@ -101,13 +107,13 @@ impl Renderer {
     /// Each time a batch comes, it and every batch queued behind it are played as one drain, and
     /// answered once: a busy main thread costs one late commit, never a backlog of them.
     pub async fn run(mut self) {
-        while let Some((span, batch)) = self.rx.recv().await {
-            let mut batches = vec![batch];
+        while let Some((span, woke)) = self.rx.recv().await {
+            let mut queued = Vec::new();
             while let Ok((_, batch)) = self.rx.try_recv() {
-                batches.push(batch);
+                queued.push(batch);
             }
             let _guard = span.enter();
-            let answer = self.play(in_order(batches));
+            let answer = self.play(in_order(woke, queued));
             (self.report)(answer);
         }
     }
@@ -115,9 +121,11 @@ impl Renderer {
     /// Plays a drain in one transaction, flushed: the overlay brought down before it when the drain
     /// lifts it, put up after when the drain shows it, and the window's background set once the
     /// holes' mask is committed. Without an overlay every command but `Display` does nothing; a drain
-    /// that dressed or posed a flight on none is `Unavailable`.
+    /// that dressed or posed a flight on none is `Unavailable`. A commit says when the drain began
+    /// and when it was flushed.
     fn play(&mut self, drained: Drained) -> Event {
-        let Drained { commands, seq, shown } = drained;
+        let began = Instant::now();
+        let Drained { commands, seq, sent, shown } = drained;
         let draws_a_flight =
             commands.iter().any(|command| matches!(command, Render::Dress { .. } | Render::Stage { .. }));
         if shown == Some(false)
@@ -132,18 +140,19 @@ impl Renderer {
         }
         CATransaction::commit();
         CATransaction::flush();
+        let flushed = Instant::now();
         let Some(overlay) = self.overlay.as_mut() else {
             return if draws_a_flight {
                 Event::Unavailable { seq }
             } else {
-                Event::Committed { seq, overlay: None }
+                Event::Committed { seq, overlay: None, shown, sent, began, flushed }
             };
         };
         overlay.paint_background();
         if shown == Some(true) {
             overlay.show();
         }
-        Event::Committed { seq, overlay: overlay.server_id() }
+        Event::Committed { seq, overlay: overlay.server_id(), shown, sent, began, flushed }
     }
 
     fn apply(&mut self, command: Render) {
@@ -200,8 +209,9 @@ mod tests {
         Render::Holes(vec![OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0))])
     }
 
-    fn batch(seq: u64, commands: Vec<Render>) -> Batch {
-        Batch { seq, commands }
+    /// Batch `seq`, sent `ms` after `at`.
+    fn batch(seq: u64, at: Instant, ms: u64, commands: Vec<Render>) -> Batch {
+        Batch { seq, sent: at + std::time::Duration::from_millis(ms), commands }
     }
 
     fn held_holes(commands: &[Render]) -> Vec<f64> {
@@ -216,22 +226,24 @@ mod tests {
 
     #[test]
     fn queued_batches_play_in_order_and_are_acknowledged_once() {
-        let drained = in_order(vec![
-            batch(4, vec![holes(1.0), holes(2.0)]),
-            batch(5, vec![holes(3.0)]),
-            batch(6, vec![holes(4.0)]),
+        let at = Instant::now();
+        let drained = in_order(batch(5, at, 2, vec![holes(3.0)]), vec![
+            batch(6, at, 3, vec![holes(4.0)]),
+            batch(4, at, 1, vec![holes(1.0), holes(2.0)]),
         ]);
         assert_eq!(held_holes(&drained.commands), vec![1.0, 2.0, 3.0, 4.0]);
         assert_eq!(drained.seq, 6, "one answer, for the highest");
+        assert_eq!(drained.sent, at + std::time::Duration::from_millis(1), "waiting since the oldest was sent");
         assert_eq!(drained.shown, None, "neither shown nor lifted: as it was");
     }
 
     #[test]
     fn the_last_show_or_lift_in_a_drain_decides_whether_the_overlay_is_up() {
-        let shown = |batches: Vec<Batch>| in_order(batches).shown;
-        assert_eq!(shown(vec![batch(1, vec![holes(1.0), Render::Show, holes(2.0)])]), Some(true));
-        assert_eq!(shown(vec![batch(1, vec![Render::Show]), batch(2, vec![Render::Lift])]), Some(false), "never shown");
-        assert_eq!(shown(vec![batch(1, vec![Render::Lift, holes(1.0)]), batch(2, vec![Render::Show])]), Some(true));
+        let at = Instant::now();
+        let shown = |woke: Batch, queued: Vec<Batch>| in_order(woke, queued).shown;
+        assert_eq!(shown(batch(1, at, 0, vec![holes(1.0), Render::Show, holes(2.0)]), Vec::new()), Some(true));
+        assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![Render::Lift])]), Some(false), "never shown");
+        assert_eq!(shown(batch(1, at, 0, vec![Render::Lift, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
     }
 
     #[test]

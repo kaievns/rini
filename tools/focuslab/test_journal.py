@@ -40,7 +40,7 @@ class Summary(unittest.TestCase):
         self.assertEqual(self.flights[0].marks[-1]["mark"], "report_settled", "a flight runs to its burst's end")
         self.assertEqual(self.flights[0].target, (1, 2))
 
-    def test_press_to_show_splits_into_parts_in_order_that_sum_to_it(self):
+    def test_press_to_overlay_up_splits_into_parts_in_order_that_sum_to_it(self):
         self.assertRow(self.clean, {
             "reactor": 2.4,
             "frame_zero_asked": 0.0,
@@ -48,18 +48,35 @@ class Summary(unittest.TestCase):
             "skylight_round": 29.7,
             "engine_wait": 2.2,
             "the_show": 0.4,
-            "press_to_show": 36.0,
+            "to_renderer": 1.3,
+            "show_commit": 0.3,
+            "press_to_up": 37.6,
         })
-        parts = sum(self.clean[key] for key, _ in journal.SPLIT if key != "press_to_show")
-        self.assertAlmostEqual(parts, self.clean["press_to_show"], places=6)
-        self.assertAlmostEqual(self.clean["press_to_show"], self.clean["overlay_up"], places=6)
+        parts = sum(self.clean[key] for key, _ in journal.SPLIT if key != "press_to_up")
+        self.assertAlmostEqual(parts, self.clean["press_to_up"], places=6)
+        self.assertAlmostEqual(self.clean["press_to_up"], self.clean["overlay_up"], places=6)
+
+    def test_the_overlay_is_up_once_the_first_drain_showing_it_after_the_show_is_flushed(self):
+        self.assertEqual(self.flights[0].count("drawn", lambda mark: mark["shown"] is None), 1, "a drain before the show")
+        marks = [mark for mark in self.flights[0].marks if not (mark["mark"] == "drawn" and mark["shown"])]
+        never_up = journal.Flight(self.flights[0].header, marks).times()
+        self.assertIsNone(never_up["overlay_up"], "drained, never shown")
+        self.assertIsNone(never_up["press_to_up"])
+        self.assertAlmostEqual(never_up["show_given"], 36.0, places=6)
+
+    def test_a_flight_written_before_drains_were_journalled_is_up_at_its_show(self):
+        bursts = [(header, [mark for mark in marks if mark["mark"] != "drawn"]) for header, marks in self.bursts]
+        clean, late = (flight.times() for flight in journal.flights(bursts))
+        self.assertRow(clean, {"to_renderer": 0.0, "show_commit": 0.0, "press_to_up": 36.0, "overlay_up": 36.0})
+        self.assertRow(late, {"show_given": 81.8, "overlay_up": 81.8})
 
     def test_the_rows_are_ms_after_the_press(self):
         self.assertRow(self.clean, {
             "compose": 6.1,
             "frame_zero_capture_starts": 3.7,
             "frame_zero_pictures_ready": 33.4,
-            "overlay_up": 36.0,
+            "show_given": 36.0,
+            "overlay_up": 37.6,
             "rini_sees_it_landed": 90.8,
             "focused_picture_captured": 133.9,
             "show_to_landed": 70.4,
@@ -75,7 +92,8 @@ class Summary(unittest.TestCase):
             "compose": 5.0,
             "frame_zero_capture_starts": None,
             "frame_zero_pictures_ready": None,
-            "overlay_up": 81.8,
+            "show_given": 81.8,
+            "overlay_up": 83.7,
             "rini_sees_it_landed": 142.8,
             "focused_picture_captured": None,
             "lift": 851.8,
@@ -105,6 +123,12 @@ class Summary(unittest.TestCase):
         self.assertEqual(found[0][0], landed, "the frame-zero pictures before it are no delivery's")
         self.assertEqual([picture["window"] for picture in found[0][2]], [[1, 2]])
 
+    def test_each_drain_drawn_is_its_wait_for_the_renderer_its_commit_and_the_way_back(self):
+        rows = journal.drains(self.flights)
+        self.assertEqual([(row["queued"], row["applied"], row["heard"]) for row in rows], [
+            (0.2, 0.4, 0.2), (0.3, 0.3, 0.3), (0.2, 0.3, 0.3), (0.4, 0.5, 0.4), (0.2, 0.4, 0.3),
+        ])
+
     def test_nearest_rank_percentiles(self):
         values = list(range(1, 11))
         self.assertEqual([journal.percentile(values, p) for p in (50, 90, 99)], [5, 9, 10])
@@ -112,7 +136,7 @@ class Summary(unittest.TestCase):
 
     def test_the_summary_prints_every_row_and_the_csv_has_one_line_a_flight(self):
         text = journal.summary(self.flights, self.bursts)
-        for _, label in journal.SPLIT + journal.ROWS + journal.COUNTS:
+        for _, label in journal.SPLIT + journal.ROWS + journal.DRAINS + journal.COUNTS:
             self.assertIn(label, text)
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "flights.csv")
@@ -120,8 +144,8 @@ class Summary(unittest.TestCase):
             with open(path) as file:
                 rows = list(csv.DictReader(file))
         self.assertEqual([row["what"] for row in rows], ["move_focus", "move_focus"])
-        self.assertEqual(rows[0]["press_to_show"], "36.0")
-        self.assertEqual(rows[1]["press_to_show"], "")
+        self.assertEqual(rows[0]["press_to_up"], "37.6")
+        self.assertEqual(rows[1]["press_to_up"], "")
 
 
 class Handover(unittest.TestCase):
