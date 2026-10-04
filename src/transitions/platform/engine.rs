@@ -841,11 +841,7 @@ impl FlightEngine {
                     self.frame_zero(generation, pictures);
                     return;
                 }
-                for (window, picture, frame) in pictures {
-                    self.delivered.insert((generation, window), picture);
-                    self.drive(lifecycle::Event::Picture { generation, window, frame, why });
-                    self.delivered.remove(&(generation, window));
-                }
+                self.offer(generation, why, pictures);
             }
             crate::pictures::event::Event::Lost { tag, window } => {
                 if ours(self.client, tag).is_some() {
@@ -855,13 +851,23 @@ impl FlightEngine {
         }
     }
 
-    /// Frame zero's pictures, put on their tiles while the overlay is not up yet; then the overlay
-    /// can go up.
+    /// Each delivered picture to the coordinator, which says whether it is swapped in.
+    fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, CGRect)>) {
+        for (window, picture, frame) in pictures {
+            self.delivered.insert((generation, window), picture);
+            self.drive(lifecycle::Event::Picture { generation, window, frame, why });
+            self.delivered.remove(&(generation, window));
+        }
+    }
+
+    /// Frame zero's pictures, put on their tiles while the overlay is not up yet, then the overlay can
+    /// go up; once it is up without them, each is offered to its tile as a swap, and frame zero is
+    /// never installed again under a moving flight.
     fn frame_zero(&mut self, generation: Generation, pictures: Vec<(WindowId, Picture, CGRect)>) {
-        let current = self.coordinator.generation() == generation
+        if self.coordinator.is_shown() {
+            self.offer(generation, Why::FrameZero, pictures);
+        } else if self.coordinator.generation() == generation
             && self.coordinator.is_flying()
-            && !self.coordinator.is_shown();
-        if current
             && let Some(running) = self.running.as_mut()
             && running.wear(pictures.into_iter().map(|(window, picture, _)| (window, picture)).collect()) > 0
         {

@@ -200,7 +200,8 @@ pub enum Event {
     Merge { stage: StageSummary, moved: bool },
     /// The frame-zero pictures arrived (or the service has nothing more to give).
     FrameZero(Generation),
-    /// One end-state picture, taken with the window at `frame`. Frame zero's come as `FrameZero`.
+    /// One picture, taken with the window at `frame`: an end-state one, or one of frame zero's that
+    /// came after the overlay went up without it. Frame zero's in time come as `FrameZero`.
     Picture { generation: Generation, window: WindowId, frame: CGRect, why: Why },
     /// An accent playing past the clock (the edge bounce) needs it to run this much longer from now.
     Extend(Duration),
@@ -302,6 +303,8 @@ enum Phase {
 #[derive(Clone, Debug, PartialEq)]
 struct Flight {
     generation: Generation,
+    /// The generation it began under, which frame zero is asked and delivered under.
+    began: Generation,
     stage: StageSummary,
     phase: Phase,
     /// When the motion started, and how long it runs from then.
@@ -423,7 +426,7 @@ impl Coordinator {
             Event::Merge { stage, moved } => self.merge(stage, moved, now, &mut out),
             Event::FrameZero(generation) => {
                 if let State::Flying(f) = &mut self.state
-                    && f.generation == generation
+                    && f.began == generation
                     && matches!(f.phase, Phase::Preparing { .. })
                 {
                     if let Some(window) = f.stage.losing_focus {
@@ -500,6 +503,7 @@ impl Coordinator {
         let end_since = ended_since(&[], None, &stage, generation);
         self.state = State::Flying(Box::new(Flight {
             generation,
+            began: generation,
             awaiting,
             repainting: stage.repainting.clone(),
             stage,
@@ -566,11 +570,21 @@ impl Coordinator {
 
     fn picture(&mut self, generation: Generation, window: WindowId, frame: CGRect, why: Why, now: Instant, out: &mut Vec<Command>) {
         let State::Flying(f) = &mut self.state else { return };
-        if f.end_since.iter().find(|(w, _)| *w == window).is_none_or(|(_, since)| generation < *since) {
+        let Some(tile) = f.stage.tile(window) else { return };
+        if why == Why::FrameZero {
+            // Taken at the press, before any picture of the end: the cache's picture it replaces is
+            // older, wherever the tile ends now.
+            if generation == f.began && !matches!(f.phase, Phase::Preparing { .. }) && near(frame, tile.start, END_SLACK) {
+                out.push(Command::Swap { generation, window });
+                if f.stage.losing_focus == Some(window) {
+                    out.push(Command::KeepFocusedLook { generation, window });
+                }
+            }
             return;
         }
-        let Some(tile) = f.stage.tile(window) else { return };
-        if !near(frame, tile.end, END_SLACK) {
+        if f.end_since.iter().find(|(w, _)| *w == window).is_none_or(|(_, since)| generation < *since)
+            || !near(frame, tile.end, END_SLACK)
+        {
             return;
         }
         out.push(Command::Swap { generation, window });
@@ -885,6 +899,36 @@ mod tests {
         let out = c.on(Event::Tick { settled: true, landed: true }, now + FRAME_ZERO_PATIENCE);
         assert_eq!(out.first(), Some(&Command::Show));
         assert!(c.is_shown() && c.is_moving());
+    }
+
+    /// Frame zero slower than the overlay's patience: the overlay is up and moving on the cache's
+    /// pictures. The late pictures go onto their tiles where they are, the window losing focus's kept as
+    /// its focused look, and nothing is shown, written or installed again.
+    #[test]
+    fn frame_zero_after_the_overlay_went_up_without_it_only_swaps_its_pictures_in() {
+        let now = Instant::now();
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(pan()), now);
+        let g = c.generation();
+        assert_eq!(c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE).first(), Some(&Command::Show));
+        let late = now + FRAME_ZERO_PATIENCE + Duration::from_millis(10);
+        let start = pan().tiles[0].start;
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: start, why: Why::FrameZero }, late);
+        assert_eq!(out, vec![Command::Swap { generation: g, window: w(1) }, Command::KeepFocusedLook { generation: g, window: w(1) }]);
+        let mut resized = start;
+        resized.size.width -= 21.0;
+        assert!(c.on(Event::Picture { generation: g, window: w(1), frame: resized, why: Why::FrameZero }, late).is_empty(),
+            "not where its tile starts");
+        assert!(c.on(Event::Picture { generation: g, window: w(9), frame: pan().tiles[2].start, why: Why::FrameZero }, late)
+            == vec![Command::Swap { generation: g, window: w(9) }]);
+        assert!(c.on(Event::FrameZero(g), late).is_empty(), "the show is not run again");
+        let mut moved = pan();
+        moved.tiles[0].end.origin.x -= 400.0;
+        c.on(Event::Merge { stage: moved, moved: true }, late);
+        assert!(has(&c.on(Event::Picture { generation: g, window: w(1), frame: start, why: Why::FrameZero }, late),
+            |c| matches!(c, Command::Swap { .. })), "wherever its tile ends now");
+        assert!(c.on(Event::Picture { generation: Generation(g.0 - 1), window: w(1), frame: start, why: Why::FrameZero }, late).is_empty(),
+            "another flight's");
     }
 
     #[test]

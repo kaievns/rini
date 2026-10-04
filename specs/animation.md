@@ -160,7 +160,8 @@ destination for a window already moving.
 
 - A flight MUST start from pictures taken at the press: every window wholly on screen where its tile
   starts, and the floating windows seen behind them. The overlay MUST wait for them no longer than
-  80ms, and then flies what the cache holds.
+  80ms, and then flies what the cache holds until they come: each then replaces the cache's on its
+  tile, and the flight MUST NOT start again.
 - A real window MUST NOT be written before the overlay is up, whatever the flight: written earlier, it
   jumps on screen before the overlay hides it. Every frame MUST be written as the overlay goes up.
 - A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
@@ -277,10 +278,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A flight that moves focus nowhere MUST NOT recapture through ScreenCaptureKit, and MUST NOT watch for
   a change of focus: no report comes to arm the watch, and one left waiting holds the windows behind
   the strip back for the whole flight.
-- Once the overlay is up, a tile MUST change its picture only for one the flight took: as its window
-  lands, as the window gaining focus changes its look, or just before the lift. A capture made for
-  anything else shows the window as it was, and cut in after the flight's own it would cut the tile
-  back.
+- Once the overlay is up, a tile MUST change its picture only for one the flight took: frame zero's
+  coming after the overlay went up without it, as its window lands, as the window gaining focus
+  changes its look, as a floating window behind the strip is refreshed, or just before the lift. A
+  capture made for anything else shows the window as it was, and cut in after the flight's own it
+  would cut the tile back.
 - A picture the cache refuses MUST NOT reach a tile either. The flight would draw what the next one
   will not.
 - A picture of a window that was not wholly on one display while it was captured MUST NOT be drawn,

@@ -53,6 +53,12 @@ on screen, so the window server counts it visible and its app keeps painting; an
 watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the windows it grows
 or opens to repaint (up to `HOLD_CAP`); a strip movement moves at once.
 
+Frame zero's pictures that come after the overlay went up are swapped onto their tiles where they are
+(`Why::FrameZero`), and frame zero is never installed again, which under a flight that moves would jump
+the strip back. They were taken at the press and come before any picture of the end, so each replaces
+only the cache's. Dropped, they would be lost for the flight: the service has started the client's
+prints from them, so a landing that looks the same is not delivered.
+
 The end state is four watches, kept and retargeted from one generation to the next (`EndWatches` in the
 engine): every end window, captured as soon as it is where it ends (`Settle::AsSoonAsThere`, watched for
 150ms); a window a pass grew or opened, or one flying as a stand-in, captured once it has repainted
@@ -172,8 +178,8 @@ Parked windows have no tile, so a tile-only check missed their moves and left th
 Before the overlay is up nothing is written: the show writes the merged frames.
 
 A picture reaches a tile only as a delivery under the flight's tag: frame zero's, which the tiles take
-before the overlay goes up, and the watches' and the final capture's, which the coordinator swaps in
-("The lifecycle"). Every other capture, a ScreenCaptureKit warm or background picture, goes to the
+before the overlay goes up or the coordinator swaps in where they are when they come after it, and the
+watches' and the final capture's, which the coordinator swaps in ("The lifecycle"). Every other capture, a ScreenCaptureKit warm or background picture, goes to the
 cache only, for the next flight. Background captures landed mid-flight in 310 of 321 flights (median 4
 per flight), and every cut of one read as a flicker or a change of transparency. On a resizing tile the
 cut also re-keyed the resize from the presented state, which staggered that tile against its
