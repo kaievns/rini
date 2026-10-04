@@ -75,22 +75,6 @@ pub fn pan_travel(from_offset: CGPoint, to_offset: CGPoint) -> CGPoint {
     CGPoint::new(from_offset.x - to_offset.x, from_offset.y - to_offset.y)
 }
 
-/// A snapshot's pixels as packed RGB, downsampled by four in each axis, for the debug dump.
-/// Converts a display-space rect into the overlay's own coordinate space.
-///
-/// The overlay's layer tree has its origin at the overlay's top-left, not the display's, so a window
-/// frame has to have the overlay's origin subtracted. Skipping this puts every tile off by the menu
-/// bar inset, which reads as the whole animation being shifted down.
-pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
-    CGRect::new(
-        CGPoint::new(
-            frame.origin.x - overlay_frame.origin.x,
-            frame.origin.y - overlay_frame.origin.y,
-        ),
-        frame.size,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::CGSize;

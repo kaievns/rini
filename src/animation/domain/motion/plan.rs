@@ -6,9 +6,8 @@ use std::collections::HashMap;
 use objc2_core_foundation::{CGPoint, CGRect};
 
 use rini_geometry::stretch::is_a_resize;
-use crate::animation::domain::motion::surface::{
-    SurfaceWindow, TileGeometry, pan_travel, to_overlay_space,
-};
+use crate::animation::domain::motion::surface::{SurfaceWindow, TileGeometry, pan_travel};
+use rini_geometry::to_overlay_space;
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 use rini_ipc::protocol::Direction;

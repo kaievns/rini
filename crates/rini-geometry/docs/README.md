@@ -7,9 +7,10 @@ every layout decision needs. Pure, and the only crate that tests without linking
 ## What it owns
 
 `CGRectExt` (`mid`, `intersection`, `union`, `area`, `contains`, `contains_rect`), `Round`,
-`SameAs` and `IsWithin` for float comparison, `centered_in`, `is_off_screen` and
-`park_entry_frame`. `stretch`: the stretch tolerance (`MIN_STRETCH`, `MAX_STRETCH`),
-`within_stretch` and `is_a_resize`.
+`SameAs` and `IsWithin` for float comparison, `centered_in`, `is_off_screen`,
+`park_entry_frame`, and `to_overlay_space`, a display rect in an overlay's own coordinates.
+`stretch`: the stretch tolerance (`MIN_STRETCH`, `MAX_STRETCH`), `within_stretch` and
+`is_a_resize`.
 
 ## The shape that matters
 

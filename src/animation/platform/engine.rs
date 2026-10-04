@@ -37,7 +37,8 @@ use rini_runloop::run_loop::RepeatingTimer;
 pub(crate) use crate::animation::domain::motion::plan;
 use crate::animation::domain::motion::strip_move::{NUDGE_STRETCH, flight_curve};
 pub use crate::animation::domain::motion::surface::SurfaceWindow;
-pub(crate) use crate::animation::domain::motion::surface::{pan_travel, to_overlay_space};
+pub(crate) use crate::animation::domain::motion::surface::pan_travel;
+use rini_geometry::to_overlay_space;
 use crate::animation::domain::motion::travel::{TilePath, is_moving, tile_path};
 
 /// One window's part in an animation, as the caller describes it.
@@ -5053,16 +5054,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn overlay_space_subtracts_the_overlay_origin() {
-        // A display inset by a 32pt menu bar: a window at y = 32 lands at y = 0 in the overlay.
-        let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
-        let window = rect(865.0, 32.0, 859.0, 1081.0);
-        assert_eq!(
-            to_overlay_space(window, overlay),
-            rect(865.0, 0.0, 859.0, 1081.0)
-        );
-    }
 
     #[test]
     fn a_bounce_extends_the_clock_to_cover_its_return() {
@@ -5082,25 +5073,7 @@ mod tests {
         assert_eq!(long, Duration::from_secs(5));
     }
 
-    #[test]
-    fn overlay_space_keeps_negative_offsets_negative() {
-        // Off-strip windows at negative x stay to the left of the overlay, not clamped into it.
-        let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
-        assert_eq!(
-            to_overlay_space(rect(-1680.0, 32.0, 1720.0, 1081.0), overlay),
-            rect(-1680.0, 0.0, 1720.0, 1081.0)
-        );
-    }
 
-    #[test]
-    fn overlay_space_handles_a_second_display_at_an_offset() {
-        // A display to the right: windows at large positive x are drawn relative to its own overlay.
-        let overlay = rect(1728.0, 32.0, 1728.0, 1085.0);
-        assert_eq!(
-            to_overlay_space(rect(1728.0, 32.0, 859.0, 1081.0), overlay),
-            rect(0.0, 0.0, 859.0, 1081.0)
-        );
-    }
 
     #[test]
     fn the_overlay_lifts_when_the_clock_is_done_and_the_tiles_are_presented_there() {

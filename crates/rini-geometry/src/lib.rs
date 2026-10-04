@@ -221,6 +221,22 @@ pub fn centered_in(frame: ic::CGRect, container: ic::CGRect) -> ic::CGRect {
     ic::CGRect::new(origin, frame.size)
 }
 
+/// `frame`, a rect in display space, in the coordinates of an overlay whose own frame is
+/// `overlay_frame`.
+///
+/// The overlay's layer tree has its origin at the overlay's top-left, not the display's, so a window
+/// frame has to have the overlay's origin subtracted. Skipping this puts every tile off by the menu
+/// bar inset, which reads as the whole animation being shifted down.
+pub fn to_overlay_space(frame: ic::CGRect, overlay_frame: ic::CGRect) -> ic::CGRect {
+    ic::CGRect::new(
+        ic::CGPoint::new(
+            frame.origin.x - overlay_frame.origin.x,
+            frame.origin.y - overlay_frame.origin.y,
+        ),
+        frame.size,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,5 +361,36 @@ mod tests {
         assert_eq!(centered.size, ic::CGSize::new(900.0, 700.0));
         assert_eq!(centered.origin, ic::CGPoint::new(-400.0, -300.0));
         assert_eq!(centered.max(), ic::CGPoint::new(500.0, 400.0));
+    }
+
+    #[test]
+    fn overlay_space_subtracts_the_overlay_origin() {
+        // A display inset by a 32pt menu bar: a window at y = 32 lands at y = 0 in the overlay.
+        let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
+        let window = rect(865.0, 32.0, 859.0, 1081.0);
+        assert_eq!(
+            to_overlay_space(window, overlay),
+            rect(865.0, 0.0, 859.0, 1081.0)
+        );
+    }
+
+    #[test]
+    fn overlay_space_keeps_negative_offsets_negative() {
+        // Off-strip windows at negative x stay to the left of the overlay, not clamped into it.
+        let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert_eq!(
+            to_overlay_space(rect(-1680.0, 32.0, 1720.0, 1081.0), overlay),
+            rect(-1680.0, 0.0, 1720.0, 1081.0)
+        );
+    }
+
+    #[test]
+    fn overlay_space_handles_a_second_display_at_an_offset() {
+        // A display to the right: windows at large positive x are drawn relative to its own overlay.
+        let overlay = rect(1728.0, 32.0, 1728.0, 1085.0);
+        assert_eq!(
+            to_overlay_space(rect(1728.0, 32.0, 859.0, 1081.0), overlay),
+            rect(0.0, 0.0, 859.0, 1081.0)
+        );
     }
 }

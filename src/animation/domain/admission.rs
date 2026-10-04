@@ -11,7 +11,7 @@ use objc2_core_foundation::{CGRect, CGSize};
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 
-use crate::animation::domain::motion::surface::to_overlay_space;
+use rini_geometry::to_overlay_space;
 use crate::animation::domain::timing::{OutAndBack, OutAndBacks};
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
