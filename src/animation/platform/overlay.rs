@@ -430,13 +430,14 @@ fn path_animation(
     timing: Timing,
 ) -> Retained<CABasicAnimation> {
     let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
+    // As objects: a `CGPath` pointer handed to `msg_send!` encodes as a struct pointer, which objc2
+    // refuses for `setFromValue:` in any build with debug assertions.
+    let (from, to): (&objc2_core_foundation::CFType, &objc2_core_foundation::CFType) = (from, to);
     // SAFETY: a CGPath is the value type Core Animation expects for path-valued key paths, and
     // the animation retains what it is given.
     unsafe {
-        let from_raw: *const objc2_core_graphics::CGPath = from;
-        let to_raw: *const objc2_core_graphics::CGPath = to;
-        let _: () = msg_send![&*animation, setFromValue: from_raw];
-        let _: () = msg_send![&*animation, setToValue: to_raw];
+        animation.setFromValue(Some(from.as_ref()));
+        animation.setToValue(Some(to.as_ref()));
     }
     timing.apply(&animation);
     animation
@@ -2495,5 +2496,33 @@ mod tests {
         clip_corners(&tile.picture, None);
         assert_eq!(tile.picture.cornerRadius(), 0.0);
         assert!(!tile.picture.masksToBounds());
+    }
+
+    /// A resize animates the shadow's silhouette and its mask's ring as paths. Handed over as
+    /// pointers they failed objc2's encoding check, so a debug build panicked on the first resize.
+    #[test]
+    fn a_resize_hands_its_paths_to_core_animation_as_objects() {
+        let timing = Timing {
+            begin: 100.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let (from, to) = (CGSize::new(1200.0, 1081.0), CGSize::new(861.0, 1081.0));
+        let origin = CGPoint::new(0.0, 0.0);
+        let animation = path_animation(
+            "shadowPath",
+            &silhouette_path(from, origin),
+            &silhouette_path(to, origin),
+            timing,
+        );
+        let path = |value: Option<Retained<objc2::runtime::AnyObject>>| {
+            let value = value.expect("a path");
+            // SAFETY: the value was made from a CGPath, which is what it is read back as.
+            let path: &objc2_core_graphics::CGPath =
+                unsafe { &*(Retained::as_ptr(&value) as *const objc2_core_graphics::CGPath) };
+            objc2_core_graphics::CGPath::bounding_box(Some(path)).size
+        };
+        assert_eq!(path(animation.fromValue()), from);
+        assert_eq!(path(animation.toValue()), to);
     }
 }
