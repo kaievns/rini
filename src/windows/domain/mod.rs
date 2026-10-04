@@ -6,6 +6,7 @@ pub mod ax_events;
 pub mod catalogue;
 pub mod focus;
 pub mod focus_order;
+pub mod frame_write;
 pub mod info;
 pub mod raise;
 pub mod raise_order;

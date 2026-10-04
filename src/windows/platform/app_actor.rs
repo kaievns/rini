@@ -2,6 +2,7 @@
 //! carries out the reactor's `Request`s (frames, raises, close). Emits `crate::windows::event::Event`.
 
 use crate::windows::domain::admissible;
+use crate::windows::domain::frame_write::{FrameWrite, frame_write};
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -12,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
-use objc2_core_foundation::CFRunLoop;
+use objc2_core_foundation::{CFRunLoop, CGRect};
 use tokio::sync::oneshot;
 use tokio::{join, select};
 use tokio_util::sync::CancellationToken;
@@ -475,10 +476,10 @@ impl<W: AxWorld> State<W> {
                 }
             }
             Request::SetWindowFrame(wid, desired, txid, _) => {
-                let elem = match self.window_mut(wid) {
+                let (elem, server_id) = match self.window_mut(wid) {
                     Ok(window) => {
                         window.last_seen_txid = txid;
-                        window.elem.clone()
+                        (window.elem.clone(), window.window_server_id)
                     }
                     Err(err) => match err {
                         AxError::Ax(code) => {
@@ -491,9 +492,7 @@ impl<W: AxWorld> State<W> {
                     },
                 };
 
-                let _ = self.ax.set_size(&elem, desired.size);
-                let _ = self.ax.set_position(&elem, desired.origin);
-                let _ = self.ax.set_size(&elem, desired.size);
+                self.write_frame(&elem, server_id, desired);
 
                 let frame = match self
                     .handle_ax_result(wid, trace("frame", wid, || self.ax.frame(&elem)))?
@@ -512,10 +511,10 @@ impl<W: AxWorld> State<W> {
             }
             Request::SetBatchWindowFrame(frames, txid, _) => {
                 for (wid, desired) in frames {
-                    let elem = match self.window_mut(wid) {
+                    let (elem, server_id) = match self.window_mut(wid) {
                         Ok(window) => {
                             window.last_seen_txid = txid;
-                            window.elem.clone()
+                            (window.elem.clone(), window.window_server_id)
                         }
                         Err(err) => match err {
                             AxError::Ax(code) => {
@@ -528,9 +527,7 @@ impl<W: AxWorld> State<W> {
                         },
                     };
 
-                    let _ = self.ax.set_size(&elem, desired.size);
-                    let _ = self.ax.set_position(&elem, desired.origin);
-                    let _ = self.ax.set_size(&elem, desired.size);
+                    self.write_frame(&elem, server_id, desired);
 
                     let frame = match self
                         .handle_ax_result(wid, trace("frame", wid, || self.ax.frame(&elem)))?
@@ -592,6 +589,20 @@ impl<W: AxWorld> State<W> {
             }
         }
         Ok(false)
+    }
+
+    fn write_frame(&self, elem: &W::Element, server_id: Option<WindowServerId>, desired: CGRect) {
+        let current = server_id.and_then(|id| self.ax.server_frame(id)).map(|frame| frame.size);
+        match frame_write(current, desired.size) {
+            FrameWrite::PositionOnly => {
+                let _ = self.ax.set_position(elem, desired.origin);
+            }
+            FrameWrite::SizePositionSize => {
+                let _ = self.ax.set_size(elem, desired.size);
+                let _ = self.ax.set_position(elem, desired.origin);
+                let _ = self.ax.set_size(elem, desired.size);
+            }
+        }
     }
 
     #[instrument(skip_all, fields(pid = ?self.pid, ?notif))]
@@ -1599,7 +1610,7 @@ mod tests {
         (state, sink)
     }
 
-    /// A frame write is size, then position, then size AGAIN.
+    /// A frame write that changes the size is size, then position, then size AGAIN.
     ///
     /// Not a typo and not belt-and-braces. AppKit clamps a size against the window's CURRENT position
     /// — a window near the right edge of a screen cannot grow until it has moved — so sizing before
@@ -1609,10 +1620,14 @@ mod tests {
     /// Nothing pinned this order before: the file had no tests, and the three lines look redundant
     /// enough that a tidy-up would drop one.
     #[test]
-    fn a_frame_write_sizes_then_moves_then_sizes_again() {
+    fn a_resize_sizes_then_moves_then_sizes_again() {
         let window = 7;
         let (mut state, _sink) =
             state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
+        state
+            .ax
+            .server_frames
+            .insert(WindowServerId::new(window), rect(0., 0., 100., 100.));
         let wid = state
             .register_window(window, peer(window, rect(0., 0., 100., 100.)))
             .expect("the window registers")
@@ -1639,6 +1654,84 @@ mod tests {
             state.ax.positions.borrow().as_slice(),
             &[(window, desired.origin)],
             "moved once, between the two sizings"
+        );
+    }
+
+    /// A move that keeps the window's size writes the position alone. See "Writing a frame" in
+    /// `specs/windows.md`.
+    #[test]
+    fn a_same_size_move_writes_the_position_alone() {
+        let window = 7;
+        let (mut state, _sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 800., 600.)));
+        state
+            .ax
+            .server_frames
+            .insert(WindowServerId::new(window), rect(0., 0., 800., 600.));
+        let wid = state
+            .register_window(window, peer(window, rect(0., 0., 800., 600.)))
+            .expect("the window registers")
+            .1;
+        state.ax.positions.borrow_mut().clear();
+        state.ax.sizes.borrow_mut().clear();
+
+        let desired = rect(500., 300., 800., 600.);
+        state
+            .handle_request(Request::SetWindowFrame(
+                wid,
+                desired,
+                TransactionId::default(),
+                false,
+            ))
+            .expect("the write succeeds");
+
+        assert!(state.ax.sizes.borrow().is_empty(), "never sized");
+        assert_eq!(
+            state.ax.positions.borrow().as_slice(),
+            &[(window, desired.origin)],
+            "moved once"
+        );
+    }
+
+    /// A batch decides each window on its own size: the one the window server has at the desired
+    /// size moves alone, the one whose size cannot be read is sized around its move.
+    #[test]
+    fn a_batch_writes_each_window_by_its_own_size() {
+        let (kept, unread) = (7, 8);
+        let mut ax = FakeAx::with_one_window(kept, rect(0., 0., 800., 600.));
+        ax.windows.push(unread);
+        ax.describe_standard_window(unread, rect(800., 0., 400., 600.));
+        ax.server_frames.insert(WindowServerId::new(kept), rect(0., 0., 800., 600.));
+        let (mut state, _sink) = state_with(ax);
+        let kept_wid = state
+            .register_window(kept, peer(kept, rect(0., 0., 800., 600.)))
+            .expect("registers")
+            .1;
+        let unread_wid = state
+            .register_window(unread, peer(unread, rect(800., 0., 400., 600.)))
+            .expect("registers")
+            .1;
+        state.ax.positions.borrow_mut().clear();
+        state.ax.sizes.borrow_mut().clear();
+
+        let (to_kept, to_unread) = (rect(400., 0., 800., 600.), rect(1200., 0., 400., 600.));
+        state
+            .handle_request(Request::SetBatchWindowFrame(
+                vec![(kept_wid, to_kept), (unread_wid, to_unread)],
+                TransactionId::default(),
+                false,
+            ))
+            .expect("the writes succeed");
+
+        assert_eq!(
+            state.ax.sizes.borrow().as_slice(),
+            &[(unread, to_unread.size), (unread, to_unread.size)],
+            "only the window of unknown size is sized"
+        );
+        assert_eq!(
+            state.ax.positions.borrow().as_slice(),
+            &[(kept, to_kept.origin), (unread, to_unread.origin)],
+            "both move, in the batch's order"
         );
     }
 

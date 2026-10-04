@@ -75,19 +75,28 @@ as visible rather than absent. The reverse — an id the server does not report 
 
 ## Writing a frame
 
-- A frame write is size, then position, then size AGAIN. AppKit clamps a size against the window's
-  current position, so a window near a screen edge cannot grow until it has moved; the first size is
-  what lets the move succeed for a window that must grow and shift at once. Neither size may be
-  dropped.
+- A same-size move writes the position alone. When the window server already has the window less
+  than 0.5pt off the desired width and the desired height, the write MUST NOT send a size. A size write costs the app
+  1-60ms even when the size does not change, and a move that keeps the size gains nothing from it.
+  The size is read from the window server, not the app, so the check asks nothing of the app.
+- Any other frame write is size, then position, then size AGAIN, and so is one whose window-server
+  size cannot be read. AppKit clamps a size against the window's current position, so a window near
+  a screen edge cannot grow until it has moved; the first size is what lets the move succeed for a
+  window that must grow and shift at once. Neither size may be dropped from such a write.
 - Enhanced User Interface MUST be suppressed for the duration of a burst of writes, not per write.
   AppKit re-lays-out a window while it is on, which fights the write.
+
+> **Found 2026-10-03, not reported.** Measured in the handover prototype: an Accessibility size write
+> cost the app 1-60ms even when the size did not change. The prototype wrote the position alone for a
+> move that kept the size.
 
 ## Where it lives
 
 `src/windows/domain/app_threads.rs` is taking an application on, `src/windows/domain/admissible.rs`
 admission, `src/windows/domain/catalogue.rs` the records, `src/windows/domain/ax_events.rs` the
-liveness rules, `src/windows/platform/app_actor.rs` the per-app thread, and `src/app/hotkeys/mod.rs`
-the controller that starts it.
+liveness rules, `src/windows/domain/frame_write.rs` which writes a frame takes,
+`src/windows/platform/app_actor.rs` the per-app thread, and `src/app/hotkeys/mod.rs` the controller
+that starts it.
 
 ## Floating windows and the park corner
 
