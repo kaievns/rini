@@ -55,6 +55,11 @@ or opens to repaint (up to `HOLD_CAP`, and no longer for one whose picture the p
 will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a strip movement
 moves at once.
 
+The coordinator hears every tile and frame in the window server's points (`Screen`), and says its
+holes and snaps in the overlay's (`Overlay`), converted over `StageSummary.display`: the bounds of the
+display the overlay covers as of the latest stage, menu bar band included. The engine passes them
+through.
+
 Frame zero's pictures that come after the overlay went up are swapped onto their tiles where they are
 (`Why::FrameZero`), and frame zero is never installed again, which under a flight that moves would jump
 the strip back. They were taken at the press and come before any picture of the end, so each replaces

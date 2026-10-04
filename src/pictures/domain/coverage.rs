@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rini_geometry::space::{PointSpace, ScreenSize, Size, ToCg};
+use rini_geometry::space::{PointSpace, Respace, ScreenSize, Size};
 use rini_geometry::stretch::{MAX_STRETCH, within_stretch};
 
 /// How much smaller than its real size a capture may be before it is not worth drawing.
@@ -63,7 +63,7 @@ const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
 /// longer matches. See "A capture can be usable and still be the wrong shape" in
 /// `src/pictures/docs/capture-research.md`.
 pub fn fits_frame<U: PointSpace>(covered: ScreenSize, frame: Size<U>) -> bool {
-    within_stretch(covered.to_cg(), frame.to_cg())
+    within_stretch(covered, frame.respace())
 }
 
 /// Whether `size` needs pixels this picture does not have: bigger than the capture in either

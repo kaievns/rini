@@ -24,6 +24,12 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for |
 | **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it holds the coordinator, stages each request and merges each pass, and carries out what the coordinator says on the renderer and the pictures service, placing the real windows through the reactor |
 
+Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
+requests, travel, the frame writes and what the coordinator hears and asks for in `Screen`, a strip
+movement's windows and viewport offsets in `Surface`, and an entrance's destination, the pan, and
+the coordinator's holes and snaps in `Overlay`. The reactor converts at the door, and CG stays in
+`platform/`, at the window server's reads.
+
 ## The shape that matters
 
 **One actor, one flight at a time.** Every transition goes through `FlightEngine`. A pass arriving

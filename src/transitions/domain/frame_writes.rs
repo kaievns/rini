@@ -1,16 +1,16 @@
 //! Which final-frame writes go out to the apps, and in what order. See "Real windows land before
 //! lift" in `src/transitions/docs/coordination.md`.
-use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowId;
-use rini_geometry::{CGRectExt, is_off_screen};
+use rini_geometry::is_off_screen;
+use rini_geometry::space::ScreenRect;
 
 /// The order the overlay's final frames go out to the apps: on-screen destinations first, parks
 /// last, each class in the order given. See "Real windows land before lift" in
 /// `src/transitions/docs/coordination.md`.
 pub fn frame_send_order(
-    frames: Vec<(WindowId, CGRect)>,
-    display: CGRect,
-) -> Vec<(WindowId, CGRect)> {
+    frames: Vec<(WindowId, ScreenRect)>,
+    display: ScreenRect,
+) -> Vec<(WindowId, ScreenRect)> {
     let (mut on_screen, parked): (Vec<_>, Vec<_>) =
         frames.into_iter().partition(|(_, frame)| !is_off_screen(display, *frame));
     on_screen.extend(parked);
@@ -27,9 +27,9 @@ pub fn frame_send_order(
 /// leaves its departing row a full display height below, which macOS clamps to a 41pt band along
 /// the bottom edge, and the pass that follows is what moves that band into the corner. Skipping
 /// that write left the band on screen and let the windows drift into the active workspace.
-pub fn is_park_to_park(current: CGRect, target: CGRect, display: CGRect) -> bool {
+pub fn is_park_to_park(current: ScreenRect, target: ScreenRect, display: ScreenRect) -> bool {
     let is_park =
-        |frame: CGRect| is_off_screen(display, frame) && frame.intersection(&display).area() > 0.0;
+        |frame: ScreenRect| is_off_screen(display, frame) && frame.intersection(&display).is_some();
     is_park(current) && is_park(target)
 }
 
@@ -39,7 +39,11 @@ pub fn is_park_to_park(current: CGRect, target: CGRect, display: CGRect) -> bool
 /// "parked" while the window still sits on screen, and skipping on the model kept a full Ghostty
 /// window on the right half of the display under the strip. No real frame means we cannot rule the
 /// write out, so it goes.
-pub fn frame_write_needed(real: Option<CGRect>, target: CGRect, display: CGRect) -> bool {
+pub fn frame_write_needed(
+    real: Option<ScreenRect>,
+    target: ScreenRect,
+    display: ScreenRect,
+) -> bool {
     !real.is_some_and(|real| is_park_to_park(real, target, display))
 }
 
@@ -49,10 +53,10 @@ pub fn frame_write_needed(real: Option<CGRect>, target: CGRect, display: CGRect)
 /// per window: one round trip per window cost a burst of presses 60ms a press. See "Rapid presses"
 /// in `specs/focus.md`.
 pub fn writes_to_send(
-    frames: Vec<(WindowId, CGRect)>,
-    display: CGRect,
-    real: impl Fn(WindowId) -> Option<CGRect>,
-) -> (Vec<(WindowId, CGRect)>, usize) {
+    frames: Vec<(WindowId, ScreenRect)>,
+    display: ScreenRect,
+    real: impl Fn(WindowId) -> Option<ScreenRect>,
+) -> (Vec<(WindowId, ScreenRect)>, usize) {
     let mut skipped = 0;
     let writes = frame_send_order(frames, display)
         .into_iter()
@@ -67,19 +71,19 @@ pub fn writes_to_send(
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_geometry::space::{ScreenPoint, ScreenSize};
 
     use super::*;
 
-    fn rect(origin_x: f64, origin_y: f64, width: f64, height: f64) -> CGRect {
-        CGRect::new(CGPoint::new(origin_x, origin_y), CGSize::new(width, height))
+    fn rect(origin_x: f64, origin_y: f64, width: f64, height: f64) -> ScreenRect {
+        ScreenRect::new(ScreenPoint::new(origin_x, origin_y), ScreenSize::new(width, height))
     }
 
-    fn display() -> CGRect {
-        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0))
+    fn display() -> ScreenRect {
+        ScreenRect::new(ScreenPoint::new(0.0, 0.0), ScreenSize::new(1728.0, 1117.0))
     }
 
-    fn ids(order: &[(WindowId, CGRect)]) -> Vec<WindowId> {
+    fn ids(order: &[(WindowId, ScreenRect)]) -> Vec<WindowId> {
         order.iter().map(|(w, _)| *w).collect()
     }
 
@@ -110,17 +114,17 @@ mod tests {
     #[test]
     fn only_a_park_to_park_move_is_skipped() {
         let d = display();
-        let left_park = CGRect::new(
-            CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0),
-            CGSize::new(859.0, 1081.0),
+        let left_park = ScreenRect::new(
+            ScreenPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0),
+            ScreenSize::new(859.0, 1081.0),
         );
-        let right_park = CGRect::new(
-            CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0),
-            CGSize::new(859.0, 1081.0),
+        let right_park = ScreenRect::new(
+            ScreenPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0),
+            ScreenSize::new(859.0, 1081.0),
         );
-        let slot = CGRect::new(
-            CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0),
-            CGSize::new(859.0, 1081.0),
+        let slot = ScreenRect::new(
+            ScreenPoint::new(d.origin.x + 4.0, d.origin.y + 32.0),
+            ScreenSize::new(859.0, 1081.0),
         );
         assert!(is_park_to_park(left_park, right_park, d));
         assert!(is_park_to_park(right_park, right_park, d));
@@ -129,8 +133,8 @@ mod tests {
         assert!(!is_park_to_park(slot, slot, d));
         // A switch's departing row sits a display height below, wholly off the display; macOS
         // clamps it to a band along the bottom edge, so the write that parks it must go out.
-        let row_below = CGRect::new(
-            CGPoint::new(slot.origin.x, d.origin.y + d.size.height + 32.0),
+        let row_below = ScreenRect::new(
+            ScreenPoint::new(slot.origin.x, d.origin.y + d.size.height + 32.0),
             slot.size,
         );
         assert!(
@@ -147,17 +151,17 @@ mod tests {
     #[test]
     fn park_write_is_judged_from_the_real_frame_not_the_model() {
         let d = display();
-        let right_park = CGRect::new(
-            CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0),
-            CGSize::new(859.0, 1081.0),
+        let right_park = ScreenRect::new(
+            ScreenPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0),
+            ScreenSize::new(859.0, 1081.0),
         );
-        let left_park = CGRect::new(
-            CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0),
-            CGSize::new(859.0, 1081.0),
+        let left_park = ScreenRect::new(
+            ScreenPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0),
+            ScreenSize::new(859.0, 1081.0),
         );
-        let slot = CGRect::new(
-            CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0),
-            CGSize::new(859.0, 1081.0),
+        let slot = ScreenRect::new(
+            ScreenPoint::new(d.origin.x + 4.0, d.origin.y + 32.0),
+            ScreenSize::new(859.0, 1081.0),
         );
         // Model would say left_park -> right_park (skip); the server says the window is in a slot.
         assert!(
@@ -214,11 +218,11 @@ mod tests {
             (seed >> 33) % n
         };
         let display = display();
-        let is_park = |frame: &CGRect| is_off_screen(display, *frame);
+        let is_park = |frame: &ScreenRect| is_off_screen(display, *frame);
         let mut mixed_runs = 0usize;
         for _ in 0..200 {
             let count = next(8) as usize;
-            let frames: Vec<(WindowId, CGRect)> = (1..=count)
+            let frames: Vec<(WindowId, ScreenRect)> = (1..=count)
                 .map(|i| {
                     let frame = match next(3) {
                         0 => rect(1727.0, 1116.0, 859.0, 1081.0),

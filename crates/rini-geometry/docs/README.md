@@ -9,12 +9,13 @@ interface speaks. Pure, and the only crate that tests without linking AppKit:
 
 `CGRectExt` (`intersection`, `union`, `area`, `contains`, `contains_rect`), `Round`
 (`rounded`), `SameAs` and `IsWithin` for float comparison, on CG values and typed
-ones alike, `centered_in`, `is_off_screen`, `park_entry_frame`, and
-`to_overlay_space` and `from_overlay_space`, a display rect in the overlay's own
-coordinates and back. `stretch`: the stretch tolerance (`MIN_STRETCH`,
-`MAX_STRETCH`), `within_stretch` and `is_a_resize`. `space`: the units, the typed
-`Rect`, `Point`, `Size` and `Vector` over them with one alias per unit and kind a
-feature uses, `PointSpace` and `Respace`, and `FromCg`/`ToCg`.
+ones alike, `centered_in` on CG, `is_off_screen` and `park_entry_frame` in any one
+space, and `to_overlay_space` and `from_overlay_space`, a window server rect on the
+overlay covering a display and back. `stretch`: the stretch tolerance (`MIN_STRETCH`,
+`MAX_STRETCH`), and `within_stretch` and `is_a_resize` over sizes in any one space.
+`space`: the units, the typed `Rect`, `Point`, `Size` and `Vector` over them with one
+alias per unit and kind a feature uses, `Translation`, `PointSpace` and `Respace`, and
+`FromCg`/`ToCg`.
 
 ## The spaces
 
@@ -52,6 +53,12 @@ Where each conversion between spaces lives:
 |---|---|
 | CG into a space and back | `space::FromCg`, `space::ToCg` |
 | A size or a displacement between point spaces | `space::Respace` |
+| `Screen` to `Overlay` and back: less the origin of the display the overlay covers, whose bounds include the menu bar's band | `to_overlay_space`, `from_overlay_space` |
+| `Screen` to `Surface`: a window on a strip, its row stacked a pitch below the first | `transitions::domain::strip_stack::strip_frame` |
+| `Surface` to `Overlay`: what the viewport at an offset shows | `animation::domain::motion::surface::viewport` |
+| `Overlay` to `Group` and back: a frame in a container at a position | `animation::domain::motion::plan::{group_relative, overlay_of}` |
+| `Overlay` to `Group` and back for a fresh plan, whose containers install at the overlay's origin: the same numbers | `animation::domain::motion::plan::{installed, on_overlay}` |
+| `Tile` to `Contents`: a crop piece over its picture's size | `animation::domain::motion::tile::crop_pieces` |
 | `Screen` to `Pixel`: a frame in a composite, at its scale | `pictures::domain::region::pixel_rect` |
 | `Pixel` to `Contents`: a pixel rect over its image's size | `pictures::domain::region::unit_rect` |
 | `Contents` within `Contents`: a piece of a region | `pictures::domain::region::within` |

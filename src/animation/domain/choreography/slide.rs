@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
-use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
+use rini_geometry::space::{GroupRect, OverlayPoint, OverlayVector, Point};
 use rini_geometry::{Round, SameAs};
 use rini_ipc::protocol::Direction;
 
@@ -21,7 +21,7 @@ use crate::animation::domain::motion::glide::{Leg, spring_omega};
 use crate::animation::domain::motion::nudge::{NUDGE_SHARE, NUDGE_STRETCH, flight_curve};
 use crate::animation::domain::motion::plan::{
     AnimationTarget, FlightPlan, GroupKey, Member, Presented, ReflowPlan, animation_targets,
-    group_relative, merge_plans, stale_overlay_layers,
+    group_relative, merge_plans, on_overlay, stale_overlay_layers,
 };
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Node, SAMPLE_STEP, Score, Track, Value,
@@ -55,7 +55,7 @@ impl Making {
     }
 
     /// Where the container `key` ends, if the score has it.
-    fn container(&self, key: GroupKey) -> Option<CGPoint> {
+    fn container(&self, key: GroupKey) -> Option<OverlayPoint> {
         match self.score.model(Node::Container(key)) {
             Some(Value::Point(position)) => Some(position),
             _ => None,
@@ -63,7 +63,7 @@ impl Making {
     }
 
     /// The container `key`, opened at `at` unless the score has it.
-    fn open(&mut self, key: GroupKey, at: CGPoint) {
+    fn open(&mut self, key: GroupKey, at: OverlayPoint) {
         if self.container(key).is_none() {
             self.push(Edit::Place(Node::Container(key), Value::Point(at)));
         }
@@ -71,7 +71,14 @@ impl Making {
 
     /// `window`'s tile placed at `to` in its container and carried there from `from` on
     /// `MOTION_CURVE`, from `begin` for `seconds`; one of no length is placed only.
-    fn move_tile(&mut self, window: WindowId, from: CGRect, to: CGRect, begin: f64, seconds: f64) {
+    fn move_tile(
+        &mut self,
+        window: WindowId,
+        from: GroupRect,
+        to: GroupRect,
+        begin: f64,
+        seconds: f64,
+    ) {
         let node = Node::Tile(window);
         self.push(Edit::Place(node, Value::Rect(to)));
         if seconds > 0.0 {
@@ -138,17 +145,17 @@ fn fills_viewport(width: f64, screen_width: f64, outer_left: f64, outer_right: f
 
 /// The step of a move: a share of the viewport away from where the moved window went, so the side
 /// it opens is the side the column it passed comes from.
-fn nudge(viewport_width: f64, direction: Direction) -> Option<CGPoint> {
+fn nudge(viewport_width: f64, direction: Direction) -> Option<OverlayVector> {
     let step = viewport_width * NUDGE_SHARE;
     match direction {
-        Direction::Right => Some(CGPoint::new(-step, 0.0)),
-        Direction::Left => Some(CGPoint::new(step, 0.0)),
+        Direction::Right => Some(OverlayVector::new(-step, 0.0)),
+        Direction::Left => Some(OverlayVector::new(step, 0.0)),
         Direction::Up | Direction::Down => None,
     }
 }
 
 /// The step an accent asks for, if any, and its press's plain length.
-fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<(CGPoint, f64)> {
+fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<(OverlayVector, f64)> {
     accents.into_iter().find_map(|accent| match *accent {
         Accent::Step { offset, seconds } => Some((offset, seconds)),
         Accent::Push { .. } => None,
@@ -157,7 +164,7 @@ fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<(CGPoint
 
 /// How long legs of `plain` length run with `step` taken: as long as the step, its press's length
 /// stretched by `NUDGE_STRETCH`, when that is longer.
-fn stepped(plain: f64, step: Option<(CGPoint, f64)>) -> f64 {
+fn stepped(plain: f64, step: Option<(OverlayVector, f64)>) -> f64 {
     step.map_or(plain, |(_, seconds)| plain.max(seconds * NUDGE_STRETCH))
 }
 
@@ -170,7 +177,7 @@ impl Choreography for Slide {
     /// moved, and a pass's frames are places on the strip there.
     fn fold(&self, plan: &FlightPlan, pass: &Pass) -> FlightPlan {
         let presented = Presented {
-            drawn: plan.positions.keys().map(|key| (*key, CGPoint::new(0.0, 0.0))).collect(),
+            drawn: plan.positions.keys().map(|key| (*key, OverlayPoint::origin())).collect(),
             along: plan.positions.clone(),
         };
         merge_plans(plan, pass.plan, pass.pan, &presented, pass.focus, pass.viewport).0
@@ -181,15 +188,15 @@ impl Choreography for Slide {
     fn pose(&self, stage: &Stage) -> Score {
         let plan = stage.plan;
         let mut score = Score::default();
-        let mut put = |key: GroupKey, members: Vec<(WindowId, CGRect)>| {
-            let members: Vec<(WindowId, CGRect)> =
+        let mut put = |key: GroupKey, members: Vec<(WindowId, GroupRect)>| {
+            let members: Vec<(WindowId, GroupRect)> =
                 members.into_iter().filter(|(window, _)| stage.drawn.contains(window)).collect();
             if members.is_empty() {
                 return;
             }
             score.apply(&Edit::Place(
                 Node::Container(key),
-                Value::Point(CGPoint::new(0.0, 0.0)),
+                Value::Point(OverlayPoint::origin()),
             ));
             for (window, frame) in members {
                 score.apply(&Edit::Ride(window, key));
@@ -202,7 +209,7 @@ impl Choreography for Slide {
                 group.members.iter().map(|m| (m.window, m.rel)).collect(),
             );
         }
-        let starts = |list: &[(WindowId, CGRect, CGRect)]| -> Vec<(WindowId, CGRect)> {
+        let starts = |list: &[(WindowId, GroupRect, GroupRect)]| -> Vec<(WindowId, GroupRect)> {
             list.iter().map(|&(window, from, _)| (window, from)).collect()
         };
         let mut loose = starts(&plan.changing);
@@ -248,8 +255,8 @@ impl Choreography for Slide {
                     else {
                         continue;
                     };
-                    let from = group_relative(from, offset).rounded();
-                    let to = group_relative(to, offset).rounded();
+                    let from = group_relative(on_overlay(from), offset).rounded();
+                    let to = group_relative(on_overlay(to), offset).rounded();
                     making.move_tile(window, from, to, begin, seconds);
                 }
             }
@@ -292,7 +299,7 @@ impl Choreography for Slide {
         let omega = spring_omega(seconds);
         let drawn = |window: WindowId| pass.drawn.contains(&window);
         let position = |key: GroupKey| merged.positions.get(&key).copied();
-        let origin = CGPoint::new(0.0, 0.0);
+        let origin = OverlayPoint::origin();
         let mut making = Making::from(playing);
 
         // Read before any leg is bent: a container opened for a member leaving another goes on as
@@ -337,8 +344,8 @@ impl Choreography for Slide {
             else {
                 continue;
             };
-            let frame = CGRect::new(
-                CGPoint::new(
+            let frame = GroupRect::new(
+                Point::new(
                     frame.origin.x + drawn.origin.x - rel.origin.x,
                     frame.origin.y + drawn.origin.y - rel.origin.y,
                 ),
@@ -452,7 +459,7 @@ impl Choreography for Slide {
         &mut self,
         playing: &Score,
         _cue: &Cue,
-        wall: CGPoint,
+        wall: OverlayVector,
         seconds: f64,
         now: f64,
     ) -> Vec<Edit> {
@@ -477,13 +484,14 @@ impl Slide {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGSize;
+    use rini_geometry::space::{Rect, ScreenRect, Size};
+    use rini_geometry::to_overlay_space;
 
     use super::*;
     use crate::animation::domain::motion::easing::EASE_IN_OUT;
     use crate::animation::domain::motion::nudge::nudge_track;
-    use crate::animation::domain::motion::plan::{entrance_from, reflow_plan};
-    use crate::animation::domain::motion::testing::{DISPLAY, rect};
+    use crate::animation::domain::motion::plan::{entrance_from, installed, reflow_plan};
+    use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT, rect};
 
     const PLAIN: f64 = 0.35;
     const BEGIN: f64 = 10.0;
@@ -491,9 +499,12 @@ mod tests {
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
-    fn column(i: f64, width: f64) -> CGRect { rect(4.0 + i * 863.0, 32.0, width, 1081.0) }
+    fn column(i: f64, width: f64) -> ScreenRect { rect(4.0 + i * 863.0, 32.0, width, 1081.0) }
 
-    fn shifted(frame: CGRect, dx: f64) -> CGRect {
+    /// A frame on `DISPLAY`, which sits at the origin, as a fresh plan holds it.
+    fn held(frame: ScreenRect) -> GroupRect { installed(to_overlay_space(frame, DISPLAY)) }
+
+    fn shifted<U>(frame: Rect<U>, dx: f64) -> Rect<U> {
         rect(
             frame.origin.x + dx,
             frame.origin.y,
@@ -503,7 +514,7 @@ mod tests {
     }
 
     /// A strip of `count` columns stepping `dx`, from `first`.
-    fn strip(first: u32, count: u32, dx: f64) -> Vec<(WindowId, CGRect, CGRect, bool)> {
+    fn strip(first: u32, count: u32, dx: f64) -> Vec<(WindowId, ScreenRect, ScreenRect, bool)> {
         (0..count)
             .map(|i| {
                 let from = column(i as f64, 859.0);
@@ -521,7 +532,7 @@ mod tests {
 
     impl Flight {
         /// `requests` posed at frame zero, every window drawn.
-        fn posed(requests: &[(WindowId, CGRect, CGRect, bool)]) -> Flight {
+        fn posed(requests: &[(WindowId, ScreenRect, ScreenRect, bool)]) -> Flight {
             let plan = FlightPlan::from(reflow_plan(requests, DISPLAY));
             let drawn = plan.windows();
             let slide = Slide::default();
@@ -559,7 +570,7 @@ mod tests {
         fn merge(
             &mut self,
             incoming: &ReflowPlan,
-            pan: Option<CGPoint>,
+            pan: Option<OverlayVector>,
             accent: Option<Accent>,
             now: f64,
         ) -> Retarget {
@@ -567,7 +578,7 @@ mod tests {
                 plan: incoming,
                 pan,
                 focus: None,
-                viewport: DISPLAY,
+                viewport: VIEWPORT,
                 drawn: &self.drawn,
                 seconds: PLAIN,
                 cue: Cue::Plain,
@@ -607,7 +618,7 @@ mod tests {
             .cloned()
     }
 
-    fn point(value: Option<Value>) -> CGPoint {
+    fn point(value: Option<Value>) -> OverlayPoint {
         match value {
             Some(Value::Point(point)) => point,
             other => panic!("a container holds a point: {other:?}"),
@@ -623,7 +634,7 @@ mod tests {
     }
 
     /// A strip moving, a resize, a floating window moving and one standing, and a still window.
-    fn mixed() -> Vec<(WindowId, CGRect, CGRect, bool)> {
+    fn mixed() -> Vec<(WindowId, ScreenRect, ScreenRect, bool)> {
         let mut requests = strip(1, 2, -863.0);
         requests.push((wid(3), column(2.0, 859.0), column(2.0, 859.0), false));
         requests.push((wid(4), column(3.0, 400.0), column(3.0, 600.0), false));
@@ -669,8 +680,10 @@ mod tests {
                 AnimationTarget::Tile { window, from, to } => {
                     let key = flight.score.parent(window).expect("posed");
                     let at = point(flight.score.model(Node::Container(key)));
-                    let (from, to) =
-                        (group_relative(from, at).rounded(), group_relative(to, at).rounded());
+                    let (from, to) = (
+                        group_relative(on_overlay(from), at).rounded(),
+                        group_relative(on_overlay(to), at).rounded(),
+                    );
                     let node = Node::Tile(window);
                     let between = Track::between(
                         node,
@@ -705,7 +718,7 @@ mod tests {
         let key = key_of(&flight.plan, wid(1));
         assert_eq!(
             flight.score.model(Node::Container(key)),
-            Some(Value::Point(CGPoint::new(-863.0, 0.0)))
+            Some(Value::Point(OverlayPoint::new(-863.0, 0.0)))
         );
         assert!(flight.slide.legs.is_empty(), "nothing is on a leg");
     }
@@ -721,7 +734,7 @@ mod tests {
         let floating = rect(224.0, 95.0, 600.0, 400.0);
         requests.push((wid(5), floating, floating, true));
         let mut flight = Flight::posed(&requests);
-        let offset = CGPoint::new(-576.0, 0.0);
+        let offset = OverlayVector::new(-576.0, 0.0);
         let edits = flight.start(PLAIN, &[Accent::Step { offset, seconds: PLAIN }]);
         let stretched = PLAIN * NUDGE_STRETCH;
         let mut strips = 0;
@@ -761,7 +774,7 @@ mod tests {
     /// step and the flight 0.64s, where the move's step runs 0.455s.
     #[test]
     fn a_step_that_waited_runs_over_its_own_press_stretched() {
-        let offset = CGPoint::new(-576.0, 0.0);
+        let offset = OverlayVector::new(-576.0, 0.0);
         let stretched = PLAIN * NUDGE_STRETCH;
         for flies in [0.64, PLAIN, 0.2] {
             let mut flight = Flight::posed(&strip(1, 2, -863.0));
@@ -796,7 +809,7 @@ mod tests {
         let leg = flight.slide.legs[&key];
         let now = BEGIN + 0.1;
         let along = point(flight.score.along(node, now));
-        let offset = CGPoint::new(-576.0, 0.0);
+        let offset = OverlayVector::new(-576.0, 0.0);
         let incoming = reflow_plan(
             &strip(1, 3, -1726.0)
                 .into_iter()
@@ -804,7 +817,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             DISPLAY,
         );
-        let pan = CGPoint::new(-863.0, 0.0);
+        let pan = OverlayVector::new(-863.0, 0.0);
         let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset, seconds: PLAIN }), now);
         let stretched = PLAIN * NUDGE_STRETCH;
         assert_eq!(
@@ -829,7 +842,7 @@ mod tests {
     #[test]
     fn a_step_while_one_plays_is_not_taken() {
         let mut flight = Flight::posed(&strip(1, 3, -863.0));
-        let offset = CGPoint::new(-576.0, 0.0);
+        let offset = OverlayVector::new(-576.0, 0.0);
         flight.start(PLAIN, &[Accent::Step { offset, seconds: PLAIN }]);
         let key = key_of(&flight.plan, wid(1));
         let node = Node::Container(key);
@@ -837,7 +850,7 @@ mod tests {
         let leg = flight.slide.legs[&key];
         let now = BEGIN + 0.1;
         let along = point(flight.score.along(node, now));
-        let pan = CGPoint::new(-863.0, 0.0);
+        let pan = OverlayVector::new(-863.0, 0.0);
         let incoming = reflow_plan(
             &strip(1, 3, -1726.0)
                 .into_iter()
@@ -896,11 +909,11 @@ mod tests {
                 .collect();
             let bent = flight.merge(
                 &reflow_plan(&requests, DISPLAY),
-                Some(CGPoint::new(-861.0, 0.0)),
+                Some(OverlayVector::new(-861.0, 0.0)),
                 None,
                 now,
             );
-            let to = CGPoint::new(destination, 0.0);
+            let to = OverlayPoint::new(destination, 0.0);
             let spring = Leg::toward(Some(&leg), along, to, now, omega);
             assert_eq!(
                 track_on(&bent.edits, node, Channel::Base),
@@ -978,7 +991,7 @@ mod tests {
         let track = track_on(&bent.edits, node, Channel::Base).expect("bent");
         assert_eq!(track.keys()[0].1, drawn);
         assert_eq!(track.begin(), now);
-        assert_eq!(track.keys()[1].1, Value::Rect(column(0.0, 1200.0)));
+        assert_eq!(track.keys()[1].1, Value::Rect(held(column(0.0, 1200.0))));
         assert_eq!(flight.score.sample(node, now), Some(drawn));
     }
 
@@ -994,12 +1007,12 @@ mod tests {
         let sent = |i: u32| shifted(column(i as f64, 859.0), d);
         let left = flight.score.drawn(wid(3), now).unwrap().origin.x - sent(2).origin.x;
         assert!(left > 100.0, "the strip has {left}pt to go");
-        let requests: Vec<(WindowId, CGRect, CGRect, bool)> =
+        let requests: Vec<(WindowId, ScreenRect, ScreenRect, bool)> =
             (0..4).map(|i| (wid(1 + i), sent(i), shifted(sent(i), d), false)).collect();
         flight.drawn.push(wid(4));
         flight.merge(
             &reflow_plan(&requests, DISPLAY),
-            Some(CGPoint::new(d, 0.0)),
+            Some(OverlayVector::new(d, 0.0)),
             None,
             now,
         );
@@ -1023,7 +1036,7 @@ mod tests {
     fn a_late_entrance_joins_on_a_track_of_its_own() {
         let mut flight = Flight::posed(&strip(1, 2, -863.0));
         flight.start(PLAIN, &[]);
-        let slot = column(2.0, 859.0);
+        let slot = held(column(2.0, 859.0));
         let mut entrance = ReflowPlan::empty();
         entrance.entrances.push((wid(9), entrance_from(slot), slot));
         flight.drawn.push(wid(9));
@@ -1032,7 +1045,7 @@ mod tests {
             plan: &entrance,
             pan: None,
             focus: None,
-            viewport: DISPLAY,
+            viewport: VIEWPORT,
             drawn: &flight.drawn,
             seconds: 0.15,
             cue: Cue::Plain,
@@ -1043,7 +1056,7 @@ mod tests {
         assert_eq!(bent.edits, [
             Edit::Place(
                 Node::Container(GroupKey::Loose),
-                Value::Point(CGPoint::new(0.0, 0.0))
+                Value::Point(OverlayPoint::new(0.0, 0.0))
             ),
             Edit::Ride(wid(9), GroupKey::Loose),
             Edit::Place(node, Value::Rect(slot)),
@@ -1066,7 +1079,7 @@ mod tests {
     fn a_late_entrance_with_no_flight_left_is_placed_in_its_slot() {
         let mut flight = Flight::posed(&strip(1, 2, -863.0));
         flight.start(PLAIN, &[]);
-        let slot = column(2.0, 859.0);
+        let slot = held(column(2.0, 859.0));
         let mut entrance = ReflowPlan::empty();
         entrance.entrances.push((wid(9), entrance_from(slot), slot));
         flight.drawn.push(wid(9));
@@ -1075,7 +1088,7 @@ mod tests {
             plan: &entrance,
             pan: None,
             focus: None,
-            viewport: DISPLAY,
+            viewport: VIEWPORT,
             drawn: &flight.drawn,
             seconds: 0.0,
             cue: Cue::Plain,
@@ -1085,7 +1098,7 @@ mod tests {
         assert_eq!(bent.edits, [
             Edit::Place(
                 Node::Container(GroupKey::Loose),
-                Value::Point(CGPoint::new(0.0, 0.0))
+                Value::Point(OverlayPoint::new(0.0, 0.0))
             ),
             Edit::Ride(wid(9), GroupKey::Loose),
             Edit::Place(Node::Tile(wid(9)), Value::Rect(slot)),
@@ -1119,7 +1132,7 @@ mod tests {
     #[test]
     fn an_accent_waiting_for_the_motion_begins_with_it() {
         let mut flight = Flight::posed(&strip(1, 2, -863.0));
-        let (wall, offset) = (CGPoint::new(0.0, 72.0), CGPoint::new(-576.0, 0.0));
+        let (wall, offset) = (OverlayVector::new(0.0, 72.0), OverlayVector::new(-576.0, 0.0));
         let edits = flight.start(PLAIN, &[Accent::Push { wall, seconds: 0.35 }, Accent::Step {
             offset,
             seconds: PLAIN,
@@ -1182,7 +1195,7 @@ mod tests {
             861.0,
             "one rounding for the strip"
         );
-        assert_eq!(frame(wid(1)).size, CGSize::new(859.0, 1081.0));
+        assert_eq!(frame(wid(1)).size, Size::new(859.0, 1081.0));
     }
 
     /// The live display, 1728pt with 3pt outer gaps: only a column the tiling area's 1722pt wide
@@ -1203,8 +1216,8 @@ mod tests {
     /// opens the right side, where the column it passed was.
     #[test]
     fn the_step_goes_away_from_where_the_window_went() {
-        assert_eq!(nudge(1728.0, Direction::Right), Some(CGPoint::new(-576.0, 0.0)));
-        assert_eq!(nudge(1728.0, Direction::Left), Some(CGPoint::new(576.0, 0.0)));
+        assert_eq!(nudge(1728.0, Direction::Right), Some(OverlayVector::new(-576.0, 0.0)));
+        assert_eq!(nudge(1728.0, Direction::Left), Some(OverlayVector::new(576.0, 0.0)));
         assert_eq!(nudge(1728.0, Direction::Up), None);
         assert_eq!(nudge(1728.0, Direction::Down), None);
     }

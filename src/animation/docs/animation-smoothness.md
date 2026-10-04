@@ -20,7 +20,8 @@ floating windows. The flight's look, chosen as it begins (`Look` in
 member a container at the origin, which the overlay builds its tree from (`TileOverlay::pose` in
 `overlay.rs`): each group is one `CALayer` container under the overlay's root. A container's
 `position` is the only animated translation its members get; the tiles inside sit at
-group-relative frames and never move on their own. Resizes and entrances
+frames in its own points (`Group` in `crates/rini-geometry/docs/README.md`), the overlay's less its
+position, and never move on their own. Resizes and entrances
 are loose tiles in `GroupKey::Loose`; floating windows sit in the `Floating`
 container. As the motion starts the look composes the whole plan as the score's edits, and the
 overlay plays them (`TileOverlay::play`) in ONE `CATransaction`: one position animation per moving

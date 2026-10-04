@@ -9,8 +9,8 @@ pub mod slide;
 
 use std::fmt::Debug;
 
-use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
+use rini_geometry::space::{OverlayRect, OverlayVector, SurfaceRect};
 use rini_ipc::protocol::Direction;
 
 use self::slide::Slide;
@@ -69,14 +69,14 @@ impl Cue {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PairStart {
     pub window: WindowId,
-    pub start: CGRect,
+    pub start: SurfaceRect,
     pub passed: bool,
 }
 
-/// The screen a strip is shown on, in the overlay's space, and its outer gaps.
+/// The screen a strip is shown on, and its outer gaps.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Area {
-    pub frame: CGRect,
+    pub frame: OverlayRect,
     pub outer_left: f64,
     pub outer_right: f64,
 }
@@ -86,10 +86,10 @@ pub struct Area {
 /// movement runs, plain.
 #[derive(Clone, Copy, Debug)]
 pub struct Strip<'a> {
-    pub windows: &'a [(WindowId, CGRect)],
+    pub windows: &'a [(WindowId, SurfaceRect)],
     pub pair: &'a [PairStart],
     pub area: Area,
-    pub travel: CGPoint,
+    pub travel: OverlayVector,
     pub seconds: f64,
 }
 
@@ -98,8 +98,8 @@ pub struct Strip<'a> {
 /// movement.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Staging {
-    pub from: Vec<(WindowId, CGRect)>,
-    pub held: Vec<(WindowId, CGRect)>,
+    pub from: Vec<(WindowId, SurfaceRect)>,
+    pub held: Vec<(WindowId, SurfaceRect)>,
     pub accent: Option<Accent>,
 }
 
@@ -122,11 +122,11 @@ pub struct Stage<'a> {
 pub struct Pass<'a> {
     pub plan: &'a ReflowPlan,
     /// The strip's travel, for a strip movement.
-    pub pan: Option<CGPoint>,
+    pub pan: Option<OverlayVector>,
     /// The window gaining focus, which wins a tied vote.
     pub focus: Option<WindowId>,
-    /// The display in the overlay's space: what a member's destination is judged against.
-    pub viewport: CGRect,
+    /// The display the overlay covers: what a member's destination is judged against.
+    pub viewport: OverlayRect,
     /// The windows the flight draws a tile of once the pass is in.
     pub drawn: &'a [WindowId],
     /// How long what the pass moves runs, plain.
@@ -167,7 +167,7 @@ pub trait Choreography: Debug {
         &mut self,
         playing: &Score,
         cue: &Cue,
-        wall: CGPoint,
+        wall: OverlayVector,
         seconds: f64,
         now: f64,
     ) -> Vec<Edit>;
@@ -175,17 +175,22 @@ pub trait Choreography: Debug {
 
 #[cfg(test)]
 mod tests {
+    use rini_geometry::space::{OverlayPoint, Point, Rect, Respace, ScreenRect, ScreenVector};
+    use rini_geometry::{from_overlay_space, to_overlay_space};
+
     use super::*;
     use crate::animation::domain::motion::plan::{GroupKey, Member, overlay_of, reflow_plan};
     use crate::animation::domain::motion::score::{Node, Value};
-    use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, random_requests, rect};
+    use crate::animation::domain::motion::testing::{
+        DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
+    };
 
     const PLAIN: f64 = 0.35;
     const BEGIN: f64 = 10.0;
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
-    fn shifted(frame: CGRect, dx: f64) -> CGRect {
+    fn shifted<U>(frame: Rect<U>, dx: f64) -> Rect<U> {
         rect(
             frame.origin.x + dx,
             frame.origin.y,
@@ -194,8 +199,14 @@ mod tests {
         )
     }
 
+    /// A frame on `DISPLAY`, which sits at the origin, on the overlay over it.
+    fn on(frame: ScreenRect) -> OverlayRect { to_overlay_space(frame, DISPLAY) }
+
+    /// An overlay frame back on `DISPLAY`.
+    fn screen(frame: OverlayRect) -> ScreenRect { from_overlay_space(frame, DISPLAY) }
+
     /// The largest of the four differences between two frames.
-    fn gap(a: CGRect, b: CGRect) -> f64 {
+    fn gap<U>(a: Rect<U>, b: Rect<U>) -> f64 {
         [
             a.origin.x - b.origin.x,
             a.origin.y - b.origin.y,
@@ -207,7 +218,7 @@ mod tests {
     }
 
     /// The farthest apart two frames' edges are.
-    fn edges_apart(a: CGRect, b: CGRect) -> f64 {
+    fn edges_apart<U>(a: Rect<U>, b: Rect<U>) -> f64 {
         [
             a.min().x - b.min().x,
             a.min().y - b.min().y,
@@ -218,11 +229,13 @@ mod tests {
         .fold(0.0f64, |worst, d| worst.max(d.abs()))
     }
 
-    /// Where `plan` lands `window`, in the overlay's space.
-    fn destination(plan: &FlightPlan, window: WindowId) -> CGRect {
+    /// Where `plan` lands `window`.
+    fn destination(plan: &FlightPlan, window: WindowId) -> OverlayRect {
         match plan.member(window).expect("in the plan") {
             Member::Rigid { key, rel } => overlay_of(rel, plan.position_of(key)),
-            Member::Changing { to, .. } | Member::Entrance { to, .. } => to,
+            Member::Changing { to, .. } | Member::Entrance { to, .. } => {
+                overlay_of(to, plan.position_of(GroupKey::Loose))
+            }
             Member::Floating { to, .. } => overlay_of(to, plan.position_of(GroupKey::Floating)),
         }
     }
@@ -239,7 +252,7 @@ mod tests {
         /// `requests` posed at frame zero, the windows `drawn` keeps drawn.
         fn posed(
             look: Look,
-            requests: &[(WindowId, CGRect, CGRect, bool)],
+            requests: &[(WindowId, ScreenRect, ScreenRect, bool)],
             drawn: impl Fn(WindowId) -> bool,
         ) -> Flight {
             let choreography = look.choreography();
@@ -268,12 +281,12 @@ mod tests {
         }
 
         /// `incoming` merged at `now`.
-        fn merge(&mut self, incoming: &ReflowPlan, pan: Option<CGPoint>, now: f64) {
+        fn merge(&mut self, incoming: &ReflowPlan, pan: Option<OverlayVector>, now: f64) {
             let pass = Pass {
                 plan: incoming,
                 pan,
                 focus: None,
-                viewport: DISPLAY,
+                viewport: VIEWPORT,
                 drawn: &self.drawn,
                 seconds: PLAIN,
                 cue: Cue::Plain,
@@ -319,7 +332,7 @@ mod tests {
                     }
                     let drawn = drawn.unwrap_or_else(|| panic!("{look:?} run {run}: {window:?}"));
                     assert!(
-                        edges_apart(drawn, from) <= 0.5,
+                        edges_apart(drawn, on(from)) <= 0.5,
                         "{look:?} run {run}: {window:?} at {drawn:?}, starts at {from:?}"
                     );
                 }
@@ -335,11 +348,11 @@ mod tests {
         let waiting = [
             Vec::new(),
             vec![Accent::Step {
-                offset: CGPoint::new(-576.0, 0.0),
+                offset: OverlayVector::new(-576.0, 0.0),
                 seconds: PLAIN,
             }],
             vec![Accent::Push {
-                wall: CGPoint::new(72.0, 0.0),
+                wall: OverlayVector::new(72.0, 0.0),
                 seconds: PLAIN,
             }],
         ];
@@ -387,13 +400,13 @@ mod tests {
                     let mut pan = None;
                     let incoming = match rng.below(3) {
                         0 => {
-                            let d = CGPoint::new(rng.pt(-9.0, 9.0) * 100.0 + 50.0, 0.0);
+                            let d = OverlayVector::new(rng.pt(-9.0, 9.0) * 100.0 + 50.0, 0.0);
                             pan = Some(d);
                             let mut p = ReflowPlan::empty();
                             let mut requests = Vec::new();
                             for w in &windows {
                                 if let Some(Member::Rigid { key, rel }) = flight.plan.member(*w) {
-                                    let from = overlay_of(rel, position(&flight.plan, key));
+                                    let from = screen(overlay_of(rel, position(&flight.plan, key)));
                                     requests.push((*w, from, shifted(from, d.x), false));
                                 }
                             }
@@ -406,9 +419,9 @@ mod tests {
                             p
                         }
                         _ => {
-                            let v1 = CGPoint::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
-                            let v2 =
-                                CGPoint::new(rng.pt(-9.0, 9.0) * 50.0, rng.pt(-2.0, 2.0) * 50.0);
+                            let v1 = ScreenVector::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
+                            let (dx, dy) = (rng.pt(-9.0, 9.0), rng.pt(-2.0, 2.0));
+                            let v2 = ScreenVector::new(dx * 50.0, dy * 50.0);
                             let mut requests = Vec::new();
                             for w in &windows {
                                 if rng.coin() {
@@ -417,7 +430,8 @@ mod tests {
                                 let v = if rng.coin() { v1 } else { v2 };
                                 match flight.plan.member(*w) {
                                     Some(Member::Rigid { key, rel }) => {
-                                        let from = overlay_of(rel, position(&flight.plan, key));
+                                        let at = position(&flight.plan, key);
+                                        let from = screen(overlay_of(rel, at));
                                         let to = if rng.below(4) > 0 {
                                             rect(
                                                 from.origin.x + v.x,
@@ -436,7 +450,9 @@ mod tests {
                                         requests.push((*w, from, to, false));
                                     }
                                     Some(Member::Changing { from, to }) => {
-                                        requests.push((*w, from, shifted(to, v.x), false));
+                                        let loose = position(&flight.plan, GroupKey::Loose);
+                                        let at = |rel| screen(overlay_of(rel, loose));
+                                        requests.push((*w, at(from), shifted(at(to), v.x), false));
                                     }
                                     _ => {}
                                 }
@@ -453,7 +469,7 @@ mod tests {
                             reflow_plan(&requests, DISPLAY)
                         }
                     };
-                    let before: Vec<(WindowId, CGRect)> = windows
+                    let before: Vec<(WindowId, OverlayRect)> = windows
                         .iter()
                         .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
                         .collect();
@@ -471,12 +487,12 @@ mod tests {
                         else {
                             panic!("{tag}: {key:?} is not drawn");
                         };
-                        let want = CGRect::new(
-                            CGPoint::new(
+                        let want = OverlayRect::new(
+                            OverlayPoint::new(
                                 from.origin.x + container.x - start.x,
                                 from.origin.y + container.y - start.y,
                             ),
-                            from.size,
+                            from.size.respace(),
                         );
                         let is = flight.score.drawn(newcomer, now).expect("drawn");
                         let gap = gap(is, want);
@@ -506,7 +522,7 @@ mod tests {
     /// A window brought beside the last rigid one of `requests` as the last pass left it, three
     /// points to its right, travelling as it does.
     fn bring(
-        requests: &mut Vec<(WindowId, CGRect, CGRect, bool)>,
+        requests: &mut Vec<(WindowId, ScreenRect, ScreenRect, bool)>,
         newcomer: WindowId,
         rng: &mut Gen,
     ) {
@@ -518,8 +534,8 @@ mod tests {
             return;
         };
         let beside = shifted(from, from.size.width + 3.0);
-        let lands = CGRect::new(
-            CGPoint::new(
+        let lands = ScreenRect::new(
+            Point::new(
                 beside.origin.x + to.origin.x - from.origin.x,
                 beside.origin.y + to.origin.y - from.origin.y,
             ),
@@ -539,7 +555,7 @@ mod tests {
             Direction::Down,
         ];
         let area = Area {
-            frame: DISPLAY,
+            frame: VIEWPORT,
             outer_left: 4.0,
             outer_right: 4.0,
         };
@@ -549,7 +565,7 @@ mod tests {
             for run in 0..RUNS {
                 let count = 1 + rng.below(6) as u32;
                 let mut x = rng.pt(-1800.0, 0.0);
-                let windows: Vec<(WindowId, CGRect)> = (1..=count)
+                let windows: Vec<(WindowId, SurfaceRect)> = (1..=count)
                     .map(|i| {
                         let width = if rng.coin() {
                             1720.0
@@ -582,7 +598,7 @@ mod tests {
                     windows: &windows,
                     pair: &pair,
                     area,
-                    travel: CGPoint::new(rng.pt(-900.0, 900.0), 0.0),
+                    travel: OverlayVector::new(rng.pt(-900.0, 900.0), 0.0),
                     seconds: PLAIN,
                 };
                 let staging = look.stage(&cue, &strip);

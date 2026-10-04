@@ -8,10 +8,9 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
-use rini_geometry::is_off_screen;
-use rini_geometry::space::{FromCg, ScreenPoint, ScreenRect};
+use rini_geometry::space::{OverlayRect, ScreenRect, SurfacePoint};
+use rini_geometry::{is_off_screen, to_overlay_space};
 
 use crate::animation::domain::motion::tile::snap_to;
 use crate::pictures::domain::watch::{Accept, Client, END_SLACK, Tag, Why, near, wholly_on};
@@ -59,7 +58,11 @@ pub enum Kind {
 impl Kind {
     /// The kind of strip movement a surface flight draws: a move when a swapped column crosses the
     /// surface, a switch when the viewport travels between workspaces, else a pan.
-    pub fn of_surface(windows: &[SurfaceWindow], from_offset: CGPoint, to_offset: CGPoint) -> Kind {
+    pub fn of_surface(
+        windows: &[SurfaceWindow],
+        from_offset: SurfacePoint,
+        to_offset: SurfacePoint,
+    ) -> Kind {
         if windows.iter().any(|w| w.from.is_some()) {
             Kind::Move
         } else if from_offset.y != to_offset.y {
@@ -88,13 +91,12 @@ pub enum Start {
     Coalesced,
 }
 
-/// One drawn window, in screen points: drawn now, or once its first picture lands (a reserved
-/// entrance).
+/// One drawn window: drawn now, or once its first picture lands (a reserved entrance).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileSummary {
     pub window: WindowId,
-    pub start: CGRect,
-    pub end: CGRect,
+    pub start: ScreenRect,
+    pub end: ScreenRect,
     pub floating: bool,
     /// A border tracing another window: drawn, never pictured on its own here.
     pub companion: bool,
@@ -102,7 +104,7 @@ pub struct TileSummary {
 
 impl TileSummary {
     fn moves(&self) -> bool {
-        !near(ScreenRect::from_cg(self.start), ScreenRect::from_cg(self.end), 0.5)
+        !near(self.start, self.end, 0.5)
     }
 }
 
@@ -112,7 +114,7 @@ pub struct StageSummary {
     pub kind: Kind,
     pub tiles: Vec<TileSummary>,
     /// Where the real windows go: every moving window, drawn or not.
-    pub final_frames: Vec<(WindowId, CGRect)>,
+    pub final_frames: Vec<(WindowId, ScreenRect)>,
     pub focus: Option<WindowId>,
     /// The window focus leaves, when focus moves. Its frame-zero picture still shows it focused if it
     /// was the key window (`key`).
@@ -132,8 +134,9 @@ pub struct StageSummary {
     /// The motion's length: the press's own, and for a merge the score's when that is longer. A merge
     /// that moves anything restarts the clock with it.
     pub duration: Duration,
-    /// The display the overlay covers, in screen points.
-    pub display: CGRect,
+    /// The bounds of the display the overlay covers, the menu bar's band included: what its holes and
+    /// snaps are drawn against.
+    pub display: ScreenRect,
     /// Windows nothing shows through: measured opaque, no material.
     pub opaque: Vec<WindowId>,
 }
@@ -168,7 +171,7 @@ impl StageSummary {
     }
 
     /// Strip windows wholly on screen at their start: what frame zero must picture fresh.
-    fn frame_zero_strip(&self) -> Vec<(WindowId, CGRect)> {
+    fn frame_zero_strip(&self) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
             .filter(|t| !t.floating && !t.companion && wholly_inside(t.start, self.display))
@@ -177,7 +180,7 @@ impl StageSummary {
     }
 
     /// Floating windows that stay put, wholly on screen: what shows behind the strip.
-    fn background(&self) -> Vec<(WindowId, CGRect)> {
+    fn background(&self) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
             .filter(|t| t.floating && !t.companion && !t.moves() && wholly_inside(t.start, self.display))
@@ -187,13 +190,10 @@ impl StageSummary {
 
     /// The background windows seen at frame zero, and whether any was left for later: one wholly
     /// behind a single opaque strip window at its start cannot be seen until the strip moves.
-    fn background_at_frame_zero(&self) -> (Vec<(WindowId, CGRect)>, bool) {
+    fn background_at_frame_zero(&self) -> (Vec<(WindowId, ScreenRect)>, bool) {
         let strip = self.frame_zero_strip();
         let (seen, hidden): (Vec<_>, Vec<_>) = self.background().into_iter().partition(|(_, frame)| {
-            let frame = ScreenRect::from_cg(*frame);
-            !strip
-                .iter()
-                .any(|(w, s)| wholly_on(frame, ScreenRect::from_cg(*s)) && self.opaque.contains(w))
+            !strip.iter().any(|(w, s)| wholly_on(*frame, *s) && self.opaque.contains(w))
         });
         (seen, !hidden.is_empty())
     }
@@ -205,7 +205,7 @@ impl StageSummary {
     }
 
     /// Strip windows that end wholly on screen: whose landing is watched and whose tiles get holes.
-    fn end_windows(&self) -> Vec<(WindowId, CGRect)> {
+    fn end_windows(&self) -> Vec<(WindowId, ScreenRect)> {
         self.final_frames
             .iter()
             .filter(|(w, f)| {
@@ -218,7 +218,7 @@ impl StageSummary {
 
     /// Of `awaiting`, the windows that end wholly on screen, floating or not: what a watch can see
     /// repaint.
-    fn awaited_ends(&self, awaiting: &[WindowId]) -> Vec<(WindowId, CGRect)> {
+    fn awaited_ends(&self, awaiting: &[WindowId]) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
             .filter(|t| awaiting.contains(&t.window) && !t.companion && wholly_inside(t.end, self.display))
@@ -230,7 +230,7 @@ impl StageSummary {
         self.tiles.iter().find(|t| t.window == window)
     }
 
-    fn ends(&self) -> impl Iterator<Item = (WindowId, CGRect)> + '_ {
+    fn ends(&self) -> impl Iterator<Item = (WindowId, ScreenRect)> + '_ {
         self.tiles.iter().map(|t| (t.window, t.end))
     }
 }
@@ -246,7 +246,7 @@ pub enum Event {
     FrameZero(Generation),
     /// One picture, taken with the window at `frame`: an end-state one, or one of frame zero's that
     /// came after the overlay went up without it. Frame zero's in time come as `FrameZero`.
-    Picture { generation: Generation, window: WindowId, frame: CGRect, why: Why },
+    Picture { generation: Generation, window: WindowId, frame: ScreenRect, why: Why },
     /// The end window watched under `generation` whose picture will not come: it was not where it ends
     /// by the watch's deadline, it never settled, or the cache refused its capture.
     Lost { generation: Generation, window: WindowId },
@@ -262,7 +262,7 @@ pub enum Event {
     Abandon,
     /// The key window changed, which turned these windows' looks, each at the frame it is at: the one
     /// that became key and the one that stopped being.
-    LooksTurned(Vec<(WindowId, CGRect)>),
+    LooksTurned(Vec<(WindowId, ScreenRect)>),
 }
 
 /// What the shell carries out.
@@ -278,26 +278,26 @@ pub enum Command {
     /// floating windows composited behind the strip.
     AskFrameZero {
         generation: Generation,
-        strip: Vec<(WindowId, CGRect)>,
-        background: Vec<(WindowId, CGRect)>,
+        strip: Vec<(WindowId, ScreenRect)>,
+        background: Vec<(WindowId, ScreenRect)>,
         behind: Vec<WindowId>,
     },
     /// Overlay up, at frame zero.
     Show,
-    Write(Vec<(WindowId, CGRect)>),
+    Write(Vec<(WindowId, ScreenRect)>),
     /// A point of the overlay left clear over each window that ends on screen, so the window server
     /// counts it visible and the app keeps painting.
-    Holes(Vec<CGRect>),
+    Holes(Vec<OverlayRect>),
     /// Watch the end state as `EndWatch` says, in place of whatever was watched before.
     Watch(EndWatch),
     StopWatches,
     StartMoving,
     /// One more capture of every end window, before the lift.
-    AskFinal { generation: Generation, windows: Vec<(WindowId, CGRect)>, behind: Vec<WindowId> },
+    AskFinal { generation: Generation, windows: Vec<(WindowId, ScreenRect)>, behind: Vec<WindowId> },
     /// Draw the delivered picture on its window's tile.
     Swap { generation: Generation, window: WindowId },
     /// Move the tile onto its window's real frame.
-    Snap { window: WindowId, frame: CGRect },
+    Snap { window: WindowId, frame: OverlayRect },
     /// The picture just swapped in shows the window focused: keep it as its focused look.
     KeepFocusedLook { generation: Generation, window: WindowId },
     /// Focus handed over: draw `to`'s tile focused and `from`'s not. Until then the tiles are drawn
@@ -307,10 +307,10 @@ pub enum Command {
     /// Overlay down. The quiet that follows ends with `Event::Quiet(generation)`.
     Lift { generation: Generation },
     /// Pictures for the next transition of every window the flight drew, at the frame each ended at.
-    Warm(Vec<(WindowId, CGRect)>),
+    Warm(Vec<(WindowId, ScreenRect)>),
     /// Fresh pictures of windows whose look turned with the key window, whatever the cache holds of
     /// them: a warm skips a picture that fits, and a focus change never changes a size.
-    Refresh(Vec<(WindowId, CGRect)>),
+    Refresh(Vec<(WindowId, ScreenRect)>),
     /// The overlay went up for a flight not already reported.
     ReportUp,
     ReportSettled,
@@ -321,10 +321,10 @@ pub enum Command {
 pub struct EndWatch {
     pub generation: Generation,
     /// End windows captured once they are where they end (`Settle::AsSoonAsThere`)...
-    pub landing: Vec<(WindowId, CGRect)>,
+    pub landing: Vec<(WindowId, ScreenRect)>,
     /// ... and end windows a pass opened or grew, captured once they have repainted there
     /// (`Settle::Repainted`).
-    pub awaiting: Vec<(WindowId, CGRect)>,
+    pub awaiting: Vec<(WindowId, ScreenRect)>,
     /// A window of `landing` not there by then is lost...
     pub landing_until: Instant,
     /// ... and one of `awaiting`, when a hold for it runs out.
@@ -332,9 +332,9 @@ pub struct EndWatch {
     /// The focus target and where it ends, watched until its look changes: only while focus is moving
     /// to it and its focused look is still to come, never for a window `awaiting` watches, and never
     /// for one ending off the display.
-    pub focus: Option<(WindowId, CGRect)>,
+    pub focus: Option<(WindowId, ScreenRect)>,
     /// Floating windows that stay put, kept fresh once `focus`'s watch is done, if there is one...
-    pub background: Vec<(WindowId, CGRect)>,
+    pub background: Vec<(WindowId, ScreenRect)>,
     /// ... except one capture this soon when they were left out of frame zero.
     pub background_initial: Option<Instant>,
     /// The floating windows, composited behind the strip in its captures.
@@ -366,18 +366,18 @@ struct Flight {
     /// The background was left out of frame zero.
     background_later: bool,
     /// Every window frame zero was asked for, where it was expected...
-    asked: Vec<(WindowId, CGRect)>,
+    asked: Vec<(WindowId, ScreenRect)>,
     /// ... and how many of those asks have not delivered yet.
     frame_zero_owed: usize,
     /// The focus target's focused look came in: focus has handed over.
     focus_in: bool,
     /// The focus target's latest landing, not swapped over the focused look its tile flies until focus
     /// hands over: under its generation, at its frame.
-    held_back: Option<(Generation, CGRect)>,
+    held_back: Option<(Generation, ScreenRect)>,
     final_asked: bool,
     snapped: HashSet<WindowId>,
     /// Where each window was last pictured at its end this generation: what its tile snaps onto.
-    landed: Vec<(WindowId, CGRect)>,
+    landed: Vec<(WindowId, ScreenRect)>,
     /// The generation since which each tile has ended where it ends: a picture delivered under an
     /// earlier one was taken for another end, and one under it or later still holds, whatever merged
     /// since it was taken.
@@ -390,21 +390,19 @@ struct Flight {
     held: Vec<WindowId>,
     /// Every window this flight drew, across its merged passes, at the frame it last ended at: what
     /// the quiet warms.
-    animated: Vec<(WindowId, CGRect)>,
+    animated: Vec<(WindowId, ScreenRect)>,
     /// Every window whose look the key window turned while the flight ran that no picture since has
     /// shown: what the quiet pictures afresh. The window losing focus that ends clipped or parked,
     /// and a target whose change no capture saw, are never pictured in flight.
-    turned: Vec<(WindowId, CGRect)>,
+    turned: Vec<(WindowId, ScreenRect)>,
 }
 
 impl Flight {
     /// Whether a picture of `window` delivered under `generation`, taken at `frame`, may be drawn on its
     /// tile: taken for the end the tile has now, within `END_SLACK` of it.
-    fn takes(&self, generation: Generation, window: WindowId, frame: CGRect) -> bool {
+    fn takes(&self, generation: Generation, window: WindowId, frame: ScreenRect) -> bool {
         self.end_since.iter().any(|(w, since)| *w == window && generation >= *since)
-            && self.stage.tile(window).is_some_and(|tile| {
-                near(ScreenRect::from_cg(frame), ScreenRect::from_cg(tile.end), END_SLACK)
-            })
+            && self.stage.tile(window).is_some_and(|tile| near(frame, tile.end, END_SLACK))
     }
 
     /// Focus handed over to the target: drawn focused from now, the window left not; with the landing
@@ -420,7 +418,7 @@ impl Flight {
     }
 
     /// The windows watched until they repaint, and the end windows watched only until they are there.
-    fn end_windows(&self) -> (Vec<(WindowId, CGRect)>, Vec<(WindowId, CGRect)>) {
+    fn end_windows(&self) -> (Vec<(WindowId, ScreenRect)>, Vec<(WindowId, ScreenRect)>) {
         let landing = self.stage.end_windows().into_iter().filter(|(w, _)| !self.awaiting.contains(w)).collect();
         (self.stage.awaited_ends(&self.awaiting), landing)
     }
@@ -433,7 +431,7 @@ impl Flight {
 
     /// Snaps `window`'s tile onto `frame` once per generation, once the motion has started: until
     /// then its container stands where frame zero put it, and the start would move it again.
-    fn snap(&mut self, window: WindowId, frame: CGRect, out: &mut Vec<Command>) {
+    fn snap(&mut self, window: WindowId, frame: ScreenRect, out: &mut Vec<Command>) {
         if self.clock.is_none() {
             return;
         }
@@ -441,7 +439,7 @@ impl Flight {
         if let Some(frame) = snap_to(tile.end, frame)
             && self.snapped.insert(window)
         {
-            out.push(Command::Snap { window, frame });
+            out.push(Command::Snap { window, frame: to_overlay_space(frame, self.stage.display) });
         }
     }
 
@@ -449,10 +447,7 @@ impl Flight {
     /// can have placed it back on its model. A window no longer ending there is forgotten.
     fn snap_landed(&mut self, out: &mut Vec<Command>) {
         let stage = &self.stage;
-        self.landed.retain(|(w, frame)| {
-            let at = ScreenRect::from_cg(*frame);
-            stage.tile(*w).is_some_and(|t| near(at, ScreenRect::from_cg(t.end), END_SLACK))
-        });
+        self.landed.retain(|(w, frame)| stage.tile(*w).is_some_and(|t| near(*frame, t.end, END_SLACK)));
         for (window, frame) in self.landed.clone() {
             self.snap(window, frame, out);
         }
@@ -465,7 +460,7 @@ enum State {
     Idle,
     Flying(Box<Flight>),
     /// `owed` is warmed at the quiet, and `turned` pictured afresh then (`Flight::turned`).
-    Settling { generation: Generation, owed: Vec<(WindowId, CGRect)>, turned: Vec<(WindowId, CGRect)> },
+    Settling { generation: Generation, owed: Vec<(WindowId, ScreenRect)>, turned: Vec<(WindowId, ScreenRect)> },
 }
 
 /// The lifecycle. One per overlay.
@@ -686,7 +681,7 @@ impl Coordinator {
         f.snap_landed(out);
     }
 
-    fn picture(&mut self, generation: Generation, window: WindowId, frame: CGRect, why: Why, now: Instant, out: &mut Vec<Command>) {
+    fn picture(&mut self, generation: Generation, window: WindowId, frame: ScreenRect, why: Why, now: Instant, out: &mut Vec<Command>) {
         let State::Flying(f) = &mut self.state else { return };
         // Every delivery is in the cache, so the window's look now is too; frame zero's was taken at
         // the press, before any turn.
@@ -697,10 +692,7 @@ impl Coordinator {
         if why == Why::FrameZero {
             // Taken at the press, before any picture of the end: the cache's picture it replaces is
             // older, wherever the tile ends now.
-            if generation == f.began
-                && !matches!(f.phase, Phase::Preparing { .. })
-                && near(ScreenRect::from_cg(frame), ScreenRect::from_cg(tile.start), END_SLACK)
-            {
+            if generation == f.began && !matches!(f.phase, Phase::Preparing { .. }) && near(frame, tile.start, END_SLACK) {
                 out.push(Command::Swap { generation, window });
                 if frame_zero_look(f.stage.losing_focus, f.stage.key) == Some(window) {
                     out.push(Command::KeepFocusedLook { generation, window });
@@ -799,15 +791,11 @@ impl Coordinator {
 /// expected there: the show waits for that ask too, up to the patience the begin set.
 fn ask_frame_zero_again(f: &mut Flight, out: &mut Vec<Command>) {
     let display = f.stage.display;
-    let unasked = |windows: Vec<(WindowId, CGRect)>, asked: &[(WindowId, CGRect)]| -> Vec<(WindowId, CGRect)> {
+    let unasked = |windows: Vec<(WindowId, ScreenRect)>, asked: &[(WindowId, ScreenRect)]| -> Vec<(WindowId, ScreenRect)> {
         windows
             .into_iter()
             .filter(|(w, start)| {
-                !asked.iter().any(|(a, at)| {
-                    a == w
-                        && Accept::Origin { at: ScreenPoint::from_cg(at.origin) }
-                            .accepts(ScreenRect::from_cg(*start), ScreenRect::from_cg(display))
-                })
+                !asked.iter().any(|(a, at)| a == w && Accept::Origin { at: at.origin }.accepts(*start, display))
             })
             .collect()
     };
@@ -840,7 +828,7 @@ fn show(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     }
 }
 
-fn refresh(turned: Vec<(WindowId, CGRect)>, out: &mut Vec<Command>) {
+fn refresh(turned: Vec<(WindowId, ScreenRect)>, out: &mut Vec<Command>) {
     if !turned.is_empty() {
         out.push(Command::Refresh(turned));
     }
@@ -891,7 +879,7 @@ fn end_watch(f: &Flight, now: Instant) -> EndWatch {
 
 /// The focus target and its end, while a focus report is coming and its focused look is not in. A
 /// watch armed by a report that never comes would hold the background back for the whole flight.
-fn watched_focus(f: &Flight) -> Option<(WindowId, CGRect)> {
+fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
     let window = f.stage.focus.filter(|w| f.stage.losing_focus.is_some() && !f.focus_in && !f.awaiting.contains(w))?;
     let end = f.stage.tile(window)?.end;
     (!is_off_screen(f.stage.display, end)).then_some((window, end))
@@ -903,9 +891,10 @@ fn final_at(started: Instant, duration: Duration) -> Instant {
 
 /// Over every end window watched: those that land, and those that repaint, floating or not, since a
 /// window the overlay covers wholly may stop painting.
-fn holes(f: &Flight) -> Vec<CGRect> {
+fn holes(f: &Flight) -> Vec<OverlayRect> {
     let (awaited, landing) = f.end_windows();
-    awaited.into_iter().chain(landing).map(|(_, frame)| frame).collect()
+    let display = f.stage.display;
+    awaited.into_iter().chain(landing).map(|(_, frame)| to_overlay_space(frame, display)).collect()
 }
 
 /// Each tile of `after` with the generation since which it has ended where it ends: what `since` says
@@ -922,20 +911,17 @@ fn ended_since(
         .map(|t| {
             let kept = before
                 .and_then(|b| b.tile(t.window))
-                .filter(|b| near(ScreenRect::from_cg(b.end), ScreenRect::from_cg(t.end), 0.5))
+                .filter(|b| near(b.end, t.end, 0.5))
                 .and_then(|_| since.iter().find(|(w, _)| *w == t.window).map(|(_, g)| *g));
             (t.window, kept.unwrap_or(generation))
         })
         .collect()
 }
 
-fn changed_frames(before: &[(WindowId, CGRect)], after: &[(WindowId, CGRect)]) -> Vec<(WindowId, CGRect)> {
+fn changed_frames(before: &[(WindowId, ScreenRect)], after: &[(WindowId, ScreenRect)]) -> Vec<(WindowId, ScreenRect)> {
     after
         .iter()
-        .filter(|(w, f)| {
-            let at = ScreenRect::from_cg(*f);
-            !before.iter().any(|(b, g)| b == w && near(at, ScreenRect::from_cg(*g), 0.5))
-        })
+        .filter(|(w, f)| !before.iter().any(|(b, g)| b == w && near(*f, *g, 0.5)))
         .copied()
         .collect()
 }
@@ -951,8 +937,8 @@ fn extend_unique(into: &mut Vec<WindowId>, more: impl Iterator<Item = WindowId>)
 /// Adds each window with its frame, or moves one already there to its new frame: latest frame per
 /// window wins.
 pub(in crate::transitions) fn extend_latest(
-    into: &mut Vec<(WindowId, CGRect)>,
-    more: impl Iterator<Item = (WindowId, CGRect)>,
+    into: &mut Vec<(WindowId, ScreenRect)>,
+    more: impl Iterator<Item = (WindowId, ScreenRect)>,
 ) {
     for (window, frame) in more {
         match into.iter_mut().find(|(held, _)| *held == window) {
@@ -963,17 +949,15 @@ pub(in crate::transitions) fn extend_latest(
 }
 
 /// Wholly on `display`, and big enough to be a window rather than a sliver.
-fn wholly_inside(frame: CGRect, display: CGRect) -> bool {
-    frame.size.width > 100.0
-        && frame.size.height > 100.0
-        && wholly_on(ScreenRect::from_cg(frame), ScreenRect::from_cg(display))
+fn wholly_inside(frame: ScreenRect, display: ScreenRect) -> bool {
+    frame.size.width > 100.0 && frame.size.height > 100.0 && wholly_on(frame, display)
 }
 
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
 
-    use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_geometry::space::{Point, ScreenPoint, ScreenSize, Size, SurfaceRect};
 
     use super::*;
     use crate::transitions::domain::timing::SETTLE_BEFORE_CAPTURES;
@@ -982,14 +966,14 @@ mod tests {
         WindowId { pid: 1, idx: NonZeroU32::new(idx).unwrap() }
     }
 
-    fn r(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    fn r(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        ScreenRect::new(ScreenPoint::new(x, y), ScreenSize::new(w, h))
     }
 
-    const DISPLAY: CGRect = CGRect { origin: CGPoint { x: 0.0, y: 0.0 }, size: CGSize { width: 1728.0, height: 1117.0 } };
+    const DISPLAY: ScreenRect = ScreenRect::new(ScreenPoint::new(0.0, 0.0), ScreenSize::new(1728.0, 1117.0));
     const PLAYS: Duration = Duration::from_millis(350);
 
-    fn tile(window: WindowId, start: CGRect, end: CGRect) -> TileSummary {
+    fn tile(window: WindowId, start: ScreenRect, end: ScreenRect) -> TileSummary {
         TileSummary { window, start, end, floating: false, companion: false }
     }
 
@@ -1034,7 +1018,7 @@ mod tests {
         out.iter().any(f)
     }
 
-    fn writes(out: &[Command]) -> Vec<(WindowId, CGRect)> {
+    fn writes(out: &[Command]) -> Vec<(WindowId, ScreenRect)> {
         out.iter().filter_map(|c| if let Command::Write(f) = c { Some(f.clone()) } else { None }).flatten().collect()
     }
 
@@ -1508,7 +1492,7 @@ mod tests {
         assert!(has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })));
         assert!(!has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })), "once");
         let merged = c.on(Event::Merge { stage: pan(), moved: false }, now);
-        assert!(has(&merged, |c| *c == Command::Snap { window: w(2), frame: real }),
+        assert!(has(&merged, |c| *c == Command::Snap { window: w(2), frame: to_overlay_space(real, DISPLAY) }),
             "again with a merge, which may have put the tile back on its model, and no new print will come");
         let g = c.generation();
         assert!(!has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })), "once a generation");
@@ -1516,6 +1500,35 @@ mod tests {
         moved.tiles[1].end.origin.x += 400.0;
         let merged = c.on(Event::Merge { stage: moved, moved: true }, now);
         assert!(!has(&merged, |c| matches!(c, Command::Snap { .. })), "a window ending elsewhere lands again first");
+    }
+
+    /// On a display away from the origin, the holes and the snaps are the overlay's points: the end
+    /// frames and the window's frame less the display's origin, as on the main display.
+    #[test]
+    fn holes_and_snaps_are_drawn_in_overlay_space_on_a_display_away_from_the_origin() {
+        let now = Instant::now();
+        let display = r(-1728.0, -300.0, 1728.0, 1117.0);
+        let on_it = |frame: ScreenRect| frame.translate(display.origin.to_vector());
+        let mut stage = pan();
+        stage.display = display;
+        for tile in &mut stage.tiles {
+            (tile.start, tile.end) = (on_it(tile.start), on_it(tile.end));
+        }
+        for (_, frame) in &mut stage.final_frames {
+            *frame = on_it(*frame);
+        }
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage), now);
+        let out = c.on(Event::FrameZero(c.generation()), now);
+        let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
+        let at_home = |frame: ScreenRect| to_overlay_space(frame, DISPLAY);
+        assert_eq!(holes, pan().final_frames.iter().map(|(_, end)| at_home(*end)).collect::<Vec<_>>());
+
+        let mut real = pan().tiles[1].end;
+        real.size.width += 1.0;
+        let landed = Event::Picture { generation: c.generation(), window: w(2), frame: on_it(real), why: Why::Landed };
+        let out = c.on(landed, now);
+        assert!(has(&out, |c| *c == Command::Snap { window: w(2), frame: at_home(real) }), "{out:?}");
     }
 
     #[test]
@@ -1531,7 +1544,7 @@ mod tests {
         assert!(has(&out, |c| matches!(c, Command::Swap { .. })));
         assert!(!has(&out, |c| matches!(c, Command::Snap { .. })), "frame zero still stands; the start would move it back");
         let out = c.on(Event::Tick { settled: true, landed: true }, now + COALESCE_WINDOW);
-        assert_eq!(out, vec![Command::StartMoving, Command::Snap { window: w(2), frame: real }]);
+        assert_eq!(out, vec![Command::StartMoving, Command::Snap { window: w(2), frame: to_overlay_space(real, DISPLAY) }]);
     }
 
     #[test]
@@ -1576,7 +1589,7 @@ mod tests {
         assert!(!has(&out, |c| *c == Command::StartMoving), "held for its first picture");
         assert_eq!(watch(&out).unwrap().awaiting, vec![(w(7), dialog)]);
         let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
-        assert!(holes.contains(&dialog), "a window the overlay covers wholly may not paint");
+        assert!(holes.contains(&to_overlay_space(dialog, DISPLAY)), "a window the overlay covers wholly may not paint");
         let g = c.generation();
         let out = c.on(Event::Picture { generation: g, window: w(7), frame: dialog, why: Why::Landed }, now);
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(7) }));
@@ -1618,7 +1631,7 @@ mod tests {
 
     #[test]
     fn a_strip_movement_is_a_move_when_a_column_crosses_it_and_a_switch_when_it_travels_between_rows() {
-        let frame = r(4.0, 32.0, 859.0, 1081.0);
+        let frame = SurfaceRect::new(Point::new(4.0, 32.0), Size::new(859.0, 1081.0));
         let window = |from| SurfaceWindow {
             window: w(1),
             server_id: rini_core::ids::WindowServerId::new(1),
@@ -1627,10 +1640,10 @@ mod tests {
             floating: false,
             from,
         };
-        let rest = CGPoint::new(0.0, 0.0);
-        assert_eq!(Kind::of_surface(&[window(None)], CGPoint::new(863.0, 0.0), rest), Kind::Pan);
-        assert_eq!(Kind::of_surface(&[window(None)], CGPoint::new(0.0, -1085.0), rest), Kind::Switch);
-        assert_eq!(Kind::of_surface(&[window(Some(frame))], CGPoint::new(863.0, 0.0), rest), Kind::Move);
+        let rest = SurfacePoint::origin();
+        assert_eq!(Kind::of_surface(&[window(None)], SurfacePoint::new(863.0, 0.0), rest), Kind::Pan);
+        assert_eq!(Kind::of_surface(&[window(None)], SurfacePoint::new(0.0, -1085.0), rest), Kind::Switch);
+        assert_eq!(Kind::of_surface(&[window(Some(frame))], SurfacePoint::new(863.0, 0.0), rest), Kind::Move);
     }
 
     #[test]

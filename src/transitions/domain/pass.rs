@@ -1,9 +1,8 @@
 //! One layout pass sorted into what moves, what stays, and what the overlay has to know. The
 //! application gathers a [`PassWindow`] per window from its stores and applies the plan; nothing
 //! here reads a store or sends a request.
-use objc2_core_foundation::CGRect;
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::space::{FromCg, ScreenSize};
+use rini_geometry::space::ScreenRect;
 use rini_geometry::{Round, SameAs};
 
 use crate::pictures::domain::target::PictureTarget;
@@ -15,11 +14,11 @@ pub struct PassWindow {
     pub window: WindowId,
     pub server_id: Option<WindowServerId>,
     /// Where the window is, as last confirmed.
-    pub current: CGRect,
+    pub current: ScreenRect,
     /// Where the layout puts it. Rounded by the plan.
-    pub target: CGRect,
+    pub target: ScreenRect,
     /// A frame already on its way from an earlier pass.
-    pub pending: Option<CGRect>,
+    pub pending: Option<ScreenRect>,
     pub in_active_workspace: bool,
     pub floating: bool,
     /// Whether the owning app can still be told. A dead app's window still counts as changed.
@@ -31,8 +30,8 @@ pub struct PassWindow {
 pub struct Move {
     pub window: WindowId,
     pub server_id: Option<WindowServerId>,
-    pub from: CGRect,
-    pub to: CGRect,
+    pub from: ScreenRect,
+    pub to: ScreenRect,
     pub in_active_workspace: bool,
     pub floating: bool,
 }
@@ -106,7 +105,7 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
             out.warm.push(PictureTarget {
                 window: w.window,
                 server_id,
-                size: ScreenSize::from_cg(to.size),
+                size: to.size,
             });
         }
         out.moves.push(Move {
@@ -123,15 +122,15 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_geometry::space::{Point, Size};
 
     use super::*;
 
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        ScreenRect::new(Point::new(x, y), Size::new(w, h))
     }
 
-    fn window(idx: u32, current: CGRect, target: CGRect) -> PassWindow {
+    fn window(idx: u32, current: ScreenRect, target: ScreenRect) -> PassWindow {
         PassWindow {
             window: WindowId::new(1, idx),
             server_id: Some(WindowServerId::new(idx)),

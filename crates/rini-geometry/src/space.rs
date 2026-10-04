@@ -26,9 +26,20 @@ pub type Point<U> = euclid::Point2D<f64, U>;
 pub type Size<U> = euclid::Size2D<f64, U>;
 pub type Vector<U> = euclid::Vector2D<f64, U>;
 
+pub type Translation<A, B> = euclid::Translation2D<f64, A, B>;
+
 pub type ScreenRect = Rect<Screen>;
 pub type ScreenPoint = Point<Screen>;
 pub type ScreenSize = Size<Screen>;
+pub type ScreenVector = Vector<Screen>;
+pub type OverlayRect = Rect<Overlay>;
+pub type OverlayPoint = Point<Overlay>;
+pub type OverlayVector = Vector<Overlay>;
+pub type SurfaceRect = Rect<Surface>;
+pub type SurfacePoint = Point<Surface>;
+pub type GroupRect = Rect<Group>;
+pub type TileRect = Rect<Tile>;
+pub type TileSize = Size<Tile>;
 pub type PixelRect = Rect<Pixel>;
 pub type PixelSize = Size<Pixel>;
 pub type ContentsRect = Rect<Contents>;

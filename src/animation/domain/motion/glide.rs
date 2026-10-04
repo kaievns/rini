@@ -1,7 +1,7 @@
 //! A group's movement as a function of time, so a new destination mid-flight continues the motion
 //! from where it is and as fast as it is going. See "One flight however many presses" in
 //! `src/animation/docs/animation-smoothness.md`.
-use objc2_core_foundation::CGPoint;
+use rini_geometry::space::{OverlayPoint, OverlayVector};
 
 use super::easing::CubicBezier;
 use super::plan::GroupKey;
@@ -24,8 +24,8 @@ pub enum Leg {
     /// `from` to `to` along `curve`, from `begin` for `seconds`: `MOTION_CURVE`, or `EASE_IN_OUT`
     /// for the strip a move steps.
     Curve {
-        from: CGPoint,
-        to: CGPoint,
+        from: OverlayPoint,
+        to: OverlayPoint,
         begin: f64,
         seconds: f64,
         curve: CubicBezier,
@@ -33,9 +33,9 @@ pub enum Leg {
     /// A critically damped spring pulling toward `to` at `omega`, let go at `from` moving at
     /// `velocity` points a second.
     Spring {
-        from: CGPoint,
-        to: CGPoint,
-        velocity: CGPoint,
+        from: OverlayPoint,
+        to: OverlayPoint,
+        velocity: OverlayVector,
         begin: f64,
         omega: f64,
     },
@@ -52,13 +52,13 @@ fn spring_axis(from: f64, to: f64, v0: f64, omega: f64, t: f64) -> (f64, f64) {
 }
 
 impl Leg {
-    pub fn to(&self) -> CGPoint {
+    pub fn to(&self) -> OverlayPoint {
         match *self {
             Leg::Curve { to, .. } | Leg::Spring { to, .. } => to,
         }
     }
 
-    pub fn position_at(&self, now: f64) -> CGPoint {
+    pub fn position_at(&self, now: f64) -> OverlayPoint {
         match *self {
             Leg::Curve {
                 from,
@@ -68,7 +68,7 @@ impl Leg {
                 curve,
             } => {
                 let p = curve.ease(((now - begin) / seconds.max(1e-9)).clamp(0.0, 1.0));
-                CGPoint::new(from.x + (to.x - from.x) * p, from.y + (to.y - from.y) * p)
+                OverlayPoint::new(from.x + (to.x - from.x) * p, from.y + (to.y - from.y) * p)
             }
             Leg::Spring {
                 from,
@@ -78,7 +78,7 @@ impl Leg {
                 omega,
             } => {
                 let t = (now - begin).max(0.0);
-                CGPoint::new(
+                OverlayPoint::new(
                     spring_axis(from.x, to.x, velocity.x, omega, t).0,
                     spring_axis(from.y, to.y, velocity.y, omega, t).0,
                 )
@@ -87,7 +87,7 @@ impl Leg {
     }
 
     /// Points a second, per axis.
-    pub fn velocity_at(&self, now: f64) -> CGPoint {
+    pub fn velocity_at(&self, now: f64) -> OverlayVector {
         match *self {
             Leg::Curve {
                 from,
@@ -98,7 +98,7 @@ impl Leg {
             } => {
                 let seconds = seconds.max(1e-9);
                 let rate = curve.slope((now - begin) / seconds) / seconds;
-                CGPoint::new((to.x - from.x) * rate, (to.y - from.y) * rate)
+                OverlayVector::new((to.x - from.x) * rate, (to.y - from.y) * rate)
             }
             Leg::Spring {
                 from,
@@ -108,7 +108,7 @@ impl Leg {
                 omega,
             } => {
                 let t = (now - begin).max(0.0);
-                CGPoint::new(
+                OverlayVector::new(
                     spring_axis(from.x, to.x, velocity.x, omega, t).1,
                     spring_axis(from.y, to.y, velocity.y, omega, t).1,
                 )
@@ -123,11 +123,17 @@ impl Leg {
     /// `position_at`, which a spring is drawn up to 10.8pt off in its first frame
     /// (`a_spring_plays_as_the_polyline_of_its_samples`), nor the drawn position, which would
     /// carry any bounce or nudge riding the container a second time.
-    pub fn toward(carried: Option<&Leg>, from: CGPoint, to: CGPoint, now: f64, omega: f64) -> Leg {
+    pub fn toward(
+        carried: Option<&Leg>,
+        from: OverlayPoint,
+        to: OverlayPoint,
+        now: f64,
+        omega: f64,
+    ) -> Leg {
         Leg::Spring {
             from,
             to,
-            velocity: carried.map_or(CGPoint::new(0.0, 0.0), |leg| leg.velocity_at(now)),
+            velocity: carried.map_or(OverlayVector::zero(), |leg| leg.velocity_at(now)),
             begin: now,
             omega,
         }
@@ -160,12 +166,12 @@ impl Leg {
 
     /// Where the leg is every `step` seconds from its begin, ending exactly at its destination, and
     /// the time that covers: what Core Animation is handed as evenly spaced keyframes.
-    pub fn samples(&self, step: f64) -> (Vec<CGPoint>, f64) {
+    pub fn samples(&self, step: f64) -> (Vec<OverlayPoint>, f64) {
         let begin = match *self {
             Leg::Curve { begin, .. } | Leg::Spring { begin, .. } => begin,
         };
         let steps = (self.seconds() / step).ceil().max(1.0) as usize;
-        let mut points: Vec<CGPoint> =
+        let mut points: Vec<OverlayPoint> =
             (0..steps).map(|k| self.position_at(begin + k as f64 * step)).collect();
         points.push(self.to());
         (points, steps as f64 * step)
@@ -211,8 +217,8 @@ mod tests {
 
     fn curve(from: f64, to: f64) -> Leg {
         Leg::Curve {
-            from: CGPoint::new(from, 0.0),
-            to: CGPoint::new(to, 0.0),
+            from: OverlayPoint::new(from, 0.0),
+            to: OverlayPoint::new(to, 0.0),
             begin: 0.0,
             seconds: DURATION,
             curve: MOTION_CURVE,
@@ -233,7 +239,7 @@ mod tests {
         let next = Leg::toward(
             Some(&first),
             first.position_at(now),
-            CGPoint::new(-2.0 * COLUMN, 0.0),
+            OverlayPoint::new(-2.0 * COLUMN, 0.0),
             now,
             spring_omega(DURATION),
         );
@@ -265,7 +271,7 @@ mod tests {
                 t += 0.004;
             }
             assert!(leg.velocity_at(at).x < -100.0, "nearly stopped at press {press}");
-            let to = CGPoint::new(-(press as f64) * COLUMN, 0.0);
+            let to = OverlayPoint::new(-(press as f64) * COLUMN, 0.0);
             leg = Leg::toward(Some(&leg), leg.position_at(at), to, at, omega);
         }
         let end = t + leg.seconds();
@@ -276,7 +282,7 @@ mod tests {
     #[test]
     fn a_new_destination_after_landing_starts_from_rest() {
         let first = curve(0.0, -COLUMN);
-        let to = CGPoint::new(-2.0 * COLUMN, 0.0);
+        let to = OverlayPoint::new(-2.0 * COLUMN, 0.0);
         let next = Leg::toward(
             Some(&first),
             first.position_at(1.0),
@@ -297,7 +303,7 @@ mod tests {
     fn a_reversal_turns_smoothly() {
         let first = curve(0.0, -COLUMN);
         let now = 0.05;
-        let home = CGPoint::new(0.0, 0.0);
+        let home = OverlayPoint::new(0.0, 0.0);
         let back = Leg::toward(
             Some(&first),
             first.position_at(now),
@@ -314,11 +320,11 @@ mod tests {
     #[test]
     fn samples_run_from_the_leg_to_its_destination() {
         let first = curve(0.0, -COLUMN);
-        let to = CGPoint::new(-2.0 * COLUMN, 0.0);
+        let to = OverlayPoint::new(-2.0 * COLUMN, 0.0);
         let leg = Leg::toward(Some(&first), first.position_at(0.1), to, 0.1, 31.0);
         let (points, seconds) = leg.samples(1.0 / 120.0);
         assert!(close(points[0].x, leg.position_at(0.1).x, 1e-9));
-        assert_eq!(points.last().copied(), Some(CGPoint::new(-2.0 * COLUMN, 0.0)));
+        assert_eq!(points.last().copied(), Some(OverlayPoint::new(-2.0 * COLUMN, 0.0)));
         assert!(close(seconds, (points.len() - 1) as f64 / 120.0, 1e-9));
     }
 
@@ -329,11 +335,11 @@ mod tests {
     #[test]
     fn a_container_with_no_leg_leaves_from_its_model_at_rest() {
         let omega = spring_omega(DURATION);
-        let model = CGPoint::new(0.0, 0.0);
-        let to = CGPoint::new(-COLUMN, 0.0);
+        let model = OverlayPoint::new(0.0, 0.0);
+        let to = OverlayPoint::new(-COLUMN, 0.0);
         let leg = Leg::toward(None, model, to, 2.0, omega);
         assert_eq!(leg.position_at(2.0), model);
-        assert_eq!(leg.velocity_at(2.0), CGPoint::new(0.0, 0.0));
+        assert_eq!(leg.velocity_at(2.0), OverlayVector::zero());
         assert!(close(
             leg.position_at(2.0 + leg.seconds()).x,
             -COLUMN,
@@ -341,7 +347,7 @@ mod tests {
         ));
 
         let moving = curve(0.0, -COLUMN);
-        let from = CGPoint::new(moving.position_at(0.1).x + 5.4, 0.0);
+        let from = OverlayPoint::new(moving.position_at(0.1).x + 5.4, 0.0);
         let bent = Leg::toward(Some(&moving), from, to, 0.1, omega);
         assert_eq!(
             bent.position_at(0.1),
@@ -359,8 +365,8 @@ mod tests {
         let omega = spring_omega(DURATION);
         let strip = curve(0.0, -2.0 * COLUMN);
         let now = 0.12;
-        let install = CGPoint::new(strip.position_at(now).x + 36.0, 0.0);
-        let to = CGPoint::new(-3.0 * COLUMN, 0.0);
+        let install = OverlayPoint::new(strip.position_at(now).x + 36.0, 0.0);
+        let to = OverlayPoint::new(-3.0 * COLUMN, 0.0);
         let leg = Leg::toward(Some(&strip), install, to, now, omega);
         assert_eq!(leg.position_at(now), install);
         assert!(close(leg.velocity_at(now).x, strip.velocity_at(now).x, 1e-6));
@@ -370,7 +376,7 @@ mod tests {
         let still = Leg::toward(None, install, to, now, omega);
         assert_eq!(
             still.velocity_at(now),
-            CGPoint::new(0.0, 0.0),
+            OverlayVector::zero(),
             "from a still one, at rest"
         );
     }
@@ -379,7 +385,7 @@ mod tests {
     #[test]
     fn a_spring_lands_in_about_one_flight() {
         let still = curve(0.0, 0.0);
-        let to = CGPoint::new(-COLUMN, 0.0);
+        let to = OverlayPoint::new(-COLUMN, 0.0);
         let leg = Leg::toward(
             Some(&still),
             still.position_at(0.0),
@@ -399,8 +405,8 @@ mod tests {
     fn a_leg_on_the_ease_in_out_bends_without_a_kick() {
         let seconds = DURATION * crate::animation::domain::motion::nudge::NUDGE_STRETCH;
         let crossing = Leg::Curve {
-            from: CGPoint::new(0.0, 0.0),
-            to: CGPoint::new(-862.0, 0.0),
+            from: OverlayPoint::new(0.0, 0.0),
+            to: OverlayPoint::new(-862.0, 0.0),
             begin: 0.0,
             seconds,
             curve: EASE_IN_OUT,
@@ -431,7 +437,7 @@ mod tests {
         let bent = Leg::toward(
             Some(&crossing),
             crossing.position_at(now),
-            CGPoint::new(-2013.0, 0.0),
+            OverlayPoint::new(-2013.0, 0.0),
             now,
             omega,
         );
@@ -442,8 +448,9 @@ mod tests {
             "it was crossing: {:?}",
             crossing.velocity_at(now)
         );
-        let install = CGPoint::new(crossing.position_at(now).x - 576.0, 0.0);
-        let left = Leg::toward(Some(&crossing), install, CGPoint::new(-1723.0, 0.0), now, omega);
+        let install = OverlayPoint::new(crossing.position_at(now).x - 576.0, 0.0);
+        let to = OverlayPoint::new(-1723.0, 0.0);
+        let left = Leg::toward(Some(&crossing), install, to, now, omega);
         assert_eq!(left.position_at(now), install);
         assert!(close(left.velocity_at(now).x, crossing.velocity_at(now).x, 1e-6));
     }
@@ -470,8 +477,8 @@ mod tests {
         assert_eq!(
             track.keys(),
             [
-                (0.0, Value::Point(CGPoint::new(0.0, 0.0))),
-                (1.0, Value::Point(CGPoint::new(-COLUMN, 0.0)))
+                (0.0, Value::Point(OverlayPoint::new(0.0, 0.0))),
+                (1.0, Value::Point(OverlayPoint::new(-COLUMN, 0.0)))
             ]
         );
         for step in 0..350 {
@@ -490,8 +497,8 @@ mod tests {
         let omega = spring_omega(DURATION);
         for (reach, first_frame) in [(2.0 * COLUMN, 10.8), (COLUMN, 5.4)] {
             let begin = 2.0;
-            let rest = CGPoint::new(0.0, 0.0);
-            let leg = Leg::toward(None, rest, CGPoint::new(reach, 0.0), begin, omega);
+            let rest = OverlayPoint::new(0.0, 0.0);
+            let leg = Leg::toward(None, rest, OverlayPoint::new(reach, 0.0), begin, omega);
             let (points, seconds) = leg.samples(STEP);
             let track = leg.track(GroupKey::STILL, STEP);
             assert_eq!((track.begin(), track.seconds()), (begin, seconds));

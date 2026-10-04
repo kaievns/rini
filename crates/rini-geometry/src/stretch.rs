@@ -5,7 +5,7 @@
 //! distortion. One tolerance answers both "does this picture still fit" and "is this a resize", so the
 //! two agree by construction.
 
-use objc2_core_foundation::CGSize;
+use crate::space::Size;
 
 /// The largest ratio of a size to the size it is drawn at that still reads as the same size.
 pub const MAX_STRETCH: f64 = 1.005;
@@ -13,7 +13,7 @@ pub const MAX_STRETCH: f64 = 1.005;
 pub const MIN_STRETCH: f64 = 0.995;
 
 /// Whether `from` drawn at `to` stretches within the tolerance on both axes. Never onto an empty size.
-pub fn within_stretch(from: CGSize, to: CGSize) -> bool {
+pub fn within_stretch<U>(from: Size<U>, to: Size<U>) -> bool {
     if to.width <= 0.0 || to.height <= 0.0 {
         return false;
     }
@@ -27,11 +27,12 @@ pub fn within_stretch(from: CGSize, to: CGSize) -> bool {
 /// Rounding is not a resize; treating a one-point re-fit as one measurably tore the strip apart. See
 /// "A one-point size change sent the whole strip to the Accessibility engine" in
 /// `src/animation/docs/capture-overlay-research.md`.
-pub fn is_a_resize(from: CGSize, to: CGSize) -> bool { !within_stretch(from, to) }
+pub fn is_a_resize<U>(from: Size<U>, to: Size<U>) -> bool { !within_stretch(from, to) }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::ScreenSize;
 
     /// The measured case. A strip re-fit took a window from 918pt to 917pt, and treating that one
     /// point as a resize sent the whole layout to the Accessibility engine, which writes every
@@ -39,16 +40,16 @@ mod tests {
     #[test]
     fn a_point_of_rounding_is_not_a_resize() {
         assert!(!is_a_resize(
-            CGSize::new(918.0, 1081.0),
-            CGSize::new(917.0, 1081.0)
+            ScreenSize::new(918.0, 1081.0),
+            ScreenSize::new(917.0, 1081.0)
         ));
         assert!(!is_a_resize(
-            CGSize::new(1720.0, 1081.0),
-            CGSize::new(1719.0, 1081.0)
+            ScreenSize::new(1720.0, 1081.0),
+            ScreenSize::new(1719.0, 1081.0)
         ));
         assert!(!is_a_resize(
-            CGSize::new(859.0, 1081.0),
-            CGSize::new(859.0, 1081.0)
+            ScreenSize::new(859.0, 1081.0),
+            ScreenSize::new(859.0, 1081.0)
         ));
     }
 
@@ -57,16 +58,16 @@ mod tests {
     #[test]
     fn a_column_changing_width_is_a_resize() {
         assert!(is_a_resize(
-            CGSize::new(1440.0, 1081.0),
-            CGSize::new(859.0, 1081.0)
+            ScreenSize::new(1440.0, 1081.0),
+            ScreenSize::new(859.0, 1081.0)
         ));
         assert!(is_a_resize(
-            CGSize::new(859.0, 1081.0),
-            CGSize::new(1720.0, 1081.0)
+            ScreenSize::new(859.0, 1081.0),
+            ScreenSize::new(1720.0, 1081.0)
         ));
         assert!(is_a_resize(
-            CGSize::new(859.0, 1081.0),
-            CGSize::new(859.0, 540.0)
+            ScreenSize::new(859.0, 1081.0),
+            ScreenSize::new(859.0, 540.0)
         ));
     }
 
@@ -75,16 +76,16 @@ mod tests {
     #[test]
     fn the_tolerance_scales_with_the_window() {
         assert!(!is_a_resize(
-            CGSize::new(400.0, 400.0),
-            CGSize::new(401.0, 400.0)
+            ScreenSize::new(400.0, 400.0),
+            ScreenSize::new(401.0, 400.0)
         ));
-        assert!(is_a_resize(CGSize::new(40.0, 400.0), CGSize::new(41.0, 400.0)));
+        assert!(is_a_resize(ScreenSize::new(40.0, 400.0), ScreenSize::new(41.0, 400.0)));
     }
 
     #[test]
     fn nothing_stretches_onto_an_empty_size() {
-        assert!(!within_stretch(CGSize::new(859.0, 1081.0), CGSize::new(0.0, 1081.0)));
-        assert!(!within_stretch(CGSize::new(0.0, 0.0), CGSize::new(0.0, 0.0)));
-        assert!(is_a_resize(CGSize::new(0.0, 0.0), CGSize::new(0.0, 0.0)));
+        assert!(!within_stretch(ScreenSize::new(859.0, 1081.0), ScreenSize::new(0.0, 1081.0)));
+        assert!(!within_stretch(ScreenSize::new(0.0, 0.0), ScreenSize::new(0.0, 0.0)));
+        assert!(is_a_resize(ScreenSize::new(0.0, 0.0), ScreenSize::new(0.0, 0.0)));
     }
 }

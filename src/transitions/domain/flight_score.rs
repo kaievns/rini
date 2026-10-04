@@ -7,8 +7,8 @@
 
 use std::time::Duration;
 
-use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
+use rini_geometry::space::{OverlayRect, OverlayVector};
 
 use crate::animation::domain::choreography::{Choreography, Cue, Look, Pass, Retarget, Stage};
 use crate::animation::domain::motion::accents::Accent;
@@ -78,15 +78,14 @@ impl FlightScore {
     }
 
     /// A push against `wall` reaching the flight that moves, at `now`.
-    pub fn push(&mut self, cue: &Cue, wall: CGPoint, seconds: f64, now: f64) -> Vec<Edit> {
+    pub fn push(&mut self, cue: &Cue, wall: OverlayVector, seconds: f64, now: f64) -> Vec<Edit> {
         let edits = self.choreography.push(&self.score, cue, wall, seconds, now);
         self.fold_in(&edits);
         edits
     }
 
-    /// `window`'s tile onto `real`, its window's frame in the overlay's space, at `now`: the
-    /// coordinator has decided it.
-    pub fn snap(&mut self, window: WindowId, real: CGRect, now: f64) -> Vec<Edit> {
+    /// `window`'s tile onto `real`, its window's frame, at `now`: the coordinator has decided it.
+    pub fn snap(&mut self, window: WindowId, real: OverlayRect, now: f64) -> Vec<Edit> {
         let edits = tile::snap(&self.score, window, real, now);
         self.fold_in(&edits);
         edits
@@ -127,22 +126,22 @@ impl FlightScore {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGPoint;
+    use rini_geometry::space::ScreenRect;
 
     use super::*;
     use crate::animation::domain::motion::nudge::NUDGE_STRETCH;
-    use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, reflow_plan};
+    use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, installed, reflow_plan};
     use crate::animation::domain::motion::score::{Channel, Node, Value};
-    use crate::animation::domain::motion::testing::{DISPLAY, rect};
+    use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT, rect};
 
     const PLAIN: f64 = 0.35;
     const BEGIN: f64 = 10.0;
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
-    fn column(i: f64) -> CGRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
+    fn column(i: f64) -> ScreenRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
-    fn shifted(frame: CGRect, dx: f64) -> CGRect {
+    fn shifted(frame: ScreenRect, dx: f64) -> ScreenRect {
         rect(
             frame.origin.x + dx,
             frame.origin.y,
@@ -152,7 +151,12 @@ mod tests {
     }
 
     /// Columns `0..count` from `first`, all stepping `dx` from `at` columns along.
-    fn strip(first: u32, count: u32, at: f64, dx: f64) -> Vec<(WindowId, CGRect, CGRect, bool)> {
+    fn strip(
+        first: u32,
+        count: u32,
+        at: f64,
+        dx: f64,
+    ) -> Vec<(WindowId, ScreenRect, ScreenRect, bool)> {
         (0..count)
             .map(|i| {
                 let from = column(at + i as f64);
@@ -170,7 +174,7 @@ mod tests {
     }
 
     impl Flight {
-        fn posed(requests: &[(WindowId, CGRect, CGRect, bool)]) -> Flight {
+        fn posed(requests: &[(WindowId, ScreenRect, ScreenRect, bool)]) -> Flight {
             let mut score = FlightScore::new(Look::default());
             let plan = score.plan(reflow_plan(requests, DISPLAY), &Cue::Plain);
             let drawn = plan.windows();
@@ -193,7 +197,7 @@ mod tests {
         fn merge(
             &mut self,
             incoming: &ReflowPlan,
-            pan: Option<CGPoint>,
+            pan: Option<OverlayVector>,
             seconds: f64,
             now: f64,
         ) -> Retarget {
@@ -203,7 +207,7 @@ mod tests {
         fn merge_with(
             &mut self,
             incoming: &ReflowPlan,
-            pan: Option<CGPoint>,
+            pan: Option<OverlayVector>,
             accent: Option<Accent>,
             seconds: f64,
             now: f64,
@@ -212,7 +216,7 @@ mod tests {
                 plan: incoming,
                 pan,
                 focus: None,
-                viewport: DISPLAY,
+                viewport: VIEWPORT,
                 drawn: &self.drawn,
                 seconds,
                 cue: Cue::Plain,
@@ -258,6 +262,7 @@ mod tests {
                         rel,
                         flight.plan.position_of(key),
                     );
+                    let from = rini_geometry::from_overlay_space(from, DISPLAY);
                     Some((w, from, shifted(from, dx), false))
                 }
                 _ => None,
@@ -276,14 +281,14 @@ mod tests {
         let now = BEGIN + 0.15;
         let key = key_of(&flight.plan, wid(1));
         let along = flight.score.score().along(Node::Container(key), now);
-        let before: Vec<Option<CGRect>> =
+        let before: Vec<Option<OverlayRect>> =
             flight.drawn.iter().map(|w| flight.score.score().drawn(*w, now)).collect();
         let incoming = pan(&flight, -863.0);
-        let bent = flight.merge(&incoming, Some(CGPoint::new(-863.0, 0.0)), PLAIN, now);
+        let bent = flight.merge(&incoming, Some(OverlayVector::new(-863.0, 0.0)), PLAIN, now);
         assert!(bent.delta.retargeted_groups.iter().any(|(k, _)| *k == key));
         let track = flight.score.score().track(Node::Container(key), Channel::Base).expect("bent");
         assert_eq!((track.begin(), Some(track.keys()[0].1)), (now, along));
-        let after: Vec<Option<CGRect>> =
+        let after: Vec<Option<OverlayRect>> =
             flight.drawn.iter().map(|w| flight.score.score().drawn(*w, now)).collect();
         assert_eq!(before, after);
         assert_eq!(flight.score.score(), &flight.replica);
@@ -356,12 +361,12 @@ mod tests {
         let mut flight = Flight::posed(&strip(1, 2, 1.0, -863.0));
         flight.start();
         let pushed = BEGIN + 0.3;
-        let edits = flight.score.push(&Cue::Plain, CGPoint::new(-72.0, 0.0), PLAIN, pushed);
+        let edits = flight.score.push(&Cue::Plain, OverlayVector::new(-72.0, 0.0), PLAIN, pushed);
         flight.played(&edits);
         let home = pushed + PLAIN;
         let now = BEGIN + 0.31;
         let incoming = pan(&flight, -863.0);
-        flight.merge(&incoming, Some(CGPoint::new(-863.0, 0.0)), 0.05, now);
+        flight.merge(&incoming, Some(OverlayVector::new(-863.0, 0.0)), 0.05, now);
         let clock = flight.score.clock(Duration::from_secs_f64(0.05), now);
         assert!(clock.as_secs_f64() >= home - now - 1e-9, "{clock:?}");
         assert_eq!(clock, flight.score.remaining(now));
@@ -391,7 +396,7 @@ mod tests {
 
         let now = BEGIN + 0.2;
         let step = Accent::Step {
-            offset: CGPoint::new(-576.0, 0.0),
+            offset: OverlayVector::new(-576.0, 0.0),
             seconds: PLAIN,
         };
         let stepped = flight.merge_with(&ReflowPlan::empty(), None, Some(step), PLAIN, now);
@@ -409,8 +414,8 @@ mod tests {
     #[test]
     fn an_accent_before_the_motion_waits_for_it() {
         let mut flight = Flight::posed(&strip(1, 2, 1.0, -863.0));
-        let (left, right) = (CGPoint::new(-72.0, 0.0), CGPoint::new(72.0, 0.0));
-        let step = CGPoint::new(-576.0, 0.0);
+        let (left, right) = (OverlayVector::new(-72.0, 0.0), OverlayVector::new(72.0, 0.0));
+        let step = OverlayVector::new(-576.0, 0.0);
         flight.score.wait(Accent::Push { wall: left, seconds: PLAIN });
         flight.score.wait(Accent::Step { offset: step, seconds: PLAIN });
         flight.score.wait(Accent::Push { wall: right, seconds: PLAIN });
@@ -447,11 +452,11 @@ mod tests {
         let resized = rect(from.origin.x, from.origin.y, 1200.0, from.size.height);
         let mut flight = Flight::posed(&[(wid(1), from, resized, false)]);
         flight.start();
-        let real = rect(from.origin.x, from.origin.y, 1199.0, from.size.height);
+        let real: OverlayRect = rect(from.origin.x, from.origin.y, 1199.0, from.size.height);
         let snapped = flight.score.snap(wid(1), real, BEGIN + 0.1);
         flight.played(&snapped);
         let node = Node::Tile(wid(1));
-        assert_eq!(flight.score.score().model(node), Some(Value::Rect(real)));
+        assert_eq!(flight.score.score().model(node), Some(Value::Rect(installed(real))));
         let now = BEGIN + 0.2;
         let drawn = flight.score.score().sample(node, now).expect("drawn");
         let incoming = reflow_plan(
@@ -483,7 +488,7 @@ mod tests {
         );
         let mut stepping = Flight::posed(&strip(1, 2, 1.0, -863.0));
         stepping.score.wait(Accent::Step {
-            offset: CGPoint::new(-576.0, 0.0),
+            offset: OverlayVector::new(-576.0, 0.0),
             seconds: PLAIN,
         });
         let edits = stepping.start();

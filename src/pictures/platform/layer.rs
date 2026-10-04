@@ -90,7 +90,7 @@ mod tests {
     fn a_layer_takes_a_picture_of_either_kind() {
         let layer = CALayer::layer();
 
-        let bitmap = test_picture(CGSize::new(1.0, 1.0));
+        let bitmap = test_picture(ScreenSize::new(1.0, 1.0));
         set_layer_contents(&layer, &bitmap);
         let Pixels::Bitmap(image) = &bitmap.image else {
             unreachable!("a test picture is a bitmap")
@@ -100,7 +100,7 @@ mod tests {
         let surface = test_surface();
         let on_surface = Picture {
             image: Pixels::Surface(surface.clone()),
-            ..test_picture(CGSize::new(1.0, 1.0))
+            ..test_picture(ScreenSize::new(1.0, 1.0))
         };
         set_layer_contents(&layer, &on_surface);
         assert_eq!(contents_address(&layer), Some(&*surface as *const _ as usize));
@@ -174,7 +174,7 @@ mod tests {
                     composite: composite.clone(),
                     rect: PixelRect::from_cg(rect),
                 },
-                ..test_picture(CGSize::new(8.0, 4.0))
+                ..test_picture(ScreenSize::new(8.0, 4.0))
             };
             let layer = CALayer::layer();
             layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(8.0, 4.0)));
@@ -204,7 +204,7 @@ mod tests {
                 composite,
                 rect: PixelRect::new(Point::new(8.0, 0.0), Size::new(8.0, 4.0)),
             },
-            ..test_picture(CGSize::new(8.0, 4.0))
+            ..test_picture(ScreenSize::new(8.0, 4.0))
         };
         let layer = CALayer::layer();
         layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(8.0, 4.0)));
@@ -222,14 +222,14 @@ mod tests {
                 composite: quadrants(),
                 rect: PixelRect::new(Point::new(8.0, 0.0), Size::new(8.0, 4.0)),
             },
-            ..test_picture(CGSize::new(8.0, 4.0))
+            ..test_picture(ScreenSize::new(8.0, 4.0))
         };
         set_layer_contents(&layer, &region);
         assert_eq!(
             layer.contentsRect(),
             CGRect::new(CGPoint::new(0.5, 0.0), CGSize::new(0.5, 0.5))
         );
-        set_layer_contents(&layer, &test_picture(CGSize::new(1.0, 1.0)));
+        set_layer_contents(&layer, &test_picture(ScreenSize::new(1.0, 1.0)));
         assert_eq!(layer.contentsRect(), crate::pictures::domain::region::WHOLE.to_cg());
     }
 
@@ -244,7 +244,7 @@ mod tests {
         assert!((region.origin.x - 20.0 / 42.0).abs() < 1e-9);
         assert!((region.size.width - 2.0 / 42.0).abs() < 1e-9);
 
-        let whole = stretch_region(&test_picture(CGSize::new(859.0, 1081.0)));
+        let whole = stretch_region(&test_picture(ScreenSize::new(859.0, 1081.0)));
         assert_eq!(whole, ContentsRect::new(Point::new(0.0, 0.0), Size::new(1.0, 1.0)));
     }
 }

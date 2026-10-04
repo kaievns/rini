@@ -4,7 +4,7 @@
 //! `accents::push_tracks`'. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
 use std::time::Duration;
 
-use objc2_core_foundation::CGPoint;
+use rini_geometry::space::{OverlayPoint, OverlayVector};
 
 use super::easing::{BOUNCE_TURN, EASE_IN_OUT, MOTION_CURVE};
 use super::plan::GroupKey;
@@ -18,8 +18,8 @@ pub const SHORTEST_PUSH: f64 = 0.4;
 /// `turn` of `duration`, then home to rest on ease-in-out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bounce {
-    pub from: CGPoint,
-    pub overshoot: CGPoint,
+    pub from: OverlayVector,
+    pub overshoot: OverlayVector,
     /// Where the way home begins, as a fraction of `duration`.
     pub turn: f64,
     pub duration: Duration,
@@ -27,9 +27,9 @@ pub struct Bounce {
 
 impl Bounce {
     /// A push with nothing playing: out from rest, the full way.
-    pub fn from_rest(overshoot: CGPoint, duration: Duration) -> Self {
+    pub fn from_rest(overshoot: OverlayVector, duration: Duration) -> Self {
         Bounce {
-            from: CGPoint::new(0.0, 0.0),
+            from: OverlayVector::zero(),
             overshoot,
             turn: BOUNCE_TURN,
             duration,
@@ -37,7 +37,7 @@ impl Bounce {
     }
 
     /// The displacement `elapsed` into the bounce.
-    pub fn at(&self, elapsed: Duration) -> CGPoint {
+    pub fn at(&self, elapsed: Duration) -> OverlayVector {
         let total = self.duration.as_secs_f64();
         let t = if total > 0.0 {
             (elapsed.as_secs_f64() / total).clamp(0.0, 1.0)
@@ -46,20 +46,20 @@ impl Bounce {
         };
         if t <= self.turn && self.turn > 0.0 {
             let k = MOTION_CURVE.ease(t / self.turn);
-            CGPoint::new(
+            OverlayVector::new(
                 self.from.x + (self.overshoot.x - self.from.x) * k,
                 self.from.y + (self.overshoot.y - self.from.y) * k,
             )
         } else {
             let k = 1.0 - EASE_IN_OUT.ease((t - self.turn) / (1.0 - self.turn));
-            CGPoint::new(self.overshoot.x * k, self.overshoot.y * k)
+            OverlayVector::new(self.overshoot.x * k, self.overshoot.y * k)
         }
     }
 
     /// A push arriving where a bounce is drawn `drawn` out: out again from there, the way out
     /// shortened by how much of it is already covered, the way home a full one. From rest, or of no
     /// length, it is exactly `from_rest`; one of no length is a cut, drawn at rest.
-    pub fn from_drawn(drawn: CGPoint, overshoot: CGPoint, duration: Duration) -> Self {
+    pub fn from_drawn(drawn: OverlayVector, overshoot: OverlayVector, duration: Duration) -> Self {
         if duration.is_zero() || (drawn.x == 0.0 && drawn.y == 0.0) {
             return Bounce::from_rest(overshoot, duration);
         }
@@ -84,14 +84,13 @@ impl Bounce {
     /// The bounce on `container` from `begin` on the media clock, as the overlay hands it to Core
     /// Animation: one additive keyframe animation, a curve per way.
     pub fn track(&self, container: GroupKey, begin: f64) -> Track {
-        let rest = CGPoint::new(0.0, 0.0);
         Track::keyframes(
             Node::Container(container),
             Channel::Bounce,
             vec![
-                (0.0, Value::Point(self.from)),
-                (self.turn, Value::Point(self.overshoot)),
-                (1.0, Value::Point(rest)),
+                (0.0, Value::Point(self.from.to_point())),
+                (self.turn, Value::Point(self.overshoot.to_point())),
+                (1.0, Value::Point(OverlayPoint::origin())),
             ],
             vec![Curve::Bezier(MOTION_CURVE), Curve::Bezier(EASE_IN_OUT)],
             begin,
@@ -106,13 +105,13 @@ mod tests {
     use crate::animation::domain::motion::score::{Edit, Score};
 
     const PLAYS: Duration = Duration::from_millis(350);
-    const WALL: CGPoint = CGPoint { x: -72.0, y: 0.0 };
+    const WALL: OverlayVector = OverlayVector::new(-72.0, 0.0);
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
     }
 
-    fn close(a: CGPoint, b: CGPoint) -> bool {
+    fn close(a: OverlayVector, b: OverlayVector) -> bool {
         (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6
     }
 
@@ -120,9 +119,9 @@ mod tests {
     #[test]
     fn a_first_push_goes_out_once_and_comes_home() {
         let b = Bounce::from_rest(WALL, PLAYS);
-        assert!(close(b.at(Duration::ZERO), CGPoint::new(0.0, 0.0)));
+        assert!(close(b.at(Duration::ZERO), OverlayVector::zero()));
         assert!(close(b.at(PLAYS.mul_f64(BOUNCE_TURN)), WALL));
-        assert!(close(b.at(PLAYS), CGPoint::new(0.0, 0.0)));
+        assert!(close(b.at(PLAYS), OverlayVector::zero()));
         let mut previous = 0.0;
         for i in 1..=350 {
             let d = -b.at(ms(i)).x;
@@ -149,7 +148,7 @@ mod tests {
                 "reaches the wall again, {at}ms"
             );
             assert!(
-                close(next.at(next.duration), CGPoint::new(0.0, 0.0)),
+                close(next.at(next.duration), OverlayVector::zero()),
                 "and comes home, {at}ms"
             );
         }
@@ -198,11 +197,11 @@ mod tests {
     /// the durations would round it, and a carrier at rest would start on a slightly other clock.
     #[test]
     fn from_rest_is_from_drawn_at_rest_exactly() {
-        let rest = CGPoint::new(0.0, 0.0);
+        let rest = OverlayVector::zero();
         for (overshoot, plays) in [
             (WALL, PLAYS),
-            (CGPoint::new(0.0, -72.0), Duration::from_millis(455)),
-            (CGPoint::new(72.0, 0.0), Duration::from_nanos(349_999_999)),
+            (OverlayVector::new(0.0, -72.0), Duration::from_millis(455)),
+            (OverlayVector::new(72.0, 0.0), Duration::from_nanos(349_999_999)),
         ] {
             assert_eq!(
                 Bounce::from_drawn(rest, overshoot, plays),
@@ -210,7 +209,7 @@ mod tests {
             );
         }
         assert_eq!(
-            Bounce::from_drawn(CGPoint::new(-0.0, 0.0), WALL, PLAYS),
+            Bounce::from_drawn(OverlayVector::new(-0.0, 0.0), WALL, PLAYS),
             Bounce::from_rest(WALL, PLAYS),
             "home, as `at` draws it at the end"
         );
@@ -224,7 +223,7 @@ mod tests {
         let cut = Bounce::from_drawn(drawn, WALL, Duration::ZERO);
         assert!(cut.turn.is_finite(), "{cut:?}");
         assert_eq!(cut.duration, Duration::ZERO);
-        assert!(close(cut.at(Duration::ZERO), CGPoint::new(0.0, 0.0)));
+        assert!(close(cut.at(Duration::ZERO), OverlayVector::zero()));
         assert_eq!(cut.track(GroupKey::STILL, 7.0).seconds(), 0.0);
     }
 
@@ -232,7 +231,7 @@ mod tests {
     #[test]
     fn a_push_the_other_way_starts_from_where_it_is() {
         let first = Bounce::from_rest(WALL, PLAYS);
-        let back = CGPoint::new(72.0, 0.0);
+        let back = OverlayVector::new(72.0, 0.0);
         let next = Bounce::from_drawn(first.at(ms(100)), back, PLAYS);
         assert!(close(next.at(Duration::ZERO), first.at(ms(100))));
         assert!(close(next.at(next.duration.mul_f64(next.turn)), back));
@@ -242,13 +241,18 @@ mod tests {
         );
     }
 
-    fn sampled(bounce: &Bounce, model: CGPoint, begin: f64, elapsed: Duration) -> CGPoint {
+    fn sampled(
+        bounce: &Bounce,
+        model: OverlayPoint,
+        begin: f64,
+        elapsed: Duration,
+    ) -> OverlayVector {
         let mut score = Score::default();
         let node = Node::Container(GroupKey::STILL);
         score.apply(&Edit::Place(node, Value::Point(model)));
         score.apply(&Edit::Add(bounce.track(GroupKey::STILL, begin)));
         match score.sample(node, begin + elapsed.as_secs_f64()) {
-            Some(Value::Point(p)) => CGPoint::new(p.x - model.x, p.y - model.y),
+            Some(Value::Point(p)) => p - model,
             other => panic!("a container holds a point: {other:?}"),
         }
     }
@@ -258,10 +262,10 @@ mod tests {
     #[test]
     fn a_bounce_from_rest_is_the_keyframes_the_overlay_installs() {
         let track = Bounce::from_rest(WALL, PLAYS).track(GroupKey::STILL, 7.0);
-        let rest = Value::Point(CGPoint::new(0.0, 0.0));
+        let rest = Value::Point(OverlayPoint::origin());
         assert_eq!(
             track.keys(),
-            [(0.0, rest), (BOUNCE_TURN, Value::Point(WALL)), (1.0, rest)]
+            [(0.0, rest), (BOUNCE_TURN, Value::Point(WALL.to_point())), (1.0, rest)]
         );
         assert_eq!(
             track.curves(),
@@ -281,10 +285,10 @@ mod tests {
             first,
             Bounce::from_drawn(first.at(ms(90)), WALL, PLAYS),
             Bounce::from_drawn(first.at(ms(250)), WALL, PLAYS),
-            Bounce::from_drawn(first.at(ms(100)), CGPoint::new(72.0, 0.0), PLAYS),
-            Bounce::from_rest(CGPoint::new(0.0, 72.0), PLAYS),
+            Bounce::from_drawn(first.at(ms(100)), OverlayVector::new(72.0, 0.0), PLAYS),
+            Bounce::from_rest(OverlayVector::new(0.0, 72.0), PLAYS),
         ];
-        let model = CGPoint::new(-861.0, 32.0);
+        let model = OverlayPoint::new(-861.0, 32.0);
         for (k, bounce) in bounces.iter().enumerate() {
             let millis = bounce.duration.as_millis() as u64;
             for at in (0..millis).map(ms).chain([bounce.duration.mul_f64(bounce.turn)]) {
@@ -293,7 +297,7 @@ mod tests {
             }
             assert_eq!(
                 sampled(bounce, model, 1234.5, bounce.duration),
-                CGPoint::new(0.0, 0.0),
+                OverlayVector::zero(),
                 "bounce {k} is home"
             );
         }

@@ -16,7 +16,7 @@ This section goes when the last row is done.
 | 3 | `transitions`: the coordinator's decisions out of `animation`; the lifecycle as a pure state machine | done |
 | 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | done |
 | 5 | `animation` plays a `Score`; choreographies and accents produce one | done |
-| 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | |
+| 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | done |
 | 7 | The coordinator on its own thread; the main thread renders only | |
 | 8 | The transitions journal | |
 

@@ -467,8 +467,9 @@ snapped them back at the handover. They belong to a workspace but not to its str
 a scroll must leave them alone, while a switch between workspaces must take them
 along.
 
-So a tile can be pinned: `surface_travel` returns `(frame, frame)` for a pinned
-window, so a strip movement carries it nowhere. A pan pins whatever the layout
+So a tile can be pinned: `surface_travel` starts and ends a pinned window where the
+final viewport shows its frame, so a strip movement carries it nowhere. A pan ends
+at viewport (0, 0), where that is the frame itself. A pan pins whatever the layout
 engine calls floating; a switch pins nothing and moves the floating container by
 the strip's own travel (`FlightPlan.floating_travel`).
 

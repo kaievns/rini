@@ -1841,8 +1841,8 @@ fn moving_strip_with(
 /// One strip movement the reactor sent.
 struct SurfaceFlight {
     windows: Vec<crate::transitions::domain::request::SurfaceWindow>,
-    from_offset: CGPoint,
-    final_frames: Vec<(WindowId, CGRect)>,
+    from_offset: SurfacePoint,
+    final_frames: Vec<(WindowId, ScreenRect)>,
     focus: Option<WindowId>,
     focused_before: Option<WindowId>,
     key: Option<WindowId>,
@@ -1966,7 +1966,7 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
     for other in windows.iter().filter(|s| s.window != moved && s.window != passed) {
         assert_eq!(other.from, None, "{:?} only pans", other.window);
     }
-    let (start, end) = w.travel(*from_offset, CGPoint::new(0.0, 0.0));
+    let (start, end) = w.travel(*from_offset, SurfacePoint::origin());
     assert!(
         (end.origin.x - start.origin.x).abs() < 1728.0 / 4.0,
         "the camera followed W: {start:?} to {end:?}"
@@ -2033,9 +2033,10 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             (w_from.origin.x - w.frame.origin.x).abs() >= 1.0,
             "{direction:?}: W starts from its old slot"
         );
-        let display = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
-        let (_, n_end) = n.travel(flight.from_offset, CGPoint::new(0.0, 0.0));
-        let (_, w_end) = w.travel(flight.from_offset, CGPoint::new(0.0, 0.0));
+        let display =
+            ScreenRect::from_cg(CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)));
+        let (_, n_end) = n.travel(flight.from_offset, SurfacePoint::origin());
+        let (_, w_end) = w.travel(flight.from_offset, SurfacePoint::origin());
         assert!(
             n_end.origin.x >= w_end.origin.x && n_end.max().x <= w_end.max().x,
             "{direction:?}: drawn ending beneath W, {n_end:?} under {w_end:?}"
@@ -2154,21 +2155,23 @@ fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
         flight.from_offset
     );
     assert_eq!(flight.windows.len(), 5);
-    let display = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let display =
+            ScreenRect::from_cg(CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)));
+    let viewport = rini_geometry::to_overlay_space(display, display);
     let mut seen = 0;
     for window in &flight.windows {
-        let (start, _) = window.travel(flight.from_offset, CGPoint::new(0.0, 0.0));
+        let (start, _) = window.travel(flight.from_offset, SurfacePoint::origin());
         let (_, before) = was.iter().find(|(w, _)| *w == window.window).unwrap();
-        if rini_geometry::is_off_screen(display, *before) {
+        if rini_geometry::is_off_screen(display, ScreenRect::from_cg(*before)) {
             assert!(
-                rini_geometry::is_off_screen(display, start),
+                rini_geometry::is_off_screen(viewport, start),
                 "{:?} was parked, and is drawn from off screen, not {start:?}",
                 window.window
             );
         } else {
             seen += 1;
             assert_eq!(
-                start.origin, before.origin,
+                start.origin.to_cg(), before.origin,
                 "{:?} is drawn from where it was",
                 window.window
             );

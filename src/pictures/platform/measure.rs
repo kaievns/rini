@@ -207,7 +207,7 @@ mod tests {
                 covered: ScreenSize::new(size.0, size.1),
                 window: ScreenSize::new(size.0, size.1),
             },
-            ..test_picture(CGSize::new(size.0, size.1))
+            ..test_picture(ScreenSize::new(size.0, size.1))
         }
     }
 
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn a_surface_has_no_band_print() {
-        let mut picture = test_picture(CGSize::new(1.0, 1.0));
+        let mut picture = test_picture(ScreenSize::new(1.0, 1.0));
         picture.image = Pixels::Surface(test_surface(4, 4, [0, 0, 0, 255]));
         assert!(band_print(&picture).is_none());
     }
@@ -282,7 +282,7 @@ mod tests {
             "grey body"
         );
 
-        let mut surface = test_picture(CGSize::new(400.0, 300.0));
+        let mut surface = test_picture(ScreenSize::new(400.0, 300.0));
         surface.image = Pixels::Surface(test_surface(800, 600, [128, 128, 128, 255]));
         assert!(!bodies_differ(&a, &body_samples(&surface).unwrap()));
 

@@ -3,13 +3,13 @@
 //! should come in. Everything here is rect arithmetic; the window-server read that feeds `real` is
 //! the caller's.
 
-use objc2_core_foundation::{CGPoint, CGRect};
+use rini_geometry::space::{Rect, ScreenRect, ScreenVector};
 use rini_geometry::{SameAs, is_off_screen, park_entry_frame};
 
 use crate::transitions::domain::request::AnimationRequest;
 
 /// What fraction of `frame`'s area lies inside `display`.
-pub fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
+pub fn on_screen_fraction(frame: ScreenRect, display: ScreenRect) -> f64 {
     let area = frame.size.width * frame.size.height;
     if area <= 0.0 {
         return 0.0;
@@ -32,19 +32,19 @@ pub fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
 /// `travel`, the vector its neighbours make this pass (`neighbour_travel`). Without a moving
 /// neighbour it enters from the display edge on the park's side (`entry_frame`).
 pub fn resolve_start(
-    real: Option<CGRect>,
-    from: CGRect,
-    to: CGRect,
-    display: CGRect,
-    travel: Option<CGPoint>,
-) -> CGRect {
+    real: Option<ScreenRect>,
+    from: ScreenRect,
+    to: ScreenRect,
+    display: ScreenRect,
+    travel: Option<ScreenVector>,
+) -> ScreenRect {
     // A park is judged from both frames, before the synthetic test: apps clamp the real frame past
     // the park threshold, and the server may already report the slot. See src/transitions/docs/coordination.md.
     let parked_real = real.is_some_and(|real| is_off_screen(display, real));
     let parked_from = is_off_screen(display, from);
     if parked_real || parked_from {
         return match travel {
-            Some(d) => translated(to, CGPoint::new(-d.x, -d.y)),
+            Some(d) => to.translate(-d),
             None => {
                 let park = if parked_real {
                     real.unwrap_or(from)
@@ -66,10 +66,15 @@ pub fn resolve_start(
 /// `start` translated by `travel` (`neighbour_travel`), the mirror of `resolve_start`. With no
 /// moving neighbour it exits past the display edge on the park's side. See "Layout changes" in
 /// `src/transitions/docs/coordination.md`.
-pub fn resolve_end(start: CGRect, to: CGRect, display: CGRect, travel: Option<CGPoint>) -> CGRect {
+pub fn resolve_end(
+    start: ScreenRect,
+    to: ScreenRect,
+    display: ScreenRect,
+    travel: Option<ScreenVector>,
+) -> ScreenRect {
     if is_off_screen(display, to) && !is_off_screen(display, start) {
         return match travel {
-            Some(d) => translated(start, d),
+            Some(d) => start.translate(d),
             None => park_entry_frame(to, start, display),
         };
     }
@@ -85,10 +90,10 @@ pub fn resolve_end(start: CGRect, to: CGRect, display: CGRect, travel: Option<CG
 /// beside it under one duration and one curve, so the two ran at different speeds and
 /// overlapped (seen 2026-09-15). Sharing the neighbour's vector is what makes them one body.
 pub fn neighbour_travel(
-    subject: CGRect,
-    others: &[(CGRect, CGRect, bool)],
-    display: CGRect,
-) -> Option<CGPoint> {
+    subject: ScreenRect,
+    others: &[(ScreenRect, ScreenRect, bool)],
+    display: ScreenRect,
+) -> Option<ScreenVector> {
     others
         .iter()
         .filter(|(_, _, floating)| !floating)
@@ -98,24 +103,16 @@ pub fn neighbour_travel(
             (to.origin.x - from.origin.x).abs() >= 0.5 || (to.origin.y - from.origin.y).abs() >= 0.5
         })
         .min_by(|(a, _, _), (b, _, _)| {
-            let da = (a.mid().x - subject.mid().x).abs();
-            let db = (b.mid().x - subject.mid().x).abs();
+            let da = (a.center().x - subject.center().x).abs();
+            let db = (b.center().x - subject.center().x).abs();
             da.total_cmp(&db)
         })
-        .map(|(from, to, _)| CGPoint::new(to.origin.x - from.origin.x, to.origin.y - from.origin.y))
-}
-
-/// `frame` moved by `by`, same size.
-pub fn translated(frame: CGRect, by: CGPoint) -> CGRect {
-    CGRect::new(
-        CGPoint::new(frame.origin.x + by.x, frame.origin.y + by.y),
-        frame.size,
-    )
+        .map(|(from, to, _)| to.origin - from.origin)
 }
 
 /// The subject frame `neighbour_travel` measures from for one request: the slot it leaves when
 /// its destination is a park, otherwise the slot it arrives at.
-pub fn travel_subject(from: CGRect, to: CGRect, display: CGRect) -> CGRect {
+pub fn travel_subject(from: ScreenRect, to: ScreenRect, display: ScreenRect) -> ScreenRect {
     if is_off_screen(display, to) { from } else { to }
 }
 
@@ -124,7 +121,7 @@ pub fn travel_subject(from: CGRect, to: CGRect, display: CGRect) -> CGRect {
 /// A window already sitting at its destination has no drift, so a request that still asks for
 /// motion can only be a synthetic start (the debug slide, which invents one). Overriding it with
 /// the real frame made `from` equal `to`, which silently killed the whole movement.
-pub fn start_is_synthetic(real: CGRect, from: CGRect, to: CGRect) -> bool {
+pub fn start_is_synthetic(real: ScreenRect, from: ScreenRect, to: ScreenRect) -> bool {
     real.same_as(to) && !from.same_as(to)
 }
 
@@ -144,7 +141,7 @@ pub fn min_on_screen(moving: bool) -> f64 {
 pub const MIN_VISIBLE_EXTENT: f64 = 80.0;
 
 /// How much of `frame` shows on `display`, as the overlap's width and height.
-pub fn on_screen_extent(frame: CGRect, display: CGRect) -> (f64, f64) {
+pub fn on_screen_extent(frame: ScreenRect, display: ScreenRect) -> (f64, f64) {
     let w = (frame.origin.x + frame.size.width).min(display.origin.x + display.size.width)
         - frame.origin.x.max(display.origin.x);
     let h = (frame.origin.y + frame.size.height).min(display.origin.y + display.size.height)
@@ -158,13 +155,13 @@ pub fn on_screen_extent(frame: CGRect, display: CGRect) -> (f64, f64) {
 /// Where one tile starts, where it ends, and the vector it rides.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TilePath {
-    /// Overlay-space start, before the coordinate conversion.
-    pub start: CGRect,
+    /// Where the tile starts.
+    pub start: ScreenRect,
     /// Where the tile lands. Not always `to`: a window heading for a park is drawn heading off the
     /// edge, and the real park stays in the frame written to the window.
-    pub end: CGRect,
+    pub end: ScreenRect,
     /// The neighbour vector this tile rides, if it is riding one.
-    pub travel: Option<CGPoint>,
+    pub travel: Option<ScreenVector>,
 }
 
 /// The whole geometry decision for one window in a pass, or `None` if it is not worth drawing.
@@ -180,17 +177,17 @@ pub struct TilePath {
 /// `others` is every window in the pass including this one, and `index` says which one is this one —
 /// rather than the caller building a self-excluding copy per window, which is what it used to do.
 pub fn tile_path(
-    real: Option<CGRect>,
-    from: CGRect,
-    to: CGRect,
+    real: Option<ScreenRect>,
+    from: ScreenRect,
+    to: ScreenRect,
     floating: bool,
-    others: &[(CGRect, CGRect, bool)],
+    others: &[(ScreenRect, ScreenRect, bool)],
     index: usize,
-    display: CGRect,
+    display: ScreenRect,
 ) -> Option<TilePath> {
     let travel = (!floating)
         .then(|| {
-            let excluding_self: Vec<(CGRect, CGRect, bool)> = others
+            let excluding_self: Vec<(ScreenRect, ScreenRect, bool)> = others
                 .iter()
                 .enumerate()
                 .filter(|(other, _)| *other != index)
@@ -205,7 +202,7 @@ pub fn tile_path(
     worth_animating(start, end, display).then_some(TilePath { start, end, travel })
 }
 
-pub fn worth_animating(from: CGRect, to: CGRect, display: CGRect) -> bool {
+pub fn worth_animating(from: ScreenRect, to: ScreenRect, display: ScreenRect) -> bool {
     /// Enough that a window cannot cross the display between two samples: the fastest realistic
     /// travel is a few display widths.
     const SAMPLES: usize = 11;
@@ -223,7 +220,7 @@ pub fn worth_animating(from: CGRect, to: CGRect, display: CGRect) -> bool {
 }
 
 /// Whether enough of the window shows at `at` for a tile to be worth drawing there.
-pub fn shows_enough(at: CGRect, display: CGRect, moving: bool) -> bool {
+pub fn shows_enough(at: ScreenRect, display: ScreenRect, moving: bool) -> bool {
     if on_screen_fraction(at, display) >= min_on_screen(moving) {
         return true;
     }
@@ -235,7 +232,7 @@ pub fn shows_enough(at: CGRect, display: CGRect, moving: bool) -> bool {
 ///
 /// Requests with the same start and end are there to be drawn, not moved. Half a point, because the layout
 /// rounds to whole points.
-pub fn is_moving(from: CGRect, to: CGRect) -> bool {
+pub fn is_moving<U>(from: Rect<U>, to: Rect<U>) -> bool {
     (to.origin.x - from.origin.x).abs() >= 0.5
         || (to.origin.y - from.origin.y).abs() >= 0.5
         || (to.size.width - from.size.width).abs() >= 0.5
@@ -264,7 +261,7 @@ pub fn travels_visibly(requests: &[AnimationRequest]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGSize;
+    use rini_geometry::space::{Point, Rect, ScreenPoint, ScreenSize, Size};
 
     use super::*;
     use crate::animation::domain::motion::plan::entrance_from;
@@ -324,7 +321,7 @@ mod tests {
     /// already is, and every such write invites another layout pass.
     #[test]
     fn a_window_that_is_not_going_anywhere_is_not_moving() {
-        let frame = CGRect::new(CGPoint::new(502.0, 135.0), CGSize::new(723.0, 879.0));
+        let frame = ScreenRect::new(ScreenPoint::new(502.0, 135.0), ScreenSize::new(723.0, 879.0));
         assert!(!is_moving(frame, frame));
     }
 
@@ -343,10 +340,10 @@ mod tests {
 
     #[test]
     fn a_window_that_changes_position_or_size_is_moving() {
-        let frame = CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(859.0, 1081.0));
-        let moved = CGRect::new(CGPoint::new(865.0, 32.0), CGSize::new(859.0, 1081.0));
-        let lowered = CGRect::new(CGPoint::new(4.0, 1149.0), CGSize::new(859.0, 1081.0));
-        let widened = CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(1720.0, 1081.0));
+        let frame = ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(859.0, 1081.0));
+        let moved = ScreenRect::new(ScreenPoint::new(865.0, 32.0), ScreenSize::new(859.0, 1081.0));
+        let lowered = ScreenRect::new(ScreenPoint::new(4.0, 1149.0), ScreenSize::new(859.0, 1081.0));
+        let widened = ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(1720.0, 1081.0));
         assert!(is_moving(frame, moved));
         assert!(is_moving(frame, lowered));
         assert!(is_moving(frame, widened));
@@ -357,18 +354,9 @@ mod tests {
     mod park_remap {
         use super::*;
 
-        const SLOT: CGRect = CGRect {
-            origin: CGPoint { x: 4.0, y: 32.0 },
-            size: CGSize { width: 1720.0, height: 1081.0 },
-        };
-        const PARK: CGRect = CGRect {
-            origin: CGPoint { x: 1727.0, y: 1116.0 },
-            size: CGSize { width: 1720.0, height: 1081.0 },
-        };
-        const RIGHT_EDGE: CGRect = CGRect {
-            origin: CGPoint { x: 1728.0, y: 32.0 },
-            size: CGSize { width: 1720.0, height: 1081.0 },
-        };
+        const SLOT: ScreenRect = Rect::new(Point::new(4.0, 32.0), Size::new(1720.0, 1081.0));
+        const PARK: ScreenRect = Rect::new(Point::new(1727.0, 1116.0), Size::new(1720.0, 1081.0));
+        const RIGHT_EDGE: ScreenRect = Rect::new(Point::new(1728.0, 32.0), Size::new(1720.0, 1081.0));
 
         /// Kiro's park shows 41pt: `is_off_screen` says visible, the requested park says parked.
         #[test]
@@ -443,7 +431,7 @@ mod tests {
                     _ => Some(to),
                 };
                 let got = resolve_start(real, from, to, DISPLAY, None);
-                let parked_left = from.mid().x < DISPLAY.mid().x;
+                let parked_left = from.center().x < DISPLAY.center().x;
                 let expected_x = if parked_left {
                     DISPLAY.origin.x - to.size.width
                 } else {
@@ -465,18 +453,9 @@ mod tests {
     mod park_exit {
         use super::*;
 
-        const SLOT: CGRect = CGRect {
-            origin: CGPoint { x: 867.0, y: 32.0 },
-            size: CGSize { width: 859.0, height: 1081.0 },
-        };
-        const RIGHT_PARK: CGRect = CGRect {
-            origin: CGPoint { x: 1727.0, y: 1116.0 },
-            size: CGSize { width: 859.0, height: 1081.0 },
-        };
-        const LEFT_PARK: CGRect = CGRect {
-            origin: CGPoint { x: -858.0, y: 1116.0 },
-            size: CGSize { width: 859.0, height: 1081.0 },
-        };
+        const SLOT: ScreenRect = Rect::new(Point::new(867.0, 32.0), Size::new(859.0, 1081.0));
+        const RIGHT_PARK: ScreenRect = Rect::new(Point::new(1727.0, 1116.0), Size::new(859.0, 1081.0));
+        const LEFT_PARK: ScreenRect = Rect::new(Point::new(-858.0, 1116.0), Size::new(859.0, 1081.0));
 
         #[test]
         fn a_window_leaving_for_the_right_park_exits_past_the_right_edge() {
@@ -532,7 +511,7 @@ mod tests {
                 let start = rng.on_screen();
                 let park = rng.park(start.size);
                 let got = resolve_end(start, park, DISPLAY, None);
-                let parked_left = park.mid().x < DISPLAY.mid().x;
+                let parked_left = park.center().x < DISPLAY.center().x;
                 let expected_x = if parked_left {
                     DISPLAY.origin.x - start.size.width
                 } else {
@@ -579,26 +558,17 @@ mod tests {
         use super::*;
 
         const W: f64 = 859.0;
-        const SLOT_A: CGRect = CGRect {
-            origin: CGPoint { x: 4.0, y: 32.0 },
-            size: CGSize { width: W, height: 1081.0 },
-        };
-        const SLOT_B: CGRect = CGRect {
-            origin: CGPoint { x: 867.0, y: 32.0 },
-            size: CGSize { width: W, height: 1081.0 },
-        };
-        const RIGHT_PARK: CGRect = CGRect {
-            origin: CGPoint { x: 1727.0, y: 1116.0 },
-            size: CGSize { width: W, height: 1081.0 },
-        };
+        const SLOT_A: ScreenRect = Rect::new(Point::new(4.0, 32.0), Size::new(W, 1081.0));
+        const SLOT_B: ScreenRect = Rect::new(Point::new(867.0, 32.0), Size::new(W, 1081.0));
+        const RIGHT_PARK: ScreenRect = Rect::new(Point::new(1727.0, 1116.0), Size::new(W, 1081.0));
 
-        fn moved(frame: CGRect, dx: f64) -> CGRect {
-            translated(frame, CGPoint::new(dx, 0.0))
+        fn moved(frame: ScreenRect, dx: f64) -> ScreenRect {
+            frame.translate(ScreenVector::new(dx, 0.0))
         }
 
         /// `start()`'s per-request rule on plain rects: the tile's `(from, to)` for request
         /// `index` of `requests` (`(from, to, floating)`), with no server answer.
-        fn tile_for(index: usize, requests: &[(CGRect, CGRect, bool)]) -> (CGRect, CGRect) {
+        fn tile_for(index: usize, requests: &[(ScreenRect, ScreenRect, bool)]) -> (ScreenRect, ScreenRect) {
             let (from, to, floating) = requests[index];
             let others: Vec<_> = requests
                 .iter()
@@ -685,7 +655,7 @@ mod tests {
             ];
             assert_eq!(
                 neighbour_travel(subject, &others, DISPLAY),
-                Some(CGPoint::new(-250.0, 0.0))
+                Some(ScreenVector::new(-250.0, 0.0))
             );
             let others = [
                 (near, moved(near, -250.0), false),
@@ -693,7 +663,7 @@ mod tests {
             ];
             assert_eq!(
                 neighbour_travel(subject, &others, DISPLAY),
-                Some(CGPoint::new(-250.0, 0.0))
+                Some(ScreenVector::new(-250.0, 0.0))
             );
         }
 
@@ -706,10 +676,10 @@ mod tests {
                 let n = rng.below(4) as usize + 2;
                 let w = rng.pt(300.0, 1680.0 / n as f64 - 4.0);
                 let k = rng.below(n as u64 - 1) as usize;
-                let columns: Vec<CGRect> =
+                let columns: Vec<ScreenRect> =
                     (0..n).map(|i| rect(4.0 + i as f64 * (w + 4.0), 32.0, w, 1081.0)).collect();
                 let park = rect(DISPLAY.max().x - 1.0, DISPLAY.max().y - 1.0, w, 1081.0);
-                let mut requests: Vec<(CGRect, CGRect, bool)> = columns
+                let mut requests: Vec<(ScreenRect, ScreenRect, bool)> = columns
                     .iter()
                     .enumerate()
                     .map(|(i, c)| {
@@ -746,10 +716,10 @@ mod tests {
                 let n = rng.below(4) as usize + 2;
                 let w = rng.pt(300.0, 1680.0 / n as f64 - 4.0);
                 let k = rng.below(n as u64 - 1) as usize;
-                let columns: Vec<CGRect> =
+                let columns: Vec<ScreenRect> =
                     (0..n).map(|i| rect(4.0 + i as f64 * (w + 4.0), 32.0, w, 1081.0)).collect();
                 let park = rect(DISPLAY.max().x - 1.0, DISPLAY.max().y - 1.0, w, 1081.0);
-                let requests: Vec<(CGRect, CGRect, bool)> = columns
+                let requests: Vec<(ScreenRect, ScreenRect, bool)> = columns
                     .iter()
                     .enumerate()
                     .map(|(i, c)| {
@@ -785,8 +755,8 @@ mod tests {
         AnimationRequest {
             window: WindowId::new(1, (from_x.abs() as u32).max(1)),
             server_id: WindowServerId::new(1),
-            from: CGRect::new(CGPoint::new(from_x, 32.0), CGSize::new(859.0, 1081.0)),
-            to: CGRect::new(CGPoint::new(to_x, 32.0), CGSize::new(859.0, 1081.0)),
+            from: ScreenRect::new(ScreenPoint::new(from_x, 32.0), ScreenSize::new(859.0, 1081.0)),
+            to: ScreenRect::new(ScreenPoint::new(to_x, 32.0), ScreenSize::new(859.0, 1081.0)),
             floating: false,
         }
     }
@@ -1022,7 +992,7 @@ mod tests {
     fn a_parked_or_scrolled_off_close_is_not_worth_animating() {
         let mut rng = Gen(39);
         for _ in 0..RUNS {
-            let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
+            let size = ScreenSize::new(rng.pt(400.0, 1720.0), 1081.0);
             let park = rng.park(size);
             assert!(
                 !worth_animating(park, entrance_from(park), DISPLAY),
@@ -1061,19 +1031,20 @@ mod tests {
     mod park_groups {
         use super::*;
         use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, RigidGroup, reflow_plan};
+        use rini_geometry::space::OverlayVector;
 
         fn window(idx: u32) -> WindowId {
             WindowId::new(7, idx)
         }
 
-        fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
-            CGRect::new(
-                CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
+        fn shifted(frame: ScreenRect, dx: f64, dy: f64) -> ScreenRect {
+            ScreenRect::new(
+                ScreenPoint::new(frame.origin.x + dx, frame.origin.y + dy),
                 frame.size,
             )
         }
 
-        fn column(i: f64) -> CGRect {
+        fn column(i: f64) -> ScreenRect {
             rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
         }
 
@@ -1097,7 +1068,7 @@ mod tests {
             let b_to = shifted(b, -863.0, 0.0);
             let others = [(b, b_to, false)];
             let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &others, DISPLAY);
-            assert_eq!(travel, Some(CGPoint::new(-863.0, 0.0)));
+            assert_eq!(travel, Some(ScreenVector::new(-863.0, 0.0)));
             let a_end = resolve_end(a, park, DISPLAY, travel);
             assert_eq!(a_end, shifted(a, -863.0, 0.0));
 
@@ -1105,7 +1076,7 @@ mod tests {
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(members(groups[0]), vec![window(1), window(2)]);
-            assert_eq!(groups[0].travel, CGPoint::new(-863.0, 0.0));
+            assert_eq!(groups[0].travel, OverlayVector::new(-863.0, 0.0));
         }
 
         #[test]
@@ -1130,7 +1101,7 @@ mod tests {
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(members(groups[0]), vec![window(1)]);
-            assert_eq!(groups[0].travel, CGPoint::new(a_end.origin.x - a.origin.x, 0.0));
+            assert_eq!(groups[0].travel, OverlayVector::new(a_end.origin.x - a.origin.x, 0.0));
             assert_eq!(members(&plan.groups[0]), vec![window(2)]);
         }
     }

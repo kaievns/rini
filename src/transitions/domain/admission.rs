@@ -4,9 +4,8 @@
 //! different destination for a window already moving, or with a window the first pass had not placed.
 //! Admitting one into the other without a visible jump is what these decisions are for.
 
-use objc2_core_foundation::{CGRect, CGSize};
 use rini_core::ids::WindowId;
-use rini_geometry::space::{FromCg, ScreenSize};
+use rini_geometry::space::{OverlayRect, ScreenRect, ScreenSize};
 use rini_geometry::{SameAs, to_overlay_space};
 
 use crate::pictures::domain::coverage::outgrows;
@@ -16,8 +15,8 @@ use crate::pictures::domain::coverage::outgrows;
 #[derive(Debug, Clone)]
 pub(in crate::transitions) struct PendingEntrance {
     pub(in crate::transitions) window: WindowId,
-    /// Destination, in the overlay's coordinate space.
-    pub(in crate::transitions) to: CGRect,
+    /// Destination.
+    pub(in crate::transitions) to: OverlayRect,
     pub(in crate::transitions) floating: bool,
 }
 
@@ -35,8 +34,8 @@ pub(in crate::transitions) enum Admitted {
 
 /// The merge decision for one tile.
 pub(in crate::transitions) fn merge_action(
-    current_to: Option<CGRect>,
-    incoming_to: CGRect,
+    current_to: Option<OverlayRect>,
+    incoming_to: OverlayRect,
 ) -> Admitted {
     match current_to {
         Some(to) if to.same_as(incoming_to) => Admitted::Redundant,
@@ -49,8 +48,8 @@ pub(in crate::transitions) fn merge_action(
 /// for `merge_pass` to retarget. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn retarget_entrances(
     entrances: &mut [PendingEntrance],
-    final_frames: &[(WindowId, CGRect)],
-    display: CGRect,
+    final_frames: &[(WindowId, ScreenRect)],
+    display: ScreenRect,
 ) -> usize {
     let mut moved = 0;
     for entrance in entrances.iter_mut() {
@@ -71,7 +70,7 @@ pub(in crate::transitions) fn retarget_entrances(
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::transitions) enum EntranceDecision {
     /// Its tile travels from the frame macOS showed it at to its slot.
-    Travel { from: CGRect, to: CGRect },
+    Travel { from: ScreenRect, to: ScreenRect },
     /// No usable picture at spawn: a reservation held for the first picture, with the reason.
     Reserve(&'static str),
 }
@@ -91,8 +90,8 @@ pub(in crate::transitions) enum EndPicture {
 impl EndPicture {
     /// A window drawn from a picture covering `covered`: a grow its picture cannot cover at `to`, or a
     /// stand-in, which covers nothing, is awaited.
-    pub(in crate::transitions) fn of_picture(covered: ScreenSize, to: CGSize) -> Self {
-        if outgrows(covered, ScreenSize::from_cg(to)) { Self::Awaited } else { Self::Lands }
+    pub(in crate::transitions) fn of_picture(covered: ScreenSize, to: ScreenSize) -> Self {
+        if outgrows(covered, to) { Self::Awaited } else { Self::Lands }
     }
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
@@ -108,8 +107,8 @@ impl EndPicture {
 
 /// `Travel` iff the server reports a sized frame, the spawn capture is usable and budget remains.
 pub(in crate::transitions) fn entrance_plan(
-    spawn: Option<CGRect>,
-    slot: CGRect,
+    spawn: Option<ScreenRect>,
+    slot: ScreenRect,
     picture_usable: bool,
     budget_left: bool,
 ) -> EntranceDecision {
@@ -130,14 +129,10 @@ pub(in crate::transitions) fn entrance_plan(
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_geometry::space::{ScreenPoint, ScreenVector};
 
     use super::*;
-    use crate::animation::domain::motion::testing::{Gen, RUNS};
-
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-    }
+    use crate::animation::domain::motion::testing::{Gen, RUNS, rect};
 
     fn window(idx: u32) -> WindowId {
         WindowId::new(1, idx)
@@ -147,13 +142,13 @@ mod tests {
     /// restarting the animation on every repeat, which would mean it never lands.
     #[test]
     fn the_same_destination_again_is_redundant() {
-        let to = rect(0., 0., 100., 100.);
+        let to: OverlayRect = rect(0., 0., 100., 100.);
         assert_eq!(merge_action(Some(to), to), Admitted::Redundant);
     }
 
     #[test]
     fn a_new_destination_for_a_moving_window_retargets_it() {
-        let flying_to = rect(0., 0., 100., 100.);
+        let flying_to: OverlayRect = rect(0., 0., 100., 100.);
         let now_to = rect(500., 0., 100., 100.);
         assert_eq!(merge_action(Some(flying_to), now_to), Admitted::Retargeted);
     }
@@ -167,7 +162,7 @@ mod tests {
     /// same destination, and treating it as a retarget would bend a tile toward where it already is.
     #[test]
     fn a_rounding_difference_is_still_the_same_destination() {
-        let to = rect(10., 20., 100., 100.);
+        let to: OverlayRect = rect(10., 20., 100., 100.);
         let nudged = rect(10.000000001, 20., 100., 100.);
         assert_eq!(merge_action(Some(to), nudged), Admitted::Redundant);
     }
@@ -200,7 +195,7 @@ mod tests {
     #[test]
     fn an_entrance_the_pass_does_not_mention_is_left_alone() {
         let display = rect(0., 0., 1000., 800.);
-        let to = rect(10., 10., 100., 100.);
+        let to: OverlayRect = rect(10., 10., 100., 100.);
         let mut entrances = vec![PendingEntrance {
             window: window(1),
             to,
@@ -220,7 +215,7 @@ mod tests {
         let frame = rect(10., 10., 100., 100.);
         let mut entrances = vec![PendingEntrance {
             window: window(1),
-            to: frame,
+            to: to_overlay_space(frame, display),
             floating: false,
         }];
 
@@ -237,7 +232,7 @@ mod tests {
 
     #[test]
     fn a_window_with_a_usable_picture_and_a_real_frame_travels() {
-        let spawn = rect(0., 0., 200., 200.);
+        let spawn: ScreenRect = rect(0., 0., 200., 200.);
         let slot = rect(500., 0., 400., 600.);
         assert_eq!(
             entrance_plan(Some(spawn), slot, true, true),
@@ -249,7 +244,7 @@ mod tests {
     /// the log is the only way to tell them apart afterwards.
     #[test]
     fn every_reason_to_reserve_says_which_one_it_was() {
-        let slot = rect(500., 0., 400., 600.);
+        let slot: ScreenRect = rect(500., 0., 400., 600.);
         let spawn = rect(0., 0., 200., 200.);
         assert_eq!(
             entrance_plan(None, slot, true, true),
@@ -273,7 +268,7 @@ mod tests {
     /// has not laid out yet, and a tile scaled from either is a division by zero.
     #[test]
     fn a_frame_with_no_height_reserves_too() {
-        let slot = rect(500., 0., 400., 600.);
+        let slot: ScreenRect = rect(500., 0., 400., 600.);
         assert_eq!(
             entrance_plan(Some(rect(0., 0., 200., 0.)), slot, true, true),
             EntranceDecision::Reserve("zero server frame")
@@ -284,7 +279,7 @@ mod tests {
     /// rather than blaming the picture it never took.
     #[test]
     fn a_spent_capture_budget_is_reported_ahead_of_an_unusable_picture() {
-        let slot = rect(500., 0., 400., 600.);
+        let slot: ScreenRect = rect(500., 0., 400., 600.);
         let spawn = rect(0., 0., 200., 200.);
         assert_eq!(
             entrance_plan(Some(spawn), slot, false, false),
@@ -301,14 +296,14 @@ mod tests {
     /// of the time.
     #[test]
     fn a_pass_confirming_the_destination_is_redundant() {
-        let to = rect(4.0, 32.0, 859.0, 1081.0);
+        let to: OverlayRect = rect(4.0, 32.0, 859.0, 1081.0);
         let confirming = rect(4.05, 32.0, 859.0, 1081.0);
         assert_eq!(merge_action(Some(to), confirming), Admitted::Redundant);
     }
 
     #[test]
     fn a_new_destination_retargets_and_a_new_window_joins() {
-        let to = rect(4.0, 32.0, 859.0, 1081.0);
+        let to: OverlayRect = rect(4.0, 32.0, 859.0, 1081.0);
         assert_eq!(
             merge_action(Some(to), rect(865.0, 32.0, 859.0, 1081.0)),
             Admitted::Retargeted
@@ -325,8 +320,8 @@ mod tests {
     /// A grow its picture cannot cover and a stand-in are held for; a picture that covers lands.
     #[test]
     fn a_grow_and_a_stand_in_are_awaited_and_a_picture_that_covers_lands() {
-        let column = CGSize::new(859.0, 1081.0);
-        assert_eq!(EndPicture::of_picture(ScreenSize::new(859.0, 1081.0), CGSize::new(1720.0, 1081.0)), EndPicture::Awaited, "a grow");
+        let column = ScreenSize::new(859.0, 1081.0);
+        assert_eq!(EndPicture::of_picture(ScreenSize::new(859.0, 1081.0), ScreenSize::new(1720.0, 1081.0)), EndPicture::Awaited, "a grow");
         assert_eq!(EndPicture::of_picture(ScreenSize::new(0.0, 0.0), column), EndPicture::Awaited, "a stand-in covers nothing");
         assert_eq!(EndPicture::of_picture(ScreenSize::new(859.0, 1081.0), column), EndPicture::Lands);
         assert_eq!(EndPicture::of_picture(ScreenSize::new(1720.0, 1081.0), column), EndPicture::Lands, "a shrink crops");
@@ -336,7 +331,7 @@ mod tests {
     /// already at its slot, a cold cache rather than an open, lands; a reservation is held for.
     #[test]
     fn an_entrance_that_travels_repaints_one_standing_lands_and_a_reservation_is_awaited() {
-        let slot = rect(867.0, 32.0, 859.0, 1081.0);
+        let slot: ScreenRect = rect(867.0, 32.0, 859.0, 1081.0);
         let spawn = rect(400.0, 200.0, 700.0, 500.0);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }), EndPicture::Repainting);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }), EndPicture::Lands);
@@ -345,7 +340,7 @@ mod tests {
 
     #[test]
     fn entrance_plan_travels_from_spawn_or_reserves_with_a_reason() {
-        let slot = rect(867.0, 32.0, 859.0, 1081.0);
+        let slot: ScreenRect = rect(867.0, 32.0, 859.0, 1081.0);
         let spawn = rect(300.0, 200.0, 640.0, 480.0);
         assert_eq!(
             entrance_plan(Some(spawn), slot, true, true),
@@ -374,7 +369,7 @@ mod tests {
     fn entrance_plan_travels_exactly_when_it_can() {
         let mut rng = Gen(157);
         for run in 0..RUNS {
-            let slot = rng.on_screen();
+            let slot: ScreenRect = rng.on_screen();
             let spawn = match rng.below(4) {
                 0 => None,
                 1 => Some(rect(
@@ -404,22 +399,13 @@ mod tests {
     }
 
     mod on_another_display {
-        use objc2_core_foundation::CGPoint;
+        use rini_geometry::space::Size;
 
         use super::*;
 
         /// An external display at a non-zero origin, so a retarget that forgot the conversion shows.
-        const EXTERNAL: CGRect = CGRect {
-            origin: CGPoint { x: 1728.0, y: -300.0 },
-            size: CGSize { width: 3008.0, height: 1692.0 },
-        };
-
-        fn shifted(frame: CGRect, delta: CGPoint) -> CGRect {
-            CGRect::new(
-                CGPoint::new(frame.origin.x + delta.x, frame.origin.y + delta.y),
-                frame.size,
-            )
-        }
+        const EXTERNAL: ScreenRect =
+            ScreenRect::new(ScreenPoint::new(1728.0, -300.0), Size::new(3008.0, 1692.0));
 
         #[test]
         fn a_later_pass_retargets_a_reserved_entrance() {
@@ -429,7 +415,7 @@ mod tests {
                 859.0,
                 1081.0,
             );
-            let pan = CGPoint::new(-574.0, 0.0);
+            let pan = ScreenVector::new(-574.0, 0.0);
             let newcomer = PendingEntrance {
                 window: window(51462),
                 to: to_overlay_space(slot, EXTERNAL),
@@ -443,11 +429,11 @@ mod tests {
             let mut entrances = vec![newcomer, untouched.clone()];
             let frames = vec![
                 (window(1), rect(4.0, 32.0, 859.0, 1081.0)),
-                (window(51462), shifted(slot, pan)),
+                (window(51462), slot.translate(pan)),
             ];
 
             assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 1);
-            assert_eq!(entrances[0].to, to_overlay_space(shifted(slot, pan), EXTERNAL));
+            assert_eq!(entrances[0].to, to_overlay_space(slot.translate(pan), EXTERNAL));
             assert_eq!(entrances[1].to, untouched.to, "no frame for it: left alone");
             assert_eq!(
                 retarget_entrances(&mut entrances, &frames, EXTERNAL),

@@ -20,7 +20,9 @@ use objc2_quartz_core::{
     CAMediaTimingFunction, CAPropertyAnimation, CATransaction, kCAMediaTimingFunctionLinear,
 };
 use rini_core::ids::WindowId;
-use rini_geometry::space::{ContentsRect, FromCg, ToCg};
+use rini_geometry::space::{
+    ContentsRect, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenRect, TileSize, ToCg,
+};
 
 use crate::animation::domain::motion::easing::CubicBezier;
 use crate::animation::domain::motion::hairline::{
@@ -63,10 +65,10 @@ define_class!(
 #[derive(Clone)]
 pub struct OverlayTile {
     pub window: WindowId,
-    /// Where the window starts, in the overlay's coordinate space.
-    pub from: CGRect,
-    /// Where the window ends up, in the overlay's coordinate space.
-    pub to: CGRect,
+    /// Where the window starts.
+    pub from: OverlayRect,
+    /// Where the window ends up.
+    pub to: OverlayRect,
     pub snapshot: Picture,
     /// In the other z-order band from the tiled windows. See `crate::animation::domain::motion::z_group`.
     pub floating: bool,
@@ -88,10 +90,10 @@ impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
     fn window(&self) -> WindowId {
         self.window
     }
-    fn from(&self) -> CGRect {
+    fn from(&self) -> OverlayRect {
         self.from
     }
-    fn to(&self) -> CGRect {
+    fn to(&self) -> OverlayRect {
         self.to
     }
     fn floating(&self) -> bool {
@@ -267,14 +269,14 @@ fn path_object(path: &objc2_core_foundation::CFType) -> Retained<AnyObject> {
     Retained::from(path)
 }
 
-fn as_point(value: Value) -> CGPoint {
+fn as_point(value: Value) -> OverlayPoint {
     match value {
         Value::Point(point) => point,
         Value::Rect(_) => unreachable!("a container holds a point"),
     }
 }
 
-fn as_frame(value: Value) -> CGRect {
+fn as_frame(value: Value) -> GroupRect {
     match value {
         Value::Rect(frame) => frame,
         Value::Point(_) => unreachable!("a tile holds a frame"),
@@ -337,7 +339,7 @@ fn install_container_track(layer: &CALayer, track: &Track, riding: &[Track]) {
         layer.removeAnimationForKey(&key);
         return;
     }
-    let position = |value: Value| point_object(as_point(value));
+    let position = |value: Value| point_object(as_point(value).to_cg());
     layer.addAnimation_forKey(&animation(track, "position", position), Some(&key));
     if track.channel() != Channel::Base {
         return;
@@ -390,7 +392,8 @@ fn install_tile_track(tile: &Tile, track: &Track) {
         remove_resize(tile);
         return;
     }
-    let position = animation(track, "position", |value| point_object(as_frame(value).origin));
+    let position =
+        animation(track, "position", |value| point_object(as_frame(value).origin.to_cg()));
     for layer in tile.layers() {
         add_under(layer, &position, TILE_ANIMATION_KEY);
     }
@@ -402,9 +405,9 @@ fn install_tile_track(tile: &Tile, track: &Track) {
         return;
     }
     let origin = CGPoint::new(0.0, 0.0);
-    let size = |value: Value| as_frame(value).size;
+    let size = |value: Value| as_frame(value).size.respace();
     let bounds = animation(track, "bounds", |value| {
-        rect_object(CGRect::new(origin, size(value)))
+        rect_object(CGRect::new(origin, size(value).to_cg()))
     });
     for layer in tile.layers() {
         add_under(layer, &bounds, TILE_SIZE_KEY);
@@ -450,21 +453,21 @@ fn install_crop_grid(tile: &Tile, track: &Track) {
     };
     let origin = CGPoint::new(0.0, 0.0);
     for (index, layer) in grid.pieces.iter().enumerate() {
-        let piece = |value: Value| crop_pieces(picture, as_frame(value).size)[index];
+        let piece = |value: Value| crop_pieces(picture, as_frame(value).size.respace())[index];
         let position = animation(track, "position", |value| {
-            point_object(piece(value).frame.origin)
+            point_object(piece(value).frame.origin.to_cg())
         });
         add_under(layer, &position, PIECE_MOVE_KEY);
         if changes(track, |value| piece(value).frame.size) {
             let bounds = animation(track, "bounds", |value| {
-                rect_object(CGRect::new(origin, piece(value).frame.size))
+                rect_object(CGRect::new(origin, piece(value).frame.size.to_cg()))
             });
             add_under(layer, &bounds, PIECE_SIZE_KEY);
         } else {
             remove_under(layer, &[PIECE_SIZE_KEY]);
         }
         let contents = animation(track, "contentsRect", |value| {
-            rect_object(within(tile.region, ContentsRect::from_cg(piece(value).contents)).to_cg())
+            rect_object(within(tile.region, piece(value).contents).to_cg())
         });
         add_under(layer, &contents, PIECE_CONTENTS_KEY);
     }
@@ -473,7 +476,7 @@ fn install_crop_grid(tile: &Tile, track: &Track) {
 /// Carries a tile's ring and outline along `track`: the ring's bounds ride the tile's, its corner
 /// and the outline's path ride here.
 fn install_hairline(tile: &Tile, track: &Track) {
-    let corner = |value: Value| corner_radius(tile.radius, as_frame(value).size);
+    let corner = |value: Value| corner_radius(tile.radius, as_frame(value).size.respace());
     if changes(track, corner) {
         let rounding = animation(track, "cornerRadius", |value| number_object(corner(value)));
         add_under(&tile.ring, &rounding, CORNER_KEY);
@@ -481,7 +484,7 @@ fn install_hairline(tile: &Tile, track: &Track) {
         remove_under(&tile.ring, &[CORNER_KEY]);
     }
     let path = animation(track, "path", |value| {
-        path_object(&outline_path(as_frame(value).size, corner(value)))
+        path_object(&outline_path(as_frame(value).size.respace(), corner(value)))
     });
     add_under(&tile.outline, &path, OUTLINE_KEY);
 }
@@ -505,7 +508,7 @@ struct Tile {
     /// The four crop pieces, created on first crop-drawn animation and pooled with the tile.
     crop_grid: Option<CropGrid>,
     /// Size in points of the picture the crop pieces show; `None` when stretching.
-    crop_of: Option<CGSize>,
+    crop_of: Option<TileSize>,
     /// The part of the contents image that is the tile's picture, which the crop pieces' contents
     /// are composed with: all of it unless the picture is a region of a composite.
     region: ContentsRect,
@@ -610,9 +613,15 @@ fn holes_mask(bounds: CGRect, holes: &[CGRect]) -> Retained<objc2_quartz_core::C
 
 impl TileOverlay {
     /// Creates the overlay once, ordered in but fully transparent. `frame` must be the display's
-    /// full bounds in CoreGraphics coordinates, and `top_band` the points the bar reserves at the
-    /// top. See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
-    pub fn new(frame: CGRect, top_band: f64, scale: f64, mtm: MainThreadMarker) -> Option<Self> {
+    /// full bounds, and `top_band` the points the bar reserves at the top. See "Level and coverage"
+    /// in `src/animation/docs/capture-overlay-research.md`.
+    pub fn new(
+        frame: ScreenRect,
+        top_band: f64,
+        scale: f64,
+        mtm: MainThreadMarker,
+    ) -> Option<Self> {
+        let frame = frame.to_cg();
         let converter = CoordinateConverter::from_height(primary_display_height());
         let cocoa_frame = converter.convert_rect(window_rect(frame, top_band))?;
 
@@ -700,13 +709,9 @@ impl TileOverlay {
         })
     }
 
-    pub fn frame(&self) -> CGRect {
-        self.frame
-    }
-
-    /// Draws the bar on top of the moving tiles; `strip` is its rect in the overlay's coordinates.
-    /// A failed capture keeps the previous picture rather than hiding the bar.
-    pub fn set_bar(&mut self, snapshot: Option<&Picture>, strip: Option<CGRect>) {
+    /// Draws the bar on top of the moving tiles; `strip` is its rect. A failed capture keeps the
+    /// previous picture rather than hiding the bar.
+    pub fn set_bar(&mut self, snapshot: Option<&Picture>, strip: Option<OverlayRect>) {
         let Some(strip) = strip else {
             self.bar.setHidden(true);
             return;
@@ -717,7 +722,7 @@ impl TileOverlay {
             Some(snapshot) => {
                 self.bar.setContentsScale(self.tree.scale);
                 set_layer_contents(&self.bar, snapshot);
-                self.bar.setFrame(bar_frame(strip, snapshot.coverage.covered.to_cg()));
+                self.bar.setFrame(bar_frame(strip.to_cg(), snapshot.coverage.covered.to_cg()));
                 self.bar_drawn = true;
                 self.bar.setHidden(false);
             }
@@ -747,7 +752,8 @@ impl TileOverlay {
 
     /// Repoints the overlay at a different display, a resolution change, or a change of the band the
     /// bar reserves at the top, and puts its window back wherever macOS has moved it.
-    pub fn set_frame(&mut self, frame: CGRect, top_band: f64, scale: f64) {
+    pub fn set_frame(&mut self, frame: ScreenRect, top_band: f64, scale: f64) {
+        let frame = frame.to_cg();
         let converter = CoordinateConverter::from_height(primary_display_height());
         if let Some(cocoa) = converter.reframe(window_rect(frame, top_band), self.window.frame()) {
             self.window.setFrame_display(cocoa, false);
@@ -876,11 +882,11 @@ impl TileOverlay {
         self.visible = false;
     }
 
-    /// Punches a hole through the overlay over each window ending at one of `ends`, in the
-    /// overlay's coordinates, replacing the holes there were, and clears the window's background so
-    /// the holes show what is below. The caller names the windows that end wholly on screen. See
-    /// "Holes" in `src/animation/docs/animation-smoothness.md`.
-    pub fn set_holes(&mut self, ends: &[CGRect]) {
+    /// Punches a hole through the overlay over each window ending at one of `ends`, replacing the
+    /// holes there were, and clears the window's background so the holes show what is below. The
+    /// caller names the windows that end wholly on screen. See "Holes" in
+    /// `src/animation/docs/animation-smoothness.md`.
+    pub fn set_holes(&mut self, ends: &[OverlayRect]) {
         if ends.is_empty() {
             self.clear_holes();
             return;
@@ -889,7 +895,7 @@ impl TileOverlay {
             return;
         };
         let holes: Vec<CGRect> =
-            ends.iter().map(|end| in_view(hole_in(*end), self.top_band)).collect();
+            ends.iter().map(|end| in_view(hole_in(*end).to_cg(), self.top_band)).collect();
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         // SAFETY: a shape layer we just made, as the mask of the view's own layer.
@@ -969,7 +975,7 @@ impl Tree {
             for layer in self.layers_of(key) {
                 layer.removeAllAnimations();
                 layer.setBounds(bounds);
-                layer.setPosition(at);
+                layer.setPosition(at.to_cg());
             }
         }
         for (window, key) in score.tiles() {
@@ -1007,7 +1013,7 @@ impl Tree {
                 Edit::Place(Node::Container(key), value) => {
                     self.open(*key);
                     for layer in self.layers_of(*key) {
-                        layer.setPosition(as_point(*value));
+                        layer.setPosition(as_point(*value).to_cg());
                     }
                 }
                 Edit::Place(Node::Tile(window), value) => {
@@ -1071,7 +1077,7 @@ impl Tree {
     }
 
     /// Puts `window`'s tile at `frame` in its container, at the depth the replica's banding gives it.
-    fn place_tile(&self, window: WindowId, frame: CGRect) {
+    fn place_tile(&self, window: WindowId, frame: GroupRect) {
         let Some(entry) = self.tile_layers.get(&window) else {
             return;
         };
@@ -1113,7 +1119,7 @@ impl Tree {
                 if new_leg && let Some(tile) = tiles.iter().find(|tile| tile.window == window) {
                     let mode = content_mode(tile.snapshot.coverage.covered, first.size, last.size);
                     if (mode == ContentMode::Crop) != entry.crop_of.is_some() {
-                        set_tile_content(entry, &tile.snapshot, mode, last.size, scale);
+                        set_tile_content(entry, &tile.snapshot, mode, last.size.respace(), scale);
                     }
                 }
                 install_tile_track(entry, track);
@@ -1207,7 +1213,7 @@ impl Tree {
         };
         let playing =
             self.replica.track(node, Channel::Base).filter(|track| track.at(at).is_some());
-        swap_onto(entry, picture, frame.size, playing);
+        swap_onto(entry, picture, frame.size.respace(), playing);
     }
 
     fn release(&mut self) {
@@ -1241,7 +1247,7 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
     clip_corners(&entry.picture, None);
     let covered = tile.snapshot.coverage.covered;
     let mode = content_mode(covered, tile.from.size, tile.to.size);
-    set_tile_content(entry, &tile.snapshot, mode, tile.from.size, scale);
+    set_tile_content(entry, &tile.snapshot, mode, tile.from.size.respace(), scale);
     show_focus(entry, tile.focused);
     entry.picture.setHidden(false);
     entry.shadow.setHidden(tile.companion.is_some());
@@ -1253,7 +1259,7 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
 /// `src/transitions/docs/coordination.md`). A crop-drawn tile's grid is laid again for `size`, its
 /// model, and re-keyed along `playing`, its own track while it plays, so the frame keeps its curve
 /// and only the pixels cut. Callers hold the transaction.
-fn swap_onto(entry: &mut Tile, snapshot: &Picture, size: CGSize, playing: Option<&Track>) {
+fn swap_onto(entry: &mut Tile, snapshot: &Picture, size: TileSize, playing: Option<&Track>) {
     if entry.crop_of.is_none() {
         set_layer_contents(&entry.picture, snapshot);
         return;
@@ -1391,46 +1397,52 @@ fn clip_corners(picture: &CALayer, radius: Option<f64>) {
 /// Puts a tile's layers at `frame`, stacked at `z`. The shadow's shape is rebuilt only when the
 /// size changes; the hairline is laid after the frame, every time, since a pooled tile's radius can
 /// have been measured since.
-fn place_tile(tile: &Tile, frame: CGRect, z: f64) {
-    let resized = tile.shadow.bounds().size != frame.size;
+fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
+    let size: TileSize = frame.size.respace();
+    let resized = tile.shadow.bounds().size != size.to_cg();
     for layer in tile.layers() {
-        layer.setFrame(frame);
+        layer.setFrame(frame.to_cg());
     }
     tile.stack(z);
     if resized {
-        set_tile_shadow(&tile.shadow, &tile.shadow_mask, frame.size);
-        layout_crop_grid(tile, frame.size);
+        set_tile_shadow(&tile.shadow, &tile.shadow_mask, size);
+        layout_crop_grid(tile, size);
     }
-    lay_hairline(tile, frame.size);
+    lay_hairline(tile, size);
 }
 
-/// Rounds the ring and draws the outline for a tile of `size`, in the ring's coordinates.
-fn lay_hairline(tile: &Tile, size: CGSize) {
+/// Rounds the ring and draws the outline for a tile of `size`.
+fn lay_hairline(tile: &Tile, size: TileSize) {
     let corner = corner_radius(tile.radius, size);
     tile.ring.setCornerRadius(corner);
-    tile.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size));
+    tile.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
     tile.outline.setPath(Some(&outline_path(size, corner)));
 }
 
 /// The outline's path around a window of `size` with corners of `corner`. Its radius is never zero,
 /// so it is always a rounded rect and two outline paths interpolate.
-fn outline_path(size: CGSize, corner: f64) -> CFRetained<objc2_core_graphics::CGPath> {
+fn outline_path(size: TileSize, corner: f64) -> CFRetained<objc2_core_graphics::CGPath> {
     let (rect, radius) = outline(size, corner);
     // SAFETY: a null transform means the path is taken as given.
     unsafe {
-        objc2_core_graphics::CGPath::with_rounded_rect(rect, radius, radius, std::ptr::null())
+        objc2_core_graphics::CGPath::with_rounded_rect(
+            rect.to_cg(),
+            radius,
+            radius,
+            std::ptr::null(),
+        )
     }
 }
 
 /// The window's rounded-rect silhouette: the shadow's shape and the mask's hole. Size and radius
 /// are floored above zero, or Core Graphics emits a plain rect and path animations cut.
-fn silhouette_path(size: CGSize, at: CGPoint) -> CFRetained<objc2_core_graphics::CGPath> {
-    let size = CGSize::new(size.width.max(0.5), size.height.max(0.5));
+fn silhouette_path(size: TileSize, at: CGPoint) -> CFRetained<objc2_core_graphics::CGPath> {
+    let size = TileSize::new(size.width.max(0.5), size.height.max(0.5));
     let radius = corner_radius(None, size).max(0.01);
     // SAFETY: a null transform means the path is taken as given.
     unsafe {
         objc2_core_graphics::CGPath::with_rounded_rect(
-            CGRect::new(at, size),
+            CGRect::new(at, size.to_cg()),
             radius,
             radius,
             std::ptr::null(),
@@ -1440,9 +1452,9 @@ fn silhouette_path(size: CGSize, at: CGPoint) -> CFRetained<objc2_core_graphics:
 
 /// The ring: the whole mask minus the window's shape, wound even-odd so the inside is the hole.
 /// Always one rect plus one rounded rect, so two ring paths interpolate.
-fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
+fn ring_path(size: TileSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
     // Floored for the same reason as `silhouette_path`.
-    let size = CGSize::new(size.width.max(0.5), size.height.max(0.5));
+    let size = TileSize::new(size.width.max(0.5), size.height.max(0.5));
     let radius = corner_radius(None, size).max(0.01);
     let mask_frame = shadow_mask_frame(size);
     let ring = objc2_core_graphics::CGMutablePath::new();
@@ -1455,7 +1467,7 @@ fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
         objc2_core_graphics::CGMutablePath::add_rounded_rect(
             Some(&ring),
             std::ptr::null(),
-            CGRect::new(CGPoint::new(SHADOW_REACH, SHADOW_REACH), size),
+            CGRect::new(CGPoint::new(SHADOW_REACH, SHADOW_REACH), size.to_cg()),
             radius,
             radius,
         );
@@ -1465,7 +1477,7 @@ fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
 
 /// Gives the caster the shadow of a window of `size`, clipped to a ring outside it. See "A layer
 /// shadow covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
-fn set_tile_shadow(layer: &CALayer, mask: &objc2_quartz_core::CAShapeLayer, size: CGSize) {
+fn set_tile_shadow(layer: &CALayer, mask: &objc2_quartz_core::CAShapeLayer, size: TileSize) {
     layer.setShadowPath(Some(&silhouette_path(size, CGPoint::new(0.0, 0.0))));
     mask.setFrame(shadow_mask_frame(size));
     mask.setPath(Some(&ring_path(size)));
@@ -1473,7 +1485,7 @@ fn set_tile_shadow(layer: &CALayer, mask: &objc2_quartz_core::CAShapeLayer, size
 
 /// The shadow mask's rect in the caster's coordinates: the window inset by `SHADOW_REACH` on
 /// every side.
-fn shadow_mask_frame(size: CGSize) -> CGRect {
+fn shadow_mask_frame(size: TileSize) -> CGRect {
     CGRect::new(
         CGPoint::new(-SHADOW_REACH, -SHADOW_REACH),
         CGSize::new(size.width + 2.0 * SHADOW_REACH, size.height + 2.0 * SHADOW_REACH),
@@ -1486,7 +1498,7 @@ fn set_tile_content(
     entry: &mut Tile,
     snapshot: &Picture,
     mode: ContentMode,
-    frame: CGSize,
+    frame: TileSize,
     scale: f64,
 ) {
     match mode {
@@ -1521,18 +1533,18 @@ fn set_tile_content(
 /// Points a crop-drawn tile at `snapshot`: the size its pieces cut, and the part of the contents
 /// image that is the picture.
 fn crop_to(entry: &mut Tile, snapshot: &Picture) {
-    entry.crop_of = Some(snapshot.coverage.covered.to_cg());
+    entry.crop_of = Some(snapshot.coverage.covered.respace());
     entry.region = snapshot.image.unit_rect();
 }
 
 /// Lays the crop grid out for the tile's current frame size.
-fn layout_crop_grid(entry: &Tile, frame: CGSize) {
+fn layout_crop_grid(entry: &Tile, frame: TileSize) {
     let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) else {
         return;
     };
     for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
-        layer.setFrame(piece.frame);
-        layer.setContentsRect(within(entry.region, ContentsRect::from_cg(piece.contents)).to_cg());
+        layer.setFrame(piece.frame.to_cg());
+        layer.setContentsRect(within(entry.region, piece.contents).to_cg());
     }
 }
 
@@ -1577,6 +1589,8 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 mod tests {
     use std::time::Duration;
 
+    use rini_geometry::space::{FromCg, OverlayVector, Point, Rect, Size};
+
     use super::*;
     use crate::animation::domain::motion::bounce::Bounce;
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
@@ -1603,6 +1617,10 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    fn typed<U>(x: f64, y: f64, w: f64, h: f64) -> Rect<U> {
+        Rect::new(Point::new(x, y), Size::new(w, h))
     }
 
     /// `timing_function` hands Core Animation the four numbers a `Leg` and the score evaluate, so
@@ -1692,7 +1710,7 @@ mod tests {
 
     #[test]
     fn the_shadow_mask_surrounds_the_window_by_one_reach() {
-        let size = CGSize::new(859.0, 1081.0);
+        let size = TileSize::new(859.0, 1081.0);
         let frame = shadow_mask_frame(size);
         assert_eq!(frame.origin.x, -SHADOW_REACH);
         assert_eq!(frame.origin.y, -SHADOW_REACH);
@@ -1883,14 +1901,14 @@ mod tests {
     }
 
     fn container_value(value: &AnyObject) -> Value {
-        Value::Point(point_in(value))
+        Value::Point(OverlayPoint::from_cg(point_in(value)))
     }
 
     fn at(x: f64, y: f64) -> Value {
-        Value::Point(CGPoint::new(x, y))
+        Value::Point(OverlayPoint::new(x, y))
     }
 
-    fn tile_track(from: CGRect, to: CGRect, begin: f64, seconds: f64) -> Track {
+    fn tile_track(from: GroupRect, to: GroupRect, begin: f64, seconds: f64) -> Track {
         Track::between(
             Node::Tile(WindowId::new(1, 1)),
             Channel::Base,
@@ -1921,14 +1939,14 @@ mod tests {
             ),
             Leg::toward(
                 None,
-                CGPoint::new(0.0, 0.0),
-                CGPoint::new(-861.0, 0.0),
+                OverlayPoint::new(0.0, 0.0),
+                OverlayPoint::new(-861.0, 0.0),
                 5.0,
                 30.6,
             )
             .track(still, SAMPLE_STEP),
-            nudge_track(still, CGPoint::new(-576.0, 0.0), 5.1, 0.455, SAMPLE_STEP),
-            Bounce::from_rest(CGPoint::new(0.0, -72.0), Duration::from_millis(350))
+            nudge_track(still, OverlayVector::new(-576.0, 0.0), 5.1, 0.455, SAMPLE_STEP),
+            Bounce::from_rest(OverlayVector::new(0.0, -72.0), Duration::from_millis(350))
                 .track(still, 5.2),
             Track::keyframes(
                 container(),
@@ -1968,11 +1986,11 @@ mod tests {
     #[test]
     fn a_tile_track_is_installed_on_every_layer_of_the_tile() {
         let origin = CGPoint::new(0.0, 0.0);
-        let mut tile = strip_tile(rect(865.0, 32.0, 861.0, 1081.0));
+        let mut tile = strip_tile(typed(865.0, 32.0, 861.0, 1081.0));
         tile.radius = Some(16.0);
         let moving = tile_track(
-            rect(1726.0, 32.0, 861.0, 1081.0),
-            rect(865.0, 32.0, 861.0, 1081.0),
+            typed(1726.0, 32.0, 861.0, 1081.0),
+            typed(865.0, 32.0, 861.0, 1081.0),
             100.0,
             0.35,
         );
@@ -1980,7 +1998,7 @@ mod tests {
         for layer in tile.layers() {
             assert_eq!(
                 installed(layer, TILE_ANIMATION_KEY, point_in),
-                expected(&moving, |v| as_frame(v).origin)
+                expected(&moving, |v| as_frame(v).origin.to_cg())
             );
             assert_eq!(animation_keys(layer), [TILE_ANIMATION_KEY]);
         }
@@ -1988,29 +2006,29 @@ mod tests {
         assert!(animation_keys(&tile.outline).is_empty());
 
         tile.crop_grid = Some(new_crop_grid(&tile.picture));
-        let picture = CGSize::new(1200.0, 1081.0);
+        let picture = TileSize::new(1200.0, 1081.0);
         tile.crop_of = Some(picture);
         let resizing = tile_track(
-            rect(1726.0, 32.0, 1200.0, 1081.0),
-            rect(865.0, 32.0, 20.0, 1081.0),
+            typed(1726.0, 32.0, 1200.0, 1081.0),
+            typed(865.0, 32.0, 20.0, 1081.0),
             100.0,
             0.35,
         );
         install_tile_track(&tile, &resizing);
-        let size = |v: Value| as_frame(v).size;
+        let size = |v: Value| -> TileSize { as_frame(v).size.respace() };
         for layer in tile.layers() {
             assert_eq!(
                 installed(layer, TILE_ANIMATION_KEY, point_in),
-                expected(&resizing, |v| as_frame(v).origin)
+                expected(&resizing, |v| as_frame(v).origin.to_cg())
             );
             assert_eq!(
                 installed(layer, "rini.tile.size", rect_in),
-                expected(&resizing, |v| CGRect::new(origin, size(v)))
+                expected(&resizing, |v| CGRect::new(origin, size(v).to_cg()))
             );
         }
         assert_eq!(
             installed(&tile.shadow, "rini.tile.shadow.path", path_in),
-            expected(&resizing, |v| CGRect::new(origin, size(v)))
+            expected(&resizing, |v| CGRect::new(origin, size(v).to_cg()))
         );
         let mask = |v: Value| shadow_mask_frame(size(v));
         assert_eq!(
@@ -2030,13 +2048,11 @@ mod tests {
             let piece = |v: Value| crop_pieces(picture, size(v))[index];
             assert_eq!(
                 installed(layer, "rini.piece.move", point_in),
-                expected(&resizing, |v| piece(v).frame.origin)
+                expected(&resizing, |v| piece(v).frame.origin.to_cg())
             );
             assert_eq!(
                 installed(layer, "rini.piece.contents", rect_in),
-                expected(&resizing, |v| {
-                    within(tile.region, ContentsRect::from_cg(piece(v).contents)).to_cg()
-                })
+                expected(&resizing, |v| within(tile.region, piece(v).contents).to_cg())
             );
         }
         let corner = |v: Value| corner_radius(tile.radius, size(v));
@@ -2050,7 +2066,7 @@ mod tests {
         );
         assert_eq!(
             installed(&tile.outline, "rini.tile.outline.path", path_in),
-            expected(&resizing, |v| outline(size(v), corner(v)).0)
+            expected(&resizing, |v| outline(size(v), corner(v)).0.to_cg())
         );
 
         install_tile_track(&tile, &moving);
@@ -2095,15 +2111,15 @@ mod tests {
         );
         install_container_track(&layer, &cut, &[]);
         assert!(animation_keys(&layer).is_empty());
-        let bounce =
-            Bounce::from_rest(CGPoint::new(-72.0, 0.0), Duration::ZERO).track(GroupKey::STILL, 5.0);
+        let bounce = Bounce::from_rest(OverlayVector::new(-72.0, 0.0), Duration::ZERO)
+            .track(GroupKey::STILL, 5.0);
         install_container_track(&layer, &bounce, &[]);
         assert!(animation_keys(&layer).is_empty());
 
-        let mut tile = strip_tile(rect(865.0, 32.0, 861.0, 1081.0));
+        let mut tile = strip_tile(typed(865.0, 32.0, 861.0, 1081.0));
         tile.crop_grid = Some(new_crop_grid(&tile.picture));
-        tile.crop_of = Some(CGSize::new(1200.0, 1081.0));
-        let (from, to) = (rect(4.0, 32.0, 1200.0, 1081.0), rect(865.0, 32.0, 861.0, 1081.0));
+        tile.crop_of = Some(TileSize::new(1200.0, 1081.0));
+        let (from, to) = (typed(4.0, 32.0, 1200.0, 1081.0), typed(865.0, 32.0, 861.0, 1081.0));
         install_tile_track(&tile, &tile_track(from, to, 100.0, 0.35));
         install_tile_track(&tile, &tile_track(from, to, 100.1, 0.0));
         let grid = tile.crop_grid.as_ref().expect("a grid");
@@ -2122,7 +2138,7 @@ mod tests {
     /// is drawn.
     #[test]
     fn the_bounce_installed_is_its_track() {
-        let wall = CGPoint::new(-72.0, 0.0);
+        let wall = OverlayVector::new(-72.0, 0.0);
         let plays = Duration::from_millis(350);
         let first = Bounce::from_rest(wall, plays);
         let pushed = Bounce::from_drawn(first.at(Duration::from_millis(90)), wall, plays);
@@ -2188,15 +2204,15 @@ mod tests {
     /// replica of what it plays.
     fn accented_container() -> (Retained<CALayer>, Score) {
         let layer = CALayer::layer();
-        let wall = CGPoint::new(-72.0, 0.0);
+        let wall = OverlayVector::new(-72.0, 0.0);
         let mut replica = Score::default();
-        replica.apply(&Edit::Place(container(), Value::Point(wall)));
+        replica.apply(&Edit::Place(container(), Value::Point(wall.to_point())));
         let tracks = [
             Track::between(
                 container(),
                 Channel::Base,
                 at(0.0, 0.0),
-                Value::Point(wall),
+                Value::Point(wall.to_point()),
                 5.0,
                 0.35,
                 Curve::Bezier(MOTION_CURVE),
@@ -2204,7 +2220,7 @@ mod tests {
             Bounce::from_rest(wall, Duration::from_millis(350)).track(GroupKey::STILL, 5.1),
             nudge_track(
                 GroupKey::STILL,
-                CGPoint::new(-576.0, 0.0),
+                OverlayVector::new(-576.0, 0.0),
                 5.2,
                 0.455,
                 SAMPLE_STEP,
@@ -2306,7 +2322,7 @@ mod tests {
                 NUDGE_ANIMATION_KEY
             ]
         );
-        let position = |v: Value| point_object(as_point(v));
+        let position = |v: Value| point_object(as_point(v).to_cg());
         let key = NSString::from_str(GROUP_ANIMATION_KEY);
         layer.addAnimation_forKey(&animation(&new_leg(5.3), "position", position), Some(&key));
         assert_eq!(
@@ -2348,11 +2364,12 @@ mod tests {
     #[test]
     fn the_mask_leaves_out_exactly_the_holes() {
         let bounds = rect(0.0, 0.0, 1728.0, 1085.0);
-        let ends = [
-            rect(868.0, 32.0, 856.0, 1081.0),
-            rect(4.0, 32.0, 856.0, 1081.0),
+        let ends: [OverlayRect; 2] = [
+            typed(868.0, 32.0, 856.0, 1081.0),
+            typed(4.0, 32.0, 856.0, 1081.0),
         ];
-        let holes: Vec<CGRect> = ends.iter().map(|end| in_view(hole_in(*end), 32.0)).collect();
+        let holes: Vec<CGRect> =
+            ends.iter().map(|end| in_view(hole_in(*end).to_cg(), 32.0)).collect();
         let mask = holes_mask(bounds, &holes);
         // SAFETY: Core Animation's own fill-rule constant.
         assert_eq!(*mask.fillRule(), *unsafe {
@@ -2385,14 +2402,14 @@ mod tests {
         let container = CALayer::layer();
         let mut tile = new_tile(&container);
         tile.crop_grid = Some(new_crop_grid(&tile.picture));
-        let picture = CGSize::new(856.0, 1081.0);
+        let picture = TileSize::new(856.0, 1081.0);
         tile.crop_of = Some(picture);
-        tile.region = ContentsRect::from_cg(rect(0.5, 0.0, 0.5, 1.0));
-        let frame = CGSize::new(600.0, 1081.0);
+        tile.region = typed(0.5, 0.0, 0.5, 1.0);
+        let frame = TileSize::new(600.0, 1081.0);
         layout_crop_grid(&tile, frame);
         let grid = tile.crop_grid.as_ref().unwrap();
         for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
-            let shown = within(tile.region, ContentsRect::from_cg(piece.contents)).to_cg();
+            let shown = within(tile.region, piece.contents).to_cg();
             assert_eq!(layer.contentsRect(), shown);
             assert!(
                 layer.contentsRect().origin.x >= 0.5,
@@ -2400,15 +2417,20 @@ mod tests {
                 layer.contentsRect()
             );
         }
-        let to = CGSize::new(300.0, 1081.0);
-        let origin = CGPoint::new(4.0, 32.0);
-        let resize = tile_track(CGRect::new(origin, frame), CGRect::new(origin, to), 5.0, 0.35);
+        let to = TileSize::new(300.0, 1081.0);
+        let origin = Point::new(4.0, 32.0);
+        let resize = tile_track(
+            GroupRect::new(origin, frame.respace()),
+            GroupRect::new(origin, to.respace()),
+            5.0,
+            0.35,
+        );
         install_crop_grid(&tile, &resize);
         let ends = crop_pieces(picture, frame).into_iter().zip(crop_pieces(picture, to));
         for (layer, (a, b)) in grid.pieces.iter().zip(ends) {
             let contents = installed(layer, "rini.piece.contents", rect_in);
             assert_eq!(contents.form, Form::Between, "a basic animation");
-            let shown = |piece: CGRect| within(tile.region, ContentsRect::from_cg(piece)).to_cg();
+            let shown = |piece: ContentsRect| within(tile.region, piece).to_cg();
             assert_eq!(contents.keys[0].1, shown(a.contents));
             assert_eq!(contents.keys[1].1, shown(b.contents));
         }
@@ -2418,7 +2440,7 @@ mod tests {
         for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
             assert_eq!(
                 layer.contentsRect(),
-                piece.contents,
+                piece.contents.to_cg(),
                 "a whole picture is unchanged"
             );
         }
@@ -2431,14 +2453,14 @@ mod tests {
         use crate::pictures::platform::picture::{test_picture, test_region};
         let container = CALayer::layer();
         let mut tile = new_tile(&container);
-        let frame = CGSize::new(2.0, 2.0);
+        let frame = TileSize::new(2.0, 2.0);
         let region = test_region();
         set_tile_content(&mut tile, &region, ContentMode::Crop, frame, 2.0);
         assert_eq!(tile.region, region.image.unit_rect());
         assert_eq!(tile.region.to_cg(), rect(0.5, 0.0, 0.5, 1.0));
         let grid = tile.crop_grid.as_ref().unwrap();
         for (layer, piece) in grid.pieces.iter().zip(crop_pieces(frame, frame)) {
-            let shown = within(tile.region, ContentsRect::from_cg(piece.contents)).to_cg();
+            let shown = within(tile.region, piece.contents).to_cg();
             assert_eq!(layer.contentsRect(), shown);
         }
         set_tile_content(&mut tile, &test_picture(frame), ContentMode::Crop, frame, 2.0);
@@ -2451,30 +2473,30 @@ mod tests {
     #[test]
     fn a_swap_re_keys_a_crop_grid_on_its_tiles_track() {
         use crate::pictures::platform::picture::test_picture;
-        let (from, to) = (rect(4.0, 32.0, 600.0, 1081.0), rect(4.0, 32.0, 859.0, 1081.0));
+        let (from, to): (GroupRect, GroupRect) =
+            (typed(4.0, 32.0, 600.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
         let stale = test_picture(from.size);
-        let landed = CGSize::new(859.0, 1081.0);
+        let landed = TileSize::new(859.0, 1081.0);
         let mut tile = strip_tile(to);
-        set_tile_content(&mut tile, &stale, ContentMode::Crop, from.size, 2.0);
+        set_tile_content(&mut tile, &stale, ContentMode::Crop, from.size.respace(), 2.0);
         let track = tile_track(from, to, 100.0, 0.35);
         install_tile_track(&tile, &track);
-        swap_onto(&mut tile, &test_picture(landed), to.size, Some(&track));
+        swap_onto(&mut tile, &test_picture(landed), to.size.respace(), Some(&track));
         assert_eq!(tile.crop_of, Some(landed), "the grid cuts the new picture");
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for (index, layer) in grid.pieces.iter().enumerate() {
-            let piece = |v: Value| crop_pieces(landed, as_frame(v).size)[index];
+            let piece = |v: Value| crop_pieces(landed, as_frame(v).size.respace())[index];
             assert_eq!(
                 installed(layer, "rini.piece.contents", rect_in),
-                expected(&track, |v| {
-                    within(tile.region, ContentsRect::from_cg(piece(v).contents)).to_cg()
-                })
+                expected(&track, |v| within(tile.region, piece(v).contents).to_cg())
             );
-            assert_eq!(layer.frame(), crop_pieces(landed, to.size)[index].frame);
+            let laid = crop_pieces(landed, to.size.respace())[index].frame;
+            assert_eq!(layer.frame(), laid.to_cg());
         }
 
         let mut riding = strip_tile(to);
-        set_tile_content(&mut riding, &stale, ContentMode::Crop, to.size, 2.0);
-        swap_onto(&mut riding, &test_picture(landed), to.size, None);
+        set_tile_content(&mut riding, &stale, ContentMode::Crop, to.size.respace(), 2.0);
+        swap_onto(&mut riding, &test_picture(landed), to.size.respace(), None);
         let grid = riding.crop_grid.as_ref().expect("a grid");
         for layer in riding.layers().into_iter().chain(grid.pieces.iter().map(|piece| &**piece)) {
             assert!(animation_keys(layer).is_empty(), "nothing to re-key");
@@ -2515,18 +2537,18 @@ mod tests {
     /// radius, and in front of its picture.
     #[test]
     fn the_hairline_is_laid_at_the_tiles_frame() {
-        let mut tile = strip_tile(rect(4.0, 32.0, 1720.0, 1081.0));
+        let mut tile = strip_tile(typed(4.0, 32.0, 1720.0, 1081.0));
         tile.radius = Some(16.0);
-        let frame = rect(4.0, 32.0, 859.0, 1081.0);
+        let frame = typed(4.0, 32.0, 859.0, 1081.0);
         place_tile(&tile, frame, -2.0);
-        assert_eq!(tile.ring.frame(), frame);
+        assert_eq!(tile.ring.frame(), frame.to_cg());
         assert_eq!(tile.ring.borderWidth(), RING_PT);
         assert_eq!(tile.ring.cornerRadius(), 16.0);
         assert_eq!(outline_bounds(&tile), rect(-0.25, -0.25, 859.5, 1081.5));
         assert!(tile.ring.zPosition() > tile.picture.zPosition());
         assert!(tile.ring.zPosition() < tile.picture.zPosition() + 0.25, "under a companion");
 
-        place_tile(&tile, rect(4.0, 32.0, 12.0, 400.0), -2.0);
+        place_tile(&tile, typed(4.0, 32.0, 12.0, 400.0), -2.0);
         assert_eq!(tile.ring.cornerRadius(), 6.0, "clamped to half the shorter side");
     }
 
@@ -2534,11 +2556,12 @@ mod tests {
     /// the outline's path go from the zero-width shape to the slot's on the same timing.
     #[test]
     fn a_resize_carries_the_hairline_on_the_tiles_timing() {
-        let (from, to) = (rect(4.0, 32.0, 0.0, 1081.0), rect(4.0, 32.0, 859.0, 1081.0));
+        let (from, to): (GroupRect, GroupRect) =
+            (typed(4.0, 32.0, 0.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
         let tile = strip_tile(to);
         install_tile_track(&tile, &tile_track(from, to, 100.0, 0.35));
         let (start, end, begin) = animation_value(&tile.ring, "rini.tile.size", rect_of);
-        assert_eq!((start.size, end.size, begin), (from.size, to.size, 100.0));
+        assert_eq!((start.size, end.size, begin), (from.size.to_cg(), to.size.to_cg(), 100.0));
 
         let corner = basic(&tile.ring, "rini.tile.ring.corner");
         let number = |value: Option<Retained<objc2::runtime::AnyObject>>| {
@@ -2558,7 +2581,7 @@ mod tests {
     /// The ring's white is the focused window's or not, and with it the shadow's depth.
     #[test]
     fn the_rings_white_follows_focus() {
-        let tile = strip_tile(rect(4.0, 32.0, 859.0, 1081.0));
+        let tile = strip_tile(typed(4.0, 32.0, 859.0, 1081.0));
         let alpha = |tile: &Tile| {
             objc2_core_graphics::CGColor::alpha(tile.ring.borderColor().as_deref())
         };
@@ -2574,16 +2597,21 @@ mod tests {
     /// pointers they failed objc2's encoding check, so a debug build panicked on the first resize.
     #[test]
     fn a_resize_hands_its_paths_to_core_animation_as_objects() {
-        let (from, to) = (CGSize::new(1200.0, 1081.0), CGSize::new(861.0, 1081.0));
+        let (from, to) = (TileSize::new(1200.0, 1081.0), TileSize::new(861.0, 1081.0));
         let origin = CGPoint::new(0.0, 0.0);
-        let track = tile_track(CGRect::new(origin, from), CGRect::new(origin, to), 100.0, 0.35);
+        let track = tile_track(
+            GroupRect::new(Point::origin(), from.respace()),
+            GroupRect::new(Point::origin(), to.respace()),
+            100.0,
+            0.35,
+        );
         let animation = animation(&track, "shadowPath", |v| {
-            path_object(&silhouette_path(as_frame(v).size, origin))
+            path_object(&silhouette_path(as_frame(v).size.respace(), origin))
         })
         .downcast::<CABasicAnimation>()
         .expect("a basic animation");
-        assert_eq!(path_bounds(animation.fromValue()).size, from);
-        assert_eq!(path_bounds(animation.toValue()).size, to);
+        assert_eq!(path_bounds(animation.fromValue()).size, from.to_cg());
+        assert_eq!(path_bounds(animation.toValue()).size, to.to_cg());
     }
 
     /// The bounding box of a path an animation was given.
@@ -2620,7 +2648,7 @@ mod tests {
         unsafe { value.rectValue() }
     }
 
-    fn strip_tile(frame: CGRect) -> Tile {
+    fn strip_tile(frame: GroupRect) -> Tile {
         let container = CALayer::layer();
         let tile = new_tile(&container);
         place_tile(&tile, frame, 0.0);
@@ -2628,16 +2656,27 @@ mod tests {
     }
 
     mod tree {
+        use rini_geometry::space::{ScreenRect, ScreenSize};
+        use rini_geometry::to_overlay_space;
+
         use super::*;
         use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
         use crate::animation::domain::motion::accents::Accent;
-        use crate::animation::domain::motion::plan::{Banding, FlightPlan, reflow_plan};
-        use crate::animation::domain::motion::testing::DISPLAY;
+        use crate::animation::domain::motion::plan::{self, Banding, FlightPlan, reflow_plan};
+        use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT};
         use crate::pictures::platform::picture::test_picture;
 
         fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
-        fn overlay_tile(window: WindowId, from: CGRect, to: CGRect, floating: bool) -> OverlayTile {
+        /// A frame on `DISPLAY`, which sits at the origin, on the overlay over it.
+        fn on(frame: ScreenRect) -> OverlayRect { to_overlay_space(frame, DISPLAY) }
+
+        fn overlay_tile(
+            window: WindowId,
+            from: OverlayRect,
+            to: OverlayRect,
+            floating: bool,
+        ) -> OverlayTile {
             OverlayTile {
                 window,
                 from,
@@ -2758,7 +2797,7 @@ mod tests {
                         Some(track) => {
                             assert_eq!(
                                 installed(layer, TILE_ANIMATION_KEY, point_in),
-                                expected(track, |v| as_frame(v).origin)
+                                expected(track, |v| as_frame(v).origin.to_cg())
                             );
                             let resizes = track.keys().windows(2).any(|pair| {
                                 rini_geometry::stretch::is_a_resize(
@@ -2786,9 +2825,10 @@ mod tests {
         /// of the edits it was handed.
         #[test]
         fn the_overlay_plays_exactly_its_score() {
-            let column = |i: f64, w: f64| rect(4.0 + i * 863.0, 32.0, w, 1081.0);
-            let step = |frame: CGRect| {
-                rect(
+            let column =
+                |i: f64, w: f64| -> ScreenRect { typed(4.0 + i * 863.0, 32.0, w, 1081.0) };
+            let step = |frame: ScreenRect| -> ScreenRect {
+                typed(
                     frame.origin.x - 863.0,
                     frame.origin.y,
                     frame.size.width,
@@ -2803,14 +2843,14 @@ mod tests {
                 (d, column(1.0, 400.0), column(1.0, 600.0), false),
                 (
                     e,
-                    rect(224.0, 95.0, 600.0, 400.0),
-                    rect(264.0, 95.0, 600.0, 400.0),
+                    typed(224.0, 95.0, 600.0, 400.0),
+                    typed(264.0, 95.0, 600.0, 400.0),
                     true,
                 ),
             ];
             let mut tiles: Vec<OverlayTile> = requests
                 .iter()
-                .map(|&(w, from, to, floating)| overlay_tile(w, from, to, floating))
+                .map(|&(w, from, to, floating)| overlay_tile(w, on(from), on(to), floating))
                 .collect();
             let plan = FlightPlan::from(reflow_plan(&requests, DISPLAY));
             let windows: Vec<WindowId> = tiles.iter().map(|t| t.window).collect();
@@ -2828,14 +2868,14 @@ mod tests {
                 lifted: vec![e],
                 ..banding(&windows, &plan)
             }));
-            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size, 2.0);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &tiles);
             assert_eq!(tree.replica, score);
             assert!(tree.lifted.is_some(), "e is drawn in front of the strip");
             plays_exactly(&tree);
 
             let steps = [Accent::Step {
-                offset: CGPoint::new(-576.0, 0.0),
+                offset: OverlayVector::new(-576.0, 0.0),
                 seconds: 0.35,
             }];
             let stage = Stage {
@@ -2854,7 +2894,7 @@ mod tests {
             plays_exactly(&tree);
 
             let joined = column(3.0, 859.0);
-            tiles.push(overlay_tile(f, joined, step(joined), false));
+            tiles.push(overlay_tile(f, on(joined), on(step(joined)), false));
             let incoming = reflow_plan(
                 &[
                     (
@@ -2882,9 +2922,9 @@ mod tests {
             let drawn = [a, b, c, d, f];
             let pass = Pass {
                 plan: &incoming,
-                pan: Some(CGPoint::new(-863.0, 0.0)),
+                pan: Some(OverlayVector::new(-863.0, 0.0)),
                 focus: None,
-                viewport: DISPLAY,
+                viewport: VIEWPORT,
                 drawn: &drawn,
                 seconds: 0.35,
                 cue: Cue::Plain,
@@ -2917,8 +2957,9 @@ mod tests {
         fn a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again() {
             use crate::animation::domain::motion::tile;
             let window = wid(1);
-            let (from, to) = (rect(4.0, 32.0, 860.0, 1081.0), rect(4.0, 32.0, 1200.0, 1081.0));
-            let mut tiles = vec![overlay_tile(window, from, to, false)];
+            let (from, to): (ScreenRect, ScreenRect) =
+                (typed(4.0, 32.0, 860.0, 1081.0), typed(4.0, 32.0, 1200.0, 1081.0));
+            let mut tiles = vec![overlay_tile(window, on(from), on(to), false)];
             let plan = FlightPlan::from(reflow_plan(&[(window, from, to, false)], DISPLAY));
             let mut slide = Look::Slide.choreography();
             let stage = Stage {
@@ -2929,7 +2970,7 @@ mod tests {
                 accents: &[],
             };
             let mut score = slide.pose(&stage);
-            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size, 2.0);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &tiles);
             let started = slide.compose(&score, &stage, 100.0);
             let mut play = |tree: &mut Tree, edits: &[Edit], tiles: &[OverlayTile]| {
@@ -2942,10 +2983,10 @@ mod tests {
             let stretched = |tree: &Tree| tree.tile_layers[&window].crop_of.is_none();
             assert!(stretched(&tree), "the old picture outgrows nothing");
 
-            let repainted = test_picture(CGSize::new(1199.0, 1081.0));
+            let repainted = test_picture(ScreenSize::new(1199.0, 1081.0));
             tiles[0].snapshot = repainted.clone();
             tree.swap(window, &repainted, 100.15);
-            let real = rect(4.0, 32.0, 1199.0, 1081.0);
+            let real = on(typed(4.0, 32.0, 1199.0, 1081.0));
             let snapped = tile::snap(&tree.replica, window, real, 100.15);
             assert!(snapped.iter().any(|edit| matches!(edit, Edit::Add(_))), "on its leg");
             play(&mut tree, &snapped, &tiles);
@@ -2954,8 +2995,8 @@ mod tests {
             let shrink = Track::between(
                 Node::Tile(window),
                 Channel::Base,
-                Value::Rect(real),
-                Value::Rect(rect(4.0, 32.0, 900.0, 1081.0)),
+                Value::Rect(plan::installed(real)),
+                Value::Rect(plan::installed(on(typed(4.0, 32.0, 900.0, 1081.0)))),
                 100.2,
                 0.35,
                 Curve::Bezier(MOTION_CURVE),
@@ -2969,33 +3010,34 @@ mod tests {
         #[test]
         fn a_placed_tile_moves_every_layer_of_the_tile() {
             let window = wid(1);
-            let at = rect(865.0, 32.0, 861.0, 1081.0);
-            let tiles = [overlay_tile(window, at, at, false)];
+            let at: GroupRect = typed(865.0, 32.0, 861.0, 1081.0);
+            let drawn = typed(865.0, 32.0, 861.0, 1081.0);
+            let tiles = [overlay_tile(window, drawn, drawn, false)];
             let mut score = Score::default();
             for edit in [
                 Edit::Place(
                     Node::Container(GroupKey::STILL),
-                    Value::Point(CGPoint::new(-861.0, 0.0)),
+                    Value::Point(OverlayPoint::new(-861.0, 0.0)),
                 ),
                 Edit::Ride(window, GroupKey::STILL),
                 Edit::Place(Node::Tile(window), Value::Rect(at)),
             ] {
                 score.apply(&edit);
             }
-            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size, 2.0);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &tiles);
-            let snapped = rect(865.0, 32.0, 860.0, 1081.0);
+            let snapped: GroupRect = typed(865.0, 32.0, 860.0, 1081.0);
             tree.play(&[Edit::Place(Node::Tile(window), Value::Rect(snapped))], &tiles);
             let tile = &tree.tile_layers[&window];
-            assert_eq!(tile.picture.frame(), snapped);
-            assert_eq!(tile.shadow.frame(), snapped);
-            assert_eq!(tile.ring.frame(), snapped);
+            assert_eq!(tile.picture.frame(), snapped.to_cg());
+            assert_eq!(tile.shadow.frame(), snapped.to_cg());
+            assert_eq!(tile.ring.frame(), snapped.to_cg());
             assert_eq!(outline_bounds(tile), rect(-0.25, -0.25, 860.5, 1081.5));
-            assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size));
+            assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size.respace()));
             let silhouette = tile.shadow.shadowPath().expect("a silhouette");
             assert_eq!(
                 objc2_core_graphics::CGPath::bounding_box(Some(&silhouette)).size,
-                snapped.size
+                snapped.size.to_cg()
             );
             for layer in tile.layers() {
                 assert!(rini_keys(layer).is_empty());

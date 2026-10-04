@@ -6,24 +6,25 @@
 //! `crate::transitions::domain::lifecycle`; when the pictures service makes the captures a flight asks
 //! for is `crate::pictures::domain::schedule`. Design in `src/transitions/docs/coordination.md`.
 
-use objc2_core_foundation::CGRect;
 use std::collections::HashMap;
 
 use rini_core::ids::{WindowId, WindowServerId};
+use rini_geometry::space::ScreenRect;
 
 use super::timing::{COMPANION_CENTER_SLACK, COMPANION_EXPANSION, HANDOVER_THRESHOLD_PT};
 
 /// The unmanaged window tracing `frame` as its border, if any. A parked window never traces and is
 /// never traced. See "Border companions" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn companion_of(
-    frame: CGRect,
-    candidates: &[(WindowServerId, CGRect)],
-    display: CGRect,
-) -> Option<(WindowServerId, CGRect)> {
+    frame: ScreenRect,
+    candidates: &[(WindowServerId, ScreenRect)],
+    display: ScreenRect,
+) -> Option<(WindowServerId, ScreenRect)> {
     if rini_geometry::is_off_screen(display, frame) {
         return None;
     }
-    let center = |r: CGRect| (r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0);
+    let center =
+        |r: ScreenRect| (r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0);
     let (cx, cy) = center(frame);
     candidates
         .iter()
@@ -55,10 +56,10 @@ pub(in crate::transitions) struct HandoverReport {
 /// Measures every tiled window's real frame against its intended one. Parks are excluded: macOS
 /// clamps them. See "Real windows land before lift" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn handover_report(
-    final_frames: &[(WindowId, CGRect)],
+    final_frames: &[(WindowId, ScreenRect)],
     tiled: &[WindowId],
-    real: &HashMap<WindowId, CGRect>,
-    display: CGRect,
+    real: &HashMap<WindowId, ScreenRect>,
+    display: ScreenRect,
 ) -> HandoverReport {
     let mut report = HandoverReport {
         total: 0,
@@ -179,14 +180,14 @@ mod tests {
     }
 
     mod handover {
-        use objc2_core_foundation::{CGPoint, CGSize};
+        use rini_geometry::space::{ScreenPoint, ScreenSize};
 
         use super::*;
         use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
 
         fn measured(
-            frames: &[(WindowId, CGRect, CGRect)],
-        ) -> (Vec<(WindowId, CGRect)>, Vec<WindowId>, HashMap<WindowId, CGRect>) {
+            frames: &[(WindowId, ScreenRect, ScreenRect)],
+        ) -> (Vec<(WindowId, ScreenRect)>, Vec<WindowId>, HashMap<WindowId, ScreenRect>) {
             let final_frames = frames.iter().map(|(w, intended, _)| (*w, *intended)).collect();
             let tiled = frames.iter().map(|(w, _, _)| *w).collect();
             let real = frames.iter().map(|(w, _, actual)| (*w, *actual)).collect();
@@ -203,7 +204,7 @@ mod tests {
                 (parked, rect(1727.0, 1116.0, 859.0, 1081.0)),
                 (strip, rect(867.0, 32.0, 859.0, 1081.0)),
             ];
-            let real: HashMap<WindowId, CGRect> = [
+            let real: HashMap<WindowId, ScreenRect> = [
                 (parked, rect(1727.0, 1051.0, 859.0, 1081.0)),
                 (strip, rect(870.0, 32.0, 859.0, 1081.0)),
             ]
@@ -304,13 +305,11 @@ mod tests {
                     let intended = if rng.coin() {
                         rng.on_screen()
                     } else {
-                        rng.park(CGSize::new(859.0, 1081.0))
+                        rng.park(ScreenSize::new(859.0, 1081.0))
                     };
                     let shift = if rng.coin() { 0.0 } else { rng.pt(-80.0, 80.0) };
-                    let actual = CGRect::new(
-                        CGPoint::new(intended.origin.x + shift, intended.origin.y + shift / 2.0),
-                        intended.size,
-                    );
+                    let (x, y) = (intended.origin.x + shift, intended.origin.y + shift / 2.0);
+                    let actual = ScreenRect::new(ScreenPoint::new(x, y), intended.size);
                     frames.push((window(i as u32), intended, actual));
                 }
                 let (f, t, r) = measured(&frames);
@@ -320,7 +319,7 @@ mod tests {
                     .iter()
                     .filter(|(_, intended, _)| !rini_geometry::is_off_screen(DISPLAY, *intended))
                     .collect();
-                let error = |intended: &CGRect, actual: &CGRect| {
+                let error = |intended: &ScreenRect, actual: &ScreenRect| {
                     (actual.origin.x - intended.origin.x)
                         .abs()
                         .max((actual.origin.y - intended.origin.y).abs())
@@ -348,7 +347,8 @@ mod tests {
     }
 
     mod worth_flying {
-        use objc2_core_foundation::CGPoint;
+        use rini_geometry::from_overlay_space;
+        use rini_geometry::space::{ScreenPoint, SurfacePoint};
 
         use super::*;
         use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, RigidGroup, reflow_plan};
@@ -356,18 +356,18 @@ mod tests {
         use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
         use crate::transitions::domain::travel::is_moving;
 
-        fn moving_drawable(tiles: &[(CGRect, CGRect)]) -> bool {
+        fn moving_drawable(tiles: &[(ScreenRect, ScreenRect)]) -> bool {
             tiles.iter().any(|(from, to)| is_moving(*from, *to))
         }
 
-        fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
-            CGRect::new(
-                CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
+        fn shifted(frame: ScreenRect, dx: f64, dy: f64) -> ScreenRect {
+            ScreenRect::new(
+                ScreenPoint::new(frame.origin.x + dx, frame.origin.y + dy),
                 frame.size,
             )
         }
 
-        fn column(i: f64) -> CGRect {
+        fn column(i: f64) -> ScreenRect {
             rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
         }
 
@@ -417,8 +417,8 @@ mod tests {
         fn a_pan_flies() {
             let frame = rect(867.0, 32.0, 859.0, 1081.0);
             let (from, to) =
-                surface_travel(frame, CGPoint::new(0.0, 0.0), CGPoint::new(867.0, 0.0), false);
-            let tiles = vec![(from, to)];
+                surface_travel(frame, SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0), false);
+            let tiles = vec![(from_overlay_space(from, DISPLAY), from_overlay_space(to, DISPLAY))];
             assert!(worth_flying(moving_drawable(&tiles), false));
         }
 
@@ -470,7 +470,7 @@ mod tests {
         fn a_close_composes_only_the_survivors_and_worth_flying_needs_a_mover() {
             let w = 863.0;
             let closed = window(2);
-            let survivors: Vec<(WindowId, CGRect, CGRect, bool)> = [1u32, 3, 4]
+            let survivors: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = [1u32, 3, 4]
                 .iter()
                 .map(|&i| {
                     let f = column(i as f64);

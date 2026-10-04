@@ -5,7 +5,7 @@
 //! viewport rather than the strips: each strip keeps its own horizontal position and is pinned
 //! vertically to its row.
 
-use objc2_core_foundation::{CGPoint, CGRect};
+use rini_geometry::space::{Point, Respace, ScreenPoint, ScreenRect, SurfacePoint, SurfaceRect};
 
 /// Longest a switch may be stretched for distance, as a multiple of the configured duration.
 const MAX_DURATION_STRETCH: f64 = 2.5;
@@ -14,13 +14,18 @@ const MAX_DURATION_STRETCH: f64 = 2.5;
 ///
 /// `row` is the workspace's position in the stack counted from the first one involved, not its absolute
 /// index, so a switch only ever builds the rows between the two ends.
-pub fn strip_frame(frame: CGRect, display_origin: CGPoint, row: usize, row_pitch: f64) -> CGRect {
-    CGRect::new(
-        CGPoint::new(
+pub fn strip_frame(
+    frame: ScreenRect,
+    display_origin: ScreenPoint,
+    row: usize,
+    row_pitch: f64,
+) -> SurfaceRect {
+    SurfaceRect::new(
+        Point::new(
             frame.origin.x - display_origin.x,
             (frame.origin.y - display_origin.y) + row as f64 * row_pitch,
         ),
-        frame.size,
+        frame.size.respace(),
     )
 }
 
@@ -29,15 +34,15 @@ pub fn strip_frame(frame: CGRect, display_origin: CGPoint, row: usize, row_pitch
 /// A switch travels only in y, so the destination row has to be laid out at a scroll that already shows the
 /// window being switched to. Otherwise the strip pans sideways afterwards to reveal it, which is the second
 /// movement a switch exists to avoid. The viewport ends at strip-surface x = 0, so the band is the display's width.
-pub fn lands_in_view(frame: CGRect, viewport_width: f64) -> bool {
+pub fn lands_in_view(frame: SurfaceRect, viewport_width: f64) -> bool {
     frame.origin.x < viewport_width && frame.origin.x + frame.size.width > 0.0
 }
 
 /// The viewport offsets a switch travels between, and how far to stretch its duration.
 #[derive(Debug, PartialEq)]
 pub struct StripTravel {
-    pub from: CGPoint,
-    pub to: CGPoint,
+    pub from: SurfacePoint,
+    pub to: SurfacePoint,
     /// Multiplier on the configured animation duration.
     pub duration_stretch: f64,
 }
@@ -56,27 +61,27 @@ pub fn travel(from_index: usize, to_index: usize, row_pitch: f64) -> StripTravel
     let low = from_index.min(to_index);
     let rows = (to_index as f64 - from_index as f64).abs().max(1.0);
     StripTravel {
-        from: CGPoint::new(0.0, (from_index - low) as f64 * row_pitch),
-        to: CGPoint::new(0.0, (to_index - low) as f64 * row_pitch),
+        from: Point::new(0.0, (from_index - low) as f64 * row_pitch),
+        to: Point::new(0.0, (to_index - low) as f64 * row_pitch),
         duration_stretch: rows.sqrt().min(MAX_DURATION_STRETCH),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGSize;
+    use rini_geometry::space::{Rect, Size};
 
     use super::*;
 
     // The usable height on the built-in: the full 1117 display less the 32pt band.
     const PITCH: f64 = 1085.0;
 
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    fn rect<U>(x: f64, y: f64, w: f64, h: f64) -> Rect<U> {
+        Rect::new(Point::new(x, y), Size::new(w, h))
     }
 
-    fn origin() -> CGPoint {
-        CGPoint::new(0.0, 0.0)
+    fn origin() -> ScreenPoint {
+        ScreenPoint::origin()
     }
 
     /// The switch is vertical, so the destination row has to arrive already scrolled to the window being
@@ -167,7 +172,7 @@ mod tests {
     #[test]
     fn a_display_that_is_not_at_the_origin_is_made_relative() {
         let window = rect(-670.0, -1660.0, 859.0, 1081.0);
-        let placed = strip_frame(window, CGPoint::new(-670.0, -1692.0), 0, PITCH);
+        let placed = strip_frame(window, ScreenPoint::new(-670.0, -1692.0), 0, PITCH);
         assert_eq!(placed.origin.x, 0.0);
         assert_eq!(placed.origin.y, 32.0);
     }

@@ -8,6 +8,8 @@ use serde_with::{DeserializeAs, SerializeAs};
 pub mod space;
 pub mod stretch;
 
+use space::{Overlay, OverlayRect, Point, Rect, Screen, ScreenRect, Translation};
+
 /// Rounded to whole points, halves away from zero. Not `round`: on a typed value that name is
 /// euclid's, which takes halves up.
 pub trait Round {
@@ -182,7 +184,7 @@ pub const PARK_CLAMP_PX: f64 = 40.0;
 /// Whether `window` shows nothing usable on `display`: no intersection, or a sliver within
 /// `PARK_CLAMP_PX` in both axes. A column peeking in at an edge shows its full height, so it is
 /// never "off screen" by this test.
-pub fn is_off_screen(display: ic::CGRect, window: ic::CGRect) -> bool {
+pub fn is_off_screen<U>(display: Rect<U>, window: Rect<U>) -> bool {
     let visible_width =
         (window.max().x.min(display.max().x) - window.origin.x.max(display.origin.x)).max(0.0);
     let visible_height =
@@ -195,18 +197,14 @@ pub fn is_off_screen(display: ic::CGRect, window: ic::CGRect) -> bool {
 
 /// Where a window parked at `park` should start an animation towards `destination`: the same row,
 /// just past the display edge on the park's side, so it enters from the side it left by.
-pub fn park_entry_frame(
-    park: ic::CGRect,
-    destination: ic::CGRect,
-    display: ic::CGRect,
-) -> ic::CGRect {
-    let from_the_left = park.mid().x < display.mid().x;
+pub fn park_entry_frame<U>(park: Rect<U>, destination: Rect<U>, display: Rect<U>) -> Rect<U> {
+    let from_the_left = park.center().x < display.center().x;
     let x = if from_the_left {
         display.origin.x - destination.size.width
     } else {
         display.max().x
     };
-    ic::CGRect::new(ic::CGPoint::new(x, destination.origin.y), destination.size)
+    Rect::new(Point::new(x, destination.origin.y), destination.size)
 }
 
 /// `frame` moved to the middle of `container`, then pulled back so no edge sits outside it.
@@ -225,32 +223,21 @@ pub fn centered_in(frame: ic::CGRect, container: ic::CGRect) -> ic::CGRect {
     ic::CGRect::new(origin, frame.size)
 }
 
-/// `frame`, a rect in display space, in the coordinates of an overlay whose own frame is
-/// `overlay_frame`.
-///
-/// The overlay's layer tree has its origin at the overlay's top-left, not the display's, so a window
-/// frame has to have the overlay's origin subtracted. Skipping this puts every tile off by the menu
-/// bar inset, which reads as the whole animation being shifted down.
-pub fn to_overlay_space(frame: ic::CGRect, overlay_frame: ic::CGRect) -> ic::CGRect {
-    ic::CGRect::new(
-        ic::CGPoint::new(
-            frame.origin.x - overlay_frame.origin.x,
-            frame.origin.y - overlay_frame.origin.y,
-        ),
-        frame.size,
-    )
+/// `frame` in the overlay's points: less the origin of `display`, the bounds of the display the
+/// overlay covers. Its root layer spans the whole display, menu bar band included, so a window
+/// under the band keeps its distance from the display's top.
+pub fn to_overlay_space(frame: ScreenRect, display: ScreenRect) -> OverlayRect {
+    into_overlay(display).transform_rect(&frame)
 }
 
-/// `rect`, in the coordinates of an overlay whose own frame is `overlay_frame`, back in display
-/// space: what `to_overlay_space` undoes.
-pub fn from_overlay_space(rect: ic::CGRect, overlay_frame: ic::CGRect) -> ic::CGRect {
-    ic::CGRect::new(
-        ic::CGPoint::new(
-            rect.origin.x + overlay_frame.origin.x,
-            rect.origin.y + overlay_frame.origin.y,
-        ),
-        rect.size,
-    )
+/// `frame`, in the points of the overlay covering `display`, back in the window server's: what
+/// `to_overlay_space` undoes.
+pub fn from_overlay_space(frame: OverlayRect, display: ScreenRect) -> ScreenRect {
+    into_overlay(display).inverse().transform_rect(&frame)
+}
+
+fn into_overlay(display: ScreenRect) -> Translation<Screen, Overlay> {
+    Translation::new(-display.origin.x, -display.origin.y)
 }
 
 #[cfg(test)]
@@ -259,6 +246,14 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> ic::CGRect {
         ic::CGRect::new(ic::CGPoint::new(x, y), ic::CGSize::new(w, h))
+    }
+
+    fn screen(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        Rect::new(Point::new(x, y), space::Size::new(w, h))
+    }
+
+    fn overlay(x: f64, y: f64, w: f64, h: f64) -> OverlayRect {
+        Rect::new(Point::new(x, y), space::Size::new(w, h))
     }
 
     #[test]
@@ -270,8 +265,7 @@ mod tests {
 
     #[test]
     fn same_as_tolerates_a_tenth_of_a_point_and_not_more() {
-        use space::{FromCg, ScreenRect};
-        let typed = |x, y, w, h| ScreenRect::from_cg(rect(x, y, w, h));
+        let typed = screen;
         assert!(rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.09, 0.0, 10.0, 10.0)));
         assert!(!rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.1, 0.0, 10.0, 10.0)));
         assert!(!rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.0, 0.0, 10.0, 10.2)));
@@ -319,36 +313,38 @@ mod tests {
 
     #[test]
     fn a_park_sliver_is_off_screen_but_a_peeking_column_is_not() {
-        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let display = screen(0.0, 0.0, 1728.0, 1117.0);
         assert!(
-            is_off_screen(display, rect(1727.0, 1116.0, 800.0, 600.0)),
+            is_off_screen(display, screen(1727.0, 1116.0, 800.0, 600.0)),
             "1pt corner park"
         );
         assert!(
-            is_off_screen(display, rect(-1719.0, 1116.0, 1720.0, 600.0)),
+            is_off_screen(display, screen(-1719.0, 1116.0, 1720.0, 600.0)),
             "1pt corner park, left"
         );
         assert!(
-            is_off_screen(display, rect(-3000.0, 0.0, 800.0, 600.0)),
+            is_off_screen(display, screen(-3000.0, 0.0, 800.0, 600.0)),
             "no intersection"
         );
         assert!(
-            !is_off_screen(display, rect(1600.0, 0.0, 800.0, 1117.0)),
+            !is_off_screen(display, screen(1600.0, 0.0, 800.0, 1117.0)),
             "column peeking in 128pt"
         );
         assert!(
-            !is_off_screen(display, rect(-770.0, 0.0, 800.0, 1117.0)),
+            !is_off_screen(display, screen(-770.0, 0.0, 800.0, 1117.0)),
             "30pt wide but full height"
         );
     }
 
     #[test]
     fn a_parked_window_enters_from_the_side_it_was_parked_on() {
-        let display = rect(0.0, 0.0, 1728.0, 1117.0);
-        let destination = rect(400.0, 32.0, 800.0, 1000.0);
-        let from_left = park_entry_frame(rect(-799.0, 1116.0, 800.0, 600.0), destination, display);
+        let display = screen(0.0, 0.0, 1728.0, 1117.0);
+        let destination = screen(400.0, 32.0, 800.0, 1000.0);
+        let from_left =
+            park_entry_frame(screen(-799.0, 1116.0, 800.0, 600.0), destination, display);
         assert_eq!((from_left.origin.x, from_left.origin.y), (-800.0, 32.0));
-        let from_right = park_entry_frame(rect(1727.0, 1116.0, 800.0, 600.0), destination, display);
+        let from_right =
+            park_entry_frame(screen(1727.0, 1116.0, 800.0, 600.0), destination, display);
         assert_eq!(from_right.origin.x, 1728.0);
         assert_eq!(from_right.size.width, 800.0);
     }
@@ -384,42 +380,40 @@ mod tests {
         assert_eq!(centered.max(), ic::CGPoint::new(500.0, 400.0));
     }
 
+    /// The display's own origin, not its usable frame's: the overlay spans the menu bar band, so a
+    /// window under a 32pt band stays 32pt down.
     #[test]
-    fn overlay_space_subtracts_the_overlay_origin() {
-        // A display inset by a 32pt menu bar: a window at y = 32 lands at y = 0 in the overlay.
-        let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
-        let window = rect(865.0, 32.0, 859.0, 1081.0);
-        assert_eq!(
-            to_overlay_space(window, overlay),
-            rect(865.0, 0.0, 859.0, 1081.0)
-        );
+    fn overlay_space_subtracts_the_display_origin() {
+        let display = screen(1728.0, -300.0, 3008.0, 1692.0);
+        let window = screen(1732.0, -268.0, 859.0, 1081.0);
+        assert_eq!(to_overlay_space(window, display), overlay(4.0, 32.0, 859.0, 1081.0));
     }
 
     #[test]
     fn overlay_space_keeps_negative_offsets_negative() {
         // Off-strip windows at negative x stay to the left of the overlay, not clamped into it.
-        let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
+        let display = screen(0.0, 0.0, 1728.0, 1117.0);
         assert_eq!(
-            to_overlay_space(rect(-1680.0, 32.0, 1720.0, 1081.0), overlay),
-            rect(-1680.0, 0.0, 1720.0, 1081.0)
+            to_overlay_space(screen(-1680.0, 32.0, 1720.0, 1081.0), display),
+            overlay(-1680.0, 32.0, 1720.0, 1081.0)
         );
     }
 
     #[test]
     fn from_overlay_space_undoes_to_overlay_space() {
-        let overlay = rect(1728.0, 32.0, 1728.0, 1085.0);
-        let tile = rect(-860.0, 0.0, 859.0, 1081.0);
-        assert_eq!(from_overlay_space(tile, overlay), rect(868.0, 32.0, 859.0, 1081.0));
-        assert_eq!(to_overlay_space(from_overlay_space(tile, overlay), overlay), tile);
+        let display = screen(1728.0, 0.0, 1728.0, 1117.0);
+        let tile = overlay(-860.0, 32.0, 859.0, 1081.0);
+        assert_eq!(from_overlay_space(tile, display), screen(868.0, 32.0, 859.0, 1081.0));
+        assert_eq!(to_overlay_space(from_overlay_space(tile, display), display), tile);
     }
 
     #[test]
     fn overlay_space_handles_a_second_display_at_an_offset() {
         // A display to the right: windows at large positive x are drawn relative to its own overlay.
-        let overlay = rect(1728.0, 32.0, 1728.0, 1085.0);
+        let display = screen(1728.0, 0.0, 1728.0, 1117.0);
         assert_eq!(
-            to_overlay_space(rect(1728.0, 32.0, 859.0, 1081.0), overlay),
-            rect(0.0, 0.0, 859.0, 1081.0)
+            to_overlay_space(screen(1728.0, 32.0, 859.0, 1081.0), display),
+            overlay(0.0, 32.0, 859.0, 1081.0)
         );
     }
 }

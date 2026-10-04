@@ -10,8 +10,8 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 
 | | |
 |---|---|
-| `domain/motion/plan.rs` | `FlightPlan`, rigid groups, `reflow_plan` and `surface_plan`, `merge_plans` for a pass arriving mid-flight, the containers an edge bounce or a nudge carries, and an entrance's shape |
-| `domain/motion/surface.rs` | How a strip movement carries a surface: `surface_travel`, `pan_travel`, and what a window on the surface and a tile have to say (`SurfaceGeometry`, `TileGeometry`) |
+| `domain/motion/plan.rs` | `FlightPlan`, rigid groups, `reflow_plan` and `surface_plan`, `merge_plans` for a pass arriving mid-flight, a frame in its container and back (`group_relative`, `overlay_of`, and `installed` for a fresh plan), the containers an edge bounce or a nudge carries, and an entrance's shape |
+| `domain/motion/surface.rs` | How a strip movement carries a surface: what the viewport at an offset shows (`viewport`), `surface_travel`, `pan_travel`, and what a window on the surface and a tile have to say (`SurfaceGeometry`, `TileGeometry`) |
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score has its movement (`Score::along`) and as fast as its leg is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
 | `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, which container each tile rides and how deep each is drawn, evaluating to what Core Animation draws; the fold of its `Edit`s (a place, a track added or cut, a ride, a drop, a bank), the one way in; each track's `Form`, the class that plays it; `ending_at`, a track's end moved; `presented`, where every container is; `plays`, whether a channel plays |
@@ -25,6 +25,12 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/choreography.rs` | The looks: `Look`, every look by name (`ALL`), its `Choreography` for a flight (the plan, frame zero posed, the motion composed, a press before it folded and one after it bent) and its staging of a press on the strip (`stage`, over a `Cue`, a `Strip` and its `PairStart`s, giving a `Staging`); what a look composes from (`Stage`), bends with (`Pass`) and gives back (`Retarget`); and the tests every look passes |
 | `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
 | `platform/overlay.rs` | `TileOverlay`, the renderer: it poses frame zero and plays a score's edits, one `CATransaction` each, every animation installed from a track; its `Tree` (the `CALayer` tree and the replica it reads only to install) hangs off any root layer, so it is tested without a window |
+
+Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
+a layout pass's requests in `Screen`, tiles, container positions, travels and accents in `Overlay`,
+a strip movement's windows and viewport offsets in `Surface`, a frame in its container in `Group`,
+and a tile's own size, crop pieces and hairline in `Tile`. CG stays in `platform/`, on the lines
+that meet objc2.
 
 ## The shape that matters
 

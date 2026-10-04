@@ -4,7 +4,7 @@ use tracing::{debug, trace};
 use crate::transitions::domain::travel::travels_visibly;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::app::power;
-use rini_geometry::space::{FromCg, ScreenSize};
+use rini_geometry::space::{FromCg, ScreenRect, ScreenSize, ToCg};
 use rini_geometry::stretch::is_a_resize;
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::{Present, instant_requests};
@@ -56,10 +56,11 @@ impl AnimationManager {
                 Some(PassWindow {
                     window: wid,
                     server_id,
-                    current: window.frame_monotonic,
-                    target,
+                    current: ScreenRect::from_cg(window.frame_monotonic),
+                    target: ScreenRect::from_cg(target),
                     pending: server_id
-                        .and_then(|wsid| reactor.transaction_manager.get_target_frame(wsid)),
+                        .and_then(|wsid| reactor.transaction_manager.get_target_frame(wsid))
+                        .map(ScreenRect::from_cg),
                     in_active_workspace: in_active(wid),
                     floating: engine.is_window_floating(wid),
                     app_alive,
@@ -77,7 +78,7 @@ impl AnimationManager {
         m: &Move,
     ) -> crate::windows::domain::transaction::TransactionId {
         Present::new(&mut reactor.state.windows, &reactor.transaction_manager)
-            .commit(m.window, m.to)
+            .commit(m.window, m.to.to_cg())
     }
 
     pub fn animate_layout(
@@ -139,10 +140,11 @@ impl AnimationManager {
             };
             if m.in_active_workspace {
                 trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Animating visible window");
-                placements.push((handle, m.window, m.to, txid));
+                placements.push((handle, m.window, m.to.to_cg(), txid));
             } else {
                 trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Direct positioning hidden window");
-                if let Err(e) = handle.send(Request::SetWindowFrame(m.window, m.to, txid, true)) {
+                let request = Request::SetWindowFrame(m.window, m.to.to_cg(), txid, true);
+                if let Err(e) = handle.send(request) {
                     debug!(window = ?m.window, ?e, "Failed to send frame request for hidden window");
                 }
             }
@@ -309,7 +311,7 @@ impl AnimationManager {
             per_app
                 .entry(m.window.pid)
                 .or_default()
-                .push((m.window, m.to, m.size_unchanged()));
+                .push((m.window, m.to.to_cg(), m.size_unchanged()));
         }
 
         for (pid, frames) in per_app {

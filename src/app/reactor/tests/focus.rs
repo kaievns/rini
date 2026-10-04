@@ -2,6 +2,7 @@
 //! per-application main window.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
+use rini_geometry::space::OverlayVector;
 use test_log::test;
 
 use super::fixtures::*;
@@ -515,7 +516,10 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
         turned.iter().map(|ends| ends.iter().map(|(window, _)| *window).collect()).collect();
     assert_eq!(ends, vec![vec![arriving, leaving], vec![leaving, arriving]]);
     assert!(
-        turned.iter().flatten().all(|(window, at)| at.size == frame(*window).size),
+        turned
+            .iter()
+            .flatten()
+            .all(|(window, at)| at.size == ScreenSize::from_cg(frame(*window).size)),
         "each at the frame the reactor has it at: {turned:?}"
     );
 }
@@ -553,7 +557,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
+        vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
         "the strip's end: one bounce to the left carrying both columns"
     );
     assert_eq!(
@@ -564,7 +568,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
+        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
         "the top of the stack: one bounce downward"
     );
     assert_eq!(
@@ -612,7 +616,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
+        vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
         "the strip's end: one bounce to the left carrying both columns"
     );
     assert_eq!(
@@ -629,7 +633,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     });
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
+        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
         "the top of the stack: one bounce downward"
     );
 

@@ -1,4 +1,5 @@
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HideCorner {
@@ -60,11 +61,12 @@ impl HiddenWindowPlacement {
 
     /// `rini_geometry::is_off_screen`; see `src/layout/docs/strip.md` "Parking".
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
-        rini_geometry::is_off_screen(screen, window)
+        rini_geometry::is_off_screen(ScreenRect::from_cg(screen), ScreenRect::from_cg(window))
     }
 
     pub fn entry_frame(park: CGRect, destination: CGRect, display: CGRect) -> CGRect {
-        rini_geometry::park_entry_frame(park, destination, display)
+        let at = |frame| ScreenRect::from_cg(frame);
+        rini_geometry::park_entry_frame(at(park), at(destination), at(display)).to_cg()
     }
 
     /// The least of a floating window that must show on each axis for its frame to be worth keeping.

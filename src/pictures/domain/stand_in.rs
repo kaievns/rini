@@ -1,6 +1,6 @@
 //! When a window with no picture flies as the dark stand-in rather than as nothing.
 
-use rini_geometry::space::{ScreenRect, ToCg};
+use rini_geometry::space::ScreenRect;
 
 /// Whether a window with no picture flies with a stand-in rather than being reserved as a newcomer.
 ///
@@ -14,7 +14,7 @@ fn stands_in(server_frame: Option<ScreenRect>, display: ScreenRect) -> bool {
     server_frame.is_some_and(|frame| {
         frame.size.width > 0.0
             && frame.size.height > 0.0
-            && rini_geometry::is_off_screen(display.to_cg(), frame.to_cg())
+            && rini_geometry::is_off_screen(display, frame)
     })
 }
 

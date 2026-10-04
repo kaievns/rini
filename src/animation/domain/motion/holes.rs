@@ -2,14 +2,14 @@
 //! overlay is not painted by the window server, so an app that repaints for focus under it shows
 //! the change only after the lift; a 1pt hole over the window keeps it painting. See "Holes" in
 //! `src/animation/docs/animation-smoothness.md`.
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_geometry::space::{OverlayRect, Point, Size};
 
 /// The hole over a window ending at `end`: a 1pt square a point in from its left edge and halfway
 /// down, inside the window's own pixels and clear of its corners.
-pub fn hole_in(end: CGRect) -> CGRect {
-    CGRect::new(
-        CGPoint::new(end.origin.x + 1.0, end.origin.y + end.size.height / 2.0),
-        CGSize::new(1.0, 1.0),
+pub fn hole_in(end: OverlayRect) -> OverlayRect {
+    OverlayRect::new(
+        Point::new(end.origin.x + 1.0, end.origin.y + end.size.height / 2.0),
+        Size::new(1.0, 1.0),
     )
 }
 
@@ -17,11 +17,11 @@ pub fn hole_in(end: CGRect) -> CGRect {
 mod tests {
     use super::*;
 
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> OverlayRect {
+        OverlayRect::new(Point::new(x, y), Size::new(w, h))
     }
 
-    fn inside(inner: CGRect, outer: CGRect) -> bool {
+    fn inside(inner: OverlayRect, outer: OverlayRect) -> bool {
         inner.origin.x >= outer.origin.x
             && inner.origin.y >= outer.origin.y
             && inner.origin.x + inner.size.width <= outer.origin.x + outer.size.width

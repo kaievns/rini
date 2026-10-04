@@ -2,10 +2,11 @@
 //! and how it snaps onto its window's real frame, as the score's edits. Sizes and rects only; the
 //! layers that realise these live in the overlay.
 
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
-
-use rini_geometry::space::{FromCg, Overlay, ScreenRect, ScreenSize, Size};
+use rini_geometry::space::{
+    ContentsRect, OverlayPoint, OverlayRect, Point, PointSpace, Rect, ScreenRect, ScreenSize, Size,
+    TileRect, TileSize,
+};
 use rini_geometry::stretch::is_a_resize;
 
 use super::plan::group_relative;
@@ -28,8 +29,12 @@ pub enum ContentMode {
 
 /// Crop for a resize, and for any picture that no longer matches the frame it starts in; stretched
 /// only when picture and frames agree, where stretching is exact.
-pub fn content_mode(covered: ScreenSize, from: CGSize, to: CGSize) -> ContentMode {
-    if is_a_resize(from, to) || !fits_frame(covered, Size::<Overlay>::from_cg(from)) {
+pub fn content_mode<U: PointSpace>(
+    covered: ScreenSize,
+    from: Size<U>,
+    to: Size<U>,
+) -> ContentMode {
+    if is_a_resize(from, to) || !fits_frame(covered, from) {
         stand_in_mode(covered, to)
     } else {
         ContentMode::Stretch
@@ -41,8 +46,8 @@ pub fn content_mode(covered: ScreenSize, from: CGSize, to: CGSize) -> ContentMod
 /// every mode fills the whole frame, so a stand-in never shows the backdrop. A top-left crop
 /// that left the growth undrawn was tried and read as a hole (see "A grow holds, then reveals"
 /// in `src/transitions/docs/coordination.md`).
-pub fn stand_in_mode(covered: ScreenSize, to: CGSize) -> ContentMode {
-    if outgrows(covered, Size::<Overlay>::from_cg(to)) {
+pub fn stand_in_mode<U: PointSpace>(covered: ScreenSize, to: Size<U>) -> ContentMode {
+    if outgrows(covered, to) {
         ContentMode::Stretch
     } else {
         ContentMode::Crop
@@ -57,12 +62,12 @@ const EDGE_BAND: f64 = 40.0;
 
 /// The band that fits the frame being drawn into: shrinks with the frame, so a window growing in
 /// from nothing starts with no band at all and gains it continuously — no seam pops mid-flight.
-fn crop_band(frame: CGSize) -> f64 {
+fn crop_band(frame: TileSize) -> f64 {
     EDGE_BAND.min(0.45 * frame.width.min(frame.height)).max(0.0)
 }
 
 /// One piece of a crop-drawn tile: where it sits in the tile, and which part of the picture it
-/// shows, in the picture's unit coordinates.
+/// shows.
 ///
 /// Every mapping is 1:1 — a piece's frame is exactly as large as the picture region it shows — so
 /// nothing ever stretches. A region reaching past the picture's edge is deliberate: Core Animation
@@ -70,8 +75,8 @@ fn crop_band(frame: CGSize) -> f64 {
 /// hole.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CropPiece {
-    pub frame: CGRect,
-    pub contents: CGRect,
+    pub frame: TileRect,
+    pub contents: ContentsRect,
 }
 
 /// The 2x2 crop grid for a picture drawn into `frame`, split one `crop_band` in from the RIGHT
@@ -95,7 +100,7 @@ pub struct CropPiece {
 /// painted a hole to the backdrop. A picture that cannot cover its destination is not drawn
 /// cropped at all (`stand_in_mode`), so this only covers the frames a fitting picture passes
 /// through.
-pub fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
+pub fn crop_pieces(picture: TileSize, frame: TileSize) -> [CropPiece; 4] {
     let pw = picture.width.max(1.0);
     let ph = picture.height.max(1.0);
     let band = crop_band(frame).min(pw).min(ph);
@@ -106,8 +111,8 @@ pub fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     let leadw = bodyw.min(pw - band);
     let tailh = bodyh.min(ph - band);
     let piece = |x: f64, y: f64, w: f64, h: f64, cx: f64, cy: f64, cw: f64, ch: f64| CropPiece {
-        frame: CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)),
-        contents: CGRect::new(CGPoint::new(cx / pw, cy / ph), CGSize::new(cw / pw, ch / ph)),
+        frame: Rect::new(Point::new(x, y), Size::new(w, h)),
+        contents: Rect::new(Point::new(cx / pw, cy / ph), Size::new(cw / pw, ch / ph)),
     };
     [
         // Title-bar band: the picture's top edge, pinned to the frame's top.
@@ -131,25 +136,24 @@ pub const SNAP_FROM: f64 = 0.25;
 /// otherwise. A strip pans by a fractional vector and the window server rounds each window on its
 /// own, so a tile of a rigid group can end a point from its window. See "Tiles snap to the real
 /// frame" in `src/animation/docs/animation-smoothness.md`.
-pub fn snap_to(model: CGRect, real: CGRect) -> Option<CGRect> {
-    let (at, landed) = (ScreenRect::from_cg(model), ScreenRect::from_cg(real));
-    (near(at, landed, END_SLACK) && !near(at, landed, SNAP_FROM)).then_some(real)
+pub fn snap_to(model: ScreenRect, real: ScreenRect) -> Option<ScreenRect> {
+    (near(model, real, END_SLACK) && !near(model, real, SNAP_FROM)).then_some(real)
 }
 
-/// The edits that move `window`'s tile onto `real`, its window's frame in the overlay's space, at
-/// `at`: its model goes there, and a track of its own still playing then is given the same timing
-/// and start ending there, so it lands with its movement instead of popping at the lift. A tile
-/// riding its container only moves inside it. None for a window the score has no tile of. Whether
-/// to snap is `snap_to`'s, decided by the caller; this does not judge it again. See "Tiles snap to
+/// The edits that move `window`'s tile onto `real`, its window's frame, at `at`: its model goes
+/// there, and a track of its own still playing then is given the same timing and start ending
+/// there, so it lands with its movement instead of popping at the lift. A tile riding its container
+/// only moves inside it. None for a window the score has no tile of. Whether to snap is
+/// `snap_to`'s, decided by the caller; this does not judge it again. See "Tiles snap to
 /// the real frame" in `src/animation/docs/animation-smoothness.md`.
-pub fn snap(score: &Score, window: WindowId, real: CGRect, at: f64) -> Vec<Edit> {
+pub fn snap(score: &Score, window: WindowId, real: OverlayRect, at: f64) -> Vec<Edit> {
     let node = Node::Tile(window);
     if score.model(node).is_none() {
         return Vec::new();
     }
     let offset = match score.parent(window).and_then(|key| score.model(Node::Container(key))) {
         Some(Value::Point(position)) => position,
-        _ => CGPoint::new(0.0, 0.0),
+        _ => OverlayPoint::origin(),
     };
     let to = Value::Rect(group_relative(real, offset));
     let playing = score.track(node, Channel::Base).filter(|track| track.at(at).is_some());
@@ -160,11 +164,11 @@ pub fn snap(score: &Score, window: WindowId, real: CGRect, at: f64) -> Vec<Edit>
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
 /// that looks almost right, which is much harder to debug than one that is obviously broken.
-pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
+pub fn lerp_rect<U>(from: Rect<U>, to: Rect<U>, t: f64) -> Rect<U> {
     let l = |a: f64, b: f64| a + (b - a) * t;
-    CGRect::new(
-        CGPoint::new(l(from.origin.x, to.origin.x), l(from.origin.y, to.origin.y)),
-        CGSize::new(
+    Rect::new(
+        Point::new(l(from.origin.x, to.origin.x), l(from.origin.y, to.origin.y)),
+        Size::new(
             l(from.size.width, to.size.width),
             l(from.size.height, to.size.height),
         ),
@@ -173,18 +177,23 @@ pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
 
 #[cfg(test)]
 mod tests {
-    use rini_geometry::space::ContentsRect;
+    use rini_geometry::space::Overlay;
 
     use super::*;
     use crate::pictures::domain::region::within;
 
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    fn rect<U>(x: f64, y: f64, w: f64, h: f64) -> Rect<U> {
+        Rect::new(Point::new(x, y), Size::new(w, h))
+    }
+
+    /// A tile's frame size on the overlay, as a track's ends carry it.
+    fn drawn(w: f64, h: f64) -> Size<Overlay> {
+        Size::new(w, h)
     }
 
     #[test]
     fn lerp_at_zero_is_the_start_frame() {
-        let from = rect(10.0, 20.0, 100.0, 200.0);
+        let from: OverlayRect = rect(10.0, 20.0, 100.0, 200.0);
         let to = rect(50.0, 60.0, 300.0, 400.0);
         let got = lerp_rect(from, to, 0.0);
         assert_eq!(got, from);
@@ -192,14 +201,14 @@ mod tests {
 
     #[test]
     fn lerp_at_one_is_the_end_frame() {
-        let from = rect(10.0, 20.0, 100.0, 200.0);
+        let from: OverlayRect = rect(10.0, 20.0, 100.0, 200.0);
         let to = rect(50.0, 60.0, 300.0, 400.0);
         assert_eq!(lerp_rect(from, to, 1.0), to);
     }
 
     #[test]
     fn lerp_midpoint_is_halfway_on_every_axis() {
-        let got = lerp_rect(
+        let got: OverlayRect = lerp_rect(
             rect(0.0, 0.0, 100.0, 100.0),
             rect(100.0, 200.0, 200.0, 300.0),
             0.5,
@@ -211,7 +220,7 @@ mod tests {
     fn lerp_handles_a_negative_origin() {
         // Off-strip windows legitimately sit at negative x, so this is the common case rather than
         // an edge case: the measured strip had columns at x = -1680.
-        let got = lerp_rect(
+        let got: OverlayRect = lerp_rect(
             rect(-1680.0, 32.0, 859.0, 1081.0),
             rect(0.0, 32.0, 859.0, 1081.0),
             0.5,
@@ -222,25 +231,25 @@ mod tests {
 
     #[test]
     fn a_matching_movement_stretches_and_everything_else_crops() {
-        let col = CGSize::new(859.0, 1081.0);
+        let col = drawn(859.0, 1081.0);
         let picture = ScreenSize::new(859.0, 1081.0);
         assert_eq!(content_mode(picture, col, col), ContentMode::Stretch);
         assert_eq!(
             content_mode(
                 ScreenSize::new(918.0, 1081.0),
-                CGSize::new(918.0, 1081.0),
-                CGSize::new(917.0, 1081.0)
+                drawn(918.0, 1081.0),
+                drawn(917.0, 1081.0)
             ),
             ContentMode::Stretch
         );
         // A horizontal grow past the picture is the stand-in: it stretches until the reveal
         // lands. A vertical shrink crops.
         assert_eq!(
-            content_mode(picture, col, CGSize::new(1720.0, 1081.0)),
+            content_mode(picture, col, drawn(1720.0, 1081.0)),
             ContentMode::Stretch
         );
         assert_eq!(
-            content_mode(picture, col, CGSize::new(859.0, 540.0)),
+            content_mode(picture, col, drawn(859.0, 540.0)),
             ContentMode::Crop
         );
         // A stale narrow picture in a wider frame is the stand-in case too: the reveal fills it.
@@ -258,32 +267,32 @@ mod tests {
     fn a_stand_in_never_shows_backdrop() {
         let picture = ScreenSize::new(859.0, 1081.0);
         assert_eq!(
-            stand_in_mode(picture, CGSize::new(1147.0, 1081.0)),
+            stand_in_mode(picture, drawn(1147.0, 1081.0)),
             ContentMode::Stretch
         );
         assert_eq!(
-            stand_in_mode(picture, CGSize::new(859.0, 1300.0)),
+            stand_in_mode(picture, drawn(859.0, 1300.0)),
             ContentMode::Stretch
         );
         assert_eq!(
-            stand_in_mode(picture, CGSize::new(859.0, 1081.0)),
+            stand_in_mode(picture, drawn(859.0, 1081.0)),
             ContentMode::Crop
         );
         assert_eq!(
-            stand_in_mode(picture, CGSize::new(572.0, 1081.0)),
+            stand_in_mode(picture, drawn(572.0, 1081.0)),
             ContentMode::Crop
         );
         // Both modes fill the frame: the match is exhaustive, so a mode that left part of the
         // frame undrawn would have to be added here to compile.
         for w in (1..=40).map(|i| i as f64 * 50.0) {
             for h in (1..=30).map(|i| i as f64 * 50.0) {
-                let to = CGSize::new(w, h);
+                let to = drawn(w, h);
                 match stand_in_mode(picture, to) {
                     ContentMode::Stretch => {
-                        assert!(outgrows(picture, Size::<Overlay>::from_cg(to)), "{to:?}")
+                        assert!(outgrows(picture, to), "{to:?}")
                     }
                     ContentMode::Crop => {
-                        assert!(!outgrows(picture, Size::<Overlay>::from_cg(to)), "{to:?}")
+                        assert!(!outgrows(picture, to), "{to:?}")
                     }
                 }
             }
@@ -296,11 +305,11 @@ mod tests {
     /// exists to rule out.
     #[test]
     fn crop_pieces_map_one_to_one_and_tile_the_frame() {
-        let picture = CGSize::new(859.0, 1081.0);
+        let picture = TileSize::new(859.0, 1081.0);
         let frames = [
-            CGSize::new(572.0, 1081.0), // shrink
-            CGSize::new(859.0, 540.0),  // vertical
-            CGSize::new(20.0, 1081.0),  // narrower than the band
+            TileSize::new(572.0, 1081.0), // shrink
+            TileSize::new(859.0, 540.0),  // vertical
+            TileSize::new(20.0, 1081.0),  // narrower than the band
         ];
         for frame in frames {
             let mut area = 0.0;
@@ -329,8 +338,8 @@ mod tests {
     /// grow as a hole — and the trailing band stays 1:1 so the corners and hairline never distort.
     #[test]
     fn a_grow_past_the_picture_stretches_the_lead_and_keeps_the_band_intact() {
-        let picture = CGSize::new(859.0, 1081.0);
-        let frame = CGSize::new(1720.0, 1081.0);
+        let picture = TileSize::new(859.0, 1081.0);
+        let frame = TileSize::new(1720.0, 1081.0);
         let pieces = crop_pieces(picture, frame);
         let body = &pieces[0];
         // The body shows everything up to the trailing band and no further.
@@ -354,8 +363,8 @@ mod tests {
     /// so the window's right border and corners ride it intact.
     #[test]
     fn crop_right_band_comes_from_the_pictures_right_edge() {
-        let picture = CGSize::new(859.0, 1081.0);
-        let pieces = crop_pieces(picture, CGSize::new(572.0, 1081.0));
+        let picture = TileSize::new(859.0, 1081.0);
+        let pieces = crop_pieces(picture, TileSize::new(572.0, 1081.0));
         let band = &pieces[3];
         assert!((band.contents.origin.x * picture.width - (859.0 - 40.0)).abs() < 1e-9);
         assert_eq!(band.frame.origin.x, 572.0 - 40.0);
@@ -367,8 +376,8 @@ mod tests {
     /// band. Cutting at the bottom instead read as the window sliding into a slot.
     #[test]
     fn a_vertical_resize_pins_the_title_bar_and_anchors_content_to_the_bottom() {
-        let picture = CGSize::new(859.0, 1081.0);
-        let frame = CGSize::new(859.0, 540.0);
+        let picture = TileSize::new(859.0, 1081.0);
+        let frame = TileSize::new(859.0, 540.0);
         let pieces = crop_pieces(picture, frame);
         let title = &pieces[0];
         assert_eq!(title.frame.origin.y, 0.0, "title band pinned to the top");
@@ -395,26 +404,26 @@ mod tests {
     /// starts as a plain reveal and gains its band continuously — no seam pops in mid-flight.
     #[test]
     fn crop_band_fits_any_frame() {
-        assert_eq!(crop_band(CGSize::new(859.0, 1081.0)), 40.0);
-        assert!((crop_band(CGSize::new(60.0, 1081.0)) - 27.0).abs() < 1e-9);
-        assert_eq!(crop_band(CGSize::new(0.0, 1081.0)), 0.0);
+        assert_eq!(crop_band(TileSize::new(859.0, 1081.0)), 40.0);
+        assert!((crop_band(TileSize::new(60.0, 1081.0)) - 27.0).abs() < 1e-9);
+        assert_eq!(crop_band(TileSize::new(0.0, 1081.0)), 0.0);
     }
 
     /// Every crop piece of a region picture stays inside the region, scaled to it, growing or
     /// shrinking: a piece reaching past the region would show the composite's next window.
     #[test]
     fn the_crop_grid_of_a_region_stays_in_the_region() {
-        let region = rect(0.125, 0.5, 0.25, 0.5);
-        let picture = CGSize::new(856.0, 1081.0);
+        let region: ContentsRect = rect(0.125, 0.5, 0.25, 0.5);
+        let picture = TileSize::new(856.0, 1081.0);
         for frame in [
-            CGSize::new(856.0, 1081.0),
-            CGSize::new(428.0, 1081.0),
-            CGSize::new(856.0, 540.0),
-            CGSize::new(1200.0, 1300.0),
+            TileSize::new(856.0, 1081.0),
+            TileSize::new(428.0, 1081.0),
+            TileSize::new(856.0, 540.0),
+            TileSize::new(1200.0, 1300.0),
         ] {
             for piece in crop_pieces(picture, frame) {
                 let whole = piece.contents;
-                let cut = within(ContentsRect::from_cg(region), ContentsRect::from_cg(whole));
+                let cut = within(region, whole);
                 let eps = 1e-12;
                 assert!(cut.origin.x >= region.origin.x - eps, "{frame:?}: {cut:?}");
                 assert!(cut.origin.y >= region.origin.y - eps, "{frame:?}: {cut:?}");
@@ -430,7 +439,7 @@ mod tests {
     /// The measured case: a rigid pan ended a tile 861 wide against its window's 860.
     #[test]
     fn a_tile_a_point_off_its_window_snaps_onto_it() {
-        let model = rect(4.0, 32.0, 861.0, 1081.0);
+        let model: ScreenRect = rect(4.0, 32.0, 861.0, 1081.0);
         let real = rect(4.0, 32.0, 860.0, 1081.0);
         assert_eq!(snap_to(model, real), Some(real));
         let moved = rect(3.0, 32.0, 861.0, 1081.0);
@@ -439,7 +448,7 @@ mod tests {
 
     #[test]
     fn a_tile_snaps_only_past_a_quarter_point_and_up_to_twenty_points_off() {
-        let model = rect(4.0, 32.0, 861.0, 1081.0);
+        let model: ScreenRect = rect(4.0, 32.0, 861.0, 1081.0);
         let off = |d: f64| rect(4.0 + d, 32.0, 861.0, 1081.0);
         for d in [0.26, -0.26, 1.0, 19.5, 20.0, -20.0] {
             assert_eq!(snap_to(model, off(d)), Some(off(d)), "{d}");
@@ -459,6 +468,7 @@ mod tests {
         use crate::animation::domain::motion::easing::MOTION_CURVE;
         use crate::animation::domain::motion::plan::GroupKey;
         use crate::animation::domain::motion::score::{Curve, Track};
+        use rini_geometry::space::GroupRect;
 
         const STRIP: GroupKey = GroupKey::STILL;
 
@@ -466,10 +476,10 @@ mod tests {
 
         /// The strip's container, model at -861, and a tile at `frame` in it: at 865 it ends at 4 on
         /// screen. `leg` is the tile's own track, when it has one.
-        fn riding(frame: CGRect, leg: Option<&Track>) -> Score {
+        fn riding(frame: GroupRect, leg: Option<&Track>) -> Score {
             let mut score = Score::default();
             for edit in [
-                Edit::Place(Node::Container(STRIP), Value::Point(CGPoint::new(-861.0, 0.0))),
+                Edit::Place(Node::Container(STRIP), Value::Point(Point::new(-861.0, 0.0))),
                 Edit::Ride(window(), STRIP),
                 Edit::Place(Node::Tile(window()), Value::Rect(frame)),
             ]
@@ -481,7 +491,7 @@ mod tests {
             score
         }
 
-        fn leg(from: CGRect, to: CGRect) -> Track {
+        fn leg(from: GroupRect, to: GroupRect) -> Track {
             Track::between(
                 Node::Tile(window()),
                 Channel::Base,
@@ -498,7 +508,7 @@ mod tests {
         #[test]
         fn a_tile_riding_its_container_snaps_onto_its_window_at_once() {
             let score = riding(rect(865.0, 32.0, 861.0, 1081.0), None);
-            let real = rect(4.0, 32.0, 860.0, 1081.0);
+            let real: OverlayRect = rect(4.0, 32.0, 860.0, 1081.0);
             assert_eq!(snap(&score, window(), real, 100.0), [Edit::Place(
                 Node::Tile(window()),
                 Value::Rect(rect(865.0, 32.0, 860.0, 1081.0))
@@ -509,14 +519,14 @@ mod tests {
         /// and curve, a new end, a resize's size with it.
         #[test]
         fn a_tile_on_its_own_leg_snaps_on_the_same_timing() {
-            let to = rect(865.0, 32.0, 861.0, 1081.0);
+            let to: GroupRect = rect(865.0, 32.0, 861.0, 1081.0);
             for from in [
                 rect(1726.0, 32.0, 861.0, 1081.0),
                 rect(1726.0, 32.0, 1200.0, 1081.0),
             ] {
                 let leg = leg(from, to);
                 let score = riding(to, Some(&leg));
-                let real = rect(4.0, 32.0, 860.0, 1081.0);
+                let real: OverlayRect = rect(4.0, 32.0, 860.0, 1081.0);
                 let snapped = Value::Rect(rect(865.0, 32.0, 860.0, 1081.0));
                 let edits = snap(&score, window(), real, 100.2);
                 assert_eq!(edits, [
@@ -532,7 +542,7 @@ mod tests {
         /// Once its track has played, only the tile's model moves.
         #[test]
         fn a_tile_whose_leg_has_ended_snaps_by_its_model() {
-            let to = rect(865.0, 32.0, 861.0, 1081.0);
+            let to: GroupRect = rect(865.0, 32.0, 861.0, 1081.0);
             let leg = leg(rect(1726.0, 32.0, 861.0, 1081.0), to);
             let score = riding(to, Some(&leg));
             assert_eq!(snap(&score, window(), rect(5.0, 32.0, 861.0, 1081.0), 100.5), [
@@ -542,7 +552,8 @@ mod tests {
                 )
             ]);
             assert!(
-                snap(&Score::default(), window(), to, 100.5).is_empty(),
+                snap(&Score::default(), window(), rect(865.0, 32.0, 861.0, 1081.0), 100.5)
+                    .is_empty(),
                 "no tile, no snap"
             );
         }

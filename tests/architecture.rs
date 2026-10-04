@@ -55,10 +55,18 @@ const SKYLIGHT_VALUE_TYPES: [&str; 5] = [
 
 /// The features whose interfaces and `domain/` speak rini-geometry's spaces (`space` in
 /// `crates/rini-geometry`). CG geometry is their boundary, not their arithmetic.
-const TYPED: [&str; 1] = ["pictures"];
+const TYPED: [&str; 3] = ["pictures", "animation", "transitions"];
 
-/// CG geometry a typed feature leaves to its `platform/`.
-const CG_GEOMETRY: [&str; 4] = ["objc2_core_foundation", "CGRect", "CGPoint", "CGSize"];
+/// CG geometry, and the conversions into it and out of it, that a typed feature leaves to its
+/// `platform/`.
+const CG_GEOMETRY: [&str; 6] = [
+    "objc2_core_foundation",
+    "CGRect",
+    "CGPoint",
+    "CGSize",
+    ".to_cg(",
+    "from_cg(",
+];
 
 /// Still on both sides of the domain/platform line: a pure model mixed with the reads that fill it.
 /// `screen.rs` wants splitting on the `System` trait it is already generic over. Nothing may be added

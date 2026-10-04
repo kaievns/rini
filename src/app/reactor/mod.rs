@@ -75,7 +75,7 @@ use events::{
 };
 use managers::LayoutManager;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use rini_geometry::space::{FromCg, ScreenRect, ScreenSize};
+use rini_geometry::space::{FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, ToCg};
 pub use replay::{Record, replay};
 use rini_ipc::protocol::SwitchScope;
 use serde::{Deserialize, Serialize};
@@ -1308,11 +1308,12 @@ impl Reactor {
             key_before,
             self.main_window_tracker.key_window(),
         );
-        let windows: Vec<(WindowId, CGRect)> = turned
+        let windows: Vec<(WindowId, ScreenRect)> = turned
             .into_iter()
             .filter_map(|window| {
                 let state = self.state.windows.window(window)?;
-                state.is_effectively_manageable().then_some((window, state.frame_monotonic))
+                let frame = ScreenRect::from_cg(state.frame_monotonic);
+                state.is_effectively_manageable().then_some((window, frame))
             })
             .collect();
         if let (false, Some(tx)) = (windows.is_empty(), &self.communication_manager.transitions_tx) {
@@ -3599,19 +3600,20 @@ impl Reactor {
             .iter()
             .filter_map(|(wid, _)| self.state.windows.window(*wid)?.info.sys_id)
             .collect();
-        let real: HashMap<WindowServerId, CGRect> = window_server::get_windows(&server_ids)
+        let real: HashMap<WindowServerId, ScreenRect> = window_server::get_windows(&server_ids)
             .into_iter()
-            .map(|info| (info.id, info.frame))
+            .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
         let (writes, skipped) = crate::transitions::domain::frame_writes::writes_to_send(
-            frames,
-            display,
+            frames.into_iter().map(|(wid, frame)| (wid, ScreenRect::from_cg(frame))).collect(),
+            ScreenRect::from_cg(display),
             |wid| {
                 let wsid = self.state.windows.window(wid)?.info.sys_id?;
                 real.get(&wsid).copied()
             },
         );
         for (wid, frame) in writes {
+            let frame = frame.to_cg();
             let Some(window) = self.state.windows.window_mut(wid) else {
                 continue;
             };
@@ -3794,18 +3796,15 @@ impl Reactor {
         //
         // Using -delta started the pan on the wrong side and moved it the wrong way. Chaining then
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
-        let from_offset = CGPoint::new(delta.x, delta.y);
-        let to_offset = CGPoint::new(0.0, 0.0);
+        let from_offset = SurfacePoint::new(delta.x, delta.y);
+        let to_offset = SurfacePoint::origin();
         use crate::animation::domain::choreography::{Area, Cue, Look};
         let look = Look::default();
         let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
         let area = Area {
-            frame: CGRect::new(
-                CGPoint::new(
-                    screen.frame.origin.x - display_bounds.origin.x,
-                    screen.frame.origin.y - display_bounds.origin.y,
-                ),
-                screen.frame.size,
+            frame: rini_geometry::to_overlay_space(
+                ScreenRect::from_cg(screen.frame),
+                ScreenRect::from_cg(display_bounds),
             ),
             outer_left: gaps.outer.left,
             outer_right: gaps.outer.right,
@@ -3827,7 +3826,10 @@ impl Reactor {
             windows,
             from_offset,
             to_offset,
-            final_frames,
+            final_frames: final_frames
+                .into_iter()
+                .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+                .collect(),
             focus: self.layout_manager.layout_engine.focused_window(),
             focused_before: self.focused_as_event_began,
             key: self.main_window_tracker.key_window(),
@@ -3840,9 +3842,8 @@ impl Reactor {
     }
 
     /// The strip surface for one workspace's layout: every window with a server id, at its layout
-    /// frame expressed relative to the display's own origin (the overlay's space). `pin_floating`
-    /// holds floating windows still while the strip moves under them (a pan); a vertical movement
-    /// carries them with their workspace.
+    /// frame on the surface's first row. `pin_floating` holds floating windows still while the strip
+    /// moves under them (a pan); a vertical movement carries them with their workspace.
     fn strip_windows_at(
         &self,
         layout: &[(WindowId, CGRect)],
@@ -3859,12 +3860,11 @@ impl Reactor {
             windows.push(crate::transitions::domain::request::SurfaceWindow {
                 window: *wid,
                 server_id,
-                frame: CGRect::new(
-                    CGPoint::new(
-                        frame.origin.x - display_bounds.origin.x,
-                        frame.origin.y - display_bounds.origin.y,
-                    ),
-                    frame.size,
+                frame: crate::transitions::domain::strip_stack::strip_frame(
+                    ScreenRect::from_cg(*frame),
+                    ScreenPoint::from_cg(display_bounds.origin),
+                    0,
+                    0.0,
                 ),
                 pinned: pin_floating && floating,
                 floating,
@@ -3929,7 +3929,10 @@ impl Reactor {
         _ = tx.send(crate::transitions::platform::engine::Event::Bounce {
             windows,
             overshoot,
-            final_frames: layout,
+            final_frames: layout
+                .into_iter()
+                .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+                .collect(),
             focus: self.layout_manager.layout_engine.focused_window(),
             duration,
             look: crate::animation::domain::choreography::Look::default(),
@@ -4002,7 +4005,7 @@ impl Reactor {
         let height = row_pitch;
 
         let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
-        let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
+        let mut final_frames: Vec<(WindowId, ScreenRect)> = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else {
                 continue;
@@ -4027,8 +4030,8 @@ impl Reactor {
                     window: wid,
                     server_id,
                     frame: crate::transitions::domain::strip_stack::strip_frame(
-                        frame,
-                        display_bounds.origin,
+                        ScreenRect::from_cg(frame),
+                        ScreenPoint::from_cg(display_bounds.origin),
                         row,
                         row_pitch,
                     ),
@@ -4047,7 +4050,11 @@ impl Reactor {
         // belonging to other workspaces. Placing only the destination's windows left all the others
         // wherever they happened to be, so windows from one workspace showed up as phantoms on
         // another until something else moved the strip.
-        final_frames = layout.iter().copied().filter(|(wid, _)| Some(*wid) != skip_wid).collect();
+        final_frames = layout
+            .iter()
+            .filter(|(wid, _)| Some(*wid) != skip_wid)
+            .map(|&(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+            .collect();
 
         tracing::debug!(
             from_index,
@@ -4175,7 +4182,7 @@ impl Reactor {
         else {
             return;
         };
-        let frame = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let frame = ScreenRect::from_cg(objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
         if let Some(tx) = &self.communication_manager.transitions_tx {
             _ = tx.send(crate::transitions::platform::engine::Event::SetDisplay {
                 id: screen.id.as_u32(),
@@ -4188,7 +4195,7 @@ impl Reactor {
             pictures.set_display(
                 crate::pictures::domain::schedule::Display {
                     id: screen.id.as_u32(),
-                    frame: ScreenRect::from_cg(frame),
+                    frame,
                     scale: screen.scale,
                 },
                 !self.config.settings.bar.enabled,

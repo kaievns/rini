@@ -26,6 +26,7 @@ use rini::windows::platform::sub_level::init_window_sub_level_server_port;
 use rini::workspaces::LayoutEngine;
 use rini::workspaces::domain::display_memory::DisplayMemory;
 use rini_core::paths::restore_file;
+use rini_geometry::space::{ScreenRect, ToCg};
 use rini_ipc as ipc;
 use rini_runloop::executor::Executor;
 use rini_skylight_sys::{
@@ -432,7 +433,10 @@ fn main() {
     );
     flight_engine.set_place_frames(Box::new({
         let events_tx = events_tx.clone();
-        move |frames| events_tx.send(reactor::Event::ApplyOverlayFrames(frames))
+        move |frames: Vec<(_, ScreenRect)>| {
+            let frames = frames.into_iter().map(|(window, frame)| (window, frame.to_cg()));
+            events_tx.send(reactor::Event::ApplyOverlayFrames(frames.collect()))
+        }
     }));
     // The bar stops picturing the menu extras while a flight runs and settles.
     flight_engine.set_on_flight(Box::new({

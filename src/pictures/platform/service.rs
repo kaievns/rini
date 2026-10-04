@@ -908,7 +908,7 @@ mod tests {
 
     fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
-    fn sized(width: f64, height: f64) -> Picture { test_picture(CGSize::new(width, height)) }
+    fn sized(width: f64, height: f64) -> Picture { test_picture(ScreenSize::new(width, height)) }
 
     fn sliver() -> Picture {
         let mut picture = sized(859.0, 1081.0);

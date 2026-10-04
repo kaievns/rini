@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use objc2_core_foundation::CGPoint;
+use rini_geometry::space::OverlayVector;
 
 use super::bounce::Bounce;
 use super::nudge::nudge_track;
@@ -17,16 +17,16 @@ use super::score::{Channel, Node, SAMPLE_STEP, Score, Track, Value};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Accent {
     /// A push against an end: out toward `wall` and home over `seconds`.
-    Push { wall: CGPoint, seconds: f64 },
+    Push { wall: OverlayVector, seconds: f64 },
     /// A move's step: the whole strip out by `offset` and back, over its press's plain `seconds`
     /// stretched, the flight it rides lasting at least as long.
-    Step { offset: CGPoint, seconds: f64 },
+    Step { offset: OverlayVector, seconds: f64 },
 }
 
 /// The bounce a push against `wall` at `at` plays on each container of `playing` that carries it,
 /// each from where its own bounce is drawn then: a container whose bounce is home, or gone with its
 /// tracks, starts from rest. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
-pub fn push_tracks(playing: &Score, wall: CGPoint, seconds: f64, at: f64) -> Vec<Track> {
+pub fn push_tracks(playing: &Score, wall: OverlayVector, seconds: f64, at: f64) -> Vec<Track> {
     let duration = Duration::from_secs_f64(seconds);
     playing
         .containers()
@@ -36,8 +36,8 @@ pub fn push_tracks(playing: &Score, wall: CGPoint, seconds: f64, at: f64) -> Vec
                 .track(Node::Container(key), Channel::Bounce)
                 .and_then(|bounce| bounce.at(at))
             {
-                Some(Value::Point(drawn)) => drawn,
-                _ => CGPoint::new(0.0, 0.0),
+                Some(Value::Point(drawn)) => drawn.to_vector(),
+                _ => OverlayVector::zero(),
             };
             Bounce::from_drawn(drawn, wall, duration).track(key, at)
         })
@@ -50,7 +50,7 @@ pub fn steps(playing: &Score, at: f64) -> bool { !playing.plays(Channel::Nudge, 
 
 /// The step out by `offset` and back over `seconds` from `at`, one `nudge_track` on each container of
 /// `playing` that carries it. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
-pub fn step_tracks(playing: &Score, offset: CGPoint, seconds: f64, at: f64) -> Vec<Track> {
+pub fn step_tracks(playing: &Score, offset: OverlayVector, seconds: f64, at: f64) -> Vec<Track> {
     playing
         .containers()
         .filter(|key| carries_out_and_back(*key, offset))
@@ -60,6 +60,8 @@ pub fn step_tracks(playing: &Score, offset: CGPoint, seconds: f64, at: f64) -> V
 
 #[cfg(test)]
 mod tests {
+    use rini_geometry::space::OverlayPoint;
+
     use super::*;
     use crate::animation::domain::motion::plan::GroupKey;
     use crate::animation::domain::motion::score::Edit;
@@ -72,7 +74,7 @@ mod tests {
         for key in [STRIP, GroupKey::Floating] {
             score.apply(&Edit::Place(
                 Node::Container(key),
-                Value::Point(CGPoint::new(-861.0, 0.0)),
+                Value::Point(OverlayPoint::new(-861.0, 0.0)),
             ));
         }
         score
@@ -94,8 +96,8 @@ mod tests {
         use super::*;
 
         const PLAYS: f64 = 0.35;
-        const UP: CGPoint = CGPoint { x: 0.0, y: -72.0 };
-        const LEFT: CGPoint = CGPoint { x: -72.0, y: 0.0 };
+        const UP: OverlayVector = OverlayVector::new(0.0, -72.0);
+        const LEFT: OverlayVector = OverlayVector::new(-72.0, 0.0);
 
         fn plays() -> Duration {
             Duration::from_secs_f64(PLAYS)
@@ -103,7 +105,7 @@ mod tests {
 
         /// Pushes against `wall` at `at`, as the overlay does: each carrier's track replaces the
         /// bounce on it. Returns what the push made, by container.
-        fn push(score: &mut Score, wall: CGPoint, at: f64) -> Vec<(GroupKey, Track)> {
+        fn push(score: &mut Score, wall: OverlayVector, at: f64) -> Vec<(GroupKey, Track)> {
             let tracks = push_tracks(score, wall, PLAYS, at);
             let made = tracks
                 .iter()
@@ -122,10 +124,10 @@ mod tests {
             made.iter().find(|(k, _)| *k == key).map(|(_, track)| track)
         }
 
-        fn drawn(score: &Score, key: GroupKey, at: f64) -> CGPoint {
+        fn drawn(score: &Score, key: GroupKey, at: f64) -> OverlayVector {
             match score.track(Node::Container(key), Channel::Bounce).and_then(|t| t.at(at)) {
-                Some(Value::Point(p)) => p,
-                _ => CGPoint::new(0.0, 0.0),
+                Some(Value::Point(p)) => p.to_vector(),
+                _ => OverlayVector::zero(),
             }
         }
 
@@ -150,7 +152,7 @@ mod tests {
 
             let at = 10.06;
             let up_drawn = drawn(&score, STRIP, at);
-            assert_ne!(up_drawn, CGPoint::new(0.0, 0.0));
+            assert_ne!(up_drawn, OverlayVector::zero());
             let sideways = push(&mut score, LEFT, at);
             assert_eq!(
                 on(&sideways, STRIP),
@@ -196,7 +198,7 @@ mod tests {
             let column = GroupKey::Rigid(7);
             opened.apply(&Edit::Place(
                 Node::Container(column),
-                Value::Point(CGPoint::new(-861.0, 0.0)),
+                Value::Point(OverlayPoint::new(-861.0, 0.0)),
             ));
             let mid = 30.06;
             let strip_drawn = drawn(&opened, STRIP, mid);
@@ -229,7 +231,7 @@ mod tests {
     #[test]
     fn a_step_is_taken_only_while_none_plays() {
         let mut score = surface();
-        let (offset, seconds) = (CGPoint::new(-576.0, 0.0), 0.455);
+        let (offset, seconds) = (OverlayVector::new(-576.0, 0.0), 0.455);
         assert!(steps(&score, 10.0), "from rest");
         let first = step_tracks(&score, offset, seconds, 10.0);
         assert_eq!(first, [nudge_track(STRIP, offset, 10.0, seconds, SAMPLE_STEP)]);
@@ -247,7 +249,7 @@ mod tests {
     #[test]
     fn the_floating_container_carries_only_a_vertical_accent() {
         let score = surface();
-        let (left, up) = (CGPoint::new(-72.0, 0.0), CGPoint::new(0.0, -72.0));
+        let (left, up) = (OverlayVector::new(-72.0, 0.0), OverlayVector::new(0.0, -72.0));
         assert_eq!(carriers(&push_tracks(&score, left, 0.35, 1.0)), [STRIP]);
         assert_eq!(carriers(&push_tracks(&score, up, 0.35, 1.0)), [
             GroupKey::Floating,

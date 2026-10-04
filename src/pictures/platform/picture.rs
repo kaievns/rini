@@ -237,19 +237,19 @@ pub(crate) fn test_region() -> Picture {
             composite,
             rect: PixelRect::new(Point::new(2.0, 0.0), Size::new(2.0, 2.0)),
         },
-        ..test_picture(CGSize::new(2.0, 2.0))
+        ..test_picture(ScreenSize::new(2.0, 2.0))
     }
 }
 
 /// A usable picture that claims to cover a window of `size`, for tests about geometry.
 #[cfg(test)]
-pub(crate) fn test_picture(size: CGSize) -> Picture {
-    use rini_geometry::space::FromCg;
+pub(crate) fn test_picture<U: PointSpace>(size: Size<U>) -> Picture {
+    use rini_geometry::space::Respace;
     Picture {
         image: Pixels::Bitmap(test_bitmap()),
         coverage: Coverage {
-            covered: ScreenSize::from_cg(size),
-            window: ScreenSize::from_cg(size),
+            covered: size.respace(),
+            window: size.respace(),
         },
         source: Route::ScreenCaptureKit,
         taken: std::time::Instant::now(),
@@ -295,7 +295,7 @@ mod tests {
         assert!(matches!(kept.image, Pixels::Bitmap(_)));
         assert_eq!(kept.taken, region.taken);
         assert_eq!(kept.coverage, region.coverage);
-        assert!(test_picture(CGSize::new(1.0, 1.0)).kept().is_none());
+        assert!(test_picture(ScreenSize::new(1.0, 1.0)).kept().is_none());
     }
 
     /// A region's own image is a crop of its rect, and its unit rect is that rect over the composite.
@@ -308,7 +308,7 @@ mod tests {
             region.image.unit_rect(),
             ContentsRect::new(Point::new(0.5, 0.0), Size::new(0.5, 1.0))
         );
-        assert_eq!(test_picture(CGSize::new(1.0, 1.0)).image.unit_rect(), WHOLE);
+        assert_eq!(test_picture(ScreenSize::new(1.0, 1.0)).image.unit_rect(), WHOLE);
     }
 
     /// The reported flicker: a blurred window's picture, taken on screen with its blur, must not be
@@ -317,12 +317,12 @@ mod tests {
     fn a_picture_with_its_blur_is_kept_over_a_grey_one_of_the_same_size() {
         let mut cache: PictureCache<Picture> = PictureCache::new();
         let window = WindowId::new(1, 1);
-        let mut blurred = test_picture(CGSize::new(859.0, 1081.0));
+        let mut blurred = test_picture(ScreenSize::new(859.0, 1081.0));
         blurred.carries_blur = true;
         assert!(cache.insert(window, blurred), "a first picture is held");
 
         assert!(
-            !cache.insert(window, test_picture(CGSize::new(859.0, 1081.0))),
+            !cache.insert(window, test_picture(ScreenSize::new(859.0, 1081.0))),
             "and the refusal is reported, so a flight in the air does not draw the grey one either"
         );
         assert!(cache.get(window).unwrap().carries_blur, "the blur stays");
@@ -332,7 +332,7 @@ mod tests {
     fn forgetting_a_window_empties_the_cache_even_while_a_clone_is_held() {
         let window = WindowId::new(1, 1);
         let mut cache: PictureCache<Picture> = PictureCache::new();
-        let size = CGSize::new(859.0, 1081.0);
+        let size = ScreenSize::new(859.0, 1081.0);
         cache.insert(window, test_picture(size));
         let held = cache.usable(window).cloned().expect("inserted");
         cache.forget(window);

@@ -5,8 +5,10 @@
 //! measured to play is "The score" in `src/animation/docs/animation-smoothness.md`.
 use std::collections::HashMap;
 
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
+#[cfg(test)]
+use rini_geometry::space::OverlayRect;
+use rini_geometry::space::{GroupRect, OverlayPoint, Point, Size};
 
 use super::easing::CubicBezier;
 use super::plan::{Banding, GroupKey, Presented};
@@ -33,19 +35,19 @@ impl Node {
 /// A container holds a `Point` and a tile a `Rect`, on every channel.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Value {
-    Point(CGPoint),
-    Rect(CGRect),
+    Point(OverlayPoint),
+    Rect(GroupRect),
 }
 
 impl Value {
     fn zip(self, other: Value, f: impl Fn(f64, f64) -> f64) -> Value {
         match (self, other) {
             (Value::Point(a), Value::Point(b)) => {
-                Value::Point(CGPoint::new(f(a.x, b.x), f(a.y, b.y)))
+                Value::Point(Point::new(f(a.x, b.x), f(a.y, b.y)))
             }
-            (Value::Rect(a), Value::Rect(b)) => Value::Rect(CGRect::new(
-                CGPoint::new(f(a.origin.x, b.origin.x), f(a.origin.y, b.origin.y)),
-                CGSize::new(f(a.size.width, b.size.width), f(a.size.height, b.size.height)),
+            (Value::Rect(a), Value::Rect(b)) => Value::Rect(GroupRect::new(
+                Point::new(f(a.origin.x, b.origin.x), f(a.origin.y, b.origin.y)),
+                Size::new(f(a.size.width, b.size.width), f(a.size.height, b.size.height)),
             )),
             _ => unreachable!("a node holds one kind of value"),
         }
@@ -383,19 +385,16 @@ impl Score {
         Some(base.unwrap_or(model))
     }
 
-    /// Where `window`'s tile is drawn at `at` in the overlay's space: its frame in its container,
-    /// moved by where the container is drawn.
+    /// Where `window`'s tile is drawn at `at`: its frame in its container, moved by where the
+    /// container is drawn.
     #[cfg(test)]
-    pub fn drawn(&self, window: WindowId, at: f64) -> Option<CGRect> {
+    pub fn drawn(&self, window: WindowId, at: f64) -> Option<OverlayRect> {
         let key = self.parent(window)?;
         match (
             self.sample(Node::Tile(window), at)?,
             self.sample(Node::Container(key), at)?,
         ) {
-            (Value::Rect(frame), Value::Point(at)) => Some(CGRect::new(
-                CGPoint::new(frame.origin.x + at.x, frame.origin.y + at.y),
-                frame.size,
-            )),
+            (Value::Rect(frame), Value::Point(at)) => Some(super::plan::overlay_of(frame, at)),
             _ => unreachable!("a tile holds a frame and a container a point"),
         }
     }
@@ -451,11 +450,11 @@ mod tests {
     }
 
     fn point(x: f64, y: f64) -> Value {
-        Value::Point(CGPoint::new(x, y))
+        Value::Point(Point::new(x, y))
     }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> Value {
-        Value::Rect(CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)))
+        Value::Rect(GroupRect::new(Point::new(x, y), Size::new(w, h)))
     }
 
     fn x(value: Option<Value>) -> f64 {
@@ -868,8 +867,8 @@ mod tests {
         assert_eq!(presented.drawn[&key], drawn);
         assert_eq!(presented.along[&key], along);
         assert!(drawn.x - along.x > 200.0, "the nudge rides what is drawn only");
-        assert_eq!(presented.drawn[&still], CGPoint::new(0.0, 40.0));
-        assert_eq!(presented.along[&still], CGPoint::new(0.0, 40.0));
+        assert_eq!(presented.drawn[&still], Point::new(0.0, 40.0));
+        assert_eq!(presented.along[&still], Point::new(0.0, 40.0));
         assert_eq!(presented.drawn.len(), 2, "containers only");
     }
 
@@ -1068,10 +1067,7 @@ mod tests {
         let along = x(score.along(strip(), 0.25));
         assert_eq!(
             score.drawn(a, 0.25),
-            Some(CGRect::new(
-                CGPoint::new(865.0 + along, 32.0),
-                CGSize::new(859.0, 1081.0)
-            ))
+            Some(OverlayRect::new(Point::new(865.0 + along, 32.0), Size::new(859.0, 1081.0)))
         );
         score.apply(&Edit::Ride(a, loose));
         assert_eq!(score.parent(a), Some(loose));

@@ -3,7 +3,7 @@
 //! (`crate::animation::domain::choreography::slide::stage`). See "The move flight" in
 //! `src/animation/docs/animation-smoothness.md`.
 
-use objc2_core_foundation::CGPoint;
+use rini_geometry::space::OverlayVector;
 
 use super::easing::{CubicBezier, EASE_IN_OUT, MOTION_CURVE, nudge_displacement};
 use super::plan::GroupKey;
@@ -23,12 +23,12 @@ pub fn flight_curve(stepping: bool) -> CubicBezier {
 }
 
 /// The nudge as evenly spaced keyframes about `step` seconds apart over `seconds`, from rest to rest.
-pub fn nudge_samples(offset: CGPoint, seconds: f64, step: f64) -> Vec<CGPoint> {
+pub fn nudge_samples(offset: OverlayVector, seconds: f64, step: f64) -> Vec<OverlayVector> {
     let steps = (seconds / step).ceil().max(1.0) as usize;
     (0..=steps)
         .map(|k| {
             let d = nudge_displacement(k as f64 / steps as f64);
-            CGPoint::new(offset.x * d, offset.y * d)
+            OverlayVector::new(offset.x * d, offset.y * d)
         })
         .collect()
 }
@@ -37,12 +37,13 @@ pub fn nudge_samples(offset: CGPoint, seconds: f64, step: f64) -> Vec<CGPoint> {
 /// Animation: `nudge_samples` evenly spaced over `seconds`, additive.
 pub fn nudge_track(
     container: GroupKey,
-    offset: CGPoint,
+    offset: OverlayVector,
     begin: f64,
     seconds: f64,
     step: f64,
 ) -> Track {
-    let samples = nudge_samples(offset, seconds, step).into_iter().map(Value::Point);
+    let samples =
+        nudge_samples(offset, seconds, step).into_iter().map(|d| Value::Point(d.to_point()));
     Track::samples(
         Node::Container(container),
         Channel::Nudge,
@@ -66,9 +67,9 @@ mod tests {
 
     #[test]
     fn the_nudge_keyframes_run_rest_to_rest_through_the_offset() {
-        let offset = CGPoint::new(576.0, 0.0);
+        let offset = OverlayVector::new(576.0, 0.0);
         let samples = nudge_samples(offset, 0.455, 1.0 / 120.0);
-        assert_eq!(samples.first(), Some(&CGPoint::new(0.0, 0.0)));
+        assert_eq!(samples.first(), Some(&OverlayVector::zero()));
         assert!(samples.last().expect("some").x.abs() < 1e-9);
         let furthest = samples.iter().map(|p| p.x).fold(0.0, f64::max);
         assert!((furthest - 576.0).abs() < 1.0, "{furthest}");
@@ -98,7 +99,7 @@ mod tests {
         use crate::animation::domain::motion::score::{Curve, Edit, Score};
 
         let (offset, begin, seconds, step) = (
-            CGPoint::new(-1720.0 * NUDGE_SHARE, 0.0),
+            OverlayVector::new(-1720.0 * NUDGE_SHARE, 0.0),
             3.0,
             0.35 * NUDGE_STRETCH,
             1.0 / 120.0,
@@ -111,11 +112,11 @@ mod tests {
         let keys: Vec<Value> = track.keys().iter().map(|(_, v)| *v).collect();
         assert_eq!(
             keys,
-            samples.iter().copied().map(Value::Point).collect::<Vec<_>>()
+            samples.iter().map(|d| Value::Point(d.to_point())).collect::<Vec<_>>()
         );
 
         let node = Node::Container(GroupKey::STILL);
-        let model = CGPoint::new(-861.0, 0.0);
+        let model = rini_geometry::space::OverlayPoint::new(-861.0, 0.0);
         let mut score = Score::default();
         score.apply(&Edit::Place(node, Value::Point(model)));
         score.apply(&Edit::Add(track));

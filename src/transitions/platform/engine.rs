@@ -13,10 +13,12 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::space::{FromCg, Overlay, ScreenRect, ScreenSize, Size, Surface, ToCg};
+use rini_geometry::space::{
+    FromCg, GroupRect, Overlay, OverlayPoint, OverlayRect, OverlayVector, Point, Respace,
+    ScreenRect, ScreenVector, Size, SurfacePoint, TileSize, ToCg,
+};
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
@@ -72,7 +74,7 @@ pub enum Event {
     /// overlay is drawn over flights is the pictures service's, which the reactor tells.
     SetDisplay {
         id: u32,
-        frame: CGRect,
+        frame: ScreenRect,
         scale: f64,
         /// Points to leave clear at the top for the bar; the overlay window starts below it.
         top_band: f64,
@@ -90,10 +92,10 @@ pub enum Event {
     /// "Strip movements" in `src/transitions/docs/coordination.md`.
     AnimateSurface {
         windows: Vec<SurfaceWindow>,
-        from_offset: CGPoint,
-        to_offset: CGPoint,
-        /// Real screen frames to apply once the overlay is covering them.
-        final_frames: Vec<(WindowId, CGRect)>,
+        from_offset: SurfacePoint,
+        to_offset: SurfacePoint,
+        /// Real frames to apply once the overlay is covering them.
+        final_frames: Vec<(WindowId, ScreenRect)>,
         /// The window that will hold focus once this settles, drawn in front of the rest.
         focus: Option<WindowId>,
         /// The window focused as the movement began: what frame zero pictures focused.
@@ -113,8 +115,8 @@ pub enum Event {
     /// in-flight movement additively. See "Edge bounce" in `src/transitions/docs/coordination.md`.
     Bounce {
         windows: Vec<SurfaceWindow>,
-        overshoot: CGPoint,
-        final_frames: Vec<(WindowId, CGRect)>,
+        overshoot: OverlayVector,
+        final_frames: Vec<(WindowId, ScreenRect)>,
         focus: Option<WindowId>,
         duration: Duration,
         /// How the flight moves, if this push begins one.
@@ -128,13 +130,13 @@ pub enum Event {
     Quiet(Generation),
     /// The key window changed, which turned these windows' looks, each at the frame it is at. Sent by
     /// the reactor for every change it hears of, rini's own raises' included.
-    LooksTurned(Vec<(WindowId, CGRect)>),
+    LooksTurned(Vec<(WindowId, ScreenRect)>),
     /// What the pictures service landed. Posted by its sink.
     Pictures(crate::pictures::event::Event),
 }
 
 /// Called with real-window frames to apply while the overlay covers them.
-pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, CGRect)>)>;
+pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, ScreenRect)>)>;
 
 /// Called with `true` when a transition is reported up and `false` once it has settled, the quiet
 /// after its lift; the coordinator's `ReportUp` and `ReportSettled`.
@@ -148,8 +150,8 @@ pub type Receiver = channel::Receiver<Event>;
 /// coordinator's.
 struct RunningAnimation {
     tiles: Vec<OverlayTile>,
-    /// Where each window must end up, in display coordinates, across every pass merged in.
-    final_frames: Vec<(WindowId, CGRect)>,
+    /// Where each window must end up, across every pass merged in.
+    final_frames: Vec<(WindowId, ScreenRect)>,
     /// Windows drawn once a first picture of them is swapped in.
     entrances: Vec<PendingEntrance>,
     /// The window gaining focus, from the latest pass that named one; its group is banded in front.
@@ -177,7 +179,7 @@ enum Took {
     /// A reserved entrance's tile, joining the flight.
     Entrance(OverlayTile),
     /// The picture on the window's tile, which ends at this size.
-    Tile { size: CGSize },
+    Tile { size: TileSize },
     /// Nothing draws the window.
     Nothing,
 }
@@ -191,7 +193,9 @@ fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
         };
         tile.to = match member {
             plan::Member::Rigid { key, rel } => plan::overlay_of(rel, plan.position_of(key)),
-            plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => to,
+            plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => {
+                plan::overlay_of(to, plan.position_of(plan::GroupKey::Loose))
+            }
             plan::Member::Floating { to, .. } => {
                 plan::overlay_of(to, plan.position_of(plan::GroupKey::Floating))
             }
@@ -205,18 +209,13 @@ fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
 /// `src/transitions/docs/coordination.md`.
 fn border_tile(
     anchor: &OverlayTile,
-    real: CGRect,
-    border: (WindowId, CGRect),
+    real: ScreenRect,
+    border: (WindowId, ScreenRect),
     snapshot: Picture,
 ) -> OverlayTile {
     let (window, frame) = border;
-    let offset = CGPoint::new(frame.origin.x - real.origin.x, frame.origin.y - real.origin.y);
-    let follow = |rect: CGRect| {
-        CGRect::new(
-            CGPoint::new(rect.origin.x + offset.x, rect.origin.y + offset.y),
-            frame.size,
-        )
-    };
+    let offset = (frame.origin - real.origin).respace::<Overlay>();
+    let follow = |rect: OverlayRect| OverlayRect::new(rect.origin + offset, frame.size.respace());
     OverlayTile {
         window,
         from: follow(anchor.from),
@@ -345,7 +344,7 @@ struct Shape {
 /// One pass, composed: what `begin_group` poses or merges.
 struct Composed {
     tiles: Vec<OverlayTile>,
-    final_frames: Vec<(WindowId, CGRect)>,
+    final_frames: Vec<(WindowId, ScreenRect)>,
     label: &'static str,
     shape: Shape,
     entrances: Vec<PendingEntrance>,
@@ -353,7 +352,7 @@ struct Composed {
     focus: (Option<WindowId>, Option<WindowId>),
     /// The key window as it went out.
     key: Option<WindowId>,
-    pan: Option<CGPoint>,
+    pan: Option<OverlayVector>,
     plan: plan::ReflowPlan,
     /// How a flight it begins moves; a pass merged into one is moved by that flight's.
     look: Look,
@@ -361,16 +360,16 @@ struct Composed {
     accent: Option<Accent>,
 }
 
-/// What the coordinator is told of a stage: `tiles` and `final_frames` in screen points.
+/// What the coordinator is told of a stage.
 fn summary(
     tiles: Vec<TileSummary>,
-    final_frames: Vec<(WindowId, CGRect)>,
+    final_frames: Vec<(WindowId, ScreenRect)>,
     focus: Option<WindowId>,
     losing_focus: Option<WindowId>,
     focused_look: Option<WindowId>,
     key: Option<WindowId>,
     shape: Shape,
-    display: CGRect,
+    display: ScreenRect,
     opaque: &dyn Fn(WindowId) -> bool,
 ) -> StageSummary {
     let opaque = tiles.iter().map(|t| t.window).filter(|w| opaque(*w)).collect();
@@ -392,8 +391,8 @@ fn summary(
 }
 
 impl RunningAnimation {
-    /// Every tile and every reserved entrance, in screen points, as the coordinator sees them.
-    fn tile_summaries(&self, display: CGRect) -> Vec<TileSummary> {
+    /// Every tile and every reserved entrance, as the coordinator sees them.
+    fn tile_summaries(&self, display: ScreenRect) -> Vec<TileSummary> {
         let tiles = self.tiles.iter().map(|t| TileSummary {
             window: t.window,
             start: from_overlay_space(t.from, display),
@@ -412,7 +411,7 @@ impl RunningAnimation {
     }
 
     /// The flight as composed, for the coordinator.
-    fn stage(&self, shape: Shape, display: CGRect, opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
+    fn stage(&self, shape: Shape, display: ScreenRect, opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
         summary(
             self.tile_summaries(display),
             self.final_frames.clone(),
@@ -461,13 +460,13 @@ impl RunningAnimation {
         if self.focused_look == Some(window) {
             self.focused_look = None;
         }
-        Took::Tile { size: tile.to.size }
+        Took::Tile { size: tile.to.size.respace() }
     }
 
     /// `target`'s tile flies `look`, drawn focused, if it fits where the tile starts. Whether it does.
     fn fly_focused_look(&mut self, target: WindowId, look: Option<Picture>) -> bool {
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else { return false };
-        let Some(look) = look.filter(|look| look.fits(Size::<Overlay>::from_cg(tile.from.size))) else {
+        let Some(look) = look.filter(|look| look.fits(tile.from.size)) else {
             return false;
         };
         tile.snapshot = look;
@@ -538,7 +537,7 @@ impl RunningAnimation {
         self.cue = pass.cue;
         for tile in self.tiles.iter_mut() {
             if let Some(member) = self.plan.member(tile.window) {
-                tile.from = member.start_frame();
+                tile.from = plan::on_overlay(member.start_frame());
             }
         }
         sync_tiles_to_plan(&mut self.tiles, &self.plan);
@@ -547,7 +546,7 @@ impl RunningAnimation {
 
     /// A push against `wall` reaching the flight: waiting for the motion until the flight moves, the
     /// latest push winning (`None`), and played on the score at `at` once it does.
-    fn push(&mut self, cue: &Cue, wall: CGPoint, seconds: f64, at: f64) -> Option<Vec<Edit>> {
+    fn push(&mut self, cue: &Cue, wall: OverlayVector, seconds: f64, at: f64) -> Option<Vec<Edit>> {
         if !self.flown {
             self.score.wait(Accent::Push { wall, seconds });
             return None;
@@ -588,19 +587,16 @@ impl RunningAnimation {
 }
 
 /// What the pictures service is asked for `window` drawn at `frame`.
-fn target_at(window: WindowId, frame: CGRect) -> PictureTarget {
+fn target_at(window: WindowId, frame: ScreenRect) -> PictureTarget {
     PictureTarget {
         window,
         server_id: WindowServerId::from(window),
-        size: ScreenSize::from_cg(frame.size),
+        size: frame.size,
     }
 }
 
-fn targets_at(windows: &[(WindowId, CGRect)]) -> Vec<(PictureTarget, ScreenRect)> {
-    windows
-        .iter()
-        .map(|&(window, frame)| (target_at(window, frame), ScreenRect::from_cg(frame)))
-        .collect()
+fn targets_at(windows: &[(WindowId, ScreenRect)]) -> Vec<(PictureTarget, ScreenRect)> {
+    windows.iter().map(|&(window, frame)| (target_at(window, frame), frame)).collect()
 }
 
 fn server_ids(windows: &[WindowId]) -> Vec<WindowServerId> {
@@ -611,8 +607,8 @@ fn server_ids(windows: &[WindowId]) -> Vec<WindowServerId> {
 fn on_screen(
     tag: Tag,
     moment: Moment,
-    strip: &[(WindowId, CGRect)],
-    background: &[(WindowId, CGRect)],
+    strip: &[(WindowId, ScreenRect)],
+    background: &[(WindowId, ScreenRect)],
     behind: &[WindowId],
 ) -> OnScreen {
     OnScreen {
@@ -626,13 +622,13 @@ fn on_screen(
 
 /// Each window at the size of `frame`: what the quiet warms, at the frame each ended at, and what a
 /// turned look is asked for at.
-fn sized_targets(windows: Vec<(WindowId, CGRect)>) -> Vec<PictureTarget> {
+fn sized_targets(windows: Vec<(WindowId, ScreenRect)>) -> Vec<PictureTarget> {
     windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
 }
 
 /// Windows whose look turned with the key window, at background priority: no warm filter drops it
 /// for a picture that fits, and it waits for any transition's release.
-fn refresh(windows: Vec<(WindowId, CGRect)>) -> Ask {
+fn refresh(windows: Vec<(WindowId, ScreenRect)>) -> Ask {
     Ask {
         priority: Priority::Background,
         targets: sized_targets(windows),
@@ -641,7 +637,7 @@ fn refresh(windows: Vec<(WindowId, CGRect)>) -> Ask {
 
 /// The radius a tile of `size` clips its picture to: a SkyLight picture of a window baked with the
 /// desktop behind it has the wallpaper in its corners. `None` draws it whole.
-fn corner_clip(knowledge: Knowledge, picture: &Picture, size: CGSize) -> Option<f64> {
+fn corner_clip(knowledge: Knowledge, picture: &Picture, size: TileSize) -> Option<f64> {
     (picture.source == Route::SkyLight && knowledge.after_alpha() == Call::Baked)
         .then(|| corner_radius(knowledge.radius, size))
 }
@@ -664,7 +660,7 @@ impl EndWatches {
             generation: end.generation.0,
         };
         let behind = server_ids(&end.behind);
-        let landing = |windows: &[(WindowId, CGRect)], settle, until| {
+        let landing = |windows: &[(WindowId, ScreenRect)], settle, until| {
             (!windows.is_empty()).then(|| Watch::Landing {
                 tag,
                 windows: targets_at(windows),
@@ -680,7 +676,7 @@ impl EndWatches {
             end.focus.map(|(window, frame)| Watch::Change {
                 tag,
                 window: target_at(window, frame),
-                end: ScreenRect::from_cg(frame),
+                end: frame,
                 behind: behind.clone(),
                 every: CHANGE_EVERY,
                 tries: CHANGE_TRIES,
@@ -729,7 +725,7 @@ pub struct FlightEngine {
     pictures: Pictures,
     /// This engine as the pictures service tags what it delivers.
     client: Client,
-    display: Option<(CGRect, f64)>,
+    display: Option<(ScreenRect, f64)>,
     /// Which display the overlay is on, for the pictures of it.
     display_id: Option<u32>,
     /// Points reserved at the top of the display for the bar. The overlay window starts below it,
@@ -877,8 +873,7 @@ impl FlightEngine {
             }
             Command::Write(frames) => self.request_frames(frames),
             Command::Holes(ends) => {
-                if let (Some(overlay), Some((display, _))) = (self.overlay.as_mut(), self.display) {
-                    let ends: Vec<CGRect> = ends.iter().map(|end| to_overlay_space(*end, display)).collect();
+                if let Some(overlay) = self.overlay.as_mut() {
                     overlay.set_holes(&ends);
                 }
             }
@@ -958,7 +953,6 @@ impl FlightEngine {
     fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
         for (window, picture, frame) in pictures {
             self.delivered.insert(window, (generation, picture));
-            let frame = frame.to_cg();
             self.drive(lifecycle::Event::Picture { generation, window, frame, why });
         }
     }
@@ -1006,14 +1000,12 @@ impl FlightEngine {
 
     /// The coordinator's snap of `window`'s tile onto `frame`, its window's, as an edit of the score
     /// played on the renderer.
-    fn snap(&mut self, window: WindowId, frame: CGRect) {
-        let Self { overlay, running, display, .. } = self;
-        let (Some(overlay), Some(running), Some((display, _))) =
-            (overlay.as_mut(), running.as_mut(), *display)
-        else {
+    fn snap(&mut self, window: WindowId, frame: OverlayRect) {
+        let Self { overlay, running, .. } = self;
+        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
             return;
         };
-        let edits = running.score.snap(window, to_overlay_space(frame, display), media_now());
+        let edits = running.score.snap(window, frame, media_now());
         overlay.play(&edits, &running.tiles);
     }
 
@@ -1030,12 +1022,14 @@ impl FlightEngine {
             "entrance admitted"
         );
         if !running.flown {
-            running.plan.entrances.push((tile.window, tile.from, tile.to));
+            let loose = running.plan.position_of(plan::GroupKey::Loose);
+            let (from, to) = (plan::group_relative(tile.from, loose), plan::group_relative(tile.to, loose));
+            running.plan.entrances.push((tile.window, from, to));
             self.reinstall();
             return;
         }
         let mut entrance = plan::ReflowPlan::empty();
-        entrance.entrances.push((tile.window, tile.from, tile.to));
+        entrance.entrances.push((tile.window, plan::installed(tile.from), plan::installed(tile.to)));
         let drawn = running.drawn();
         let pass = Pass {
             plan: &entrance,
@@ -1057,15 +1051,15 @@ impl FlightEngine {
         }
     }
 
-    /// The display in the overlay's space: what a member's destination is judged against.
-    fn viewport(&self) -> CGRect {
+    /// The display the overlay covers: what a member's destination is judged against.
+    fn viewport(&self) -> OverlayRect {
         self.display
             .map(|(display, _)| to_overlay_space(display, display))
-            .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)))
+            .unwrap_or(OverlayRect::new(Point::new(-1e9, -1e9), Size::new(2e9, 2e9)))
     }
 
     /// The overlay's geometry. The pictures of the display are the service's, told by the reactor.
-    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, top_band: f64) {
+    fn set_display(&mut self, id: u32, frame: ScreenRect, scale: f64, top_band: f64) {
         self.display = Some((frame, scale));
         self.display_id = Some(id);
         self.top_band = top_band;
@@ -1077,11 +1071,7 @@ impl FlightEngine {
     /// The display the overlay is on, as the pictures of it are keyed.
     fn picture_display(&self) -> Option<Display> {
         let ((frame, scale), id) = (self.display?, self.display_id?);
-        Some(Display {
-            id,
-            frame: ScreenRect::from_cg(frame),
-            scale,
-        })
+        Some(Display { id, frame, scale })
     }
 
     /// Creates the overlay on first use and keeps it forever: creation is too slow to pay per
@@ -1129,7 +1119,7 @@ impl FlightEngine {
             .iter()
             .filter_map(|tile| {
                 let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
-                Some((tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size)?))
+                Some((tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size.respace())?))
             })
             .collect();
         if let Some(overlay) = self.overlay.as_mut() {
@@ -1143,8 +1133,8 @@ impl FlightEngine {
     /// frame and its tile. See "Border companions" in `src/transitions/docs/coordination.md`.
     fn companion_tiles(
         &mut self,
-        display: CGRect,
-        anchors: &[(CGRect, &OverlayTile)],
+        display: ScreenRect,
+        anchors: &[(ScreenRect, &OverlayTile)],
         exclude: &std::collections::HashSet<u32>,
         needs_capture: &mut Vec<PictureTarget>,
     ) -> Vec<OverlayTile> {
@@ -1153,10 +1143,11 @@ impl FlightEngine {
         }
         // Every window rini manages is excluded, not only the pass's: parked windows share a frame.
         let managed = managed_server_ids(exclude, self.pictures.windows().into_iter());
-        let candidates: Vec<(WindowServerId, CGRect)> =
-            crate::windows::platform::window_server::visible_windows_on_display(display)
+        let candidates: Vec<(WindowServerId, ScreenRect)> =
+            crate::windows::platform::window_server::visible_windows_on_display(display.to_cg())
                 .into_iter()
                 .filter(|(id, _)| !managed.contains(&id.as_u32()))
+                .map(|(id, frame)| (id, ScreenRect::from_cg(frame)))
                 .collect();
         let mut claimed: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut tiles = Vec::new();
@@ -1182,7 +1173,7 @@ impl FlightEngine {
                 None => needs_capture.push(PictureTarget {
                     window,
                     server_id,
-                    size: ScreenSize::from_cg(frame.size),
+                    size: frame.size,
                 }),
             }
         }
@@ -1194,7 +1185,7 @@ impl FlightEngine {
     fn begin(
         &mut self,
         tiles: Vec<TileSummary>,
-        final_frames: Vec<(WindowId, CGRect)>,
+        final_frames: Vec<(WindowId, ScreenRect)>,
         (focus, focused_before): (Option<WindowId>, Option<WindowId>),
         key: Option<WindowId>,
         shape: Shape,
@@ -1275,7 +1266,7 @@ impl FlightEngine {
 
         // Every moving window's destination, picture or not. A still window is not re-placed: the
         // round trip invites another layout pass.
-        let final_frames: Vec<(WindowId, CGRect)> = windows
+        let final_frames: Vec<(WindowId, ScreenRect)> = windows
             .iter()
             .filter(|request| is_moving(request.from, request.to))
             .map(|request| (request.window, request.to))
@@ -1319,14 +1310,14 @@ impl FlightEngine {
             EndPicture::Lands => {}
         };
         // Newly opened windows travelling from their spawn frame.
-        let mut spawn_entrances: Vec<(WindowId, CGRect, CGRect)> = Vec::new();
+        let mut spawn_entrances: Vec<(WindowId, GroupRect, GroupRect)> = Vec::new();
         let mut sync_captures = 0usize;
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-        let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
-        let mut resolved: Vec<(WindowId, CGRect, CGRect, bool)> = Vec::new();
+        let mut starts: Vec<(WindowId, ScreenRect)> = Vec::new();
+        let mut resolved: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = Vec::new();
         // For `neighbour_travel`: a window leaving for or returning from a park rides its
         // nearest strip neighbour's vector.
-        let others: Vec<(CGRect, CGRect, bool)> =
+        let others: Vec<(ScreenRect, ScreenRect, bool)> =
             windows.iter().map(|r| (r.from, r.to, r.floating)).collect();
         for (index, request) in windows.iter().enumerate() {
             let path = tile_path(
@@ -1368,7 +1359,7 @@ impl FlightEngine {
                 needs_capture.push(PictureTarget {
                     window: request.window,
                     server_id: request.server_id,
-                    size: ScreenSize::from_cg(request.from.size),
+                    size: request.from.size,
                 });
                 debug!(
                     pid = request.window.pid,
@@ -1385,8 +1376,8 @@ impl FlightEngine {
                     crate::windows::platform::window_server::get_window(request.server_id)
                         .map(|info| ScreenRect::from_cg(info.frame))
                 },
-                ScreenRect::from_cg(display_frame),
-                || self.pictures.stand_in(ScreenSize::from_cg(request.to.size), scale),
+                display_frame,
+                || self.pictures.stand_in(request.to.size, scale),
             );
             match snapshot {
                 Some(snapshot) => {
@@ -1412,7 +1403,7 @@ impl FlightEngine {
                     // Only a frame on this display counts as a spawn; capturing off screen is slow.
                     let spawn =
                         crate::windows::platform::window_server::get_window(request.server_id)
-                            .map(|info| info.frame)
+                            .map(|info| ScreenRect::from_cg(info.frame))
                             .filter(|f| !rini_geometry::is_off_screen(display_frame, *f));
                     let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
                     let captured_at = Instant::now();
@@ -1468,7 +1459,8 @@ impl FlightEngine {
                                 starts.push((request.window, from));
                                 resolved.push((request.window, from, to, request.floating));
                             } else {
-                                spawn_entrances.push((request.window, from_o, to_o));
+                                let entrance = (plan::installed(from_o), plan::installed(to_o));
+                                spawn_entrances.push((request.window, entrance.0, entrance.1));
                             }
                         }
                         EntranceDecision::Reserve(reason) => {
@@ -1491,7 +1483,7 @@ impl FlightEngine {
         }
         // Stacked here so the companions can anchor to their windows' depths.
         restack(&mut tiles, drawing_focus);
-        let anchors: Vec<(CGRect, &OverlayTile)> = starts
+        let anchors: Vec<(ScreenRect, &OverlayTile)> = starts
             .iter()
             .filter_map(|(window, start)| {
                 Some((*start, tiles.iter().find(|tile| tile.window == *window)?))
@@ -1568,22 +1560,13 @@ impl FlightEngine {
         let dressing = self
             .picture_display()
             .map(|display| self.pictures.dressing(display, backdrop_drawn));
-        let display_origin = self.display.map(|(frame, _)| frame.origin).unwrap_or_default();
+        let display = self.display.map(|(frame, _)| frame);
         let Some(overlay) = self.ensure_overlay() else {
             self.abandon();
             return;
         };
-        if let Some(dressing) = &dressing {
-            let strip = dressing.strip.map(|strip| {
-                let strip = strip.to_cg();
-                CGRect::new(
-                    CGPoint::new(
-                        strip.origin.x - display_origin.x,
-                        strip.origin.y - display_origin.y,
-                    ),
-                    strip.size,
-                )
-            });
+        if let (Some(dressing), Some(display)) = (&dressing, display) {
+            let strip = dressing.strip.map(|strip| to_overlay_space(strip, display));
             log_dressing(pass.label, dressing, strip);
             overlay.set_backdrop(dressing.desktop.as_ref());
             overlay.set_bar(dressing.bar.as_ref(), strip);
@@ -1634,7 +1617,8 @@ impl FlightEngine {
             if look == Some(tile.window) {
                 let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
                 overlay.swap(tile.window, &tile.snapshot);
-                overlay.set_tile_corner_clip(tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size));
+                let clip = corner_clip(knowledge, &tile.snapshot, tile.to.size.respace());
+                overlay.set_tile_corner_clip(tile.window, clip);
                 overlay.set_tile_focused(tile.window, true);
             } else if was.is_some_and(|was| was != tile.focused) {
                 overlay.set_tile_focused(tile.window, tile.focused);
@@ -1695,7 +1679,7 @@ impl FlightEngine {
                 for (key, to) in &delta.retargeted_groups {
                     let drawn = match running.score.score().sample(Node::Container(*key), at) {
                         Some(Value::Point(drawn)) => drawn,
-                        _ => CGPoint::new(0.0, 0.0),
+                        _ => OverlayPoint::origin(),
                     };
                     debug!(
                         key = format!("{key:?}"),
@@ -1710,7 +1694,10 @@ impl FlightEngine {
                             plan::overlay_of(rel, running.plan.position_of(key))
                         }
                         plan::Member::Changing { to, .. }
-                        | plan::Member::Entrance { to, .. } => to,
+                        | plan::Member::Entrance { to, .. } => plan::overlay_of(
+                            to,
+                            running.plan.position_of(plan::GroupKey::Loose),
+                        ),
                         plan::Member::Floating { to, .. } => plan::overlay_of(
                             to,
                             running.plan.position_of(plan::GroupKey::Floating),
@@ -1772,9 +1759,9 @@ impl FlightEngine {
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,
-        from_offset: CGPoint,
-        to_offset: CGPoint,
-        final_frames: Vec<(WindowId, CGRect)>,
+        from_offset: SurfacePoint,
+        to_offset: SurfacePoint,
+        final_frames: Vec<(WindowId, ScreenRect)>,
         focus: (Option<WindowId>, Option<WindowId>),
         key: Option<WindowId>,
         duration: Duration,
@@ -1815,19 +1802,19 @@ impl FlightEngine {
         let depths = crate::windows::platform::window_server::front_to_back_depths();
         // One query for every window, not one each: a round trip per window stalled this thread
         // for 100-200ms a press. See "Rapid presses" in `specs/focus.md`.
-        let real_frames: HashMap<WindowServerId, CGRect> =
+        let real_frames: HashMap<WindowServerId, ScreenRect> =
             crate::windows::platform::window_server::get_windows(
                 &windows.iter().map(|w| w.server_id).collect::<Vec<_>>(),
             )
             .into_iter()
-            .map(|info| (info.id, info.frame))
+            .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
         let mut stand_ins = 0usize;
         let mut needs_capture: Vec<PictureTarget> = Vec::new();
-        let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
+        let mut starts: Vec<(WindowId, ScreenRect)> = Vec::new();
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for window in &windows {
             let (from, to) = window.travel(from_offset, to_offset);
@@ -1836,9 +1823,9 @@ impl FlightEngine {
             // the per-window path; see `stands_in`.
             let snapshot = picture_or_stand_in(
                 cached,
-                || real_frames.get(&window.server_id).copied().map(ScreenRect::from_cg),
-                ScreenRect::from_cg(display),
-                || self.pictures.stand_in(ScreenSize::from_cg(window.frame.size), scale),
+                || real_frames.get(&window.server_id).copied(),
+                display,
+                || self.pictures.stand_in(window.frame.size.respace(), scale),
             );
             match snapshot {
                 Some(snapshot) => {
@@ -1846,7 +1833,7 @@ impl FlightEngine {
                     // was resized keeps a usable picture" in `src/pictures/docs/capture-research.md`.
                     if snapshot.source == Route::StandIn {
                         stand_ins += 1;
-                    } else if !snapshot.fits(Size::<Surface>::from_cg(window.frame.size)) {
+                    } else if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
                     if let Some(frame) = real_frames.get(&window.server_id) {
@@ -1870,7 +1857,7 @@ impl FlightEngine {
             }
         }
         restack(&mut tiles, drawing_focus);
-        let anchors: Vec<(CGRect, &OverlayTile)> = starts
+        let anchors: Vec<(ScreenRect, &OverlayTile)> = starts
             .iter()
             .filter_map(|(window, real)| {
                 Some((*real, tiles.iter().find(|tile| tile.window == *window)?))
@@ -1934,14 +1921,14 @@ impl FlightEngine {
     fn start_bounce(
         &mut self,
         windows: Vec<SurfaceWindow>,
-        overshoot: CGPoint,
-        final_frames: Vec<(WindowId, CGRect)>,
+        overshoot: OverlayVector,
+        final_frames: Vec<(WindowId, ScreenRect)>,
         focus: Option<WindowId>,
         duration: Duration,
         (look, cue): (Look, Cue),
     ) {
         if !self.coordinator.is_flying() {
-            let at_rest = CGPoint::new(0.0, 0.0);
+            let at_rest = SurfacePoint::origin();
             // A push against an end moves no focus.
             self.start_surface(
                 windows,
@@ -2071,14 +2058,14 @@ impl FlightEngine {
             .map(|(window, _)| *window)
             .filter(|window| tiled.contains(window))
             .collect();
-        let by_server: HashMap<WindowServerId, CGRect> =
+        let by_server: HashMap<WindowServerId, ScreenRect> =
             crate::windows::platform::window_server::get_windows(
                 &asked.iter().map(|w| WindowServerId::new(w.idx.get())).collect::<Vec<_>>(),
             )
             .into_iter()
-            .map(|info| (info.id, info.frame))
+            .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
-        let real: HashMap<WindowId, CGRect> = asked
+        let real: HashMap<WindowId, ScreenRect> = asked
             .into_iter()
             .filter_map(|w| Some((w, *by_server.get(&WindowServerId::new(w.idx.get()))?)))
             .collect();
@@ -2104,7 +2091,7 @@ impl FlightEngine {
     }
 
     /// Asks the reactor to place windows at their final frames.
-    fn request_frames(&self, frames: Vec<(WindowId, CGRect)>) {
+    fn request_frames(&self, frames: Vec<(WindowId, ScreenRect)>) {
         if frames.is_empty() {
             return;
         }
@@ -2123,23 +2110,23 @@ impl FlightEngine {
             return;
         };
         let windows =
-            crate::windows::platform::window_server::visible_windows_on_display(display_frame);
+            crate::windows::platform::window_server::visible_windows_on_display(display_frame.to_cg());
         if windows.is_empty() {
             warn!("no visible windows found for the debug slide");
             return;
         }
         let requests: Vec<AnimationRequest> = windows
             .into_iter()
-            .map(|(server_id, frame)| AnimationRequest {
-                window: synthetic_window_id(server_id),
-                server_id,
-                // The debug slide knows nothing about the layout; everything is on the strip.
-                floating: false,
-                from: CGRect::new(
-                    CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
-                    frame.size,
-                ),
-                to: frame,
+            .map(|(server_id, frame)| {
+                let frame = ScreenRect::from_cg(frame);
+                AnimationRequest {
+                    window: synthetic_window_id(server_id),
+                    server_id,
+                    // The debug slide knows nothing about the layout; everything is on the strip.
+                    floating: false,
+                    from: frame.translate(ScreenVector::new(dx, dy)),
+                    to: frame,
+                }
             })
             .collect();
         debug!(count = requests.len(), dx, dy, "running debug slide");
@@ -2152,9 +2139,9 @@ impl FlightEngine {
 ///
 /// A zero-sized frame is macOS saying it has not laid the window out yet, which is not a position to
 /// animate from. The geometry decision is `travel::tile_path`; this is the read it needs.
-fn live_frame(server_id: WindowServerId) -> Option<CGRect> {
+fn live_frame(server_id: WindowServerId) -> Option<ScreenRect> {
     crate::windows::platform::window_server::get_window(server_id)
-        .map(|info| info.frame)
+        .map(|info| ScreenRect::from_cg(info.frame))
         .filter(|frame| frame.size.width > 0.0 && frame.size.height > 0.0)
 }
 
@@ -2162,7 +2149,7 @@ fn live_frame(server_id: WindowServerId) -> Option<CGRect> {
 fn log_dressing(
     path: &str,
     dressing: &crate::pictures::platform::service::Dressing,
-    strip: Option<CGRect>,
+    strip: Option<OverlayRect>,
 ) {
     debug!(
         path,
@@ -2191,9 +2178,21 @@ fn log_dressing(
 
 #[cfg(test)]
 mod tests {
+    use rini_geometry::space::{Rect, Respace, ScreenSize, SurfaceRect};
+
     use super::*;
-    use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
+    use crate::animation::domain::motion::surface::viewport;
+    use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, VIEWPORT, rect};
     use crate::pictures::platform::picture::test_picture;
+
+    /// A frame on `DISPLAY`, which sits at the origin, on the overlay over it.
+    fn on(frame: ScreenRect) -> OverlayRect { to_overlay_space(frame, DISPLAY) }
+
+    /// An overlay frame back on `DISPLAY`.
+    fn screen(frame: OverlayRect) -> ScreenRect { from_overlay_space(frame, DISPLAY) }
+
+    /// A frame on the strip surface where the viewport at rest shows it.
+    fn seen(frame: SurfaceRect) -> OverlayRect { viewport(SurfacePoint::origin()).transform_rect(&frame) }
 
     fn wid(idx: u32) -> WindowId {
         WindowId::new(7, idx)
@@ -2219,8 +2218,8 @@ mod tests {
     /// A tile drawn from a picture the size of its destination.
     fn stacked(
         window: WindowId,
-        from: CGRect,
-        to: CGRect,
+        from: OverlayRect,
+        to: OverlayRect,
         server_order: Option<usize>,
         floating: bool,
     ) -> OverlayTile {
@@ -2239,7 +2238,7 @@ mod tests {
     }
 
     /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
-    fn clipped(size: CGSize) -> Picture {
+    fn clipped(size: ScreenSize) -> Picture {
         let mut snapshot = test_picture(size);
         snapshot.coverage.covered = ScreenSize::new(40.0, size.height);
         snapshot
@@ -2358,13 +2357,13 @@ mod tests {
         fn an_ask_of_windows_on_screen_carries_the_engines_tag_and_each_window_where_it_is_expected() {
             let client = Client(1);
             let tag = Tag { client, generation: 5 };
-            let at = rect(4.0, 32.0, 859.0, 1081.0);
+            let at: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
             let floating = rect(224.0, 95.0, 600.0, 400.0);
             let ask = on_screen(tag, Moment::FrameZero, &[(wid(1), at)], &[(wid(9), floating)], &[wid(9)]);
             assert_eq!((ask.tag, ask.moment), (tag, Moment::FrameZero));
-            let size = ScreenSize::from_cg(at.size);
+            let size = at.size;
             let target = PictureTarget { window: wid(1), server_id: WindowServerId::new(1), size };
-            assert_eq!(ask.strip, vec![(target, ScreenRect::from_cg(at))]);
+            assert_eq!(ask.strip, vec![(target, at)]);
             assert_eq!(ask.background.len(), 1);
             assert_eq!(ask.behind, vec![WindowServerId::new(9)]);
             assert_eq!(sized_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
@@ -2374,7 +2373,7 @@ mod tests {
         /// would start ScreenCaptureKit through the hold of a flight the same click begins.
         #[test]
         fn a_turned_look_is_asked_at_background_priority_at_the_size_it_is_at() {
-            let at = rect(4.0, 32.0, 859.0, 1081.0);
+            let at: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
             let ask = refresh(vec![(wid(1), at)]);
             assert_eq!(ask.priority, Priority::Background);
             assert_eq!(ask.targets, sized_targets(vec![(wid(1), at)]));
@@ -2439,7 +2438,7 @@ mod tests {
             let mut border = stacked(wid(8), slot, slot, None, false);
             border.companion = Some(wid(1));
             running.tiles.push(border);
-            let fresh = test_picture(CGSize::new(859.0, 1000.0));
+            let fresh = test_picture(ScreenSize::new(859.0, 1000.0));
             let worn = running.wear(vec![(wid(1), fresh.clone()), (wid(8), fresh.clone()), (wid(5), fresh.clone())]);
             assert_eq!(worn, 1, "a window with no tile is the cache's alone");
             assert_eq!(running.tiles[0].snapshot.coverage, fresh.coverage);
@@ -2474,14 +2473,14 @@ mod tests {
             let park = rect(1727.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let (image, _) = stand_in_image(2.0).expect("drawn");
-            let stand_in = stand_in_picture(ScreenSize::from_cg(slot.size), image);
-            assert_eq!(EndPicture::of_picture(stand_in.coverage.covered, slot.size), EndPicture::Awaited);
+            let stand_in = stand_in_picture(slot.size.respace(), image);
+            assert_eq!(EndPicture::of_picture(stand_in.coverage.covered, slot.size.respace()), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;
             running.tiles.push(tile);
             let real = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(1), &real), Took::Tile { size } if size == slot.size));
+            assert!(matches!(running.take_picture(wid(1), &real), Took::Tile { size } if size == slot.size.respace()));
             assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
             let tile = &running.tiles[0];
             assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
@@ -2509,10 +2508,10 @@ mod tests {
         /// Two columns stepping one column left, frame zero posed.
         fn posed() -> (RunningAnimation, plan::ReflowPlan) {
             let (a, b) = (rect(4.0, 32.0, 859.0, 1081.0), rect(867.0, 32.0, 859.0, 1081.0));
-            let shifted = |frame: CGRect, dx: f64| rect(frame.origin.x + dx, frame.origin.y, frame.size.width, frame.size.height);
+            let shifted = |frame: ScreenRect, dx: f64| rect(frame.origin.x + dx, frame.origin.y, frame.size.width, frame.size.height);
             let requests = [(wid(1), a, shifted(a, -863.0), false), (wid(2), b, shifted(b, -863.0), false)];
             let mut running = flight();
-            running.tiles = requests.iter().map(|&(w, from, to, _)| stacked(w, from, to, Some(0), false)).collect();
+            running.tiles = requests.iter().map(|&(w, from, to, _)| stacked(w, on(from), on(to), Some(0), false)).collect();
             running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
             pose(&mut running);
             let again = requests.map(|(w, _, to, floating)| (w, to, shifted(to, -863.0), floating));
@@ -2538,7 +2537,7 @@ mod tests {
         fn a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once() {
             use crate::animation::domain::motion::bounce::Bounce;
             let (mut running, _) = posed();
-            let (left, right) = (CGPoint::new(-72.0, 0.0), CGPoint::new(72.0, 0.0));
+            let (left, right) = (OverlayVector::new(-72.0, 0.0), OverlayVector::new(72.0, 0.0));
             assert_eq!(running.push(&Cue::Plain, left, 0.35, 10.0), None);
             assert_eq!(running.push(&Cue::Plain, right, 0.35, 10.0), None);
             running.flown = true;
@@ -2548,7 +2547,7 @@ mod tests {
             let plays = Duration::from_secs_f64(0.35);
             assert!(start.contains(&Edit::Add(Bounce::from_rest(right, plays).track(key, 10.0))), "the latest push");
             assert!(!start.contains(&Edit::Add(Bounce::from_rest(left, plays).track(key, 10.0))));
-            let pushed = running.push(&Cue::Plain, CGPoint::new(0.0, 72.0), 0.35, 10.1).expect("at once");
+            let pushed = running.push(&Cue::Plain, OverlayVector::new(0.0, 72.0), 0.35, 10.1).expect("at once");
             assert!(!pushed.is_empty());
             assert!(pushed.iter().all(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)), "{pushed:?}");
         }
@@ -2560,13 +2559,13 @@ mod tests {
         fn a_pass_before_the_flight_moves_is_folded_with_its_step_waiting_and_one_after_bends_it() {
             use crate::animation::domain::motion::score::Channel;
             let (mut running, again) = posed();
-            let step = Accent::Step { offset: CGPoint::new(-576.0, 0.0), seconds: 0.35 };
+            let step = Accent::Step { offset: OverlayVector::new(-576.0, 0.0), seconds: 0.35 };
             let drawn = running.drawn();
             let pass = Pass {
                 plan: &again,
-                pan: Some(CGPoint::new(-863.0, 0.0)),
+                pan: Some(OverlayVector::new(-863.0, 0.0)),
                 focus: None,
-                viewport: DISPLAY,
+                viewport: VIEWPORT,
                 drawn: &drawn,
                 seconds: 0.35,
                 cue: Cue::Plain,
@@ -2574,18 +2573,18 @@ mod tests {
             };
             assert!(running.take_pass(&pass, 10.0).is_none(), "folded");
             let key = strip_key(&running);
-            assert_eq!(running.plan.position_of(key), CGPoint::new(-1726.0, 0.0), "both pans from frame zero");
+            assert_eq!(running.plan.position_of(key), OverlayPoint::new(-1726.0, 0.0), "both pans from frame zero");
             pose(&mut running);
             running.flown = true;
             let (plan, drawn) = (running.plan.clone(), running.drawn());
             let start = running.score.start_moving(&stage(&plan, &drawn), 10.0);
             assert!(start.iter().any(|e| matches!(e, Edit::Add(t) if t.channel() == Channel::Nudge && t.begin() == 10.0)), "the step waited");
 
-            let further = Pass { pan: Some(CGPoint::new(-863.0, 0.0)), accent: None, ..pass };
+            let further = Pass { pan: Some(OverlayVector::new(-863.0, 0.0)), accent: None, ..pass };
             let (delta, edits) = running.take_pass(&further, 10.1).expect("bent");
             assert!(delta.retargeted_groups.iter().any(|(k, _)| *k == key));
             assert!(edits.iter().any(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)));
-            assert_eq!(running.plan.position_of(key), CGPoint::new(-2589.0, 0.0));
+            assert_eq!(running.plan.position_of(key), OverlayPoint::new(-2589.0, 0.0));
             let tile = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
             assert_eq!(tile.to.origin.x, 4.0 - 2589.0, "the tile follows the merged plan");
         }
@@ -2610,7 +2609,7 @@ mod tests {
 
         #[test]
         fn a_skylight_picture_baked_with_the_desktop_is_clipped_to_its_corners_and_no_other_is() {
-            let size = CGSize::new(859.0, 1081.0);
+            let size = TileSize::new(859.0, 1081.0);
             let mut skylight = test_picture(size);
             skylight.source = Route::SkyLight;
             let baked = Knowledge { translucent: Some(false), material: Some(true), radius: Some(12.0) };
@@ -2629,7 +2628,7 @@ mod tests {
             let park = rect(-860.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(2), park, rect(4.0, 32.0, 859.0, 1081.0), Some(0), false));
-            assert!(!running.fly_focused_look(wid(2), Some(test_picture(CGSize::new(600.0, 1081.0)))), "drawn squashed");
+            assert!(!running.fly_focused_look(wid(2), Some(test_picture(ScreenSize::new(600.0, 1081.0)))), "drawn squashed");
             assert!(!running.fly_focused_look(wid(2), None));
             assert!(!running.fly_focused_look(wid(3), Some(test_picture(park.size))), "no tile");
             assert_eq!((running.focused_look, running.tiles[0].focused), (None, false));
@@ -2696,10 +2695,10 @@ mod tests {
             use crate::pictures::domain::coverage::needs_capture;
             let mut rng = Gen(95);
             for _ in 0..RUNS {
-                let slot = rng.on_screen();
+                let slot: SurfaceRect = rng.on_screen();
                 let mut cache: crate::pictures::domain::cache::PictureCache<Picture> =
                     crate::pictures::domain::cache::PictureCache::new();
-                cache.insert(wid(2), clipped(slot.size));
+                cache.insert(wid(2), clipped(slot.size.respace()));
                 assert!(cache.usable(wid(1)).is_none(), "seed 95: never captured");
                 assert!(cache.usable(wid(2)).is_none(), "seed 95: a sliver");
                 assert!(cache.usable(wid(3)).is_none());
@@ -2707,25 +2706,26 @@ mod tests {
                 assert!(cache.usable(wid(3)).is_some(), "seed 95: the drawn neighbour");
 
                 let (from, to) =
-                    surface_travel(slot, CGPoint::new(0.0, 0.0), CGPoint::new(861.0, 0.0), false);
+                    surface_travel(slot, SurfacePoint::origin(), SurfacePoint::new(861.0, 0.0), false);
                 let mut running = flight();
                 running.tiles.push(stacked(wid(3), from, to, Some(0), false));
-                running.final_frames = vec![(wid(1), to), (wid(2), to), (wid(3), to)];
+                let real_to = screen(to);
+                running.final_frames = vec![(wid(1), real_to), (wid(2), real_to), (wid(3), real_to)];
                 let tiled: Vec<WindowId> = running.tiles.iter().map(|t| t.window).collect();
-                let real: HashMap<WindowId, CGRect> =
+                let real: HashMap<WindowId, ScreenRect> =
                     running.final_frames.iter().copied().collect();
                 let report = handover_report(&running.final_frames, &tiled, &real, DISPLAY);
                 // A destination past the edge is a park, which the report excludes (2.3).
-                let measured = usize::from(!rini_geometry::is_off_screen(DISPLAY, to));
+                let measured = usize::from(!rini_geometry::is_off_screen(DISPLAY, real_to));
                 assert_eq!(
                     report.total, measured,
                     "seed 95: only the drawn window is measured"
                 );
                 assert_eq!(report.count_over, 0);
 
-                let size = ScreenSize::from_cg(slot.size);
+                let size: ScreenSize = slot.size.respace();
                 assert!(needs_capture(None, size), "seed 95: warmed after the movement");
-                assert!(needs_capture(Some(clipped(slot.size).coverage), size));
+                assert!(needs_capture(Some(clipped(size).coverage), size));
                 assert!(!needs_capture(Some(test_picture(slot.size).coverage), size));
             }
         }
@@ -2738,7 +2738,7 @@ mod tests {
 
         const PITCH: f64 = 1117.0;
 
-        fn on_surface(window: WindowId, frame: CGRect, floating: bool) -> SurfaceWindow {
+        fn on_surface(window: WindowId, frame: SurfaceRect, floating: bool) -> SurfaceWindow {
             SurfaceWindow {
                 window,
                 server_id: WindowServerId::new(window.idx.get()),
@@ -2751,7 +2751,11 @@ mod tests {
 
         /// A strip movement as `start_surface` composes it: every tile travels the viewport's travel,
         /// and the plan is the surface's.
-        fn movement(windows: &[SurfaceWindow], from: CGPoint, to: CGPoint) -> (Vec<OverlayTile>, plan::ReflowPlan) {
+        fn movement(
+            windows: &[SurfaceWindow],
+            from: SurfacePoint,
+            to: SurfacePoint,
+        ) -> (Vec<OverlayTile>, plan::ReflowPlan) {
             let tiles = windows
                 .iter()
                 .map(|w| {
@@ -2771,7 +2775,13 @@ mod tests {
         }
 
         /// A second press, folded in as `merge_group` folds one into a flight not yet moving.
-        fn press(running: &mut RunningAnimation, windows: &[SurfaceWindow], (from, to): (CGPoint, CGPoint), focus: WindowId, cue: Cue) {
+        fn press(
+            running: &mut RunningAnimation,
+            windows: &[SurfaceWindow],
+            (from, to): (SurfacePoint, SurfacePoint),
+            focus: WindowId,
+            cue: Cue,
+        ) {
             let (tiles, pieces) = movement(windows, from, to);
             running.merge_pass(tiles, Some(focus));
             let drawn = running.drawn();
@@ -2779,7 +2789,7 @@ mod tests {
                 plan: &pieces,
                 pan: Some(pan_travel(from, to)),
                 focus: running.focus,
-                viewport: DISPLAY,
+                viewport: VIEWPORT,
                 drawn: &drawn,
                 seconds: 0.35,
                 cue,
@@ -2788,12 +2798,12 @@ mod tests {
             assert!(running.take_pass(&pass, 0.0).is_none(), "folded, not bent");
         }
 
-        fn path(running: &RunningAnimation, window: WindowId) -> (CGRect, CGRect) {
+        fn path(running: &RunningAnimation, window: WindowId) -> (OverlayRect, OverlayRect) {
             let tile = running.tiles.iter().find(|t| t.window == window).expect("drawn");
             (tile.from, tile.to)
         }
 
-        fn piece(running: &RunningAnimation, window: WindowId) -> Option<(plan::GroupKey, CGPoint)> {
+        fn piece(running: &RunningAnimation, window: WindowId) -> Option<(plan::GroupKey, OverlayVector)> {
             let group = running.plan.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))?;
             Some((group.key, group.travel))
         }
@@ -2805,9 +2815,9 @@ mod tests {
         #[test]
         fn a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface() {
             let (a, b, floater, c) = (wid(1), wid(2), wid(3), wid(4));
-            let column = |row: f64| rect(4.0, 32.0 + row * PITCH, 1720.0, 1081.0);
-            let floating = |row: f64| rect(224.0, 95.0 + row * PITCH, 600.0, 400.0);
-            let (rest, down) = (CGPoint::new(0.0, 0.0), CGPoint::new(0.0, PITCH));
+            let column = |row: f64| -> SurfaceRect { rect(4.0, 32.0 + row * PITCH, 1720.0, 1081.0) };
+            let floating = |row: f64| -> SurfaceRect { rect(224.0, 95.0 + row * PITCH, 600.0, 400.0) };
+            let (rest, down) = (SurfacePoint::new(0.0, 0.0), SurfacePoint::new(0.0, PITCH));
             let first = [
                 on_surface(a, column(0.0), false),
                 on_surface(b, column(1.0), false),
@@ -2821,20 +2831,21 @@ mod tests {
             let mut running = composed(movement(&first, rest, down), b);
             press(&mut running, &second, (rest, down), c, Cue::Plain);
 
-            let both = CGPoint::new(0.0, -2.0 * PITCH);
+            let both = OverlayVector::new(0.0, -2.0 * PITCH);
             assert_eq!(running.plan.floating_travel, both, "the floating container travels both rows");
+            let standing = plan::installed(seen(floating(1.0)));
             assert_eq!(
                 running.plan.member(floater),
-                Some(plan::Member::Floating { from: floating(1.0), to: floating(1.0) }),
+                Some(plan::Member::Floating { from: standing, to: standing }),
                 "riding it, with no motion of its own"
             );
             let strip = piece(&running, a);
             assert_eq!(strip.map(|(_, travel)| travel), Some(both));
             assert_eq!(piece(&running, b), strip);
             assert_eq!(piece(&running, c), strip);
-            assert_eq!(path(&running, c), (column(2.0), column(0.0)), "below B, where the stack has it");
-            assert_eq!(path(&running, a).1, column(-2.0));
-            assert_eq!(path(&running, floater).1, floating(-1.0));
+            assert_eq!(path(&running, c), (seen(column(2.0)), seen(column(0.0))), "below B, where the stack has it");
+            assert_eq!(path(&running, a).1, seen(column(-2.0)));
+            assert_eq!(path(&running, floater).1, seen(floating(-1.0)));
         }
 
         /// A second step along the strip before the first moves: one piece travels both steps, and
@@ -2842,22 +2853,26 @@ mod tests {
         #[test]
         fn a_second_pan_before_the_flight_moves_keeps_the_strip_one_piece() {
             let step = 864.0;
-            let column = |x: f64| rect(x, 32.0, 860.0, 1081.0);
+            let column = |x: f64| -> SurfaceRect { rect(x, 32.0, 860.0, 1081.0) };
             let columns = [wid(1), wid(2), wid(3), wid(4)];
             let at = |i: usize, scrolled: f64| on_surface(columns[i], column(4.0 + (i as f64 - scrolled) * step), false);
             let first: Vec<SurfaceWindow> = (0..3).map(|i| at(i, 1.0)).collect();
             let second: Vec<SurfaceWindow> = (1..4).map(|i| at(i, 2.0)).collect();
-            let (away, rest) = (CGPoint::new(-step, 0.0), CGPoint::new(0.0, 0.0));
+            let (away, rest) = (SurfacePoint::new(-step, 0.0), SurfacePoint::new(0.0, 0.0));
             let mut running = composed(movement(&first, away, rest), columns[2]);
             press(&mut running, &second, (away, rest), columns[3], Cue::Plain);
 
             let strip = piece(&running, columns[0]);
-            assert_eq!(strip.map(|(_, travel)| travel), Some(CGPoint::new(-2.0 * step, 0.0)));
+            assert_eq!(strip.map(|(_, travel)| travel), Some(OverlayVector::new(-2.0 * step, 0.0)));
             for window in &columns[1..] {
                 assert_eq!(piece(&running, *window), strip, "{window:?} rides the strip");
             }
-            assert_eq!(path(&running, columns[3]), (column(4.0 + 3.0 * step), column(4.0 + step)), "beside the third");
-            assert_eq!(path(&running, columns[0]).1, column(4.0 - 2.0 * step));
+            assert_eq!(
+                path(&running, columns[3]),
+                (seen(column(4.0 + 3.0 * step)), seen(column(4.0 + step))),
+                "beside the third"
+            );
+            assert_eq!(path(&running, columns[0]).1, seen(column(4.0 - 2.0 * step)));
         }
 
         /// Frame zero shows the latest press folded into it, so the look poses and composes the burst
@@ -2865,11 +2880,11 @@ mod tests {
         #[test]
         fn a_fold_before_the_flight_moves_shows_the_latest_press() {
             let step = 864.0;
-            let column = |x: f64| rect(x, 32.0, 860.0, 1081.0);
+            let column = |x: f64| -> SurfaceRect { rect(x, 32.0, 860.0, 1081.0) };
             let (a, w) = (wid(1), wid(2));
             let first = [on_surface(a, column(4.0), false), on_surface(w, column(4.0 + step), false)];
             let second = [on_surface(w, column(4.0), false), on_surface(a, column(4.0 + step), false)];
-            let rest = CGPoint::new(0.0, 0.0);
+            let rest = SurfacePoint::new(0.0, 0.0);
             let mut running = composed(movement(&first, rest, rest), a);
             assert_eq!(running.cue, Cue::Plain);
             let moved = Cue::Move { window: w, direction: rini_ipc::protocol::Direction::Left };
@@ -2891,7 +2906,7 @@ mod tests {
         use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
         use crate::transitions::domain::strip_move::tests::staging::*;
 
-        fn column(i: f64) -> CGRect {
+        fn column(i: f64) -> OverlayRect {
             rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
         }
 
@@ -2904,9 +2919,9 @@ mod tests {
             FlightPlan::from(pieces)
         }
 
-        fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
-            CGRect::new(
-                CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
+        fn shifted(frame: OverlayRect, dx: f64, dy: f64) -> OverlayRect {
+            OverlayRect::new(
+                Point::new(frame.origin.x + dx, frame.origin.y + dy),
                 frame.size,
             )
         }
@@ -3236,7 +3251,7 @@ mod tests {
             let (left, right) = (rect(4.0, 32.0, 860.0, 1081.0), rect(868.0, 32.0, 856.0, 1081.0));
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let far = column(2.0);
-            let v = CGPoint::new(-300.0, 0.0);
+            let v = OverlayVector::new(-300.0, 0.0);
             // Left half focused: the pair stands, a far column slides, Settings floats.
             let mut tiles = vec![
                 stacked(wid(90), left, left, Some(0), false),
@@ -3422,7 +3437,7 @@ mod tests {
                     (wid(3), at(4.0 + step, width)),
                 ];
                 let windows = surface(&frames, wid(2), Direction::Right);
-                let (from_offset, to_offset) = (CGPoint::new(-step, 0.0), CGPoint::new(0.0, 0.0));
+                let (from_offset, to_offset) = (SurfacePoint::new(-step, 0.0), SurfacePoint::new(0.0, 0.0));
                 let plan = FlightPlan::from(surface_plan(&windows, from_offset, to_offset));
                 let mut tiles: Vec<OverlayTile> = windows
                     .iter()
@@ -3457,10 +3472,11 @@ mod tests {
                 Some(pan_travel(offset, REST)),
                 &halfway(&current).into(),
                 Some(w),
-                DISPLAY,
+                VIEWPORT,
             );
 
             for (window, frame) in second {
+                let frame = seen(frame);
                 assert!(
                     dest(&merged, window).unwrap().same_as(frame),
                     "{window:?} lands at {frame:?}, not {:?}",
@@ -3488,7 +3504,7 @@ mod tests {
             let mut tiles: Vec<OverlayTile> = second
                 .iter()
                 .enumerate()
-                .map(|(order, &(window, frame))| stacked(window, frame, frame, Some(order), false))
+                .map(|(order, &(window, frame))| stacked(window, seen(frame), seen(frame), Some(order), false))
                 .collect();
             restack(&mut tiles, Some(w));
             let banding = band_plan(&merged, &tiles, Some(w));
@@ -3512,7 +3528,7 @@ mod tests {
         use crate::transitions::domain::strip_move::tests::staging::*;
 
         /// A border four points proud of `frame` all round.
-        fn hug(frame: CGRect) -> CGRect {
+        fn hug<U>(frame: Rect<U>) -> Rect<U> {
             rect(
                 frame.origin.x - 4.0,
                 frame.origin.y - 4.0,
@@ -3521,7 +3537,10 @@ mod tests {
             )
         }
 
-        fn floating_at(window: WindowId, frame: CGRect, pinned: bool) -> SurfaceWindow {
+        /// A window on the strip surface where the window server has it, the viewport at rest.
+        fn real(frame: SurfaceRect) -> ScreenRect { screen(seen(frame)) }
+
+        fn floating_at(window: WindowId, frame: SurfaceRect, pinned: bool) -> SurfaceWindow {
             SurfaceWindow {
                 window,
                 server_id: WindowServerId::new(window.idx.get()),
@@ -3540,7 +3559,7 @@ mod tests {
         #[test]
         fn a_floating_windows_border_stays_with_it_and_off_the_nudge() {
             let (a, w, f) = (wid(1), wid(2), wid(7));
-            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
             let (mut windows, step) = staged(
                 &[
                     (a, at(4.0 - STEP, WIDTH)),
@@ -3551,7 +3570,7 @@ mod tests {
                 Direction::Right,
             );
             let step = step.expect("a full-width move steps");
-            assert_eq!(step, CGPoint::new(-576.0, 0.0), "away from where W went");
+            assert_eq!(step, OverlayVector::new(-576.0, 0.0), "away from where W went");
             windows.push(floating_at(f, settings, true));
             let mut plan = surface_plan(&windows, OFFSET, REST);
             let w_key = plan.group_of(w).unwrap().key;
@@ -3568,7 +3587,8 @@ mod tests {
                 .collect();
             restack(&mut tiles, Some(f));
             let tile = |window| tiles.iter().find(|t| t.window == window).unwrap().clone();
-            let border = |anchor: WindowId, real: CGRect, window| {
+            let border = |anchor: WindowId, at: SurfaceRect, window| {
+                let real = real(at);
                 border_tile(
                     &tile(anchor),
                     real,
@@ -3590,8 +3610,8 @@ mod tests {
             assert_eq!(
                 flight.member(wid(70)),
                 Some(Member::Floating {
-                    from: hug(settings),
-                    to: hug(settings)
+                    from: installed(seen(hug(settings))),
+                    to: installed(seen(hug(settings)))
                 }),
                 "it stands with F"
             );
@@ -3612,16 +3632,16 @@ mod tests {
         #[test]
         fn a_floating_windows_border_rides_the_floating_container_on_a_switch() {
             let f = wid(7);
-            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
             let windows = [floating_at(f, settings, false)];
-            let from_offset = CGPoint::new(0.0, -1117.0);
+            let from_offset = SurfacePoint::new(0.0, -1117.0);
             let mut plan = surface_plan(&windows, from_offset, REST);
             assert!(plan.floating_travel.y != 0.0, "the container travels");
             let (from, to) = windows[0].travel(from_offset, REST);
             let border = border_tile(
                 &stacked(f, from, to, Some(0), true),
-                settings,
-                (wid(70), hug(settings)),
+                real(settings),
+                (wid(70), hug(real(settings))),
                 test_picture(hug(settings).size),
             );
             plan.adopt(&border);
@@ -3647,15 +3667,15 @@ mod tests {
             let (from, to) = moved.travel(offset, REST);
             let mut anchor = stacked(w, from, to, Some(0), false);
             anchor.depth = 0;
-            let real = at(4.0, WIDTH);
+            let real = real(at(4.0, WIDTH));
             let frame = rect(0.0, 28.0, WIDTH + 8.0, 1089.0);
             let border = border_tile(&anchor, real, (wid(20), frame), test_picture(frame.size));
             incoming.adopt(&border);
 
             let along = halfway(&current);
             let key = key_of(&current, w).unwrap();
-            let on_screen: HashMap<GroupKey, CGPoint> =
-                along.iter().map(|(key, p)| (*key, CGPoint::new(p.x - 576.0, p.y))).collect();
+            let on_screen: HashMap<GroupKey, OverlayPoint> =
+                along.iter().map(|(key, p)| (*key, OverlayPoint::new(p.x - 576.0, p.y))).collect();
             let presented = Presented {
                 drawn: on_screen.clone(),
                 along,
@@ -3666,7 +3686,7 @@ mod tests {
                 Some(pan_travel(offset, REST)),
                 &presented,
                 Some(w),
-                DISPLAY,
+                VIEWPORT,
             );
 
             assert_eq!(key_of(&merged, wid(20)), Some(key), "it rides with W");
