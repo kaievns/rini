@@ -170,8 +170,18 @@ picture landing while it runs, is here.
 A pass confirming the flight's destinations is an empty `PlanDelta`: nothing is touched, and rapid
 presses neither restart nor extend the flight. Any real change restarts the coordinator's clock
 (`Merge { moved }`), so the frame placement and teardown cover the newest legs. A pass arriving before
-the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead:
-the plan is rebuilt from the merged tiles and installed again (`recompose`). Behind the frame-zero
+the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead,
+and frame zero installed again (`fold_before_moving`). It is folded by `merge_plans`, as a pass in
+flight is, with every container where frame zero installs it and taken to be where the last pass
+sends it: the reactor builds a pass from the layout where the press before left it, so its frames are
+places on the strip there. A burst of presses then composes as one movement from frame zero. Rebuilt
+from the merged tiles, as it was, each window rode its own path from where frame zero drew it to where
+the last press sends it. On two steps along the strip, the column the second brought started under
+the one the first brought, and the column the second left behind was outrun and covered by its
+neighbour; on two switches the rows did the same, and the floating windows left their container for
+paths of their own (pinned by
+`a_second_pan_before_the_flight_moves_keeps_the_strip_one_piece` and
+`a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface`). Behind the frame-zero
 wait, frame zero is asked again for every window the pass brought wholly on screen where its tile
 starts that no ask expected there, under the same generation, and the overlay waits for that ask too,
 never past the 80ms the begin set. The request alone is what the first ask knew: a window rejoining
@@ -450,7 +460,7 @@ nothing of it lands on screen to be watched. A
 move that does not step keeps both columns crossing.
 
 The step starts only on a flight that moves: one still collecting passes
-recomposes its containers, which drops any additive animation, so a move
+installs its containers again with each, which drops any additive animation, so a move
 arriving then waits and steps when the flight starts moving (`nudge_admission`,
 `NudgeAdmission::Wait`, `starting_nudge`); it used to be dropped, and a
 full-width move merged into a collecting layout pass showed nothing. The engine

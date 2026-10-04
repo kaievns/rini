@@ -499,6 +499,25 @@ impl RunningAnimation {
         outcomes
     }
 
+    /// A later pass folded into a flight not yet moving, by the rules a moving flight's merge
+    /// follows, every container where frame zero installs it and the pass's frames taken as places on
+    /// the strip where the last pass sends it: a burst composes as one movement from frame zero, and
+    /// each tile starts where its container installs it.
+    fn fold_before_moving(&mut self, incoming: &plan::ReflowPlan, pan: Option<CGPoint>, viewport: CGRect) {
+        let presented = plan::Presented {
+            drawn: self.plan.positions.keys().map(|key| (*key, CGPoint::new(0.0, 0.0))).collect(),
+            along: self.plan.positions.clone(),
+        };
+        let (merged, _) = plan::merge_plans(&self.plan, incoming, pan, &presented, self.focus, viewport);
+        self.plan = merged;
+        for tile in self.tiles.iter_mut() {
+            if let Some(member) = self.plan.member(tile.window) {
+                tile.from = member.start_frame();
+            }
+        }
+        sync_tiles_to_plan(&mut self.tiles, &self.plan);
+    }
+
     /// Adds or retargets one window without disturbing anything already moving.
     fn merge(&mut self, tile: OverlayTile) -> Admitted {
         let action = merge_action(
@@ -951,11 +970,11 @@ impl FlightEngine {
     fn admit_entrance(&mut self, tile: OverlayTile, now: Instant) {
         let Some(running) = self.running.as_mut() else { return };
         debug!(pid = tile.window.pid, idx = tile.window.idx.get(), flown = running.flown, "entrance admitted");
+        running.plan.entrances.push((tile.window, tile.from, tile.to));
         if !running.flown {
-            self.recompose();
+            self.reinstall();
             return;
         }
-        running.plan.entrances.push((tile.window, tile.from, tile.to));
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         let left = self.coordinator.remaining(now).unwrap_or_default();
         if let Some(overlay) = self.overlay.as_mut() {
@@ -1003,18 +1022,6 @@ impl FlightEngine {
         overlay.install(&running.plan, &running.tiles, &banding);
         bounce.gone();
         self.clip_corners();
-    }
-
-    /// Frame zero again, for a flight not yet moving: the plan is rebuilt from its tiles and
-    /// installed.
-    fn recompose(&mut self) {
-        let Some(running) = self.running.as_mut() else { return };
-        let mut rebuilt = plan::plan_from_tiles(&running.tiles);
-        // A tile only knows it resizes; the plan remembers which of those are entrances.
-        let entrances: Vec<WindowId> = running.plan.entrances.iter().map(|(w, _, _)| *w).collect();
-        rebuilt.mark_entrances(&entrances);
-        running.plan = plan::FlightPlan::from(rebuilt);
-        self.reinstall();
     }
 
     /// Every tile whose picture is baked with the desktop behind it clipped to its corners; every
@@ -1530,8 +1537,8 @@ impl FlightEngine {
     }
 
     /// One later pass folded into the flight running: retargeted on the renderer once the plan
-    /// plays, frame zero recomposed before. A pass moving focus to a target parked off the display
-    /// flies its focused look, as the first pass's does.
+    /// plays, folded into frame zero and installed again before. A pass moving focus to a target
+    /// parked off the display flies its focused look, as the first pass's does.
     fn merge_group(&mut self, pass: Pass) {
         let now = Instant::now();
         let display = self.display.map(|(frame, _)| frame);
@@ -1554,18 +1561,19 @@ impl FlightEngine {
         let mut shape = pass.shape;
         let mut moved = false;
         let mut nudge = None;
+        // The viewport in overlay space: what a member's destination is judged against.
+        let viewport = display
+            .map(|d| to_overlay_space(d, d))
+            .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)));
         if !running.flown {
             if let Some(waiting) = nudge_waiting(pass.nudge, shape.duration, nudge_playing, now) {
                 running.nudge = Some(waiting);
             }
+            running.fold_before_moving(&pass.plan, pass.pan, viewport);
         } else {
             // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
             let presented = overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
             let focus_changed = pass_focus.is_some() && pass_focus != focus_before;
-            // The viewport in overlay space: what a member's destination is judged against.
-            let viewport = display
-                .map(|d| to_overlay_space(d, d))
-                .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)));
             let (merged, mut delta) = plan::merge_plans(
                 &running.plan,
                 &pass.plan,
@@ -1650,7 +1658,7 @@ impl FlightEngine {
         if flown {
             self.redraw_focus(&drawn_focused_before, look, now);
         } else {
-            self.recompose();
+            self.reinstall();
         }
         let Some(stage) = self.stage(shape) else { return };
         self.drive(lifecycle::Event::Merge { stage, moved });
@@ -2577,6 +2585,125 @@ mod tests {
         }
     }
 
+    /// Presses folded into a flight before it moves, each built as the reactor builds it, from the
+    /// layout where the press before left it.
+    mod folded {
+        use super::*;
+
+        const PITCH: f64 = 1117.0;
+
+        fn on_surface(window: WindowId, frame: CGRect, floating: bool) -> SurfaceWindow {
+            SurfaceWindow {
+                window,
+                server_id: WindowServerId::new(window.idx.get()),
+                frame,
+                pinned: false,
+                floating,
+                from: None,
+            }
+        }
+
+        /// A strip movement as `start_surface` composes it: every tile travels the viewport's travel,
+        /// and the plan is the surface's.
+        fn movement(windows: &[SurfaceWindow], from: CGPoint, to: CGPoint) -> (Vec<OverlayTile>, plan::ReflowPlan) {
+            let tiles = windows
+                .iter()
+                .map(|w| {
+                    let (start, end) = w.travel(from, to);
+                    stacked(w.window, start, end, Some(0), w.floating)
+                })
+                .collect();
+            (tiles, plan::surface_plan(windows, from, to))
+        }
+
+        fn composed((tiles, pieces): (Vec<OverlayTile>, plan::ReflowPlan), focus: WindowId) -> RunningAnimation {
+            let mut running = flight();
+            running.tiles = tiles;
+            running.plan = plan::FlightPlan::from(pieces);
+            running.focus = Some(focus);
+            running
+        }
+
+        /// A second press, folded in as `merge_group` folds one into a flight not yet moving.
+        fn press(running: &mut RunningAnimation, windows: &[SurfaceWindow], from: CGPoint, to: CGPoint, focus: WindowId) {
+            let (tiles, pieces) = movement(windows, from, to);
+            running.merge_pass(tiles, Some(focus));
+            running.fold_before_moving(&pieces, Some(pan_travel(from, to)), DISPLAY);
+        }
+
+        fn path(running: &RunningAnimation, window: WindowId) -> (CGRect, CGRect) {
+            let tile = running.tiles.iter().find(|t| t.window == window).expect("drawn");
+            (tile.from, tile.to)
+        }
+
+        fn piece(running: &RunningAnimation, window: WindowId) -> Option<(plan::GroupKey, CGPoint)> {
+            let group = running.plan.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))?;
+            Some((group.key, group.travel))
+        }
+
+        /// Kai, 2026-10-03: "rapid press navigation messes things up, i periodically see missing
+        /// tiles". A switch pressed again before the first moves travels the whole stack as one
+        /// surface: the floating window rides its container both rows, and the row the second press
+        /// brings starts below the one the first brought, where the stack has it, not on top of it.
+        #[test]
+        fn a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface() {
+            let (a, b, floater, c) = (wid(1), wid(2), wid(3), wid(4));
+            let column = |row: f64| rect(4.0, 32.0 + row * PITCH, 1720.0, 1081.0);
+            let floating = |row: f64| rect(224.0, 95.0 + row * PITCH, 600.0, 400.0);
+            let (rest, down) = (CGPoint::new(0.0, 0.0), CGPoint::new(0.0, PITCH));
+            let first = [
+                on_surface(a, column(0.0), false),
+                on_surface(b, column(1.0), false),
+                on_surface(floater, floating(1.0), true),
+            ];
+            let second = [
+                on_surface(b, column(0.0), false),
+                on_surface(floater, floating(0.0), true),
+                on_surface(c, column(1.0), false),
+            ];
+            let mut running = composed(movement(&first, rest, down), b);
+            press(&mut running, &second, rest, down, c);
+
+            let both = CGPoint::new(0.0, -2.0 * PITCH);
+            assert_eq!(running.plan.floating_travel, both, "the floating container travels both rows");
+            assert_eq!(
+                running.plan.member(floater),
+                Some(plan::Member::Floating { from: floating(1.0), to: floating(1.0) }),
+                "riding it, with no motion of its own"
+            );
+            let strip = piece(&running, a);
+            assert_eq!(strip.map(|(_, travel)| travel), Some(both));
+            assert_eq!(piece(&running, b), strip);
+            assert_eq!(piece(&running, c), strip);
+            assert_eq!(path(&running, c), (column(2.0), column(0.0)), "below B, where the stack has it");
+            assert_eq!(path(&running, a).1, column(-2.0));
+            assert_eq!(path(&running, floater).1, floating(-1.0));
+        }
+
+        /// A second step along the strip before the first moves: one piece travels both steps, and
+        /// the column the second brings in starts beside the one the first brought.
+        #[test]
+        fn a_second_pan_before_the_flight_moves_keeps_the_strip_one_piece() {
+            let step = 864.0;
+            let column = |x: f64| rect(x, 32.0, 860.0, 1081.0);
+            let columns = [wid(1), wid(2), wid(3), wid(4)];
+            let at = |i: usize, scrolled: f64| on_surface(columns[i], column(4.0 + (i as f64 - scrolled) * step), false);
+            let first: Vec<SurfaceWindow> = (0..3).map(|i| at(i, 1.0)).collect();
+            let second: Vec<SurfaceWindow> = (1..4).map(|i| at(i, 2.0)).collect();
+            let (away, rest) = (CGPoint::new(-step, 0.0), CGPoint::new(0.0, 0.0));
+            let mut running = composed(movement(&first, away, rest), columns[2]);
+            press(&mut running, &second, away, rest, columns[3]);
+
+            let strip = piece(&running, columns[0]);
+            assert_eq!(strip.map(|(_, travel)| travel), Some(CGPoint::new(-2.0 * step, 0.0)));
+            for window in &columns[1..] {
+                assert_eq!(piece(&running, *window), strip, "{window:?} rides the strip");
+            }
+            assert_eq!(path(&running, columns[3]), (column(4.0 + 3.0 * step), column(4.0 + step)), "beside the third");
+            assert_eq!(path(&running, columns[0]).1, column(4.0 - 2.0 * step));
+        }
+    }
+
     /// Which tile and which container are drawn in front: `restack` and `band_plan`, over passes.
     mod depth {
         use rini_ipc::protocol::Direction;
@@ -2590,6 +2717,15 @@ mod tests {
 
         fn column(i: f64) -> CGRect {
             rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
+        }
+
+        /// The plan of `tiles` alone, each adopted as a pass adopts a tile it did not derive.
+        fn plan_of(tiles: &[OverlayTile]) -> FlightPlan {
+            let mut pieces = ReflowPlan::empty();
+            for tile in tiles {
+                pieces.adopt(tile);
+            }
+            FlightPlan::from(pieces)
         }
 
         fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
@@ -2936,7 +3072,7 @@ mod tests {
             companion.companion = Some(wid(90));
             tiles.push(companion);
             restack(&mut tiles, Some(wid(90)));
-            let plan = FlightPlan::from(plan_from_tiles(&tiles));
+            let plan = plan_of(&tiles);
             let still = plan.groups[0].key;
             let moving = plan.groups[1].key;
 
@@ -2997,7 +3133,7 @@ mod tests {
                 stacked(controls, bar, bar, Some(4), true),
             ];
             restack(&mut tiles, Some(onepassword));
-            let plan = FlightPlan::from(plan_from_tiles(&tiles));
+            let plan = plan_of(&tiles);
             let banding = band_plan(&plan, &tiles, Some(onepassword));
             assert_eq!(banding.lifted, vec![onepassword], "zoom is not lifted with it");
 
@@ -3039,7 +3175,7 @@ mod tests {
                     None
                 };
                 restack(&mut tiles, focus);
-                let plan = FlightPlan::from(plan_from_tiles(&tiles));
+                let plan = plan_of(&tiles);
                 let banding = band_plan(&plan, &tiles, focus);
                 let tag = format!("seed 163 run {run}");
                 let placements = stack(&stacked_windows(&tiles), focus);

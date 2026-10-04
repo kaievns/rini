@@ -166,14 +166,6 @@ impl ReflowPlan {
         }
     }
 
-    /// Moves the named windows from `changing` to `entrances`: a rebuilt plan sees only a resize.
-    pub fn mark_entrances(&mut self, windows: &[WindowId]) {
-        let (entrances, changing): (Vec<_>, Vec<_>) =
-            self.changing.drain(..).partition(|(w, _, _)| windows.contains(w));
-        self.changing = changing;
-        self.entrances.extend(entrances);
-    }
-
     /// The group `window` rides, if it is a rigid member.
     pub fn group_of(&self, window: WindowId) -> Option<&RigidGroup> {
         self.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))
@@ -820,16 +812,6 @@ pub fn reflow_plan(requests: &[(WindowId, CGRect, CGRect, bool)], display: CGRec
         } else {
             plan.place(window, from, vector_of(from, to));
         }
-    }
-    plan
-}
-
-/// Frame zero again from a flight's merged tiles (overlay space): every tile adopted by the
-/// `reflow_plan` rules. Used while a flight is still collecting passes.
-pub fn plan_from_tiles<T: TileGeometry>(tiles: &[T]) -> ReflowPlan {
-    let mut plan = ReflowPlan::empty();
-    for tile in tiles {
-        plan.adopt(tile);
     }
     plan
 }
@@ -1916,15 +1898,14 @@ mod tests {
         }
     }
 
-    /// A pass as rigid pieces: `reflow_plan`, `surface_plan`, `plan_from_tiles` and what
-    /// `animation_targets` names. See "Layout changes and strip movements" in
+    /// A pass as rigid pieces: `reflow_plan`, `surface_plan` and what `animation_targets` names. See "Layout changes and strip movements" in
     /// `src/transitions/docs/coordination.md`.
     mod pieces {
         use rini_geometry::{SameAs, to_overlay_space};
 
         use super::*;
         use crate::animation::domain::motion::surface::{pan_travel, surface_travel};
-        use crate::animation::domain::motion::testing::{DISPLAY, Gen, OnSurface, RUNS, StagedTile};
+        use crate::animation::domain::motion::testing::{DISPLAY, Gen, OnSurface, RUNS};
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -2422,27 +2403,6 @@ mod tests {
             let flight = FlightPlan::from(plan);
             let targets = animation_targets(&flight);
             assert_eq!(targets.len(), 1, "the floating tile flies on its own");
-        }
-
-        #[test]
-        fn a_plan_rebuilt_from_tiles_matches_the_plan_from_requests() {
-            let mut rng = Gen(139);
-            for run in 0..RUNS {
-                let requests = random_requests(&mut rng);
-                let expected = reflow_plan(&requests, DISPLAY);
-                let tiles: Vec<StagedTile> = requests
-                    .iter()
-                    .map(|&(window, start, end, floating)| StagedTile {
-                        window,
-                        from: to_overlay_space(start, DISPLAY),
-                        to: to_overlay_space(end, DISPLAY),
-                        floating,
-                        companion: None,
-                    })
-                    .collect();
-                let rebuilt = plan_from_tiles(&tiles);
-                assert_eq!(rebuilt, expected, "seed 139 run {run}");
-            }
         }
 
         /// `fly` installs what `animation_targets` names and nothing else.

@@ -88,7 +88,10 @@ was left a third of the display from its window; pinned by
 `a_border_arriving_mid_nudge_rides_with_the_moved_window`. A move's step rides
 every strip container, so a still window joining mid-step takes the still
 piece and steps with the strip; pinned by
-`a_still_window_joining_mid_step_steps_with_the_strip`. What the flight does about a merge,
+`a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded in
+by the same function, every container drawn where frame zero installs it and its leg taken to be where
+the last pass sends it: nothing has moved, and the pass's frames are places on the strip there
+(`fold_before_moving`). What the flight does about a merge,
 the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes" in
 `src/transitions/docs/coordination.md`.
 

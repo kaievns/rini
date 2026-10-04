@@ -144,11 +144,18 @@ destination for a window already moving.
   their own thread and arrive while a press is merged, and none is taken twice.
 - A merged press MUST NOT replace a tile's picture with the cache's: the tile keeps frame zero's, a
   focused look, or a picture the flight took.
+- A press merged before the flight moves MUST compose with it as one movement from frame zero: the
+  strip, and on a switch every row and floating window, travel together as one piece, and a window the
+  later press brings starts where the layout has it, beside the rest. Composed window by window from
+  where each tile starts to where the last press sends it, the pieces slid over one another, and a
+  column the second press brought started under the column the first had brought.
 
 > **Reported 2026-10-03.** "rapid press navigation messes things up, i periodically see missing tiles
 > (or they're just transparrent), occasionally i see tiles that are zoomed in." Each picture is now
 > pinned to the end its tile had when it was taken and to the frame its tile ends at; which picture
-> each of those tiles drew was not measured.
+> each of those tiles drew was not measured. A press merged before the flight moved also split the
+> strip into pieces that slid over one another, one covering another; it now composes as one
+> movement. Whether either is what was seen is not measured.
 
 ## A window that has just opened
 

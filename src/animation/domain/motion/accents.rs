@@ -31,8 +31,8 @@ impl NudgePlaying {
 pub enum NudgeAdmission {
     /// It steps the strip from now, and the flight is stretched to carry it.
     Start,
-    /// The flight is still collecting passes, which recomposes its containers and would drop it:
-    /// it starts when the flight does.
+    /// The flight is still collecting passes, each installing its containers again, which would drop
+    /// it: it starts when the flight does.
     Wait,
     /// One is still playing: not in this flight, which keeps its plain duration.
     Skip,
