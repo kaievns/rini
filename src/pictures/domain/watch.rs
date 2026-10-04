@@ -390,8 +390,9 @@ impl Watches {
 
     /// Replaces what `id` watches, keeping what it already knows: a window that landed where it still
     /// ends stays landed, a repainting window that has not landed settles against the picture held
-    /// when the watch first named it, or on two captures in a row if none was, a focus already seen
-    /// stays seen, and the background keeps its pace. A window that landed and is watched to land
+    /// when the watch first named it, or on two captures in a row if none was, a focus report already
+    /// seen stays seen, a change watch at the same size keeps its baseline, its tries and whether it is
+    /// done, and the background keeps its pace. A window that landed and is watched to land
     /// somewhere new settles against the picture held now, the one it landed with. A window watched to
     /// land somewhere new starts its print afresh: what the client was delivered of it was taken for
     /// the end before, which the client no longer draws.
@@ -429,11 +430,15 @@ impl Watches {
             (Watching::Change(new), Watching::Change(old))
                 if new.target.window == old.target.window =>
             {
-                new.baseline = old.baseline;
                 new.armed = old.armed;
-                new.left = old.left.min(new.left);
-                new.next = old.next;
-                new.done = old.done;
+                // A band print is drawn from the window's whole width, so one taken at another size
+                // never matches; and the cache refuses a capture only at the size of what it holds.
+                if new.end.size == old.end.size {
+                    new.baseline = old.baseline;
+                    new.left = old.left.min(new.left);
+                    new.next = old.next;
+                    new.done = old.done;
+                }
             }
             (Watching::Live(new), Watching::Live(old)) => new.last = old.last,
             _ => {}
@@ -1679,6 +1684,49 @@ mod tests {
         let (_, outcome) = round_of(&mut watches, start, |_| Some(LEFT), |_| Capture::Refused).unwrap();
         assert!(outcome.deliveries.is_empty(), "not delivered as landed either");
         assert!(watches.next(start + CHANGE_EVERY).is_none());
+    }
+
+    /// A change watch retargeted to an end of another size starts afresh but for its focus report: a
+    /// refusal or the tries spent at one size say nothing of another. At the same size it carries on.
+    #[test]
+    fn a_change_watch_retargeted_to_another_size_starts_afresh_but_for_its_focus_report() {
+        let start = Instant::now();
+        let wider = rect(4.0, 32.0, 1200.0, 1081.0);
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        round_of(&mut watches, start, |_| Some(LEFT), |_| Capture::Refused).unwrap();
+        let later = start + ms(2000);
+        watches.retarget(WatchId(1), change(1, rect(14.0, 32.0, 859.0, 1081.0)), later, &none);
+        assert!(watches.next(later).is_none(), "the same size: still done");
+        watches.retarget(WatchId(1), change(1, wider), later, &none);
+        assert_eq!(
+            looked(&watches.next(later).unwrap()),
+            vec![vec![wid(1)]],
+            "another size: captured again, armed long after the report"
+        );
+
+        let tries = |watches: &mut Watches, mut at: Instant, end: CGRect| {
+            let mut tries = 0;
+            while round(watches, at, |_| Some(end), |_| Some(1)).is_some() {
+                tries += 1;
+                at += CHANGE_EVERY;
+            }
+            tries
+        };
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        let at = start + CHANGE_EVERY * (CHANGE_TRIES - 1);
+        let mut now = start;
+        while now < at {
+            round(&mut watches, now, |_| Some(LEFT), |_| Some(1)).unwrap();
+            now += CHANGE_EVERY;
+        }
+        watches.retarget(WatchId(1), change(1, LEFT), at, &none);
+        assert_eq!(tries(&mut watches, at, LEFT), 1, "the same size: the one try left");
+        watches.retarget(WatchId(1), change(1, wider), at, &none);
+        assert_eq!(tries(&mut watches, at, wider), CHANGE_TRIES, "another size: every try again");
     }
 
     /// Until the window is where it ends, a change watch only watches it land: no try is spent.
