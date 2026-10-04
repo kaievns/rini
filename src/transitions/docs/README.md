@@ -16,7 +16,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **Where a tile starts and ends** | `domain/travel.rs` — the window server's frame against the request's, a park's way in and out by its neighbours' travel, what is worth flying |
 | **A move along the strip, staged** | `domain/strip_move.rs` — where the two columns changing places start, whether the move steps the whole strip, and the column such a move holds on it |
 | **A switch's stack** | `domain/strip_stack.rs` — the stacked workspace strips a vertical switch scrolls through |
-| **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, the frames a coalescing merge sends again, how an opened window enters, what frame zero sends and chases |
+| **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, the frames a coalescing merge sends again, how an opened window enters, what frame zero sends and chases, a move's nudge waiting for its flight to move, and the bounce a push against an end starts |
 | **What a flight is** | `domain/flight.rs` — when a picture landing in flight is swapped in, the focus refresh, border companions, the handover report, when a pass is worth an overlay, the flight report |
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the apply points, the reveal hold, the lift and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
@@ -69,10 +69,13 @@ old timer posted acts on whichever flight is current. Step 4 replaces them with 
 **Two names for the reveal hold.** `timing::HOLD_CAP` is the engine's, `lifecycle::HOLD_PATIENCE` the
 coordinator's; both are 300ms. One goes when step 4 wires the coordinator.
 
-**Some pure rules are still the engine's.** What a held flight claims, what a landing picture may
-change and how tiles band are methods on `RunningAnimation` and functions over `OverlayTile`, and both
-carry a platform `Picture`. They and their tests (`platform/engine.rs`, grouped by unit) move to
-`domain/` once a tile holds a picture handle instead.
+**Some pure rules are still the engine's.** The flight's clock, when its frames are due, how a later
+pass extends its hold or merges into its tiles, what a held flight claims, how a late entrance joins,
+what a landing picture may change, how tiles band, a border's tile and which stand-ins are chased are
+methods on `RunningAnimation` and functions over `OverlayTile`, and both carry a platform `Picture`.
+They and their tests (`platform/engine.rs`, grouped by unit) move to `domain/` once a tile holds a
+picture handle instead. `refresh_requests`, the focus refresh's capture targets, carries no `Picture`;
+it stays because step 4 deletes the refresh.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
 `start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's

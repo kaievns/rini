@@ -18,9 +18,9 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
-use crate::animation::domain::motion::accents::{NudgeAdmission, NudgePlaying, nudge_admission};
+use crate::animation::domain::motion::accents::NudgePlaying;
 use crate::animation::domain::motion::bounce::Bounce;
-use crate::animation::domain::motion::nudge::{NUDGE_STRETCH, flight_curve};
+use crate::animation::domain::motion::nudge::flight_curve;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
@@ -256,48 +256,6 @@ fn stand_in_chase(
         .collect()
 }
 
-/// A move's nudge arriving at a flight that does not move yet, kept with the move's plain duration
-/// until it does (`NudgeAdmission::Wait`); `None` when it is skipped.
-fn nudge_waiting(
-    nudge: Option<CGPoint>,
-    duration: Duration,
-    playing: &NudgePlaying,
-    now: Instant,
-) -> Option<(CGPoint, Duration)> {
-    let nudge = nudge?;
-    match nudge_admission(playing, now, false) {
-        NudgeAdmission::Wait => Some((nudge, duration)),
-        admission => {
-            admitted(nudge, admission);
-            None
-        }
-    }
-}
-
-/// The waiting nudge as its flight starts moving, with the stretched duration it plays over; `None`
-/// when it is skipped.
-fn starting_nudge(
-    waiting: Option<(CGPoint, Duration)>,
-    playing: &NudgePlaying,
-    now: Instant,
-) -> Option<(CGPoint, Duration)> {
-    let (nudge, plain) = waiting?;
-    let nudge = admitted(nudge, nudge_admission(playing, now, true))?;
-    Some((nudge, plain.mul_f64(NUDGE_STRETCH)))
-}
-
-/// The nudge that starts now, or `None`, logged when it is skipped.
-fn admitted(nudge: CGPoint, admission: NudgeAdmission) -> Option<CGPoint> {
-    match admission {
-        NudgeAdmission::Start => Some(nudge),
-        NudgeAdmission::Wait => None,
-        NudgeAdmission::Skip => {
-            debug!("move nudge skipped: one is still playing");
-            None
-        }
-    }
-}
-
 /// Steps the whole strip out by `offset` and back over `duration`, and holds the flight's clock and
 /// lift for it to come home. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
 fn nudge_on(
@@ -311,22 +269,6 @@ fn nudge_on(
     running.duration = clock_for_bounce(running.started, running.duration, duration);
     overlay.nudge(offset, duration);
     debug!(offset = format!("{:.0},{:.0}", offset.x, offset.y), "move nudge");
-}
-
-/// The bounce a push at `now` plays: from rest with none playing, else pushed from where the one
-/// playing is drawn.
-fn next_bounce(
-    playing: Option<(Instant, Bounce)>,
-    now: Instant,
-    overshoot: CGPoint,
-    duration: Duration,
-) -> Bounce {
-    match playing {
-        Some((began, bounce)) => {
-            bounce.pushed(now.saturating_duration_since(began), overshoot, duration)
-        }
-        None => Bounce::from_rest(overshoot, duration),
-    }
 }
 
 /// The capture work a lift leaves for the quiet period.
@@ -1542,14 +1484,10 @@ impl FlightEngine {
                 running.plan = merged;
                 sync_tiles_to_plan(&mut running.tiles, &running.plan);
                 let now = Instant::now();
-                let nudge = nudge
-                    .and_then(|nudge| admitted(nudge, nudge_admission(nudge_playing, now, true)));
+                let nudge =
+                    starting_nudge(nudge.map(|nudge| (nudge, duration)), nudge_playing, now);
                 // A flight carrying the nudge is stretched, its new legs with it.
-                let duration = if nudge.is_some() {
-                    duration.mul_f64(NUDGE_STRETCH)
-                } else {
-                    duration
-                };
+                let duration = nudge.map_or(duration, |(_, stretched)| stretched);
                 if !delta.is_empty() {
                     debug!(
                         groups =
@@ -1612,8 +1550,8 @@ impl FlightEngine {
                     running.duration = duration.max(legs);
                 }
                 running.absorb_in_flight_change(changed, frames_changed);
-                if let (Some(nudge), Some(overlay)) = (nudge, overlay.as_mut()) {
-                    nudge_on(overlay, running, nudge_playing, nudge, duration);
+                if let (Some((nudge, stretched)), Some(overlay)) = (nudge, overlay.as_mut()) {
+                    nudge_on(overlay, running, nudge_playing, nudge, stretched);
                 }
                 // A grow joining mid-flight cannot hold; its chase lands as `Swap("reveal")`.
                 let (_, chase_set, _) = frame_zero_work(&awaiting, &chase, &[], &[]);
@@ -4035,61 +3973,6 @@ mod tests {
             };
             assert_eq!(order(w), 0, "the moved window leads");
             assert!(order(w) < order(b), "B slides beneath it");
-        }
-    }
-
-    /// A move's nudge waits for its flight to move, then plays stretched.
-    mod nudge {
-        use super::*;
-        use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
-
-        /// The reactor's step waits with the move's plain duration until the flight moves, then
-        /// plays stretched, and the flight crosses on the ease-in-out. A press while one plays is
-        /// skipped, and its flight keeps the motion curve.
-        #[test]
-        fn a_nudge_waits_for_its_flight_then_plays_stretched_on_the_ease_in_out() {
-            let step = CGPoint::new(-576.0, 0.0);
-            let plain = Duration::from_millis(350);
-            let now = Instant::now();
-            let idle = NudgePlaying::default();
-            let waiting = nudge_waiting(Some(step), plain, &idle, now);
-            assert_eq!(waiting, Some((step, plain)));
-            let started = starting_nudge(waiting, &idle, now);
-            assert_eq!(started, Some((step, plain.mul_f64(NUDGE_STRETCH))));
-            assert_eq!(flight_curve(started.is_some()), EASE_IN_OUT);
-
-            let mut playing = NudgePlaying::default();
-            playing.start(now, plain.mul_f64(NUDGE_STRETCH));
-            let soon = now + Duration::from_millis(100);
-            assert_eq!(nudge_waiting(Some(step), plain, &playing, soon), None);
-            assert_eq!(starting_nudge(Some((step, plain)), &playing, soon), None);
-            assert_eq!(flight_curve(false), MOTION_CURVE);
-            assert_eq!(nudge_waiting(None, plain, &idle, now), None);
-        }
-    }
-
-    /// The edge bounce: every push against an end shows, re-kicked from where the last is drawn.
-    mod bounce {
-        use super::*;
-
-        /// A push while a bounce plays is not dropped: it starts a bounce from where the last is
-        /// drawn. One after it came home, or with none playing, starts from rest.
-        #[test]
-        fn every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn() {
-            let plays = Duration::from_millis(350);
-            let wall = CGPoint::new(-72.0, 0.0);
-            let began = Instant::now();
-            let first = next_bounce(None, began, wall, plays);
-            assert_eq!(first, Bounce::from_rest(wall, plays));
-            let later = began + Duration::from_millis(60);
-            let second = next_bounce(Some((began, first)), later, wall, plays);
-            assert_eq!(second.from, first.at(Duration::from_millis(60)));
-            assert_ne!(second.from, CGPoint::new(0.0, 0.0), "not over from rest");
-            let home = began + plays;
-            assert_eq!(
-                next_bounce(Some((began, first)), home, wall, plays),
-                Bounce::from_rest(wall, plays)
-            );
         }
     }
 

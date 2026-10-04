@@ -57,6 +57,13 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::easing::nudge_rate;
 
+    /// A flight carrying the nudge crosses on the ease-in-out; one without it keeps the motion curve.
+    #[test]
+    fn a_flight_crosses_on_the_ease_in_out_only_while_the_strip_steps() {
+        assert_eq!(flight_curve(true), EASE_IN_OUT);
+        assert_eq!(flight_curve(false), MOTION_CURVE);
+    }
+
     #[test]
     fn the_nudge_keyframes_run_rest_to_rest_through_the_offset() {
         let offset = CGPoint::new(576.0, 0.0);

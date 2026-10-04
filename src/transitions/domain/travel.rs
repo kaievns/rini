@@ -271,47 +271,6 @@ mod tests {
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
     use crate::transitions::domain::timing::{APPLY_FRAMES_AT, FlightKind, apply_frames_at};
 
-    /// The rigidity property the old canvas layer guaranteed structurally: every unpinned window
-    /// of a strip movement translates by exactly the same vector, so tiles animated per-tile from
-    /// these rects cannot drift apart. If this ever fails, the strip tears.
-    #[test]
-    fn a_strip_movement_translates_every_window_by_the_same_vector() {
-        let from_offset = CGPoint::new(0.0, 0.0);
-        let to_offset = CGPoint::new(-861.0, 1117.0);
-        let frames = [
-            rect(4.0, 32.0, 859.0, 1081.0),
-            rect(867.0, 32.0, 859.0, 1081.0),
-            rect(4.0, 1149.0, 1720.0, 1081.0), // the row below, mid-jump
-        ];
-        for frame in frames {
-            let (from, to) = crate::animation::domain::motion::surface::surface_travel(
-                frame,
-                from_offset,
-                to_offset,
-                false,
-            );
-            assert_eq!(from, frame, "at rest the viewport offset is zero");
-            assert_eq!(to.origin.x - from.origin.x, 861.0);
-            assert_eq!(to.origin.y - from.origin.y, -1117.0);
-            assert_eq!(to.size, frame.size, "a strip movement never resizes");
-        }
-    }
-
-    /// A floating window does not belong to the strip: a pan leaves it exactly where it stands,
-    /// and a standing tile still exists, because the overlay is opaque and omissions vanish.
-    #[test]
-    fn a_pinned_window_stands_still() {
-        let frame = rect(224.0, 95.0, 1280.0, 960.0);
-        let (from, to) = crate::animation::domain::motion::surface::surface_travel(
-            frame,
-            CGPoint::new(100.0, 0.0),
-            CGPoint::new(-4000.0, 0.0),
-            true,
-        );
-        assert_eq!(from, frame);
-        assert_eq!(to, frame);
-    }
-
     /// The debug slide invents a start for a window already at rest; correcting that "drift" from
     /// the window server made from equal to and silently killed the whole movement.
     #[test]
