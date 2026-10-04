@@ -417,6 +417,16 @@ impl RunningAnimation {
         self.tiles.iter().find(|t| t.window == window).cloned()
     }
 
+    /// `target`'s tile flies `look`, drawn focused, if it fits where the tile starts. Whether it does.
+    fn fly_focused_look(&mut self, target: WindowId, look: Option<Picture>) -> bool {
+        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else { return false };
+        let Some(look) = look.filter(|look| look.fits(tile.from.size)) else { return false };
+        tile.snapshot = look;
+        tile.focused = true;
+        self.focused_look = Some(target);
+        true
+    }
+
     /// Focus handed over: `to` is drawn focused from now, `from` not.
     fn hand_over_focus(&mut self, to: WindowId, from: Option<WindowId>) {
         self.shown_focus = Some(to);
@@ -429,12 +439,15 @@ impl RunningAnimation {
         }
     }
 
-    /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`.
+    /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`. A
+    /// pass moving focus redraws which tiles are drawn focused, and none flies a focused look until
+    /// the engine gives the new target its own.
     fn merge_pass(
         &mut self,
         tiles: Vec<OverlayTile>,
         focus: Option<WindowId>,
     ) -> Vec<(WindowId, Admitted)> {
+        let focus_moved = focus.is_some() && focus != self.focus;
         if focus.is_some() {
             self.focus = focus;
         }
@@ -445,6 +458,13 @@ impl RunningAnimation {
                 (window, self.merge(tile))
             })
             .collect();
+        if focus_moved {
+            let losing = losing_focus(self.focus, self.shown_focus);
+            for tile in self.tiles.iter_mut().filter(|t| t.companion.is_none()) {
+                tile.focused = drawn_focused(tile.window, self.focus, losing);
+            }
+            self.focused_look = None;
+        }
         restack(&mut self.tiles, self.focus);
         outcomes
     }
@@ -463,14 +483,14 @@ impl RunningAnimation {
                     .iter_mut()
                     .find(|t| t.window == tile.window)
                     .expect("retarget implies the tile exists");
-                // The original start is kept so a moving window is not yanked backwards.
+                // The original start is kept so a moving window is not yanked backwards, and the
+                // picture and focus it is drawn with: a pass is composed from the cache, and a tile
+                // changes its picture only for one the flight took.
                 existing.to = tile.to;
-                existing.snapshot = tile.snapshot;
                 existing.floating = tile.floating;
                 existing.server_order = tile.server_order;
                 existing.depth = tile.depth;
                 existing.companion = tile.companion;
-                existing.focused = tile.focused;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -539,11 +559,6 @@ fn ours(client: Client, tag: Tag) -> Option<Generation> {
 fn corner_clip(knowledge: Knowledge, picture: &Picture, size: CGSize) -> Option<f64> {
     (picture.source == Route::SkyLight && knowledge.after_alpha() == Call::Baked)
         .then(|| corner_radius(knowledge.radius, size))
-}
-
-/// The focused look a parked focus target flies, if it fits where the tile starts.
-fn focused_look(tile: &OverlayTile, look: Option<Picture>) -> Option<Picture> {
-    look.filter(|look| look.fits(tile.from.size))
 }
 
 /// The end state's watches: one slot for each kind, kept from one generation to the next and
@@ -1471,17 +1486,30 @@ impl FlightEngine {
     /// fits: frame zero cannot picture it, and it arrives focused. Whether it does.
     fn fly_focused_look(&mut self, target: WindowId) -> bool {
         let look = self.pictures.focused(target);
-        let Some(running) = self.running.as_mut() else { return false };
-        let Some(tile) = running.tiles.iter_mut().find(|t| t.window == target) else { return false };
-        let Some(look) = focused_look(tile, look) else { return false };
-        tile.snapshot = look;
-        tile.focused = true;
-        running.focused_look = Some(target);
-        true
+        self.running.as_mut().is_some_and(|running| running.fly_focused_look(target, look))
+    }
+
+    /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
+    /// a new parked target flies cut onto its tile: a retarget draws neither.
+    fn redraw_focus(&mut self, before: &[(WindowId, bool)], look: Option<WindowId>, now: Instant) {
+        let remaining = self.coordinator.remaining(now);
+        let (Some(running), Some(overlay)) = (self.running.as_ref(), self.overlay.as_mut()) else { return };
+        for tile in running.tiles.iter().filter(|t| t.companion.is_none()) {
+            let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
+            if look == Some(tile.window) {
+                let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
+                overlay.set_tile_picture(tile.window, &tile.snapshot, remaining);
+                overlay.set_tile_corner_clip(tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size));
+                overlay.set_tile_focused(tile.window, true);
+            } else if was.is_some_and(|was| was != tile.focused) {
+                overlay.set_tile_focused(tile.window, tile.focused);
+            }
+        }
     }
 
     /// One later pass folded into the flight running: retargeted on the renderer once the plan
-    /// plays, frame zero recomposed before.
+    /// plays, frame zero recomposed before. A pass moving focus to a target parked off the display
+    /// flies its focused look, as the first pass's does.
     fn merge_group(&mut self, pass: Pass) {
         let now = Instant::now();
         let display = self.display.map(|(frame, _)| frame);
@@ -1497,6 +1525,8 @@ impl FlightEngine {
         }
         merge_final_frames(&mut running.final_frames, pass.final_frames);
         let focus_before = running.focus;
+        let drawn_focused_before: Vec<(WindowId, bool)> =
+            running.tiles.iter().map(|t| (t.window, t.focused)).collect();
         running.merge_pass(pass.tiles, pass.focus);
         let mut shape = pass.shape;
         let mut moved = false;
@@ -1584,7 +1614,19 @@ impl FlightEngine {
             // A merge that moves anything restarts the clock, over the newest legs.
             shape.duration = duration.max(legs);
         }
-        if !running.flown {
+        let flown = running.flown;
+        let focus_moved = running.focus != focus_before;
+        let look = if focus_moved
+            && let Some(target) = self.stage(shape.clone()).and_then(|stage| stage.parked_focus())
+            && self.fly_focused_look(target)
+        {
+            Some(target)
+        } else {
+            None
+        };
+        if flown {
+            self.redraw_focus(&drawn_focused_before, look, now);
+        } else {
             self.recompose();
         }
         let Some(stage) = self.stage(shape) else { return };
@@ -2365,11 +2407,67 @@ mod tests {
         #[test]
         fn a_parked_focus_target_flies_its_focused_look_only_where_it_fits() {
             let park = rect(-860.0, 32.0, 859.0, 1081.0);
-            let tile = stacked(wid(2), park, rect(4.0, 32.0, 859.0, 1081.0), Some(0), false);
-            let look = test_picture(park.size);
-            assert!(focused_look(&tile, Some(look)).is_some());
-            assert!(focused_look(&tile, Some(test_picture(CGSize::new(600.0, 1081.0)))).is_none(), "drawn squashed");
-            assert!(focused_look(&tile, None).is_none());
+            let mut running = flight();
+            running.tiles.push(stacked(wid(2), park, rect(4.0, 32.0, 859.0, 1081.0), Some(0), false));
+            assert!(!running.fly_focused_look(wid(2), Some(test_picture(CGSize::new(600.0, 1081.0)))), "drawn squashed");
+            assert!(!running.fly_focused_look(wid(2), None));
+            assert!(!running.fly_focused_look(wid(3), Some(test_picture(park.size))), "no tile");
+            assert_eq!((running.focused_look, running.tiles[0].focused), (None, false));
+            let mut look = test_picture(park.size);
+            look.coverage.covered.1 -= 1.0;
+            assert!(running.fly_focused_look(wid(2), Some(look.clone())));
+            assert_eq!(running.tiles[0].snapshot.coverage, look.coverage);
+            assert!(running.tiles[0].focused);
+            assert_eq!(running.focused_look, Some(wid(2)));
+        }
+
+        /// A pass is composed from the cache. A tile it retargets keeps the picture the flight gave it
+        /// and how focus is drawn on it: its focused look, frame zero's or a swapped-in end picture.
+        #[test]
+        fn a_retargeted_tile_keeps_its_picture_and_its_focus_while_the_cache_holds_another() {
+            let park = rect(-860.0, 32.0, 859.0, 1081.0);
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(1), slot, slot, Some(1), false));
+            running.tiles.push(stacked(wid(2), park, slot, Some(0), false));
+            running.focus = Some(wid(2));
+            running.shown_focus = Some(wid(1));
+            running.tiles[0].focused = true;
+            let mut look = test_picture(park.size);
+            look.coverage.covered.1 -= 1.0;
+            assert!(running.fly_focused_look(wid(2), Some(look.clone())));
+            let next = rect(867.0, 32.0, 859.0, 1081.0);
+            let outcomes = running.merge_pass(vec![stacked(wid(2), park, next, Some(0), false)], None);
+            assert_eq!(outcomes, vec![(wid(2), Admitted::Retargeted)]);
+            let tile = running.tiles.iter().find(|t| t.window == wid(2)).unwrap();
+            assert_eq!(tile.to, next);
+            assert_eq!(tile.snapshot.coverage, look.coverage, "not the cache's");
+            assert!(tile.focused);
+            assert_eq!(running.focused_look, Some(wid(2)));
+            running.merge_pass(vec![stacked(wid(2), park, slot, Some(0), false)], Some(wid(2)));
+            assert_eq!(running.focused_look, Some(wid(2)), "a pass naming the same focus moves none");
+        }
+
+        /// A pass moving focus on: the window focused as the flight began is still drawn focused
+        /// until focus hands over, the target before it no longer is, and nothing flies a focused look
+        /// until the new target is given its own.
+        #[test]
+        fn a_pass_moving_focus_on_redraws_which_tiles_are_drawn_focused() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let park = rect(-860.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles = vec![
+                stacked(wid(1), slot, slot, Some(0), false),
+                stacked(wid(2), park, slot, Some(1), false),
+            ];
+            running.tiles[0].focused = true;
+            running.focus = Some(wid(2));
+            running.shown_focus = Some(wid(1));
+            assert!(running.fly_focused_look(wid(2), Some(test_picture(park.size))));
+            running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
+            let focused: Vec<(WindowId, bool)> = running.tiles.iter().map(|t| (t.window, t.focused)).collect();
+            assert_eq!(focused, vec![(wid(1), true), (wid(2), false), (wid(3), false)]);
+            assert_eq!(running.focused_look, None);
         }
 
         #[test]

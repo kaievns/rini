@@ -142,6 +142,8 @@ destination for a window already moving.
   tile: drawn, it is a stale tile, or one stretched or zoomed to the other size.
 - A merged press MUST NOT lose a picture taken for an end its tile still has. Pictures are taken on
   their own thread and arrive while a press is merged, and none is taken twice.
+- A merged press MUST NOT replace a tile's picture with the cache's: the tile keeps frame zero's, a
+  focused look, or a picture the flight took.
 
 > **Reported 2026-10-03.** "rapid press navigation messes things up, i periodically see missing tiles
 > (or they're just transparrent), occasionally i see tiles that are zoomed in." Each picture is now
@@ -271,10 +273,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   changed.
 - A focus report that arrives before the flight watches for it MUST still count.
 - A window gaining focus that starts off the display, where nothing can picture it, MUST fly the last
-  picture taken of it focused, drawn focused from the first frame, unless that picture no longer fits it
-  or a later picture shows its content changed. Its landing MUST NOT replace that picture before focus
-  hands over: it is often taken before the window repaints focused, and would turn it unfocused and
-  back.
+  picture taken of it focused, drawn focused from the first frame of the press giving it focus, a press
+  merged into a flight included, unless that picture no longer fits it or a later picture shows its
+  content changed. Its landing MUST NOT replace that picture before focus hands over: it is often taken
+  before the window repaints focused, and would turn it unfocused and back.
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
 - Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the

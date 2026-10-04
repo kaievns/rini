@@ -178,6 +178,12 @@ the pass, or one a layout pass starts from the window server's frame rather than
 otherwise fly the cache's picture to its landing. Reserved entrances still waiting for a picture take
 the pass's slot (`retarget_entrances`).
 
+A tile the pass retargets keeps the picture it has and how focus is drawn on it: a pass is composed
+from the cache, and copied over it erased frame zero's picture, a picture the flight took or a parked
+target's focused look, before the overlay was up as much as after. A pass moving focus on redraws which
+tiles are drawn focused, the window focused as the flight began still among them until focus hands
+over, and a new target parked off the display flies its focused look, as the first pass's does.
+
 A pass merged once the overlay is up writes every final frame it changed, a parked window's included.
 Parked windows have no tile, so a tile-only check missed their moves and left them at the old park.
 Before the overlay is up nothing is written: the show writes the merged frames.
@@ -223,7 +229,8 @@ The watches capture through SkyLight, one call at a time, as the windows land.
 **A parked focus target flies its focused look.** A focus target that starts off the display, where
 frame zero cannot picture it, flies the last picture the pictures service kept of it focused
 (`Pictures::focused`), drawn focused, when that picture fits where its tile starts; the service drops a
-look once a newer capture's body differs. Its landing does not replace the look: it is often taken
+look once a newer capture's body differs. So does a target a merged pass moves focus to. Its landing
+does not replace the look: it is often taken
 before the window repaints focused (the prototype's medians, landed at 76.9ms and the focused picture
 at 104.9ms after the press, "Where a moving focus change spends its time" in
 `src/animation/docs/capture-overlay-research.md`), and cut in it would turn the window unfocused and
