@@ -12,7 +12,7 @@ use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 
 use crate::animation::domain::motion::surface::to_overlay_space;
-use crate::animation::domain::timing::{OutAndBack, OutAndBacks};
+use crate::animation::domain::timing::NudgePlaying;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
@@ -135,14 +135,14 @@ pub(in crate::animation) enum NudgeAdmission {
     Skip,
 }
 
-/// The nudge's admission from what is playing and whether the flight moves yet. An edge bounce
-/// playing never holds it off.
+/// The nudge's admission from the nudge playing and whether the flight moves yet. An edge bounce
+/// is not consulted: it never holds the nudge off.
 pub(in crate::animation) fn nudge_admission(
-    playing: &OutAndBacks,
+    playing: &NudgePlaying,
     now: Instant,
     moving: bool,
 ) -> NudgeAdmission {
-    if !playing.admits(OutAndBack::Nudge, now) {
+    if !playing.admits(now) {
         NudgeAdmission::Skip
     } else if !moving {
         NudgeAdmission::Wait
@@ -529,9 +529,9 @@ mod tests {
         assert!(!chases_stand_in(rect(-3446.0, 32.0, 1720.0, 1081.0), display));
     }
 
-    fn nudging_since(now: Instant) -> OutAndBacks {
-        let mut playing = OutAndBacks::default();
-        playing.start(OutAndBack::Nudge, now, std::time::Duration::from_millis(455));
+    fn nudging_since(now: Instant) -> NudgePlaying {
+        let mut playing = NudgePlaying::default();
+        playing.start(now, std::time::Duration::from_millis(455));
         playing
     }
 
@@ -542,7 +542,7 @@ mod tests {
         use std::time::Duration;
         let now = Instant::now();
         let soon = now + Duration::from_millis(100);
-        let idle = OutAndBacks::default();
+        let idle = NudgePlaying::default();
         assert_eq!(nudge_admission(&idle, now, true), NudgeAdmission::Start);
         assert_eq!(nudge_admission(&idle, now, false), NudgeAdmission::Wait);
         for moving in [true, false] {
@@ -552,13 +552,6 @@ mod tests {
                 "a press while the step plays starts no other"
             );
         }
-        let mut bouncing = OutAndBacks::default();
-        bouncing.start(OutAndBack::Bounce, now, Duration::from_millis(350));
-        assert_eq!(
-            nudge_admission(&bouncing, soon, true),
-            NudgeAdmission::Start,
-            "a bounce at the end never holds the step off"
-        );
         assert_eq!(
             nudge_admission(&nudging_since(now), now + Duration::from_millis(455), true),
             NudgeAdmission::Start,

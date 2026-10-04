@@ -30,12 +30,19 @@ only the transitions are missing.
   untouched throughout.
 - A request that simply cannot be honoured — a workspace named by an index that does not exist — is NOT
   an end and MUST NOT bounce. Bouncing would claim the stack has an edge in a direction nobody named.
-- A push against an end while the bounce is still playing MUST NOT start another. Presses at the wall
-  bounce once, not once per press.
+- **Every push against an end MUST show.** One arriving while the bounce plays MUST push the view out
+  again from wherever it is drawn: it MUST NOT be dropped, and MUST NOT start the bounce over from
+  rest. A burst at the wall holds the view there, and the view is home within one bounce of the last
+  press, never later.
+
+> **Reported 2026-10-03.** "the only thing that still mildly bugs me is the end of strip/stack
+> animation, it throttles rapid key presses and it feels like a bug. if you can make it react to
+> every single press like a pure CSS based bouncer would, that'd be fantastic." A push while a
+> bounce played was dropped, so the second and third press of a burst showed nothing.
 
 > **Reported 2026-09-29.** "espcecially visible when you hit the end of the strip and it just bounces
-> off the wall several times". Each press at the wall restarted the bounce, and presses the reactor
-> handled late went on bouncing after the pressing stopped.
+> off the wall several times". Each press at the wall restarted the bounce from rest, and presses the
+> reactor handled late went on bouncing after the pressing stopped. Both stay excluded above.
 
 > **Reported 2026-09-24.** "The little bounce animation when navigation reaches an end of strip or
 > workspaces stack is neat but a bit too small, I need a little more swing. Also when I'm moving a window

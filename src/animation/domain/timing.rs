@@ -107,45 +107,24 @@ pub(in crate::animation) fn clock_for_bounce(
     duration.max(needed)
 }
 
-/// The two out-and-backs a flight carries on top of its movement: the edge bounce and a move's
-/// nudge, which steps the whole strip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::animation) enum OutAndBack {
-    Bounce,
-    Nudge,
-}
-
-/// When each out-and-back playing now comes home. One still playing holds off another of its kind,
-/// or a burst of presses replays it once per press; the two kinds never hold each other off. See
-/// "Edge bounce" and "The move flight" in `src/animation/docs/animation-smoothness.md`.
+/// When a move's nudge playing now comes home. One still playing holds off the next, or a burst of
+/// moves steps the strip once per press. The edge bounce is not held off: every push against an end
+/// re-kicks it (`motion::bounce::Bounce::pushed`). See "Edge bounce" and "The move flight" in
+/// `src/animation/docs/animation-smoothness.md`.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub(in crate::animation) struct OutAndBacks {
-    bounce: Option<Instant>,
-    nudge: Option<Instant>,
+pub(in crate::animation) struct NudgePlaying {
+    until: Option<Instant>,
 }
 
-impl OutAndBacks {
-    /// Whether one of `kind` may start at `now`.
-    pub(in crate::animation) fn admits(&self, kind: OutAndBack, now: Instant) -> bool {
-        let until = match kind {
-            OutAndBack::Bounce => self.bounce,
-            OutAndBack::Nudge => self.nudge,
-        };
-        until.is_none_or(|until| now >= until)
+impl NudgePlaying {
+    /// Whether a nudge may start at `now`.
+    pub(in crate::animation) fn admits(&self, now: Instant) -> bool {
+        self.until.is_none_or(|until| now >= until)
     }
 
-    /// One of `kind` starts at `now` and comes home after `duration`.
-    pub(in crate::animation) fn start(
-        &mut self,
-        kind: OutAndBack,
-        now: Instant,
-        duration: Duration,
-    ) {
-        let until = Some(now + duration);
-        match kind {
-            OutAndBack::Bounce => self.bounce = until,
-            OutAndBack::Nudge => self.nudge = until,
-        }
+    /// A nudge starts at `now` and comes home after `duration`.
+    pub(in crate::animation) fn start(&mut self, now: Instant, duration: Duration) {
+        self.until = Some(now + duration);
     }
 }
 
@@ -167,45 +146,21 @@ mod tests {
 
     const PLAYS: Duration = Duration::from_millis(350);
 
-    /// The reported case: presses at the end of the strip kept the view bouncing off the wall, once
-    /// per press, after the pressing had stopped. A move's nudge is held off the same way.
+    /// A burst of moves steps the strip once, not once per press.
     #[test]
-    fn a_press_while_one_plays_starts_no_other_of_its_kind() {
+    fn a_move_while_its_nudge_plays_starts_no_other() {
         let now = Instant::now();
-        for kind in [OutAndBack::Bounce, OutAndBack::Nudge] {
-            let mut playing = OutAndBacks::default();
-            playing.start(kind, now, PLAYS);
-            assert!(
-                !playing.admits(kind, now + Duration::from_millis(100)),
-                "{kind:?}"
-            );
-        }
+        let mut playing = NudgePlaying::default();
+        playing.start(now, PLAYS);
+        assert!(!playing.admits(now + Duration::from_millis(100)));
     }
 
     #[test]
-    fn a_press_after_it_came_home_starts_one() {
+    fn a_move_after_the_nudge_came_home_starts_one() {
         let now = Instant::now();
-        for kind in [OutAndBack::Bounce, OutAndBack::Nudge] {
-            let mut playing = OutAndBacks::default();
-            assert!(playing.admits(kind, now));
-            playing.start(kind, now, PLAYS);
-            assert!(playing.admits(kind, now + PLAYS), "{kind:?}");
-        }
-    }
-
-    /// A move at the end of the strip nudges and bounces at once: neither holds the other off.
-    #[test]
-    fn a_bounce_and_a_nudge_never_hold_each_other_off() {
-        let now = Instant::now();
-        let soon = now + Duration::from_millis(100);
-        let mut playing = OutAndBacks::default();
-        playing.start(OutAndBack::Bounce, now, PLAYS);
-        assert!(playing.admits(OutAndBack::Nudge, soon), "a bounce playing");
-        let mut playing = OutAndBacks::default();
-        playing.start(OutAndBack::Nudge, now, PLAYS);
-        assert!(playing.admits(OutAndBack::Bounce, soon), "a nudge playing");
-        playing.start(OutAndBack::Bounce, now, PLAYS);
-        assert!(!playing.admits(OutAndBack::Bounce, soon));
-        assert!(!playing.admits(OutAndBack::Nudge, soon));
+        let mut playing = NudgePlaying::default();
+        assert!(playing.admits(now));
+        playing.start(now, PLAYS);
+        assert!(playing.admits(now + PLAYS));
     }
 }

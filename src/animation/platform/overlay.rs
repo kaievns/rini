@@ -33,7 +33,6 @@ use crate::animation::domain::motion::tile::{
     resize_in_flight,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
-use crate::animation::domain::timing::OutAndBack;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::platform::edge_dressing::{boundary_layout, tile_corner_radius};
@@ -298,6 +297,21 @@ fn curve_function(curve: Curve) -> Retained<CAMediaTimingFunction> {
             CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionLinear })
         }
     }
+}
+
+/// The bounce the container `key` plays when `bounce` replaces one of overshoot `before`: none if it
+/// does not carry this one, from rest if it did not carry that one.
+fn container_bounce(key: GroupKey, bounce: &Bounce, before: Option<CGPoint>) -> Option<Bounce> {
+    if !carries_out_and_back(key, bounce.overshoot) {
+        return None;
+    }
+    if before.is_some_and(|before| carries_out_and_back(key, before)) {
+        return Some(*bounce);
+    }
+    Some(Bounce {
+        from: CGPoint::new(0.0, 0.0),
+        ..*bounce
+    })
 }
 
 /// One key for a move's nudge, apart from the bounce's so neither stops the other.
@@ -893,24 +907,39 @@ impl TileOverlay {
         commit_now();
     }
 
+    /// Plays `bounce` on every container that carries it, replacing the bounce playing there, so a
+    /// push starts from where that one is drawn. `before` is the overshoot of the bounce it
+    /// replaces: a container that did not carry that one is at rest and starts from there. See "Edge
+    /// bounce" in `src/animation/docs/animation-smoothness.md`.
+    pub(in crate::animation) fn bounce(&mut self, bounce: &Bounce, before: Option<CGPoint>) {
+        if bounce.duration.is_zero() {
+            return;
+        }
+        let begin = objc2_quartz_core::CACurrentMediaTime();
+        let key_name = NSString::from_str(BOUNCE_ANIMATION_KEY);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        let keys: Vec<GroupKey> = self.containers.keys().copied().collect();
+        for key in keys {
+            let Some(own) = container_bounce(key, bounce, before) else {
+                continue;
+            };
+            for layer in self.layers_of(key) {
+                layer.addAnimation_forKey(&bounce_animation(&own, key, begin), Some(&key_name));
+            }
+        }
+        commit_now();
+    }
+
     /// Takes every container `carries_out_and_back` names out to `offset` and back, additively, on
-    /// top of any movement in flight, under a key of the kind's own: the edge bounce's shape or the
-    /// nudge's. See "Edge bounce" and "The move flight" in
+    /// top of any movement in flight, under the nudge's own key. See "The move flight" in
     /// `src/animation/docs/animation-smoothness.md`.
-    pub(in crate::animation) fn out_and_back(
-        &mut self,
-        kind: OutAndBack,
-        offset: CGPoint,
-        duration: Duration,
-    ) {
+    pub(in crate::animation) fn nudge(&mut self, offset: CGPoint, duration: Duration) {
         if duration.is_zero() {
             return;
         }
         let timing = Timing::starting_now(duration);
-        let key_name = NSString::from_str(match kind {
-            OutAndBack::Bounce => BOUNCE_ANIMATION_KEY,
-            OutAndBack::Nudge => NUDGE_ANIMATION_KEY,
-        });
+        let key_name = NSString::from_str(NUDGE_ANIMATION_KEY);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let keys: Vec<GroupKey> = self.containers.keys().copied().collect();
@@ -919,13 +948,7 @@ impl TileOverlay {
                 continue;
             }
             for layer in self.layers_of(key) {
-                let animation = match kind {
-                    OutAndBack::Bounce => {
-                        bounce_animation(&Bounce::from_rest(offset, duration), key, timing.begin)
-                    }
-                    OutAndBack::Nudge => nudge_animation(offset, timing),
-                };
-                layer.addAnimation_forKey(&animation, Some(&key_name));
+                layer.addAnimation_forKey(&nudge_animation(offset, timing), Some(&key_name));
             }
         }
         commit_now();
@@ -2025,5 +2048,35 @@ mod tests {
             control_points(&curve_function(Curve::Bezier(EASE_IN_OUT))),
             bezier_points(Curve::Bezier(EASE_IN_OUT))
         );
+    }
+
+    /// A push replaces the bounce on every container that carries it. One that carried the bounce
+    /// before goes on from where that is drawn; one that did not, the floating windows under a
+    /// sideways bounce, is at rest and starts there; one that does not carry this one plays none.
+    #[test]
+    fn a_container_that_did_not_carry_the_last_bounce_starts_from_rest() {
+        let plays = Duration::from_millis(350);
+        let (up, left) = (CGPoint::new(0.0, -72.0), CGPoint::new(-72.0, 0.0));
+        let pushed_up = Bounce::from_rest(up, plays).pushed(Duration::from_millis(90), up, plays);
+        let strip = GroupKey::STILL;
+        assert_eq!(container_bounce(strip, &pushed_up, Some(up)), Some(pushed_up));
+        assert_eq!(container_bounce(strip, &pushed_up, Some(left)), Some(pushed_up));
+        assert_eq!(
+            container_bounce(GroupKey::Floating, &pushed_up, Some(up)),
+            Some(pushed_up)
+        );
+        let from_rest = container_bounce(GroupKey::Floating, &pushed_up, Some(left)).unwrap();
+        assert_eq!(from_rest.from, CGPoint::new(0.0, 0.0));
+        assert_eq!(
+            (from_rest.overshoot, from_rest.turn, from_rest.duration),
+            (pushed_up.overshoot, pushed_up.turn, pushed_up.duration),
+            "on the same clock as the rest"
+        );
+        assert_eq!(
+            container_bounce(GroupKey::Floating, &pushed_up, None).map(|b| b.from),
+            Some(CGPoint::new(0.0, 0.0))
+        );
+        let sideways = Bounce::from_rest(left, plays);
+        assert_eq!(container_bounce(GroupKey::Floating, &sideways, Some(left)), None);
     }
 }

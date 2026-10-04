@@ -470,10 +470,10 @@ notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The a
 no travel when none is running (every tile at rest, `final_frames` the layout
 the windows already sit at) and adds the bounce to whatever is running
 otherwise, extending the clock to cover the return (`clock_for_bounce`). The
-overlay's `out_and_back` with `OutAndBack::Bounce` is one additive
-`CAKeyframeAnimation` per container, built from `Bounce::track`
-(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; the motion curve out, `EASE_IN_OUT`
-home, the control points of `kCAMediaTimingFunctionEaseInEaseOut`) under
+overlay's `bounce` is one additive `CAKeyframeAnimation` per container, built
+from `Bounce::track` (`from, overshoot, 0` at `0, turn, 1`; the motion curve
+out, `EASE_IN_OUT` home, the control points of
+`kCAMediaTimingFunctionEaseInEaseOut`) under
 its own key, so an in-flight movement is neither replaced nor disturbed and
 the model positions stay put; `settled` reads false until it is home, which
 holds the lift. The floating container rides only a vertical bounce
@@ -483,16 +483,29 @@ follow. Real windows never move. The shape is `Bounce::from_rest`
 `a_first_push_goes_out_once_and_comes_home`. The overlay installs its track key
 for key and curve for curve (`the_bounce_installed_is_its_track`), so
 `a_bounce_from_rest_is_the_keyframes_the_overlay_installs` pins what is drawn.
-`Bounce::pushed` is the handover prototype's re-kick, a new bounce from wherever
-the last is drawn; the engine does not play it. A push while a bounce is still
-playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
-under the same key, so a burst of presses at the wall bounced once per press, and the
-presses the reactor reached late kept bouncing after the pressing had stopped.
-A move's nudge (below) is the other out-and-back, on the same containers by
-the same rule, under its own key and held off only by a nudge still playing
-(`OutAndBacks` in
-`src/animation/domain/timing.rs`, one clock per kind), so neither holds the
-other off; pinned by `a_bounce_and_a_nudge_never_hold_each_other_off` and
+
+Every push re-kicks the bounce. The engine keeps the bounce playing and when it
+began; a push while it plays is `Bounce::pushed` from where it is drawn, the
+way out shortened by how much of it is already covered (never below
+`SHORTEST_PUSH` of a full one) and the way home a full one, added under the
+same key so it replaces the one playing (`a_push_starts_where_the_last_is_drawn`,
+`every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn`). A burst
+holds the surface at the wall and lets it go home once, within one bounce of
+the last press (`a_burst_holds_the_wall_and_comes_home_after_the_last_press`).
+It replaced two behaviours, both reported in `specs/animation.md`: each press
+restarting the keyframes from rest, which bounced once per press and went on
+bouncing after the pressing stopped (2026-09-29), and the throttle that fixed
+it by dropping every push while one played, which showed nothing for the
+second and third press of a burst (2026-10-03). A container that did not carry
+the bounce playing, the floating windows under a sideways one, starts this one
+from rest on the same clock
+(`a_container_that_did_not_carry_the_last_bounce_starts_from_rest`). The record
+goes at the lift and when frame zero is installed again, which removes the
+animations it describes. A push of no length is a cut, drawn at rest
+(`a_push_of_no_length_is_a_cut`). A move's nudge (below) is the other
+out-and-back, on the same containers by the same rule, under its own key. Only
+a nudge still playing holds a nudge off (`NudgePlaying` in
+`src/animation/domain/timing.rs`) and the bounce never does; pinned by
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
 ## The move flight
@@ -538,8 +551,8 @@ side N was heading for.
 
 **The whole strip steps.** It is the edge bounce's mechanism: one additive
 keyframe animation, under its own key (`"rini.group.nudge"`), on every
-container `carries_out_and_back` names (`TileOverlay::out_and_back` with
-`OutAndBack::Nudge`), sampled every 1/120s from `nudge_displacement`,
+container `carries_out_and_back` names (`TileOverlay::nudge`), sampled every
+1/120s from `nudge_displacement`,
 `sin²(πt)`: at rest and motionless at both ends, furthest out at half time.
 That is every strip container: the moved window's, the strip's, and with them
 every border tracing a strip window, which rides its window's container. The
@@ -639,9 +652,9 @@ few points into the outer gap beside the moved window until the lift. A
 container a merge opens after a step began does not carry the rest of it: its
 member leaves from where it is drawn, so it does not jump, but it stops
 stepping, as with the edge bounce. The orchestration clock restarts to cover
-the new legs. A step still playing is not restarted (`OutAndBacks`): one step
-per burst, as presses at the wall bounce once. A press after it has come home,
-455ms at the default duration, starts another. A press at the end of the strip
+the new legs. A step still playing is not restarted (`NudgePlaying`): one step
+per burst. A press after it has come home, 455ms at the default duration,
+starts another. A press at the end of the strip
 bounces as before, on top of whatever is playing.
 
 **Pictures.** The column a full-width move passes is parked at both ends, so a
