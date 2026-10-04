@@ -1542,7 +1542,7 @@ mod tests {
         assert!(outcomes[1..].iter().all(|outcome| outcome.deliveries.is_empty()));
     }
 
-    /// D1: the focus report often comes before the watch. Remembered for a second, it arms a watch
+    /// The focus report often comes before the watch. Remembered for a second, it arms a watch
     /// created after it; older, it does not.
     #[test]
     fn a_focus_reported_just_before_the_watch_arms_it() {

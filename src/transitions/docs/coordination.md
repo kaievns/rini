@@ -220,9 +220,10 @@ rest waits and starts at the release, most urgent first. The reactor's
 `warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
 start) waits; so does the desktop render; hairline harvests for landed
 pictures go to `finish_harvest_set`, harvested at the quiet, once per window per flight. A warm
-also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: a pass's
-warm is sent just after the flight it starts, and reaches the service before
-that flight's hold. Under the old load the refresh took 203ms median (p90
+also waits `SETTLE_BEFORE_LISTING` (50ms) before it is listed, for the hold of
+the flight its pass started; a flight that composites its desktop on the main
+thread holds later, and what was listed meanwhile is listed again at the
+release ("The schedule" in `src/pictures/docs/README.md`). Under the old load the refresh took 203ms median (p90
 441, n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
 271 of 321 desktop renders landed mid-flight. `warm_all_workspaces` stays in
 the reactor's switch handler: the service knows a flight is holding it, the

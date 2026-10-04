@@ -1,8 +1,11 @@
 //! The pictures service: the thread that takes every background picture of a window, the desktop and
 //! the bar, the cache those pictures land in, and the handle every client holds.
 //!
-//! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`). Every SkyLight call
-//! is made on it, one at a time; ScreenCaptureKit is asked from it and its completions post back to it.
+//! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`) and makes the
+//! service's own calls: its SkyLight captures, one at a time, and its ScreenCaptureKit asks, whose
+//! completions post back to it. A transition's dressing is composited on the caller's thread until its
+//! display's first render lands, and the flight engine still takes its framed captures on its own
+//! threads (Known debt in `src/pictures/docs/README.md`).
 //! A client asks, watches, hints, holds and forgets through a channel, reads from any thread through
 //! one lock, and hears of what lands through the sink it was started with. See "The service" in
 //! `src/pictures/docs/README.md`.
@@ -1348,7 +1351,7 @@ mod tests {
     }
 
     /// A window that is gone takes everything known of it: its pictures, its focused look, what it was
-    /// delivered, and its knowledge, whose id may come back on another window (D9).
+    /// delivered, and its knowledge, whose id may come back on another window.
     #[test]
     fn a_forgotten_window_leaves_nothing_behind() {
         let (mut service, shared) = detached_service();

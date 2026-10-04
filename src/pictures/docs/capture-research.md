@@ -97,6 +97,24 @@ process before a cold capture cut it to 33; a 20ms GPU burst, the caller's QoS, 
 window and tiny keep-alive captures did nothing. Calls on separate `SLSNewConnection`s still run
 one at a time. The frame-zero capture is always the cold one: 27-35 in a press.
 
+### What the prototype's journal showed of a focus change
+
+Measured 2026-10-03 with the handover prototype on branch `scratch/handover`, from its transitions
+journal of 225 flights between 19:34 and 20:40 (`docs/data/2026-10-03-focus/transitions-1934-2040.log`
+on that branch; a flight is a group with a `proto_capture_flight` mark).
+
+**The focus report often comes before the watch.** The reactor's focus report (`ws_focus`) came
+before the capture worker started its flight (`proto_capture_flight`) in 136 of the 225 flights. The
+prototype dropped a report that came before its flight, and 135 of those 136 had no focus capture
+(`why=focus`); of the other 89, 42 had one. A `Change` watch created within a second of the report
+starts armed (`src/pictures/domain/watch.rs`).
+
+**A refresh behind the strip ahead of the focus capture holds it up.** With the windows behind the
+strip refreshed from the start of a flight (`bg=1`), a refresh held up the focus capture for 31ms in
+one flight of a smoke run on the comms workspace at 19:36, recorded in the prototype's working notes
+(`STATE.md` on that branch). The next build refreshed them only once the focus capture was done
+(`bg=2`), which is the `Live` watch's `after`.
+
 ## What ScreenCaptureKit returns
 
 `SCContentFilter(desktopIndependentWindow:)` plus `SCScreenshotManager` returns

@@ -54,13 +54,18 @@ evaluates to exactly what the render server draws, so the coordinator retargets 
 
 **Interface.** A handle any thread can hold:
 
-- `ask` a set of windows at a priority (frame zero, focus, end state, background, thumbnail, warm),
-  with a deadline;
-- `watch` windows: until each lands where it ends (`Landing`), until a window's look changes from a
-  print (`Change`), or kept fresh at a rate (`Live`);
+- `ask` windows anywhere at a priority (frame zero, focus, background, warm; the switcher's cards
+  are warms);
+- `ask_on_screen` windows on screen under a tag, at frame zero or just before the lift (`Final`);
+- `watch` windows: until each lands where it ends or is lost (`Landing`), until a window's look
+  changes from a print (`Change`), or kept fresh at a rate (`Live`); `retarget` or `stop` a watch;
 - `hint` that a window was placed or focused; `hold` off-screen capture while a transition runs;
-- read the cache: `usable`, `focused`, `desktop`, `bar`, `knowledge` (radius, translucency);
-- `show(layer, picture)` draws any picture into any layer, regions through `contentsRect`.
+- read the cache: `usable`, `focused`, `knowledge` (radius, translucency, material), and `dressing`,
+  a display's desktop and bar;
+- `set_layer_contents(layer, picture)` draws any picture into any layer, regions through
+  `contentsRect`.
+
+No ask carries a deadline: a landing's is its `until`, and frame zero's the coordinator's 80ms.
 
 Deliveries carry the caller's tag (a transition puts its generation in it) and only pictures the cache
 took.
@@ -68,8 +73,8 @@ took.
 **Inside:** a pure schedule (asks, watches and holds in, the next call out), region arithmetic, the
 per-window knowledge, the cache policy; and on the platform side the SkyLight and ScreenCaptureKit
 backends, first-sight measurement, and the service thread. Rules the schedule keeps, each a test:
-frame zero first; a focus capture never queued behind a background or thumbnail; a landing read from
-the window server's own frame; windows that overlap a translucent one never share a composite;
+frame zero first; a focus capture never queued behind a background capture or a warm; a landing read
+from the window server's own frame; windows that overlap a translucent one never share a composite;
 ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end.
 
 ## `animation`
@@ -113,6 +118,7 @@ tile's end. A focus report arriving while Preparing is kept for Playing.
 | The bar's menu-extras thread stays in `bar` for now | it has its own pacing and pauses for flights already | move it behind the pictures thread |
 | A transition's hold has three states: up at compose, settling at the lift, released at the quiet after it | the bar is pictured 250ms after the lift, as it always was, while the warms the flight held wait for the quiet, which keeps a burst of presses off a busy compositor | release at the lift, and picture the bar 250ms after the quiet instead |
 | A transition on a display before its desktop render lands is dressed with a desktop composited on the main thread, and the first with a bar composited there too | the service holds no picture of a display the reactor names just before the flight on it, and renders one only once released; drawn without one, that transition shows black or the other display's wallpaper | let those transitions fly without them until step 4's coordinator waits for frame-zero pictures |
-| A warm or background ask settles 50ms before it is listed | the reactor sends a pass's warm just after the flight it starts, so it reaches the service before that flight's hold | have the reactor route those warms through the engine, which holds first |
+| A warm or background ask settles 50ms before it is listed | the reactor sends a pass's warm just after the flight it starts, before that flight's hold, which usually comes within 50ms; a flight that composites its desktop on the main thread holds later, and what was listed meanwhile is listed again at the release | have the reactor route those warms through the engine, which holds first |
+| The end state is an ask on screen at `Moment::Final`, not a priority on `ask` | an end state is captured on screen through SkyLight in tagged, batched calls, delivered only where it is news, none of which a ScreenCaptureKit priority has | an `EndState` priority on `Ask` |
 | Window captures stay at 2x on every display; the display's own scale is for what is read off its framebuffer | ScreenCaptureKit charges per call, a 1x capture flies soft on a Retina display, and a scale change no longer throws away window captures in flight | capture each window at the scale of the display the overlay is on |
 | The hairline harvest moved into `pictures` in step 1 with the captures, though step 4 deletes it | the framed capture harvests the ring and a `Picture` carries it, so left in `animation` it would have had `pictures` name `animation` | leave it in `animation` and accept a two-way edge until step 4 |
