@@ -269,18 +269,20 @@ impl AnimationManager {
     ///
     /// Workspaces are stacked vertically, so a switch reads as travelling up or down the stack,
     /// as ONE strip movement across every workspace between the two: a jump from 1 to 4 scrolls
-    /// past 2 and 3. Falls back to the position-only instant path when there is no recorded
-    /// direction or animation is off. Kept apart from `instant_layout`: layouts merely
-    /// suppressed during a switch may still change sizes and must use the full-frame request.
+    /// past 2 and 3. `movement` is the pass's, from `Reactor::take_workspace_movement`. Falls back
+    /// to the position-only instant path when there is none or animation is off. Kept apart from
+    /// `instant_layout`: layouts merely suppressed during a switch may still change sizes and must
+    /// use the full-frame request.
     pub fn workspace_switch_layout(
         reactor: &mut Reactor,
         space: SpaceId,
+        movement: Option<(usize, usize)>,
         layout: &[(WindowId, CGRect)],
         skip_wid: Option<WindowId>,
     ) -> bool {
         let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
         if animate
-            && let Some((from_index, to_index)) = reactor.workspace_switch_indices(space)
+            && let Some((from_index, to_index)) = movement
             && reactor.start_strip_switch(space, from_index, to_index, layout, skip_wid)
         {
             // The strip movement owns this movement, including placing the real windows once it covers them.

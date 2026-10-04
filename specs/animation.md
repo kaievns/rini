@@ -120,6 +120,15 @@ only the transitions are missing.
 > inside its row, so a bar-sized strip of desktop showed between workspaces as they scrolled. The
 > overlay covered the whole display, including the band the bar sits in.
 
+- The first switch after rini starts MUST slide like every other, whichever workspace a restored
+  layout opens on. A switch slides from the workspace the display last showed, which is known from
+  the first time rini lays the display out, so it MUST NOT wait for an earlier switch to learn it.
+
+> **Found 2026-10-05, not reported.** The transitions journal showed the first `prev_workspace` press
+> after a restart with no press mark and no flight, and every later switch sliding. The workspace a
+> switch slides from was recorded only by a switch, so the first one on each display had none and
+> cut to the destination.
+
 ## Arriving mid-flight
 
 The layout does not wait for an animation to land, so a second pass can arrive with a different

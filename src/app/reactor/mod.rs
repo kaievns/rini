@@ -539,9 +539,8 @@ pub struct Reactor {
     workspace_switch_manager: managers::WorkspaceSwitchManager,
     recording_manager: managers::RecordingManager,
     communication_manager: managers::CommunicationManager,
-    /// Last active workspace index per space, so a switch can be recognised without intercepting the
-    /// command that caused it.
-    last_active_workspace: HashMap<SpaceId, usize>,
+    /// The workspace each space's last layout pass drew, where its next switch slides from.
+    drawn_workspace: HashMap<SpaceId, crate::workspaces::VirtualWorkspaceId>,
     notification_manager: managers::NotificationManager,
     transaction_manager: TransactionManager,
     menu_manager: managers::MenuManager,
@@ -670,7 +669,7 @@ impl Reactor {
                 pending_workspace_mouse_warp: None,
             },
             recording_manager: managers::RecordingManager { record },
-            last_active_workspace: HashMap::default(),
+            drawn_workspace: HashMap::default(),
             communication_manager: managers::CommunicationManager {
                 event_tap_tx: None,
                 gesture_tap_tx: None,
@@ -3723,26 +3722,23 @@ impl Reactor {
         });
     }
 
-    /// Which workspace indices this switch is moving between.
+    /// The workspace indices this pass moves the space between, from the one the last pass drew to the
+    /// active one, which is drawn from now on. `None` when it stays on one workspace or has none drawn.
     ///
-    /// Called only from the workspace-switch layout path, so the currently active workspace is already
-    /// the DESTINATION and the previously recorded one is the origin. Recording it here rather than
-    /// intercepting the command means any route into a switch is covered.
-    fn workspace_switch_indices(&mut self, space: SpaceId) -> Option<(usize, usize)> {
+    /// Every pass takes it, not only a switch's: a space has to have an origin before its first switch.
+    fn take_workspace_movement(&mut self, space: SpaceId) -> Option<(usize, usize)> {
         let active = self.layout_manager.layout_engine.active_workspace(space)?;
+        let drawn = self.drawn_workspace.insert(space, active)?;
+        if drawn == active {
+            return None;
+        }
         let workspaces = self
             .layout_manager
             .layout_engine
             .virtual_workspace_manager_mut()
             .list_workspaces(space);
-        let to_index = workspaces.iter().position(|(id, _)| *id == active)?;
-        let previous = self.last_active_workspace.insert(space, to_index);
-        match previous {
-            Some(from_index) if from_index != to_index => Some((from_index, to_index)),
-            // Nothing to move between, but the destination is now recorded so the next switch has an
-            // origin to compare against.
-            _ => None,
-        }
+        let index = |workspace| workspaces.iter().position(|(id, _)| *id == workspace);
+        Some((index(drawn)?, index(active)?))
     }
 
     /// Animates a strip scroll as one horizontal viewport pan, the horizontal twin of a workspace
