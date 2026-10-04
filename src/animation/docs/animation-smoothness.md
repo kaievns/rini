@@ -24,22 +24,21 @@ frames in its own points (`Group` in `crates/rini-geometry/docs/README.md`), the
 position, and never move on their own. Resizes and entrances
 are loose tiles in `GroupKey::Loose`; floating windows sit in the `Floating`
 container. As the motion starts the look composes the whole plan as the score's edits, and the
-overlay plays them (`TileOverlay::play`) in ONE `CATransaction`: one position animation per moving
+renderer plays them (`TileOverlay::play`) in ONE `CATransaction`, the one its drain is played in
+(`src/animation/platform/renderer.rs`): one position animation per moving
 container, one resize per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
 while a move steps the strip; see "The move flight"). Model layers jump to their
 destinations; the animations carry the presentation and are removed on
 completion. The tick loop paces only the coordinator (frame zero's wait,
 the coalesce window, the hold, the final capture, the lift); nothing is drawn
-on ticks. Every overlay commit is flushed to the render
-server at once (`commit_now`): the overlay shares the main thread with the
-reactor, and an explicit commit nested in the run loop's implicit
-transaction is only sent when that iteration ends, after the reactor's
-synchronous AX and window-server calls. Sent late, a flight skipped its
-first frames. Every animation is installed from a track
-(`src/animation/domain/motion/score.rs`) and carries the track's explicit
-`beginTime`, one read of the media clock per transaction, so the render
-server's clock and the actor's agree; "flight landed" logs how late the last
-frame was presented (`late_ms`).
+on ticks. Every drain's transaction is flushed to the render server at
+once: an explicit commit nested in the run loop's implicit transaction is
+only sent when that pass of the main thread's loop ends, after whatever
+else runs in it. Sent late, a flight skipped its first frames. Every
+animation is installed from a track (`src/animation/domain/motion/score.rs`)
+and carries the track's explicit `beginTime`, read off the media clock as
+the engine makes the edits, so the render server's clock and the actor's
+agree.
 
 The model has been round the loop twice. The original manual tick loop
 (60Hz `RepeatingTimer` posting into the actor queue) was not vsync-aligned
@@ -224,9 +223,11 @@ punches a 1pt hole over each window the caller names, a point in from its left
 edge and halfway down its final frame (`hole_in` in
 `src/animation/domain/motion/holes.rs`): one even-odd `CAShapeLayer` mask on
 the content view's layer, the view's bounds and every hole, with the window's
-background clear while it is up. Each call replaces the holes; `clear_holes`,
-which `hide` and a new display frame call, removes the mask and puts the black
-back. Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
+background clear while it is up: the window's, so `paint_background` sets it
+once the renderer has flushed the mask, outside the transaction like the
+alpha. Each call replaces the holes; `clear_holes`, which a lift and a new
+display frame call, removes the mask, and the black goes back after the flush.
+Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
 `the_mask_leaves_out_exactly_the_holes`. The mask is in the view layer's
 coordinates, flipped as the canvas is; where a hole lands on screen was not
 measured on a window shorter than the display. Which windows get holes, and

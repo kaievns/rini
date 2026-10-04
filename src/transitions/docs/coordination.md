@@ -12,11 +12,23 @@ those fixes landed; anything marked *estimated* has not been measured yet.
 
 Every animated movement runs through the overlay engine
 (the actor `src/transitions/platform/engine.rs`, its decisions in `src/transitions/domain/`; the
-renderer `src/animation/platform/overlay.rs`, the motion in `src/animation/domain/motion/`): window
+renderer `src/animation/platform/renderer.rs` and the overlay it draws on,
+`src/animation/platform/overlay.rs`; the motion in `src/animation/domain/motion/`): window
 bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "Real windows land before lift"). Layout passes, strip pans, moves along
 the strip, workspace switches, resizes, entrances and the edge bounce are all
 flights of it. When each step of one happens is the coordinator's ("The lifecycle").
+
+The engine hands the renderer what each event draws as one batch of render commands, numbered, and
+the renderer answers with the highest it committed. What must not happen before the overlay's change
+is on screen waits for the batch that carries it (`src/transitions/domain/drawn.rs`): the real frames
+for the `Show`'s, since a window written before the overlay covering it is up jumps to its end while
+its tile still starts; the bar's picture (`Settle`) and the quiet for the `Lift`'s, since the bar is
+read off the screen 250ms after `Settling` (`BAR_REFRESH_DELAY`) and must not find the overlay there.
+A new hold drops the last lift's `Settle` and quiet: one thread always carried them out before it,
+which the schedule nets to a transition hold with no bar due. The engine still owns the renderer on
+the main thread, so it plays each batch at the end of the event that drew it and carries out there
+what the commit releases.
 `AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
 `crate::transitions::domain::pass::plan` (moves, unmoved windows the overlay must still

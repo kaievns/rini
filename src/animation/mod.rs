@@ -5,11 +5,12 @@
 //! nudge. `domain::choreography` is the looks: how each stages a press on the strip and composes and
 //! bends a flight's score. `platform` is the renderer: it draws pictures of windows, which
 //! `crate::pictures` takes, as Core Animation tiles and plays the score while the real windows move
-//! underneath. When each step happens is `crate::transitions`'. Knows windows, frames and the strip as
-//! one surface that moves, and a press on it as its cue; never names `crate::layout` or
-//! `crate::workspaces`.
+//! underneath, and `event` is what it answers each drain it plays with. When each step happens is
+//! `crate::transitions`'. Knows windows, frames and the strip as one surface that moves, and a press
+//! on it as its cue; never names `crate::layout` or `crate::workspaces`.
 //!
 //! See `docs/architecture.md` and `src/animation/docs/animation-smoothness.md`.
 
 pub mod domain;
+pub mod event;
 pub mod platform;

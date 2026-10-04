@@ -182,8 +182,11 @@ It is off unless asked for, and `off` turns it off with the writing.
 
 - **The engine.** A lift is held when the last watch named a window ending wholly on screen
   (`journal::measures`). At `Lift` the engine asks the pictures service for the check
-  (`Pictures::check_handover`), tells `Journalled::lifted`, and holds back only the hide and the
-  tiles' release; the quiet, `Settle` and the rest go out at the lift as ever. The hide comes when
+  (`Pictures::check_handover`), tells `Journalled::lifted`, and holds back the hide and the tiles'
+  release, and with them the bar's picture (`Settle`) and the quiet, which wait for the overlay to be
+  drawn down: the bar is read off the screen and must not find the overlay there; a request that
+  hides it holds its own transition next, which drops both (`Drawn::begun`). The rest goes out at the
+  lift as ever. The hide comes when
   `Journalled::heard` says so: on the service's word for that lift's picture (`OverlayTaken`), on any
   request, since a press never waits for the overlay's picture, on the overlay about to move to
   another display or be laid out for another band or scale (a `SetDisplay`: ahead of a request onto
@@ -196,7 +199,8 @@ It is off unless asked for, and `off` turns it off with the writing.
   moving or on the patience, the overlay may be gone from a picture taken later, and its measure, if
   one comes, is dropped.
 - **The pictures service.** The overlay window alone is its next SkyLight call, ahead of any other
-  (`TileOverlay::server_id` names it, and `TileOverlay::origin` says where it starts on screen), and
+  (the number the renderer's `Committed` gives names it, and `window_origin` of
+  the display the engine last laid the overlay out for says where it starts on screen), and
   it tells the engine `OverlayTaken` at once. `AFTER_LIFT` (45ms) after that picture, as the research
   waited after its hide, it takes the screen through `CGWindowListCreateImage` on its own thread. The
   research hid as its picture returned; here the hide waits for the hop to the main thread, so the
@@ -208,8 +212,8 @@ It is off unless asked for, and `off` turns it off with the writing.
   beginning drops both: the screen would show the next overlay. Neither picture is taken once a
   transition is asked and the pictures thread has not yet applied its hold: that press has hidden the
   overlay, and asks its frame zero of the same thread.
-- **What it costs.** Each held lift's hide comes up to 60ms later: its `hide`'s `waited_us` says how
-  much. A press that lands while the pictures thread takes the overlay's picture or the screen waits
+- **What it costs.** Each held lift's hide comes up to 60ms later, and the bar's picture and the quiet
+  with it: its `hide`'s `waited_us` says how much. A press that lands while the pictures thread takes the overlay's picture or the screen waits
   for that one call, a SkyLight call or a `CGWindowListCreateImage` of the display, before its frame
   zero is taken. The screen capture goes through ScreenCaptureKit's delivery queue while the transition
   settles, the one capture besides a clipped focus end's that the hold lets through. The two pictures,

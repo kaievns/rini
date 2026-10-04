@@ -1,6 +1,7 @@
 //! The coordination decisions, pure: over ids, frames, progress fractions and instants.
 
 pub mod admission;
+pub mod drawn;
 pub mod flight;
 pub mod flight_score;
 pub mod frame_writes;

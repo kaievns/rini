@@ -416,9 +416,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   window ending wholly on screen, the mean RGB difference between the overlay's own picture just
   before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,
   and over the 1pt either side of its outline, so a lift can be read against the handover measured on
-  2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture. It MUST NOT
-  start a capture once a press has asked for a transition, so that press waits at most for the one
-  capture of the overlay or the screen under way as it lands, and it MUST be off unless asked for.
+  2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
+  picture and the quiet after the lift MUST then count from the hide, so the bar is never pictured
+  with the overlay over it. It MUST NOT start a capture once a press has asked for a transition, so
+  that press waits at most for the one capture of the overlay or the screen under way as it lands,
+  and it MUST be off unless asked for.
 - Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial
   and rini's steps line up with no wall clock between them.
 - CPU and GPU use MAY be recorded only once what reading them costs is measured, and found to slow
@@ -439,8 +441,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 depth bands, the edge bounce and the nudge, and the hairline every tile wears. The looks
 (`src/animation/domain/choreography.rs`, Slide the default in
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
-into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/overlay.rs`
-plays the score on Core Animation. When each step happens is `src/transitions/`:
+into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
+plays the score on Core Animation, on the overlay in `src/animation/platform/overlay.rs`. When each step happens is `src/transitions/`:
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,

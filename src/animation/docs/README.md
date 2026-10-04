@@ -24,7 +24,9 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/hairline.rs` | The hairline every tile wears: the ring's width and white by focus, the outline's rect and stroke, the corner radius |
 | `domain/choreography.rs` | The looks: `Look`, every look by name (`ALL`), its `Choreography` for a flight (the plan, frame zero posed, the motion composed, a press before it folded and one after it bent) and its staging of a press on the strip (`stage`, over a `Cue`, a `Strip` and its `PairStart`s, giving a `Staging`); what a look composes from (`Stage`), bends with (`Pass`) and gives back (`Retarget`); and the tests every look passes |
 | `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
-| `platform/overlay.rs` | `TileOverlay`, the renderer: it poses frame zero and plays a score's edits, one `CATransaction` each, every animation installed from a track; its `Tree` (the `CALayer` tree and the replica it reads only to install) hangs off any root layer, so it is tested without a window; `server_id()` is its window's number, which a handover check pictures alone, and `origin()` where that window starts on screen, which the picture is read from |
+| `platform/overlay.rs` | `TileOverlay`, the window the renderer draws on: it poses frame zero and plays a score's edits, every animation installed from a track, and commits nothing itself; its `Tree` (the `CALayer` tree and the replica it reads only to install) hangs off any root layer, so it is tested without a window; `server_id()` is its window's number, which a handover check pictures alone; `window_origin` is where the window over a display starts on screen, which that picture is read from, and `same_layout` whether a display lays the window out again |
+| `platform/renderer.rs` | `Renderer`: it owns the overlay, makes it on the first flight it dresses or poses, and plays the flight engine's `Batch`es of `Render` commands, each one of the overlay's calls; batches played together are one drain (`in_order`), played in one `CATransaction` with the window's alpha and background set around it |
+| `event.rs` | What the renderer answers each drain with: `Committed`, with the overlay's window number once the window server has numbered it, or `Unavailable`, a flight dressed or posed with no overlay to draw it on |
 
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
 a layout pass's requests in `Screen`, tiles, container positions, travels and accents in `Overlay`,
@@ -43,10 +45,13 @@ legs, which the user saw as a teleport.
 **One `CATransaction`, one timebase, one curve per flight.** Model layers jump to their
 destinations; the animations carry the presentation.
 
-**Every commit is flushed at once.** `commit_now`, because the overlay shares the main
-thread with the reactor and an explicit commit nested in the run loop's implicit
-transaction is only sent after the reactor's synchronous AX calls. Sent late, a flight
-skipped its first frames.
+**One transaction a drain, flushed.** The renderer plays the batches it is handed together, one
+drain, in one `CATransaction` and flushes it, so its answer means the render server has it: an explicit commit
+nested in the run loop's implicit transaction is otherwise sent only as that pass of the main
+thread's loop ends, after whatever else runs in it. Sent late, a flight skipped its first frames.
+The window's alpha and background are the window's, not the layers', so they are set around the
+transaction: alpha 0 before a drain that lifts the overlay, and after the flush the background its
+holes need and alpha 1 for a drain that shows it, which puts frame zero up holed and moving.
 
 **`tokio::time` panics here.** There is no tokio reactor; see
 [`crates/rini-runloop/docs/run-loop-executor.md`](../../../crates/rini-runloop/docs/run-loop-executor.md).
@@ -55,9 +60,9 @@ skipped its first frames.
 
 `domain/motion/plan.rs` → `domain/motion/glide.rs` → `domain/motion/score.rs` →
 `domain/motion/accents.rs` → `domain/motion/z_group.rs` → `domain/choreography.rs` →
-`domain/choreography/slide.rs` → `platform/overlay.rs`. The flight's score is kept by
-`src/transitions/domain/flight_score.rs`, and the actor that drives the overlay is
-`src/transitions/platform/engine.rs`.
+`domain/choreography/slide.rs` → `platform/overlay.rs` → `platform/renderer.rs`. The flight's
+score is kept by `src/transitions/domain/flight_score.rs`, and the actor that hands the renderer its
+batches is `src/transitions/platform/engine.rs`.
 
 ## Detail
 

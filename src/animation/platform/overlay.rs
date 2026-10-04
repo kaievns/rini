@@ -1,9 +1,11 @@
 //! The animation overlay: one rini-owned opaque window holding a picture of every animating window.
 //! Real windows are placed at their final frames once, underneath it; tiles ride containers, one
 //! per rigid piece of the flight. It plays a flight's score as it is handed it: frame zero posed,
-//! then each edit, folded into a replica it reads only to install, and decides nothing. See "The
-//! overlay engine" in `src/animation/docs/animation-smoothness.md` and the overlay's own
-//! measurements in `src/animation/docs/capture-overlay-research.md`.
+//! then each edit, folded into a replica it reads only to install, and decides nothing. No method
+//! commits: the renderer (`crate::animation::platform::renderer`) holds the one transaction they run
+//! in, and sets the window's alpha and background outside it. See "The overlay engine" in
+//! `src/animation/docs/animation-smoothness.md` and the overlay's own measurements in
+//! `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 
@@ -17,7 +19,7 @@ use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CAAnimation, CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming,
-    CAMediaTimingFunction, CAPropertyAnimation, CATransaction, kCAMediaTimingFunctionLinear,
+    CAMediaTimingFunction, CAPropertyAnimation, kCAMediaTimingFunctionLinear,
 };
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
@@ -148,13 +150,6 @@ const BAR_Z: f64 = 10_000.0;
 /// `src/animation/docs/animation-smoothness.md`.
 const BACKDROP_Z: f64 =
     -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
-
-/// Commits and flushes the run loop's implicit transaction too, or the change waits behind the
-/// reactor's next synchronous calls. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
-fn commit_now() {
-    CATransaction::commit();
-    CATransaction::flush();
-}
 
 /// One key per tile movement, so a retarget replaces the animation in flight instead of stacking.
 const TILE_ANIMATION_KEY: &str = "rini.tile.move";
@@ -554,9 +549,6 @@ pub struct TileOverlay {
     tree: Tree,
     /// The real desktop, drawn behind everything and held still.
     backdrop: Retained<CALayer>,
-    /// Whether the backdrop holds a picture of the display the overlay is on: until then a desktop
-    /// captured without its wallpaper beats black.
-    backdrop_drawn: bool,
     /// The bar, redrawn on top with its own alpha since the overlay covers the real one. See "The
     /// bar has to be captured on its own" in `src/pictures/docs/capture-research.md`.
     bar: Retained<CALayer>,
@@ -568,6 +560,8 @@ pub struct TileOverlay {
     /// Points reserved at the top for the bar, so the window starts below it.
     top_band: f64,
     visible: bool,
+    /// Whether the window's background is clear, as it is while the window is holed.
+    clear: bool,
     mtm: MainThreadMarker,
 }
 
@@ -587,14 +581,16 @@ fn window_rect(frame: CGRect, top_band: f64) -> CGRect {
 }
 
 /// Whether an overlay laid out for `held` is laid out for `wanted`: each a display's frame, the band
-/// the bar reserves at its top, and the scale.
-fn same_layout(held: (CGRect, f64, f64), wanted: (CGRect, f64, f64)) -> bool {
+/// the bar reserves at its top, and the scale. `set_frame` with the layout held moves nothing and
+/// keeps its holes.
+pub fn same_layout(held: (ScreenRect, f64, f64), wanted: (ScreenRect, f64, f64)) -> bool {
     held.0 == wanted.0 && held.1 == wanted.1 && (held.2 - wanted.2).abs() < f64::EPSILON
 }
 
-/// Where the overlay window's top-left is on screen, as `window_rect` places it.
-fn window_origin(frame: CGRect, top_band: f64) -> ScreenPoint {
-    ScreenPoint::from_cg(window_rect(frame, top_band).origin)
+/// Where the overlay window over `display` starts on screen, as `window_rect` places it, which a
+/// picture of the window alone starts at.
+pub fn window_origin(display: ScreenRect, top_band: f64) -> ScreenPoint {
+    ScreenPoint::from_cg(window_rect(display.to_cg(), top_band).origin)
 }
 
 /// Where the content layer sits inside the window: the full display, lifted so the reserved band is
@@ -719,10 +715,10 @@ impl TileOverlay {
             backdrop,
             bar,
             bar_drawn: false,
-            backdrop_drawn: false,
             frame,
             top_band,
             visible: false,
+            clear: false,
             mtm,
         })
     }
@@ -734,8 +730,6 @@ impl TileOverlay {
             self.bar.setHidden(true);
             return;
         };
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         match snapshot {
             Some(snapshot) => {
                 self.bar.setContentsScale(self.tree.scale);
@@ -746,15 +740,12 @@ impl TileOverlay {
             }
             None => self.bar.setHidden(!self.bar_drawn),
         }
-        commit_now();
     }
 
     /// Sets the still image drawn behind the moving tiles, at its own covered size so it stays in
     /// register with the real desktop. A failed capture keeps the previous picture.
     pub fn set_backdrop(&mut self, snapshot: Option<&Picture>) {
         let Some(snapshot) = snapshot else { return };
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         self.backdrop.setFrame(CGRect::new(
             CGPoint::new(0.0, 0.0),
             snapshot.coverage.covered.to_cg(),
@@ -762,16 +753,13 @@ impl TileOverlay {
         self.backdrop.setContentsScale(self.tree.scale);
         set_layer_contents(&self.backdrop, snapshot);
         self.backdrop.setHidden(false);
-        self.backdrop_drawn = true;
-        commit_now();
     }
-
-    pub fn backdrop_drawn(&self) -> bool { self.backdrop_drawn }
 
     /// Repoints the overlay at a different display, a resolution change, or a change of the band the
     /// bar reserves at the top, and puts its window back wherever macOS has moved it.
     pub fn set_frame(&mut self, frame: ScreenRect, top_band: f64, scale: f64) {
-        let laid_out = self.laid_out_for(frame, top_band, scale);
+        let held = (ScreenRect::from_cg(self.frame), self.top_band, self.tree.scale);
+        let laid_out = same_layout(held, (frame, top_band, scale));
         let frame = frame.to_cg();
         let converter = CoordinateConverter::from_height(primary_display_height());
         if let Some(cocoa) = converter.reframe(window_rect(frame, top_band), self.window.frame()) {
@@ -785,7 +773,6 @@ impl TileOverlay {
         self.top_band = top_band;
         self.tree.size = frame.size;
         self.tree.scale = scale;
-        self.backdrop_drawn = false;
         if let Some(view) = self.window.contentView() {
             view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size));
         }
@@ -793,40 +780,22 @@ impl TileOverlay {
         self.tree.root.setContentsScale(scale);
     }
 
-    /// Whether the overlay is laid out for `frame`, `top_band` and `scale` already, so `set_frame`
-    /// with them moves nothing and keeps its holes.
-    pub fn laid_out_for(&self, frame: ScreenRect, top_band: f64, scale: f64) -> bool {
-        same_layout((self.frame, self.top_band, self.tree.scale), (frame.to_cg(), top_band, scale))
-    }
-
     /// Frame zero: the tree rebuilt as `score` has it, every tile dressed from `tiles`, and the
     /// replica `score`. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     pub fn pose(&mut self, score: &Score, tiles: &[OverlayTile]) {
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         self.tree.pose(score, tiles);
-        commit_now();
     }
 
-    /// Plays `edits` in one transaction: each folded into the replica, then carried out on the
-    /// layers. A tile first seen is made and dressed from `tiles`.
+    /// Plays `edits`: each folded into the replica, then carried out on the layers. A tile first seen
+    /// is made and dressed from `tiles`.
     pub fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) {
-        if edits.is_empty() {
-            return;
-        }
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         self.tree.play(edits, tiles);
-        commit_now();
     }
 
     /// Swaps a fresh picture into a tile mid-flight, leaving its movement alone: a crop-drawn tile
     /// on a track of its own has its grid re-keyed along that track, so only the pixels cut.
     pub fn swap(&mut self, window: WindowId, picture: &Picture) {
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         self.tree.swap(window, picture, media_now());
-        commit_now();
     }
 
     /// Clips a tile's picture to a rounded rect of `radius`, for a picture whose corners carry what
@@ -836,10 +805,7 @@ impl TileOverlay {
         let Some(entry) = self.tree.tile_layers.get(&window) else {
             return;
         };
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         clip_corners(&entry.picture, radius);
-        commit_now();
     }
 
     /// Draws a tile focused or not, a hard cut: its ring's white and its shadow's depth. For focus
@@ -848,20 +814,15 @@ impl TileOverlay {
         let Some(entry) = self.tree.tile_layers.get(&window) else {
             return;
         };
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         show_focus(entry, focused);
-        commit_now();
     }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
     /// between them, under `rini::animation::trace` at trace level: the measurement behind "One
-    /// flight however many presses" in `src/animation/docs/animation-smoothness.md`. Off, it reads
-    /// nothing. The one read of the presentation layer left, and nothing is decided by it.
+    /// flight however many presses" in `src/animation/docs/animation-smoothness.md`. Asked for only
+    /// while that target is on. The one read of the presentation layer left, and nothing is decided
+    /// by it.
     pub fn trace(&self, at: f64) {
-        if !tracing::enabled!(target: "rini::animation::trace", tracing::Level::TRACE) {
-            return;
-        }
         for (key, layer) in &self.tree.containers {
             // SAFETY: `presentationLayer` returns a read-only copy of the layer.
             let presented =
@@ -887,9 +848,6 @@ impl TileOverlay {
     /// The overlay's window as the window server numbers it, which a handover check pictures alone.
     pub fn server_id(&self) -> Option<WindowServerId> { numbered(self.window.windowNumber()) }
 
-    /// Where the overlay's window starts on screen, which a picture of it alone starts at.
-    pub fn origin(&self) -> ScreenPoint { window_origin(self.frame, self.top_band) }
-
     /// Shows the overlay; only an alpha change.
     pub fn show(&mut self) {
         if self.visible {
@@ -900,9 +858,9 @@ impl TileOverlay {
         self.visible = true;
     }
 
-    /// Hides the overlay, revealing the real windows already sitting at their final frames.
+    /// Hides the overlay, revealing the real windows already sitting at their final frames; only an
+    /// alpha change.
     pub fn hide(&mut self) {
-        self.clear_holes();
         if !self.visible {
             return;
         }
@@ -911,8 +869,8 @@ impl TileOverlay {
     }
 
     /// Punches a hole through the overlay over each window ending at one of `ends`, replacing the
-    /// holes there were, and clears the window's background so the holes show what is below. The
-    /// caller names the windows that end wholly on screen. See "Holes" in
+    /// holes there were; `paint_background` then clears the window's background so the holes show
+    /// what is below. The caller names the windows that end wholly on screen. See "Holes" in
     /// `src/animation/docs/animation-smoothness.md`.
     pub fn set_holes(&mut self, ends: &[OverlayRect]) {
         if ends.is_empty() {
@@ -924,15 +882,11 @@ impl TileOverlay {
         };
         let holes: Vec<CGRect> =
             ends.iter().map(|end| in_view(hole_in(*end).to_cg(), self.top_band)).collect();
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         // SAFETY: a shape layer we just made, as the mask of the view's own layer.
         unsafe { clip.setMask(Some(&holes_mask(clip.bounds(), &holes))) };
-        commit_now();
-        self.window.setBackgroundColor(Some(&NSColor::clearColor()));
     }
 
-    /// Fills the holes in again and puts the window's black background back.
+    /// Fills the holes in again; `paint_background` then puts the window's black background back.
     pub fn clear_holes(&mut self) {
         let Some(clip) = self.window.contentView().and_then(|view| view.layer()) else {
             return;
@@ -940,20 +894,26 @@ impl TileOverlay {
         if clip.mask().is_none() {
             return;
         }
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         // SAFETY: removing the mask this overlay set.
         unsafe { clip.setMask(None) };
-        commit_now();
-        self.window.setBackgroundColor(Some(&NSColor::blackColor()));
+    }
+
+    /// The window's background as its holes need it once their mask is committed: clear while it is
+    /// holed, black otherwise. Like the alpha, it is the window's, outside the layers' transaction.
+    pub fn paint_background(&mut self) {
+        let clip = self.window.contentView().and_then(|view| view.layer());
+        let holed = clip.is_some_and(|clip| clip.mask().is_some());
+        if holed == self.clear {
+            return;
+        }
+        let colour = if holed { NSColor::clearColor() } else { NSColor::blackColor() };
+        self.window.setBackgroundColor(Some(&colour));
+        self.clear = holed;
     }
 
     /// Frees the tile contents without destroying the overlay, and the replica with them.
     pub fn release_tiles(&mut self) {
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         self.tree.release();
-        commit_now();
         let _ = self.mtm;
     }
 }
@@ -1647,8 +1607,8 @@ mod tests {
     /// nothing, and any other one moves the window or lays it out again.
     #[test]
     fn a_display_moves_the_overlay_unless_its_frame_band_and_scale_are_the_ones_held() {
-        let display = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3008.0, 1692.0));
-        let other = CGRect::new(CGPoint::new(3008.0, 0.0), CGSize::new(1920.0, 1080.0));
+        let display: ScreenRect = typed(0.0, 0.0, 3008.0, 1692.0);
+        let other: ScreenRect = typed(3008.0, 0.0, 1920.0, 1080.0);
         assert!(same_layout((display, 32.0, 2.0), (display, 32.0, 2.0)));
         assert!(!same_layout((display, 32.0, 2.0), (other, 32.0, 2.0)), "another display");
         assert!(!same_layout((display, 32.0, 2.0), (display, 0.0, 2.0)), "the bar's band gone");
@@ -1659,7 +1619,7 @@ mod tests {
     /// down.
     #[test]
     fn the_window_starts_a_band_below_the_displays_top_left() {
-        let display = CGRect::new(CGPoint::new(-670.0, -1692.0), CGSize::new(3008.0, 1692.0));
+        let display: ScreenRect = typed(-670.0, -1692.0, 3008.0, 1692.0);
         assert_eq!(window_origin(display, 32.0), ScreenPoint::new(-670.0, -1660.0));
         assert_eq!(window_origin(display, 0.0), ScreenPoint::new(-670.0, -1692.0));
     }

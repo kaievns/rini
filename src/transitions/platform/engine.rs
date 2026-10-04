@@ -2,13 +2,14 @@
 //! journal (`crate::transitions::domain::journal`'s `Journalled`, over
 //! `crate::transitions::domain::lifecycle`'s `Coordinator`), stages each request and merges each
 //! pass into the flight running, and does what the coordinator says: it hands the renderer
-//! (`crate::animation::platform::overlay`) the edits of each flight's score
-//! (`crate::transitions::domain::flight_score`) and asks and watches the pictures service
-//! (`crate::pictures::platform::service`), and sends each burst of the journal to its writer
-//! (`crate::transitions::platform::journal`). When anything happens is the coordinator's, but for the
-//! hide of a lift held, while the handover is measured, for the overlay's own picture, which the
-//! journal decides (`crate::transitions::domain::journal::Journalled::heard`). Runs on the main thread
-//! because Core Animation requires it.
+//! (`crate::animation::platform::renderer`) each event's render commands as one batch, among them the
+//! edits of each flight's score (`crate::transitions::domain::flight_score`), holds what must wait
+//! for a batch to be drawn until the renderer commits it (`crate::transitions::domain::drawn`), asks
+//! and watches the pictures service (`crate::pictures::platform::service`), and sends each burst of
+//! the journal to its writer (`crate::transitions::platform::journal`). When anything happens is the
+//! coordinator's, but for the hide of a lift held, while the handover is measured, for the overlay's
+//! own picture, which the journal decides (`crate::transitions::domain::journal::Journalled::heard`).
+//! Runs on the main thread because Core Animation requires it.
 //!
 //! Design in `src/transitions/docs/coordination.md`; how a flight moves in
 //! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
@@ -34,7 +35,8 @@ use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::score::{Edit, Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
-use crate::animation::platform::overlay::{OverlayTile, TileOverlay, media_now};
+use crate::animation::platform::overlay::{OverlayTile, media_now, same_layout, window_origin};
+use crate::animation::platform::renderer::{Batch, Render, Renderer, in_order};
 use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
@@ -48,6 +50,7 @@ use crate::pictures::platform::picture::{Picture, Route};
 use crate::pictures::platform::service::Pictures;
 use crate::pictures::platform::skylight::capture_via_framed;
 use crate::transitions::domain::admission::*;
+use crate::transitions::domain::drawn::{Drawn, Owed};
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::flight_score::FlightScore;
 use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, measures};
@@ -726,12 +729,31 @@ fn put(slot: &mut Option<WatchId>, watch: Option<Watch>, pictures: &Pictures) {
     }
 }
 
+/// A lift held, while the handover is measured, for the overlay's own picture: the patience's timer,
+/// and what waits for the lift to be drawn once it hides.
+struct HeldLift {
+    _patience: RepeatingTimer,
+    owed: Vec<Owed>,
+}
+
 pub struct FlightEngine {
     rx: Receiver,
     /// Timers post back into this actor's own queue through it.
     tx: Sender,
-    mtm: MainThreadMarker,
-    overlay: Option<TileOverlay>,
+    renderer: Renderer,
+    /// The render commands of the event being handled, handed to the renderer as one batch at its end.
+    batch: Option<Batch>,
+    /// What waits for a batch to be drawn.
+    drawn: Drawn,
+    /// The batch the latest `Render::Show` went in, which the real frames are written after.
+    shown: u64,
+    /// The batch the latest `Render::Lift` went in, which `Settle` waits for.
+    lifted: u64,
+    /// Whether the overlay is dressed with a desktop of the display it is laid out for: until then a
+    /// desktop captured without its wallpaper beats black.
+    dressed: bool,
+    /// The overlay's window as the window server numbers it, once the renderer has made it.
+    overlay: Option<WindowServerId>,
     /// Every picture the flight draws, and the background captures that fill it.
     pictures: Pictures,
     /// This engine as the pictures service tags what it delivers.
@@ -760,8 +782,8 @@ pub struct FlightEngine {
     quiet: Option<(Generation, RepeatingTimer)>,
     /// The end windows the last watch named, ending wholly on screen: what a measured lift compares.
     ends: Vec<(WindowId, ScreenRect)>,
-    /// The patience of a lift held, while the handover is measured, for the overlay's own picture.
-    lift_patience: Option<RepeatingTimer>,
+    /// The lift held for the overlay's own picture, while the handover is measured.
+    held: Option<HeldLift>,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     on_flight: Option<OnFlight>,
@@ -780,7 +802,12 @@ impl FlightEngine {
         Self {
             rx,
             tx,
-            mtm,
+            renderer: Renderer::new(mtm),
+            batch: None,
+            drawn: Drawn::default(),
+            shown: 0,
+            lifted: 0,
+            dressed: false,
             overlay: None,
             pictures,
             client,
@@ -796,7 +823,7 @@ impl FlightEngine {
             clock: None,
             quiet: None,
             ends: Vec::new(),
-            lift_patience: None,
+            held: None,
             place_frames: None,
             on_flight: None,
         }
@@ -818,7 +845,8 @@ impl FlightEngine {
     }
 
     /// One event. A request first hides a lift waiting for the overlay's picture, and gives the
-    /// journal its press, for the request's first drive to mark.
+    /// journal its press, for the request's first drive to mark. What the event draws is played at its
+    /// end, and what that releases carried out.
     fn handle(&mut self, event: Event) {
         match event {
             Event::SetDisplay {
@@ -887,6 +915,7 @@ impl FlightEngine {
             Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
             Event::Journal(settings) => self.set_journal(settings),
         }
+        self.draw();
         self.flights.answered();
     }
 
@@ -929,22 +958,19 @@ impl FlightEngine {
 
     fn carry_out(&mut self, command: Command, now: Instant) {
         match command {
-            Command::Hold => self.pictures.hold(Hold::Transition),
-            Command::Settle => self.pictures.hold(Hold::Settling),
+            Command::Hold => {
+                self.drawn.begun();
+                self.pictures.hold(Hold::Transition)
+            }
+            Command::Settle => self.settle(),
             Command::Release => self.pictures.hold(Hold::Released),
             Command::AskFrameZero { generation, strip, background, behind } => self
                 .pictures
                 .ask_on_screen(on_screen(self.tag(generation), Moment::FrameZero, &strip, &background, &behind)),
-            Command::Show => {
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.show();
-                }
-            }
-            Command::Write(frames) => self.request_frames(frames),
+            Command::Show => self.shown = self.render(Render::Show),
+            Command::Write(frames) => self.owe(self.shown, Owed::Write(frames)),
             Command::Holes(ends) => {
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.set_holes(&ends);
-                }
+                self.render(Render::Holes(ends));
             }
             Command::Watch(end) => {
                 self.ends = end.landing.iter().chain(&end.awaiting).copied().collect();
@@ -964,11 +990,9 @@ impl FlightEngine {
                 if let Some(running) = self.running.as_mut() {
                     running.hand_over_focus(to, from);
                 }
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.set_tile_focused(to, true);
-                    if let Some(from) = from {
-                        overlay.set_tile_focused(from, false);
-                    }
+                self.render(Render::Focus { window: to, focused: true });
+                if let Some(from) = from {
+                    self.render(Render::Focus { window: from, focused: false });
                 }
             }
             Command::Lift { generation } => self.lift(generation, now),
@@ -996,6 +1020,79 @@ impl FlightEngine {
     fn report(&self, flying: bool) {
         if let Some(on_flight) = &self.on_flight {
             on_flight(flying);
+        }
+    }
+
+    /// `command` into the event's batch, numbered as its first command goes in: that batch's number.
+    fn render(&mut self, command: Render) -> u64 {
+        let Self { batch, drawn, .. } = self;
+        let batch = batch.get_or_insert_with(|| Batch { seq: drawn.batch(), commands: Vec::new() });
+        batch.commands.push(command);
+        batch.seq
+    }
+
+    /// The score's `edits` played, every tile of the flight handed with them.
+    fn play(&mut self, edits: Vec<Edit>) {
+        let Some(running) = self.running.as_ref() else { return };
+        if edits.is_empty() {
+            return;
+        }
+        let tiles = running.tiles.clone();
+        self.render(Render::Play { edits, tiles });
+    }
+
+    /// `owed` once batch `after` is drawn: now, if it is.
+    fn owe(&mut self, after: u64, owed: Owed) {
+        if let Some(owed) = self.drawn.owe(after, owed) {
+            self.carry(owed);
+        }
+    }
+
+    fn carry(&mut self, owed: Owed) {
+        match owed {
+            Owed::Write(frames) => self.request_frames(frames),
+            Owed::Settle => self.pictures.hold(Hold::Settling),
+            Owed::Quiet(generation) => self.quiet_after(generation),
+        }
+    }
+
+    /// The bar pictured again once the lift is drawn, or once a lift held hides and that is drawn.
+    fn settle(&mut self) {
+        match self.held.as_mut() {
+            Some(held) => held.owed.push(Owed::Settle),
+            None => self.owe(self.lifted, Owed::Settle),
+        }
+    }
+
+    /// The renderer plays the event's batch; what its answer releases is carried out, and so on until
+    /// that draws nothing more.
+    fn draw(&mut self) {
+        while let Some(batch) = self.batch.take() {
+            let answer = self.renderer.play(in_order(vec![batch]));
+            self.rendered(answer);
+        }
+    }
+
+    /// The renderer's answer: a commit releases what waited for it, and with no overlay to draw on the
+    /// flight is abandoned, everything it owed dropped, since its `Abandon` writes the final frames.
+    fn rendered(&mut self, answer: crate::animation::event::Event) {
+        match answer {
+            crate::animation::event::Event::Committed { seq, overlay } => {
+                if overlay.is_some() {
+                    self.overlay = overlay;
+                }
+                for owed in self.drawn.committed(seq) {
+                    self.carry(owed);
+                }
+            }
+            crate::animation::event::Event::Unavailable { seq } => {
+                self.drawn.abandon();
+                self.drawn.committed(seq);
+                self.dressed = false;
+                if self.flights.coordinator().is_flying() {
+                    self.abandon();
+                }
+            }
         }
     }
 
@@ -1076,21 +1173,16 @@ impl FlightEngine {
             return;
         }
         let clip = corner_clip(self.pictures.knowledge(WindowServerId::from(window)), &picture, size);
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.swap(window, &picture);
-            overlay.set_tile_corner_clip(window, clip);
-        }
+        self.render(Render::Swap { window, picture });
+        self.render(Render::Corner { window, radius: clip });
     }
 
     /// The coordinator's snap of `window`'s tile onto `frame`, its window's, as an edit of the score
     /// played on the renderer.
     fn snap(&mut self, window: WindowId, frame: OverlayRect) {
-        let Self { overlay, running, .. } = self;
-        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
-            return;
-        };
+        let Some(running) = self.running.as_mut() else { return };
         let edits = running.score.snap(window, frame, media_now());
-        overlay.play(&edits, &running.tiles);
+        self.play(edits);
     }
 
     /// A reserved entrance's tile, with its first picture: it joins frame zero, or the flight for what
@@ -1130,9 +1222,7 @@ impl FlightEngine {
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         let mut edits = merged.edits;
         edits.push(running.score.bank(banding));
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.play(&edits, &running.tiles);
-        }
+        self.play(edits);
     }
 
     /// The display the overlay covers: what a member's destination is judged against.
@@ -1145,15 +1235,15 @@ impl FlightEngine {
     /// The overlay's geometry. The pictures of the display are the service's, told by the reactor. A
     /// lift held for the overlay's picture hides first when the overlay is to move.
     fn set_display(&mut self, id: u32, frame: ScreenRect, scale: f64, top_band: f64) {
-        if self.overlay.as_ref().is_some_and(|overlay| !overlay.laid_out_for(frame, top_band, scale)) {
+        let held = self.display.map(|(held, held_scale)| (held, self.top_band, held_scale));
+        if held.is_some_and(|held| !same_layout(held, (frame, top_band, scale))) {
             self.lift_heard(Heard::Moved);
+            self.dressed = false;
         }
         self.display = Some((frame, scale));
         self.display_id = Some(id);
         self.top_band = top_band;
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_frame(frame, top_band, scale);
-        }
+        self.render(Render::Display { frame, top_band, scale });
     }
 
     /// The display the overlay is on, as the pictures of it are keyed.
@@ -1162,29 +1252,10 @@ impl FlightEngine {
         Some(Display { id, frame, scale })
     }
 
-    /// Creates the overlay on first use and keeps it forever: creation is too slow to pay per
-    /// animation. See "Toggle alpha, do not order the window in and out" in the research doc.
-    fn ensure_overlay(&mut self) -> Option<&mut TileOverlay> {
-        if self.overlay.is_none() {
-            let (frame, scale) = self.display?;
-            match TileOverlay::new(frame, self.top_band, scale, self.mtm) {
-                Some(overlay) => self.overlay = Some(overlay),
-                None => {
-                    warn!("could not create the animation overlay; animations will be skipped");
-                    return None;
-                }
-            }
-        }
-        self.overlay.as_mut()
-    }
-
     /// Frame zero posed again, its plan as it is, with the pictures the tiles hold now; the accents
     /// waiting for the motion keep waiting.
     fn reinstall(&mut self) {
-        let Self { overlay, running, .. } = self;
-        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
-            return;
-        };
+        let Some(running) = self.running.as_mut() else { return };
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         let drawn = running.drawn();
         let stage = Stage {
@@ -1194,7 +1265,9 @@ impl FlightEngine {
             cue: running.cue,
             accents: &[],
         };
-        overlay.pose(running.score.pose(&stage, banding), &running.tiles);
+        let score = running.score.pose(&stage, banding).clone();
+        let tiles = running.tiles.clone();
+        self.render(Render::Stage { score, tiles });
         self.clip_corners();
     }
 
@@ -1210,10 +1283,8 @@ impl FlightEngine {
                 Some((tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size.respace())?))
             })
             .collect();
-        if let Some(overlay) = self.overlay.as_mut() {
-            for (window, radius) in clips {
-                overlay.set_tile_corner_clip(window, Some(radius));
-            }
+        for (window, radius) in clips {
+            self.render(Render::Corner { window, radius: Some(radius) });
         }
     }
 
@@ -1307,7 +1378,7 @@ impl FlightEngine {
     /// The transition could not be staged or shown: its windows are placed directly and nothing
     /// holds the pictures service.
     fn abandon(&mut self) {
-        self.hide();
+        self.hide(Vec::new());
         self.running = None;
         self.clock = None;
         self.ends.clear();
@@ -1642,20 +1713,15 @@ impl FlightEngine {
             self.abandon();
             return;
         }
-        let backdrop_drawn = self.overlay.as_ref().is_some_and(TileOverlay::backdrop_drawn);
         let dressing = self
             .picture_display()
-            .map(|display| self.pictures.dressing(display, backdrop_drawn));
+            .map(|display| self.pictures.dressing(display, self.dressed));
         let display = self.display.map(|(frame, _)| frame);
-        let Some(overlay) = self.ensure_overlay() else {
-            self.abandon();
-            return;
-        };
-        if let (Some(dressing), Some(display)) = (&dressing, display) {
+        if let (Some(dressing), Some(display)) = (dressing, display) {
             let strip = dressing.strip.map(|strip| to_overlay_space(strip, display));
-            log_dressing(pass.label, dressing, strip);
-            overlay.set_backdrop(dressing.desktop.as_ref());
-            overlay.set_bar(dressing.bar.as_ref(), strip);
+            log_dressing(pass.label, &dressing, strip);
+            self.dressed |= dressing.desktop.is_some();
+            self.render(Render::Dress { desktop: dressing.desktop, bar: dressing.bar, strip });
         }
         let (focus, losing) = self.drawing_focus(pass.focus);
         let score = FlightScore::new(pass.look);
@@ -1697,18 +1763,23 @@ impl FlightEngine {
     /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
     /// a new parked target flies cut onto its tile: a retarget draws neither.
     fn redraw_focus(&mut self, before: &[(WindowId, bool)], look: Option<WindowId>) {
-        let (Some(running), Some(overlay)) = (self.running.as_ref(), self.overlay.as_mut()) else { return };
+        let Some(running) = self.running.as_ref() else { return };
+        let mut drawn = Vec::new();
         for tile in running.tiles.iter().filter(|t| t.companion.is_none()) {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
-            if look == Some(tile.window) {
-                let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
-                overlay.swap(tile.window, &tile.snapshot);
-                let clip = corner_clip(knowledge, &tile.snapshot, tile.to.size.respace());
-                overlay.set_tile_corner_clip(tile.window, clip);
-                overlay.set_tile_focused(tile.window, true);
+            let window = tile.window;
+            if look == Some(window) {
+                let knowledge = self.pictures.knowledge(WindowServerId::from(window));
+                let radius = corner_clip(knowledge, &tile.snapshot, tile.to.size.respace());
+                drawn.push(Render::Swap { window, picture: tile.snapshot.clone() });
+                drawn.push(Render::Corner { window, radius });
+                drawn.push(Render::Focus { window, focused: true });
             } else if was.is_some_and(|was| was != tile.focused) {
-                overlay.set_tile_focused(tile.window, tile.focused);
+                drawn.push(Render::Focus { window, focused: tile.focused });
             }
+        }
+        for command in drawn {
+            self.render(command);
         }
     }
 
@@ -1720,8 +1791,7 @@ impl FlightEngine {
         let left = self.flights.coordinator().remaining(Instant::now()).unwrap_or_default();
         let viewport = self.viewport();
         let display = self.display.map(|(frame, _)| frame);
-        let Self { overlay, running, .. } = self;
-        let Some(running) = running.as_mut() else { return };
+        let Some(running) = self.running.as_mut() else { return };
         for entrance in pass.entrances {
             if !running.entrances.iter().any(|e| e.window == entrance.window) {
                 running.entrances.push(entrance);
@@ -1749,6 +1819,7 @@ impl FlightEngine {
             accent: pass.accent,
         };
         let mut moved = false;
+        let mut played = Vec::new();
         // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
         if let Some((mut delta, mut edits)) = running.take_pass(&folded, at) {
             delta.focus_changed = pass_focus.is_some() && pass_focus != focus_before;
@@ -1809,15 +1880,14 @@ impl FlightEngine {
             moved = delta.moves_anything();
             let banding = band_plan(&running.plan, &running.tiles, running.focus);
             edits.push(running.score.bank(banding));
-            if let Some(overlay) = overlay.as_mut() {
-                overlay.play(&edits, &running.tiles);
-            }
+            played = edits;
             // A merge that moves anything restarts the clock, over everything the score plays.
             shape.duration = running.score.clock(shape.duration, at);
         }
         let flown = running.flown;
         let extend = (flown && !moved).then(|| running.score.outlasting(left, at)).flatten();
         let focus_moved = running.focus != focus_before;
+        self.play(played);
         let look = if focus_moved
             && let Some(target) = self.stage(shape.clone()).and_then(|stage| stage.parked_focus())
             && self.fly_focused_look(target)
@@ -2028,18 +2098,15 @@ impl FlightEngine {
                 Some(Kind::Bounce),
             );
         }
-        let Self { overlay, running, .. } = self;
-        let Some(running) = running.as_mut() else { return };
+        let Some(running) = self.running.as_mut() else { return };
         let at = media_now();
         let Some(edits) = running.push(&cue, overshoot, duration.as_secs_f64(), at) else { return };
-        if let Some(overlay) = overlay.as_mut() {
-            overlay.play(&edits, &running.tiles);
-        }
+        let remaining = running.score.remaining(at);
+        self.play(edits);
         debug!(
             overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
             "edge bounce"
         );
-        let remaining = running.score.remaining(at);
         self.drive(lifecycle::Event::Extend(remaining));
     }
 
@@ -2047,8 +2114,7 @@ impl FlightEngine {
     /// and the renderer plays it in one transaction; the clock runs on for as long as the score does.
     fn start_moving(&mut self, now: Instant) {
         let duration = self.flights.coordinator().remaining(now).unwrap_or_default();
-        let Self { overlay, running, .. } = self;
-        let Some(running) = running.as_mut() else { return };
+        let Some(running) = self.running.as_mut() else { return };
         running.flown = true;
         // The acceptance greps count this line against "overlay lifted".
         let flight = &running.plan;
@@ -2069,18 +2135,17 @@ impl FlightEngine {
             accents: &[],
         };
         let edits = running.score.start_moving(&stage, at);
-        if let Some(overlay) = overlay.as_mut() {
-            overlay.play(&edits, &running.tiles);
-        }
         let remaining = running.score.remaining(at);
+        self.play(edits);
         self.drive(lifecycle::Event::Extend(remaining));
     }
 
     /// One frame of the clock: where the tiles are drawn and where the windows are, read only once
-    /// the clock is done.
+    /// the clock is done. It draws only the trace of where each container is presented, and that
+    /// only while its target is on.
     fn tick(&mut self) {
-        if let Some(overlay) = self.overlay.as_ref() {
-            overlay.trace(media_now());
+        if tracing::enabled!(target: "rini::animation::trace", tracing::Level::TRACE) {
+            self.render(Render::Trace);
         }
         if !self.flights.coordinator().is_flying() {
             return;
@@ -2096,22 +2161,25 @@ impl FlightEngine {
         self.drive(lifecycle::Event::Tick { settled, landed });
     }
 
-    /// Overlay down, over the real windows where they end; the quiet after it begins. While the
-    /// handover is measured, the hide waits for the overlay's own picture.
+    /// Overlay down, over the real windows where they end; the quiet after it begins once that is
+    /// drawn. While the handover is measured, the hide waits for the overlay's own picture, and the
+    /// quiet with it.
     fn lift(&mut self, generation: Generation, now: Instant) {
         self.report_handover_error();
-        if self.overlay.is_some() {
-            // The acceptance greps pair "placing real windows" with this line.
-            let windows = self.running.as_ref().map_or(0, |running| running.tiles.len());
-            debug!(windows, "overlay lifted");
-        }
+        // The acceptance greps pair "placing real windows" with this line.
+        let windows = self.running.as_ref().map_or(0, |running| running.tiles.len());
+        debug!(windows, "overlay lifted");
         match self.handover_check(generation) {
-            Some(check) => self.hold_hide(generation, check, now),
-            None => self.hide(),
+            Some(check) => self.hold_lift(generation, check, now),
+            None => self.hide(vec![Owed::Quiet(generation)]),
         }
         self.running = None;
         self.clock = None;
         self.delivered.clear();
+    }
+
+    /// The quiet after `generation`'s lift, from now.
+    fn quiet_after(&mut self, generation: Generation) {
         let tx = self.tx.clone();
         match RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
             _ = tx.send(Event::Quiet(generation));
@@ -2128,12 +2196,11 @@ impl FlightEngine {
         if !measures(self.journal.is_some_and(|journal| journal.measure_handover), &windows) {
             return None;
         }
-        let overlay = self.overlay.as_ref()?;
         let (display, scale) = self.display?;
         Some(HandoverCheck {
             tag: self.tag(generation),
-            overlay: overlay.server_id()?,
-            overlay_origin: overlay.origin(),
+            overlay: self.overlay?,
+            overlay_origin: window_origin(display, self.top_band),
             display,
             scale,
             windows,
@@ -2141,31 +2208,34 @@ impl FlightEngine {
     }
 
     /// The pictures service measures the lift, and the hide waits for the overlay's own picture, up to
-    /// `OVERLAY_TAKE_PATIENCE`; with no timer for the patience, nothing is measured and it does not wait.
-    fn hold_hide(&mut self, generation: Generation, check: HandoverCheck, now: Instant) {
+    /// `OVERLAY_TAKE_PATIENCE`, with the quiet and `Settle`; with no timer for the patience, nothing is
+    /// measured and it does not wait.
+    fn hold_lift(&mut self, generation: Generation, check: HandoverCheck, now: Instant) {
+        let quiet = Owed::Quiet(generation);
         let tx = self.tx.clone();
-        let Some(timer) = RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || _ = tx.send(Event::LiftPatience)) else {
-            self.hide();
+        let Some(patience) = RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || _ = tx.send(Event::LiftPatience)) else {
+            self.hide(vec![quiet]);
             return;
         };
         self.pictures.check_handover(check);
-        self.lift_patience = Some(timer);
+        self.held = Some(HeldLift { _patience: patience, owed: vec![quiet] });
         self.flights.lifted(generation, now);
     }
 
     /// What a lift held for the overlay's picture hears: it hides once the journal says so.
     fn lift_heard(&mut self, heard: Heard) {
-        if self.flights.heard(heard, Instant::now()) {
-            self.lift_patience = None;
-            self.hide();
+        if self.flights.heard(heard, Instant::now())
+            && let Some(held) = self.held.take()
+        {
+            self.hide(held.owed);
         }
     }
 
-    /// The overlay down, and its tiles let go.
-    fn hide(&mut self) {
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.hide();
-            overlay.release_tiles();
+    /// The overlay down, and its tiles let go; `owed` waits for that to be drawn.
+    fn hide(&mut self, owed: Vec<Owed>) {
+        self.lifted = self.render(Render::Lift);
+        for owed in owed {
+            self.owe(self.lifted, owed);
         }
     }
 
