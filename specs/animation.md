@@ -137,6 +137,13 @@ destination for a window already moving.
 > at 6.25x its average speed, so a strip that had nearly stopped was thrown forward again: about
 > 890pt/s to 15,375pt/s in one frame at a typical interval between presses.
 - A window the flight has not seen MUST be able to join it.
+- A merged press MUST NOT show a stale, transparent, stretched or zoomed tile. A picture taken for an
+  earlier press, or of the window at another size than its tile ends at, never reaches a tile.
+
+> **Reported 2026-10-03.** "rapid press navigation messes things up, i periodically see missing tiles
+> (or they're just transparrent), occasionally i see tiles that are zoomed in." Each picture is now
+> pinned to the press it was taken for and to the frame its tile ends at; which picture each of those
+> tiles drew was not measured.
 
 ## A window that has just opened
 
@@ -145,6 +152,26 @@ destination for a window already moving.
 - Otherwise the flight holds a place for it and waits for its first picture. Each reason for holding
   MUST be recorded distinctly: "the window appeared without animating" has four causes and the log is
   the only way to tell them apart afterwards.
+
+## The pictures a flight starts with
+
+- A flight MUST start from pictures taken at the press: every window wholly on screen where its tile
+  starts, and the floating windows seen behind them. The overlay MUST wait for them no longer than
+  80ms, and then flies what the cache holds.
+- A real window MUST NOT be written before the overlay is up, whatever the flight: written earlier, it
+  jumps on screen before the overlay hides it. Every frame MUST be written as the overlay goes up.
+- A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
+  window that ends wholly on screen, so the window server counts it visible. Covered wholly, a
+  terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
+  all 24.
+- A floating window seen through a translucent one MUST show its live content while the flight runs,
+  kept fresh behind the strip once the window gaining focus has its look.
+
+> **Reported 2026-10-03.** "the background window images are served stale constantly, it's not a
+> minor issue, because i can see changing content in the background windows during animation with
+> semi-transparrent windows. this won't do." The windows behind the strip flew the cache's pictures,
+> which no capture landing mid-flight replaced; the cache's pictures a flight drew were 1.6s old at
+> the median, measured 2026-10-02.
 
 ## Correctness the user can see
 
