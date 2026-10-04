@@ -134,7 +134,8 @@ mod tests {
         /// and one whose bounce is home or gone, as installing frame zero again and the lift take
         /// it, from rest. A container that does not carry this push, the floating windows under a
         /// sideways one, plays none and keeps what it draws; under the next vertical push it goes on
-        /// from that older bounce rather than jumping to rest.
+        /// from that older bounce rather than jumping to rest. One a merge opened while a bounce
+        /// plays draws none of it and starts the next from rest, as the strip goes on from its own.
         #[test]
         fn a_push_starts_each_carrier_from_where_its_bounce_is_drawn() {
             let mut score = surface();
@@ -188,6 +189,26 @@ mod tests {
                 on(&after, STRIP),
                 Some(&Bounce::from_rest(UP, plays()).track(STRIP, home)),
                 "home: from rest"
+            );
+
+            let mut opened = surface();
+            push(&mut opened, UP, 30.0);
+            let column = GroupKey::Rigid(7);
+            opened.apply(&Edit::Place(
+                Node::Container(column),
+                Value::Point(CGPoint::new(-861.0, 0.0)),
+            ));
+            let mid = 30.06;
+            let strip_drawn = drawn(&opened, STRIP, mid);
+            let next = push(&mut opened, UP, mid);
+            assert_eq!(
+                on(&next, column),
+                Some(&Bounce::from_rest(UP, plays()).track(column, mid)),
+                "opened mid-bounce: from rest, where it is drawn"
+            );
+            assert_eq!(
+                on(&next, STRIP),
+                Some(&Bounce::from_drawn(strip_drawn, UP, plays()).track(STRIP, mid))
             );
 
             let mut gone = surface();

@@ -99,7 +99,7 @@ one holding the window nearest it, a border the one holding the window it traces
 where the leg has it, a column a second pan brought mid-leg matched no group's remaining
 travel, opened its own and started where the first pan sends the strip, short of the strip by the
 travel left: of two 863pt pans, the second merged 7ms into the first started its column 759pt short,
-20ms in 591pt (measured in the test below against that rule; not seen on screen); pinned
+20ms in 591pt (measured with the test that pins it against that rule; not seen on screen); pinned
 by `a_column_a_pan_brings_in_mid_flight_starts_beside_the_strip` and, for every look, by
 `every_look_bends_a_flight_without_a_jump`. Judged against the drawn position, a border landing
 mid-nudge matched no container and was left a third of the display from its window; pinned by
@@ -362,12 +362,16 @@ its own bounce is drawn, read from the flight's score (`push_tracks` in
 still drawing an older bounce than the last, the floating windows under up,
 sideways, up within one bounce, from that older one. One bounce pushed from the
 engine's record of the last used to be handed to every container, so the floating
-container jumped from the older bounce to rest on the last one's clock; pinned by
+container jumped from the older bounce to rest on the last one's clock. A container a merge opens
+while a bounce plays draws none of it, opened with no tracks, and the next push starts its bounce from rest on a full
+way out while the strip's goes on from where it is drawn on a shortened one: the two stay apart by
+at most the offset the strip drew, until both are home. Handed the record's bounce, it used to jump
+by up to 72pt into phase with the strip. Both are pinned by
 `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. A
 push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
 move's nudge (below) is the other out-and-back, on the same containers by the
 same rule, under its own key. Only a step still playing holds a step off (`steps` in
-`src/animation/domain/motion/accents.rs`, no while the score `plays` one) and the bounce never
+`src/animation/domain/motion/accents.rs` says no while the score `plays` one) and the bounce never
 does; pinned by `a_step_is_taken_only_while_none_plays` and
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
