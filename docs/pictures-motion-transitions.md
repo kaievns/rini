@@ -58,11 +58,12 @@ evaluates to exactly what the render server draws, so the coordinator retargets 
   pictures ride warm);
 - `ask_on_screen` windows on screen under a tag, at frame zero or for the last capture before the
   lift (`Moment::FrameZero`, `Moment::Final`);
-- `watch` windows: until each lands where it ends (`Landing`, its deadline the watch's `until`),
-  until a window's look changes from a print (`Change`), or kept fresh at a rate (`Live`);
+- `watch` windows: until each lands where it ends or is lost (`Landing`, its deadline the watch's
+  `until`), until a window's look changes from a print (`Change`), or kept fresh at a rate (`Live`);
+  `retarget` or `stop` a watch;
 - `hint` that a window was placed or focused; `hold` off-screen capture while a transition runs;
-- read the cache: `usable`, `focused`, `knowledge` (radius, translucency), and `dressing` (the desktop
-  and the bar);
+- read the cache: `usable`, `focused`, `knowledge` (radius, translucency, material), and `dressing`
+  (the desktop and the bar);
 - `set_layer_contents(layer, picture)` draws any picture into any layer, regions through
   `contentsRect`.
 

@@ -1170,9 +1170,10 @@ What each part of the prototype fixed:
   still in motion.
 - **A window counts as landed when its frame is within 20pt of its target**, and the crop uses the real
   frame: a terminal shrinking to half width sat at 862 against 860 requested before settling. The build
-  measured here waited for the frame to be stable between two polls; the one kept takes one
-  `SLSGetWindowBounds` read, which has the written frame within 0.1ms ("Where a moving focus change
-  spends its time").
+  measured here waited for the frame to be stable between two polls; the one kept captures the window
+  at the first `SLSGetWindowBounds` read within the 20pt and crops it at that frame, reading every 1ms
+  until then, which waits out a write an app applies late ("Where a moving focus change spends its
+  time").
 - **A resize places the real windows at frame zero.** The deployed engine applies them at half the
   flight, which left the app no time to render before the lift; the mirror's picture arrived 50ms
   after it.

@@ -51,7 +51,9 @@ once those pictures arrive, each put on its tile, or 80ms pass (`FRAME_ZERO_PATI
 are written then and never before, for every kind; a 1pt hole is cut over every window that ends wholly
 on screen, so the window server counts it visible and its app keeps painting; and the end state is
 watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the windows it grows
-or opens to repaint (up to `HOLD_CAP`); a strip movement moves at once.
+or opens to repaint (up to `HOLD_CAP`, and no longer for one whose picture the pictures service reports
+will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a strip movement
+moves at once.
 
 Frame zero's pictures that come after the overlay went up are swapped onto their tiles where they are
 (`Why::FrameZero`), and frame zero is never installed again, which under a flight that moves would jump
@@ -238,7 +240,9 @@ final capture if it ends wholly on screen and its look has changed by then; one 
 display's edge keeps its frame-zero picture to the lift, only its ring and shadow turning, and its look
 turns at rest, pictured again at the quiet: SkyLight returns only its visible part, and the one
 ScreenCaptureKit capture a flight lets through is the target's ("Decisions taken while Kai was away" in
-`docs/pictures-motion-transitions.md`). The target is pictured again by the final capture too, if its
+`docs/pictures-motion-transitions.md`). A capture of the target the cache refuses ends its watch,
+delivering nothing: the cache refuses a picture without the blur in place of one with it at the same
+size, and so every later capture there. The target is pictured again by the final capture too, if its
 change watch ran out first, and that hands focus over. If nothing has handed it over when the final capture is asked, focus
 hands over then, while the flight still moves: the window is reported focused, and a look that never
 showed a change (one already focused when the watch started, or an app whose title band looks the
@@ -554,7 +558,8 @@ hole in the strip (recording of 2026-09-15 3:28:10). Its first picture once it
 has repainted there, taken within 20pt of the slot, admits it
 (`RunningAnimation::admit`): before the motion starts the zero-width tile
 joins frame zero, posed again with it, and the flight starts when the
-last awaited picture lands or `HOLD_CAP` passes, so every tile starts in the one
+last awaited picture lands, is reported lost or is sent off the display by a merged pass, or
+`HOLD_CAP` passes, so every tile starts in the one
 transaction the motion starts in; after, it is merged in as a pass holding it alone and joins the
 flight in `GroupKey::Loose` on a track of its own for what is left of the clock
 (`a_late_entrance_joins_on_a_track_of_its_own`). One admitted once the clock has run out, while the

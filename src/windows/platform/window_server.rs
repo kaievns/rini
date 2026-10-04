@@ -500,8 +500,9 @@ pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
     window_info_from_query(&query)
 }
 
-/// The frame the window server has for `id` now, answered without asking the app: it has a written
-/// frame within 0.1ms of the write returning ("Where a moving focus change spends its time" in
+/// The frame the window server has for `id` now, answered without asking the app. A parked window's
+/// written frame is there 0.04-0.1ms after the write returns, but an app still activating applies a
+/// write tens of milliseconds late ("Where a moving focus change spends its time" in
 /// `src/animation/docs/capture-overlay-research.md`).
 pub fn server_frame(id: WindowServerId) -> Option<CGRect> {
     let mut frame = CGRect::default();

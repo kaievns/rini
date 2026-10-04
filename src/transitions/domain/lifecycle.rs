@@ -243,6 +243,9 @@ pub enum Event {
     /// One picture, taken with the window at `frame`: an end-state one, or one of frame zero's that
     /// came after the overlay went up without it. Frame zero's in time come as `FrameZero`.
     Picture { generation: Generation, window: WindowId, frame: CGRect, why: Why },
+    /// The end window watched under `generation` whose picture will not come: it was not where it ends
+    /// by the watch's deadline, it never settled, or the cache refused its capture.
+    Lost { generation: Generation, window: WindowId },
     /// The score plays this much longer from now: composed as the motion starts, or added to by a
     /// push or a merge that moves nothing. The clock runs on to cover it.
     Extend(Duration),
@@ -340,7 +343,7 @@ enum Phase {
     Preparing { deadline: Instant },
     /// Overlay up, waiting for the follow-up passes.
     Coalescing { until: Instant },
-    /// Overlay up, waiting for the awaited windows' first pictures.
+    /// Overlay up, waiting for the awaited windows' first pictures, or to hear they will not come.
     Holding { deadline: Instant },
     Playing,
     /// The clock is done; waiting for the tiles and the windows to be where they end.
@@ -518,6 +521,14 @@ impl Coordinator {
                 }
             }
             Event::Picture { generation, window, frame, why } => self.picture(generation, window, frame, why, now, &mut out),
+            // A merge's retarget watches the window again, so one lost under the generation before is not.
+            Event::Lost { generation, window } => {
+                if let State::Flying(f) = &mut self.state
+                    && f.generation == generation
+                {
+                    hold_no_longer(f, window, now, &mut out);
+                }
+            }
             Event::Extend(needs) => {
                 if let State::Flying(f) = &mut self.state
                     && let Some((started, duration)) = &mut f.clock
@@ -643,9 +654,9 @@ impl Coordinator {
             f.focus_in = false;
             f.held_back = None;
         }
+        let holdable = f.holdable();
         // Until the motion starts, a newcomer is held for too; once moving, it joins as it lands.
         if f.clock.is_none() {
-            let holdable = f.holdable();
             extend_unique(&mut f.held, newcomers.into_iter().filter(|w| holdable.contains(w)));
         }
         if f.stage.kind.writes() && !changed.is_empty() {
@@ -659,6 +670,9 @@ impl Coordinator {
         out.push(Command::Holes(holes(f)));
         if f.stage.kind.watches_end() {
             out.push(Command::Watch(end_watch(f, now)));
+        }
+        for window in f.held.clone().into_iter().filter(|w| !holdable.contains(w)) {
+            hold_no_longer(f, window, now, out);
         }
         f.snap_landed(out);
     }
@@ -710,12 +724,7 @@ impl Coordinator {
             f.held_back = None;
             f.hand_over(window, out);
         }
-        if let Phase::Holding { .. } = f.phase {
-            f.held.retain(|w| *w != window);
-            if f.held.is_empty() {
-                start_moving(f, now, out);
-            }
-        }
+        hold_no_longer(f, window, now, out);
     }
 
     fn tick(&mut self, settled: bool, landed: bool, now: Instant, out: &mut Vec<Command>) {
@@ -827,6 +836,15 @@ fn hold_or_move(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
         start_moving(f, now, out);
     } else {
         f.phase = Phase::Holding { deadline: now + HOLD_CAP };
+    }
+}
+
+/// `window` is held for no longer, its picture in or never to come: the motion starts once the hold
+/// waits for nothing.
+fn hold_no_longer(f: &mut Flight, window: WindowId, now: Instant, out: &mut Vec<Command>) {
+    f.held.retain(|w| *w != window);
+    if matches!(f.phase, Phase::Holding { .. }) && f.held.is_empty() {
+        start_moving(f, now, out);
     }
 }
 
@@ -1259,6 +1277,105 @@ mod tests {
         assert!(!c.is_moving());
         let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now + COALESCE_WINDOW);
         assert!(has(&out, |c| *c == Command::StartMoving));
+    }
+
+    /// A newcomer whose picture comes, or is given up on, while the passes coalesce is not held for
+    /// once they have.
+    #[test]
+    fn a_newcomer_pictured_or_lost_while_the_passes_coalesce_is_not_held_for() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.kind = Kind::LayoutPass;
+        stage.start = Start::Coalesced;
+        let mut opened = stage.clone();
+        opened.awaiting = vec![w(2)];
+        for lost in [false, true] {
+            let mut c = running(stage.clone(), now);
+            c.on(Event::Merge { stage: opened.clone(), moved: true }, now + Duration::from_millis(10));
+            let (generation, window) = (c.generation(), w(2));
+            let event = match lost {
+                true => Event::Lost { generation, window },
+                false => Event::Picture { generation, window, frame: stage.tiles[1].end, why: Why::Landed },
+            };
+            assert!(!has(&c.on(event, now + Duration::from_millis(20)), |c| *c == Command::StartMoving), "still coalescing");
+            let out = c.on(Event::Tick { settled: true, landed: true }, now + COALESCE_WINDOW);
+            assert_eq!(out, vec![Command::StartMoving], "lost: {lost}");
+        }
+    }
+
+    /// A held window whose picture the pictures service gives up on, out of time, out of tries or
+    /// refused by the cache, is held for no longer: the motion starts once nothing else is, with
+    /// nothing swapped or snapped for it. Its repainted picture would have handed focus over; lost,
+    /// focus hands over as the last capture is asked.
+    #[test]
+    fn a_held_window_given_up_on_is_held_for_no_longer() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.awaiting = vec![w(2)];
+        let mut c = running(stage.clone(), now);
+        assert!(!c.is_moving());
+        let out = c.on(Event::Lost { generation: c.generation(), window: w(2) }, now);
+        assert_eq!(out, vec![Command::StartMoving]);
+        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
+        assert!(matches!(out.as_slice(), [Command::AskFinal { .. }, Command::HandOverFocus { to, .. }] if *to == w(2)),
+            "{out:?}");
+
+        stage.awaiting = vec![w(1), w(2)];
+        let mut c = running(stage.clone(), now);
+        let g = c.generation();
+        assert!(c.on(Event::Lost { generation: g, window: w(2) }, now).is_empty(), "window 1 is still held for");
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].end, why: Why::Landed }, now);
+        assert!(has(&out, |c| *c == Command::StartMoving));
+    }
+
+    /// A held window a merged pass sends where no watch can see it repaint, off the display, is held
+    /// for no longer: the motion starts at once rather than at the cap.
+    #[test]
+    fn a_held_window_a_merge_sends_off_the_display_is_held_for_no_longer() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.awaiting = vec![w(2)];
+        let mut c = running(stage.clone(), now);
+        assert!(!c.is_moving());
+        let off = r(1727.0, 35.0, 860.0, 1079.0);
+        stage.tiles[1].end = off;
+        stage.final_frames[1].1 = off;
+        let out = c.on(Event::Merge { stage, moved: true }, now + Duration::from_millis(10));
+        assert!(watch(&out).unwrap().awaiting.is_empty(), "no watch sees it");
+        assert!(has(&out, |c| *c == Command::StartMoving), "{out:?}");
+        assert!(c.is_moving());
+    }
+
+    /// A merge's retarget watches again a window lost under the generation before, so only a loss under
+    /// the generation watched now holds it for no longer.
+    #[test]
+    fn a_window_lost_under_the_generation_before_a_merge_is_still_held_for() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.awaiting = vec![w(2)];
+        let mut c = running(stage.clone(), now);
+        let before = c.generation();
+        c.on(Event::Merge { stage, moved: false }, now + Duration::from_millis(10));
+        assert!(c.on(Event::Lost { generation: before, window: w(2) }, now + Duration::from_millis(11)).is_empty());
+        assert!(!c.is_moving());
+        let out = c.on(Event::Lost { generation: c.generation(), window: w(2) }, now + Duration::from_millis(12));
+        assert!(has(&out, |c| *c == Command::StartMoving));
+    }
+
+    /// A window given up on is no landing: its tile is not snapped, and the lift still waits for the
+    /// real windows where they were written, which the engine reads off the window server.
+    #[test]
+    fn a_window_given_up_on_is_never_taken_for_landed() {
+        let now = Instant::now();
+        let mut c = running(pan(), now);
+        let g = c.generation();
+        for window in [w(1), w(2)] {
+            assert!(c.on(Event::Lost { generation: g, window }, now + LANDING_PATIENCE).is_empty());
+        }
+        let end = now + PLAYS;
+        assert!(!has(&c.on(Event::Tick { settled: true, landed: false }, end), |c| matches!(c, Command::Lift { .. })));
+        let out = c.on(Event::Tick { settled: true, landed: true }, end + Duration::from_millis(16));
+        assert!(has(&out, |c| matches!(c, Command::Lift { .. })));
     }
 
     #[test]

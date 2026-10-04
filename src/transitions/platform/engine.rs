@@ -926,8 +926,9 @@ impl FlightEngine {
         }
     }
 
-    /// What the pictures service landed: the deliveries under this engine's tag go to the
-    /// coordinator, frame zero's onto their tiles first. Any other capture is the cache's alone.
+    /// What the pictures service landed: the deliveries and the lost landings under this engine's tag
+    /// go to the coordinator, frame zero's onto their tiles first. Any other capture is the cache's
+    /// alone.
     fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
         match landed {
             crate::pictures::event::Event::Taken { .. } => {}
@@ -940,9 +941,9 @@ impl FlightEngine {
                 self.offer(generation, why, pictures);
             }
             crate::pictures::event::Event::Lost { tag, window } => {
-                if Generation::for_client(tag, self.client).is_some() {
-                    debug!(pid = window.pid, idx = window.idx.get(), "end window not where it ends by its deadline");
-                }
+                let Some(generation) = Generation::for_client(tag, self.client) else { return };
+                debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, "end window's picture will not come");
+                self.drive(lifecycle::Event::Lost { generation, window });
             }
         }
     }

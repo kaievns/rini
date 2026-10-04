@@ -1,8 +1,11 @@
 //! The pictures service: the thread that takes every background picture of a window, the desktop and
 //! the bar, the cache those pictures land in, and the handle every client holds.
 //!
-//! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`). Every SkyLight call
-//! is made on it, one at a time; ScreenCaptureKit is asked from it and its completions post back to it.
+//! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`) and makes the
+//! service's own calls: its SkyLight captures, one at a time, and its ScreenCaptureKit asks, whose
+//! completions post back to it. A transition's dressing is composited on the caller's thread until its
+//! display's first render lands, and the flight engine takes its spawn capture of a window that has
+//! just opened on the main thread as it composes (Known debt in `src/pictures/docs/README.md`).
 //! A client asks, watches, hints, holds and forgets through a channel, reads from any thread through
 //! one lock, and hears of what lands through the sink it was started with. See "The service" in
 //! `src/pictures/docs/README.md`.
@@ -25,7 +28,9 @@ use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
 use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Priority, Schedule};
 use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
-use crate::pictures::domain::watch::{Hint, OnScreen, Outcome, Prints, Seen, Set, Tag, Watch, WatchId, Why};
+use crate::pictures::domain::watch::{
+    Capture, Hint, Look, OnScreen, Prints, Seen, Set, Tag, Watch, WatchId, Why,
+};
 use crate::pictures::event::Event;
 use crate::pictures::platform::bitmap::thumbprint;
 use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
@@ -168,10 +173,19 @@ fn land_desktop<P>(
     kept
 }
 
-/// What a background capture that came back tells the clients, once the cache has had it: `Taken`
-/// when its pixels are now the ones held, and then to each client owed it as a focus change, a
-/// delivery; nothing when the cache kept what it holds, or for an empty capture or a window forgotten
-/// meanwhile (`kept` is `None`).
+/// Puts a capture in the cache; true when its pixels are now the ones held, and then every sink hears
+/// `Taken`.
+fn put(cache: &mut PictureCache<Picture>, window: WindowId, picture: Picture, events: &mut Vec<Event>) -> bool {
+    let took = cache.insert(window, picture.clone());
+    if took {
+        events.push(Event::Taken { window, picture });
+    }
+    took
+}
+
+/// What a background capture that came back tells the clients, once the cache has had it (`put`), and,
+/// when it took it, a delivery to each client owed it as a focus change; nothing when the cache kept
+/// what it holds, or for an empty capture or a window forgotten meanwhile (`kept` is `None`).
 fn landing(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
@@ -179,16 +193,13 @@ fn landing(
     kept: Option<Vec<(Tag, CGRect)>>,
     picture: Option<Picture>,
 ) -> Vec<Event> {
+    let mut events = Vec::new();
     let (Some(owed), Some(picture)) = (kept, picture) else {
-        return Vec::new();
+        return events;
     };
-    if !cache.insert(window, picture.clone()) {
-        return Vec::new();
+    if !put(cache, window, picture.clone(), &mut events) {
+        return events;
     }
-    let mut events = vec![Event::Taken {
-        window,
-        picture: picture.clone(),
-    }];
     for (tag, frame) in owed {
         delivered.record(tag, window, picture.clone());
         events.push(Event::Delivered {
@@ -200,26 +211,77 @@ fn landing(
     events
 }
 
-/// What a round of SkyLight captures tells the clients: each picture the cache took, once however many
-/// clients it is delivered to, and each delivery the schedule decided, of the pictures the cache took.
-/// A frame-zero delivery is sent even with none.
-fn deliver(
+/// The windows of `looks` to capture, at their server frames: those one of their accepts takes there
+/// on the display held. None with no display held.
+fn wanted(looks: &[Look], frames: &[Option<CGRect>], display: Option<Display>) -> Vec<skylight::OnScreen> {
+    let Some(display) = display else {
+        return Vec::new();
+    };
+    looks
+        .iter()
+        .zip(frames)
+        .filter_map(|(look, frame)| {
+            let frame = (*frame)?;
+            look.accepts.iter().any(|accept| accept.accepts(frame, display.frame)).then_some(
+                skylight::OnScreen {
+                    window: look.target.window,
+                    server_id: look.target.server_id,
+                    frame,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Each picture captured, with its prints: its band print, and its thumbprint only where a look at
+/// its window asks for one.
+fn with_prints(looks: &[Look], captured: Vec<(WindowId, Picture)>) -> Vec<(WindowId, Picture, Option<Prints>)> {
+    captured
+        .into_iter()
+        .map(|(window, picture)| {
+            let thumbprint = looks.iter().any(|look| look.target.window == window && look.thumbprint);
+            let prints = band_print(&picture).map(|band| Prints {
+                band,
+                thumb: thumbprint.then(|| picture_thumbprint(&picture)).flatten(),
+            });
+            (window, picture, prints)
+        })
+        .collect()
+}
+
+/// What a round of SkyLight captures tells the clients. Each picture is put to the cache first, and
+/// the schedule is told what each window looked at was seen as: only a picture the cache took is a
+/// capture it may deliver or judge news by. Every delivery it decides is then sent as it decided it,
+/// and recorded as delivered.
+fn round<P>(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
-    captured: Vec<(WindowId, Picture)>,
-    outcome: Outcome,
+    schedule: &mut Schedule<P>,
+    now: Instant,
+    looked: Vec<(WindowId, Option<CGRect>)>,
+    captured: Vec<(WindowId, Picture, Option<Prints>)>,
 ) -> Vec<Event> {
     let mut events = Vec::new();
     let mut took = HashMap::new();
-    for (window, picture) in captured {
-        if cache.insert(window, picture.clone()) {
-            events.push(Event::Taken {
-                window,
-                picture: picture.clone(),
-            });
+    let mut captures = HashMap::new();
+    for (window, picture, prints) in captured {
+        let capture = if put(cache, window, picture.clone(), &mut events) {
             took.insert(window, picture);
-        }
+            prints.map_or(Capture::Missed, Capture::Taken)
+        } else {
+            Capture::Refused
+        };
+        captures.insert(window, capture);
     }
+    let seen: Vec<Seen> = looked
+        .into_iter()
+        .map(|(window, frame)| Seen {
+            window,
+            frame,
+            capture: captures.get(&window).cloned().unwrap_or(Capture::Missed),
+        })
+        .collect();
+    let outcome = schedule.seen(now, &seen);
     for delivery in outcome.deliveries {
         let pictures: Vec<(WindowId, Picture, CGRect)> = delivery
             .windows
@@ -229,13 +291,11 @@ fn deliver(
         for (window, picture, _) in &pictures {
             delivered.record(delivery.tag, *window, picture.clone());
         }
-        if delivery.why == Why::FrameZero || !pictures.is_empty() {
-            events.push(Event::Delivered {
-                tag: delivery.tag,
-                why: delivery.why,
-                pictures,
-            });
-        }
+        events.push(Event::Delivered {
+            tag: delivery.tag,
+            why: delivery.why,
+            pictures,
+        });
     }
     events.extend(outcome.lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }));
     events
@@ -257,7 +317,7 @@ struct StandIn {
 unsafe impl Send for StandIn {}
 
 impl Pictures {
-    /// Starts the service on its own thread. Every sink hears of every picture that lands.
+    /// Starts the service on its own thread. Every sink hears of every picture the cache takes.
     pub fn start(sinks: Vec<Sink>) -> Self {
         let (commands, requests) = channel::channel();
         let (done_tx, done) = channel::channel();
@@ -700,33 +760,20 @@ impl Service {
     }
 
     /// Reads the server frame of every window `sets` names, captures those where they are wanted, set
-    /// by set and never two overlapping windows in one call, and hands the schedule what was seen; then
-    /// tells the clients what it decided. What is learned of a window on the way is kept.
+    /// by set and never two overlapping windows in one call, and puts what came back where it belongs
+    /// (`put_round`).
     fn look(&mut self, sets: Vec<Set>) {
         let display = self.shared.lock().unwrap().schedule.display();
         // Taken from the shared state only once something is captured: most looks are landing polls.
         let mut known: Option<(Learned, Option<DesktopBackdrop>)> = None;
-        let mut seen = Vec::new();
+        let mut looks = Vec::new();
+        let mut looked = Vec::new();
         let mut captured: Vec<(WindowId, Picture)> = Vec::new();
         let mut desktop_stale = false;
         for set in sets {
             let frames: Vec<Option<CGRect>> =
                 set.looks.iter().map(|look| server_frame(look.target.server_id)).collect();
-            let wanted: Vec<skylight::OnScreen> = set
-                .looks
-                .iter()
-                .zip(&frames)
-                .filter_map(|(look, frame)| {
-                    let (frame, display) = ((*frame)?, display?);
-                    look.accepts.iter().any(|accept| accept.accepts(frame, display.frame)).then_some(
-                        skylight::OnScreen {
-                            window: look.target.window,
-                            server_id: look.target.server_id,
-                            frame,
-                        },
-                    )
-                })
-                .collect();
+            let wanted = wanted(&set.looks, &frames, display);
             if let (Some(display), false) = (display, wanted.is_empty()) {
                 let behind: Vec<(WindowServerId, CGRect)> =
                     set.behind.iter().filter_map(|id| Some((*id, server_frame(*id)?))).collect();
@@ -743,32 +790,34 @@ impl Service {
                     captured.extend(batch.pictures);
                 }
             }
-            for (look, frame) in set.looks.iter().zip(frames) {
-                let picture = captured.iter().find(|(window, _)| *window == look.target.window);
-                let prints = picture.and_then(|(_, picture)| {
-                    Some(Prints {
-                        band: band_print(picture)?,
-                        thumb: look.thumbprint.then(|| picture_thumbprint(picture)).flatten(),
-                    })
-                });
-                seen.push(Seen {
-                    window: look.target.window,
-                    frame,
-                    prints,
-                });
-            }
+            looked.extend(set.looks.iter().map(|look| look.target.window).zip(frames));
+            looks.extend(set.looks);
         }
-        let took_any = !captured.is_empty();
+        let captured = with_prints(&looks, captured);
+        self.put_round(looked, captured, known, desktop_stale);
+    }
+
+    /// What a round of SkyLight captures brought back, put where it belongs: what was learned of each
+    /// window, and the desktop's windows unless the round found them `desktop_stale`; the pictures and
+    /// what the schedule makes of them (`round`), told; and, released, what no hold allows, once the
+    /// cache took any.
+    fn put_round(
+        &mut self,
+        looked: Vec<(WindowId, Option<CGRect>)>,
+        captured: Vec<(WindowId, Picture, Option<Prints>)>,
+        known: Option<(Learned, Option<DesktopBackdrop>)>,
+        desktop_stale: bool,
+    ) {
         let (events, released) = {
             let mut shared = self.shared.lock().unwrap();
             if let Some((learned, desktop)) = known {
                 shared.learned = learned;
                 shared.display.desktop_windows = desktop.filter(|_| !desktop_stale);
             }
-            let outcome = shared.schedule.seen(Instant::now(), &seen);
             let Shared { cache, delivered, schedule, .. } = &mut *shared;
-            (deliver(cache, delivered, captured, outcome), !schedule.held())
+            (round(cache, delivered, schedule, Instant::now(), looked, captured), !schedule.held())
         };
+        let took_any = events.iter().any(|event| matches!(event, Event::Taken { .. }));
         self.tell(events);
         if released && took_any {
             self.at_rest();
@@ -851,6 +900,7 @@ mod tests {
     use objc2_core_foundation::CGPoint;
 
     use super::*;
+    use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Moment, Settle};
     use crate::pictures::platform::picture::test_picture;
 
     fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
@@ -936,58 +986,210 @@ mod tests {
         assert!(delivered.under(tag(3), wid(2)).is_none());
     }
 
-    fn delivery(generation: u64, why: Why, windows: &[u32]) -> crate::pictures::domain::watch::Delivery {
-        crate::pictures::domain::watch::Delivery {
-            tag: tag(generation),
-            why,
-            windows: windows.iter().map(|idx| (wid(*idx), frame())).collect(),
+    fn target(idx: u32) -> PictureTarget {
+        PictureTarget {
+            window: wid(idx),
+            server_id: WindowServerId::new(idx),
+            size: CGSize::new(859.0, 1081.0),
         }
     }
 
-    /// A round of captures puts each picture in the cache once, delivers only what the cache took,
-    /// and sends a frame-zero delivery even when nothing could be taken.
+    fn on_screen(generation: u64, moment: Moment, windows: &[u32]) -> OnScreen {
+        OnScreen {
+            tag: tag(generation),
+            moment,
+            strip: windows.iter().map(|idx| (target(*idx), frame())).collect(),
+            background: Vec::new(),
+            behind: Vec::new(),
+        }
+    }
+
+    fn landing_watch(windows: &[u32], settle: Settle) -> Watch {
+        Watch::Landing {
+            tag: tag(1),
+            windows: windows.iter().map(|idx| (target(*idx), frame())).collect(),
+            behind: Vec::new(),
+            slack: 20.0,
+            settle,
+            until: Instant::now() + Duration::from_secs(1),
+        }
+    }
+
+    fn change_watch(idx: u32) -> Watch {
+        Watch::Change {
+            tag: tag(1),
+            window: target(idx),
+            end: frame(),
+            behind: Vec::new(),
+            every: CHANGE_EVERY,
+            tries: CHANGE_TRIES,
+        }
+    }
+
+    /// The looks of a SkyLight round.
+    fn sky<P>(next: Next<P>) -> Vec<Look> {
+        match next {
+            Next::Sky(sets) => sets.into_iter().flat_map(|set| set.looks).collect(),
+            _ => panic!("not a SkyLight round"),
+        }
+    }
+
+    /// Every window `looks` names, with the server frame `frame`.
+    fn found(looks: &[Look], frame: Option<CGRect>) -> Vec<(WindowId, Option<CGRect>)> {
+        looks.iter().map(|look| (look.target.window, frame)).collect()
+    }
+
+    /// One SkyLight round of `ask`, every window found at `frame()` and captured as `pictures` says.
+    fn asked(
+        schedule: &mut Schedule<()>,
+        cache: &mut PictureCache<Picture>,
+        delivered: &mut Delivered<Picture>,
+        ask: OnScreen,
+        pictures: Vec<(WindowId, Picture)>,
+    ) -> Vec<Event> {
+        let now = Instant::now();
+        schedule.ask_on_screen(ask);
+        let looks = sky(schedule.next(now, |_| None));
+        round(cache, delivered, schedule, now, found(&looks, Some(frame())), with_prints(&looks, pictures))
+    }
+
+    /// A round puts each picture to the cache before the schedule sees it: every sink hears of each
+    /// one taken once, a covering one refused for the blurred one held is never delivered, and frame
+    /// zero is delivered even with nothing taken.
     #[test]
-    fn a_round_delivers_only_what_the_cache_took_and_frame_zero_always() {
+    fn a_round_tells_the_schedule_only_of_what_the_cache_took() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.set_display(built_in(), false, now);
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
-        let mut blurred = sized(859.0, 1081.0);
-        blurred.carries_blur = true;
-        cache.insert(wid(2), blurred);
-        let outcome = Outcome {
-            deliveries: vec![delivery(1, Why::Landed, &[1, 2]), delivery(1, Why::Final, &[1])],
-            lost: vec![(tag(1), wid(3))],
-            clipped: Vec::new(),
-        };
-        let events = deliver(
+        cache.insert(wid(2), blurred(0.5, now));
+        let events = asked(
+            &mut schedule,
             &mut cache,
             &mut delivered,
-            vec![(wid(1), sized(859.0, 1081.0)), (wid(2), sized(859.0, 1081.0))],
-            outcome,
+            on_screen(1, Moment::FrameZero, &[1, 2]),
+            vec![(wid(1), flat(0.5, now)), (wid(2), flat(0.5, now))],
         );
-        let taken: Vec<WindowId> =
-            events.iter().filter_map(|e| if let Event::Taken { window, .. } = e { Some(*window) } else { None }).collect();
-        assert_eq!(taken, vec![wid(1)], "the grey one was refused for the blurred one held");
-        let landed: Vec<Vec<WindowId>> = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Delivered { pictures, .. } => Some(pictures.iter().map(|(w, _, _)| *w).collect()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(landed, vec![vec![wid(1)], vec![wid(1)]]);
-        assert!(events.iter().any(|e| matches!(e, Event::Lost { window, .. } if *window == wid(3))));
+        assert!(matches!(&events[..], [
+            Event::Taken { window: taken, .. },
+            Event::Delivered { why: Why::FrameZero, pictures, .. },
+        ] if *taken == wid(1) && pictures.len() == 1 && pictures[0].0 == wid(1)));
+        assert!(delivered.under(tag(1), wid(1)).is_some());
+        assert!(delivered.under(tag(1), wid(2)).is_none(), "never delivered");
 
-        let events = deliver(
-            &mut cache,
-            &mut delivered,
-            Vec::new(),
-            Outcome {
-                deliveries: vec![delivery(2, Why::FrameZero, &[]), delivery(2, Why::Landed, &[4])],
-                ..Outcome::default()
-            },
-        );
+        schedule.ask_on_screen(on_screen(2, Moment::FrameZero, &[3]));
+        let looks = sky(schedule.next(now, |_| None));
+        let events = round(&mut cache, &mut delivered, &mut schedule, now, found(&looks, None), Vec::new());
         assert!(matches!(&events[..], [Event::Delivered { why: Why::FrameZero, pictures, .. }] if pictures.is_empty()));
     }
+
+    /// A landing whose capture the cache refuses for the blurred picture it holds is lost at once, so
+    /// the hold hears that its picture will not come; a refused change capture delivers nothing,
+    /// records nothing as delivered, and finishes its watch.
+    #[test]
+    fn a_refused_landing_is_lost_and_a_refused_change_delivers_nothing() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.set_display(built_in(), false, now);
+        schedule.hold(Hold::Transition, now);
+        let mut cache = PictureCache::new();
+        let mut delivered = Delivered::default();
+        cache.insert(wid(1), blurred(0.5, now));
+        cache.insert(wid(2), blurred(0.5, now));
+        schedule.watch(WatchId(1), landing_watch(&[1], Settle::Repainted), now, &|_| None);
+        schedule.hint(Hint::Focused(wid(2)), now);
+        schedule.watch(WatchId(2), change_watch(2), now, &|_| None);
+        let looks = sky(schedule.next(now, |_| None));
+        let captured = with_prints(&looks, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.1, now))]);
+        let events = round(&mut cache, &mut delivered, &mut schedule, now, found(&looks, Some(frame())), captured);
+        assert!(matches!(&events[..], [
+            Event::Lost { tag: lost_tag, window: lost },
+        ] if *lost_tag == tag(1) && *lost == wid(1)));
+        assert!(delivered.under(tag(1), wid(2)).is_none());
+        assert!(matches!(schedule.next(now, |_| None), Next::Idle), "nothing more is asked of either");
+    }
+
+    /// A final capture the cache refused was never delivered, so the next one showing the same is news.
+    #[test]
+    fn a_final_ask_after_a_refused_capture_counts_the_next_one_as_news() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.set_display(built_in(), false, now);
+        schedule.hold(Hold::Transition, now);
+        let mut cache = PictureCache::new();
+        let mut delivered = Delivered::default();
+        let events = asked(
+            &mut schedule,
+            &mut cache,
+            &mut delivered,
+            on_screen(1, Moment::FrameZero, &[1]),
+            vec![(wid(1), flat(0.5, now))],
+        );
+        assert!(matches!(&events[..], [Event::Taken { .. }, Event::Delivered { why: Why::FrameZero, .. }]));
+        cache.insert(wid(1), blurred(0.5, now));
+
+        let final_ask = || on_screen(1, Moment::Final, &[1]);
+        let events = asked(&mut schedule, &mut cache, &mut delivered, final_ask(), vec![(wid(1), flat(0.1, now))]);
+        assert!(events.is_empty(), "refused for the blurred one held");
+        let events = asked(&mut schedule, &mut cache, &mut delivered, final_ask(), vec![(wid(1), blurred(0.1, now))]);
+        assert!(matches!(&events[..], [
+            Event::Taken { .. },
+            Event::Delivered { why: Why::Final, pictures, .. },
+        ] if pictures.len() == 1));
+    }
+
+    /// A window is captured only at a server frame one of its accepts takes on the display held; with
+    /// no display held, none is.
+    #[test]
+    fn a_window_is_wanted_only_where_an_accept_takes_its_frame_on_the_display_held() {
+        let look = |idx, accepts| Look {
+            target: target(idx),
+            accepts,
+            thumbprint: false,
+        };
+        let off = CGRect::new(CGPoint::new(1700.0, 32.0), CGSize::new(859.0, 1081.0));
+        let looks = [
+            look(1, vec![Accept::Origin { at: frame().origin }]),
+            look(2, vec![Accept::OnDisplay]),
+            look(3, vec![Accept::OnDisplay]),
+            look(4, vec![Accept::Near { end: off, slack: 20.0 }, Accept::OnDisplay]),
+        ];
+        let frames = [Some(frame()), None, Some(off), Some(frame())];
+        let wanted_now: Vec<(WindowId, WindowServerId, CGRect)> = wanted(&looks, &frames, Some(built_in()))
+            .iter()
+            .map(|window| (window.window, window.server_id, window.frame))
+            .collect();
+        assert_eq!(
+            wanted_now,
+            vec![
+                (wid(1), WindowServerId::new(1), frame()),
+                (wid(4), WindowServerId::new(4), frame())
+            ],
+            "with no frame, or off the display, a window is not wanted; one accept is enough"
+        );
+        assert!(wanted(&looks, &frames, None).is_empty(), "no display held");
+    }
+
+    /// Every picture captured is band printed, and thumbprinted only where a look at its window asks.
+    #[test]
+    fn a_capture_is_thumbprinted_only_where_its_look_asks() {
+        let now = Instant::now();
+        let look = |idx, thumbprint| Look {
+            target: target(idx),
+            accepts: vec![Accept::OnDisplay],
+            thumbprint,
+        };
+        let printed: Vec<(WindowId, bool, bool)> =
+            with_prints(&[look(1, true), look(2, false)], vec![(wid(1), flat(0.5, now)), (wid(2), flat(0.5, now))])
+                .into_iter()
+                .map(|(window, _, prints)| {
+                    (window, prints.is_some(), prints.is_some_and(|prints| prints.thumb.is_some()))
+                })
+                .collect();
+        assert_eq!(printed, vec![(wid(1), true, true), (wid(2), true, false)]);
+    }
+
     /// A display change leaves nothing of the display left behind, its desktop's windows included,
     /// and a bar no longer pictured goes on its own.
     #[test]
@@ -1090,6 +1292,14 @@ mod tests {
         }
     }
 
+    /// The same, carrying its blur, as a baked capture of a window with a material does.
+    fn blurred(level: f64, taken: Instant) -> Picture {
+        Picture {
+            carries_blur: true,
+            ..flat(level, taken)
+        }
+    }
+
     /// A client keeps as a window's focused look only a picture it was delivered under the tag it
     /// names; the look stays through a newer capture of the same content, goes with one of different
     /// content, and is judged only once no transition holds the service.
@@ -1117,7 +1327,7 @@ mod tests {
     }
 
     /// A window that is gone takes everything known of it: its pictures, its focused look, what it was
-    /// delivered, and its knowledge, whose id may come back on another window (D9).
+    /// delivered, and its knowledge, whose id may come back on another window.
     #[test]
     fn a_forgotten_window_leaves_nothing_behind() {
         let (mut service, shared) = detached_service();
@@ -1143,6 +1353,149 @@ mod tests {
         shared.lock().unwrap().cache.keep_focused(wid(1), crate::pictures::platform::picture::test_region());
         service.apply(Command::Hold(Hold::Released));
         assert!(matches!(shared.lock().unwrap().cache.focused(wid(1)).unwrap().image, Pixels::Bitmap(_)));
+    }
+
+    /// One SkyLight round on the service: the looks the schedule hands out, every window found at
+    /// `frame()` and captured as `pictures` says.
+    fn service_round(service: &mut Service, shared: &Arc<Mutex<Shared>>, pictures: Vec<(WindowId, Picture)>) {
+        let looks = sky(shared.lock().unwrap().schedule.next(Instant::now(), |_| None));
+        service.put_round(found(&looks, Some(frame())), with_prints(&looks, pictures), None, false);
+    }
+
+    fn delivered_of(shared: &Arc<Mutex<Shared>>, idx: u32) -> bool {
+        shared.lock().unwrap().delivered.under(tag(1), wid(idx)).is_some()
+    }
+
+    /// What a round learned is kept, and the desktop's windows listed with it unless a baked composite
+    /// came back another shape, which a desktop window gone from it makes: they are listed afresh the
+    /// next time. A round that captured nothing writes nothing back.
+    #[test]
+    fn a_round_keeps_what_it_learned_and_drops_the_desktop_windows_when_stale() {
+        let (mut service, shared) = detached_service();
+        let window = WindowServerId::new(1);
+        let mut learned = Learned::default();
+        learned.saw_alpha(window, true, Some(10.0));
+        let listed = || {
+            Some(DesktopBackdrop {
+                windows: vec![WindowServerId::new(7)],
+                ..DesktopBackdrop::default()
+            })
+        };
+        service.put_round(Vec::new(), Vec::new(), Some((learned.clone(), listed())), false);
+        service.put_round(Vec::new(), Vec::new(), None, false);
+        {
+            let shared = shared.lock().unwrap();
+            assert_eq!(shared.learned.get(window).translucent, Some(true));
+            assert!(shared.display.desktop_windows.is_some());
+        }
+        service.put_round(Vec::new(), Vec::new(), Some((learned, listed())), true);
+        assert!(shared.lock().unwrap().display.desktop_windows.is_none(), "stale");
+    }
+
+    /// A round the cache took a picture from, with no transition holding the service, keeps its
+    /// regions as copies at once; held, or with nothing taken, a region stays one until the release.
+    #[test]
+    fn a_round_at_rest_keeps_regions_as_copies_once_the_cache_took_a_picture() {
+        let region = crate::pictures::platform::picture::test_region;
+        let is_region = |shared: &Arc<Mutex<Shared>>| {
+            matches!(shared.lock().unwrap().cache.get(wid(1)).unwrap().image, Pixels::Region { .. })
+        };
+
+        let (mut service, shared) = detached_service();
+        service.put_round(Vec::new(), vec![(wid(1), region(), None)], None, false);
+        assert!(!is_region(&shared), "kept as a copy");
+
+        let (mut service, shared) = detached_service();
+        service.apply(Command::Hold(Hold::Transition));
+        service.put_round(Vec::new(), vec![(wid(1), region(), None)], None, false);
+        assert!(is_region(&shared), "held");
+
+        let (mut service, shared) = detached_service();
+        shared.lock().unwrap().cache.insert(
+            wid(1),
+            Picture {
+                carries_blur: true,
+                ..region()
+            },
+        );
+        service.put_round(Vec::new(), vec![(wid(1), region(), None)], None, false);
+        assert!(is_region(&shared), "refused: nothing taken");
+    }
+
+    /// A watched landing that has to repaint settles against the picture the cache held when it was
+    /// watched: a first capture that differs from it is the window repainted, one that matches it is
+    /// not. A retarget keeps that picture for a window still landing, though the cache holds the
+    /// watch's own capture by then.
+    #[test]
+    fn a_repainting_landing_settles_against_the_picture_held_when_it_was_watched() {
+        let now = Instant::now();
+        let (mut service, shared) = detached_service();
+        {
+            let mut shared = shared.lock().unwrap();
+            shared.schedule.set_display(built_in(), false, now);
+            shared.cache.insert(wid(1), flat(0.5, now));
+            shared.cache.insert(wid(2), flat(0.5, now));
+        }
+        service.apply(Command::Watch(WatchId(1), landing_watch(&[1, 2], Settle::Repainted)));
+        service_round(&mut service, &shared, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.5, now))]);
+        assert!(delivered_of(&shared, 1), "repainted");
+        assert!(!delivered_of(&shared, 2), "the picture held before");
+
+        service.apply(Command::Retarget(WatchId(1), landing_watch(&[1, 2], Settle::Repainted)));
+        shared.lock().unwrap().cache.insert(wid(2), flat(0.9, now));
+        service_round(&mut service, &shared, vec![(wid(2), flat(0.9, now))]);
+        assert!(delivered_of(&shared, 2), "differs from the picture held when it was first watched");
+    }
+
+    /// An ask on screen, a stop and a focus hint reach the schedule as they are applied.
+    #[test]
+    fn an_ask_on_screen_a_stop_and_a_focus_hint_reach_the_schedule() {
+        let (mut service, shared) = detached_service();
+        let next = || shared.lock().unwrap().schedule.next(Instant::now(), |_| None);
+        let looked = |next| sky(next).into_iter().map(|look| look.target.window).collect::<Vec<_>>();
+
+        service.apply(Command::AskOnScreen(on_screen(1, Moment::FrameZero, &[1, 2])));
+        assert_eq!(looked(next()), vec![wid(1), wid(2)]);
+
+        service.apply(Command::Watch(WatchId(1), landing_watch(&[3], Settle::AsSoonAsThere)));
+        assert_eq!(looked(next()), vec![wid(3)]);
+        service.apply(Command::Stop(WatchId(1)));
+        assert!(matches!(next(), Next::Idle), "stopped");
+
+        service.apply(Command::Watch(WatchId(2), change_watch(4)));
+        assert!(matches!(next(), Next::Idle), "no focus reported");
+        service.apply(Command::Hint(Hint::Focused(wid(4))));
+        assert_eq!(looked(next()), vec![wid(4)]);
+    }
+
+    /// Every handle method that asks sends its command, in order; the reads are of what is shared.
+    #[test]
+    fn the_handle_sends_each_ask_and_reads_what_is_held() {
+        let (pictures, mut commands) = Pictures::detached();
+        pictures.ask_on_screen(on_screen(1, Moment::Final, &[1]));
+        pictures.retarget(WatchId(3), change_watch(1));
+        pictures.stop(WatchId(3));
+        pictures.hint(Hint::Placed(wid(1)));
+        pictures.keep_focused(tag(2), wid(1));
+        let sent: Vec<Command> =
+            std::iter::from_fn(|| commands.try_recv().ok().map(|(_, command)| command)).collect();
+        assert!(matches!(&sent[..], [
+            Command::AskOnScreen(ask),
+            Command::Retarget(WatchId(3), Watch::Change { .. }),
+            Command::Stop(WatchId(3)),
+            Command::Hint(Hint::Placed(placed)),
+            Command::KeepFocused(kept, focused),
+        ] if ask.moment == Moment::Final && *placed == wid(1) && *kept == tag(2) && *focused == wid(1)));
+
+        let now = Instant::now();
+        {
+            let mut shared = pictures.lock();
+            shared.cache.keep_focused(wid(1), flat(0.5, now));
+            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true, Some(10.0));
+        }
+        assert_eq!(pictures.focused(wid(1)).map(|look| look.taken), Some(now));
+        assert!(pictures.focused(wid(2)).is_none());
+        assert_eq!(pictures.knowledge(WindowServerId::from(wid(1))).translucent, Some(true));
     }
 
     /// Watch ids are the handle's, handed out at once, and the watch goes to the thread after them.

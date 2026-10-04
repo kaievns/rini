@@ -22,8 +22,8 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be, and the id a window rini does not manage is pictured under |
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, hints, holds and display changes in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus and placement hints, and the band prints each client was last delivered, which decide what is news |
-| **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes every SkyLight call, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
-| **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, and a window that never landed |
+| **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
+| **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, and a landing whose picture will not come |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, and the framed capture of one window with, wholly on a display, its blur |
 | **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency and corner, and whether its baked picture shows a material |
@@ -38,8 +38,12 @@ this a resize" so the two agree.
 ## The service
 
 One thread, `pictures`, makes every background capture of a window, the desktop and the bar, and
-every SkyLight capture of windows on screen, one call at a time. It is started once, in `src/main.rs`,
-with a sink per client; the flight engine, the reactor and the switcher each hold a `Pictures` handle.
+every capture of windows on screen a transition asks for or watches, one SkyLight call at a time. Two
+kinds of capture are not its yet: a transition's desktop and bar, composited on the caller's thread
+until its display's first render lands, and the flight engine's spawn capture of a window that has just
+opened, taken on the main thread as it composes (both Known debt). It is started once, in
+`src/main.rs`, with a sink per client; the flight engine, the reactor and the switcher each hold a
+`Pictures` handle.
 
 | A client | Through the handle |
 |---|---|
@@ -54,10 +58,11 @@ Asks, watches, hints, holds and forgets are messages, applied in order on the th
 queued before the next call is made, so the newest wins. Reads are not: they lock the shared state and
 copy out, so the switcher draws without a round trip and the engine composes frame zero with what is
 held at that instant. Every capture that comes back goes into the cache first, and every sink hears of
-each one (`event.rs`): a client draws only a picture the cache took, so a flight and the switcher never
-draw what the next flight will not. A delivery under a tag carries only pictures the cache took too,
-each with the server frame it was taken at; every sink hears it, and a client takes its own by the
-tag's client.
+each one the cache took (`event.rs`): a client draws only a picture the cache took, so a flight and the
+switcher never draw what the next flight will not. The watches are told which pictures the cache took
+before they decide anything: a delivery under a tag carries only those, each with the server frame it
+was taken at, and a capture the cache refused is neither delivered nor news. Every sink hears a
+delivery, and a client takes its own by the tag's client.
 
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels
 out and post them back. No capture call is made there: `CGWindowListCreateImage` is proxied through the
@@ -111,8 +116,9 @@ handle. Every other picture a transition draws it asks for or watches.
 ## The watches
 
 `domain/watch.rs` is the SkyLight half of the schedule: windows on screen, captured at the frames the
-window server has them at (`SLSGetWindowBounds`, which has a written frame within 0.1ms of the write
-returning) and delivered under the asker's `Tag`, a client and its generation. None of it waits for a
+window server has them at (`SLSGetWindowBounds`: a parked window's written frame is there within 0.1ms
+of the write returning, an app still activating applies a write late) and delivered under the asker's
+`Tag`, a client and its generation. None of it waits for a
 release: it is what a transition waits on.
 
 | Rule | Why |
@@ -121,19 +127,22 @@ release: it is what a transition waits on.
 | Frame zero takes the windows within 2pt of where their tiles start and wholly on the display, the strip in one set and the background in another, and delivers everything in one delivery, even an empty one | the overlay waits for it, so it must always come; in one composite with the strip, a translucent window would bake what is behind it |
 | No two overlapping windows are in one call, and windows with different `behind` are never in one call | the crop of the window behind would show the one in front; a material blurs what is composited after it |
 | `Landing` reads each window's frame every 1ms, captures it once it is within `slack` (20pt) of its end and wholly on the display, and reports it `Lost` at `until`; `Placed` reads at once | the server rounds each window on its own and an app may settle a point or two off; a window that never lands must not hold anything up |
+| A landing whose capture the cache refuses is `Lost` at once | the cache refuses a capture without the blur for a picture with it at the same size, and so every later capture there; what it holds is the picture to fly |
 | `Settle::Repainted` keeps capturing every 8ms, 125 times at most once there, until `repaint_settled`, and delivers that capture whatever its band print; out of tries it is `Lost` | a grow or an entrance is not painted at its new size yet; the flight holds for it, so the picture must come or the hold must hear it will not |
-| `Change` starts at the window's focus report, captures it where it ends every 15ms, six times at most, and stops at the first band print that differs from what the client was delivered of it as the watch started; with none then, from what it was delivered by the first capture, and with none at all the first capture is delivered as landed and the change judged from it; it spends no try before the window is there | a focus change shows in the title band; a landing looked at first in the same round delivers the focused look of a window focused before it landed, and judged from the latest delivery the change was never seen; with nothing to compare, a first capture cannot be called a change |
-| A focus report is remembered for a second, and a `Change` watch created after it starts armed | the report came before the watch in 136 of 225 flights of the prototype, and 135 of those never captured the focus (D1) |
+| `Change` starts at the window's focus report, captures it where it ends every 15ms, six times at most, and stops at the first band print that differs from what the client was delivered of it as the watch started; with none then, from what it was delivered by the first capture, and with none at all the first capture is delivered as landed and the change judged from it; it spends no try before the window is there, and is done at a capture the cache refuses | a focus change shows in the title band; a landing looked at first in the same round delivers the focused look of a window focused before it landed, and judged from the latest delivery the change was never seen; with nothing to compare, a first capture cannot be called a change; the cache refuses every later capture of the window at that size too, and the windows behind the strip wait on the watch |
+| A focus report is remembered for a second, and a `Change` watch created after it starts armed | the report came before the watch in 136 of 225 flights of the prototype, and 135 of those never captured the focus |
 | A `Change` window whose frame is where it ends but cut by the display's edge takes one ScreenCaptureKit capture, at focus priority, through the hold, delivered as its focus change; one already out is followed by its own | SkyLight captures only what is on a display, and `specs/animation.md` has the window gaining focus recaptured even clipped (`docs/pictures-motion-transitions.md`) |
-| `Live` refreshes every 16ms at most, never while a landing is pending or a change capture is due within 8ms, and only once its `after` watch is done, but once at `initial` regardless; every capture is delivered | refreshing ahead of the focus capture held it up 31ms; content behind the strip changes below the band, which a band print would not see |
+| `Live` refreshes every 16ms at most, never while a landing is pending or a change capture is due within 8ms, and only once its `after` watch is done, but once at `initial` regardless; every capture the cache took is delivered, whatever its band print | refreshing ahead of the focus capture held it up 31ms; content behind the strip changes below the band, which a band print would not see |
 | Landing, change and final deliveries carry only band prints that are news to the client; frame zero starts the client's prints afresh, and frame zero asked again under the same tag adds to them | a picture the tile already shows is not swapped again; a window flying the cache's picture this time gets its landing whatever it looked like last time; a transition asks frame zero again for what a pass merged before its show brought on screen |
-| A retarget keeps a window landed where it still ends and a focus already seen, and watches the rest from now; a window watched to land somewhere new starts its print afresh | a merged press moves some ends and not others; a window new to the watch is watched too, which the prototype missed; what the client was delivered for the end before, it no longer draws |
+| A retarget keeps a window landed where it still ends, the picture a repainting window that has not landed settles against (none if it had none), a focus report already seen, and a change watch's baseline, tries and finish while its end keeps its size, and watches the rest from now; a window watched to land somewhere new starts its print afresh, and one that had landed settles there against the picture held now | a merged press moves some ends and not others; until a window lands the cache may hold the watch's own captures, not the picture from before the change, while one that landed is held as it landed, which is what the server's resize shows before the app repaints; a band print is drawn from the window's whole width, so one taken at another size never matches, and the cache refuses a capture only at the size of what it holds; a window new to the watch is watched too, which the prototype missed; what the client was delivered for the end before, it no longer draws |
 
 The constants are measured in `src/animation/docs/capture-overlay-research.md`: "Where a moving focus
 change spends its time" (the server's frame, the focused look), "The handover, measured" (the 20pt
-landing, the final capture) and "Sequencing a focus change behind the overlay" (SkyLight behind
-ScreenCaptureKit); and in [`capture-research.md`](capture-research.md), "What a capture costs in a
-press" (frame zero's cost, the kept filter).
+landing, the final capture) and "Sequencing a focus change behind the overlay" (queued ScreenCaptureKit
+work slowing frame zero); and in [`capture-research.md`](capture-research.md): "What a capture costs
+in a press" (frame zero's cost, the kept filter), "SkyLight in parallel" (204ms behind four
+ScreenCaptureKit captures against 27 alone) and "What the prototype's journal showed of a focus
+change" (the focus report before the watch, the refresh that held up the focus capture).
 
 **Focused looks.** A client says which picture it was delivered shows a window focused
 (`keep_focused(tag, window)`): the focus target's once its change was delivered, and the frame-zero
@@ -227,6 +236,12 @@ set belongs to the reactor's world; it comes from there once the coordinator com
 takes the desktop, and the first time the bar, synchronously while the service holds none of that
 display. The coordinator waits for frame zero's window pictures, not for a desktop: that would be one
 more ask at the begin.
+
+**The flight engine takes one capture itself.** A window that has just opened is pictured at its spawn
+frame by one framed capture (`capture_via_framed`, 16-24ms, at most `MAX_SYNC_ENTRANCE_CAPTURES` a
+pass), taken on the main thread as the engine composes and handed over through `insert` ("A window
+that opens" in `src/transitions/docs/coordination.md`). It is the one picture of a window a
+transition draws that it neither asks for nor watches, and the main thread waits for it.
 
 **The bar still captures on its own.** Its menu extras and its ground are pictured on the bar's own
 thread (`src/bar/platform/menu_extras.rs`), with its own pacing and its own pause for flights.

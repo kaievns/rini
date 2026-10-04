@@ -246,8 +246,7 @@ mod tests {
         assert!(cache.get(wid(2)).is_none());
     }
 
-    /// The focused look is kept until it is dropped as stale or the window goes (D9: the prototype
-    /// kept it past the window's close).
+    /// The focused look is kept until it is dropped as stale or the window goes.
     #[test]
     fn a_focused_look_is_kept_until_stale_or_forgotten() {
         let mut cache = cache();

@@ -36,7 +36,8 @@ it went out, a bounce, the windows whose look each change of the key window turn
 (`Event::LooksTurned`), and the display the overlay flies on. A pass, a movement and a bounce each name
 the `Look` a flight they begin moves by, and a movement and a bounce the press (`Cue`): the engine
 hands both to the look and matches on neither. The pictures service's sink, wired in
-`src/main.rs`, tells the engine what it delivered under the engine's tag. The engine answers through
+`src/main.rs`, tells the engine what it delivered under the engine's tag and which watched windows'
+pictures will not come. The engine answers through
 the callbacks `src/main.rs` installs: the frames to write (`PlaceFrames`, back to the reactor) and
 whether a flight is up (`OnFlight`, to the bar). The reactor never learns more of a flight than that.
 

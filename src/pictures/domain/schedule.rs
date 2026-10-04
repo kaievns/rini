@@ -1020,6 +1020,26 @@ mod tests {
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
     }
 
+    /// A retarget replaces what a watch looks at, and starts one it does not hold; a stopped watch is
+    /// looked at no more.
+    #[test]
+    fn a_watch_is_retargeted_and_stopped_by_its_id() {
+        let now = Instant::now();
+        let until = now + Duration::from_millis(150);
+        let looked = |next: Next<()>| match next {
+            Next::Sky(sets) => sets.iter().flat_map(|set| &set.looks).map(|look| look.target.window).collect(),
+            _ => Vec::new(),
+        };
+        let mut schedule = Schedule::<()>::default();
+        schedule.watch(WatchId(1), landing(1, end(), until), now, &no_print);
+        schedule.retarget(WatchId(1), landing(2, end(), until), now, &no_print);
+        schedule.retarget(WatchId(2), landing(3, end(), until), now, &no_print);
+        assert_eq!(looked(schedule.next(now, nothing_held)), vec![wid(2), wid(3)]);
+        schedule.stop(WatchId(1));
+        schedule.stop(WatchId(2));
+        assert!(matches!(schedule.next(now, nothing_held), Next::Idle));
+    }
+
     /// A window that did not land is reported before anything else is done, and the schedule wakes for
     /// the watch's next look.
     #[test]
@@ -1044,7 +1064,7 @@ mod tests {
     /// through the transition's hold and comes back owed to the watch's client as its focus change.
     #[test]
     fn a_clipped_focus_end_takes_one_capture_through_the_hold() {
-        use crate::pictures::domain::watch::{CHANGE_EVERY, CHANGE_TRIES, Hint, Prints, Seen};
+        use crate::pictures::domain::watch::{CHANGE_EVERY, CHANGE_TRIES, Capture, Hint, Seen};
         let now = Instant::now();
         let mut schedule = Schedule::<()>::default();
         schedule.set_display(built_in(), false, now);
@@ -1072,7 +1092,7 @@ mod tests {
             &[Seen {
                 window: wid(1),
                 frame: Some(clipped),
-                prints: None::<Prints>,
+                capture: Capture::Missed,
             }],
         );
         assert!(outcome.clipped.is_empty(), "taken over by the schedule");
