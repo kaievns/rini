@@ -237,6 +237,18 @@ pub fn to_overlay_space(frame: ic::CGRect, overlay_frame: ic::CGRect) -> ic::CGR
     )
 }
 
+/// `rect`, in the coordinates of an overlay whose own frame is `overlay_frame`, back in display
+/// space: what `to_overlay_space` undoes.
+pub fn from_overlay_space(rect: ic::CGRect, overlay_frame: ic::CGRect) -> ic::CGRect {
+    ic::CGRect::new(
+        ic::CGPoint::new(
+            rect.origin.x + overlay_frame.origin.x,
+            rect.origin.y + overlay_frame.origin.y,
+        ),
+        rect.size,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +394,14 @@ mod tests {
             to_overlay_space(rect(-1680.0, 32.0, 1720.0, 1081.0), overlay),
             rect(-1680.0, 0.0, 1720.0, 1081.0)
         );
+    }
+
+    #[test]
+    fn from_overlay_space_undoes_to_overlay_space() {
+        let overlay = rect(1728.0, 32.0, 1728.0, 1085.0);
+        let tile = rect(-860.0, 0.0, 859.0, 1081.0);
+        assert_eq!(from_overlay_space(tile, overlay), rect(868.0, 32.0, 859.0, 1081.0));
+        assert_eq!(to_overlay_space(from_overlay_space(tile, overlay), overlay), tile);
     }
 
     #[test]

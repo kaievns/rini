@@ -51,19 +51,6 @@ pub(in crate::transitions) fn merge_action(
     }
 }
 
-/// Folds a later pass's destinations into the flight's; latest frame per window wins.
-pub(in crate::transitions) fn merge_final_frames(
-    existing: &mut Vec<(WindowId, CGRect)>,
-    incoming: Vec<(WindowId, CGRect)>,
-) {
-    for (window, frame) in incoming {
-        match existing.iter_mut().find(|(w, _)| *w == window) {
-            Some(current) => current.1 = frame,
-            None => existing.push((window, frame)),
-        }
-    }
-}
-
 /// Points a flight's reserved entrances at a later pass's destinations; an entrance has no tile
 /// for `merge_pass` to retarget. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn retarget_entrances(
@@ -225,30 +212,6 @@ mod tests {
         let to = rect(10., 20., 100., 100.);
         let nudged = rect(10.000000001, 20., 100., 100.);
         assert_eq!(merge_action(Some(to), nudged), Admitted::Redundant);
-    }
-
-    #[test]
-    fn a_later_pass_overwrites_a_windows_destination() {
-        let mut frames = vec![(window(1), rect(0., 0., 100., 100.))];
-        merge_final_frames(&mut frames, vec![(window(1), rect(500., 0., 100., 100.))]);
-        assert_eq!(frames, [(window(1), rect(500., 0., 100., 100.))]);
-        merge_final_frames(&mut frames, vec![(window(1), rect(500., 0., 100., 100.))]);
-        assert_eq!(frames, [(window(1), rect(500., 0., 100., 100.))], "a repeat changes nothing");
-    }
-
-    #[test]
-    fn a_window_not_in_the_flight_is_appended() {
-        let mut frames = vec![(window(1), rect(0., 0., 100., 100.))];
-        merge_final_frames(&mut frames, vec![(window(2), rect(200., 0., 100., 100.))]);
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[1], (window(2), rect(200., 0., 100., 100.)));
-    }
-
-    #[test]
-    fn nothing_incoming_changes_nothing() {
-        let mut frames = vec![(window(1), rect(0., 0., 100., 100.))];
-        merge_final_frames(&mut frames, vec![]);
-        assert_eq!(frames, [(window(1), rect(0., 0., 100., 100.))]);
     }
 
     /// An entrance has no tile yet, so `merge_pass` cannot retarget it; this is the path that does.

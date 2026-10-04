@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::{SameAs, to_overlay_space};
+use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
@@ -41,7 +41,7 @@ use crate::transitions::domain::admission::*;
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::lifecycle::{
     self, Command, Coordinator, EndWatch, Generation, Kind, Start, StageSummary, TileSummary,
-    drawn_focused,
+    drawn_focused, extend_latest, losing_focus,
 };
 use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
 use crate::transitions::domain::timing::*;
@@ -323,14 +323,6 @@ struct Pass {
     nudge: Option<CGPoint>,
 }
 
-/// `rect` in the overlay's space, in screen points.
-fn on_screen_of(rect: CGRect, display: CGRect) -> CGRect {
-    CGRect::new(
-        CGPoint::new(rect.origin.x + display.origin.x, rect.origin.y + display.origin.y),
-        rect.size,
-    )
-}
-
 /// What the coordinator is told of a stage: `tiles` and `final_frames` in screen points.
 fn summary(
     tiles: Vec<TileSummary>,
@@ -359,25 +351,20 @@ fn summary(
     }
 }
 
-/// The window focus leaves when focus moves to `focus`: the one drawn focused now, if not that one.
-fn losing_focus(focus: Option<WindowId>, shown: Option<WindowId>) -> Option<WindowId> {
-    focus.and(shown.filter(|window| Some(*window) != focus))
-}
-
 impl RunningAnimation {
     /// Every tile and every reserved entrance, in screen points, as the coordinator sees them.
     fn tile_summaries(&self, display: CGRect) -> Vec<TileSummary> {
         let tiles = self.tiles.iter().map(|t| TileSummary {
             window: t.window,
-            start: on_screen_of(t.from, display),
-            end: on_screen_of(t.to, display),
+            start: from_overlay_space(t.from, display),
+            end: from_overlay_space(t.to, display),
             floating: t.floating,
             companion: t.companion.is_some(),
         });
         let entrances = self.entrances.iter().map(|e| TileSummary {
             window: e.window,
-            start: on_screen_of(entrance_from(e.to), display),
-            end: on_screen_of(e.to, display),
+            start: from_overlay_space(entrance_from(e.to), display),
+            end: from_overlay_space(e.to, display),
             floating: e.floating,
             companion: false,
         });
@@ -501,18 +488,6 @@ impl RunningAnimation {
     }
 }
 
-/// The kind of strip movement a surface flight draws: a move when a swapped column crosses the
-/// surface, a switch when the viewport travels between workspaces, else a pan.
-fn surface_kind(windows: &[SurfaceWindow], from_offset: CGPoint, to_offset: CGPoint) -> Kind {
-    if windows.iter().any(|w| w.from.is_some()) {
-        Kind::Move
-    } else if from_offset.y != to_offset.y {
-        Kind::Switch
-    } else {
-        Kind::Pan
-    }
-}
-
 /// What the pictures service is asked for `window` drawn at `frame`.
 fn target_at(window: WindowId, frame: CGRect) -> PictureTarget {
     PictureTarget {
@@ -550,11 +525,6 @@ fn on_screen(
 /// The warms the quiet asks for: each window at the size it ended at.
 fn warm_targets(windows: Vec<(WindowId, CGRect)>) -> Vec<PictureTarget> {
     windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
-}
-
-/// The generation a delivery is for, when it is this engine's.
-fn ours(client: Client, tag: Tag) -> Option<Generation> {
-    (tag.client == client).then_some(Generation(tag.generation))
 }
 
 /// The radius a tile of `size` clips its picture to: a SkyLight picture of a window baked with the
@@ -859,7 +829,7 @@ impl FlightEngine {
         match landed {
             crate::pictures::event::Event::Taken { .. } => {}
             crate::pictures::event::Event::Delivered { tag, why, pictures } => {
-                let Some(generation) = ours(self.client, tag) else { return };
+                let Some(generation) = Generation::for_client(tag, self.client) else { return };
                 if why == Why::FrameZero {
                     self.frame_zero(generation, pictures);
                     return;
@@ -867,7 +837,7 @@ impl FlightEngine {
                 self.offer(generation, why, pictures);
             }
             crate::pictures::event::Event::Lost { tag, window } => {
-                if ours(self.client, tag).is_some() {
+                if Generation::for_client(tag, self.client).is_some() {
                     debug!(pid = window.pid, idx = window.idx.get(), "end window not where it ends by its deadline");
                 }
             }
@@ -1530,7 +1500,7 @@ impl FlightEngine {
         if let Some(display) = display {
             retarget_entrances(&mut running.entrances, &pass.final_frames, display);
         }
-        merge_final_frames(&mut running.final_frames, pass.final_frames);
+        extend_latest(&mut running.final_frames, pass.final_frames.into_iter());
         let focus_before = running.focus;
         let drawn_focused_before: Vec<(WindowId, bool)> =
             running.tiles.iter().map(|t| (t.window, t.focused)).collect();
@@ -1664,7 +1634,7 @@ impl FlightEngine {
             return;
         };
         let shape = Shape {
-            kind: kind.unwrap_or_else(|| surface_kind(&windows, from_offset, to_offset)),
+            kind: kind.unwrap_or_else(|| Kind::of_surface(&windows, from_offset, to_offset)),
             start: Start::Immediate,
             duration,
             awaiting: Vec::new(),
@@ -1677,8 +1647,8 @@ impl FlightEngine {
                     let (from, to) = w.travel(from_offset, to_offset);
                     TileSummary {
                         window: w.window,
-                        start: on_screen_of(from, display),
-                        end: on_screen_of(to, display),
+                        start: from_overlay_space(from, display),
+                        end: from_overlay_space(to, display),
                         floating: w.floating,
                         companion: false,
                     }
@@ -2271,8 +2241,6 @@ mod tests {
             assert_eq!(ask.background.len(), 1);
             assert_eq!(ask.behind, vec![WindowServerId::new(9)]);
             assert_eq!(warm_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
-            assert_eq!(ours(client, tag), Some(Generation(5)));
-            assert_eq!(ours(Client(2), tag), None, "another client's delivery is not drawn");
         }
 
         #[test]
@@ -2286,7 +2254,7 @@ mod tests {
             border.companion = Some(wid(1));
             running.tiles.push(border);
             running.entrances.push(PendingEntrance { window: wid(2), to: next, floating: true });
-            running.final_frames = vec![(wid(1), on_screen_of(slot, display))];
+            running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
             let stage = running.stage(layout(vec![wid(2)]), display, &|window| window == wid(1));
@@ -2305,7 +2273,7 @@ mod tests {
                 stage.tiles[2],
                 TileSummary {
                     window: wid(2),
-                    start: on_screen_of(entrance_from(next), display),
+                    start: from_overlay_space(entrance_from(next), display),
                     end: rect(2595.0, 32.0, 859.0, 1081.0),
                     floating: true,
                     companion: false,
@@ -2318,24 +2286,6 @@ mod tests {
             assert_eq!((stage.awaiting, stage.display), (vec![wid(2)], display));
             running.shown_focus = Some(wid(2));
             assert_eq!(running.stage(layout(Vec::new()), display, &|_| false).losing_focus, None, "handed over");
-            assert_eq!(losing_focus(None, Some(wid(1))), None, "a pass naming no focus moves none");
-        }
-
-        #[test]
-        fn a_strip_movement_is_a_move_when_a_column_crosses_it_and_a_switch_when_it_travels_between_rows() {
-            let frame = rect(4.0, 32.0, 859.0, 1081.0);
-            let window = |from| SurfaceWindow {
-                window: wid(1),
-                server_id: WindowServerId::new(1),
-                frame,
-                pinned: false,
-                floating: false,
-                from,
-            };
-            let rest = CGPoint::new(0.0, 0.0);
-            assert_eq!(surface_kind(&[window(None)], CGPoint::new(863.0, 0.0), rest), Kind::Pan);
-            assert_eq!(surface_kind(&[window(None)], CGPoint::new(0.0, -1085.0), rest), Kind::Switch);
-            assert_eq!(surface_kind(&[window(Some(frame))], CGPoint::new(863.0, 0.0), rest), Kind::Move);
         }
     }
 

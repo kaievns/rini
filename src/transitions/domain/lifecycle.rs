@@ -8,13 +8,14 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::CGRect;
+use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
 use rini_geometry::is_off_screen;
 
 use crate::animation::domain::motion::tile::snap_to;
-use crate::pictures::domain::watch::{Accept, END_SLACK, Why, near, wholly_on};
+use crate::pictures::domain::watch::{Accept, Client, END_SLACK, Tag, Why, near, wholly_on};
 
+use super::request::SurfaceWindow;
 use super::timing::{COALESCE_WINDOW, HOLD_CAP, LIFT_GRACE};
 
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
@@ -30,6 +31,13 @@ pub const FINAL_NOT_BEFORE: Duration = Duration::from_millis(40);
 /// end its tile no longer has is never drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Generation(pub u64);
+
+impl Generation {
+    /// The generation a delivery under `tag` is for, when `client` is the one it was delivered to.
+    pub fn for_client(tag: Tag, client: Client) -> Option<Generation> {
+        (tag.client == client).then_some(Generation(tag.generation))
+    }
+}
 
 /// What kind of change a transition is. The lifecycle is the same for all; each kind decides the few
 /// things below.
@@ -48,6 +56,18 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// The kind of strip movement a surface flight draws: a move when a swapped column crosses the
+    /// surface, a switch when the viewport travels between workspaces, else a pan.
+    pub fn of_surface(windows: &[SurfaceWindow], from_offset: CGPoint, to_offset: CGPoint) -> Kind {
+        if windows.iter().any(|w| w.from.is_some()) {
+            Kind::Move
+        } else if from_offset.y != to_offset.y {
+            Kind::Switch
+        } else {
+            Kind::Pan
+        }
+    }
+
     /// Whether the real windows are written to new frames.
     pub fn writes(self) -> bool {
         !matches!(self, Kind::Bounce)
@@ -118,6 +138,12 @@ pub struct StageSummary {
 /// is drawn focused with it.
 pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Option<WindowId>) -> bool {
     losing_focus == Some(window) || focus == Some(window) && losing_focus.is_none()
+}
+
+/// The window focus leaves when focus moves to `focus`: `shown`, the one drawn focused now, if not that
+/// one. A pass naming no focus moves none.
+pub fn losing_focus(focus: Option<WindowId>, shown: Option<WindowId>) -> Option<WindowId> {
+    focus.and(shown.filter(|window| Some(*window) != focus))
 }
 
 impl StageSummary {
@@ -839,8 +865,12 @@ fn extend_unique(into: &mut Vec<WindowId>, more: impl Iterator<Item = WindowId>)
     }
 }
 
-/// Adds each window with its frame, or moves one already there to its new frame.
-fn extend_latest(into: &mut Vec<(WindowId, CGRect)>, more: impl Iterator<Item = (WindowId, CGRect)>) {
+/// Adds each window with its frame, or moves one already there to its new frame: latest frame per
+/// window wins.
+pub(in crate::transitions) fn extend_latest(
+    into: &mut Vec<(WindowId, CGRect)>,
+    more: impl Iterator<Item = (WindowId, CGRect)>,
+) {
     for (window, frame) in more {
         match into.iter_mut().find(|(held, _)| *held == window) {
             Some(held) => held.1 = frame,
@@ -1364,11 +1394,62 @@ mod tests {
     #[test]
     fn the_window_focus_leaves_is_drawn_focused_and_the_target_only_once_it_has_the_look() {
         let (from, to) = (Some(w(1)), Some(w(2)));
+        assert_eq!(losing_focus(to, from), from);
+        assert_eq!(losing_focus(to, to), None, "drawn focused already");
+        assert_eq!(losing_focus(None, from), None, "a pass naming no focus moves none");
         assert!(drawn_focused(w(1), to, from), "frame zero pictures it focused");
         assert!(!drawn_focused(w(2), to, from), "until focus hands over");
         assert!(drawn_focused(w(2), to, None), "focus is not moving: it has it");
         assert!(!drawn_focused(w(3), to, from));
         assert!(!drawn_focused(w(3), None, None));
+    }
+
+    #[test]
+    fn a_strip_movement_is_a_move_when_a_column_crosses_it_and_a_switch_when_it_travels_between_rows() {
+        let frame = r(4.0, 32.0, 859.0, 1081.0);
+        let window = |from| SurfaceWindow {
+            window: w(1),
+            server_id: rini_core::ids::WindowServerId::new(1),
+            frame,
+            pinned: false,
+            floating: false,
+            from,
+        };
+        let rest = CGPoint::new(0.0, 0.0);
+        assert_eq!(Kind::of_surface(&[window(None)], CGPoint::new(863.0, 0.0), rest), Kind::Pan);
+        assert_eq!(Kind::of_surface(&[window(None)], CGPoint::new(0.0, -1085.0), rest), Kind::Switch);
+        assert_eq!(Kind::of_surface(&[window(Some(frame))], CGPoint::new(863.0, 0.0), rest), Kind::Move);
+    }
+
+    #[test]
+    fn a_delivery_is_a_clients_own_under_the_generation_its_tag_carries() {
+        let tag = Tag { client: Client(1), generation: 5 };
+        assert_eq!(Generation::for_client(tag, Client(1)), Some(Generation(5)));
+        assert_eq!(Generation::for_client(tag, Client(2)), None, "another client's delivery is not drawn");
+    }
+
+    #[test]
+    fn a_later_pass_overwrites_a_windows_destination() {
+        let mut frames = vec![(w(1), r(0., 0., 100., 100.))];
+        extend_latest(&mut frames, [(w(1), r(500., 0., 100., 100.))].into_iter());
+        assert_eq!(frames, [(w(1), r(500., 0., 100., 100.))]);
+        extend_latest(&mut frames, [(w(1), r(500., 0., 100., 100.))].into_iter());
+        assert_eq!(frames, [(w(1), r(500., 0., 100., 100.))], "a repeat changes nothing");
+    }
+
+    #[test]
+    fn a_window_not_in_the_flight_is_appended() {
+        let mut frames = vec![(w(1), r(0., 0., 100., 100.))];
+        extend_latest(&mut frames, [(w(2), r(200., 0., 100., 100.))].into_iter());
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[1], (w(2), r(200., 0., 100., 100.)));
+    }
+
+    #[test]
+    fn nothing_incoming_changes_nothing() {
+        let mut frames = vec![(w(1), r(0., 0., 100., 100.))];
+        extend_latest(&mut frames, std::iter::empty());
+        assert_eq!(frames, [(w(1), r(0., 0., 100., 100.))]);
     }
 
     #[test]

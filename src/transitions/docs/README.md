@@ -66,11 +66,13 @@ from the begin to the lift.
 ## Known debt
 
 **Some pure rules are still the engine's.** How a later pass merges into a flight's tiles, how a
-reserved entrance joins, what frame zero's pictures and a focus handover change, what the coordinator
-is told of a flight, how tiles band, a border's tile, which baked picture is clipped to its corners and
-which focused look a parked target flies are methods on `RunningAnimation` and functions over
+reserved entrance joins, what frame zero's pictures and a focus handover change, which tiles the
+coordinator is told of, how tiles band, a border's tile, which baked picture is clipped to its corners
+and which focused look a parked target flies are methods on `RunningAnimation` and functions over
 `OverlayTile` and `Picture`, and both carry a platform `Picture`. They and their tests
 (`platform/engine.rs`, grouped by unit) move to `domain/` once a tile holds a picture handle instead.
+`summary`, which assembles the coordinator's `StageSummary` from them and from what the pictures
+service knows, is the actor's glue rather than a rule.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
 `start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's
