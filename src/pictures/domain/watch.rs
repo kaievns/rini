@@ -122,7 +122,8 @@ pub enum Watch {
         until: Instant,
     },
     /// Armed by the window's focus report: captured where it ends every `every`, `tries` times at most,
-    /// until its band print changes from the last picture delivered of it.
+    /// until its band print changes from the last picture delivered of it as the watch starts, even
+    /// when another watch delivered the changed look first.
     Change {
         tag: Tag,
         window: PictureTarget,
@@ -325,6 +326,9 @@ enum Arrival {
 struct Change {
     tag: Tag,
     target: PictureTarget,
+    /// The band print a change is judged from: what the client was delivered of the window as the
+    /// watch started; with none then, what it was delivered by the first capture, else that capture.
+    baseline: Option<Vec<u8>>,
     end: CGRect,
     behind: Vec<WindowServerId>,
     every: Duration,
@@ -398,6 +402,7 @@ impl Watches {
             (Watching::Change(new), Watching::Change(old))
                 if new.target.window == old.target.window =>
             {
+                new.baseline = old.baseline;
                 new.armed = old.armed;
                 new.left = old.left.min(new.left);
                 new.next = old.next;
@@ -679,17 +684,24 @@ impl Watches {
                     };
                     let frame = of(window).and_then(|seen| seen.frame);
                     if let Some((frame, prints)) = captured(window, accept) {
-                        let known = self.prints.contains_key(&(change.tag.client, window));
-                        if news(&mut self.prints, change.tag.client, window, &prints.band) && known
+                        let client = change.tag.client;
+                        // A landing may have delivered the changed look first: the change is judged
+                        // from what was delivered before it, not from the latest delivery.
+                        let judged =
+                            change.baseline.take().or_else(|| self.prints.get(&(client, window)).cloned());
+                        news(&mut self.prints, client, window, &prints.band);
+                        if let Some(baseline) = judged.as_deref()
+                            && print_changed(Some(baseline), &prints.band)
                         {
                             change.done = true;
                             out.deliver(change.tag, Why::FocusChanged, window, frame);
                         } else {
                             // With nothing delivered to judge a change by, the first capture is
                             // delivered as the window where it ends, and the change judged from it.
-                            if !known {
+                            if judged.is_none() {
                                 out.deliver(change.tag, Why::Landed, window, frame);
                             }
+                            change.baseline = Some(judged.unwrap_or_else(|| prints.band.clone()));
                             change.left = change.left.saturating_sub(1);
                             change.done = change.left == 0;
                             change.next = now + change.every;
@@ -764,6 +776,7 @@ impl Watches {
                 Watching::Change(Change {
                     tag,
                     target: window,
+                    baseline: self.prints.get(&(tag.client, window.window)).cloned(),
                     end,
                     behind,
                     every,
@@ -1480,6 +1493,35 @@ mod tests {
             "never a focus change"
         );
         assert!(outcomes[1..].iter().all(|outcome| outcome.deliveries.is_empty()));
+    }
+
+    /// A window that was focused before it landed: its landing, looked at first in the same round,
+    /// delivers the focused look, and its change watch still sees it changed from frame zero's.
+    #[test]
+    fn a_change_watch_sees_the_look_a_landing_delivered_first() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.ask(frame_zero(&[(1, RIGHT)], &[]));
+        round(&mut watches, start, |_| Some(RIGHT), |_| Some(1)).unwrap();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start, &none);
+        watches.watch(WatchId(2), change(1, LEFT), start, &none);
+        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert_eq!(
+            delivered(&outcome),
+            vec![(Why::Landed, vec![wid(1)]), (Why::FocusChanged, vec![wid(1)])]
+        );
+
+        // A parked window, nothing delivered as the watch started: judged from what its landing
+        // delivered by the watch's first capture.
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start, &none);
+        watches.watch(WatchId(2), change(1, LEFT), start, &none);
+        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "one landing, delivered once");
+        let (_, outcome) = round(&mut watches, start + CHANGE_EVERY, |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(1)])]);
     }
 
     /// D1: the focus report often comes before the watch. Remembered for a second, it arms a watch

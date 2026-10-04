@@ -197,11 +197,18 @@ to the engine, which takes the window last reported focused as the one focus lea
 that window focused, and its tile is drawn focused; the focus target's tile is drawn unfocused, unless
 it flies its focused look (below). The target's `Change` watch, armed by its report (one remembered for
 a second arms a watch started after it), captures it where it ends every 15ms, six times at most, until
-its band print changes. That picture is swapped in, kept as its focused look, and focus hands over
-(`HandOverFocus`): the target's ring and shadow are drawn focused and the window left's not
-(`TileOverlay::set_tile_focused`). The window left is pictured again by the final capture, if its look
-has changed by then; so is the target, if its change watch ran out first, and that hands focus over
-too. A target the pass opened, grew or flies as a stand-in hands over with its repainted picture. A
+its band print differs from what the engine was delivered of it as the watch started, frame zero's for
+a window on screen at the press. It is judged from that, not from the latest delivery: the landing
+watch is looked at first in a round, and a window focused before it landed delivered its focused look
+as its landing, which the change watch then never saw change. That picture is swapped in, kept as its
+focused look, and focus hands over (`HandOverFocus`): the target's ring and shadow are drawn focused
+and the window left's not (`TileOverlay::set_tile_focused`). The window left is pictured again by the
+final capture, if its look has changed by then; so is the target, if its change watch ran out first,
+and that hands focus over too. If nothing has handed it over when the final capture is asked, focus
+hands over then, while the flight still moves: the window is reported focused, and a look that never
+showed a change (one already focused when the watch started, or an app whose title band looks the
+same either way) would otherwise turn at the lift. A target the pass opened, grew or flies as a
+stand-in hands over with its repainted picture. A
 target clipped by the display edge where it ends takes one ScreenCaptureKit capture through the hold, the
 only one a transition lets through: SkyLight returns only its visible sliver ("A clipped destination
 needs ScreenCaptureKit, not SkyLight" in `src/pictures/docs/capture-research.md`). A flight that moves
@@ -216,8 +223,14 @@ The watches capture through SkyLight, one call at a time, as the windows land.
 **A parked focus target flies its focused look.** A focus target that starts off the display, where
 frame zero cannot picture it, flies the last picture the pictures service kept of it focused
 (`Pictures::focused`), drawn focused, when that picture fits where its tile starts; the service drops a
-look once a newer capture's body differs. Kai, 2026-10-03: "fcache doesn't bother me … windows arrive
-in focus every single time".
+look once a newer capture's body differs. Its landing does not replace the look: it is often taken
+before the window repaints focused (the prototype's medians, landed at 76.9ms and the focused picture
+at 104.9ms after the press, "Where a moving focus change spends its time" in
+`src/animation/docs/capture-overlay-research.md`), and cut in it would turn the window unfocused and
+back. The coordinator holds the latest landing back (`StageSummary::focused_look`) and swaps it in
+only if focus hands over at the final capture's ask with nothing newer; a focus change or the final
+capture replaces the look as it hands over. Kai, 2026-10-03: "fcache doesn't bother me … windows
+arrive in focus every single time".
 
 The engine's thread stalled mid-flight, so a press landed after the strip had stopped. Reading
 every window's frame in one query when a surface flight starts and at handover took the stalls over

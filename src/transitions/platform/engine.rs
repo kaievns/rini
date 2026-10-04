@@ -131,6 +131,8 @@ struct RunningAnimation {
     focus: Option<WindowId>,
     /// The window drawn focused until focus hands over: the one focused as the flight began.
     shown_focus: Option<WindowId>,
+    /// The focus target whose tile flies its focused look, until a picture is swapped onto it.
+    focused_look: Option<WindowId>,
     /// The flight as rigid pieces: what `install` composed and `fly` animates.
     /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     plan: plan::FlightPlan,
@@ -332,6 +334,7 @@ fn summary(
     final_frames: Vec<(WindowId, CGRect)>,
     focus: Option<WindowId>,
     losing_focus: Option<WindowId>,
+    focused_look: Option<WindowId>,
     shape: Shape,
     display: CGRect,
     opaque: &dyn Fn(WindowId) -> bool,
@@ -343,6 +346,7 @@ fn summary(
         final_frames,
         focus,
         losing_focus,
+        focused_look,
         awaiting: shape.awaiting,
         repainting: shape.repainting,
         start: shape.start,
@@ -384,6 +388,7 @@ impl RunningAnimation {
             self.final_frames.clone(),
             self.focus,
             losing_focus(self.focus, self.shown_focus),
+            self.focused_look,
             shape,
             display,
             opaque,
@@ -634,8 +639,9 @@ pub struct FlightEngine {
     /// When everything happens.
     coordinator: Coordinator,
     running: Option<RunningAnimation>,
-    /// A picture delivered under a generation, until the coordinator says whether it is swapped in.
-    delivered: HashMap<(Generation, WindowId), Picture>,
+    /// The latest picture delivered of each window, under its generation, until it is swapped in: the
+    /// coordinator holds a landing back from over a focused look until focus hands over.
+    delivered: HashMap<WindowId, (Generation, Picture)>,
     watches: EndWatches,
     /// The frame clock, from a transition's begin to its lift.
     clock: Option<RepeatingTimer>,
@@ -854,9 +860,8 @@ impl FlightEngine {
     /// Each delivered picture to the coordinator, which says whether it is swapped in.
     fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, CGRect)>) {
         for (window, picture, frame) in pictures {
-            self.delivered.insert((generation, window), picture);
+            self.delivered.insert(window, (generation, picture));
             self.drive(lifecycle::Event::Picture { generation, window, frame, why });
-            self.delivered.remove(&(generation, window));
         }
     }
 
@@ -879,8 +884,14 @@ impl FlightEngine {
     /// The picture delivered of `window` under `generation`, onto its tile; a reserved entrance's
     /// first joins the flight with it.
     fn swap(&mut self, generation: Generation, window: WindowId, now: Instant) {
-        let Some(picture) = self.delivered.get(&(generation, window)).cloned() else { return };
+        if self.delivered.get(&window).is_none_or(|(delivered, _)| *delivered != generation) {
+            return;
+        }
+        let Some((_, picture)) = self.delivered.remove(&window) else { return };
         let Some(running) = self.running.as_mut() else { return };
+        if running.focused_look == Some(window) {
+            running.focused_look = None;
+        }
         if running.entrances.iter().any(|e| e.window == window) {
             self.admit_entrance(window, &picture, now);
             return;
@@ -1057,6 +1068,7 @@ impl FlightEngine {
             final_frames,
             focus,
             losing_focus(focus, self.focused),
+            None,
             shape,
             display,
             &|window| self.pictures.knowledge(WindowServerId::from(window)).is_opaque(),
@@ -1437,6 +1449,7 @@ impl FlightEngine {
             entrances: pass.entrances,
             focus,
             shown_focus: losing.or(focus),
+            focused_look: None,
             plan: plan::FlightPlan::from(pass.plan),
             flown: false,
             nudge: nudge_waiting(pass.nudge, pass.shape.duration, &self.nudge_playing, Instant::now()),
@@ -1444,25 +1457,27 @@ impl FlightEngine {
         };
         restack(&mut running.tiles, focus);
         self.running = Some(running);
-        let Some(stage) = self.stage(pass.shape) else { return };
-        if let Some(target) = stage.parked_focus() {
-            self.fly_focused_look(target);
+        let Some(mut stage) = self.stage(pass.shape) else { return };
+        if let Some(target) = stage.parked_focus()
+            && self.fly_focused_look(target)
+        {
+            stage.focused_look = Some(target);
         }
         self.reinstall();
         self.drive(lifecycle::Event::Merge { stage, moved: false });
     }
 
     /// A focus target parked off the display flies its focused look, if the service holds one that
-    /// fits: frame zero cannot picture it, and it arrives focused.
-    fn fly_focused_look(&mut self, target: WindowId) {
+    /// fits: frame zero cannot picture it, and it arrives focused. Whether it does.
+    fn fly_focused_look(&mut self, target: WindowId) -> bool {
         let look = self.pictures.focused(target);
-        let Some(tile) = self.running.as_mut().and_then(|r| r.tiles.iter_mut().find(|t| t.window == target)) else {
-            return;
-        };
-        if let Some(look) = focused_look(tile, look) {
-            tile.snapshot = look;
-            tile.focused = true;
-        }
+        let Some(running) = self.running.as_mut() else { return false };
+        let Some(tile) = running.tiles.iter_mut().find(|t| t.window == target) else { return false };
+        let Some(look) = focused_look(tile, look) else { return false };
+        tile.snapshot = look;
+        tile.focused = true;
+        running.focused_look = Some(target);
+        true
     }
 
     /// One later pass folded into the flight running: retargeted on the renderer once the plan
@@ -2046,6 +2061,7 @@ mod tests {
             entrances: Vec::new(),
             focus: None,
             shown_focus: None,
+            focused_look: None,
             plan: plan::FlightPlan::empty(),
             flown: false,
             nudge: None,

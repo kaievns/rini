@@ -264,12 +264,17 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   the flight still moves, so nothing changes at rest after the lift.
 - The window gaining focus MUST be pictured where it ends from the moment the window server reports it
   focused until its look changes, and drawn focused from that picture on: its ring and its shadow with
-  it. Until then the window losing focus MUST be drawn focused, as it was on screen when the flight
-  began, and after it unfocused; it MUST be pictured again before the lift if its look has changed.
+  it. A look it already had when it landed counts as changed. If no picture shows the change by the
+  last capture before the lift, it MUST be drawn focused from then on all the same, while the flight
+  still moves. Until then the window losing focus MUST be drawn focused, as it was on screen when the
+  flight began, and after it unfocused; it MUST be pictured again before the lift if its look has
+  changed.
 - A focus report that arrives before the flight watches for it MUST still count.
 - A window gaining focus that starts off the display, where nothing can picture it, MUST fly the last
   picture taken of it focused, drawn focused from the first frame, unless that picture no longer fits it
-  or a later picture shows its content changed.
+  or a later picture shows its content changed. Its landing MUST NOT replace that picture before focus
+  hands over: it is often taken before the window repaints focused, and would turn it unfocused and
+  back.
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
 - Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the
