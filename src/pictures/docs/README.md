@@ -38,7 +38,8 @@ this a resize" so the two agree.
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
 frames, display bounds, a target's size, coverage, watches and deliveries in `Screen`, a region's rect
 and an image's size in `Pixel`, and what a layer's `contentsRect` and `contentsCenter` are given in
-`Contents`. CG stays in `platform/`, on the lines that meet objc2.
+`Contents`. CG stays in `platform/`: in its objc2 and SkyLight calls, its reads from `windows`, and
+its private helpers and structs.
 
 ## The service
 

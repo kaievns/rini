@@ -39,11 +39,12 @@ displacement means the same in each, and `Respace` carries one across; it is the
 only `cast_unit` in the tree. A rect reaches `Pixel` or `Contents` only where a
 function divides by what carries the scale. The scale itself stays `f64`.
 
-**CG is the boundary, not the arithmetic.** In a feature on the spaces, a CG value
-becomes typed (`FromCg`) on the line where it enters an interface or `domain/`, and
-CG again (`ToCg`) on the line where it reaches objc2, in `platform/`. `From` cannot
-be written: euclid's types and CG's are both foreign. `TYPED` in
-`tests/architecture.rs` lists the features on the spaces, and
+**CG is the boundary, not the arithmetic.** In a feature on the spaces, CG stays in
+`platform/`: in its objc2 and FFI calls, its calls into features still on CG, and its
+private helpers and structs. Every value its interface and `domain/` carry is typed,
+so `platform/` converts a value on the line where it crosses: `FromCg` on its way out,
+`ToCg` on its way in. `From` cannot be written: euclid's types and CG's are both
+foreign. `TYPED` in `tests/architecture.rs` lists the features on the spaces, and
 `a_typed_feature_names_no_cg_geometry_outside_platform` holds them to it. Every
 other feature speaks CG and converts at its calls into them.
 

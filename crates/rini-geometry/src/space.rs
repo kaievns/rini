@@ -73,7 +73,7 @@ pub trait FromCg<C> {
     fn from_cg(cg: C) -> Self;
 }
 
-/// A typed value leaving its space for CG, where it reaches objc2.
+/// A typed value leaving its space for CG.
 pub trait ToCg {
     type Cg;
     fn to_cg(self) -> Self::Cg;

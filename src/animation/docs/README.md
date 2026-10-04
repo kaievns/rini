@@ -29,8 +29,8 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
 a layout pass's requests in `Screen`, tiles, container positions, travels and accents in `Overlay`,
 a strip movement's windows and viewport offsets in `Surface`, a frame in its container in `Group`,
-and a tile's own size, crop pieces and hairline in `Tile`. CG stays in `platform/`, on the lines
-that meet objc2.
+and a tile's own size, crop pieces and hairline in `Tile`. CG stays in `platform/`: in its objc2
+calls, its calls into `displays`, and its private helpers and structs.
 
 ## The shape that matters
 

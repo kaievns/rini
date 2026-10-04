@@ -232,9 +232,9 @@ fn a_typed_feature_names_no_cg_geometry_outside_platform() {
     }
     assert!(
         broken.is_empty(),
-        "a typed feature speaks rini-geometry's spaces: a CG value becomes typed on the line where it \
-         enters an interface or `domain/`, and CG again where it reaches objc2, in `platform/`. A \
-         size or a displacement crosses point spaces through `Respace`, never `cast_unit`. See \
+        "a typed feature speaks rini-geometry's spaces: CG stays in its `platform/`, which converts \
+         a value on the line where it crosses into or out of an interface or `domain/`. A size or a \
+         displacement crosses point spaces through `Respace`, never `cast_unit`. See \
          crates/rini-geometry/docs/README.md:\n{}",
         broken.join("\n")
     );
