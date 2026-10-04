@@ -284,8 +284,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   still moves. Until then the window losing focus MUST be drawn focused, as it was on screen when the
   flight began, and after it unfocused. Ending wholly on a display, it MUST be pictured again before
   the lift if its look has changed. Ending clipped by the display's edge, it keeps its picture to the
-  lift, only its ring and its shadow turning unfocused, and its look turns at rest: SkyLight returns
-  only its visible part, and the one ScreenCaptureKit capture below is the window gaining focus's.
+  lift, only its ring and its shadow turning unfocused, and its look turns at rest, unless it has a
+  material: then it keeps its blurred picture until a flight next pictures it on screen (below). SkyLight
+  returns only its visible part, and the one ScreenCaptureKit capture below is the window gaining
+  focus's.
 - A focus report that arrives before the flight watches for it MUST still count, and so MUST one that
   arrives before the request it causes, as a click's or an app activation's does: the window focused
   before it is the one the flight begins drawn focused.
@@ -315,12 +317,20 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   quiet after the lift, the window losing focus that ends clipped or parked among them. A focus change
   alters a window's look and never its size, and a picture that still fits was never taken again for
   its own sake, so a window kept the look it had until it was resized, and its tile turned at the lift.
-- Pictured again at rest, a window wholly on the display MUST be pictured with its blur and with its
-  look turned, and that capture MUST wait from a press to the quiet after the lift, as ScreenCaptureKit's
-  do: SkyLight serves one call at a time, and one already out delays the one the overlay waits for. A
-  capture of the window alone has no blur, and a picture with its blur is never replaced by one
-  without, so a window with a material kept its old look until a flight next pictured it on screen;
-  and a capture made as the change is reported shows the look from before the app repaints.
+- Pictured again at rest, a window wholly on the overlay's display MUST be pictured with its blur and
+  with its look turned. A capture of the window alone has no blur, and a picture with its blur is never
+  replaced by one without, so a window with a material kept its old look until a flight next pictured
+  it on screen; a capture made as the change is reported shows the look from before the app repaints;
+  and the picture held from before can differ in its title band for reasons other than focus, so the
+  turn is judged only from captures taken after the change.
+- A capture at rest MUST NOT start from a press to the quiet after the lift, as no ScreenCaptureKit
+  capture does: SkyLight serves one call at a time, and one already out delays the one the overlay
+  waits for. A call already out when the press's hold arrives cannot be recalled, so at most one
+  SkyLight call at rest, two for a window never pictured before, MAY be ahead of a frame zero.
+- A window with a material that is not wholly on the overlay's display when it is pictured again at
+  rest, clipped, parked or on another display, keeps its blurred picture, and its look turns when a
+  flight next pictures it on screen: ScreenCaptureKit's capture of it has no blur, and SkyLight's
+  covers only what is on that display ("Known debt" in `src/pictures/docs/README.md`).
 - Once the overlay is up, a tile MUST change its picture only for one the flight took: frame zero's
   coming after the overlay went up without it, as its window lands, as the window gaining focus
   changes its look, as a floating window behind the strip is refreshed, or just before the lift. A

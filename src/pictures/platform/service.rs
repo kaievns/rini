@@ -367,8 +367,8 @@ impl Pictures {
 
     /// Fresh pictures of windows whose look has just turned, whatever the cache holds of them, once
     /// nothing holds the service: through SkyLight, blur and all, where the window server has a window
-    /// wholly on the display, until its look shows the turn; through ScreenCaptureKit at background
-    /// priority anywhere else.
+    /// wholly on the display, until a capture differs from its first; through ScreenCaptureKit at
+    /// background priority anywhere else.
     pub fn refresh(&self, targets: Vec<PictureTarget>) { self.commands.send(Command::Refresh(targets)) }
 
     /// Starts `watch`, which runs until stopped.
@@ -500,10 +500,6 @@ fn held_print(cache: &PictureCache<Picture>, window: WindowId) -> Option<Vec<u8>
     picture_thumbprint(cache.get(window)?)
 }
 
-/// The band print of what the cache holds of `window`, which a refresh judges its turn against; `None`
-/// for a surface.
-fn held_band(cache: &PictureCache<Picture>, window: WindowId) -> Option<Vec<u8>> { band_print(cache.get(window)?) }
-
 /// A picture's thumbprint; `None` for a surface.
 fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> { thumbprint(&*picture.image.bitmap()?) }
 
@@ -566,6 +562,7 @@ impl Service {
         loop {
             let wait = self.make_calls();
             tokio::select! {
+                biased;
                 command = self.requests.recv() => match command {
                     Some((span, command)) => {
                         let _guard = span.enter();
@@ -593,10 +590,7 @@ impl Service {
         match command {
             Command::Ask(ask) => shared.schedule.ask(ask, now),
             Command::AskOnScreen(ask) => shared.schedule.ask_on_screen(ask),
-            Command::Refresh(targets) => {
-                let Shared { cache, schedule, .. } = &mut *shared;
-                schedule.refresh(targets, now, &|window| held_band(cache, window));
-            }
+            Command::Refresh(targets) => shared.schedule.refresh(targets, now),
             Command::Watch(id, watch) => {
                 let Shared { cache, schedule, .. } = &mut *shared;
                 schedule.watch(id, watch, now, &|window| held_print(cache, window));
@@ -736,9 +730,13 @@ impl Service {
         );
     }
 
-    /// Makes every call the schedule has ready; how long nothing is due for, if anything is.
+    /// Makes every call the schedule has ready until a command is queued; how long nothing is due
+    /// for, if anything is. A hold that arrives during a call is in force before the next one starts.
     fn make_calls(&mut self) -> Option<Duration> {
         loop {
+            if !self.requests.is_empty() {
+                return Some(Duration::ZERO);
+            }
             let now = Instant::now();
             let next = {
                 let mut shared = self.shared.lock().unwrap();
@@ -1285,7 +1283,13 @@ mod tests {
 
     /// The thread's side of a service with no thread, ScreenCaptureKit or sink behind it.
     fn detached_service() -> (Service, Arc<Mutex<Shared>>) {
-        let (_commands, requests) = channel::channel();
+        let (service, shared, _commands) = detached_service_and_commands();
+        (service, shared)
+    }
+
+    /// The same, with the handle's side of its command channel.
+    fn detached_service_and_commands() -> (Service, Arc<Mutex<Shared>>, Sender<Command>) {
+        let (commands, requests) = channel::channel();
         let (done_tx, done) = channel::channel();
         let shared = Arc::new(Mutex::new(Shared::default()));
         let service = Service {
@@ -1298,7 +1302,7 @@ mod tests {
             looks_checked: HashMap::new(),
             sinks: Vec::new(),
         };
-        (service, shared)
+        (service, shared, commands)
     }
 
     /// A window drawn grey at `level`, 40x30 pixels.
@@ -1469,18 +1473,18 @@ mod tests {
         assert!(delivered_of(&shared, 2), "differs from the picture held when it was first watched");
     }
 
-    /// A refresh judges its window's turn against the picture the cache held when it was asked, not
-    /// against what the cache holds as each capture lands: a capture showing the band held then is
-    /// looked at again, and the first that differs is the turned look, whatever was put in the cache
-    /// since.
+    /// The reported shape of a click at rest: the picture held of a window is old and its band differs
+    /// from the window's now, a title changed since; the refresh's first capture comes before the app
+    /// repaints, and a later one shows the turn. The turn is judged from the refresh's own first
+    /// capture, so the picture the cache ends up holding is the turned one.
     #[test]
-    fn a_refresh_is_judged_against_the_picture_held_when_it_was_asked() {
+    fn a_refresh_ends_holding_the_turned_capture_however_the_picture_held_before_differs() {
         let now = Instant::now();
         let (mut service, shared) = detached_service();
         {
             let mut shared = shared.lock().unwrap();
             shared.schedule.set_display(built_in(), false, now);
-            shared.cache.insert(wid(1), flat(0.5, now));
+            shared.cache.insert(wid(1), flat(0.9, now));
         }
         service.apply(Command::Refresh(vec![target(1)]));
         let later = Instant::now() + Duration::from_secs(1);
@@ -1489,11 +1493,31 @@ mod tests {
             service.put_round(found(&looks, Some(frame())), with_prints(&looks, vec![(wid(1), picture)]), None, false);
         };
         let owed = || shared.lock().unwrap().schedule.owed().collect::<Vec<_>>();
-        refreshed(&mut service, flat(0.5, now));
-        assert_eq!(owed(), vec![wid(1)], "not turned yet");
-        shared.lock().unwrap().cache.insert(wid(1), flat(0.1, now));
-        refreshed(&mut service, flat(0.1, now));
-        assert!(owed().is_empty(), "turned from the band held when it was asked");
+        let before = now + Duration::from_millis(1);
+        refreshed(&mut service, flat(0.5, before));
+        assert_eq!(owed(), vec![wid(1)], "a first capture is never the turn");
+        refreshed(&mut service, flat(0.5, before));
+        assert_eq!(owed(), vec![wid(1)], "not repainted yet");
+        let turned = now + Duration::from_millis(2);
+        refreshed(&mut service, flat(0.1, turned));
+        assert!(owed().is_empty(), "turned");
+        assert_eq!(shared.lock().unwrap().cache.get(wid(1)).map(|held| held.taken), Some(turned));
+    }
+
+    /// No call is made while a command is queued: the thread applies it first, so a hold that arrives
+    /// during a call is in force before the next, and a refresh due then waits for the release.
+    #[test]
+    fn no_call_is_made_while_a_command_is_queued() {
+        let (mut service, shared, commands) = detached_service_and_commands();
+        let settled = Instant::now() - crate::pictures::domain::schedule::SETTLE_BEFORE_STARTING;
+        shared.lock().unwrap().schedule.refresh(vec![target(1)], settled);
+        commands.send(Command::Hold(Hold::Transition));
+        assert_eq!(service.make_calls(), Some(Duration::ZERO), "the queue first");
+        while let Ok((_, command)) = service.requests.try_recv() {
+            service.apply(command);
+        }
+        assert_eq!(service.make_calls(), None, "held: no refresh look");
+        assert_eq!(shared.lock().unwrap().schedule.owed().collect::<Vec<_>>(), vec![wid(1)]);
     }
 
     /// An ask on screen, a stop and a focus hint reach the schedule as they are applied.

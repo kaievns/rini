@@ -1,7 +1,7 @@
 //! Windows pictured afresh at rest once their look has turned: through SkyLight where the window
 //! server has them wholly on the display, and through ScreenCaptureKit anywhere else.
 //!
-//! Pure. Asks and what each look came to go in with `now`; the windows to look at, and those owed a
+//! Pure. Asks and what each look came to go in with `now`; the window to look at, and one owed a
 //! ScreenCaptureKit capture instead, come out. `crate::pictures::domain::schedule` holds the looks off
 //! while a transition holds the service and makes them before any ScreenCaptureKit call. The rules and
 //! why each holds: "The schedule" in `src/pictures/docs/README.md`.
@@ -9,36 +9,40 @@
 use std::time::Instant;
 
 use rini_core::ids::WindowId;
+use rini_geometry::space::ScreenRect;
 
 use crate::pictures::domain::print::print_changed;
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Capture, Look, Seen, Set};
 
-/// Every window owed a picture at rest, and the ones the last round looked at.
+/// Every window owed a picture at rest, and the one the last round looked at.
 #[derive(Default)]
 pub struct Refreshes {
     windows: Vec<Refresh>,
-    looked: Vec<WindowId>,
+    looked: Option<WindowId>,
 }
 
 struct Refresh {
     target: PictureTarget,
-    /// The band print its turn is judged from: the picture held when it was asked; with none, its
-    /// first capture.
-    baseline: Option<Vec<u8>>,
+    /// The band print of its first capture, which its turn is judged from.
+    first: Option<Vec<u8>>,
     left: u32,
     next: Instant,
 }
 
 impl Refreshes {
-    /// Owes each target a picture, looked at from `from` on. `held` is the band print of the picture
-    /// held of a window. A window already owed one is owed it afresh: its look has turned again.
-    pub fn ask(&mut self, targets: Vec<PictureTarget>, from: Instant, held: &dyn Fn(WindowId) -> Option<Vec<u8>>) {
+    /// Owes each target a picture, looked at from `from` on, and holds every window already owed one
+    /// until then too: a press that turns a look may start a flight, whose hold comes after it. A
+    /// window already owed one is owed it afresh: its look has turned again.
+    pub fn ask(&mut self, targets: Vec<PictureTarget>, from: Instant) {
+        for refresh in &mut self.windows {
+            refresh.next = refresh.next.max(from);
+        }
         for target in targets {
             self.forget(target.window);
             self.windows.push(Refresh {
                 target,
-                baseline: held(target.window),
+                first: None,
                 left: CHANGE_TRIES,
                 next: from,
             });
@@ -49,63 +53,68 @@ impl Refreshes {
 
     pub fn owed(&self) -> impl Iterator<Item = WindowId> + '_ { self.windows.iter().map(|refresh| refresh.target.window) }
 
-    /// The windows due a look at `now`, each taken wholly on the display wherever it is, in one set
-    /// with nothing composited behind them but the desktop.
+    /// The window due a look soonest at `now`, taken wholly on the display wherever it is, with
+    /// nothing composited behind it but the desktop. One window a round, so a round is one SkyLight
+    /// call, two for a window seen for the first time.
     pub fn next(&mut self, now: Instant) -> Option<Set> {
-        let looks: Vec<Look> = self
-            .windows
-            .iter()
-            .filter(|refresh| refresh.next <= now)
-            .map(|refresh| Look {
+        let refresh = self.windows.iter().filter(|refresh| refresh.next <= now).min_by_key(|refresh| refresh.next)?;
+        self.looked = Some(refresh.target.window);
+        Some(Set {
+            looks: vec![Look {
                 target: refresh.target,
                 accepts: vec![Accept::OnDisplay],
                 thumbprint: false,
-            })
-            .collect();
-        if looks.is_empty() {
-            return None;
-        }
-        self.looked = looks.iter().map(|look| look.target.window).collect();
-        Some(Set { looks, behind: Vec::new() })
+            }],
+            behind: Vec::new(),
+        })
     }
 
     /// When a look is next due, if a window is owed one.
     pub fn wake(&self) -> Option<Instant> { self.windows.iter().map(|refresh| refresh.next).min() }
 
-    /// What the window server and the captures said of the windows `next` handed out. A window is
-    /// done at the first capture whose band print differs from its baseline, once its tries run out,
-    /// or at a capture the cache refused; one not captured wholly on the display is done here and
-    /// returned, owed a ScreenCaptureKit capture.
-    pub fn seen(&mut self, now: Instant, seen: &[Seen]) -> Vec<PictureTarget> {
-        let mut elsewhere = Vec::new();
-        for window in std::mem::take(&mut self.looked) {
-            let Some(at) = self.windows.iter().position(|refresh| refresh.target.window == window) else {
-                continue;
-            };
-            let refresh = &mut self.windows[at];
-            let done = match seen.iter().find(|seen| seen.window == window).map(|seen| &seen.capture) {
-                Some(Capture::Taken(prints)) => {
-                    let turned = refresh
-                        .baseline
-                        .as_deref()
-                        .is_some_and(|baseline| print_changed(Some(baseline), &prints.band));
-                    refresh.baseline.get_or_insert_with(|| prints.band.clone());
-                    refresh.left = refresh.left.saturating_sub(1);
-                    refresh.next = now + CHANGE_EVERY;
-                    turned || refresh.left == 0
-                }
-                // Every later capture at this size is refused too.
-                Some(Capture::Refused) => true,
-                Some(Capture::Missed) | None => {
-                    elsewhere.push(refresh.target);
-                    true
-                }
-            };
-            if done {
-                self.windows.remove(at);
+    /// What the window server and the capture said of the window `next` handed out, on `display`. It
+    /// is done at the first capture whose band print differs from its first capture's, once its tries
+    /// run out, or at a capture the cache refused. A capture that missed it wholly on the display
+    /// spends a try. One the window server does not have wholly on the display, or one no try
+    /// captured, is returned, owed a ScreenCaptureKit capture.
+    pub fn seen(&mut self, now: Instant, seen: &[Seen], display: Option<ScreenRect>) -> Option<PictureTarget> {
+        let window = self.looked.take()?;
+        let at = self.windows.iter().position(|refresh| refresh.target.window == window)?;
+        let seen = seen.iter().find(|seen| seen.window == window);
+        let on_display = seen
+            .and_then(|seen| seen.frame)
+            .zip(display)
+            .is_some_and(|(frame, display)| Accept::OnDisplay.accepts(frame, display));
+        let refresh = &mut self.windows[at];
+        let (done, elsewhere) = match seen.map(|seen| &seen.capture) {
+            // Every later capture at this size is refused too.
+            Some(Capture::Refused) => (true, false),
+            Some(Capture::Taken(prints)) => {
+                let turned =
+                    refresh.first.as_deref().is_some_and(|first| print_changed(Some(first), &prints.band));
+                refresh.first.get_or_insert_with(|| prints.band.clone());
+                refresh.spend(now);
+                (turned || refresh.left == 0, false)
             }
+            _ if on_display => {
+                refresh.spend(now);
+                let done = refresh.left == 0;
+                (done, done && refresh.first.is_none())
+            }
+            _ => (true, true),
+        };
+        let target = refresh.target;
+        if done {
+            self.windows.remove(at);
         }
-        elsewhere
+        elsewhere.then_some(target)
+    }
+}
+
+impl Refresh {
+    fn spend(&mut self, now: Instant) {
+        self.left = self.left.saturating_sub(1);
+        self.next = now + CHANGE_EVERY;
     }
 }
 
@@ -114,10 +123,16 @@ mod tests {
     use std::time::Duration;
 
     use rini_core::ids::WindowServerId;
-    use rini_geometry::space::{ScreenPoint, ScreenRect, ScreenSize};
+    use rini_geometry::space::{ScreenPoint, ScreenSize};
 
     use super::*;
     use crate::pictures::domain::watch::Prints;
+
+    const LAPTOP: ScreenRect = rect(0.0, 0.0, 1728.0, 1117.0);
+
+    const fn rect(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        ScreenRect::new(ScreenPoint::new(x, y), ScreenSize::new(w, h))
+    }
 
     fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
@@ -129,18 +144,16 @@ mod tests {
         }
     }
 
-    fn held(band: u8) -> impl Fn(WindowId) -> Option<Vec<u8>> { move |_| Some(vec![band]) }
-
-    fn nothing_held(_: WindowId) -> Option<Vec<u8>> { None }
-
     fn looked(set: Option<Set>) -> Vec<WindowId> {
         set.map(|set| set.looks.into_iter().map(|look| look.target.window).collect()).unwrap_or_default()
     }
 
-    fn seen(idx: u32, capture: Capture) -> Seen {
+    fn on(idx: u32, capture: Capture) -> Seen { at(idx, Some(rect(4.0, 32.0, 859.0, 1081.0)), capture) }
+
+    fn at(idx: u32, frame: Option<ScreenRect>, capture: Capture) -> Seen {
         Seen {
             window: wid(idx),
-            frame: Some(ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(859.0, 1081.0))),
+            frame,
             capture,
         }
     }
@@ -152,101 +165,111 @@ mod tests {
         })
     }
 
-    /// Nothing is looked at before its start, and then every window due is, taken wholly on the
-    /// display wherever the window server has it, with only the desktop composited behind it.
+    /// One look at the window `next` hands out at `now`, which saw `seen`.
+    fn round(refreshes: &mut Refreshes, now: Instant, seen: Seen) -> Option<PictureTarget> {
+        assert_eq!(looked(refreshes.next(now)), vec![seen.window]);
+        refreshes.seen(now, &[seen], Some(LAPTOP))
+    }
+
+    /// Nothing is looked at before its start, and then each window due is, one a round, taken wholly
+    /// on the display wherever the window server has it, with only the desktop composited behind it.
     #[test]
-    fn a_refresh_is_looked_at_from_its_start_wholly_on_the_display_with_nothing_behind_it() {
+    fn a_refresh_is_looked_at_from_its_start_one_window_a_round_with_nothing_behind_it() {
         let now = Instant::now();
         let from = now + Duration::from_millis(50);
         let mut refreshes = Refreshes::default();
-        refreshes.ask(vec![target(1), target(2)], from, &nothing_held);
+        refreshes.ask(vec![target(1), target(2)], from);
         assert_eq!(refreshes.wake(), Some(from));
         assert!(refreshes.next(now).is_none(), "not yet");
-        let set = refreshes.next(from).expect("both due");
+        let set = refreshes.next(from).expect("due");
         assert!(set.behind.is_empty());
-        assert!(set.looks.iter().all(|look| look.accepts == vec![Accept::OnDisplay] && !look.thumbprint));
-        assert_eq!(looked(Some(set)), vec![wid(1), wid(2)]);
+        assert_eq!(set.looks[0].accepts, vec![Accept::OnDisplay]);
+        assert_eq!(looked(Some(set)), vec![wid(1)]);
+        refreshes.seen(from, &[on(1, taken(1))], Some(LAPTOP));
+        assert_eq!(looked(refreshes.next(from)), vec![wid(2)]);
     }
 
-    /// An app repaints a while after its focus changes: a capture showing the band held when it was
-    /// asked is looked at again `CHANGE_EVERY` later, and the first that differs is the turned look.
-    /// One whose band never changes is done when its tries run out, its last capture held.
+    /// An app repaints a while after its focus changes, and a picture held from before can differ in
+    /// its band for other reasons: the turn is judged from the refresh's own first capture. One
+    /// captured before the repaint is looked at again until a capture differs; one whose band never
+    /// changes is done when its tries run out, its last capture held.
     #[test]
-    fn a_refresh_ends_at_the_first_capture_whose_band_turned_or_when_its_tries_run_out() {
+    fn a_refresh_ends_at_the_first_capture_that_differs_from_its_first_or_when_its_tries_run_out() {
         let now = Instant::now();
         let mut refreshes = Refreshes::default();
-        refreshes.ask(vec![target(1), target(2)], now, &held(7));
-        let _ = refreshes.next(now);
-        assert!(refreshes.seen(now, &[seen(1, taken(7)), seen(2, taken(7))]).is_empty());
-        assert_eq!(refreshes.wake(), Some(now + CHANGE_EVERY));
+        refreshes.ask(vec![target(1)], now);
+        assert!(round(&mut refreshes, now, on(1, taken(8))).is_none());
+        assert_eq!(refreshes.wake(), Some(now + CHANGE_EVERY), "the first capture is never the turn");
         assert!(refreshes.next(now).is_none(), "looked at again only after CHANGE_EVERY");
+        round(&mut refreshes, now + CHANGE_EVERY, on(1, taken(8)));
+        round(&mut refreshes, now + CHANGE_EVERY * 2, on(1, taken(9)));
+        assert!(refreshes.owed().next().is_none(), "turned");
 
-        let mut at = now + CHANGE_EVERY;
-        let _ = refreshes.next(at);
-        refreshes.seen(at, &[seen(1, taken(8)), seen(2, taken(7))]);
-        assert_eq!(refreshes.owed().collect::<Vec<_>>(), vec![wid(2)], "window 1 turned");
-
-        let mut tries = 2;
-        loop {
+        refreshes.ask(vec![target(2)], now);
+        let mut at = now;
+        for _ in 0..CHANGE_TRIES {
+            assert!(round(&mut refreshes, at, on(2, taken(7))).is_none());
             at += CHANGE_EVERY;
-            let Some(set) = refreshes.next(at) else { break };
-            assert_eq!(looked(Some(set)), vec![wid(2)]);
-            refreshes.seen(at, &[seen(2, taken(7))]);
-            tries += 1;
         }
-        assert_eq!(tries, CHANGE_TRIES);
+        assert!(refreshes.owed().next().is_none(), "out of tries");
+    }
+
+    /// SkyLight captures only what is on a display: a window parked, clipped or with no frame on the
+    /// server is owed ScreenCaptureKit's capture instead. One wholly on the display whose capture
+    /// missed is looked at again, a try spent, and owed ScreenCaptureKit's only if no try captured it.
+    /// A capture the cache refused ends a refresh with nothing more owed: every later one at that
+    /// size is refused too.
+    #[test]
+    fn only_a_window_off_the_display_or_never_captured_is_owed_elsewhere_and_a_refused_one_nothing() {
+        let now = Instant::now();
+        let parked = rect(1727.0, 32.0, 859.0, 1081.0);
+        let mut refreshes = Refreshes::default();
+        refreshes.ask(vec![target(1), target(2), target(3)], now);
+        assert_eq!(round(&mut refreshes, now, at(1, Some(parked), Capture::Missed)), Some(target(1)));
+        assert_eq!(round(&mut refreshes, now, at(2, None, Capture::Missed)), Some(target(2)));
+        assert!(round(&mut refreshes, now, on(3, Capture::Refused)).is_none());
+        assert!(refreshes.owed().next().is_none());
+
+        refreshes.ask(vec![target(4)], now);
+        assert!(refreshes.next(now).is_some());
+        assert_eq!(refreshes.seen(now, &[on(4, Capture::Missed)], None), Some(target(4)), "no display held");
+
+        refreshes.ask(vec![target(5), target(6)], now);
+        let mut at = now;
+        for _ in 0..CHANGE_TRIES - 1 {
+            assert!(round(&mut refreshes, at, on(5, Capture::Missed)).is_none());
+            let sixth = if at == now { taken(1) } else { Capture::Missed };
+            assert!(round(&mut refreshes, at, on(6, sixth)).is_none());
+            at += CHANGE_EVERY;
+        }
+        assert_eq!(round(&mut refreshes, at, on(5, Capture::Missed)), Some(target(5)), "never captured");
+        assert!(round(&mut refreshes, at, on(6, Capture::Missed)).is_none(), "its first capture is held");
         assert!(refreshes.owed().next().is_none());
     }
 
-    /// With no picture held to judge it by, or only a surface, a first capture cannot be called a
-    /// turn: the turn is judged from it.
+    /// A press that turns a look may also start a flight, whose hold reaches the service after the
+    /// refresh: every window already being looked at waits for the new refresh's start too. A window
+    /// whose look turns again is owed afresh, judged from its next capture; a forgotten one is owed
+    /// nothing, and what its round saw is dropped.
     #[test]
-    fn with_nothing_held_the_first_capture_is_what_a_turn_is_judged_from() {
+    fn an_ask_holds_every_refresh_to_its_start_and_a_window_asked_again_is_owed_afresh() {
         let now = Instant::now();
         let mut refreshes = Refreshes::default();
-        refreshes.ask(vec![target(1)], now, &nothing_held);
-        let _ = refreshes.next(now);
-        refreshes.seen(now, &[seen(1, taken(5))]);
-        assert_eq!(refreshes.owed().collect::<Vec<_>>(), vec![wid(1)]);
-        let _ = refreshes.next(now + CHANGE_EVERY);
-        refreshes.seen(now + CHANGE_EVERY, &[seen(1, taken(6))]);
-        assert!(refreshes.owed().next().is_none());
-    }
-
-    /// SkyLight captures only what is on a display: a window parked, clipped or gone from the server
-    /// is owed ScreenCaptureKit's capture instead, and a capture the cache refused ends a refresh with
-    /// nothing more owed, since every later one at that size is refused too.
-    #[test]
-    fn a_window_not_captured_wholly_on_the_display_is_owed_elsewhere_and_a_refused_one_nothing() {
-        let now = Instant::now();
-        let mut refreshes = Refreshes::default();
-        refreshes.ask(vec![target(1), target(2), target(3)], now, &held(7));
-        let _ = refreshes.next(now);
-        let elsewhere = refreshes.seen(now, &[seen(1, Capture::Missed), seen(2, Capture::Refused), seen(3, taken(7))]);
-        assert_eq!(elsewhere, vec![target(1)]);
-        assert_eq!(refreshes.owed().collect::<Vec<_>>(), vec![wid(3)]);
-    }
-
-    /// A window whose look turns again while it is owed is owed afresh, judged from what is held then
-    /// and with every try; one forgotten is owed nothing, and what a round saw of it is dropped.
-    #[test]
-    fn a_window_asked_again_is_owed_afresh_and_a_forgotten_one_nothing() {
-        let now = Instant::now();
-        let mut refreshes = Refreshes::default();
-        refreshes.ask(vec![target(1)], now, &held(7));
-        let _ = refreshes.next(now);
-        refreshes.seen(now, &[seen(1, taken(7))]);
+        refreshes.ask(vec![target(1), target(2)], now);
+        round(&mut refreshes, now, on(1, taken(7)));
         let later = now + Duration::from_millis(5);
-        refreshes.ask(vec![target(1)], later, &held(9));
-        assert_eq!(refreshes.wake(), Some(later));
-        let _ = refreshes.next(later);
-        refreshes.seen(later, &[seen(1, taken(7))]);
-        assert!(refreshes.owed().next().is_none(), "judged from the band held when asked again");
+        let from = later + Duration::from_millis(50);
+        refreshes.ask(vec![target(1), target(3)], from);
+        assert_eq!(refreshes.wake(), Some(from), "window 2 waits too");
+        assert!(refreshes.next(later).is_none());
 
-        refreshes.ask(vec![target(2)], now, &held(7));
-        let _ = refreshes.next(now);
-        refreshes.forget(wid(2));
-        assert!(refreshes.seen(now, &[seen(2, Capture::Missed)]).is_empty());
-        assert!(refreshes.owed().next().is_none());
+        round(&mut refreshes, from, on(2, taken(1)));
+        round(&mut refreshes, from, on(1, taken(9)));
+        assert!(refreshes.owed().any(|window| window == wid(1)), "judged from its next capture");
+
+        assert_eq!(looked(refreshes.next(from)), vec![wid(3)]);
+        refreshes.forget(wid(3));
+        assert!(refreshes.seen(from, &[on(3, Capture::Missed)], Some(LAPTOP)).is_none());
+        assert!(refreshes.owed().all(|window| window != wid(3)));
     }
 }

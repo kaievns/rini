@@ -23,8 +23,8 @@ pub enum Priority {
     /// A focus target ending clipped by the display's edge, which SkyLight cannot picture whole.
     Focus,
     /// Every window on the display, after a display change or on the debug command; and a window
-    /// refreshed at rest that SkyLight could not capture wholly on the display, whose turned look keeps
-    /// the size the cache holds it at.
+    /// refreshed at rest that the window server does not have wholly on the display, or that SkyLight
+    /// never captured, whose turned look keeps the size the cache holds it at.
     Background,
     /// Windows named for a later transition or the switcher: skipped where the picture held fits and is
     /// fresh.
@@ -82,13 +82,16 @@ pub fn wants_warm(held: Option<Held>, size: ScreenSize, now: Instant) -> bool {
         || held.is_some_and(|held| picture_is_stale(now.saturating_duration_since(held.taken)))
 }
 
-/// How long a background or warm ask waits before it is listed, and a refresh before its first look.
-/// The reactor sends a pass's warm straight here just after the request for its flight, and the flight
-/// engine a click's refresh just before the request for the flight the click starts, so either usually
-/// arrives before that flight's hold, which the engine sends as it takes the request; started at once,
-/// it would put ScreenCaptureKit to work at the flight's frame zero, or a SkyLight call ahead of it. A
-/// flight whose request waits behind other work on the main thread holds later than this; what is
-/// listed meanwhile is listed again at the release (`hold`).
+/// How long a background or warm ask waits before it is listed, and a refresh, with every refresh
+/// already owed, before its next look. The reactor sends a pass's warm straight here just after the
+/// request for its flight, and the flight engine a click's refresh just before the request for the
+/// flight the click starts, so either usually arrives before that flight's hold, which the engine sends
+/// as it takes the request; started at once, it would put ScreenCaptureKit to work at the flight's
+/// frame zero, or a SkyLight call ahead of it. A flight whose request waits behind other work on the
+/// main thread holds later than this, and so does one a press starts with no look turned: what is
+/// listed meanwhile is listed again at the release (`hold`), and a refresh's SkyLight call already out
+/// cannot be recalled, so at most that one call, two for a window seen for the first time, is ahead of
+/// frame zero.
 pub const SETTLE_BEFORE_STARTING: Duration = Duration::from_millis(50);
 
 /// Concurrent ScreenCaptureKit captures. It serialises internally, so wall clock stops improving past
@@ -261,10 +264,9 @@ impl<P> Schedule<P> {
     pub fn ask_on_screen(&mut self, ask: OnScreen) { self.watches.ask(ask) }
 
     /// Windows whose look has just turned, pictured afresh at rest (see [`Refreshes`]) from
-    /// `SETTLE_BEFORE_STARTING` on. `held` is the band print of the picture held of a window, which its
-    /// turn is judged against.
-    pub fn refresh(&mut self, targets: Vec<PictureTarget>, now: Instant, held: &dyn Fn(WindowId) -> Option<Vec<u8>>) {
-        self.refreshes.ask(targets, now + SETTLE_BEFORE_STARTING, held)
+    /// `SETTLE_BEFORE_STARTING` on, every refresh already owed held until then too.
+    pub fn refresh(&mut self, targets: Vec<PictureTarget>, now: Instant) {
+        self.refreshes.ask(targets, now + SETTLE_BEFORE_STARTING)
     }
 
     /// Starts `watch`. `before` is the thumbprint of the picture held of a window, which a repainting
@@ -283,19 +285,18 @@ impl<P> Schedule<P> {
 
     /// What the window server and the captures said of the windows `Next::Sky` named. A window a
     /// changing watch found cut by the display's edge is owed one ScreenCaptureKit capture, which starts
-    /// through any hold; one a refresh could not capture wholly on the display, one at background
-    /// priority.
+    /// through any hold; one a refresh cannot capture through SkyLight, one at background priority.
     pub fn seen(&mut self, now: Instant, seen: &[Seen]) -> Outcome {
-        let mut outcome = self.watches.seen(now, seen, self.display.map(|display| display.frame));
+        let display = self.display.map(|display| display.frame);
+        let mut outcome = self.watches.seen(now, seen, display);
         for (tag, target, frame) in std::mem::take(&mut outcome.clipped) {
             self.ask_clipped(tag, target, frame, now);
         }
-        let elsewhere = self.refreshes.seen(now, seen);
-        if !elsewhere.is_empty() {
+        if let Some(target) = self.refreshes.seen(now, seen, display) {
             self.ask(
                 Ask {
                     priority: Priority::Background,
-                    targets: elsewhere,
+                    targets: vec![target],
                 },
                 now,
             );
@@ -1169,6 +1170,21 @@ mod tests {
         }
     }
 
+    fn seen(window: u32, frame: ScreenRect, capture: crate::pictures::domain::watch::Capture) -> Seen {
+        Seen {
+            window: wid(window),
+            frame: Some(frame),
+            capture,
+        }
+    }
+
+    fn band(print: u8) -> crate::pictures::domain::watch::Capture {
+        crate::pictures::domain::watch::Capture::Taken(crate::pictures::domain::watch::Prints {
+            band: vec![print],
+            thumb: None,
+        })
+    }
+
     /// A click's refresh usually reaches the service just before the hold of the flight the click
     /// starts: it waits long enough for that hold to arrive, then out the flight, and at the release
     /// its SkyLight look goes before any ScreenCaptureKit call.
@@ -1177,7 +1193,7 @@ mod tests {
         let now = Instant::now();
         let mut schedule = Schedule::<()>::default();
         schedule.ask(ask(Priority::Background, &[2]), settled_by(now));
-        schedule.refresh(vec![target(1, 859.0)], now, &no_print);
+        schedule.refresh(vec![target(1, 859.0)], now);
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(2)], "the refresh settles");
         assert!(matches!(schedule.next(now, nothing_held), Next::WaitUntil(at) if at == now + SETTLE_BEFORE_STARTING));
 
@@ -1189,16 +1205,16 @@ mod tests {
         }
         schedule.hold(Hold::Released, settled);
         assert_eq!(refreshed(schedule.next(settled, nothing_held)), vec![wid(1)]);
-        let _ = schedule.seen(settled, &[]);
+        let _ = schedule.seen(settled, &[seen(1, end(), band(1))]);
         assert_eq!(listed_windows(schedule.next(settled, nothing_held)), vec![wid(3)]);
     }
 
-    /// A refreshed window SkyLight could not capture wholly on the display is owed one ScreenCaptureKit
-    /// capture at background priority, whatever is held, since its turned look keeps its size; until
-    /// done, a refreshed window is owed, and a forgotten one is not.
+    /// A refreshed window the window server does not have wholly on the display is owed one
+    /// ScreenCaptureKit capture at background priority, whatever is held, since its turned look keeps
+    /// its size; until done, a refreshed window is owed, and a forgotten one is not.
     #[test]
     fn a_refreshed_window_off_the_display_is_owed_one_capture_at_background_priority() {
-        use crate::pictures::domain::watch::{Capture, Prints, Seen};
+        use crate::pictures::domain::watch::Capture;
         let now = Instant::now();
         let fits = Held {
             coverage: Coverage {
@@ -1211,29 +1227,61 @@ mod tests {
         schedule.set_display(built_in(), false, now);
         let _ = schedule.next(now, nothing_held);
         let _ = schedule.desktop_rendered(built_in(), Some(now));
-        schedule.refresh(vec![target(1, 859.0), target(2, 859.0)], settled_by(now), &no_print);
+        schedule.refresh(vec![target(1, 859.0), target(2, 859.0)], settled_by(now));
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1), wid(2)]);
-        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(1), wid(2)]);
-        let parked = Seen {
-            window: wid(1),
-            frame: Some(rect(1727.0, 32.0, 859.0, 1081.0)),
-            capture: Capture::Missed,
-        };
-        let first = Seen {
-            window: wid(2),
-            frame: Some(end()),
-            capture: Capture::Taken(Prints {
-                band: vec![1],
-                thumb: None,
-            }),
-        };
-        let outcome = schedule.seen(now, &[parked, first]);
+        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(1)]);
+        let parked = rect(1727.0, 32.0, 859.0, 1081.0);
+        let outcome = schedule.seen(now, &[seen(1, parked, Capture::Missed)]);
         assert_eq!(outcome, Outcome::default(), "nothing is delivered of a refresh");
+        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(2)], "before the listing");
+        let _ = schedule.seen(now, &[seen(2, end(), band(1))]);
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1), wid(2)], "window 2 is looked at again");
         schedule.forget(wid(2));
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1)], "owed ScreenCaptureKit's capture");
         let settled = now + SETTLE_BEFORE_STARTING;
         assert_eq!(listed_windows(schedule.next(settled, |_| Some(fits))), vec![wid(1)]);
+    }
+
+    /// A press during a refresh's poll pauses it: no look is made while the service is held, and the
+    /// flight's own rounds over the same window, a frame-zero miss among them, spend none of its tries
+    /// and send it nowhere else. At the release it goes on with the tries it had left, judged from its
+    /// first capture.
+    #[test]
+    fn a_hold_pauses_a_refresh_mid_poll_and_the_release_resumes_it_with_the_tries_it_had_left() {
+        use crate::pictures::domain::watch::{CHANGE_EVERY, CHANGE_TRIES, Capture, Moment};
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.set_display(built_in(), false, now);
+        let _ = schedule.next(now, nothing_held);
+        let _ = schedule.desktop_rendered(built_in(), Some(now));
+        schedule.refresh(vec![target(1, 859.0)], settled_by(now));
+        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(1)]);
+        let _ = schedule.seen(now, &[seen(1, end(), band(7))]);
+
+        schedule.hold(Hold::Transition, now);
+        schedule.ask_on_screen(OnScreen {
+            tag: tag(),
+            moment: Moment::FrameZero,
+            strip: vec![(target(1, 859.0), end())],
+            background: Vec::new(),
+            behind: Vec::new(),
+        });
+        let later = now + CHANGE_EVERY;
+        assert_eq!(refreshed(schedule.next(later, nothing_held)), vec![wid(1)], "frame zero's round");
+        let _ = schedule.seen(later, &[seen(1, end(), Capture::Missed)]);
+        assert!(matches!(schedule.next(later, nothing_held), Next::Idle), "no refresh look while held");
+        assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1)], "and no ScreenCaptureKit capture owed");
+
+        let release = later + Duration::from_millis(400);
+        schedule.hold(Hold::Released, release);
+        let (mut looks, mut at) = (0, release);
+        while schedule.owed().next().is_some() {
+            assert_eq!(refreshed(schedule.next(at, nothing_held)), vec![wid(1)]);
+            let _ = schedule.seen(at, &[seen(1, end(), band(7))]);
+            looks += 1;
+            at += CHANGE_EVERY;
+        }
+        assert_eq!(looks, CHANGE_TRIES - 1);
     }
 
     /// The one record of whether there is a bar to picture, which a transition is dressed by too.
