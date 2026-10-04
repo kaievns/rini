@@ -397,11 +397,12 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   started afresh once it passes 50MB, and the one before it.
 - Turning the journal on or off MUST NOT change what is drawn or when.
 - With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
-  window ending wholly on screen, how far the screen just after it differs from the overlay's own
-  picture just before it, inside the window and either side of its outline, sampled as "The handover,
-  measured" in `src/animation/docs/capture-overlay-research.md` was, so a lift can be read against
-  those numbers. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture, MUST
-  NOT hold a press, and MUST be off unless asked for.
+  window ending wholly on screen, the mean RGB difference between the overlay's own picture just
+  before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,
+  and over the 1pt either side of its outline, so a lift can be read against the handover measured on
+  2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture. It MUST NOT
+  start a capture once a press has asked for a transition, so that press waits at most for the one
+  capture of the overlay or the screen under way as it lands, and it MUST be off unless asked for.
 - Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial
   and rini's steps line up with no wall clock between them.
 - CPU and GPU use MAY be recorded only once what reading them costs is measured, and found to slow
@@ -439,5 +440,6 @@ for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs
 captures), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
 Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),
 `src/animation/docs/animation-smoothness.md` (how it moves),
-`src/animation/docs/capture-overlay-research.md` (the overlay) and
+`src/animation/docs/capture-overlay-research.md` (the overlay, and "The handover, measured", which a
+measured lift is sampled as) and
 `src/pictures/docs/capture-research.md` (the captures).

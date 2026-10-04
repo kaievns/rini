@@ -2,8 +2,9 @@
 //! the bar, the cache those pictures land in, and the handle every client holds.
 //!
 //! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`) and makes the
-//! service's own calls: its SkyLight captures, one at a time, a handover check's two pictures, and its
-//! ScreenCaptureKit asks, whose completions post back to it. A transition's dressing is composited on
+//! service's own calls: its SkyLight captures, one at a time, a handover check's two pictures, which a
+//! thread of the check's own compares, and its ScreenCaptureKit asks, whose completions post back to
+//! it. A transition's dressing is composited on
 //! the caller's thread until its display's first render lands, and the flight engine takes its spawn
 //! capture of a window that has just opened on the main thread as it composes (Known debt in
 //! `src/pictures/docs/README.md`).
@@ -25,7 +26,7 @@ use tracing::{debug, warn};
 
 use crate::pictures::domain::cache::{Delivered, PictureCache};
 use crate::pictures::domain::coverage::{is_backdrop_worth_drawing, spans_display};
-use crate::pictures::domain::handover::{HandoverCheck, compare};
+use crate::pictures::domain::handover::{HandoverCheck, HandoverDiff, compare};
 use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
@@ -37,7 +38,7 @@ use crate::pictures::domain::watch::{
 use crate::pictures::event::Event;
 use crate::pictures::platform::bitmap::thumbprint;
 use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
-use crate::pictures::platform::measure::{Drawn, band_print, body_samples, rgba};
+use crate::pictures::platform::measure::{band_print, body_samples, rgba};
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
@@ -76,6 +77,11 @@ enum Done {
         display: Display,
         picture: Option<Picture>,
     },
+    /// A handover check's two pictures compared, off the thread.
+    Compared {
+        tag: Tag,
+        windows: Vec<(WindowId, HandoverDiff)>,
+    },
 }
 
 /// Where a client hears of what lands. Called on the service's thread.
@@ -105,7 +111,7 @@ pub struct Pictures {
 #[derive(Default)]
 struct Shared {
     cache: PictureCache<Picture>,
-    schedule: Schedule<Prepared>,
+    schedule: Schedule<Prepared, Whole>,
     /// The pictures of the schedule's display, which belong to it alone.
     display: DisplayPictures,
     learned: Learned,
@@ -143,8 +149,8 @@ impl DisplayPictures {
 
 /// The overlay now flies on `display`. A change leaves nothing of the display left behind; a bar
 /// no longer pictured is dropped. True when the display changed.
-fn set_display<P>(
-    schedule: &mut Schedule<P>,
+fn set_display<P, O>(
+    schedule: &mut Schedule<P, O>,
     held: &mut DisplayPictures,
     display: Display,
     picture_bar: bool,
@@ -162,8 +168,8 @@ fn set_display<P>(
 /// A render of `display`'s desktop came back. Held only when it spans the display it was asked of
 /// and that display is still the one held: a render of the external drawn behind a flight on the
 /// built-in display shows its top-left corner, zoomed.
-fn land_desktop<P>(
-    schedule: &mut Schedule<P>,
+fn land_desktop<P, O>(
+    schedule: &mut Schedule<P, O>,
     held: &mut DisplayPictures,
     display: Display,
     picture: Option<Picture>,
@@ -260,10 +266,10 @@ fn with_prints(looks: &[Look], captured: Vec<(WindowId, Picture)>) -> Vec<(Windo
 /// the schedule is told what each window looked at was seen as: only a picture the cache took is a
 /// capture it may deliver or judge news by. Every delivery it decides is then sent as it decided it,
 /// stamped `now`, and recorded as delivered.
-fn round<P>(
+fn round<P, O>(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
-    schedule: &mut Schedule<P>,
+    schedule: &mut Schedule<P, O>,
     now: Instant,
     looked: Vec<(WindowId, Option<CGRect>)>,
     captured: Vec<(WindowId, Picture, Option<Prints>)>,
@@ -309,11 +315,22 @@ fn round<P>(
     events
 }
 
+/// Whether a transition was asked that the thread has not applied yet: the overlay may be up, and the
+/// press behind it waits on whatever the thread does before it applies the hold and the frame zero
+/// asked after it.
+fn transition_asked(asked: u64, applied: u64) -> bool { asked != applied }
+
 /// Whether a bar read is free of the overlay: no transition was asked before it that the thread had
 /// not yet applied, and none was asked while it ran.
 fn bar_read_kept(asked_before: u64, applied: u64, asked_after: u64) -> bool {
-    asked_before == applied && asked_after == asked_before
+    !transition_asked(asked_before, applied) && asked_after == asked_before
 }
+
+/// A picture of a handover check, the overlay's own or the screen's, undrawn until it is compared.
+struct Whole(CFRetained<CGImage>);
+
+// SAFETY: CGImage is immutable, like `Pixels::Bitmap`.
+unsafe impl Send for Whole {}
 
 /// The stand-in's pixels, drawn once per scale.
 struct StandIn {
@@ -343,7 +360,6 @@ impl Pictures {
             transitions: pictures.transitions.clone(),
             applied_transitions: 0,
             looks_checked: HashMap::new(),
-            overlay_picture: None,
             sinks,
         };
         std::thread::Builder::new()
@@ -558,8 +574,6 @@ struct Service {
     /// The focused look and the newer picture last compared for each window, by when each was taken:
     /// a pair is compared once.
     looks_checked: HashMap<WindowId, (Instant, Instant)>,
-    /// The overlay's own picture for the handover check under way, until the screen is taken.
-    overlay_picture: Option<(Tag, Drawn)>,
     sinks: Vec<Sink>,
 }
 
@@ -613,7 +627,6 @@ impl Service {
             Command::Hold(hold) => {
                 if hold == Hold::Transition {
                     self.applied_transitions += 1;
-                    self.overlay_picture = None;
                 }
                 shared.schedule.hold(hold, now);
                 if hold == Hold::Released {
@@ -768,7 +781,7 @@ impl Service {
                 }),
                 Next::Bar(display) => self.picture_bar(display),
                 Next::Overlay(overlay) => self.take_overlay(overlay),
-                Next::Screen(check) => self.compare_screen(check),
+                Next::Screen(check, overlay) => self.compare_screen(check, overlay),
                 Next::WaitUntil(at) => return Some(at.saturating_duration_since(now)),
                 Next::Idle => return None,
             }
@@ -851,40 +864,48 @@ impl Service {
         }
     }
 
-    /// The overlay alone, for the handover check under way: its client hears at once that the overlay
-    /// may come down, and the picture is drawn whole to wait for the screen.
-    fn take_overlay(&mut self, overlay: WindowServerId) {
-        let picture = skylight::capture_alone(overlay);
-        let tag = self.shared.lock().unwrap().schedule.overlay_taken(Instant::now(), picture.is_some());
-        let Some(tag) = tag else { return };
-        self.tell(vec![Event::OverlayTaken { tag }]);
-        self.overlay_picture = picture.and_then(|picture| rgba(&picture)).map(|drawn| (tag, drawn));
+    /// Whether a transition was asked that this thread has not applied yet.
+    fn transition_waits(&self) -> bool {
+        transition_asked(self.transitions.load(Ordering::Acquire), self.applied_transitions)
     }
 
-    /// The screen, against the overlay's picture taken for `check`, over each of its windows; both
-    /// pictures dropped once compared.
-    fn compare_screen(&mut self, check: HandoverCheck) {
-        let Some((tag, overlay)) = self.overlay_picture.take().filter(|(tag, _)| *tag == check.tag) else {
+    /// The overlay alone, for the handover check under way, and its client told at once that the
+    /// overlay may come down. Not taken with a transition asked: that press has hidden the overlay, and
+    /// its frame zero is asked of this thread.
+    fn take_overlay(&mut self, overlay: WindowServerId) {
+        let picture = if self.transition_waits() { None } else { skylight::capture_alone(overlay).map(Whole) };
+        let tag = self.shared.lock().unwrap().schedule.overlay_taken(Instant::now(), picture);
+        if let Some(tag) = tag {
+            self.tell(vec![Event::OverlayTaken { tag }]);
+        }
+    }
+
+    /// The screen, for `check` against the overlay's picture taken for it: drawn and compared over each
+    /// of its windows on a thread of their own, a display's worth each, and told as `Handover` once
+    /// back. Not taken with a transition asked, whose frame zero waits on this thread.
+    fn compare_screen(&mut self, check: HandoverCheck, overlay: Whole) {
+        if self.transition_waits() {
             return;
-        };
-        let Some(screen) = skylight::capture_screen(check.display).and_then(|screen| rgba(&screen)) else {
+        }
+        let Some(screen) = skylight::capture_screen(check.display).map(Whole) else {
             debug!("no picture of the screen for the handover check");
             return;
         };
-        let (overlay, screen) = (overlay.at(check.overlay_origin, check.scale), screen.at(check.display.origin, check.scale));
-        let windows = check
-            .windows
-            .iter()
-            .filter_map(|&(window, frame)| Some((window, compare(&overlay, &screen, frame)?)))
-            .collect();
-        self.tell(vec![Event::Handover { tag, windows }]);
+        let done = self.done_tx.clone();
+        let comparing = std::thread::Builder::new().name("handover".to_owned()).spawn(move || {
+            let windows = compared(&check, &overlay, &screen);
+            done.send(Done::Compared { tag: check.tag, windows });
+        });
+        if let Err(error) = comparing {
+            warn!(%error, "no thread to compare the handover on");
+        }
     }
 
     /// SkyLight reads the framebuffer, so a bar read while a transition was on its way, or began, may
     /// have the overlay in it, and is not kept: that transition's lift asks again.
     fn picture_bar(&self, display: Display) {
         let before = self.transitions.load(Ordering::Acquire);
-        if before != self.applied_transitions {
+        if transition_asked(before, self.applied_transitions) {
             return;
         }
         let (picture, strip) = bar_of(&bar_strip(display.frame), display.scale);
@@ -939,8 +960,23 @@ impl Service {
                     debug!(display_id, "desktop capture landed");
                 }
             }
+            Done::Compared { tag, windows } => self.tell(vec![Event::Handover { tag, windows }]),
         }
     }
+}
+
+/// `check`'s windows, each compared between the overlay's picture and the screen's, both drawn whole.
+fn compared(check: &HandoverCheck, overlay: &Whole, screen: &Whole) -> Vec<(WindowId, HandoverDiff)> {
+    let (Some(overlay), Some(screen)) = (rgba(&overlay.0), rgba(&screen.0)) else {
+        debug!("a picture of the handover check could not be drawn");
+        return Vec::new();
+    };
+    let (overlay, screen) = (overlay.at(check.overlay_origin, check.scale), screen.at(check.display.origin, check.scale));
+    check
+        .windows
+        .iter()
+        .filter_map(|&(window, frame)| Some((window, compare(&overlay, &screen, frame)?)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -949,6 +985,7 @@ mod tests {
     use rini_geometry::space::ScreenPoint;
 
     use super::*;
+    use crate::pictures::domain::handover::AFTER_LIFT;
     use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Moment, Settle};
     use crate::pictures::platform::picture::test_picture;
 
@@ -1080,7 +1117,7 @@ mod tests {
     }
 
     /// The looks of a SkyLight round.
-    fn sky<P>(next: Next<P>) -> Vec<Look> {
+    fn sky<P, O>(next: Next<P, O>) -> Vec<Look> {
         match next {
             Next::Sky(sets) => sets.into_iter().flat_map(|set| set.looks).collect(),
             _ => panic!("not a SkyLight round"),
@@ -1094,7 +1131,7 @@ mod tests {
 
     /// One SkyLight round of `ask`, every window found at `frame()` and captured as `pictures` says.
     fn asked(
-        schedule: &mut Schedule<()>,
+        schedule: &mut Schedule<(), ()>,
         cache: &mut PictureCache<Picture>,
         delivered: &mut Delivered<Picture>,
         ask: OnScreen,
@@ -1112,7 +1149,7 @@ mod tests {
     #[test]
     fn a_round_tells_the_schedule_only_of_what_the_cache_took() {
         let now = Instant::now();
-        let mut schedule = Schedule::<()>::default();
+        let mut schedule = Schedule::<(), ()>::default();
         schedule.set_display(built_in(), false, now);
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
@@ -1143,7 +1180,7 @@ mod tests {
     #[test]
     fn a_refused_landing_is_lost_and_a_refused_change_delivers_nothing() {
         let now = Instant::now();
-        let mut schedule = Schedule::<()>::default();
+        let mut schedule = Schedule::<(), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.hold(Hold::Transition, now);
         let mut cache = PictureCache::new();
@@ -1167,7 +1204,7 @@ mod tests {
     #[test]
     fn a_final_ask_after_a_refused_capture_counts_the_next_one_as_news() {
         let now = Instant::now();
-        let mut schedule = Schedule::<()>::default();
+        let mut schedule = Schedule::<(), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.hold(Hold::Transition, now);
         let mut cache = PictureCache::new();
@@ -1199,7 +1236,7 @@ mod tests {
     fn a_delivery_carries_when_the_service_sent_it() {
         let taken = Instant::now();
         let sent = taken + Duration::from_millis(31);
-        let mut schedule = Schedule::<()>::default();
+        let mut schedule = Schedule::<(), ()>::default();
         schedule.set_display(built_in(), false, taken);
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
@@ -1278,7 +1315,7 @@ mod tests {
     #[test]
     fn a_display_change_empties_what_is_held_and_a_bar_turned_off_drops_only_the_bar() {
         let now = Instant::now();
-        let mut schedule = Schedule::<()>::default();
+        let mut schedule = Schedule::<(), ()>::default();
         let mut held = DisplayPictures::default();
         assert!(set_display(&mut schedule, &mut held, built_in(), true, now));
         held.desktop = Some(sized(1728.0, 1117.0));
@@ -1300,7 +1337,7 @@ mod tests {
     #[test]
     fn a_render_is_held_only_for_the_display_held_and_only_at_its_size() {
         let now = Instant::now();
-        let mut schedule = Schedule::<()>::default();
+        let mut schedule = Schedule::<(), ()>::default();
         let mut held = DisplayPictures::default();
         set_display(&mut schedule, &mut held, built_in(), false, now);
         let _ = schedule.next(now, |_| None);
@@ -1344,6 +1381,14 @@ mod tests {
         assert!(!bar_read_kept(3, 3, 4), "began during the read");
     }
 
+    /// The handle counts a transition as it is asked, ahead of its hold: until the thread applies it,
+    /// the thread starts no read of the screen for a handover check.
+    #[test]
+    fn a_transition_is_asked_until_the_thread_applies_it() {
+        assert!(transition_asked(4, 3));
+        assert!(!transition_asked(4, 4));
+    }
+
     /// The thread's side of a service with no thread, ScreenCaptureKit or sink behind it.
     fn detached_service() -> (Service, Arc<Mutex<Shared>>) {
         let (_commands, requests) = channel::channel();
@@ -1357,7 +1402,6 @@ mod tests {
             transitions: Arc::default(),
             applied_transitions: 0,
             looks_checked: HashMap::new(),
-            overlay_picture: None,
             sinks: Vec::new(),
         };
         (service, shared)
@@ -1596,19 +1640,18 @@ mod tests {
         }
     }
 
-    /// The overlay's picture for a handover check goes with the check when a transition begins, so it
-    /// is never compared with a screen showing the next overlay; the lift's own settle keeps it.
+    /// A press waits on whatever the thread does before it applies the press's hold, so with a
+    /// transition asked the overlay's picture is not taken: its client is told, and nothing is compared.
     #[test]
-    fn a_transition_beginning_drops_the_overlays_picture() {
+    fn the_overlay_is_not_pictured_with_a_transition_asked() {
         let (mut service, shared) = detached_service();
-        let drawn = || Drawn { width: 1, height: 1, stride: 4, bytes: vec![0; 4] };
         shared.lock().unwrap().schedule.check_handover(check());
-        service.overlay_picture = Some((tag(4), drawn()));
-        service.apply(Command::Hold(Hold::Settling));
-        assert!(service.overlay_picture.is_some(), "settling: the lift it measures");
-        service.apply(Command::Hold(Hold::Transition));
-        assert!(service.overlay_picture.is_none());
-        assert!(matches!(shared.lock().unwrap().schedule.next(Instant::now(), |_| None), Next::Idle));
+        let next = shared.lock().unwrap().schedule.next(Instant::now(), |_| None);
+        let Next::Overlay(overlay) = next else { panic!("the overlay is the next call") };
+        service.transitions.fetch_add(1, Ordering::AcqRel);
+        service.take_overlay(overlay);
+        let next = shared.lock().unwrap().schedule.next(Instant::now() + AFTER_LIFT, |_| None);
+        assert!(matches!(next, Next::Idle), "nothing to compare");
     }
 
     /// Watch ids are the handle's, handed out at once, and the watch goes to the thread after them.

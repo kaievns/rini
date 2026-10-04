@@ -58,7 +58,7 @@ opened, taken on the main thread as it composes (both Known debt). It is started
 | asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it |
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
-| measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared |
+| measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared on a thread of the check's own |
 | holds | `hold` at a transition's begin, before anything is composed, `Settling` at its lift, `Released` at its quiet |
 | reads | `usable`, `usable_many`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
 | hands over | `insert`, for the flight engine's one capture of its own, of a window that has just opened |
@@ -77,7 +77,9 @@ delivery, and a client takes its own by the tag's client.
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels
 out and post them back. No capture call is made there: `CGWindowListCreateImage` is proxied through the
 same delivery queue and deadlocks. A handover check's screen is the one `CGWindowListCreateImage` of a
-whole display, made on the thread while a transition settles: it goes through that queue too.
+whole display, made on the thread while a transition settles: it goes through that queue too. Its two
+pictures, a display's worth each, are drawn and compared on a thread of their own, `handover`, which
+posts the result back like a completion: a press asks its frame zero of the service's thread.
 
 Window captures are taken at 2x on any display: ScreenCaptureKit costs per call, not per pixel, and a
 picture taken at 1x flies soft on a Retina display. What is read off a display's framebuffer, the
@@ -106,7 +108,7 @@ listed window, render the desktop, picture the bar, wait until a time, or nothin
 | Rule | Why |
 |---|---|
 | While a transition holds the service, only a focus capture starts, of a focus target clipped by the display's edge, and, with the handover measured, the screen a check takes while the transition settles | ScreenCaptureKit work queued at a focus change slows every step of it: with four captures out the frame-zero capture took 92-97ms against 26-33; what the transition waits for is the exception, and the check is opt-in and taken once the overlay is down |
-| A handover check's overlay picture is the next call, ahead of every other; the screen comes `AFTER_LIFT` (45ms) after it, once, and never when the overlay's picture could not be taken; a transition beginning drops the check | the lift's hide waits for the overlay's picture; the research took the screen 45ms after its hide; a screen taken once the next overlay is up would measure that overlay, and a press never waits on a measurement |
+| A handover check's overlay picture is the next call, ahead of every other; the screen comes `AFTER_LIFT` (45ms) after it, once, and never when the overlay's picture was not taken; a transition beginning drops the check and the overlay's picture it holds, and neither picture is taken while a transition is asked and not yet applied | the lift's hide waits for the overlay's picture; the research took the screen 45ms after its hide; a screen taken once the next overlay is up would measure that overlay, and a press asks its frame zero of this thread, so it waits at most for the one call under way as it lands |
 | What waited starts at the release, most urgent first: focus, background, warm | a capture of a focus end is never queued behind warms |
 | A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | the reactor sends a pass's warm just after the request for its flight, which the engine holds for as it takes it: the settle usually covers the gap, and what it does not is listed again at the release (below) |
 | A capture listed and unable to start through a hold is listed again at the release, as is one asked again at another size | the buffer a listing prepares is the size it found the window at, and the transition may resize it |

@@ -179,23 +179,29 @@ It is off unless asked for, and `off` turns it off with the writing.
 - **The engine.** At `Lift` it asks the pictures service for the check (`Pictures::check_handover`)
   and holds back only the hide and the tiles' release; the quiet, `Settle` and the rest go out at the
   lift as ever. The hide comes on what `journal::hides` says: the overlay's picture taken for that
-  lift (`OverlayTaken`), any request, since a press never waits on a measurement, or
+  lift (`OverlayTaken`), any request, since a press never waits for the overlay's picture, or
   `OVERLAY_TAKE_PATIENCE` (60ms, past the 43.3ms of the coldest SkyLight call). Only a lift that hid on
   its own picture is measured; on a request or the patience the overlay may be gone from the picture,
   and its measure, if one comes, is dropped.
 - **The pictures service.** The overlay window alone is its next SkyLight call, ahead of any other
-  (`TileOverlay::server_id` names it). It tells the engine `OverlayTaken` at once, draws the picture
-  whole, and `AFTER_LIFT` (45ms) after it, as the research waited after its hide, takes the screen
-  through `CGWindowListCreateImage` on its own thread. The research hid as its picture returned; here
-  the hide waits for the hop to the main thread, so the screen comes that much less after it. It compares the two over each window
-  (`src/pictures/domain/handover.rs`: the research's sampling and thresholds) and tells the engine
-  `Handover`, which the engine marks as it comes, usually before the quiet and so in the lift's own
-  burst. A transition beginning drops the check and the overlay's picture: the screen would show the
-  next overlay.
+  (`TileOverlay::server_id` names it), and it tells the engine `OverlayTaken` at once. `AFTER_LIFT`
+  (45ms) after that picture, as the research waited after its hide, it takes the screen through
+  `CGWindowListCreateImage` on its own thread. The research hid as its picture returned; here the hide
+  waits for the hop to the main thread, so the screen comes that much less after it. A thread of the
+  check's own, `handover`, draws the two whole and compares them over each window
+  (`src/pictures/domain/handover.rs`: the research's sampling and thresholds), and the service tells
+  the engine `Handover`, which the engine marks as it comes, usually before the quiet and so in the
+  lift's own burst. The schedule holds the overlay's picture with the check, and a transition
+  beginning drops both: the screen would show the next overlay. Neither picture is taken once a
+  transition is asked and the pictures thread has not yet applied its hold: that press has hidden the
+  overlay, and asks its frame zero of the same thread.
 - **What it costs.** Each lift's hide comes up to 60ms later: `handover`'s `waited_us` says how much.
-  The screen capture goes through ScreenCaptureKit's delivery queue while the transition settles, the
-  one capture besides a clipped focus end's that the hold lets through. The two pictures, a display's
-  worth each, are drawn and compared on the pictures thread and dropped.
+  A press that lands while the pictures thread takes the overlay's picture or the screen waits for that
+  one call, a SkyLight call or a `CGWindowListCreateImage` of the display, before its frame zero is
+  taken. The screen capture goes through ScreenCaptureKit's delivery queue while the transition
+  settles, the one capture besides a clipped focus end's that the hold lets through. The two pictures,
+  a display's worth each, are drawn and compared on `handover`, off the pictures thread, and dropped
+  once compared.
 
 ## Reading it
 
