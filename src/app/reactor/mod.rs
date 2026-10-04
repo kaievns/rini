@@ -3794,17 +3794,19 @@ impl Reactor {
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
         let from_offset = CGPoint::new(delta.x, delta.y);
         let to_offset = CGPoint::new(0.0, 0.0);
-        let nudge = moved.and_then(|(window, direction)| {
-            crate::transitions::domain::strip_move::stage_move(
-                &mut windows,
-                window,
-                direction,
-                screen.frame.size.width,
-                gaps.outer.left,
-                gaps.outer.right,
-            )
-        });
-        // The plain duration: the engine stretches the flight only when it does nudge.
+        let accent = moved
+            .and_then(|(window, direction)| {
+                crate::transitions::domain::strip_move::stage_move(
+                    &mut windows,
+                    window,
+                    direction,
+                    screen.frame.size.width,
+                    gaps.outer.left,
+                    gaps.outer.right,
+                )
+            })
+            .map(|offset| crate::animation::domain::motion::accents::Accent::Step { offset });
+        // The plain duration: the look stretches the flight only when it takes the step.
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
 
@@ -3818,7 +3820,7 @@ impl Reactor {
             focused_before: self.focused_as_event_began,
             key: self.main_window_tracker.key_window(),
             duration,
-            nudge,
+            accent,
         });
         true
     }
@@ -4089,7 +4091,7 @@ impl Reactor {
             focused_before: self.focused_as_event_began,
             key: self.main_window_tracker.key_window(),
             duration,
-            nudge: None,
+            accent: None,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
         // the pictures service holds a warm until the quiet after the flight (`src/transitions/docs/coordination.md`).

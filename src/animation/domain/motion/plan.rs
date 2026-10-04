@@ -884,8 +884,8 @@ pub fn edge_bounce_overshoot(direction: Direction) -> CGPoint {
         Direction::Down => CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT),
     }
 }
-/// One movement `fly` installs: a container's translation, or one loose tile's own animation.
-/// Pure output of [`animation_targets`].
+/// One movement a flight's motion carries: a container's translation, or one loose tile's own
+/// animation. Pure output of [`animation_targets`], which a look composes its tracks from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AnimationTarget {
     Container {
@@ -969,7 +969,7 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
-    /// `animation_targets`: what `fly` installs and nothing else (Requirement 11.4 of
+    /// `animation_targets`: what a look composes the motion from and nothing else (Requirement 11.4 of
     /// `rigid-strip-groups`). Plans built with `reflow_plan` on a 1728x1117 display at the origin,
     /// so overlay space equals display space.
     mod targets {
@@ -1245,9 +1245,10 @@ mod tests {
     mod merges {
         use rini_geometry::{SameAs, to_overlay_space};
 
-        use super::pieces::random_requests;
         use super::*;
-        use crate::animation::domain::motion::testing::{DISPLAY, Gen, OnSurface, RUNS, StagedTile};
+        use crate::animation::domain::motion::testing::{
+            DISPLAY, Gen, OnSurface, RUNS, StagedTile, random_requests,
+        };
 
         /// An external display at a non-zero origin, so a retarget that forgot the conversion shows.
         const EXTERNAL: CGRect = CGRect {
@@ -1907,7 +1908,9 @@ mod tests {
 
         use super::*;
         use crate::animation::domain::motion::surface::{pan_travel, surface_travel};
-        use crate::animation::domain::motion::testing::{DISPLAY, Gen, OnSurface, RUNS};
+        use crate::animation::domain::motion::testing::{
+            DISPLAY, Gen, OnSurface, RUNS, random_requests,
+        };
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -1946,65 +1949,6 @@ mod tests {
                 floating,
                 from: None,
             }
-        }
-
-        /// A random pass: 1-12 windows over 1-4 distinct vectors (4pt apart on some axis, and from zero)
-        /// plus ±1pt jitter; some still, resizing, or floating.
-        pub(super) fn random_requests(rng: &mut Gen) -> Vec<(WindowId, CGRect, CGRect, bool)> {
-            let mut palette: Vec<CGPoint> = Vec::new();
-            let wanted = 1 + rng.below(4) as usize;
-            while palette.len() < wanted {
-                let v = CGPoint::new(
-                    rng.pt(-12.0, 12.0) * 50.0,
-                    if rng.coin() {
-                        0.0
-                    } else {
-                        rng.pt(-6.0, 6.0) * 50.0
-                    },
-                );
-                if (v.x == 0.0 && v.y == 0.0) || palette.contains(&v) {
-                    continue;
-                }
-                palette.push(v);
-            }
-            let count = 1 + rng.below(12) as usize;
-            (0..count)
-                .map(|i| {
-                    let from = rng.on_screen();
-                    let window = wid(i as u32 + 1);
-                    match rng.below(10) {
-                        0 => (window, from, from, false),
-                        1 => {
-                            let to = rect(
-                                from.origin.x,
-                                from.origin.y,
-                                from.size.width + rng.pt(-300.0, 300.0),
-                                from.size.height,
-                            );
-                            let to = if is_a_resize(from.size, to.size) {
-                                to
-                            } else {
-                                rect(
-                                    to.origin.x,
-                                    to.origin.y,
-                                    from.size.width + 200.0,
-                                    to.size.height,
-                                )
-                            };
-                            (window, from, to, false)
-                        }
-                        2 => {
-                            let v = palette[rng.below(palette.len() as u64) as usize];
-                            (window, from, shifted(from, v.x, v.y), true)
-                        }
-                        _ => {
-                            let v = palette[rng.below(palette.len() as u64) as usize];
-                            let (jx, jy) = (rng.pt(-1.0, 1.0), rng.pt(-1.0, 1.0));
-                            (window, from, shifted(from, v.x + jx, v.y + jy), false)
-                        }
-                    }
-                })
-                .collect()
         }
 
         #[test]
@@ -2407,7 +2351,7 @@ mod tests {
             assert_eq!(targets.len(), 1, "the floating tile flies on its own");
         }
 
-        /// `fly` installs what `animation_targets` names and nothing else.
+        /// A look composes what `animation_targets` names and nothing else.
         #[test]
         fn animation_targets_name_every_moving_piece_once_and_no_rigid_member() {
             let mut rng = Gen(137);

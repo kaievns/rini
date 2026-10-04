@@ -169,12 +169,15 @@ picture landing while it runs, is here.
 
 A pass confirming the flight's destinations is an empty `PlanDelta`: nothing is touched, and rapid
 presses neither restart nor extend the flight. Any real change restarts the coordinator's clock
-(`Merge { moved }`), so the frame placement and teardown cover the newest legs. A pass arriving before
-the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead,
-and frame zero installed again (`fold_before_moving`). It is folded by `merge_plans`, as a pass in
-flight is, with every container where frame zero installs it and taken to be where the last pass
-sends it: the reactor builds a pass from the layout where the press before left it, so its frames are
-places on the strip there. A burst of presses then composes as one movement from frame zero. Rebuilt
+(`Merge { moved }`) at the pass's own length or what is left of the flight's score, whichever is
+longer (`FlightScore::clock`), so the teardown covers everything playing, a bounce outlasting the pass
+included; a merge that moves nothing runs the clock on for whatever it started, a step
+(`Event::Extend`). A pass arriving before the plan plays, behind the frame-zero wait or the coalesce
+window, is folded into frame zero instead, and frame zero posed again (`fold_before_moving`). It is
+folded by the flight's look (`FlightScore::fold`; Slide's is `merge_plans`, as a pass in flight is),
+with every container where frame zero installs it and taken to be where the last pass sends it: the
+reactor builds a pass from the layout where the press before left it, so its frames are places on the
+strip there. A burst of presses then composes as one movement from frame zero. Rebuilt
 from the merged tiles, as it was, each window rode its own path from where frame zero drew it to where
 the last press sends it. On two steps along the strip, the column the second brought started under
 the one the first brought, and the column the second left behind was outrun and covered by its
@@ -352,10 +355,10 @@ screen at lift, 1000-3446pt from its park. The handover metric
 macOS (y=1116 on a 1117pt display, clamped to 1051) had reported 65pt on 180
 flights and masked every smaller error. The lift logs "overlay lifted", so
 the placing-to-lift gap can be read from the log. The lift itself waits for
-the render server and the real windows (the coordinator's tick, `TileOverlay::settled`,
+the render server and the real windows (the coordinator's tick, `FlightScore::settled`,
 `handover_report`): the clock has
-to run out AND every animation the overlay installed has to have ended (its replica's
-`Score::settled`) AND every window has to be within 2pt of where it was written, or
+to run out AND every track of the flight's score has to have ended (`Score::settled`, which the
+overlay plays exactly) AND every window has to be within 2pt of where it was written, or
 `LIFT_GRACE` (350ms) past the clock. The overlay used to ask the presentation instead, every container
 and picture within half a point of its model, which a 1722pt curve reaches at 87% of its length: the
 tracks ending says yes no earlier, so where a track outlasts the clock the lift waits as long or longer.
@@ -406,14 +409,15 @@ workspace pulls the row up. It was 36pt and was reported as too small to
 notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a transition of
 the bounce kind when none is running: every tile at rest, nothing written and nothing watched, the
 bounce played as the motion starts, once frame zero is up. On a flight that moves it adds the bounce at
-once, and on one that does not move yet as it starts; either way the coordinator's clock runs on to cover
-the return (`Event::Extend`, for as long as the longest bounce the push started runs). Every push that
-reaches a moving flight shows: each container's bounce is a track the overlay keeps in its replica, and a
-push while it plays starts that container's next from where it is drawn, the clock extended to the new
-ones' return. A container's bounce goes with its tracks whenever frame zero is installed again and at
-the lift, which remove its animations, so the next push starts it from rest; an engine's record of the
-bounce kept past either pushed from where nothing was drawn and the surface jumped. Both are pinned by
-`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. How the bounce is drawn, and how a push
+once; on one that does not move yet it waits for the motion (`FlightScore::wait`), the latest push in
+place of any before it, and plays as the motion starts. Either way the coordinator's clock runs on for
+as long as the score plays (`Event::Extend`). Every push that reaches a moving flight shows: each
+container's bounce is a track in the flight's score, and a push while it plays starts that
+container's next from where it is drawn, the clock extended to the new ones' return. Frame zero posed
+again has nothing playing, and the lift drops the score, so the next push starts every bounce from
+rest; an engine's record of the bounce kept past either pushed from where nothing was drawn and the
+surface jumped. Both are pinned by `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`, the
+wait by `an_accent_before_the_motion_waits_for_it`. How the bounce is drawn, and how a push
 re-kicks it, is "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
 
 ## The move flight, staged
@@ -467,14 +471,14 @@ nothing of it lands on screen to be watched. A
 move that does not step keeps both columns crossing.
 
 The step starts only on a flight that moves: one still collecting passes
-installs its containers again with each, which drops any additive animation, so a move
-arriving then waits and steps when the flight starts moving (`nudge_admission`,
-`NudgeAdmission::Wait`, `starting_nudge`); it used to be dropped, and a
-full-width move merged into a collecting layout pass showed nothing. The engine
-stretches a flight that steps to `NUDGE_STRETCH` (1.3x) the plain duration,
-when the step starts, so a flight that does not step keeps its length; the
-reactor asked for the stretch with every nudge it sent, stepped or not. The
-clock and lift wait for the step to come home (`Event::Extend`, `settled`).
+poses frame zero again with each, which has nothing playing, so a move
+arriving then waits (`FlightScore::wait`, a later step in place of the earlier) and steps when the
+flight starts moving; it used to be dropped, and a full-width move merged into a collecting layout
+pass showed nothing. A step is taken only while none plays (`step_tracks`), one per burst. The look
+stretches a flight that steps to `NUDGE_STRETCH` (1.3x) the plain duration when it takes the step, so
+a flight that does not step keeps its length; the reactor asked for the stretch with every step it
+sent, stepped or not. The clock and lift wait for the step to come home (`Event::Extend` over the
+score, `FlightScore::settled`).
 
 **Pictures.** The column a full-width move passes is parked at both ends, so a
 cold cache had no picture of it, and the strip surface drew nothing for a
@@ -539,10 +543,11 @@ SPAWN size and, drawn top-left in the slot, left the growth as backdrop, a
 hole in the strip (recording of 2026-09-15 3:28:10). Its first picture once it
 has repainted there, taken within 20pt of the slot, admits it
 (`RunningAnimation::admit`): before the motion starts the zero-width tile
-joins the frame-zero composition (`install`), and the flight starts when the
-last awaited picture lands or `HOLD_CAP` passes, so every tile flies in one
-`fly` transaction; after, it joins the flight in `GroupKey::Loose`
-(`add_tile`) for what is left of the clock. A picture that misses the flight
+joins frame zero, posed again with it, and the flight starts when the
+last awaited picture lands or `HOLD_CAP` passes, so every tile starts in the one
+transaction the motion starts in; after, it is merged in as a pass holding it alone and joins the
+flight in `GroupKey::Loose` on a track of its own for what is left of the clock
+(`a_late_entrance_joins_on_a_track_of_its_own`). A picture that misses the flight
 altogether shows when the overlay lifts. SkyLight is quick only with nothing
 in front of it: 27ms for one call alone, 170-300ms under load and 204ms behind
 four ScreenCaptureKit captures ("SkyLight in parallel" in
@@ -604,7 +609,7 @@ top-left crop that stopped the grid at the picture's edge and showed the
 backdrop in the growth was tried and read as a hole (3:28:10), the same
 hole recorded above for `contentsRect` past the edge. If the repainted
 picture lands once the motion has started after all, it is hard-cut onto the tile and
-`set_tile_picture` re-installs the tile's own track from the overlay's replica,
+`TileOverlay::swap` re-installs the tile's own track from the overlay's replica,
 the SAME begin, length and curve, while it plays (a plain move's track too, so a
 crop-drawn tile on a move re-keys the same way): the frame keeps its curve and only
 the pixels cut (`a_swap_re_keys_a_crop_grid_on_its_tiles_track`). A tile with no track

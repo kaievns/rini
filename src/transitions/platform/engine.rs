@@ -1,7 +1,8 @@
 //! The flight engine: the actor that carries out every transition. It holds the lifecycle
 //! (`crate::transitions::domain::lifecycle`'s `Coordinator`), stages each request and merges each
-//! pass into the flight running, and does what the coordinator says: it drives the renderer
-//! (`crate::animation::platform::overlay`) and asks and watches the pictures service
+//! pass into the flight running, and does what the coordinator says: it hands the renderer
+//! (`crate::animation::platform::overlay`) the edits of each flight's score
+//! (`crate::transitions::domain::flight_score`) and asks and watches the pictures service
 //! (`crate::pictures::platform::service`). When anything happens is the coordinator's. Runs on the
 //! main thread because Core Animation requires it.
 //!
@@ -20,10 +21,11 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
-use crate::animation::domain::motion::accents::NudgePlaying;
+use crate::animation::domain::choreography::{Pass, Stage};
+use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::hairline::corner_radius;
-use crate::animation::domain::motion::nudge::flight_curve;
 use crate::animation::domain::motion::plan::{self, entrance_from};
+use crate::animation::domain::motion::score::{Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay, media_now};
 use crate::pictures::domain::knowledge::{Call, Knowledge};
@@ -39,6 +41,7 @@ use crate::pictures::platform::service::Pictures;
 use crate::pictures::platform::skylight::capture_via_framed;
 use crate::transitions::domain::admission::*;
 use crate::transitions::domain::flight::*;
+use crate::transitions::domain::flight_score::FlightScore;
 use crate::transitions::domain::lifecycle::{
     self, Command, Coordinator, EndWatch, Generation, Kind, Start, StageSummary, TileSummary,
     drawn_focused, extend_latest, losing_focus,
@@ -95,8 +98,9 @@ pub enum Event {
         /// The key window as the movement went out, as for `Animate`.
         key: Option<WindowId>,
         duration: Duration,
-        /// The whole strip's step away from where a moved window went and back; drawn only.
-        nudge: Option<CGPoint>,
+        /// What rides the movement: a move's step, the whole strip away from where the moved window
+        /// went and back, drawn only.
+        accent: Option<Accent>,
     },
     /// Nudge the strip surface by `overshoot` and bring it back; real windows stay put. Rides an
     /// in-flight movement additively. See "Edge bounce" in `src/transitions/docs/coordination.md`.
@@ -145,18 +149,14 @@ struct RunningAnimation {
     key: Option<WindowId>,
     /// The focus target whose tile flies its focused look, until a picture is swapped onto it.
     focused_look: Option<WindowId>,
-    /// The flight as rigid pieces: what `install` composed and `fly` animates.
+    /// The flight as rigid pieces, which its look composes the score from.
     /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     plan: plan::FlightPlan,
     /// The plan is playing on the renderer: a pass or a picture now retargets it rather than
     /// installing frame zero again.
     flown: bool,
-    /// A move's nudge waiting for the flight to move, with the move's plain duration
-    /// (`NudgeAdmission::Wait`).
-    nudge: Option<(CGPoint, Duration)>,
-    /// A push against an end that arrived before the flight moved, played as it starts: frame zero
-    /// may not be on screen yet.
-    bounce: Option<(CGPoint, Duration)>,
+    /// Everything the flight draws, and the accents waiting for its motion.
+    score: FlightScore,
 }
 
 /// What a swapped-in picture became.
@@ -329,8 +329,8 @@ struct Shape {
     repainting: Vec<WindowId>,
 }
 
-/// One pass, composed: what `begin_group` installs or merges.
-struct Pass {
+/// One pass, composed: what `begin_group` poses or merges.
+struct Composed {
     tiles: Vec<OverlayTile>,
     final_frames: Vec<(WindowId, CGRect)>,
     label: &'static str,
@@ -342,7 +342,7 @@ struct Pass {
     key: Option<WindowId>,
     pan: Option<CGPoint>,
     plan: plan::ReflowPlan,
-    nudge: Option<CGPoint>,
+    accent: Option<Accent>,
 }
 
 /// What the coordinator is told of a stage: `tiles` and `final_frames` in screen points.
@@ -458,17 +458,6 @@ impl RunningAnimation {
         true
     }
 
-    /// A push against an end: played now on a flight that moves, else kept, the latest push winning,
-    /// until the motion starts. Frame zero may not be on screen yet, and the bounce is drawn on the
-    /// containers frame zero installs.
-    fn push_bounce(&mut self, overshoot: CGPoint, duration: Duration) -> Option<(CGPoint, Duration)> {
-        if self.flown {
-            return Some((overshoot, duration));
-        }
-        self.bounce = Some((overshoot, duration));
-        None
-    }
-
     /// Focus handed over: `to` is drawn focused from now, `from` not.
     fn hand_over_focus(&mut self, to: WindowId, from: Option<WindowId>) {
         self.shown_focus = Some(to);
@@ -511,17 +500,10 @@ impl RunningAnimation {
         outcomes
     }
 
-    /// A later pass folded into a flight not yet moving, by the rules a moving flight's merge
-    /// follows, every container where frame zero installs it and the pass's frames taken as places on
-    /// the strip where the last pass sends it: a burst composes as one movement from frame zero, and
-    /// each tile starts where its container installs it.
-    fn fold_before_moving(&mut self, incoming: &plan::ReflowPlan, pan: Option<CGPoint>, viewport: CGRect) {
-        let presented = plan::Presented {
-            drawn: self.plan.positions.keys().map(|key| (*key, CGPoint::new(0.0, 0.0))).collect(),
-            along: self.plan.positions.clone(),
-        };
-        let (merged, _) = plan::merge_plans(&self.plan, incoming, pan, &presented, self.focus, viewport);
-        self.plan = merged;
+    /// A later pass folded into a flight not yet moving, by its look (`FlightScore::fold`): a burst
+    /// composes as one movement from frame zero, and each tile starts where its container installs it.
+    fn fold_before_moving(&mut self, pass: &Pass) {
+        self.plan = self.score.fold(&self.plan, pass);
         for tile in self.tiles.iter_mut() {
             if let Some(member) = self.plan.member(tile.window) {
                 tile.from = member.start_frame();
@@ -529,6 +511,9 @@ impl RunningAnimation {
         }
         sync_tiles_to_plan(&mut self.tiles, &self.plan);
     }
+
+    /// The windows the flight draws a tile of.
+    fn drawn(&self) -> Vec<WindowId> { self.tiles.iter().map(|tile| tile.window).collect() }
 
     /// Adds or retargets one window without disturbing anything already moving.
     fn merge(&mut self, tile: OverlayTile) -> Admitted {
@@ -719,8 +704,6 @@ pub struct FlightEngine {
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     on_flight: Option<OnFlight>,
-    /// When the move nudge playing now comes home.
-    nudge_playing: NudgePlaying,
 }
 
 impl FlightEngine {
@@ -751,7 +734,6 @@ impl FlightEngine {
             quiet: None,
             place_frames: None,
             on_flight: None,
-            nudge_playing: NudgePlaying::default(),
         }
     }
 
@@ -790,7 +772,7 @@ impl FlightEngine {
                 focused_before,
                 key,
                 duration,
-                nudge,
+                accent,
             } => self.start_surface(
                 windows,
                 from_offset,
@@ -799,7 +781,7 @@ impl FlightEngine {
                 (focus, focused_before),
                 key,
                 duration,
-                nudge,
+                accent,
                 None,
             ),
             Event::Bounce {
@@ -857,11 +839,7 @@ impl FlightEngine {
                 .pictures
                 .ask_on_screen(on_screen(self.tag(generation), Moment::Final, &windows, &[], &behind)),
             Command::Swap { generation, window } => self.swap(generation, window, now),
-            Command::Snap { window, frame } => {
-                if let (Some(overlay), Some((display, _))) = (self.overlay.as_mut(), self.display) {
-                    overlay.snap_tile(window, to_overlay_space(frame, display));
-                }
-            }
+            Command::Snap { window, frame } => self.snap(window, frame),
             Command::KeepFocusedLook { generation, window } => {
                 self.pictures.keep_focused(self.tag(generation), window)
             }
@@ -969,26 +947,68 @@ impl FlightEngine {
         }
         let clip = corner_clip(self.pictures.knowledge(WindowServerId::from(window)), &picture, size);
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tile_picture(window, &picture);
+            overlay.swap(window, &picture);
             overlay.set_tile_corner_clip(window, clip);
         }
     }
 
+    /// The coordinator's snap of `window`'s tile onto `frame`, its window's, as an edit of the score
+    /// played on the renderer.
+    fn snap(&mut self, window: WindowId, frame: CGRect) {
+        let Self { overlay, running, display, .. } = self;
+        let (Some(overlay), Some(running), Some((display, _))) =
+            (overlay.as_mut(), running.as_mut(), *display)
+        else {
+            return;
+        };
+        let edits = running.score.snap(window, to_overlay_space(frame, display), media_now());
+        overlay.play(&edits, &running.tiles);
+    }
+
     /// A reserved entrance's tile, with its first picture: it joins frame zero, or the flight for what
-    /// is left of it.
+    /// is left of it, merged in as a pass holding it alone.
     fn admit_entrance(&mut self, tile: OverlayTile, now: Instant) {
+        let left = self.coordinator.remaining(now).unwrap_or_default();
+        let viewport = self.viewport();
         let Some(running) = self.running.as_mut() else { return };
-        debug!(pid = tile.window.pid, idx = tile.window.idx.get(), flown = running.flown, "entrance admitted");
-        running.plan.entrances.push((tile.window, tile.from, tile.to));
+        debug!(
+            pid = tile.window.pid,
+            idx = tile.window.idx.get(),
+            flown = running.flown,
+            "entrance admitted"
+        );
         if !running.flown {
+            running.plan.entrances.push((tile.window, tile.from, tile.to));
             self.reinstall();
             return;
         }
+        let mut entrance = plan::ReflowPlan::empty();
+        entrance.entrances.push((tile.window, tile.from, tile.to));
+        let drawn = running.drawn();
+        let pass = Pass {
+            plan: &entrance,
+            pan: None,
+            focus: running.focus,
+            viewport,
+            drawn: &drawn,
+            seconds: left.as_secs_f64(),
+            accent: None,
+        };
+        let merged = running.score.merge(&running.plan, &pass, media_now());
+        running.plan = merged.plan;
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
-        let left = self.coordinator.remaining(now).unwrap_or_default();
+        let mut edits = merged.edits;
+        edits.push(running.score.bank(banding));
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.add_tile(&tile, plan::GroupKey::Loose, &banding, left);
+            overlay.play(&edits, &running.tiles);
         }
+    }
+
+    /// The display in the overlay's space: what a member's destination is judged against.
+    fn viewport(&self) -> CGRect {
+        self.display
+            .map(|(display, _)| to_overlay_space(display, display))
+            .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)))
     }
 
     /// The overlay's geometry. The pictures of the display are the service's, told by the reactor.
@@ -1023,12 +1043,22 @@ impl FlightEngine {
         self.overlay.as_mut()
     }
 
-    /// Frame zero installed again, its plan as it is, with the pictures the tiles hold now.
+    /// Frame zero posed again, its plan as it is, with the pictures the tiles hold now; the accents
+    /// waiting for the motion keep waiting.
     fn reinstall(&mut self) {
         let Self { overlay, running, .. } = self;
-        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_ref()) else { return };
+        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
+            return;
+        };
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
-        overlay.install(&running.plan, &running.tiles, &banding);
+        let drawn = running.drawn();
+        let stage = Stage {
+            plan: &running.plan,
+            drawn: &drawn,
+            seconds: 0.0,
+            accents: &[],
+        };
+        overlay.pose(running.score.pose(&stage, banding), &running.tiles);
         self.clip_corners();
     }
 
@@ -1443,7 +1473,7 @@ impl FlightEngine {
             }
         }
 
-        self.begin_group(Pass {
+        self.begin_group(Composed {
             tiles,
             final_frames,
             label: "per-window",
@@ -1457,13 +1487,13 @@ impl FlightEngine {
             key,
             pan: None,
             plan,
-            nudge: None,
+            accent: None,
         });
     }
 
-    /// Runs one composed pass: merged into the flight running, or installed as its frame zero.
+    /// Runs one composed pass: merged into the flight running, or posed as its frame zero.
     /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
-    fn begin_group(&mut self, pass: Pass) {
+    fn begin_group(&mut self, pass: Composed) {
         if self.running.is_some() {
             self.merge_group(pass);
             return;
@@ -1507,9 +1537,11 @@ impl FlightEngine {
             focused_look: None,
             plan: plan::FlightPlan::from(pass.plan),
             flown: false,
-            nudge: nudge_waiting(pass.nudge, pass.shape.duration, &self.nudge_playing, Instant::now()),
-            bounce: None,
+            score: FlightScore::default(),
         };
+        if let Some(accent) = pass.accent {
+            running.score.wait(accent);
+        }
         restack(&mut running.tiles, focus);
         self.running = Some(running);
         let Some(mut stage) = self.stage(pass.shape) else { return };
@@ -1537,7 +1569,7 @@ impl FlightEngine {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
             if look == Some(tile.window) {
                 let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
-                overlay.set_tile_picture(tile.window, &tile.snapshot);
+                overlay.swap(tile.window, &tile.snapshot);
                 overlay.set_tile_corner_clip(tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size));
                 overlay.set_tile_focused(tile.window, true);
             } else if was.is_some_and(|was| was != tile.focused) {
@@ -1546,13 +1578,14 @@ impl FlightEngine {
         }
     }
 
-    /// One later pass folded into the flight running: retargeted on the renderer once the plan
-    /// plays, folded into frame zero and installed again before. A pass moving focus to a target
-    /// parked off the display flies its focused look, as the first pass's does.
-    fn merge_group(&mut self, pass: Pass) {
-        let now = Instant::now();
+    /// One later pass folded into the flight running: bent by its look from the score once the plan
+    /// plays, folded into frame zero and posed again before. A pass moving focus to a target parked
+    /// off the display flies its focused look, as the first pass's does.
+    fn merge_group(&mut self, pass: Composed) {
+        let at = media_now();
+        let viewport = self.viewport();
         let display = self.display.map(|(frame, _)| frame);
-        let Self { overlay, running, nudge_playing, .. } = self;
+        let Self { overlay, running, .. } = self;
         let Some(running) = running.as_mut() else { return };
         for entrance in pass.entrances {
             if !running.entrances.iter().any(|e| e.window == entrance.window) {
@@ -1569,35 +1602,29 @@ impl FlightEngine {
         let (pass_focus, _) = pass.focus;
         running.merge_pass(pass.tiles, pass_focus);
         let mut shape = pass.shape;
+        let drawn = running.drawn();
+        let folded = Pass {
+            plan: &pass.plan,
+            pan: pass.pan,
+            focus: running.focus,
+            viewport,
+            drawn: &drawn,
+            seconds: shape.duration.as_secs_f64(),
+            accent: pass.accent,
+        };
         let mut moved = false;
-        let mut nudge = None;
-        // The viewport in overlay space: what a member's destination is judged against.
-        let viewport = display
-            .map(|d| to_overlay_space(d, d))
-            .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)));
         if !running.flown {
-            if let Some(waiting) = nudge_waiting(pass.nudge, shape.duration, nudge_playing, now) {
-                running.nudge = Some(waiting);
+            if let Some(accent) = pass.accent {
+                running.score.wait(accent);
             }
-            running.fold_before_moving(&pass.plan, pass.pan, viewport);
+            running.fold_before_moving(&folded);
         } else {
             // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
-            let presented = overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
-            let focus_changed = pass_focus.is_some() && pass_focus != focus_before;
-            let (merged, mut delta) = plan::merge_plans(
-                &running.plan,
-                &pass.plan,
-                pass.pan,
-                &presented,
-                running.focus,
-                viewport,
-            );
-            delta.focus_changed = focus_changed;
-            running.plan = merged;
+            let mut merged = running.score.merge(&running.plan, &folded, at);
+            merged.delta.focus_changed = pass_focus.is_some() && pass_focus != focus_before;
+            running.plan = merged.plan;
             sync_tiles_to_plan(&mut running.tiles, &running.plan);
-            nudge = starting_nudge(pass.nudge.map(|nudge| (nudge, shape.duration)), nudge_playing, now);
-            // A flight carrying the nudge is stretched, its new legs with it.
-            let duration = nudge.map_or(shape.duration, |(_, stretched)| stretched);
+            let delta = &merged.delta;
             if !delta.is_empty() {
                 debug!(
                     groups = running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
@@ -1609,10 +1636,13 @@ impl FlightEngine {
                     "flight merged"
                 );
                 for (key, to) in &delta.retargeted_groups {
-                    let presented = presented.drawn.get(key).copied().unwrap_or_default();
+                    let drawn = match running.score.score().sample(Node::Container(*key), at) {
+                        Some(Value::Point(drawn)) => drawn,
+                        _ => CGPoint::new(0.0, 0.0),
+                    };
                     debug!(
                         key = format!("{key:?}"),
-                        presented = format!("{:.0},{:.0}", presented.x, presented.y),
+                        presented = format!("{:.0},{:.0}", drawn.x, drawn.y),
                         to = format!("{:.0},{:.0}", to.x, to.y),
                         "group retargeted"
                     );
@@ -1646,16 +1676,19 @@ impl FlightEngine {
                     );
                 }
             }
-            let mut legs = Duration::ZERO;
-            if let Some(overlay) = overlay.as_mut() {
-                let banding = band_plan(&running.plan, &running.tiles, running.focus);
-                legs = overlay.retarget(&delta, &running.plan, &running.tiles, &banding, duration);
-            }
             moved = delta.moves_anything();
-            // A merge that moves anything restarts the clock, over the newest legs.
-            shape.duration = duration.max(legs);
+            let banding = band_plan(&running.plan, &running.tiles, running.focus);
+            let mut edits = merged.edits;
+            edits.push(running.score.bank(banding));
+            if let Some(overlay) = overlay.as_mut() {
+                overlay.play(&edits, &running.tiles);
+            }
+            // A merge that moves anything restarts the clock, over everything the score plays.
+            shape.duration = running.score.clock(shape.duration, at);
         }
         let flown = running.flown;
+        // A step a merge takes runs the clock on even when the merge moves nothing.
+        let extend = (flown && !moved).then(|| running.score.remaining(at));
         let focus_moved = running.focus != focus_before;
         let look = if focus_moved
             && let Some(target) = self.stage(shape.clone()).and_then(|stage| stage.parked_focus())
@@ -1672,15 +1705,15 @@ impl FlightEngine {
         }
         let Some(stage) = self.stage(shape) else { return };
         self.drive(lifecycle::Event::Merge { stage, moved });
-        if let Some((offset, stretched)) = nudge {
-            self.nudge_on(offset, stretched);
+        if let Some(extend) = extend {
+            self.drive(lifecycle::Event::Extend(extend));
         }
     }
 
     /// Animates the whole strip surface as one rigid group, one container and one position
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
-    /// move's `nudge` stepping every strip container. A bounce from rest is one with no travel. See
-    /// "The move flight, staged" in `src/transitions/docs/coordination.md`.
+    /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
+    /// travel. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -1690,7 +1723,7 @@ impl FlightEngine {
         focus: (Option<WindowId>, Option<WindowId>),
         key: Option<WindowId>,
         duration: Duration,
-        nudge: Option<CGPoint>,
+        accent: Option<Accent>,
         kind: Option<Kind>,
     ) {
         let Some((display, _)) = self.display else {
@@ -1822,7 +1855,7 @@ impl FlightEngine {
 
         // A strip movement never resizes, never carries a brand-new window and never holds: a stand-in
         // whose window comes on screen is pictured once it lands there.
-        self.begin_group(Pass {
+        self.begin_group(Composed {
             tiles,
             final_frames,
             label: "surface",
@@ -1832,7 +1865,7 @@ impl FlightEngine {
             key,
             pan: Some(pan_travel(from_offset, to_offset)),
             plan,
-            nudge,
+            accent,
         });
     }
 
@@ -1864,46 +1897,33 @@ impl FlightEngine {
                 Some(Kind::Bounce),
             );
         }
-        let Some(running) = self.running.as_mut() else { return };
-        if let Some((overshoot, duration)) = running.push_bounce(overshoot, duration) {
-            self.play_bounce(overshoot, duration);
+        let Self { overlay, running, .. } = self;
+        let Some(running) = running.as_mut() else { return };
+        let seconds = duration.as_secs_f64();
+        if !running.flown {
+            running.score.wait(Accent::Push { wall: overshoot, seconds });
+            return;
         }
-    }
-
-    /// The bounce a push plays from now, on the containers, with the clock run on for it to come home.
-    fn play_bounce(&mut self, overshoot: CGPoint, duration: Duration) {
-        let Some(overlay) = self.overlay.as_mut() else { return };
-        let seconds = overlay.push(overshoot, duration.as_secs_f64());
+        let at = media_now();
+        let edits = running.score.push(overshoot, seconds, at);
+        if let Some(overlay) = overlay.as_mut() {
+            overlay.play(&edits, &running.tiles);
+        }
         debug!(
             overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
-            seconds = format!("{seconds:.3}"),
             "edge bounce"
         );
-        self.drive(lifecycle::Event::Extend(Duration::from_secs_f64(seconds)));
+        let remaining = running.score.remaining(at);
+        self.drive(lifecycle::Event::Extend(remaining));
     }
 
-    /// Steps the whole strip out by `offset` and back over `duration`, with the clock run on for it to
-    /// come home. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
-    fn nudge_on(&mut self, offset: CGPoint, duration: Duration) {
-        let Some(overlay) = self.overlay.as_mut() else { return };
-        self.nudge_playing.start(Instant::now(), duration);
-        overlay.nudge(offset, duration);
-        debug!(offset = format!("{:.0},{:.0}", offset.x, offset.y), "move nudge");
-        self.drive(lifecycle::Event::Extend(duration));
-    }
-
-    /// The motion starts: the plan goes to Core Animation in one transaction, with a nudge or a
-    /// bounce waiting for it.
+    /// The motion starts: the look composes it from frame zero, with the accents that waited for it,
+    /// and the renderer plays it in one transaction; the clock runs on for as long as the score does.
     fn start_moving(&mut self, now: Instant) {
         let duration = self.coordinator.remaining(now).unwrap_or_default();
-        let Some(running) = self.running.as_mut() else { return };
+        let Self { overlay, running, .. } = self;
+        let Some(running) = running.as_mut() else { return };
         running.flown = true;
-        let nudge = starting_nudge(running.nudge.take(), &self.nudge_playing, now);
-        // A flight carrying the nudge is stretched, and crosses on the curve that keeps the column
-        // the move passed in the side the step opens.
-        let duration = nudge.map_or(duration, |(_, stretched)| duration.max(stretched));
-        let curve = flight_curve(nudge.is_some());
-        let bounce = running.bounce.take();
         // The acceptance greps count this line against "overlay lifted".
         let flight = &running.plan;
         debug!(
@@ -1913,15 +1933,20 @@ impl FlightEngine {
             floating = flight.floating.len(),
             "flight composed"
         );
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.fly(flight, duration, curve);
+        let at = media_now();
+        let drawn = running.drawn();
+        let stage = Stage {
+            plan: &running.plan,
+            drawn: &drawn,
+            seconds: duration.as_secs_f64(),
+            accents: &[],
+        };
+        let edits = running.score.start_moving(&stage, at);
+        if let Some(overlay) = overlay.as_mut() {
+            overlay.play(&edits, &running.tiles);
         }
-        if let Some((offset, stretched)) = nudge {
-            self.nudge_on(offset, stretched);
-        }
-        if let Some((overshoot, duration)) = bounce {
-            self.play_bounce(overshoot, duration);
-        }
+        let remaining = running.score.remaining(at);
+        self.drive(lifecycle::Event::Extend(remaining));
     }
 
     /// One frame of the clock: where the tiles are drawn and where the windows are, read only once
@@ -1934,7 +1959,8 @@ impl FlightEngine {
             return;
         }
         let (settled, landed) = if self.coordinator.wants_landing(Instant::now()) {
-            let settled = self.overlay.as_ref().is_none_or(TileOverlay::settled);
+            let now = media_now();
+            let settled = self.running.as_ref().is_none_or(|running| running.score.settled(now));
             let landed = self.handover().as_ref().is_none_or(|report| report.count_over == 0);
             (settled, landed)
         } else {
@@ -2131,8 +2157,7 @@ mod tests {
             focused_look: None,
             plan: plan::FlightPlan::empty(),
             flown: false,
-            nudge: None,
-            bounce: None,
+            score: FlightScore::default(),
         }
     }
 
@@ -2425,20 +2450,6 @@ mod tests {
             assert_eq!(running.tiles.len(), 2);
         }
 
-        /// A bounce from rest plays as the motion starts, never behind an overlay still waiting for
-        /// frame zero; one pushed into a flight that moves plays at once.
-        #[test]
-        fn a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once() {
-            let plays = Duration::from_millis(350);
-            let mut running = flight();
-            assert_eq!(running.push_bounce(CGPoint::new(-72.0, 0.0), plays), None);
-            assert_eq!(running.push_bounce(CGPoint::new(72.0, 0.0), plays), None);
-            assert_eq!(running.bounce, Some((CGPoint::new(72.0, 0.0), plays)), "the latest push");
-            running.flown = true;
-            assert_eq!(running.push_bounce(CGPoint::new(0.0, 72.0), plays), Some((CGPoint::new(0.0, 72.0), plays)));
-            assert_eq!(running.bounce, Some((CGPoint::new(72.0, 0.0), plays)), "kept for the start only");
-        }
-
         #[test]
         fn focus_handing_over_draws_the_target_focused_and_the_window_left_not() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
@@ -2623,7 +2634,17 @@ mod tests {
         fn press(running: &mut RunningAnimation, windows: &[SurfaceWindow], from: CGPoint, to: CGPoint, focus: WindowId) {
             let (tiles, pieces) = movement(windows, from, to);
             running.merge_pass(tiles, Some(focus));
-            running.fold_before_moving(&pieces, Some(pan_travel(from, to)), DISPLAY);
+            let drawn = running.drawn();
+            let pass = Pass {
+                plan: &pieces,
+                pan: Some(pan_travel(from, to)),
+                focus: running.focus,
+                viewport: DISPLAY,
+                drawn: &drawn,
+                seconds: 0.35,
+                accent: None,
+            };
+            running.fold_before_moving(&pass);
         }
 
         fn path(running: &RunningAnimation, window: WindowId) -> (CGRect, CGRect) {

@@ -95,7 +95,7 @@ mod tests {
     /// `sin²(πt)` between them at a third of a 1720pt viewport.
     #[test]
     fn the_nudge_plays_as_its_samples() {
-        use crate::animation::domain::motion::score::{Curve, Score};
+        use crate::animation::domain::motion::score::{Curve, Edit, Score};
 
         let (offset, begin, seconds, step) = (
             CGPoint::new(-1720.0 * NUDGE_SHARE, 0.0),
@@ -117,8 +117,8 @@ mod tests {
         let node = Node::Container(GroupKey::STILL);
         let model = CGPoint::new(-861.0, 0.0);
         let mut score = Score::default();
-        score.place(node, Value::Point(model));
-        score.add(track);
+        score.apply(&Edit::Place(node, Value::Point(model)));
+        score.apply(&Edit::Add(track));
         let drawn = |at: f64| match score.sample(node, at) {
             Some(Value::Point(p)) => p.x - model.x,
             other => panic!("a container holds a point: {other:?}"),

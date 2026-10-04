@@ -1,5 +1,6 @@
-//! How a transition moves: how tiles group, travel, ease, stack and bounce, and the accents riding
-//! them. Pure functions over CoreGraphics rects; nothing here draws. See
+//! How a transition moves: how tiles group, travel, ease, stack and bounce, the accents riding them,
+//! and the score all of it is written in, as edits. Pure functions over CoreGraphics rects; nothing
+//! here draws, and the looks that compose a score are `super::choreography`. See
 //! `src/animation/docs/animation-smoothness.md`.
 pub mod accents;
 pub mod bounce;

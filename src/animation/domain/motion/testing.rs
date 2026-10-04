@@ -1,8 +1,9 @@
 //! What the motion and transition tests stage with: the built-in display, a deterministic generator of
-//! frames on it, a window on a surface and a tile.
+//! frames and passes on it, a window on a surface and a tile.
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
+use rini_geometry::stretch::is_a_resize;
 
 use super::surface::{SurfaceGeometry, TileGeometry};
 
@@ -57,6 +58,69 @@ impl Gen {
         };
         rect(x, DISPLAY.size.height - 1.0, size.width, size.height)
     }
+}
+
+/// A random pass: 1-12 windows over 1-4 distinct vectors (4pt apart on some axis, and from zero)
+/// plus ±1pt jitter; some still, resizing, or floating. Display-space requests, as `reflow_plan` takes
+/// them.
+pub(crate) fn random_requests(rng: &mut Gen) -> Vec<(WindowId, CGRect, CGRect, bool)> {
+    let shifted = |frame: CGRect, dx: f64, dy: f64| {
+        rect(
+            frame.origin.x + dx,
+            frame.origin.y + dy,
+            frame.size.width,
+            frame.size.height,
+        )
+    };
+    let mut palette: Vec<CGPoint> = Vec::new();
+    let wanted = 1 + rng.below(4) as usize;
+    while palette.len() < wanted {
+        let v = CGPoint::new(
+            rng.pt(-12.0, 12.0) * 50.0,
+            if rng.coin() {
+                0.0
+            } else {
+                rng.pt(-6.0, 6.0) * 50.0
+            },
+        );
+        if (v.x == 0.0 && v.y == 0.0) || palette.contains(&v) {
+            continue;
+        }
+        palette.push(v);
+    }
+    let count = 1 + rng.below(12) as usize;
+    (0..count)
+        .map(|i| {
+            let from = rng.on_screen();
+            let window = WindowId::new(7, i as u32 + 1);
+            match rng.below(10) {
+                0 => (window, from, from, false),
+                1 => {
+                    let to = rect(
+                        from.origin.x,
+                        from.origin.y,
+                        from.size.width + rng.pt(-300.0, 300.0),
+                        from.size.height,
+                    );
+                    let to = if is_a_resize(from.size, to.size) {
+                        to
+                    } else {
+                        rect(to.origin.x, to.origin.y, from.size.width + 200.0, to.size.height)
+                    };
+                    (window, from, to, false)
+                }
+                2 => {
+                    let v = palette[rng.below(palette.len() as u64) as usize];
+                    (window, from, shifted(from, v.x, v.y), true)
+                }
+                _ => {
+                    let v = palette[rng.below(palette.len() as u64) as usize];
+                    let (jx, jy) = (rng.pt(-1.0, 1.0), rng.pt(-1.0, 1.0));
+                    (window, from, shifted(from, v.x + jx, v.y + jy), false)
+                }
+            }
+        })
+        .collect()
 }
 
 /// A window on a surface, as a test stages it.

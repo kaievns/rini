@@ -103,7 +103,7 @@ impl Bounce {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::animation::domain::motion::score::Score;
+    use crate::animation::domain::motion::score::{Edit, Score};
 
     const PLAYS: Duration = Duration::from_millis(350);
     const WALL: CGPoint = CGPoint { x: -72.0, y: 0.0 };
@@ -245,8 +245,8 @@ mod tests {
     fn sampled(bounce: &Bounce, model: CGPoint, begin: f64, elapsed: Duration) -> CGPoint {
         let mut score = Score::default();
         let node = Node::Container(GroupKey::STILL);
-        score.place(node, Value::Point(model));
-        score.add(bounce.track(GroupKey::STILL, begin));
+        score.apply(&Edit::Place(node, Value::Point(model)));
+        score.apply(&Edit::Add(bounce.track(GroupKey::STILL, begin)));
         match score.sample(node, begin + elapsed.as_secs_f64()) {
             Some(Value::Point(p)) => CGPoint::new(p.x - model.x, p.y - model.y),
             other => panic!("a container holds a point: {other:?}"),

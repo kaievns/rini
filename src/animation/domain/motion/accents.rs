@@ -1,16 +1,26 @@
-//! The accents a flight carries on top of its movement, the edge bounce and a move's nudge: when a
-//! nudge may start, when one waits for its flight, and where a push against an end starts each
-//! container's bounce. The bounce is never held off: every push re-kicks it on every container that
-//! carries it, from where that container's bounce is drawn (`push_tracks`). Their shapes are
-//! `bounce` and `nudge`.
+//! The accents a flight carries on top of its movement, the edge bounce and a move's step, and the
+//! tracks each plays on the containers that carry it. A push against an end re-kicks every
+//! carrier's bounce from where that carrier's is drawn (`push_tracks`), never held off; a step is
+//! taken only while none plays (`step_tracks`), or a burst of moves steps the strip once per press.
+//! Their shapes are `bounce` and `nudge`.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use objc2_core_foundation::CGPoint;
 
 use super::bounce::Bounce;
+use super::nudge::nudge_track;
 use super::plan::carries_out_and_back;
-use super::score::{Channel, Node, Score, Track, Value};
+use super::score::{Channel, Node, SAMPLE_STEP, Score, Track, Value};
+
+/// What a press asks to play on top of its movement.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Accent {
+    /// A push against an end: out toward `wall` and home over `seconds`.
+    Push { wall: CGPoint, seconds: f64 },
+    /// A move's step: the whole strip out by `offset` and back, over the flight it rides.
+    Step { offset: CGPoint },
+}
 
 /// The bounce a push against `wall` at `at` plays on each container of `playing` that carries it,
 /// each from where its own bounce is drawn then: a container whose bounce is home, or gone with its
@@ -33,78 +43,61 @@ pub fn push_tracks(playing: &Score, wall: CGPoint, seconds: f64, at: f64) -> Vec
         .collect()
 }
 
-/// When a move's nudge playing now comes home. One still playing holds off the next, or a burst of
-/// moves steps the strip once per press. The edge bounce is not held off: every push against an end
-/// re-kicks it (`push_tracks`). See "Edge bounce" and "The move flight" in
+/// The step out by `offset` and back over `seconds` from `at`, one `nudge_track` on each container of
+/// `playing` that carries it; none while a step plays anywhere in it. See "The move flight" in
 /// `src/animation/docs/animation-smoothness.md`.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub struct NudgePlaying {
-    until: Option<Instant>,
-}
-
-impl NudgePlaying {
-    /// Whether a nudge may start at `now`.
-    pub fn admits(&self, now: Instant) -> bool {
-        self.until.is_none_or(|until| now >= until)
+pub fn step_tracks(playing: &Score, offset: CGPoint, seconds: f64, at: f64) -> Vec<Track> {
+    if playing.plays(Channel::Nudge, at) {
+        return Vec::new();
     }
-
-    /// A nudge starts at `now` and comes home after `duration`.
-    pub fn start(&mut self, now: Instant, duration: Duration) {
-        self.until = Some(now + duration);
-    }
-}
-
-/// What becomes of a move's nudge. See "The move flight, staged" in
-/// `src/transitions/docs/coordination.md`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum NudgeAdmission {
-    /// It steps the strip from now, and the flight is stretched to carry it.
-    Start,
-    /// The flight is still collecting passes, each installing its containers again, which would drop
-    /// it: it starts when the flight does.
-    Wait,
-    /// One is still playing: not in this flight, which keeps its plain duration.
-    Skip,
-}
-
-/// The nudge's admission from the nudge playing and whether the flight moves yet. An edge bounce
-/// is not consulted: it never holds the nudge off.
-pub fn nudge_admission(playing: &NudgePlaying, now: Instant, moving: bool) -> NudgeAdmission {
-    if !playing.admits(now) {
-        NudgeAdmission::Skip
-    } else if !moving {
-        NudgeAdmission::Wait
-    } else {
-        NudgeAdmission::Start
-    }
+    playing
+        .containers()
+        .filter(|key| carries_out_and_back(*key, offset))
+        .map(|key| nudge_track(key, offset, at, seconds, SAMPLE_STEP))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::domain::motion::plan::GroupKey;
+    use crate::animation::domain::motion::score::Edit;
 
-    const PLAYS: Duration = Duration::from_millis(350);
+    const STRIP: GroupKey = GroupKey::STILL;
+
+    /// The strip and the floating container, placed, nothing playing.
+    fn surface() -> Score {
+        let mut score = Score::default();
+        for key in [STRIP, GroupKey::Floating] {
+            score.apply(&Edit::Place(
+                Node::Container(key),
+                Value::Point(CGPoint::new(-861.0, 0.0)),
+            ));
+        }
+        score
+    }
+
+    fn carriers(tracks: &[Track]) -> Vec<GroupKey> {
+        let mut keys: Vec<GroupKey> = tracks
+            .iter()
+            .map(|track| match track.node() {
+                Node::Container(key) => key,
+                Node::Tile(_) => unreachable!("an accent rides containers"),
+            })
+            .collect();
+        keys.sort_by_key(|key| format!("{key:?}"));
+        keys
+    }
 
     mod pushes {
         use super::*;
-        use crate::animation::domain::motion::plan::GroupKey;
 
         const PLAYS: f64 = 0.35;
         const UP: CGPoint = CGPoint { x: 0.0, y: -72.0 };
         const LEFT: CGPoint = CGPoint { x: -72.0, y: 0.0 };
-        const STRIP: GroupKey = GroupKey::STILL;
 
         fn plays() -> Duration {
             Duration::from_secs_f64(PLAYS)
-        }
-
-        /// The strip and the floating container, placed, nothing playing.
-        fn surface() -> Score {
-            let mut score = Score::default();
-            for key in [STRIP, GroupKey::Floating] {
-                score.place(Node::Container(key), Value::Point(CGPoint::new(-861.0, 0.0)));
-            }
-            score
         }
 
         /// Pushes against `wall` at `at`, as the overlay does: each carrier's track replaces the
@@ -119,7 +112,7 @@ mod tests {
                 })
                 .collect();
             for track in tracks {
-                score.add(track);
+                score.apply(&Edit::Add(track));
             }
             made
         }
@@ -198,7 +191,7 @@ mod tests {
 
             let mut gone = surface();
             push(&mut gone, LEFT, 20.0);
-            gone.cut(Node::Container(STRIP), Channel::Bounce);
+            gone.apply(&Edit::Cut(Node::Container(STRIP), Channel::Bounce));
             let next = push(&mut gone, LEFT, 20.06);
             assert_eq!(
                 on(&next, STRIP),
@@ -208,51 +201,47 @@ mod tests {
         }
     }
 
-    /// A burst of moves steps the strip once, not once per press.
+    /// A step is taken only while none plays: one on every carrier from rest, none for a press while
+    /// it plays however many come, and one again once it is home. A burst of moves steps the strip
+    /// once, not once per press.
     #[test]
-    fn a_move_while_its_nudge_plays_starts_no_other() {
-        let now = Instant::now();
-        let mut playing = NudgePlaying::default();
-        playing.start(now, PLAYS);
-        assert!(!playing.admits(now + Duration::from_millis(100)));
-    }
-
-    #[test]
-    fn a_move_after_the_nudge_came_home_starts_one() {
-        let now = Instant::now();
-        let mut playing = NudgePlaying::default();
-        assert!(playing.admits(now));
-        playing.start(now, PLAYS);
-        assert!(playing.admits(now + PLAYS));
-    }
-
-    fn nudging_since(now: Instant) -> NudgePlaying {
-        let mut playing = NudgePlaying::default();
-        playing.start(now, std::time::Duration::from_millis(455));
-        playing
-    }
-
-    /// Every combination the engine meets: one playing holds a nudge off whatever else holds, and a
-    /// flight still collecting makes it wait.
-    #[test]
-    fn a_nudge_is_admitted_once_per_burst_and_waits_for_its_flight_to_move() {
-        use std::time::Duration;
-        let now = Instant::now();
-        let soon = now + Duration::from_millis(100);
-        let idle = NudgePlaying::default();
-        assert_eq!(nudge_admission(&idle, now, true), NudgeAdmission::Start);
-        assert_eq!(nudge_admission(&idle, now, false), NudgeAdmission::Wait);
-        for moving in [true, false] {
-            assert_eq!(
-                nudge_admission(&nudging_since(now), soon, moving),
-                NudgeAdmission::Skip,
-                "a press while the step plays starts no other"
+    fn a_step_is_taken_only_while_none_plays() {
+        let mut score = surface();
+        let (offset, seconds) = (CGPoint::new(-576.0, 0.0), 0.455);
+        let first = step_tracks(&score, offset, seconds, 10.0);
+        assert_eq!(first, [nudge_track(STRIP, offset, 10.0, seconds, SAMPLE_STEP)]);
+        for track in first {
+            score.apply(&Edit::Add(track));
+        }
+        for at in [10.0, 10.1, 10.3, 10.455 - 1e-9] {
+            assert!(
+                step_tracks(&score, offset, seconds, at).is_empty(),
+                "{at}: one plays"
             );
         }
+        let home = 10.0 + seconds;
         assert_eq!(
-            nudge_admission(&nudging_since(now), now + Duration::from_millis(455), true),
-            NudgeAdmission::Start,
-            "once it is home the next press steps again"
+            step_tracks(&score, offset, seconds, home),
+            [nudge_track(STRIP, offset, home, seconds, SAMPLE_STEP)],
+            "home: the next press steps again"
         );
+    }
+
+    /// The floating container carries only a vertical accent, as a pan pins it and a switch carries
+    /// it; every strip container carries either.
+    #[test]
+    fn the_floating_container_carries_only_a_vertical_accent() {
+        let score = surface();
+        let (left, up) = (CGPoint::new(-72.0, 0.0), CGPoint::new(0.0, -72.0));
+        assert_eq!(carriers(&push_tracks(&score, left, 0.35, 1.0)), [STRIP]);
+        assert_eq!(carriers(&push_tracks(&score, up, 0.35, 1.0)), [
+            GroupKey::Floating,
+            STRIP
+        ]);
+        assert_eq!(carriers(&step_tracks(&score, left, 0.455, 1.0)), [STRIP]);
+        assert_eq!(carriers(&step_tracks(&score, up, 0.455, 1.0)), [
+            GroupKey::Floating,
+            STRIP
+        ]);
     }
 }

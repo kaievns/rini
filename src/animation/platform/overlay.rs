@@ -1,10 +1,11 @@
 //! The animation overlay: one rini-owned opaque window holding a picture of every animating window.
 //! Real windows are placed at their final frames once, underneath it; tiles ride containers, one
-//! per rigid piece of the flight. See "The overlay engine" in `src/animation/docs/animation-smoothness.md` and
-//! the overlay's own measurements in `src/animation/docs/capture-overlay-research.md`.
+//! per rigid piece of the flight. It plays a flight's score as it is handed it: frame zero posed,
+//! then each edit, folded into a replica it reads only to install, and decides nothing. See "The
+//! overlay engine" in `src/animation/docs/animation-smoothness.md` and the overlay's own
+//! measurements in `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
@@ -18,21 +19,16 @@ use objc2_quartz_core::{
     CAAnimation, CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming,
     CAMediaTimingFunction, CAPropertyAnimation, CATransaction, kCAMediaTimingFunctionLinear,
 };
+use rini_core::ids::WindowId;
 
-use crate::animation::domain::motion::accents::push_tracks;
-use crate::animation::domain::motion::easing::{CubicBezier, MOTION_CURVE};
-use crate::animation::domain::motion::glide::{Leg, spring_omega};
+use crate::animation::domain::motion::easing::CubicBezier;
 use crate::animation::domain::motion::hairline::{
     OUTLINE_ALPHA, OUTLINE_PT, RING_PT, corner_radius, outline, ring_alpha,
 };
 use crate::animation::domain::motion::holes::hole_in;
-use crate::animation::domain::motion::nudge::nudge_track;
-use crate::animation::domain::motion::plan::{
-    AnimationTarget, Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented,
-    animation_targets, carries_out_and_back, group_relative, stale_overlay_layers,
-};
+use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{
-    Channel, Curve, Form, Node, SAMPLE_STEP, Score, Track, Value,
+    Channel, Curve, Edit, Form, Node, Score, Track, Value,
 };
 use crate::animation::domain::motion::tile::{ContentMode, content_mode, crop_pieces};
 use crate::animation::domain::motion::z_group::{Band, container_z};
@@ -41,8 +37,6 @@ use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
 use crate::pictures::platform::layer::{set_layer_contents, stretch_region};
 use crate::pictures::platform::picture::Picture;
-use rini_core::ids::WindowId;
-use rini_geometry::{Round, SameAs};
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
 /// See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
@@ -107,14 +101,6 @@ impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
     }
 }
 
-impl OverlayTile {
-    /// The zPosition this tile draws at; a companion's quarter step stays clear of the half step
-    /// the shadow casters sit behind and of the eighth its ring sits in front (`RING_Z`).
-    pub(crate) fn z(&self) -> f64 {
-        -(self.depth as f64) + if self.companion.is_some() { 0.25 } else { 0.0 }
-    }
-}
-
 /// How far in front of its picture a tile's ring is drawn: over the picture, under a companion.
 const RING_Z: f64 = 0.125;
 
@@ -158,16 +144,6 @@ const BAR_Z: f64 = 10_000.0;
 /// `src/animation/docs/animation-smoothness.md`.
 const BACKDROP_Z: f64 =
     -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
-
-/// The window server places real windows on whole points; a layer at a fraction is resampled and
-/// pops at the lift. See "Whole points" in `src/animation/docs/animation-smoothness.md`.
-fn whole(rect: CGRect) -> CGRect {
-    rect.round()
-}
-
-fn whole_point(point: CGPoint) -> CGPoint {
-    point.round()
-}
 
 /// Commits and flushes the run loop's implicit transaction too, or the change waits behind the
 /// reactor's next synchronous calls. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
@@ -543,18 +519,18 @@ struct CropGrid {
     pieces: [Retained<CALayer>; 4],
 }
 
-pub struct TileOverlay {
-    window: Retained<NSWindow>,
-    /// The layer-backed content view's layer, so AppKit presents it on the GPU.
+/// What a flight is drawn with: the containers, the floating container's twin and the tiles under
+/// `root`, and the replica, the score of everything installed and placed on them. Apart from the
+/// window, so it hangs off any root layer and a test builds one without a window. Every method that
+/// changes a layer leaves the transaction to its caller.
+struct Tree {
     root: Retained<CALayer>,
+    /// The display's size: every container covers it.
+    size: CGSize,
+    scale: f64,
     /// One layer per rigid piece of a flight; a container's `position` is the only animated
     /// translation its members get.
     containers: HashMap<GroupKey, Retained<CALayer>>,
-    /// Each moving container's current leg, whose velocity a new destination carries on at.
-    legs: HashMap<GroupKey, Leg>,
-    /// Every track installed and every model set, as the score they make: what is drawn is read
-    /// from here, never from the presentation layer.
-    replica: Score,
     /// The floating container's twin, drawn in front of the strip: where the floating windows that come
     /// forward with the focus are drawn (`Banding::lifted`).
     ///
@@ -562,9 +538,18 @@ pub struct TileOverlay {
     /// rides one translation — and only its depth differs. Tiles are children of their container, and a
     /// container's zPosition alone decides its children's order against every other container, so one
     /// floating container could never put one application in front of the strip and another behind it.
-    /// Created, reset, moved, animated and dropped with the floating container, so a tile moved between
-    /// the two lands exactly where it was.
+    /// Opened, moved, animated and dropped with the floating container, so a tile moved between the two
+    /// lands exactly where it was.
     lifted: Option<Retained<CALayer>>,
+    tile_layers: HashMap<WindowId, Tile>,
+    /// The fold of every edit played: what is drawn is read from here, never from the presentation
+    /// layer.
+    replica: Score,
+}
+
+pub struct TileOverlay {
+    window: Retained<NSWindow>,
+    tree: Tree,
     /// The real desktop, drawn behind everything and held still.
     backdrop: Retained<CALayer>,
     /// Whether the backdrop holds a picture of the display the overlay is on: until then a desktop
@@ -575,13 +560,11 @@ pub struct TileOverlay {
     bar: Retained<CALayer>,
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
-    tile_layers: HashMap<WindowId, Tile>,
-    /// Display frame in CoreGraphics coordinates. Full display: `root` draws in these coordinates,
-    /// and the window is the part below `top_band`.
+    /// Display frame in CoreGraphics coordinates. Full display: the tree's root draws in these
+    /// coordinates, and the window is the part below `top_band`.
     frame: CGRect,
     /// Points reserved at the top for the bar, so the window starts below it.
     top_band: f64,
-    scale: f64,
     visible: bool,
     mtm: MainThreadMarker,
 }
@@ -707,19 +690,13 @@ impl TileOverlay {
 
         Some(Self {
             window,
-            root,
+            tree: Tree::new(root, frame.size, scale),
             backdrop,
             bar,
             bar_drawn: false,
             backdrop_drawn: false,
-            containers: HashMap::new(),
-            legs: HashMap::new(),
-            replica: Score::default(),
-            lifted: None,
-            tile_layers: HashMap::new(),
             frame,
             top_band,
-            scale,
             visible: false,
             mtm,
         })
@@ -741,7 +718,7 @@ impl TileOverlay {
         match snapshot {
             Some(snapshot) => {
                 let (covered_w, covered_h) = snapshot.coverage.covered;
-                self.bar.setContentsScale(self.scale);
+                self.bar.setContentsScale(self.tree.scale);
                 set_layer_contents(&self.bar, snapshot);
                 self.bar.setFrame(bar_frame(strip, CGSize::new(covered_w, covered_h)));
                 self.bar_drawn = true;
@@ -763,7 +740,7 @@ impl TileOverlay {
             CGPoint::new(0.0, 0.0),
             CGSize::new(covered_w, covered_h),
         ));
-        self.backdrop.setContentsScale(self.scale);
+        self.backdrop.setContentsScale(self.tree.scale);
         set_layer_contents(&self.backdrop, snapshot);
         self.backdrop.setHidden(false);
         self.backdrop_drawn = true;
@@ -781,47 +758,58 @@ impl TileOverlay {
         }
         if self.frame == frame
             && self.top_band == top_band
-            && (self.scale - scale).abs() < f64::EPSILON
+            && (self.tree.scale - scale).abs() < f64::EPSILON
         {
             return;
         }
         self.clear_holes();
         self.frame = frame;
         self.top_band = top_band;
-        self.scale = scale;
+        self.tree.size = frame.size;
+        self.tree.scale = scale;
         self.backdrop_drawn = false;
         if let Some(view) = self.window.contentView() {
             view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size));
         }
-        self.root.setFrame(canvas_rect(frame, top_band));
-        self.root.setContentsScale(scale);
+        self.tree.root.setFrame(canvas_rect(frame, top_band));
+        self.tree.root.setContentsScale(scale);
+    }
+
+    /// Frame zero: the tree rebuilt as `score` has it, every tile dressed from `tiles`, and the
+    /// replica `score`. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
+    pub fn pose(&mut self, score: &Score, tiles: &[OverlayTile]) {
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.tree.pose(score, tiles);
+        commit_now();
+    }
+
+    /// Plays `edits` in one transaction: each folded into the replica, then carried out on the
+    /// layers. A tile first seen is made and dressed from `tiles`.
+    pub fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) {
+        if edits.is_empty() {
+            return;
+        }
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.tree.play(edits, tiles);
+        commit_now();
     }
 
     /// Swaps a fresh picture into a tile mid-flight, leaving its movement alone: a crop-drawn tile
     /// on a track of its own has its grid re-keyed along that track, so only the pixels cut.
-    pub fn set_tile_picture(&mut self, window: WindowId, snapshot: &Picture) {
-        let node = Node::Tile(window);
-        let Some(entry) = self.tile_layers.get_mut(&window) else {
-            return;
-        };
-        let size = match self.replica.model(node) {
-            Some(Value::Rect(frame)) => frame.size,
-            _ => entry.picture.bounds().size,
-        };
-        let now = media_now();
-        let playing =
-            self.replica.track(node, Channel::Base).filter(|track| track.at(now).is_some());
+    pub fn swap(&mut self, window: WindowId, picture: &Picture) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        swap_onto(entry, snapshot, size, playing);
+        self.tree.swap(window, picture, media_now());
         commit_now();
     }
 
     /// Clips a tile's picture to a rounded rect of `radius`, for a picture whose corners carry what
     /// was behind its window, as a crop of a composite of the desktop does; `None` draws it whole,
-    /// which every install starts from.
+    /// which every dressing starts from.
     pub fn set_tile_corner_clip(&mut self, window: WindowId, radius: Option<f64>) {
-        let Some(entry) = self.tile_layers.get(&window) else {
+        let Some(entry) = self.tree.tile_layers.get(&window) else {
             return;
         };
         CATransaction::begin();
@@ -831,347 +819,15 @@ impl TileOverlay {
     }
 
     /// Draws a tile focused or not, a hard cut: its ring's white and its shadow's depth. For focus
-    /// handing over mid-flight; every install draws what its tile says.
+    /// handing over mid-flight; every dressing draws what its tile says.
     pub fn set_tile_focused(&mut self, window: WindowId, focused: bool) {
-        let Some(entry) = self.tile_layers.get(&window) else {
+        let Some(entry) = self.tree.tile_layers.get(&window) else {
             return;
         };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         show_focus(entry, focused);
         commit_now();
-    }
-
-    /// Composes a flight at frame zero: one container per group, loose members under `Loose` /
-    /// `Floating`. Pre-flight only; see "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
-    pub(crate) fn install(&mut self, plan: &FlightPlan, tiles: &[OverlayTile], banding: &Banding) {
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        let mut keep: Vec<WindowId> = Vec::new();
-        let find = |window: WindowId| tiles.iter().find(|t| t.window == window);
-        for group in &plan.groups {
-            if group.members.is_empty() {
-                continue;
-            }
-            self.reset_container(group.key);
-            for member in &group.members {
-                let Some(tile) = find(member.window) else { continue };
-                keep.push(tile.window);
-                self.install_tile(tile, member.rel, Some(group.key));
-            }
-        }
-        let strip_loose: Vec<(WindowId, CGRect, CGRect)> =
-            plan.changing.iter().chain(&plan.entrances).copied().collect();
-        for (key, members) in [
-            (GroupKey::Loose, &strip_loose),
-            (GroupKey::Floating, &plan.floating),
-        ] {
-            if members.is_empty() {
-                continue;
-            }
-            self.reset_container(key);
-            for &(window, from, _) in members {
-                let Some(tile) = find(window) else { continue };
-                keep.push(tile.window);
-                self.install_tile(tile, from, Some(key));
-            }
-        }
-        self.remove_stale(&keep);
-        self.rebank(banding);
-        commit_now();
-    }
-
-    /// Writes every container's and tile's `zPosition` from `banding`. A hard cut: z does not
-    /// interpolate. Callers hold the transaction.
-    pub(crate) fn rebank(&self, banding: &Banding) {
-        let off_strip = banding.focus_off_strip;
-        for (key, layer) in &self.containers {
-            let z = match key {
-                GroupKey::Floating => container_z(Band::Behind, off_strip),
-                key => {
-                    let index = banding
-                        .group_order
-                        .iter()
-                        .position(|k| k == key)
-                        .unwrap_or(banding.group_order.len());
-                    container_z(Band::Strip, off_strip) - index as f64 * 0.25
-                }
-            };
-            layer.setZPosition(z);
-        }
-        if let (Some(lifted), Some(behind)) =
-            (self.lifted.as_ref(), self.containers.get(&GroupKey::Floating))
-        {
-            lifted.setZPosition(container_z(Band::Lifted, off_strip));
-            for (window, tile) in &self.tile_layers {
-                if tile.key != Some(GroupKey::Floating) {
-                    continue;
-                }
-                let parent = if banding.lifted.contains(window) {
-                    lifted
-                } else {
-                    behind
-                };
-                tile.reparent(parent);
-            }
-        }
-        for (window, tile) in &self.tile_layers {
-            let Some(&within) = banding.within.get(window) else {
-                continue;
-            };
-            let z = -(within as f64) + if tile.companion { 0.25 } else { 0.0 };
-            tile.stack(z);
-        }
-    }
-
-    /// The container for `key`, created on first use, put back at the origin with no animation
-    /// riding it. Callers hold the transaction.
-    fn reset_container(&mut self, key: GroupKey) -> Retained<CALayer> {
-        let root = self.root.clone();
-        let layer = self.containers.entry(key).or_insert_with(|| new_container(&root)).clone();
-        if key == GroupKey::Floating {
-            self.lifted.get_or_insert_with(|| new_container(&root));
-        }
-        for layer in self.layers_of(key) {
-            layer.removeAllAnimations();
-            layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), self.frame.size));
-        }
-        self.legs.remove(&key);
-        self.replica.remove(Node::Container(key));
-        self.place_container(key, CGPoint::new(0.0, 0.0));
-        layer
-    }
-
-    /// Every layer that carries `key`'s translation: its container, and for the floating container its
-    /// twin in front of the strip. Anything that moves or resets one moves or resets both.
-    fn layers_of(&self, key: GroupKey) -> Vec<Retained<CALayer>> {
-        let twin = (key == GroupKey::Floating).then(|| self.lifted.clone()).flatten();
-        self.containers.get(&key).cloned().into_iter().chain(twin).collect()
-    }
-
-    /// Puts the container `key` names, and its twin, at `at`, its model in the replica with it.
-    fn place_container(&mut self, key: GroupKey, at: CGPoint) {
-        for layer in self.layers_of(key) {
-            layer.setPosition(at);
-        }
-        self.replica.place(Node::Container(key), Value::Point(at));
-    }
-
-    /// Puts a tile's layers at `frame` in its container, stacked at `z`, its model in the replica
-    /// with it. Callers hold the transaction.
-    fn place(&mut self, window: WindowId, frame: CGRect, z: f64) {
-        let Some(entry) = self.tile_layers.get(&window) else {
-            return;
-        };
-        place_tile(entry, frame, z);
-        self.replica.place(Node::Tile(window), Value::Rect(frame));
-    }
-
-    /// Installs `track` on the layers that draw its node, and keeps it in the replica. Callers hold
-    /// the transaction.
-    fn add(&mut self, track: Track) {
-        match track.node() {
-            Node::Container(key) => {
-                let riding: Vec<Track> = match track.channel() {
-                    Channel::Base => self.replica.tracks(track.node()).cloned().collect(),
-                    Channel::Bounce | Channel::Nudge => Vec::new(),
-                };
-                for layer in self.layers_of(key) {
-                    install_container_track(&layer, &track, &riding);
-                }
-            }
-            Node::Tile(window) => {
-                let Some(entry) = self.tile_layers.get(&window) else {
-                    return;
-                };
-                install_tile_track(entry, &track);
-            }
-        }
-        self.replica.add(track);
-    }
-
-    /// Drops every tile not in `keep`, and every container left with no tile.
-    fn remove_stale(&mut self, keep: &[WindowId]) {
-        let tiles: Vec<(WindowId, Option<GroupKey>)> =
-            self.tile_layers.iter().map(|(window, tile)| (*window, tile.key)).collect();
-        let containers: Vec<GroupKey> = self.containers.keys().copied().collect();
-        let (stale_tiles, empty_containers) = stale_overlay_layers(&tiles, keep, &containers);
-
-        for window in stale_tiles {
-            if let Some(entry) = self.tile_layers.remove(&window) {
-                entry.remove();
-            }
-            self.replica.remove(Node::Tile(window));
-        }
-        for key in empty_containers {
-            for layer in self.layers_of(key) {
-                layer.removeFromSuperlayer();
-            }
-            self.containers.remove(&key);
-            self.legs.remove(&key);
-            self.replica.remove(Node::Container(key));
-            if key == GroupKey::Floating {
-                self.lifted = None;
-            }
-        }
-    }
-
-    /// Hands a composed flight to Core Animation in one transaction: exactly the movements
-    /// `animation_targets` names, every container on `curve`, all from one begin. A zero duration
-    /// lands everything with no animation.
-    pub(crate) fn fly(&mut self, plan: &FlightPlan, duration: Duration, curve: CubicBezier) {
-        let (now, seconds) = (media_now(), duration.as_secs_f64());
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        for target in animation_targets(plan) {
-            match target {
-                AnimationTarget::Container { key, from, to } => {
-                    let (from, to) = (whole_point(from), whole_point(to));
-                    let leg = Leg::Curve {
-                        from,
-                        to,
-                        begin: now,
-                        seconds,
-                        curve,
-                    };
-                    self.place_container(key, to);
-                    self.add(leg.track(key, SAMPLE_STEP));
-                    self.record_leg(key, leg);
-                }
-                AnimationTarget::Tile { window, from, to } => {
-                    let Some(entry) = self.tile_layers.get(&window) else {
-                        continue;
-                    };
-                    let offset = self.container_position(entry.key);
-                    let (from, to) = (
-                        whole(group_relative(from, offset)),
-                        whole(group_relative(to, offset)),
-                    );
-                    let z = entry.picture.zPosition();
-                    self.move_tile(window, from, to, z, now, seconds);
-                }
-            }
-        }
-        commit_now();
-    }
-
-    /// Pushes every container that carries a push against `wall` out toward it and home over
-    /// `seconds`, each from where its own bounce is drawn (`push_tracks`), replacing that one.
-    /// Returns how long the longest of them runs. See "Edge bounce" in
-    /// `src/animation/docs/animation-smoothness.md`.
-    pub fn push(&mut self, wall: CGPoint, seconds: f64) -> f64 {
-        let tracks = push_tracks(&self.replica, wall, seconds, media_now());
-        let longest = tracks.iter().map(Track::seconds).fold(0.0, f64::max);
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        for track in tracks {
-            self.add(track);
-        }
-        commit_now();
-        longest
-    }
-
-    /// Takes every container `carries_out_and_back` names out to `offset` and back, additively, on
-    /// top of any movement in flight, under the nudge's own key. See "The move flight" in
-    /// `src/animation/docs/animation-smoothness.md`.
-    pub fn nudge(&mut self, offset: CGPoint, duration: Duration) {
-        let (now, seconds) = (media_now(), duration.as_secs_f64());
-        let keys: Vec<GroupKey> = self
-            .containers
-            .keys()
-            .copied()
-            .filter(|key| carries_out_and_back(*key, offset))
-            .collect();
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        for key in keys {
-            self.add(nudge_track(key, offset, now, seconds, SAMPLE_STEP));
-        }
-        commit_now();
-    }
-
-    /// Where the container `key` names ends, from the replica; the origin for the root.
-    fn container_position(&self, key: Option<GroupKey>) -> CGPoint {
-        match key.and_then(|k| self.replica.model(Node::Container(k))) {
-            Some(Value::Point(position)) => position,
-            _ => CGPoint::new(0.0, 0.0),
-        }
-    }
-
-    /// Installs one tile at `at`, in the space of the parent `key` names (the root for `None`).
-    /// Callers hold the transaction.
-    fn install_tile(&mut self, tile: &OverlayTile, at: CGRect, key: Option<GroupKey>) {
-        let parent = match key.and_then(|k| self.containers.get(&k)) {
-            Some(container) => container.clone(),
-            None => self.root.clone(),
-        };
-        let entry = self.tile_layers.entry(tile.window).or_insert_with(|| new_tile(&parent));
-        entry.reparent(&parent);
-        entry.key = key;
-        entry.companion = tile.companion.is_some();
-        entry.radius = tile.radius;
-        entry.picture.setContentsScale(self.scale);
-        entry.outline.setContentsScale(self.scale);
-        clip_corners(&entry.picture, None);
-        let covered = tile.snapshot.coverage.covered;
-        let mode = content_mode(covered, tile.from.size, tile.to.size);
-        set_tile_content(entry, &tile.snapshot, mode, tile.from.size, self.scale);
-        // Tile layers are pooled, so every per-window property is written on each install.
-        show_focus(entry, tile.focused);
-        entry.picture.setHidden(false);
-        entry.shadow.setHidden(tile.companion.is_some());
-        entry.ring.setHidden(tile.companion.is_some());
-        self.place(tile.window, whole(at), tile.z());
-    }
-
-    /// Adds one loose tile to a flight in progress under `key`, flying `tile.from` to `tile.to`
-    /// (the container's space) over `duration`.
-    pub(crate) fn add_tile(
-        &mut self,
-        tile: &OverlayTile,
-        key: GroupKey,
-        banding: &Banding,
-        duration: Duration,
-    ) {
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        self.ensure_container(key, CGPoint::new(0.0, 0.0));
-        self.install_tile(tile, tile.from, Some(key));
-        let (from, to) = (whole(tile.from), whole(tile.to));
-        self.move_tile(
-            tile.window,
-            from,
-            to,
-            tile.z(),
-            media_now(),
-            duration.as_secs_f64(),
-        );
-        self.rebank(banding);
-        commit_now();
-    }
-
-    /// The container for `key`, created at `position` when the flight has none yet. Unlike
-    /// `reset_container` this leaves a moving container alone. Callers hold the transaction.
-    fn ensure_container(&mut self, key: GroupKey, position: CGPoint) -> Retained<CALayer> {
-        if let Some(layer) = self.containers.get(&key) {
-            return layer.clone();
-        }
-        let layer = self.reset_container(key);
-        self.place_container(key, position);
-        layer
-    }
-
-    /// Whether every track installed has ended, so everything is drawn at its model. See "Real
-    /// windows land before lift" in `src/transitions/docs/coordination.md`.
-    pub fn settled(&self) -> bool {
-        self.replica.settled(media_now())
-    }
-
-    /// Where every container is: where it is drawn, any bounce or nudge riding it included, and
-    /// where its movement has it, from the replica. `merge_plans` starts a member leaving a
-    /// container from the first and judges everything else against the second.
-    pub(crate) fn presented_positions(&self) -> Presented {
-        self.replica.presented(media_now())
     }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
@@ -1182,11 +838,12 @@ impl TileOverlay {
         if !tracing::enabled!(target: "rini::animation::trace", tracing::Level::TRACE) {
             return;
         }
-        for (key, layer) in &self.containers {
+        for (key, layer) in &self.tree.containers {
             // SAFETY: `presentationLayer` returns a read-only copy of the layer.
             let presented =
                 unsafe { layer.presentationLayer() }.map_or(layer.position(), |p| p.position());
-            let Some(Value::Point(drawn)) = self.replica.sample(Node::Container(*key), at) else {
+            let Some(Value::Point(drawn)) = self.tree.replica.sample(Node::Container(*key), at)
+            else {
                 continue;
             };
             let gap = (presented.x - drawn.x).abs().max((presented.y - drawn.y).abs());
@@ -1201,226 +858,6 @@ impl TileOverlay {
                 "presented"
             );
         }
-    }
-
-    /// Applies one merged pass to a flight in progress in one transaction, every container bent
-    /// from where the replica draws it. See "Mid-flight passes" in
-    /// `src/animation/docs/animation-smoothness.md`.
-    pub(crate) fn retarget(
-        &mut self,
-        delta: &PlanDelta,
-        plan: &FlightPlan,
-        tiles: &[OverlayTile],
-        banding: &Banding,
-        duration: Duration,
-    ) -> Duration {
-        let (now, seconds) = (media_now(), duration.as_secs_f64());
-        let mut longest = 0.0f64;
-        let find = |window: WindowId| tiles.iter().find(|t| t.window == window);
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-
-        // Read before any leg is bent below: a container opened for a member leaving another goes
-        // on as fast as that one was going.
-        let carried: HashMap<GroupKey, Leg> = delta
-            .new_groups
-            .iter()
-            .filter_map(|group| Some((group.key, *self.legs.get(&group.leaving?)?)))
-            .collect();
-        for new in &delta.new_groups {
-            let key = new.key;
-            let container = self.reset_container(key);
-            container.setPosition(whole_point(new.install));
-            self.replica.place(Node::Container(key), Value::Point(whole_point(new.install)));
-            let Some(group) = plan.groups.iter().find(|g| g.key == key) else {
-                continue;
-            };
-            for member in &group.members {
-                if delta.reparented.iter().any(|(w, _, to)| *w == member.window && *to == key) {
-                    continue;
-                }
-                if let Some(tile) = find(member.window) {
-                    self.install_tile(tile, member.rel, Some(key));
-                }
-            }
-        }
-
-        let mut placed: Vec<WindowId> = Vec::new();
-        for &(window, _, to_key) in &delta.reparented {
-            let Some(frame) = plan.member(window).map(|member| member.start_frame()) else {
-                continue;
-            };
-            let container = self.ensure_container(
-                to_key,
-                plan.positions.get(&to_key).copied().unwrap_or(CGPoint::new(0.0, 0.0)),
-            );
-            let Some(entry) = self.tile_layers.get_mut(&window) else {
-                continue;
-            };
-            entry.reparent(&container);
-            entry.key = Some(to_key);
-            let z = entry.picture.zPosition();
-            self.place(window, whole(frame), z);
-            placed.push(window);
-        }
-
-        // The container carries on from where the replica draws its movement, as fast as its own
-        // leg is going. See "One flight however many presses" in
-        // `src/animation/docs/animation-smoothness.md`.
-        let omega = spring_omega(seconds);
-        for &(key, to) in &delta.retargeted_groups {
-            let to = whole_point(to);
-            let from = match self.replica.along(Node::Container(key), now) {
-                Some(Value::Point(along)) => along,
-                _ => to,
-            };
-            let leg = Leg::toward(self.legs.get(&key), from, to, now, omega);
-            self.place_container(key, to);
-            if duration.is_zero() {
-                self.legs.remove(&key);
-                continue;
-            }
-            let track = leg.track(key, SAMPLE_STEP);
-            longest = longest.max(track.seconds());
-            self.add(track);
-            self.legs.insert(key, leg);
-        }
-        for new in &delta.new_groups {
-            let key = new.key;
-            let to = whole_point(plan.positions.get(&key).copied().unwrap_or(new.install));
-            let install = whole_point(new.install);
-            self.place_container(key, to);
-            if duration.is_zero() || install.same_as(to) {
-                self.legs.remove(&key);
-                continue;
-            }
-            // A member leaving a container mid-flight keeps its speed; see `Leg::toward`.
-            let leg = match new.leaving {
-                Some(_) => Leg::toward(carried.get(&key), install, to, now, omega),
-                None => Leg::Curve {
-                    from: install,
-                    to,
-                    begin: now,
-                    seconds,
-                    curve: MOTION_CURVE,
-                },
-            };
-            let track = leg.track(key, SAMPLE_STEP);
-            if new.leaving.is_some() {
-                longest = longest.max(track.seconds());
-            }
-            self.add(track);
-            self.record_leg(key, leg);
-        }
-
-        for &(window, key) in &delta.joined_tiles {
-            let Some(tile) = find(window) else { continue };
-            let position = plan.positions.get(&key).copied().unwrap_or(CGPoint::new(0.0, 0.0));
-            self.ensure_container(key, position);
-            match plan.member(window) {
-                Some(Member::Rigid { rel, .. }) => self.install_tile(tile, rel, Some(key)),
-                Some(Member::Changing { from, to })
-                | Some(Member::Entrance { from, to })
-                | Some(Member::Floating { from, to }) => {
-                    self.install_tile(tile, from, Some(key));
-                    self.move_tile(window, whole(from), whole(to), tile.z(), now, seconds);
-                }
-                None => {}
-            }
-        }
-
-        for &(window, to) in &delta.retargeted_tiles {
-            let Some(tile) = find(window) else { continue };
-            let node = Node::Tile(window);
-            let drawn = if placed.contains(&window) {
-                self.replica.model(node)
-            } else {
-                self.replica.sample(node, now)
-            };
-            let scale = self.scale;
-            let Some(entry) = self.tile_layers.get_mut(&window) else {
-                continue;
-            };
-            let from = match drawn {
-                Some(Value::Rect(frame)) => frame,
-                _ => entry.picture.frame(),
-            };
-            // Content mode is judged against the new leg: a retarget can turn a move into a resize.
-            let to = whole(to);
-            let covered = tile.snapshot.coverage.covered;
-            let mode = content_mode(covered, from.size, to.size);
-            set_tile_content(entry, &tile.snapshot, mode, from.size, scale);
-            let z = entry.picture.zPosition();
-            self.move_tile(window, from, to, z, now, seconds);
-        }
-
-        self.remove_stale(&tiles.iter().map(|t| t.window).collect::<Vec<_>>());
-        self.rebank(banding);
-        commit_now();
-        Duration::from_secs_f64(longest)
-    }
-
-    /// Remembers the leg a container was just given, or forgets it when it was placed outright.
-    fn record_leg(&mut self, key: GroupKey, leg: Leg) {
-        let placed = match leg {
-            Leg::Curve { from, to, seconds, .. } => seconds == 0.0 || from.same_as(to),
-            Leg::Spring { .. } => false,
-        };
-        if placed {
-            self.legs.remove(&key);
-        } else {
-            self.legs.insert(key, leg);
-        }
-    }
-
-    /// Places a tile's model at `to` and carries it there from `from` on `MOTION_CURVE`, from
-    /// `now` for `seconds`; one of no length is placed only. Callers hold the transaction.
-    fn move_tile(
-        &mut self,
-        window: WindowId,
-        from: CGRect,
-        to: CGRect,
-        z: f64,
-        now: f64,
-        seconds: f64,
-    ) {
-        if !self.tile_layers.contains_key(&window) {
-            return;
-        }
-        self.place(window, to, z);
-        self.add(Track::between(
-            Node::Tile(window),
-            Channel::Base,
-            Value::Rect(from),
-            Value::Rect(to),
-            now,
-            seconds,
-            Curve::Bezier(MOTION_CURVE),
-        ));
-    }
-
-    /// Moves a tile onto its window's real frame, `real` in the overlay's coordinates, and says
-    /// whether the window has a tile to move. A tile on a track of its own goes on along it, on the
-    /// same timing, to the real frame; one riding its container moves inside it at once. Shadow,
-    /// mask, crop pieces and hairline follow. Whether to snap is the caller's, by `snap_to`, once per
-    /// window per generation, and is not checked again here. See "Tiles snap to the real frame" in
-    /// `src/animation/docs/animation-smoothness.md`.
-    pub fn snap_tile(&mut self, window: WindowId, real: CGRect) -> bool {
-        let Some(entry) = self.tile_layers.get(&window) else {
-            return false;
-        };
-        let offset = self.container_position(entry.key);
-        let node = Node::Tile(window);
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        let playing = self.replica.track(node, Channel::Base);
-        let (to, snapped) = snap_onto(entry, playing, offset, real, media_now());
-        self.replica.place(node, Value::Rect(to));
-        if let Some(track) = snapped {
-            self.replica.add(track);
-        }
-        commit_now();
-        true
     }
 
     /// Shows the overlay; only an alpha change.
@@ -1481,45 +918,331 @@ impl TileOverlay {
         self.window.setBackgroundColor(Some(&NSColor::blackColor()));
     }
 
-    /// Frees the tile contents without destroying the overlay.
+    /// Frees the tile contents without destroying the overlay, and the replica with them.
     pub fn release_tiles(&mut self) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
+        self.tree.release();
+        commit_now();
+        let _ = self.mtm;
+    }
+}
+
+impl Tree {
+    fn new(root: Retained<CALayer>, size: CGSize, scale: f64) -> Tree {
+        Tree {
+            root,
+            size,
+            scale,
+            containers: HashMap::new(),
+            lifted: None,
+            tile_layers: HashMap::new(),
+            replica: Score::default(),
+        }
+    }
+
+    /// The tree as `score` has it: what it lacks dropped, every container at its model with nothing
+    /// riding it, every tile dressed from `tiles` and placed at its model in its container, and then
+    /// every track it has installed.
+    fn pose(&mut self, score: &Score, tiles: &[OverlayTile]) {
+        let stale: Vec<WindowId> = self
+            .tile_layers
+            .keys()
+            .copied()
+            .filter(|window| score.parent(*window).is_none())
+            .collect();
+        for window in stale {
+            self.drop_node(Node::Tile(window));
+        }
+        let empty: Vec<GroupKey> = self
+            .containers
+            .keys()
+            .copied()
+            .filter(|key| score.model(Node::Container(*key)).is_none())
+            .collect();
+        for key in empty {
+            self.drop_node(Node::Container(key));
+        }
+        self.replica = score.clone();
+        let bounds = CGRect::new(CGPoint::new(0.0, 0.0), self.size);
+        for key in score.containers() {
+            self.open(key);
+            let Some(Value::Point(at)) = score.model(Node::Container(key)) else {
+                continue;
+            };
+            for layer in self.layers_of(key) {
+                layer.removeAllAnimations();
+                layer.setBounds(bounds);
+                layer.setPosition(at);
+            }
+        }
+        for (window, key) in score.tiles() {
+            let Some(tile) = tiles.iter().find(|tile| tile.window == window) else {
+                continue;
+            };
+            let parent = self.parent_layer(window, key);
+            let scale = self.scale;
+            let entry = self.tile_layers.entry(window).or_insert_with(|| new_tile(&parent));
+            dress(entry, tile, scale);
+            entry.reparent(&parent);
+            entry.key = Some(key);
+            entry.remove_animations();
+            if let Some(Value::Rect(frame)) = score.model(Node::Tile(window)) {
+                self.place_tile(window, frame);
+            }
+        }
+        let tracks: Vec<Track> = score
+            .containers()
+            .map(Node::Container)
+            .chain(score.tiles().map(|(window, _)| Node::Tile(window)))
+            .flat_map(|node| score.tracks(node).cloned().collect::<Vec<_>>())
+            .collect();
+        for track in &tracks {
+            self.install(track, tiles);
+        }
+        self.rebank();
+    }
+
+    /// Folds each edit into the replica and carries it out.
+    fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) {
+        for edit in edits {
+            self.replica.apply(edit);
+            match edit {
+                Edit::Place(Node::Container(key), value) => {
+                    self.open(*key);
+                    for layer in self.layers_of(*key) {
+                        layer.setPosition(as_point(*value));
+                    }
+                }
+                Edit::Place(Node::Tile(window), value) => {
+                    self.place_tile(*window, as_frame(*value))
+                }
+                Edit::Add(track) => self.install(track, tiles),
+                Edit::Cut(node, channel) => self.cut(*node, *channel),
+                Edit::Ride(window, key) => self.ride(*window, *key, tiles),
+                Edit::Drop(node) => self.drop_node(*node),
+                Edit::Bank(_) => self.rebank(),
+            }
+        }
+    }
+
+    /// The container for `key` and, for the floating container, its twin, made covering the overlay
+    /// unless the tree has them.
+    fn open(&mut self, key: GroupKey) {
+        let bounds = CGRect::new(CGPoint::new(0.0, 0.0), self.size);
+        if !self.containers.contains_key(&key) {
+            let layer = new_container(&self.root);
+            layer.setBounds(bounds);
+            self.containers.insert(key, layer);
+        }
+        if key == GroupKey::Floating && self.lifted.is_none() {
+            let twin = new_container(&self.root);
+            twin.setBounds(bounds);
+            self.lifted = Some(twin);
+        }
+    }
+
+    /// Every layer that carries `key`'s translation: its container, and for the floating container its
+    /// twin in front of the strip. Anything that moves or animates one moves or animates both.
+    fn layers_of(&self, key: GroupKey) -> Vec<Retained<CALayer>> {
+        let twin = (key == GroupKey::Floating).then(|| self.lifted.clone()).flatten();
+        self.containers.get(&key).cloned().into_iter().chain(twin).collect()
+    }
+
+    /// The layer `window`'s tile hangs under riding `key`: the floating container's twin for a
+    /// window the replica's banding lifts, its container otherwise, the root with none.
+    fn parent_layer(&self, window: WindowId, key: GroupKey) -> Retained<CALayer> {
+        let lifted = key == GroupKey::Floating && self.replica.banding().lifted.contains(&window);
+        let twin = self.lifted.as_ref().filter(|_| lifted);
+        twin.or(self.containers.get(&key)).unwrap_or(&self.root).clone()
+    }
+
+    /// A tile into `key`'s container, made and dressed from `tiles` when it is first seen.
+    fn ride(&mut self, window: WindowId, key: GroupKey, tiles: &[OverlayTile]) {
+        let parent = self.parent_layer(window, key);
+        if !self.tile_layers.contains_key(&window) {
+            let Some(tile) = tiles.iter().find(|tile| tile.window == window) else {
+                return;
+            };
+            let mut entry = new_tile(&parent);
+            dress(&mut entry, tile, self.scale);
+            self.tile_layers.insert(window, entry);
+        }
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
+        entry.reparent(&parent);
+        entry.key = Some(key);
+    }
+
+    /// Puts `window`'s tile at `frame` in its container, at the depth the replica's banding gives it.
+    fn place_tile(&self, window: WindowId, frame: CGRect) {
+        let Some(entry) = self.tile_layers.get(&window) else {
+            return;
+        };
+        let within = self.replica.banding().within.get(&window).copied().unwrap_or(0);
+        place_tile(entry, frame, tile_z(within, entry.companion));
+    }
+
+    /// Installs `track` on the layers that draw its node. A container's movement begins every accent
+    /// riding it again from the replica; a tile's first judges its content mode again against its
+    /// first and last key, and sets it only when it changes.
+    fn install(&mut self, track: &Track, tiles: &[OverlayTile]) {
+        match track.node() {
+            Node::Container(key) => {
+                let riding: Vec<Track> = match track.channel() {
+                    Channel::Base => self.replica.tracks(track.node()).cloned().collect(),
+                    Channel::Bounce | Channel::Nudge => Vec::new(),
+                };
+                for layer in self.layers_of(key) {
+                    install_container_track(&layer, track, &riding);
+                }
+            }
+            Node::Tile(window) => {
+                assert_eq!(track.channel(), Channel::Base, "no accent rides a tile");
+                let scale = self.scale;
+                let Some(entry) = self.tile_layers.get_mut(&window) else {
+                    return;
+                };
+                let keys = track.keys();
+                let (first, last) = (as_frame(keys[0].1), as_frame(keys[keys.len() - 1].1));
+                if let Some(tile) = tiles.iter().find(|tile| tile.window == window) {
+                    let mode = content_mode(tile.snapshot.coverage.covered, first.size, last.size);
+                    if (mode == ContentMode::Crop) != entry.crop_of.is_some() {
+                        set_tile_content(entry, &tile.snapshot, mode, last.size, scale);
+                    }
+                }
+                install_tile_track(entry, track);
+            }
+        }
+    }
+
+    /// Takes away what `node`'s track on `channel` installed.
+    fn cut(&self, node: Node, channel: Channel) {
+        match node {
+            Node::Container(key) => {
+                let key_path = NSString::from_str(container_key(channel));
+                for layer in self.layers_of(key) {
+                    layer.removeAnimationForKey(&key_path);
+                }
+            }
+            Node::Tile(window) => {
+                assert_eq!(channel, Channel::Base, "no accent rides a tile");
+                let Some(entry) = self.tile_layers.get(&window) else {
+                    return;
+                };
+                for layer in entry.layers() {
+                    remove_under(layer, &[TILE_ANIMATION_KEY]);
+                }
+                remove_resize(entry);
+            }
+        }
+    }
+
+    /// Takes a tile's layers out, or a container's with its twin.
+    fn drop_node(&mut self, node: Node) {
+        match node {
+            Node::Tile(window) => {
+                if let Some(entry) = self.tile_layers.remove(&window) {
+                    entry.remove();
+                }
+            }
+            Node::Container(key) => {
+                for layer in self.layers_of(key) {
+                    layer.removeFromSuperlayer();
+                }
+                self.containers.remove(&key);
+                if key == GroupKey::Floating {
+                    self.lifted = None;
+                }
+            }
+        }
+    }
+
+    /// Writes every container's and tile's `zPosition` from the replica's banding, and hangs each
+    /// floating tile under the floating container or its twin. A hard cut: z does not interpolate.
+    fn rebank(&self) {
+        let banding = self.replica.banding();
+        let off_strip = banding.focus_off_strip;
+        for (key, layer) in &self.containers {
+            let z = match key {
+                GroupKey::Floating => container_z(Band::Behind, off_strip),
+                key => {
+                    let index = banding
+                        .group_order
+                        .iter()
+                        .position(|k| k == key)
+                        .unwrap_or(banding.group_order.len());
+                    container_z(Band::Strip, off_strip) - index as f64 * 0.25
+                }
+            };
+            layer.setZPosition(z);
+        }
+        if let Some(lifted) = self.lifted.as_ref() {
+            lifted.setZPosition(container_z(Band::Lifted, off_strip));
+        }
+        for (window, tile) in &self.tile_layers {
+            if tile.key == Some(GroupKey::Floating) {
+                tile.reparent(&self.parent_layer(*window, GroupKey::Floating));
+            }
+            let Some(&within) = banding.within.get(window) else {
+                continue;
+            };
+            tile.stack(tile_z(within, tile.companion));
+        }
+    }
+
+    /// `picture` onto `window`'s tile, re-keyed along the tile's own track while it plays at `at`.
+    fn swap(&mut self, window: WindowId, picture: &Picture, at: f64) {
+        let node = Node::Tile(window);
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
+        let size = match self.replica.model(node) {
+            Some(Value::Rect(frame)) => frame.size,
+            _ => entry.picture.bounds().size,
+        };
+        let playing =
+            self.replica.track(node, Channel::Base).filter(|track| track.at(at).is_some());
+        swap_onto(entry, picture, size, playing);
+    }
+
+    fn release(&mut self) {
         for (_, entry) in self.tile_layers.drain() {
             entry.remove();
         }
         for (_, container) in self.containers.drain() {
             container.removeFromSuperlayer();
         }
-        self.legs.clear();
-        self.replica = Score::default();
         if let Some(lifted) = self.lifted.take() {
             lifted.removeFromSuperlayer();
         }
-        commit_now();
-        let _ = self.mtm;
+        self.replica = Score::default();
     }
 }
 
-/// Moves a tile under a container at `offset` onto `real`, both in the overlay's coordinates: its
-/// model goes there, and `playing`, its own track, is given the same timing and start ending there
-/// while it plays at `now`. Returns the model and that track. Callers hold the transaction.
-fn snap_onto(
-    entry: &Tile,
-    playing: Option<&Track>,
-    offset: CGPoint,
-    real: CGRect,
-    now: f64,
-) -> (CGRect, Option<Track>) {
-    let to = group_relative(real, offset);
-    place_tile(entry, to, entry.picture.zPosition());
-    let snapped = playing
-        .filter(|track| track.at(now).is_some())
-        .map(|track| track.ending_at(Value::Rect(to)));
-    if let Some(track) = &snapped {
-        install_tile_track(entry, track);
-    }
-    (to, snapped)
+/// The depth a tile is drawn at in its container, `within` its band: a companion's quarter step
+/// in front of its window stays clear of the half step the shadow casters sit behind and of the
+/// eighth its ring sits in front (`RING_Z`).
+fn tile_z(within: usize, companion: bool) -> f64 {
+    -(within as f64) + if companion { 0.25 } else { 0.0 }
+}
+
+/// Dresses a tile for `tile`: its picture, fitted to how it starts and ends, its focus, its radius
+/// and whether it is a companion. Tile layers are pooled, so every per-window property is written.
+fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
+    entry.companion = tile.companion.is_some();
+    entry.radius = tile.radius;
+    entry.picture.setContentsScale(scale);
+    entry.outline.setContentsScale(scale);
+    clip_corners(&entry.picture, None);
+    let covered = tile.snapshot.coverage.covered;
+    let mode = content_mode(covered, tile.from.size, tile.to.size);
+    set_tile_content(entry, &tile.snapshot, mode, tile.from.size, scale);
+    show_focus(entry, tile.focused);
+    entry.picture.setHidden(false);
+    entry.shadow.setHidden(tile.companion.is_some());
+    entry.ring.setHidden(tile.companion.is_some());
 }
 
 /// Puts `snapshot` on a tile, leaving its movement alone: a hard cut, on purpose, since a crossfade
@@ -1623,6 +1346,15 @@ impl Tile {
     fn remove(&self) {
         for layer in self.layers() {
             layer.removeFromSuperlayer();
+        }
+    }
+
+    /// Takes every animation off every layer of the tile.
+    fn remove_animations(&self) {
+        let masks: [&CALayer; 2] = [&self.shadow_mask, &self.outline];
+        let pieces = self.crop_grid.iter().flat_map(|grid| grid.pieces.iter().map(|p| &**p));
+        for layer in self.layers().into_iter().chain(masks).chain(pieces) {
+            layer.removeAllAnimations();
         }
     }
 
@@ -1842,9 +1574,14 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::animation::domain::motion::bounce::Bounce;
-    use crate::animation::domain::motion::easing::EASE_IN_OUT;
+    use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
+    use crate::animation::domain::motion::glide::Leg;
+    use crate::animation::domain::motion::nudge::nudge_track;
+    use crate::animation::domain::motion::score::SAMPLE_STEP;
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the
@@ -1865,27 +1602,6 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-    }
-
-    #[test]
-    fn tiles_sit_on_whole_points_like_the_real_windows() {
-        let a = rect(4.0 - 4592.6724 + 4592.0, 32.0, 859.0, 1081.0);
-        let b = rect(a.origin.x + 861.0, 32.0, 861.0, 1081.0);
-        assert_eq!(whole(a).origin.x, 3.0);
-        assert_eq!(
-            whole(b).origin.x - whole(a).origin.x,
-            861.0,
-            "one rounding for the strip"
-        );
-        assert_eq!(whole(a).size, a.size);
-        assert_eq!(
-            whole_point(CGPoint::new(-861.3276, 0.4)),
-            CGPoint::new(-861.0, 0.0)
-        );
-        assert_eq!(
-            whole(rect(10.0, 20.0, 100.0, 50.0)),
-            rect(10.0, 20.0, 100.0, 50.0)
-        );
     }
 
     /// `timing_function` hands Core Animation the four numbers a `Leg` and the score evaluate, so
@@ -2471,7 +2187,7 @@ mod tests {
         let layer = CALayer::layer();
         let wall = CGPoint::new(-72.0, 0.0);
         let mut replica = Score::default();
-        replica.place(container(), Value::Point(wall));
+        replica.apply(&Edit::Place(container(), Value::Point(wall)));
         let tracks = [
             Track::between(
                 container(),
@@ -2493,7 +2209,7 @@ mod tests {
         ];
         for track in tracks {
             install_container_track(&layer, &track, &[]);
-            replica.add(track);
+            replica.apply(&Edit::Add(track));
         }
         (layer, replica)
     }
@@ -2891,18 +2607,10 @@ mod tests {
         )
     }
 
-    fn point_of(value: &NSValue) -> CGPoint {
-        // SAFETY: the value was made from a point.
-        unsafe { value.pointValue() }
-    }
-
     fn rect_of(value: &NSValue) -> CGRect {
         // SAFETY: the value was made from a rect.
         unsafe { value.rectValue() }
     }
-
-    /// The strip's container, model at -861: a tile at 865 in it ends at 4 on screen.
-    const STRIP_AT: CGPoint = CGPoint { x: -861.0, y: 0.0 };
 
     fn strip_tile(frame: CGRect) -> Tile {
         let container = CALayer::layer();
@@ -2911,93 +2619,290 @@ mod tests {
         tile
     }
 
-    /// The measured case, a tile 861 wide over a window 860 wide, riding its container: it is
-    /// moved inside the container at once, its shadow, mask, silhouette and hairline with it.
-    #[test]
-    fn a_tile_riding_its_container_snaps_onto_its_window_at_once() {
-        let tile = strip_tile(rect(865.0, 32.0, 861.0, 1081.0));
-        let real = rect(4.0, 32.0, 860.0, 1081.0);
-        let (model, track) = snap_onto(&tile, None, STRIP_AT, real, 100.0);
-        let snapped = rect(865.0, 32.0, 860.0, 1081.0);
-        assert_eq!((model, track), (snapped, None));
-        assert_eq!(tile.picture.frame(), snapped);
-        assert_eq!(tile.shadow.frame(), snapped);
-        assert_eq!(tile.ring.frame(), snapped);
-        assert_eq!(outline_bounds(&tile), rect(-0.25, -0.25, 860.5, 1081.5));
-        assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size));
-        let silhouette = tile.shadow.shadowPath().expect("a silhouette");
-        assert_eq!(
-            objc2_core_graphics::CGPath::bounding_box(Some(&silhouette)).size,
-            snapped.size
-        );
-        assert!(tile.picture.animationKeys().is_none_or(|keys| keys.count() == 0));
-    }
+    mod tree {
+        use super::*;
+        use crate::animation::domain::choreography::slide::Slide;
+        use crate::animation::domain::choreography::{Pass, Stage};
+        use crate::animation::domain::motion::accents::Accent;
+        use crate::animation::domain::motion::plan::{Banding, FlightPlan, reflow_plan};
+        use crate::animation::domain::motion::testing::DISPLAY;
+        use crate::pictures::platform::picture::test_picture;
 
-    /// A tile on a track of its own goes on along it to the window's frame: the same begin and
-    /// start, a new end.
-    #[test]
-    fn a_tile_on_its_own_leg_snaps_on_the_same_timing() {
-        let from = rect(1726.0, 32.0, 861.0, 1081.0);
-        let to = rect(865.0, 32.0, 861.0, 1081.0);
-        let tile = strip_tile(to);
-        let leg = tile_track(from, to, 100.0, 0.35);
-        install_tile_track(&tile, &leg);
-        let (model, track) = snap_onto(
-            &tile,
-            Some(&leg),
-            STRIP_AT,
-            rect(5.0, 32.0, 861.0, 1081.0),
-            100.2,
-        );
-        let snapped = rect(866.0, 32.0, 861.0, 1081.0);
-        assert_eq!(tile.picture.frame(), snapped);
-        assert_eq!(model, snapped);
-        for layer in tile.layers() {
-            assert_eq!(
-                animation_value(layer, TILE_ANIMATION_KEY, point_of),
-                (from.origin, snapped.origin, 100.0)
-            );
+        fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
+
+        fn overlay_tile(window: WindowId, from: CGRect, to: CGRect, floating: bool) -> OverlayTile {
+            OverlayTile {
+                window,
+                from,
+                to,
+                snapshot: test_picture(from.size),
+                floating,
+                server_order: Some(0),
+                depth: 0,
+                companion: None,
+                focused: false,
+                radius: None,
+            }
         }
-        assert_eq!(track, Some(leg.ending_at(Value::Rect(snapped))));
 
-        let resized_from = rect(1726.0, 32.0, 1200.0, 1081.0);
-        let tile = strip_tile(to);
-        let leg = tile_track(resized_from, to, 100.0, 0.35);
-        install_tile_track(&tile, &leg);
-        let real = rect(4.0, 32.0, 860.0, 1081.0);
-        snap_onto(&tile, Some(&leg), STRIP_AT, real, 100.2);
-        for layer in tile.layers() {
-            let (start, end, begin) = animation_value(layer, "rini.tile.size", rect_of);
-            assert_eq!(
-                (start.size, end.size, begin),
-                (resized_from.size, real.size, 100.0)
-            );
+        fn banding(windows: &[WindowId], plan: &FlightPlan) -> Banding {
+            Banding {
+                within: windows.iter().enumerate().map(|(i, w)| (*w, i)).collect(),
+                group_order: plan.groups.iter().map(|g| g.key).collect(),
+                ..Banding::default()
+            }
         }
-        let path = basic(&tile.outline, "rini.tile.outline.path");
-        assert_eq!(path_bounds(path.toValue()).size, CGSize::new(860.5, 1081.5));
-    }
 
-    /// Once its track has played, the tile's model moves and nothing is installed again.
-    #[test]
-    fn a_tile_whose_leg_has_ended_snaps_by_its_model() {
-        let from = rect(1726.0, 32.0, 861.0, 1081.0);
-        let to = rect(865.0, 32.0, 861.0, 1081.0);
-        let tile = strip_tile(to);
-        let leg = tile_track(from, to, 100.0, 0.35);
-        install_tile_track(&tile, &leg);
-        let (model, track) = snap_onto(
-            &tile,
-            Some(&leg),
-            STRIP_AT,
-            rect(5.0, 32.0, 861.0, 1081.0),
-            100.5,
-        );
-        assert_eq!(tile.picture.frame().origin, CGPoint::new(866.0, 32.0));
-        assert_eq!((model.origin, track), (CGPoint::new(866.0, 32.0), None));
-        assert_eq!(
-            animation_value(&tile.picture, TILE_ANIMATION_KEY, point_of).1,
-            to.origin,
-            "the leg that played is left as it was"
-        );
+        fn rini_keys(layer: &CALayer) -> Vec<String> {
+            let mut keys: Vec<String> = animation_keys(layer)
+                .into_iter()
+                .filter(|key| key.starts_with("rini."))
+                .collect();
+            keys.sort();
+            keys
+        }
+
+        fn sorted(keys: impl IntoIterator<Item = &'static str>) -> Vec<String> {
+            let mut keys: Vec<String> = keys.into_iter().map(String::from).collect();
+            keys.sort();
+            keys
+        }
+
+        /// What the tree draws is exactly its replica: a container and a tile layer for every node,
+        /// each tile under its container, every track installed as itself under its key (an accent a
+        /// later movement begins again as far into its own time as it had got), and no `rini.*` key
+        /// the replica has no track for.
+        fn plays_exactly(tree: &Tree) {
+            let replica = &tree.replica;
+            let mut containers: Vec<String> =
+                tree.containers.keys().map(|key| format!("{key:?}")).collect();
+            let mut placed: Vec<String> =
+                replica.containers().map(|key| format!("{key:?}")).collect();
+            containers.sort();
+            placed.sort();
+            assert_eq!(containers, placed);
+            assert_eq!(tree.tile_layers.len(), replica.tiles().count());
+            for (window, key) in replica.tiles() {
+                let entry = &tree.tile_layers[&window];
+                assert_eq!(entry.key, Some(key));
+                let parent = entry.picture.superlayer().expect("hung under its container");
+                assert!(
+                    std::ptr::eq(&*parent, &*tree.containers[&key]),
+                    "{window:?} under {key:?}"
+                );
+            }
+            for key in replica.containers() {
+                let node = Node::Container(key);
+                let layer = &tree.containers[&key];
+                let base = replica.track(node, Channel::Base);
+                for track in replica.tracks(node) {
+                    let mut want = expected(track, |v| v);
+                    if let Some(again) = base
+                        .filter(|base| {
+                            track.channel().is_additive() && base.begin() > track.begin()
+                        })
+                        .and_then(|base| Playing::of(track).again_at(base.begin()))
+                    {
+                        want.begin = again.begin;
+                        assert!(close(playing(layer, container_key(track.channel())), again));
+                    }
+                    assert_eq!(
+                        installed(layer, container_key(track.channel()), container_value),
+                        want
+                    );
+                }
+                let mut wanted: Vec<String> =
+                    replica.tracks(node).map(|t| container_key(t.channel()).to_string()).collect();
+                wanted.sort();
+                assert_eq!(rini_keys(layer), wanted, "{key:?}");
+            }
+            for (window, _) in replica.tiles() {
+                let entry = &tree.tile_layers[&window];
+                let track = replica.track(Node::Tile(window), Channel::Base);
+                for (index, layer) in entry.layers().into_iter().enumerate() {
+                    let caster = index == 1;
+                    match track {
+                        Some(track) => {
+                            assert_eq!(
+                                installed(layer, TILE_ANIMATION_KEY, point_in),
+                                expected(track, |v| as_frame(v).origin)
+                            );
+                            let resizes = track.keys().windows(2).any(|pair| {
+                                rini_geometry::stretch::is_a_resize(
+                                    as_frame(pair[0].1).size,
+                                    as_frame(pair[1].1).size,
+                                )
+                            });
+                            let keys = match (resizes, caster) {
+                                (true, true) => {
+                                    sorted([TILE_ANIMATION_KEY, TILE_SIZE_KEY, SILHOUETTE_KEY])
+                                }
+                                (true, false) => sorted([TILE_ANIMATION_KEY, TILE_SIZE_KEY]),
+                                (false, _) => sorted([TILE_ANIMATION_KEY]),
+                            };
+                            assert_eq!(rini_keys(layer), keys, "{window:?}");
+                        }
+                        None => assert!(rini_keys(layer).is_empty(), "{window:?}"),
+                    }
+                }
+            }
+        }
+
+        /// A Slide flight posed and played, then bent by a pan with a window joining and the
+        /// floating window leaving: the tree plays exactly its replica, and the replica is the fold
+        /// of the edits it was handed.
+        #[test]
+        fn the_overlay_plays_exactly_its_score() {
+            let column = |i: f64, w: f64| rect(4.0 + i * 863.0, 32.0, w, 1081.0);
+            let step = |frame: CGRect| {
+                rect(
+                    frame.origin.x - 863.0,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let (a, b, c, d, e, f) = (wid(1), wid(2), wid(3), wid(4), wid(5), wid(6));
+            let requests = [
+                (a, column(0.0, 859.0), step(column(0.0, 859.0)), false),
+                (b, column(1.0, 859.0), step(column(1.0, 859.0)), false),
+                (c, column(2.0, 859.0), step(column(2.0, 859.0)), false),
+                (d, column(1.0, 400.0), column(1.0, 600.0), false),
+                (
+                    e,
+                    rect(224.0, 95.0, 600.0, 400.0),
+                    rect(264.0, 95.0, 600.0, 400.0),
+                    true,
+                ),
+            ];
+            let mut tiles: Vec<OverlayTile> = requests
+                .iter()
+                .map(|&(w, from, to, floating)| overlay_tile(w, from, to, floating))
+                .collect();
+            let plan = FlightPlan::from(reflow_plan(&requests, DISPLAY));
+            let windows: Vec<WindowId> = tiles.iter().map(|t| t.window).collect();
+
+            let mut slide = Slide::default();
+            let mut score = slide.pose(&Stage {
+                plan: &plan,
+                drawn: &windows,
+                seconds: 0.35,
+                accents: &[],
+            });
+            score.apply(&Edit::Bank(banding(&windows, &plan)));
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size, 2.0);
+            tree.pose(&score, &tiles);
+            assert_eq!(tree.replica, score);
+            plays_exactly(&tree);
+
+            let steps = [Accent::Step {
+                offset: CGPoint::new(-576.0, 0.0),
+            }];
+            let stage = Stage {
+                plan: &plan,
+                drawn: &windows,
+                seconds: 0.35,
+                accents: &steps,
+            };
+            let started = slide.compose(&score, &stage, 100.0);
+            for edit in &started {
+                score.apply(edit);
+            }
+            tree.play(&started, &tiles);
+            assert_eq!(tree.replica, score);
+            plays_exactly(&tree);
+
+            let joined = column(3.0, 859.0);
+            tiles.push(overlay_tile(f, joined, step(joined), false));
+            let incoming = reflow_plan(
+                &[
+                    (
+                        a,
+                        step(column(0.0, 859.0)),
+                        step(step(column(0.0, 859.0))),
+                        false,
+                    ),
+                    (
+                        b,
+                        step(column(1.0, 859.0)),
+                        step(step(column(1.0, 859.0))),
+                        false,
+                    ),
+                    (
+                        c,
+                        step(column(2.0, 859.0)),
+                        step(step(column(2.0, 859.0))),
+                        false,
+                    ),
+                    (f, joined, step(joined), false),
+                ],
+                DISPLAY,
+            );
+            let drawn = [a, b, c, d, f];
+            let pass = Pass {
+                plan: &incoming,
+                pan: Some(CGPoint::new(-863.0, 0.0)),
+                focus: None,
+                viewport: DISPLAY,
+                drawn: &drawn,
+                seconds: 0.35,
+                accent: None,
+            };
+            let mut bent = slide.retarget(&score, &plan, &pass, 100.1);
+            bent.edits.push(Edit::Bank(banding(&drawn, &bent.plan)));
+            for edit in &bent.edits {
+                score.apply(edit);
+            }
+            assert!(
+                bent.edits.iter().any(|edit| matches!(edit, Edit::Ride(w, _) if *w == f)),
+                "f joins"
+            );
+            assert!(bent.edits.contains(&Edit::Drop(Node::Container(GroupKey::Floating))));
+            tree.play(&bent.edits, &tiles);
+            assert_eq!(tree.replica, score);
+            assert!(
+                tree.lifted.is_none(),
+                "the twin goes with the floating container"
+            );
+            plays_exactly(&tree);
+        }
+
+        /// A placed tile moves every layer of the tile at once: the picture, the caster and the ring,
+        /// the shadow's mask and silhouette, and the hairline, and plays nothing.
+        #[test]
+        fn a_placed_tile_moves_every_layer_of_the_tile() {
+            let window = wid(1);
+            let at = rect(865.0, 32.0, 861.0, 1081.0);
+            let tiles = [overlay_tile(window, at, at, false)];
+            let mut score = Score::default();
+            for edit in [
+                Edit::Place(
+                    Node::Container(GroupKey::STILL),
+                    Value::Point(CGPoint::new(-861.0, 0.0)),
+                ),
+                Edit::Ride(window, GroupKey::STILL),
+                Edit::Place(Node::Tile(window), Value::Rect(at)),
+            ] {
+                score.apply(&edit);
+            }
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size, 2.0);
+            tree.pose(&score, &tiles);
+            let snapped = rect(865.0, 32.0, 860.0, 1081.0);
+            tree.play(&[Edit::Place(Node::Tile(window), Value::Rect(snapped))], &tiles);
+            let tile = &tree.tile_layers[&window];
+            assert_eq!(tile.picture.frame(), snapped);
+            assert_eq!(tile.shadow.frame(), snapped);
+            assert_eq!(tile.ring.frame(), snapped);
+            assert_eq!(outline_bounds(tile), rect(-0.25, -0.25, 860.5, 1081.5));
+            assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size));
+            let silhouette = tile.shadow.shadowPath().expect("a silhouette");
+            assert_eq!(
+                objc2_core_graphics::CGPath::bounding_box(Some(&silhouette)).size,
+                snapped.size
+            );
+            for layer in tile.layers() {
+                assert!(rini_keys(layer).is_empty());
+            }
+        }
     }
 }

@@ -13,14 +13,17 @@ landed; anything marked *estimated* has not been measured yet. When each step of
 
 Every overlay flight is a `FlightPlan` (`crate::animation::domain::motion::plan`): a
 set of rigid groups (`RigidGroup`, keyed `GroupKey::Rigid`), a loose set (resizes and entrances), and the
-floating windows. Each group is one `CALayer` container under the overlay's
-root (`TileOverlay::install` in `overlay.rs`). A container's `position` is the
-only animated translation its members get; the tiles inside sit at
+floating windows. A look composes it into the flight's score, which the flight keeps
+(`src/transitions/domain/flight_score.rs`) and the overlay plays: Slide, the default look
+(`src/animation/domain/choreography/slide.rs`). Frame zero is its pose, every group with a drawn
+member a container at the origin, which the overlay builds its tree from (`TileOverlay::pose` in
+`overlay.rs`): each group is one `CALayer` container under the overlay's root. A container's
+`position` is the only animated translation its members get; the tiles inside sit at
 group-relative frames and never move on their own. Resizes and entrances
 are loose tiles in `GroupKey::Loose`; floating windows sit in the `Floating`
-container. `fly` hands the whole plan to the render server in ONE
-`CATransaction`: one position animation per moving container, one resize
-per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
+container. As the motion starts the look composes the whole plan as the score's edits, and the
+overlay plays them (`TileOverlay::play`) in ONE `CATransaction`: one position animation per moving
+container, one resize per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
 while a move steps the strip; see "The move flight"). Model layers jump to their
 destinations; the animations carry the presentation and are removed on
 completion. The tick loop paces only the coordinator (frame zero's wait,
@@ -79,7 +82,7 @@ members of a group that does not travel with the pan (the columns the move
 swapped that cross it) vote as in an ordinary pass, wherever their destination is,
 and the rest of each group they sit in holds the place the pan gave it. The
 merge reads two positions of every container (`Presented`), evaluated from the
-overlay's replica of what it installed (`Score::presented`): where it is drawn,
+flight's score (`Score::presented`): where it is drawn,
 any bounce or nudge riding it included, and where its movement has it. A member
 leaving a container for one of its own starts from the first, so it stays where
 it is drawn and still lands on its destination; pinned by
@@ -93,8 +96,8 @@ every strip container, so a still window joining mid-step takes the still
 piece and steps with the strip; pinned by
 `a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded in
 by the same function, every container drawn where frame zero installs it and its leg taken to be where
-the last pass sends it: nothing has moved, and the pass's frames are places on the strip there
-(`fold_before_moving`). What the flight does about a merge,
+the last pass sends it: nothing has moved, and the pass's frames are places on the strip there. That
+is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded plan. What the flight does about a merge,
 the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes" in
 `src/transitions/docs/coordination.md`.
 
@@ -106,8 +109,8 @@ travel it moves at about 890pt/s, and the restart put it at 15,375pt/s in one
 frame. Reported as a series of jerky movements. Now each container keeps its
 current leg (`Leg` in `src/animation/domain/motion/glide.rs`), and a new
 destination starts a critically damped spring (`Leg::toward`) from where the
-score draws its movement (`Score::along` on the overlay's replica) and as fast
-as its leg is going. The spring's stiffness follows the movement's length, 0.35s times
+flight's score draws its movement (`Score::along`) and as fast
+as its leg is going, which Slide keeps. The spring's stiffness follows the movement's length, 0.35s times
 `animations › slowdown`: 97% home
 from rest at half the duration, where the curve is, so a chained leg lands like
 a fresh one. Core Animation cannot take a spring with a starting velocity in
@@ -129,8 +132,10 @@ from where the member is drawn, as fast as the old container's leg is going
 move passes left the strip at 12x the speed it had a frame before, 5,700 to
 53,000pt/s in a full-width burst; pinned by
 `the_column_a_second_move_passes_keeps_its_speed`. The flight's clock covers
-the longest spring: the coordinator restarts it with the merge's duration, at least as long as the
-longest leg `retarget` returns.
+the score: a merge that moves anything restarts it at the pass's length or what is left of the score,
+whichever is longer (`FlightScore::clock`), so the longest spring and a bounce still playing are both
+covered. It used to restart at the longest leg the merge made, and could lift before a bounce came
+home.
 
 Measured 2026-09-29 by tracing where each container is drawn every tick
 (`TileOverlay::trace`, enabled with `rini::animation::trace=trace` in `RUST_LOG`;
@@ -150,9 +155,10 @@ A retarget now accelerates over about 30ms from the speed it was at (210, 4163,
 separate pulses at 300-570ms between presses is separate flights: the first
 leg is 97% home by half time, so the strip is at rest before the next press.
 
-The engine reads every container's two positions once, from the
-overlay's replica, for `merge_plans`, and the overlay applies the delta in one transaction
-(`retarget`): reparents, container animations, joins, loose retargets.
+The look reads every container's two positions once, from the flight's score, for `merge_plans`,
+and turns the delta into the score's edits (`Slide::retarget`), which the overlay plays in one
+transaction: reparents, container animations, joins, loose retargets, and the `Bank` the engine
+appends.
 Without this a pan merging 56ms after an open (log 3:27:20, 22 tiles
 scrolled 574pt) left the newcomer at its pre-pan slot: a tear between the
 active window and its neighbours, then a pop at lift. Cross-container z is a
@@ -161,7 +167,7 @@ between two moving groups is transient, and the group holding focus is drawn
 first.
 
 Depth is banded (`stack` in `animation/domain/motion/z_group.rs`) at the
-container level (`band_plan`, `rebank`), in three bands with the strip always
+container level (`band_plan`, played as the score's `Bank`), in three bands with the strip always
 the middle one: `Lifted` in front of it, `Behind` behind it. Only one set of
 off-strip windows comes forward with a focus, and that set is the focused
 window's APPLICATION — a zoom call is a meeting window and its controls — plus
@@ -171,10 +177,10 @@ the strip nothing is lifted, so the strip leads at zero and the floating
 container is one `GROUP_STRIDE` behind; with focus off it, the strip is one
 stride back and the floating container two.
 
-The floating container therefore has a twin (`TileOverlay::lifted`) in front of
-the strip, and `rebank` moves each floating tile into whichever of the two its
+The floating container therefore has a twin (the overlay's `lifted`) in front of
+the strip, and a `Bank` moves each floating tile into whichever of the two its
 band names. A twin rather than a second plan group: every floating window rides
-one translation, so the twin is created, reset, moved, animated and dropped with
+one translation, so the twin is opened, moved, animated and dropped with
 the floating container (`layers_of`) and a tile moved between them lands where
 it was. It has to be a separate layer at all because tiles are children of their
 container and a container's `zPosition` alone decides its children's order
@@ -235,8 +241,9 @@ decides with `snap_to`, once per window per generation and only once the motion
 has started: before it, the container stands at frame zero and the start would
 move the tile back. A window pictured where it ends before the start, or before a
 merge that can put its tile back on its model, is snapped again then, since a
-delivery comes only with a changed print. `TileOverlay::snap_tile` moves the tile
-onto the real frame without checking again. A tile riding its container moves inside it at once, while the container
+delivery comes only with a changed print. `tile::snap` (`src/animation/domain/motion/tile.rs`) makes
+the snap the score's edits, which the flight folds into its score and the overlay plays, without
+checking again. A tile riding its container moves inside it at once, while the container
 carries it on. A tile on a track of its own is given the same track ending on
 the real frame (`Track::ending_at`), its begin, start and curve kept, so it
 lands there with its movement instead of popping at the lift
@@ -293,10 +300,12 @@ Mechanics worth remembering:
   durations bypass the animation and draw the final frame directly.
 - `NSValue::valueWithPoint` (the from/to carrier) requires the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
-- **Whole points.** Tiles sit on whole points (`whole` in
-  the overlay): layout offsets are fractional (4592.67) and the window server
-  places windows on whole points, so a tile drawn at the fraction was resampled
-  and popped by the fraction at the lift.
+- **Whole points.** Slide places every container and tile on whole points
+  (`tiles_sit_on_whole_points_like_the_real_windows`): layout offsets are fractional (4592.67) and
+  the window server places windows on whole points, so a tile drawn at the fraction was resampled
+  and popped by the fraction at the lift. A member a merge moves to another container starts at its
+  plan frame and keeps the rounding its tile sat at; placed from the plan frame alone it jumped by up
+  to a point, origin and width (`a_bent_flight_is_drawn_without_a_jump`).
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits
@@ -309,13 +318,12 @@ stands still (`pinned`); during switches it rides its workspace row in the
 floating container.
 
 **Edge bounce.** When a push against an end bounces, and what the flight does about it, is "Edge
-bounce" in `src/transitions/docs/coordination.md`. The
-overlay's `push` installs one additive `CAKeyframeAnimation` per container,
-its `Bounce::track` (`from, overshoot, 0` at `0, turn, 1`; the motion curve
-out, `EASE_IN_OUT` home, the control points of
-`kCAMediaTimingFunctionEaseInEaseOut`), under
+bounce" in `src/transitions/docs/coordination.md`. A
+push is one additive track per container that carries it, its `Bounce::track` (`from, overshoot, 0`
+at `0, turn, 1`; the motion curve out, `EASE_IN_OUT` home, the control points of
+`kCAMediaTimingFunctionEaseInEaseOut`), which the overlay installs as a `CAKeyframeAnimation` under
 its own key, so an in-flight movement is neither replaced nor disturbed and
-the model positions stay put; `settled`, every track installed ended, reads
+the model positions stay put; the score's `settled`, every track ended, reads
 false until it is home, which holds the lift. The floating container rides only a vertical bounce
 (`carries_out_and_back`), the rule a pan (pinned) and a switch (carried) already
 follow. Real windows never move. The shape is `Bounce::from_rest`
@@ -336,7 +344,7 @@ keyframes from rest, which bounced once per press and went on bouncing after the
 pressing stopped (2026-09-29), and the throttle that fixed it by dropping every
 push while one played, which showed nothing for the second and third press of a
 burst (2026-10-03). Each container that carries a push starts it from where
-its own bounce is drawn, read from the overlay's replica (`push_tracks` in
+its own bounce is drawn, read from the flight's score (`push_tracks` in
 `src/animation/domain/motion/accents.rs`): one at rest from rest exactly, and one
 still drawing an older bounce than the last, the floating windows under up,
 sideways, up within one bounce, from that older one. One bounce pushed from the
@@ -345,9 +353,9 @@ container jumped from the older bounce to rest on the last one's clock; pinned b
 `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. A
 push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
 move's nudge (below) is the other out-and-back, on the same containers by the
-same rule, under its own key. Only a nudge still playing holds a nudge off
-(`NudgePlaying` in `src/animation/domain/motion/accents.rs`) and the bounce
-never does; pinned by
+same rule, under its own key. Only a step still playing holds a step off (`step_tracks` in
+`src/animation/domain/motion/accents.rs` takes none while the score `plays` one) and the bounce never
+does; pinned by `a_step_is_taken_only_while_none_plays` and
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
 ## The move flight
@@ -357,7 +365,7 @@ flight, staged" in `src/transitions/docs/coordination.md`. This is how it moves.
 
 **The whole strip steps.** It is the edge bounce's mechanism: one additive
 keyframe animation, under its own key (`"rini.group.nudge"`), on every
-container `carries_out_and_back` names (`TileOverlay::nudge`), sampled every
+container `carries_out_and_back` names (`step_tracks`), sampled every
 1/120s from `nudge_displacement`,
 `sin²(πt)`: at rest and motionless at both ends, furthest out at half time.
 That is every strip container: the moved window's, the strip's, and with them
@@ -375,7 +383,7 @@ was the desktop (a screen recording and the engine's debug log, 2026-09-30).
 duration instead of `MOTION_CURVE`, so N lingers in the side the step opens.
 `MOTION_CURVE` is 87% of the way at a quarter of the flight: it carries N
 beneath W before the step is out, and C fills the side instead. `Leg::Curve`
-carries its curve and `fly` hands Core Animation the same four numbers
+carries its curve and the overlay hands Core Animation the same four numbers
 (`timing_function`), so the leg is what the render server draws, and a press
 arriving mid-flight bends it from where it is and as fast as it goes; pinned by
 `a_leg_on_the_ease_in_out_bends_without_a_kick`. A step that starts on a flight
@@ -421,9 +429,9 @@ The nudge's peak is `offset x π / seconds`, at a quarter and three quarters of
 the flight; pinned by `the_nudge_peaks_at_a_moderate_speed`. The viewport is
 the display's usable width, `screen.frame`, not the tiling area.
 
-**A burst.** Each press is its own `AnimateSurface`. The first installs the
+**A burst.** Each press is its own `AnimateSurface`. The first composes the
 flight and starts the step. A press arriving mid-flight merges into it
-(`begin_group`, `merge_plans` with the pan): every container moves by the pan,
+(`merge_group`, Slide's `retarget` over `merge_plans` with the pan): every container moves by the pan,
 the new pair votes as an ordinary pass would, and the moved window keeps its
 container (a camera that follows it again leaves it going where it was, so it
 is not retargeted at all). For a narrower column the newly passed column leaves
@@ -440,7 +448,7 @@ few points into the outer gap beside the moved window until the lift. A
 container a merge opens after a step began does not carry the rest of it: its
 member leaves from where it is drawn, so it does not jump, but it stops
 stepping, as with the edge bounce. The coordinator's clock restarts to cover
-the new legs. A step still playing is not restarted (`NudgePlaying`): one step
+the score. A step still playing is not restarted (`step_tracks`, `Score::plays`): one step
 per burst. A press after it has come home, 455ms at the default duration,
 starts another. A press at the end of the strip
 bounces as before, on top of whatever is playing.
@@ -485,7 +493,7 @@ changes is how the picture maps onto it (`content_mode` in
   shadow-path, ring-mask, hairline-corner and outline-path animations on the shared curve.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
   seam a few points mid-flight inside the window's own content. A loose
-  tile's retarget continues from the position and size the overlay's replica
+  tile's retarget continues from the position and size the flight's score
   draws it at (`Score::sample`), so rapid preset cycling bends the resize
   instead of snapping it. A retarget that no longer resizes takes away what the
   resize installed: left, its bounds went on to the old size under the new
@@ -503,18 +511,23 @@ changes is how the picture maps onto it (`content_mode` in
 `src/animation/domain/motion/score.rs` is the movement of a transition as data:
 tracks of keyframes on containers (a position) and tiles (a frame), on three
 channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
-model value each node ends at. `Score::sample` is what Core Animation draws at a
-media time, so a merge can bend a flight from the score instead of reading the
-presentation layer back (step 5 of `docs/pictures-motion-transitions.md`).
-The overlay installs every animation from a track, through one builder
-(`animation` in `overlay.rs`): a track's `Form`, the constructor that made it,
-names the class (`every_track_is_installed_as_itself`), and a tile's track rides
-every layer of the tile, each value mapped from its key's frame
-(`a_tile_track_is_installed_on_every_layer_of_the_tile`). What it installs and
-places it keeps as a score of its own, its replica, and every read of where a
-container or a tile is goes there; the presentation layer is read only by the
-trace. Nothing composes a whole score yet: the overlay still makes each flight's
-tracks itself, from the plan and the legs it keeps.
+model value each node ends at, which container each tile rides and how deep
+everything is drawn. A score is the fold of its edits (`Edit`: a place, a track
+added or cut, a ride, a drop, a bank; `a_score_is_the_fold_of_its_edits`).
+`Score::sample` is what Core Animation draws at a media time, so a merge bends a
+flight from the score instead of reading the presentation layer back (step 5 of
+`docs/pictures-motion-transitions.md`). A look composes the score and bends it
+(`src/animation/domain/choreography/slide.rs`), the flight keeps it
+(`src/transitions/domain/flight_score.rs`), and the overlay plays the same edits,
+folding each into a replica it reads only to install: an accent begun again, a
+crop grid re-keyed (`the_overlay_plays_exactly_its_score`). The overlay installs
+every animation from a track, through one builder (`animation` in `overlay.rs`):
+a track's `Form`, the constructor that made it, names the class
+(`every_track_is_installed_as_itself`), and a tile's track rides every layer of
+the tile, each value mapped from its key's frame
+(`a_tile_track_is_installed_on_every_layer_of_the_tile`); a tile's track judges
+its content mode again against its first and last key, set only when it changes.
+The presentation layer is read only by the trace.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
 an off-screen window, its presentation read at chosen `timeOffset`s.
@@ -552,16 +565,16 @@ Two rows are rules for whatever plays a score:
   this for every movement it gives a container, from the accents' tracks in its
   replica (`install_container_track`, pinned by
   `a_replaced_movement_begins_its_accents_again_from_the_replica` and
-  `core_animation_orders_a_layers_animations_by_begin_time`). Until it did,
-  `retarget` hid a bounce or nudge riding a retargeted container until the new
-  leg ended.
+  `core_animation_orders_a_layers_animations_by_begin_time`). Until it did, a
+  merge hid a bounce or nudge riding a retargeted container until the new leg
+  ended.
 - **No length.** A track of no length is a cut in the score and 0.25s in Core
   Animation, so a renderer places the node, installs nothing, and takes away
   what played under the track's key, as the score's track replaces it
   (`a_track_of_no_length_installs_nothing`).
 
-`Score::settled` is every track ended, and the overlay's `settled` is its
-replica's. It used to compare the presentation with the model within 0.5pt,
+`Score::settled` is every track ended, and the lift waits for the flight's
+(`FlightScore::settled`). The overlay used to compare the presentation with the model within 0.5pt,
 which a `MOTION_CURVE` movement of 1722pt reaches at 87% of its duration; the
 lift also waits for the clock, so the two part only where a track outlasts it,
-and there the replica says yes no earlier than the presentation did.
+and there the score says yes no earlier than the presentation did.

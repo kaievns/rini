@@ -16,7 +16,8 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **Where a tile starts and ends** | `domain/travel.rs` — the window server's frame against the request's, a park's way in and out by its neighbours' travel, what is worth flying |
 | **A move along the strip, staged** | `domain/strip_move.rs` — where the two columns changing places start, whether the move steps the whole strip, and the column such a move holds on it |
 | **A switch's stack** | `domain/strip_stack.rs` — the stacked workspace strips a vertical switch scrolls through |
-| **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, how each window's picture where it ends is waited for (`EndPicture`), and a move's nudge waiting for its flight to move |
+| **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, and how each window's picture where it ends is waited for (`EndPicture`) |
+| **A flight's score** | `domain/flight_score.rs` — `FlightScore`: the score the flight's look composes and bends, every edit it hands the renderer folded into it first, the accents waiting for the motion, and the clock and the lift's settle read from it |
 | **What a flight is** | `domain/flight.rs` — border companions, the handover report, when a pass is worth an overlay |
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the reveal hold, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
@@ -51,8 +52,8 @@ from the begin to the lift.
 ## Reading order
 
 `domain/request.rs` → `domain/pass.rs` → `domain/travel.rs` → `domain/admission.rs` →
-`domain/flight.rs` → `domain/timing.rs` → `domain/lifecycle.rs` (`Kind`, then `StageSummary`, then
-`Coordinator::on`) → `platform/engine.rs`, the actor and the largest file.
+`domain/flight.rs` → `domain/flight_score.rs` → `domain/timing.rs` → `domain/lifecycle.rs` (`Kind`,
+then `StageSummary`, then `Coordinator::on`) → `platform/engine.rs`, the actor and the largest file.
 
 ## Detail
 

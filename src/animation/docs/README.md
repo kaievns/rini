@@ -2,8 +2,8 @@
 
 Every animated movement is played on one Core Animation overlay: window pictures composited in one
 opaque window, the real windows placed once behind it. This feature is how things move there: rigid
-pieces and how a pass merges into them, the curves, the depth bands, the accents riding them, and the
-renderer that plays all of it. When each step happens is `transitions`' (`src/transitions/docs/README.md`),
+pieces and how a pass merges into them, the curves, the depth bands, the accents riding them, the
+score all of it is written in, the look that composes and bends it, and the renderer that plays it. When each step happens is `transitions`' (`src/transitions/docs/README.md`),
 and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 
 ## What it owns
@@ -14,15 +14,17 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/surface.rs` | How a strip movement carries a surface: `surface_travel`, `pan_travel`, and what a window on the surface and a tile have to say (`SurfaceGeometry`, `TileGeometry`) |
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score draws it and as fast as its leg is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
-| `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, evaluating to what Core Animation draws; each track's `Form`, the class that plays it; `ending_at`, a track's end moved; `presented`, where every container is |
+| `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, which container each tile rides and how deep each is drawn, evaluating to what Core Animation draws; the fold of its `Edit`s (a place, a track added or cut, a ride, a drop, a bank), the one way in; each track's `Form`, the class that plays it; `ending_at`, a track's end moved; `presented`, where every container is; `plays`, whether a channel plays |
 | `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving where one is drawn (`from_drawn`), and its track |
 | `domain/motion/nudge.rs` | A move's nudge: the step's share and stretch, its keyframes and track, and the curve a stepping flight flies on |
-| `domain/motion/accents.rs` | Which accent may start: one nudge at a time, a nudge waiting for its flight to move, and the bounce never held off; `push_tracks`, each container's bounce from where its own is drawn |
+| `domain/motion/accents.rs` | `Accent`, what a press asks to ride its movement (a push, a step), and the tracks each plays on its carriers: `push_tracks`, each container's bounce from where its own is drawn, never held off; `step_tracks`, a step taken only while none plays |
 | `domain/motion/holes.rs` | Where the overlay is holed over a window that ends on screen, so the window keeps painting |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
-| `domain/motion/tile.rs` | How a tile fits its picture to its frame: stretch or crop, the crop pieces, the stand-in's mode; and the snap onto its window's real frame |
+| `domain/motion/tile.rs` | How a tile fits its picture to its frame: stretch or crop, the crop pieces, the stand-in's mode; when it snaps onto its window's real frame (`snap_to`), and the snap as the score's edits (`snap`) |
 | `domain/motion/hairline.rs` | The hairline every tile wears: the ring's width and white by focus, the outline's rect and stroke, the corner radius |
-| `platform/overlay.rs` | `TileOverlay`, the renderer: the `CALayer` tree, the one `CATransaction` per flight, every animation installed from a track, and the replica of what it installed that every read of where things are goes to |
+| `domain/choreography.rs` | What a look composes a flight from (`Stage`), what bends one that moves (`Pass`), and what a bend gives back (`Retarget`) |
+| `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points |
+| `platform/overlay.rs` | `TileOverlay`, the renderer: it poses frame zero and plays a score's edits, one `CATransaction` each, every animation installed from a track; its `Tree` (the `CALayer` tree and the replica it reads only to install) hangs off any root layer, so it is tested without a window |
 
 ## The shape that matters
 
@@ -45,8 +47,11 @@ skipped its first frames.
 
 ## Reading order
 
-`domain/motion/plan.rs` → `domain/motion/glide.rs` → `domain/motion/z_group.rs` →
-`platform/overlay.rs`. The actor that drives the overlay is `src/transitions/platform/engine.rs`.
+`domain/motion/plan.rs` → `domain/motion/glide.rs` → `domain/motion/score.rs` →
+`domain/motion/accents.rs` → `domain/motion/z_group.rs` → `domain/choreography.rs` →
+`domain/choreography/slide.rs` → `platform/overlay.rs`. The flight's score is kept by
+`src/transitions/domain/flight_score.rs`, and the actor that drives the overlay is
+`src/transitions/platform/engine.rs`.
 
 ## Detail
 
@@ -59,10 +64,3 @@ skipped its first frames.
 - What the pictures it draws cost and return is
   [`src/pictures/docs/capture-research.md`](../../pictures/docs/capture-research.md); when a flight
   does what is [`src/transitions/docs/coordination.md`](../../transitions/docs/coordination.md)
-
-## Known debt
-
-**The overlay composes its own tracks.** It installs every animation from a track and reads where
-things are from its replica, but it still makes each flight's tracks itself, from the plan and the
-legs it keeps, rather than playing a score composed elsewhere. Step 5 of
-`docs/pictures-motion-transitions.md` has a look compose the score and the overlay play it.

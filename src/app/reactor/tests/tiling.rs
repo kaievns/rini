@@ -1846,7 +1846,7 @@ struct SurfaceFlight {
     focus: Option<WindowId>,
     focused_before: Option<WindowId>,
     key: Option<WindowId>,
-    nudge: Option<CGPoint>,
+    accent: Option<crate::animation::domain::motion::accents::Accent>,
     duration: std::time::Duration,
 }
 
@@ -1863,7 +1863,7 @@ fn strip_movements(
             focus,
             focused_before,
             key,
-            nudge,
+            accent,
             duration,
             ..
         } = event
@@ -1875,7 +1875,7 @@ fn strip_movements(
                 focus,
                 focused_before,
                 key,
-                nudge,
+                accent,
                 duration,
             });
         }
@@ -1969,7 +1969,7 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
         "the camera followed W: {start:?} to {end:?}"
     );
     assert_eq!(
-        flights[0].nudge, None,
+        flights[0].accent, None,
         "a half-width column is seen moving and never steps"
     );
 
@@ -1978,7 +1978,7 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
     for flight in strip_movements(&mut rx) {
         assert!(flight.windows.iter().all(|w| w.from.is_none()));
-        assert_eq!(flight.nudge, None);
+        assert_eq!(flight.accent, None);
     }
 }
 
@@ -1986,7 +1986,7 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
 /// A full-size window the camera follows does not move on screen at all, so the move steps the
 /// whole strip a third of the display away from where it went and back, the column it passed held
 /// on the strip beneath it. That column's real window still goes to its layout frame. The reactor
-/// asks for the plain duration: the engine stretches the flight only if it does step.
+/// asks for the plain duration: the look stretches the flight only if it takes the step.
 #[test]
 fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
     for (direction, sign) in [(Direction::Right, -1.0), (Direction::Left, 1.0)] {
@@ -2035,7 +2035,11 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{direction:?}: its real window goes to the layout's frame, off screen: {real:?}"
         );
 
-        let nudge = flight.nudge.expect("a full-width move steps");
+        let Some(crate::animation::domain::motion::accents::Accent::Step { offset: nudge }) =
+            flight.accent
+        else {
+            panic!("{direction:?}: a full-width move steps");
+        };
         assert!(
             (nudge.x - sign * 1728.0 / 3.0).abs() < 1e-9,
             "{direction:?}: {nudge:?}"
@@ -2060,7 +2064,7 @@ fn a_narrower_move_never_steps() {
         let flights = strip_movements(&mut rx);
         assert_eq!(flights.len(), 1, "{ratio}");
         let flight = &flights[0];
-        assert_eq!(flight.nudge, None, "{ratio}");
+        assert_eq!(flight.accent, None, "{ratio}");
         assert_eq!(
             flight.windows.iter().filter(|w| w.from.is_some()).count(),
             2,
@@ -2080,7 +2084,7 @@ fn a_move_the_camera_does_not_follow_is_not_nudged() {
     let flight = &flights[0];
     assert_eq!(flight.from_offset.x, 0.0, "the pair was already in view");
     assert_eq!(flight.windows.iter().filter(|w| w.from.is_some()).count(), 2);
-    assert_eq!(flight.nudge, None);
+    assert_eq!(flight.accent, None);
     assert!(
         (flight.duration.as_secs_f64() - reactor.config.settings.animation_duration).abs() < 1e-6
     );
@@ -2159,7 +2163,7 @@ fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
     }
     assert_eq!(seen, 3, "the three columns in view");
     assert_eq!(
-        flight.nudge, None,
+        flight.accent, None,
         "a third-width column is seen moving and never steps"
     );
 }
@@ -2176,6 +2180,6 @@ fn a_navigation_scroll_pans_with_no_swap_and_no_nudge() {
     for flight in flights {
         assert!(flight.from_offset.x.abs() >= 1.0);
         assert!(flight.windows.iter().all(|w| w.from.is_none()));
-        assert_eq!(flight.nudge, None);
+        assert_eq!(flight.accent, None);
     }
 }

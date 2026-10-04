@@ -128,7 +128,8 @@ pub struct StageSummary {
     /// where they end, and never held for.
     pub repainting: Vec<WindowId>,
     pub start: Start,
-    /// The motion's length. A merge that moves anything restarts the clock with its own.
+    /// The motion's length: the press's own, and for a merge the score's when that is longer. A merge
+    /// that moves anything restarts the clock with it.
     pub duration: Duration,
     /// The display the overlay covers, in screen points.
     pub display: CGRect,
@@ -242,7 +243,8 @@ pub enum Event {
     /// One picture, taken with the window at `frame`: an end-state one, or one of frame zero's that
     /// came after the overlay went up without it. Frame zero's in time come as `FrameZero`.
     Picture { generation: Generation, window: WindowId, frame: CGRect, why: Why },
-    /// An accent playing past the clock (the edge bounce) needs it to run this much longer from now.
+    /// The score plays this much longer from now: composed as the motion starts, or added to by a
+    /// push or a merge that moves nothing. The clock runs on to cover it.
     Extend(Duration),
     /// The frame clock. `settled`: every tile is drawn where it ends. `landed`: the real windows are where
     /// they were written.

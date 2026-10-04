@@ -2,18 +2,12 @@
 //!
 //! The layout does not wait for an animation to land, so a second pass can arrive mid-flight with a
 //! different destination for a window already moving, or with a window the first pass had not placed.
-//! Admitting one into the other without a visible jump is what these decisions are for. A move's
-//! nudge arrives the same way, and waits for its flight to move.
+//! Admitting one into the other without a visible jump is what these decisions are for.
 
-use std::time::{Duration, Instant};
-
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CGRect, CGSize};
 use rini_core::ids::WindowId;
 use rini_geometry::{SameAs, to_overlay_space};
-use tracing::debug;
 
-use crate::animation::domain::motion::accents::{NudgeAdmission, NudgePlaying, nudge_admission};
-use crate::animation::domain::motion::nudge::NUDGE_STRETCH;
 use crate::pictures::domain::coverage::outgrows;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
@@ -131,39 +125,6 @@ pub(in crate::transitions) fn entrance_plan(
         return EntranceDecision::Reserve("capture unusable");
     }
     EntranceDecision::Travel { from, to: slot }
-}
-
-/// A move's nudge arriving at a flight that does not move yet, kept with the move's plain duration
-/// until it does (`NudgeAdmission::Wait`); `None` when one still playing skips it.
-pub(in crate::transitions) fn nudge_waiting(
-    nudge: Option<CGPoint>,
-    plain: Duration,
-    playing: &NudgePlaying,
-    now: Instant,
-) -> Option<(CGPoint, Duration)> {
-    let nudge = nudge?;
-    if nudge_admission(playing, now, false) == NudgeAdmission::Wait {
-        Some((nudge, plain))
-    } else {
-        debug!("move nudge skipped: one is still playing");
-        None
-    }
-}
-
-/// A move's nudge reaching a flight that moves, with the stretched duration it plays over; `None`
-/// when one still playing skips it.
-pub(in crate::transitions) fn starting_nudge(
-    nudge: Option<(CGPoint, Duration)>,
-    playing: &NudgePlaying,
-    now: Instant,
-) -> Option<(CGPoint, Duration)> {
-    let (nudge, plain) = nudge?;
-    if nudge_admission(playing, now, true) == NudgeAdmission::Start {
-        Some((nudge, plain.mul_f64(NUDGE_STRETCH)))
-    } else {
-        debug!("move nudge skipped: one is still playing");
-        None
-    }
 }
 
 #[cfg(test)]
@@ -492,32 +453,6 @@ mod tests {
                 0,
                 "already there"
             );
-        }
-    }
-
-    /// A move's nudge waits for its flight to move, then plays stretched.
-    mod nudge {
-        use super::*;
-
-        /// The reactor's step waits with the move's plain duration until the flight moves, then
-        /// plays stretched. A press while one plays is skipped.
-        #[test]
-        fn a_nudge_waits_for_its_flight_then_plays_stretched() {
-            let step = CGPoint::new(-576.0, 0.0);
-            let plain = Duration::from_millis(350);
-            let now = Instant::now();
-            let idle = NudgePlaying::default();
-            let waiting = nudge_waiting(Some(step), plain, &idle, now);
-            assert_eq!(waiting, Some((step, plain)));
-            let started = starting_nudge(waiting, &idle, now);
-            assert_eq!(started, Some((step, plain.mul_f64(NUDGE_STRETCH))));
-
-            let mut playing = NudgePlaying::default();
-            playing.start(now, plain.mul_f64(NUDGE_STRETCH));
-            let soon = now + Duration::from_millis(100);
-            assert_eq!(nudge_waiting(Some(step), plain, &playing, soon), None);
-            assert_eq!(starting_nudge(Some((step, plain)), &playing, soon), None);
-            assert_eq!(nudge_waiting(None, plain, &idle, now), None);
         }
     }
 }

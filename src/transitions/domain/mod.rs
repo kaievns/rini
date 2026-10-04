@@ -2,6 +2,7 @@
 
 pub mod admission;
 pub mod flight;
+pub mod flight_score;
 pub mod frame_writes;
 pub mod lifecycle;
 pub mod pass;

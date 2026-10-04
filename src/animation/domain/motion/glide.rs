@@ -204,7 +204,7 @@ impl Leg {
 mod tests {
     use super::*;
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
-    use crate::animation::domain::motion::score::Score;
+    use crate::animation::domain::motion::score::{Edit, Score};
 
     const DURATION: f64 = 0.35;
     const COLUMN: f64 = 861.0;
@@ -453,8 +453,8 @@ mod tests {
     fn drawn(leg: &Leg, at: f64) -> f64 {
         let mut score = Score::default();
         let node = Node::Container(GroupKey::STILL);
-        score.place(node, Value::Point(leg.to()));
-        score.add(leg.track(GroupKey::STILL, STEP));
+        score.apply(&Edit::Place(node, Value::Point(leg.to())));
+        score.apply(&Edit::Add(leg.track(GroupKey::STILL, STEP)));
         match score.sample(node, at) {
             Some(Value::Point(p)) => p.x,
             other => panic!("a container holds a point: {other:?}"),

@@ -1,11 +1,14 @@
 //! How one tile fits its picture to the frame it is drawn in, how its frame interpolates, and when
-//! it snaps onto its window's real frame. Sizes and rects only; the layers that realise these live
-//! in the overlay.
+//! and how it snaps onto its window's real frame, as the score's edits. Sizes and rects only; the
+//! layers that realise these live in the overlay.
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::WindowId;
 
 use rini_geometry::stretch::is_a_resize;
 
+use super::plan::group_relative;
+use super::score::{Channel, Edit, Node, Score, Value};
 use crate::pictures::domain::coverage::{fits_frame, outgrows};
 use crate::pictures::domain::watch::{END_SLACK, near};
 
@@ -129,6 +132,28 @@ pub const SNAP_FROM: f64 = 0.25;
 /// frame" in `src/animation/docs/animation-smoothness.md`.
 pub fn snap_to(model: CGRect, real: CGRect) -> Option<CGRect> {
     (near(model, real, END_SLACK) && !near(model, real, SNAP_FROM)).then_some(real)
+}
+
+/// The edits that move `window`'s tile onto `real`, its window's frame in the overlay's space, at
+/// `at`: its model goes there, and a track of its own still playing then is given the same timing
+/// and start ending there, so it lands with its movement instead of popping at the lift. A tile
+/// riding its container only moves inside it. None for a window the score has no tile of. Whether
+/// to snap is `snap_to`'s, decided by the caller; this does not judge it again. See "Tiles snap to
+/// the real frame" in `src/animation/docs/animation-smoothness.md`.
+pub fn snap(score: &Score, window: WindowId, real: CGRect, at: f64) -> Vec<Edit> {
+    let node = Node::Tile(window);
+    if score.model(node).is_none() {
+        return Vec::new();
+    }
+    let offset = match score.parent(window).and_then(|key| score.model(Node::Container(key))) {
+        Some(Value::Point(position)) => position,
+        _ => CGPoint::new(0.0, 0.0),
+    };
+    let to = Value::Rect(group_relative(real, offset));
+    let playing = score.track(node, Channel::Base).filter(|track| track.at(at).is_some());
+    std::iter::once(Edit::Place(node, to))
+        .chain(playing.map(|track| Edit::Add(track.ending_at(to))))
+        .collect()
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -423,5 +448,99 @@ mod tests {
             None,
             "half a point across but 30 taller: judged by the furthest edge"
         );
+    }
+
+    mod snaps {
+        use super::*;
+        use crate::animation::domain::motion::easing::MOTION_CURVE;
+        use crate::animation::domain::motion::plan::GroupKey;
+        use crate::animation::domain::motion::score::{Curve, Track};
+
+        const STRIP: GroupKey = GroupKey::STILL;
+
+        fn window() -> WindowId { WindowId::new(1, 1) }
+
+        /// The strip's container, model at -861, and a tile at `frame` in it: at 865 it ends at 4 on
+        /// screen. `leg` is the tile's own track, when it has one.
+        fn riding(frame: CGRect, leg: Option<&Track>) -> Score {
+            let mut score = Score::default();
+            for edit in [
+                Edit::Place(Node::Container(STRIP), Value::Point(CGPoint::new(-861.0, 0.0))),
+                Edit::Ride(window(), STRIP),
+                Edit::Place(Node::Tile(window()), Value::Rect(frame)),
+            ]
+            .into_iter()
+            .chain(leg.cloned().map(Edit::Add))
+            {
+                score.apply(&edit);
+            }
+            score
+        }
+
+        fn leg(from: CGRect, to: CGRect) -> Track {
+            Track::between(
+                Node::Tile(window()),
+                Channel::Base,
+                Value::Rect(from),
+                Value::Rect(to),
+                100.0,
+                0.35,
+                Curve::Bezier(MOTION_CURVE),
+            )
+        }
+
+        /// The measured case, a tile 861 wide over a window 860 wide, riding its container: it is
+        /// moved inside the container at once, and nothing plays.
+        #[test]
+        fn a_tile_riding_its_container_snaps_onto_its_window_at_once() {
+            let score = riding(rect(865.0, 32.0, 861.0, 1081.0), None);
+            let real = rect(4.0, 32.0, 860.0, 1081.0);
+            assert_eq!(snap(&score, window(), real, 100.0), [Edit::Place(
+                Node::Tile(window()),
+                Value::Rect(rect(865.0, 32.0, 860.0, 1081.0))
+            )]);
+        }
+
+        /// A tile on a track of its own goes on along it to the window's frame: the same begin, start
+        /// and curve, a new end, a resize's size with it.
+        #[test]
+        fn a_tile_on_its_own_leg_snaps_on_the_same_timing() {
+            let to = rect(865.0, 32.0, 861.0, 1081.0);
+            for from in [
+                rect(1726.0, 32.0, 861.0, 1081.0),
+                rect(1726.0, 32.0, 1200.0, 1081.0),
+            ] {
+                let leg = leg(from, to);
+                let score = riding(to, Some(&leg));
+                let real = rect(4.0, 32.0, 860.0, 1081.0);
+                let snapped = Value::Rect(rect(865.0, 32.0, 860.0, 1081.0));
+                let edits = snap(&score, window(), real, 100.2);
+                assert_eq!(edits, [
+                    Edit::Place(Node::Tile(window()), snapped),
+                    Edit::Add(leg.ending_at(snapped)),
+                ]);
+                let Edit::Add(track) = &edits[1] else { unreachable!() };
+                assert_eq!(track.keys()[0], (0.0, Value::Rect(from)));
+                assert_eq!((track.begin(), track.seconds()), (100.0, 0.35));
+            }
+        }
+
+        /// Once its track has played, only the tile's model moves.
+        #[test]
+        fn a_tile_whose_leg_has_ended_snaps_by_its_model() {
+            let to = rect(865.0, 32.0, 861.0, 1081.0);
+            let leg = leg(rect(1726.0, 32.0, 861.0, 1081.0), to);
+            let score = riding(to, Some(&leg));
+            assert_eq!(snap(&score, window(), rect(5.0, 32.0, 861.0, 1081.0), 100.5), [
+                Edit::Place(
+                    Node::Tile(window()),
+                    Value::Rect(rect(866.0, 32.0, 861.0, 1081.0))
+                )
+            ]);
+            assert!(
+                snap(&Score::default(), window(), to, 100.5).is_empty(),
+                "no tile, no snap"
+            );
+        }
     }
 }

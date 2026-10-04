@@ -1,5 +1,6 @@
 //! Everything that moves in one transition, as data: tracks of keyframes on containers and tiles,
-//! and where each node ends. A score evaluates at any media time to what Core Animation draws, so a
+//! where each node ends, which container each tile rides and how deep everything is drawn. A score is
+//! the fold of its edits (`Edit`), and evaluates at any media time to what Core Animation draws, so a
 //! retarget starts from the score instead of the presentation layer. What Core Animation was
 //! measured to play is "The score" in `src/animation/docs/animation-smoothness.md`.
 use std::collections::HashMap;
@@ -8,7 +9,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
 
 use super::easing::CubicBezier;
-use super::plan::{GroupKey, Presented};
+use super::plan::{Banding, GroupKey, Presented};
 
 /// How far apart a spring leg's and a nudge's samples are: one 120Hz frame.
 pub const SAMPLE_STEP: f64 = 1.0 / 120.0;
@@ -257,18 +258,65 @@ impl Track {
     }
 }
 
-/// Where every node ends, as a layer's model value, and the tracks that carry them there.
+/// One change to a score, and what a renderer carries out to draw it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Edit {
+    /// The node's model, where it is drawn once its tracks end. A container's first opens it.
+    Place(Node, Value),
+    /// A track, replacing the one on its node and channel.
+    Add(Track),
+    /// Takes the track off a node's channel.
+    Cut(Node, Channel),
+    /// A tile into a container: its first edit, a tile joining a flight's included; a later one
+    /// moves it to another container.
+    Ride(WindowId, GroupKey),
+    /// A node out, with every track on it; a tile with its ride.
+    Drop(Node),
+    /// How deep every container and tile is drawn, a cut: depth does not interpolate.
+    Bank(Banding),
+}
+
+/// Where every node ends, as a layer's model value, the tracks that carry them there, which container
+/// each tile rides, and how deep each is drawn.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Score {
     models: HashMap<Node, Value>,
     tracks: HashMap<(Node, Channel), Track>,
+    parents: HashMap<WindowId, GroupKey>,
+    banding: Banding,
 }
 
 impl Score {
-    /// Panics if `value` is not the kind `node` holds.
-    pub fn place(&mut self, node: Node, value: Value) {
+    /// Folds `edit` in: the one way a score changes. Panics on a `Place` of a value its node does
+    /// not hold.
+    pub fn apply(&mut self, edit: &Edit) {
+        match edit {
+            Edit::Place(node, value) => self.place(*node, *value),
+            Edit::Add(track) => self.add(track.clone()),
+            Edit::Cut(node, channel) => {
+                self.tracks.remove(&(*node, *channel));
+            }
+            Edit::Ride(window, key) => {
+                self.parents.insert(*window, *key);
+            }
+            Edit::Drop(node) => self.remove(*node),
+            Edit::Bank(banding) => self.banding = banding.clone(),
+        }
+    }
+
+    fn place(&mut self, node: Node, value: Value) {
         assert!(node.holds(value), "{node:?} cannot hold {value:?}");
         self.models.insert(node, value);
+    }
+
+    fn add(&mut self, track: Track) { self.tracks.insert((track.node, track.channel), track); }
+
+    fn remove(&mut self, node: Node) {
+        self.models.remove(&node);
+        self.tracks.retain(|(on, _), _| *on != node);
+        if let Node::Tile(window) = node {
+            self.parents.remove(&window);
+        }
     }
 
     /// Where `node` is drawn once its tracks have ended.
@@ -276,24 +324,13 @@ impl Score {
         self.models.get(&node).copied()
     }
 
-    /// Adds `track`, and returns the one it replaces on the same node and channel.
-    pub fn add(&mut self, track: Track) -> Option<Track> {
-        self.tracks.insert((track.node, track.channel), track)
-    }
-
     pub fn track(&self, node: Node, channel: Channel) -> Option<&Track> {
         self.tracks.get(&(node, channel))
     }
 
-    /// Takes `node`'s track off `channel`, and returns it.
-    pub fn cut(&mut self, node: Node, channel: Channel) -> Option<Track> {
-        self.tracks.remove(&(node, channel))
-    }
-
-    /// Takes `node` out, its model and every track on it.
-    pub fn remove(&mut self, node: Node) {
-        self.models.remove(&node);
-        self.tracks.retain(|(on, _), _| *on != node);
+    /// The container `window`'s tile rides.
+    pub fn parent(&self, window: WindowId) -> Option<GroupKey> {
+        self.parents.get(&window).copied()
     }
 
     /// Every container placed.
@@ -302,6 +339,20 @@ impl Score {
             Node::Container(key) => Some(*key),
             Node::Tile(_) => None,
         })
+    }
+
+    /// Every tile, with the container it rides.
+    pub fn tiles(&self) -> impl Iterator<Item = (WindowId, GroupKey)> + '_ {
+        self.parents.iter().map(|(window, key)| (*window, *key))
+    }
+
+    pub fn banding(&self) -> &Banding { &self.banding }
+
+    /// Whether a track on `channel` plays at `at` on any node.
+    pub fn plays(&self, channel: Channel, at: f64) -> bool {
+        self.tracks
+            .values()
+            .any(|track| track.channel == channel && track.at(at).is_some())
     }
 
     /// `node`'s tracks in the order Core Animation must draw them. It composes a layer's
@@ -330,6 +381,22 @@ impl Score {
         let model = self.model(node)?;
         let base = self.track(node, Channel::Base).and_then(|track| track.at(at));
         Some(base.unwrap_or(model))
+    }
+
+    /// Where `window`'s tile is drawn at `at` in the overlay's space: its frame in its container,
+    /// moved by where the container is drawn.
+    pub fn drawn(&self, window: WindowId, at: f64) -> Option<CGRect> {
+        let key = self.parent(window)?;
+        match (
+            self.sample(Node::Tile(window), at)?,
+            self.sample(Node::Container(key), at)?,
+        ) {
+            (Value::Rect(frame), Value::Point(at)) => Some(CGRect::new(
+                CGPoint::new(frame.origin.x + at.x, frame.origin.y + at.y),
+                frame.size,
+            )),
+            _ => unreachable!("a tile holds a frame and a container a point"),
+        }
     }
 
     /// Every container at `at`: where it is drawn, and where its movement has it.
@@ -663,9 +730,8 @@ mod tests {
     #[test]
     fn a_track_replaces_the_one_on_its_node_and_channel() {
         let mut score = moving(0.0, 100.0, 0.0, 1.0, Curve::Linear);
-        let first = score.track(strip(), Channel::Base).cloned();
         let second = base(50.0, 200.0, 0.5, 1.0, Curve::Linear);
-        assert_eq!(score.add(second.clone()), first, "the replaced track comes back");
+        score.apply(&Edit::Add(second.clone()));
         assert_eq!(score.track(strip(), Channel::Base), Some(&second));
 
         let bounce = Track::between(
@@ -677,9 +743,9 @@ mod tests {
             1.0,
             Curve::Linear,
         );
-        assert_eq!(score.add(bounce), None);
+        score.apply(&Edit::Add(bounce.clone()));
         let other = Node::Container(GroupKey::Floating);
-        score.place(other, point(0.0, 0.0));
+        score.apply(&Edit::Place(other, point(0.0, 0.0)));
         let elsewhere = Track::between(
             other,
             Channel::Base,
@@ -689,8 +755,10 @@ mod tests {
             1.0,
             Curve::Linear,
         );
-        assert_eq!(score.add(elsewhere), None);
+        score.apply(&Edit::Add(elsewhere.clone()));
         assert_eq!(score.track(strip(), Channel::Base), Some(&second));
+        assert_eq!(score.track(strip(), Channel::Bounce), Some(&bounce));
+        assert_eq!(score.track(other, Channel::Base), Some(&elsewhere));
         assert_eq!(score.tracks(strip()).count(), 2);
     }
 
@@ -870,7 +938,7 @@ mod tests {
         assert_eq!(keyframes.ending_at(point(2.0, 0.0)).form(), Form::Keyframes);
     }
 
-    /// A cut takes one channel off a node and leaves the rest; a removal takes the node, its model
+    /// A cut takes one channel off a node and leaves the rest; a drop takes the node, its model
     /// and every track, and `containers` names what is left.
     #[test]
     fn a_cut_takes_one_channel_and_a_removal_the_whole_node() {
@@ -882,13 +950,19 @@ mod tests {
             0.0,
             1.0,
         );
-        score.add(bounce.clone());
         let floating = Node::Container(GroupKey::Floating);
-        score.place(floating, point(0.0, 0.0));
-        score.place(tile(), rect(0.0, 0.0, 10.0, 10.0));
-
-        assert_eq!(score.cut(strip(), Channel::Bounce), Some(bounce));
-        assert_eq!(score.cut(strip(), Channel::Bounce), None);
+        for edit in [
+            Edit::Add(bounce),
+            Edit::Place(floating, point(0.0, 0.0)),
+            Edit::Place(tile(), rect(0.0, 0.0, 10.0, 10.0)),
+            Edit::Cut(strip(), Channel::Bounce),
+        ] {
+            score.apply(&edit);
+        }
+        assert_eq!(score.track(strip(), Channel::Bounce), None);
+        let cut = score.clone();
+        score.apply(&Edit::Cut(strip(), Channel::Bounce));
+        assert_eq!(score, cut, "nothing left to cut");
         assert!(
             score.track(strip(), Channel::Base).is_some(),
             "the movement stays"
@@ -897,12 +971,156 @@ mod tests {
         let mut keys: Vec<GroupKey> = score.containers().collect();
         keys.sort_by_key(|key| format!("{key:?}"));
         assert_eq!(keys, [GroupKey::Floating, GroupKey::Rigid(1)]);
-        score.remove(strip());
+        score.apply(&Edit::Drop(strip()));
         assert_eq!(score.model(strip()), None);
         assert_eq!(score.tracks(strip()).count(), 0);
         assert_eq!(score.containers().collect::<Vec<_>>(), [GroupKey::Floating]);
         assert!(score.settled(0.5), "nothing is left playing");
         assert!(score.model(tile()).is_some(), "the tile stays");
+    }
+
+    fn window(idx: u32) -> WindowId { WindowId::new(1, idx) }
+
+    /// A score is the fold of its edits: the same edits in the same order make the same score
+    /// however they are split, which is how a renderer's replica and the score it plays agree, and
+    /// each kind is what the score says after it: the last `Place` the model, the last `Ride` the
+    /// container, the last `Bank` the depths.
+    #[test]
+    fn a_score_is_the_fold_of_its_edits() {
+        let (a, b) = (window(1), window(2));
+        let (strip, floating) = (GroupKey::Rigid(1), GroupKey::Floating);
+        let moved = Track::between(
+            Node::Tile(a),
+            Channel::Base,
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(50.0, 0.0, 10.0, 10.0),
+            1.0,
+            0.5,
+            Curve::Linear,
+        );
+        let deep = Banding {
+            group_order: vec![strip],
+            ..Banding::default()
+        };
+        let edits = [
+            Edit::Place(Node::Container(strip), point(0.0, 0.0)),
+            Edit::Place(Node::Container(floating), point(0.0, 0.0)),
+            Edit::Ride(a, strip),
+            Edit::Place(Node::Tile(a), rect(0.0, 0.0, 10.0, 10.0)),
+            Edit::Ride(b, strip),
+            Edit::Place(Node::Tile(b), rect(20.0, 0.0, 10.0, 10.0)),
+            Edit::Bank(Banding::default()),
+            Edit::Place(Node::Container(strip), point(-861.0, 0.0)),
+            Edit::Place(Node::Tile(a), rect(50.0, 0.0, 10.0, 10.0)),
+            Edit::Add(moved.clone()),
+            Edit::Ride(b, floating),
+            Edit::Bank(deep.clone()),
+        ];
+        let mut whole = Score::default();
+        for edit in &edits {
+            whole.apply(edit);
+        }
+        for split in 0..=edits.len() {
+            let mut first = Score::default();
+            for edit in &edits[..split] {
+                first.apply(edit);
+            }
+            let mut rest = first.clone();
+            for edit in &edits[split..] {
+                rest.apply(edit);
+            }
+            assert_eq!(rest, whole, "split at {split}");
+        }
+        assert_eq!(whole.model(Node::Container(strip)), Some(point(-861.0, 0.0)));
+        assert_eq!(whole.model(Node::Tile(a)), Some(rect(50.0, 0.0, 10.0, 10.0)));
+        assert_eq!(whole.track(Node::Tile(a), Channel::Base), Some(&moved));
+        assert_eq!((whole.parent(a), whole.parent(b)), (Some(strip), Some(floating)));
+        assert_eq!(whole.banding(), &deep);
+    }
+
+    /// A tile rides one container at a time and is drawn where it sits in it, moved by where the
+    /// container is drawn; a drop takes the tile out with its ride and its tracks, and leaves the
+    /// container.
+    #[test]
+    fn a_tile_rides_one_container_and_a_drop_takes_its_tracks() {
+        let (a, b) = (window(1), window(2));
+        let (rigid, loose) = (GroupKey::Rigid(1), GroupKey::Loose);
+        let mut score = moving(0.0, -861.0, 0.0, 1.0, Curve::Linear);
+        for edit in [
+            Edit::Place(Node::Container(loose), point(0.0, 0.0)),
+            Edit::Ride(a, rigid),
+            Edit::Place(Node::Tile(a), rect(865.0, 32.0, 859.0, 1081.0)),
+            Edit::Ride(b, rigid),
+            Edit::Place(Node::Tile(b), rect(4.0, 32.0, 859.0, 1081.0)),
+            Edit::Add(Track::between(
+                Node::Tile(b),
+                Channel::Base,
+                rect(4.0, 32.0, 859.0, 1081.0),
+                rect(4.0, 32.0, 859.0, 1081.0),
+                0.0,
+                1.0,
+                Curve::Linear,
+            )),
+        ] {
+            score.apply(&edit);
+        }
+        let along = x(score.along(strip(), 0.25));
+        assert_eq!(
+            score.drawn(a, 0.25),
+            Some(CGRect::new(
+                CGPoint::new(865.0 + along, 32.0),
+                CGSize::new(859.0, 1081.0)
+            ))
+        );
+        score.apply(&Edit::Ride(a, loose));
+        assert_eq!(score.parent(a), Some(loose));
+        assert_eq!(
+            score.drawn(a, 0.25).map(|r| r.origin.x),
+            Some(865.0),
+            "in its new container"
+        );
+        let mut tiles: Vec<(WindowId, GroupKey)> = score.tiles().collect();
+        tiles.sort_by_key(|(window, _)| window.idx);
+        assert_eq!(tiles, [(a, loose), (b, rigid)], "one container each");
+
+        score.apply(&Edit::Drop(Node::Tile(b)));
+        assert_eq!(score.parent(b), None);
+        assert_eq!(score.model(Node::Tile(b)), None);
+        assert_eq!(score.track(Node::Tile(b), Channel::Base), None);
+        assert_eq!(score.drawn(b, 0.25), None);
+        assert_eq!(score.tiles().count(), 1);
+        assert!(score.model(strip()).is_some(), "the container stays");
+    }
+
+    /// `plays` says whether any node has a track of the channel playing: from its begin up to its
+    /// end, never outside it, and never for a track of no length.
+    #[test]
+    fn plays_says_whether_a_channel_is_playing() {
+        let mut score = moving(0.0, -861.0, 1.0, 0.35, Curve::Linear);
+        let floating = Node::Container(GroupKey::Floating);
+        score.apply(&Edit::Place(floating, point(0.0, 0.0)));
+        score.apply(&Edit::Add(Track::samples(
+            floating,
+            Channel::Nudge,
+            [point(0.0, 0.0), point(-300.0, 0.0), point(0.0, 0.0)],
+            2.0,
+            0.4,
+        )));
+        assert!(!score.plays(Channel::Base, 0.99));
+        assert!(score.plays(Channel::Base, 1.0));
+        assert!(!score.plays(Channel::Base, 1.35));
+        assert!(!score.plays(Channel::Nudge, 1.5), "not begun");
+        assert!(score.plays(Channel::Nudge, 2.2), "on another node");
+        assert!(!score.plays(Channel::Nudge, 2.4), "home");
+        assert!(!score.plays(Channel::Bounce, 2.2));
+        score.apply(&Edit::Add(Track::samples(
+            strip(),
+            Channel::Bounce,
+            [point(0.0, 0.0), point(0.0, 72.0), point(0.0, 0.0)],
+            3.0,
+            0.0,
+        )));
+        assert!(!score.plays(Channel::Bounce, 3.0), "a cut never plays");
     }
 
     #[test]
