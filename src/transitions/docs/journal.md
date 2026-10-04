@@ -8,12 +8,15 @@ moving around can be read back afterwards. Kai's ask, and what rini must do abou
 
 ## Where a mark comes from
 
-`Journalled` holds the coordinator and its journal as one pure unit. The engine's one call into the
-lifecycle, `FlightEngine::drive`, goes through `Journalled::drive`: it reads the event's own marks,
-the coordinator takes the event, and then those marks and one for each command it gave are pushed,
-every one stamped with the drive's `now` and the generation the drive left (`g`). No mark call sits
-anywhere else, and the engine never reads the journal back: of what a drive returns, it carries out
-the commands and sends the writer the burst, if one is due.
+`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at two
+seams. Its one call into the lifecycle, `FlightEngine::drive`, goes through `Journalled::drive`: it
+reads the event's own marks, the coordinator takes the event, and then those marks and one for each
+command it gave are pushed, every one stamped with the drive's `now` and the generation the drive
+left (`g`). Its pictures inbox hands each delivery under its tag to `Journalled::delivery` as it
+comes, before turning it into `FrameZero` and `Picture` events: a `delivery` mark, then a `delivered`
+mark for each picture in it, stamped with when the engine heard it and the generation the coordinator
+is in. No mark call sits anywhere else, and the engine never reads the journal back: of what a drive
+returns, it carries out the commands and sends the writer the burst, if one is due.
 
 Both matches, over `Event` and over `Command`, have no `_` arm, so a new variant does not compile
 until it has a mark.
@@ -26,7 +29,9 @@ until it has a mark.
 | `Event::Tick { settled, landed }`, once the clock has run out | `at_rest`, `landed`: each once a generation, at its first `true` | |
 | `Event::Lost { generation, window }` | `lost` | `of`, `window` |
 | `Event::LooksTurned(windows)` | `looks_turned`, one for each window | `window` |
-| `Event::Picture`, `Event::FrameZero` | none | |
+| `Event::Picture`, `Event::FrameZero` | none: the delivery's marks are the record | |
+| a delivery of the pictures service under the engine's tag | `delivery` | `of`, `why`, `pictures` (a count), `sent_before_us` |
+| each picture in it, after its `delivery` | `delivered` | `window`, `frame` (screen points, where the window was when it was taken), `taken_before_us` |
 | `Hold` / `Settle` / `Release` | `hold` / `settle` / `release` | |
 | `AskFrameZero` | `ask_frame_zero` | `strip`, `background`, `behind` (counts) |
 | `Show` / `StartMoving` / `StopWatches` | `show` / `start_moving` / `stop_watches` | |
@@ -43,32 +48,59 @@ How to read them:
 
 - **`g` is the generation after the event.** A merge that starts a generation is marked in it. `of`
   is the generation a delivery, a loss, a swap or a quiet was under; `of != g` is stale.
+- **A delivery carries its times as ages,** in microseconds before its own `t`: `sent_before_us` is
+  when the service sent it, and each `delivered`'s `taken_before_us` when that picture's capture
+  started (below).
 - **`at_rest` and `landed` are the lift's condition, not when each window landed.** The engine reads
   where the tiles are drawn and where the windows are only once the clock has run out
   (`Coordinator::wants_landing`) and tells the coordinator `false` before, so a tick before then
   marks nothing.
 - **A command's mark says the coordinator gave it,** stamped with its drive's `now`. Carrying it out
   is not timed.
-- **Marks are in the order their drives ran.** A drive nested in carrying out a command
-  (`StartMoving`'s `Extend`) comes after every command of the drive it is nested in. Group by `g`.
-- **`Picture` and `FrameZero` have no mark:** they restate a delivery of the pictures service, and the
-  delivery is to be the record. Deliveries are not journalled yet (below).
+- **Marks are in the order they were pushed:** a delivery's as the engine hears it, an event's and
+  its commands' as its drive runs. A drive nested in carrying out a command (`StartMoving`'s `Extend`)
+  comes after every command of the drive it is nested in. Group by `g`.
+- **`Picture` and `FrameZero` have no mark:** they restate a delivery of the pictures service, which is
+  marked whole where the engine hears it. An empty frame-zero delivery is a `delivery` with no
+  `delivered` after it.
 
 ## A line
 
 One JSON object a line. Each burst opens with a header, then one line a mark, oldest first:
 
 ```
-{"t":81234599990000,"mark":"burst","journal":1,"unix_ms":1791043200123,"lost":0}
+{"t":81235020000000,"mark":"burst","journal":1,"unix_ms":1791043200123,"lost":0}
 {"t":81234567890123,"g":42,"mark":"begin","kind":"pan","coalesced":false,"tiles":3,"awaiting":0,"repainting":0,"focus":[812,3104],"losing_focus":[812,3090],"key":[812,3090],"duration_ms":350}
 {"t":81234567890123,"g":42,"mark":"hold"}
-{"t":81234570012345,"g":42,"mark":"snap","window":[812,3104],"frame":[3.0,35.0,860.0,1079.0]}
+{"t":81234598190123,"g":42,"mark":"delivery","of":42,"why":"frame_zero","pictures":1,"sent_before_us":4100}
+{"t":81234598190123,"g":42,"mark":"delivered","window":[812,3104],"frame":[0.0,32.0,864.0,1085.0],"taken_before_us":28900}
+{"t":81234970012345,"g":42,"mark":"snap","window":[812,3104],"frame":[3.0,35.0,860.0,1079.0]}
 ```
 
 The header's `t` is when the burst was written, `journal` the format's version (1), `unix_ms` the wall
 clock then, and `lost` how many marks the ring overwrote before they were written. A window is
 `[pid, idx]`, its `idx` the window server's id; a rect is `[x, y, w, h]` as `f32`; a generation is a
-number; `null` is none. `a_line_is_one_object_with_t_g_and_mark` pins the format.
+number; a `why` is `frame_zero`, `landed`, `focus_changed`, `background` or `final`; `null` is none.
+`a_line_is_one_object_with_t_g_and_mark` pins the format.
+
+## A delivery's times
+
+The pictures service stamps each delivery with when it sent it (`Delivered.sent`): for a round of
+SkyLight captures, once its calls and band prints are done, as the cache and the schedule are handed
+them; for the one ScreenCaptureKit capture of a clipped focus end, once that capture is back on the
+service's thread. Each picture keeps when its capture started (`Picture::taken`), stamped before the
+call that took it. On the probe's clock a `delivery`'s `t - sent_before_us` is the round's end and a
+`delivered`'s `t - taken_before_us` its capture's start, so a delivery splits into two gaps:
+
+- **Capture start to sent is the round.** For a frame-zero delivery, measured from the earliest
+  picture's start, that is every SkyLight call of the round, the server frames of each later set read
+  between them, and then the band prints.
+- **Sent to the `delivery` mark is the wait for the engine.** The service putting the pictures in the
+  cache and deciding, the hop to the main thread, and whatever the engine was doing when the delivery
+  came. Composing the flight frame zero was asked for is one such thing; it ends at that generation's
+  `merge {moved: false}`.
+
+A delivery under a generation the flight has moved on from is marked all the same, with `of != g`.
 
 ## The clock
 
@@ -113,7 +145,6 @@ A crash loses the marks not yet written: a panic hook cannot reach the engine's 
 ## What it does not record yet
 
 - The press: when the reactor took the event a request answers.
-- Deliveries: when the pictures service sent each, and when each picture in it started its capture.
 - How long carrying out a drive's commands takes.
 - CPU and GPU use. Kai allowed it if it costs nothing; what the IOKit read costs is not measured, so
   it waits for that measurement.

@@ -67,8 +67,8 @@ evaluates to exactly what the render server draws, so the coordinator retargets 
 - `set_layer_contents(layer, picture)` draws any picture into any layer, regions through
   `contentsRect`.
 
-Deliveries carry the caller's tag (a transition puts its generation in it) and only pictures the cache
-took.
+Deliveries carry the caller's tag (a transition puts its generation in it), when the service sent
+them, and only pictures the cache took.
 
 **Inside:** a pure schedule (asks, watches and holds in, the next call out), region arithmetic, the
 per-window knowledge, the cache policy; and on the platform side the SkyLight and ScreenCaptureKit
@@ -140,5 +140,7 @@ service remembers it for a second.
 | The journal is written by default; `animations { journal { off; } }` turns it off | Kai asked for "a record overything as i move around" (2026-10-03), so the record is the default. `off` is niri's form for turning an animation off, so `docs/config.md`'s rule that a flag names the non-default holds, and the file is read live | `journal false`, a default-on flag written as `x false`; `RINI_JOURNAL=0`, which needs the launch agent's environment and a restart |
 | A burst is written at the quiet after its lift (`ReportSettled`), and the file starts afresh past 50MB | Kai: "make sure you don't flush until after the transition settles so the disk io didn't add to the durations". A ring cannot grow, so the prototype's 200k-mark cap goes | the prototype's write once 400ms pass with no mark: a second timer for what the quiet already says |
 | JSON lines at `~/Library/Logs/rini/transitions.jsonl`, `t` in uptime nanoseconds | focuslab's probes read `DispatchTime.uptimeNanoseconds`, the same clock, so a probe's trial and rini's marks join with no wall clock. A new name, so no reader of the prototype's text log misreads it | wall-clock milliseconds, which drift against the probe and are ambiguous across a sleep |
-| `Event::Picture` and `Event::FrameZero` have no mark; `Event::Lost` is the `lost` mark | the first two restate a delivery of the pictures service, which step 8 journals whole where the engine hears it. The engine turns every pictures `Lost` under its tag into exactly one `Event::Lost` | mark both: two records of one fact |
+| `Event::Picture` and `Event::FrameZero` have no mark; `Event::Lost` is the `lost` mark | the first two restate a delivery of the pictures service, which the journal marks whole where the engine hears it. The engine turns every pictures `Lost` under its tag into exactly one `Event::Lost` | mark both: two records of one fact |
+| The pictures service stamps each delivery with when it sent it (`Delivered.sent`) | a frame-zero picture's `taken` is stamped before its SkyLight call, and the engine hears the delivery only once it is free, so without the round's end the SkyLight round and the wait for the engine are one gap, and that split is what the time from a press to the overlay up needs | infer the engine's wait from the compose's end: ambiguous exactly when the capture and the compose overlap |
+| A delivery is one mark (`delivery`: `of`, `why`, `sent`, a count), and each of its pictures one more after it (`delivered`: window, frame, `taken`) | `of`, `why` and `sent` are facts of the delivery, and window, frame and `taken` of each picture; an empty frame-zero delivery is a `delivery` alone, and the largest mark stays 48 bytes, a `Stamped` 72 | one mark per picture with the delivery's fields: each repeated per picture, an optional window and frame for the empty one, and a `Stamped` of 80 bytes, at the bound (measured 2026-10-04) |
 | CPU and GPU use are not journalled | Kai allowed them if they cost nothing; what the IOKit read costs is not measured | sample them at the overlay up and the lift, as the prototype did |

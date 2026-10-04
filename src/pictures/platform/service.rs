@@ -185,11 +185,12 @@ fn put(cache: &mut PictureCache<Picture>, window: WindowId, picture: Picture, ev
 }
 
 /// What a background capture that came back tells the clients, once the cache has had it (`put`), and,
-/// when it took it, a delivery to each client owed it as a focus change; nothing when the cache kept
-/// what it holds, or for an empty capture or a window forgotten meanwhile (`kept` is `None`).
+/// when it took it, a delivery to each client owed it as a focus change, sent `now`; nothing when the
+/// cache kept what it holds, or for an empty capture or a window forgotten meanwhile (`kept` is `None`).
 fn landing(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
+    now: Instant,
     window: WindowId,
     kept: Option<Vec<(Tag, ScreenRect)>>,
     picture: Option<Picture>,
@@ -206,6 +207,7 @@ fn landing(
         events.push(Event::Delivered {
             tag,
             why: Why::FocusChanged,
+            sent: now,
             pictures: vec![(window, picture.clone(), frame)],
         });
     }
@@ -254,7 +256,7 @@ fn with_prints(looks: &[Look], captured: Vec<(WindowId, Picture)>) -> Vec<(Windo
 /// What a round of SkyLight captures tells the clients. Each picture is put to the cache first, and
 /// the schedule is told what each window looked at was seen as: only a picture the cache took is a
 /// capture it may deliver or judge news by. Every delivery it decides is then sent as it decided it,
-/// and recorded as delivered.
+/// stamped `now`, and recorded as delivered.
 fn round<P>(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
@@ -296,6 +298,7 @@ fn round<P>(
         events.push(Event::Delivered {
             tag: delivery.tag,
             why: delivery.why,
+            sent: now,
             pictures,
         });
     }
@@ -878,7 +881,7 @@ impl Service {
                         );
                     }
                     let Shared { cache, delivered, schedule, .. } = &mut *shared;
-                    (landing(cache, delivered, window, kept, picture), !schedule.held())
+                    (landing(cache, delivered, Instant::now(), window, kept, picture), !schedule.held())
                 };
                 self.tell(events);
                 if released {
@@ -934,27 +937,28 @@ mod tests {
     /// the cache refused is no news, and a closed window's capture is never put back in the cache.
     #[test]
     fn a_capture_the_cache_took_is_taken_and_one_it_refused_is_no_news() {
+        let now = Instant::now();
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
         let kept = || Some(Vec::new());
-        assert!(landing(&mut cache, &mut delivered, wid(1), None, Some(sized(859.0, 1081.0))).is_empty());
+        assert!(landing(&mut cache, &mut delivered, now, wid(1), None, Some(sized(859.0, 1081.0))).is_empty());
         assert!(cache.get(wid(1)).is_none(), "forgotten meanwhile: not cached");
-        assert!(landing(&mut cache, &mut delivered, wid(1), kept(), None).is_empty(), "no picture");
+        assert!(landing(&mut cache, &mut delivered, now, wid(1), kept(), None).is_empty(), "no picture");
 
         assert!(matches!(
-            landing(&mut cache, &mut delivered, wid(1), kept(), Some(sized(859.0, 1081.0))).as_slice(),
+            landing(&mut cache, &mut delivered, now, wid(1), kept(), Some(sized(859.0, 1081.0))).as_slice(),
             [Event::Taken { window, .. }] if *window == wid(1)
         ));
 
         let mut blurred = sized(859.0, 1081.0);
         blurred.carries_blur = true;
-        landing(&mut cache, &mut delivered, wid(2), kept(), Some(blurred));
+        landing(&mut cache, &mut delivered, now, wid(2), kept(), Some(blurred));
         assert!(
-            landing(&mut cache, &mut delivered, wid(2), kept(), Some(sized(859.0, 1081.0))).is_empty(),
+            landing(&mut cache, &mut delivered, now, wid(2), kept(), Some(sized(859.0, 1081.0))).is_empty(),
             "refused for the blur it holds"
         );
         assert!(
-            landing(&mut cache, &mut delivered, wid(2), kept(), Some(sliver())).is_empty(),
+            landing(&mut cache, &mut delivered, now, wid(2), kept(), Some(sliver())).is_empty(),
             "a sliver refused is no news"
         );
     }
@@ -974,19 +978,20 @@ mod tests {
     /// its focus change, once the cache has it; refused, it is delivered to no one.
     #[test]
     fn a_capture_owed_as_a_focus_change_is_delivered_when_the_cache_takes_it() {
+        let now = Instant::now();
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
-        let events = landing(&mut cache, &mut delivered, wid(1), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        let events = landing(&mut cache, &mut delivered, now, wid(1), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
         assert!(matches!(&events[..], [
             Event::Taken { .. },
-            Event::Delivered { tag: t, why: Why::FocusChanged, pictures },
+            Event::Delivered { tag: t, why: Why::FocusChanged, pictures, .. },
         ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == frame()));
         assert!(delivered.under(tag(3), wid(1)).is_some(), "recorded, so it can be kept as a look");
 
         let mut blurred = sized(859.0, 1081.0);
         blurred.carries_blur = true;
         cache.insert(wid(2), blurred);
-        let events = landing(&mut cache, &mut delivered, wid(2), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        let events = landing(&mut cache, &mut delivered, now, wid(2), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
         assert!(events.is_empty());
         assert!(delivered.under(tag(3), wid(2)).is_none());
     }
@@ -1142,6 +1147,34 @@ mod tests {
             Event::Taken { .. },
             Event::Delivered { why: Why::Final, pictures, .. },
         ] if pictures.len() == 1));
+    }
+
+    /// A delivery says when the service sent it: a round's at the `now` it is given once its captures
+    /// are done, a focus change's when its capture came back. Each picture keeps when its capture
+    /// started.
+    #[test]
+    fn a_delivery_carries_when_the_service_sent_it() {
+        let taken = Instant::now();
+        let sent = taken + Duration::from_millis(31);
+        let mut schedule = Schedule::<()>::default();
+        schedule.set_display(built_in(), false, taken);
+        let mut cache = PictureCache::new();
+        let mut delivered = Delivered::default();
+        schedule.ask_on_screen(on_screen(1, Moment::FrameZero, &[1]));
+        let looks = sky(schedule.next(taken, |_| None));
+        let captured = with_prints(&looks, vec![(wid(1), flat(0.5, taken))]);
+        let events = round(&mut cache, &mut delivered, &mut schedule, sent, found(&looks, Some(frame())), captured);
+        assert!(matches!(&events[..], [
+            Event::Taken { .. },
+            Event::Delivered { why: Why::FrameZero, sent: at, pictures, .. },
+        ] if *at == sent && pictures[0].1.taken == taken));
+
+        let owed = Some(vec![(tag(3), frame())]);
+        let events = landing(&mut cache, &mut delivered, sent, wid(2), owed, Some(flat(0.5, taken)));
+        assert!(matches!(&events[..], [
+            Event::Taken { .. },
+            Event::Delivered { why: Why::FocusChanged, sent: at, .. },
+        ] if *at == sent));
     }
 
     /// A window is captured only at a server frame one of its accepts takes on the display held; with

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{ScreenPoint, ScreenRect};
+use serde::Serialize;
 
 use crate::pictures::domain::print::print_changed;
 use crate::pictures::domain::settle::repaint_settled;
@@ -54,7 +55,8 @@ pub struct Tag {
 }
 
 /// Why a picture was delivered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Why {
     /// Asked for at frame zero.
     FrameZero,

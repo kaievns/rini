@@ -22,7 +22,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the reveal hold, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for |
-| **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, every event it takes and every command it gives a mark in a ring of 8192, and the burst due once a transition settles; the JSON lines a burst is written as |
+| **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, every event it takes, every command it gives and every delivery of pictures to it a mark in a ring of 8192, and the burst due once a transition settles; the JSON lines a burst is written as |
 | **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer and the pictures service, placing the real windows through the reactor |
 | **The journal's writer** | `platform/journal.rs` — `Writer`: the `journal` thread, which appends each burst to `~/Library/Logs/rini/transitions.jsonl` and starts it afresh past 50MB |
 | **Settings** | `settings.rs` — `JournalSettings`: whether the journal is written (`animations › journal`) |
@@ -56,9 +56,11 @@ and instants; the engine reads the window server and the clock, and holds what e
 between events.
 
 **The journal observes, and nothing reads it back.** Every event the coordinator takes and every
-command it gives is a mark, pushed by `Journalled::drive` and nowhere else; the engine branches on
-nothing the journal holds, and only hands each burst it gives to the writer, once a transition has
-settled. What each mark says and when it is written: [`journal.md`](journal.md).
+command it gives is a mark pushed by `Journalled::drive`, and every delivery under the engine's tag
+one pushed by `Journalled::delivery`, with when the pictures service sent it; no mark is pushed
+anywhere else. The engine branches on nothing the journal holds, and only hands each burst it gives
+to the writer, once a transition has settled. What each mark says and when it is written:
+[`journal.md`](journal.md).
 
 **One lifecycle for every kind.** `domain/lifecycle.rs` is the lifecycle as a state machine: a kind
 says what it stages, which pictures frame zero needs, whether it writes frames and what the lift must

@@ -67,7 +67,8 @@ held at that instant. Every capture that comes back goes into the cache first, a
 each one the cache took (`event.rs`): a client draws only a picture the cache took, so a flight and the
 switcher never draw what the next flight will not. The watches are told which pictures the cache took
 before they decide anything: a delivery under a tag carries only those, each with the server frame it
-was taken at, and a capture the cache refused is neither delivered nor news. Every sink hears a
+was taken at, and says when the service sent it, so a client can tell the capture from its own wait
+for it; a capture the cache refused is neither delivered nor news. Every sink hears a
 delivery, and a client takes its own by the tag's client.
 
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels

@@ -965,13 +965,15 @@ impl FlightEngine {
     }
 
     /// What the pictures service landed: the deliveries and the lost landings under this engine's tag
-    /// go to the coordinator, frame zero's onto their tiles first. Any other capture is the cache's
-    /// alone.
+    /// go to the coordinator, each delivery journalled as it came and frame zero's onto their tiles
+    /// first. Any other capture is the cache's alone.
     fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
         match landed {
             crate::pictures::event::Event::Taken { .. } => {}
-            crate::pictures::event::Event::Delivered { tag, why, pictures } => {
+            crate::pictures::event::Event::Delivered { tag, why, sent, pictures } => {
                 let Some(generation) = Generation::for_client(tag, self.client) else { return };
+                let taken = pictures.iter().map(|(window, picture, frame)| (*window, *frame, picture.taken));
+                self.flights.delivery(Instant::now(), generation, why, sent, taken);
                 if why == Why::FrameZero {
                     self.frame_zero(generation, pictures);
                     return;

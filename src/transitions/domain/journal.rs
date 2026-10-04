@@ -1,18 +1,19 @@
-//! The transitions journal: every event the lifecycle takes and every command it gives, a mark in a
-//! ring kept with the coordinator, and the JSON lines a burst of marks is written as. Pure: the engine
-//! drives the lifecycle through [`Journalled`] and hands each burst it gives to the writer
-//! (`crate::transitions::platform::journal`). The marks, the clock and when a burst is given:
-//! `src/transitions/docs/journal.md`.
+//! The transitions journal: every event the lifecycle takes, every command it gives and every delivery
+//! of pictures to it, a mark in a ring kept with the coordinator, and the JSON lines a burst of marks
+//! is written as. Pure: the engine drives the lifecycle and tells it each delivery through
+//! [`Journalled`], and hands each burst it gives to the writer (`crate::transitions::platform::journal`).
+//! The marks, the clock and when a burst is given: `src/transitions/docs/journal.md`.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{OverlayRect, Rect};
+use rini_geometry::space::{OverlayRect, Rect, ScreenRect};
 use serde::{Serialize, Serializer};
 use serde_with::{SerializeAs, serde_as};
 
 use super::lifecycle::{Command, Coordinator, Event, Generation, Kind, Start};
+use crate::pictures::domain::watch::Why;
 
 /// How many marks the ring holds.
 pub const RING: usize = 8192;
@@ -20,7 +21,8 @@ pub const RING: usize = 8192;
 /// The line format's version, in every burst's header.
 const FORMAT: u32 = 1;
 
-/// One step of a transition: an event the coordinator took, or a command it gave.
+/// One step of a transition: an event the coordinator took, a command it gave, or a delivery of
+/// pictures to it.
 #[serde_as]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(tag = "mark", rename_all = "snake_case")]
@@ -71,6 +73,23 @@ pub enum Mark {
     LooksTurned {
         #[serde_as(as = "PidIdx")]
         window: WindowId,
+    },
+    /// A delivery under the engine's tag, as the engine heard it: the generation it was for, how many
+    /// pictures it brought, and how long before this mark the service sent it.
+    Delivery {
+        of: Generation,
+        why: Why,
+        pictures: u16,
+        sent_before_us: u32,
+    },
+    /// A picture of the delivery marked before it: where its window was when it was taken, and how long
+    /// before this mark its capture started.
+    Delivered {
+        #[serde_as(as = "PidIdx")]
+        window: WindowId,
+        #[serde_as(as = "Xywh")]
+        frame: ScreenRect,
+        taken_before_us: u32,
     },
     Hold,
     Settle,
@@ -227,6 +246,10 @@ fn millis(span: Duration) -> u32 {
     u32::try_from(span.as_millis()).unwrap_or(u32::MAX)
 }
 
+fn micros(span: Duration) -> u32 {
+    u32::try_from(span.as_micros()).unwrap_or(u32::MAX)
+}
+
 fn count(n: usize) -> u16 {
     u16::try_from(n).unwrap_or(u16::MAX)
 }
@@ -375,6 +398,25 @@ impl Journal {
         }
     }
 
+    /// A delivery's mark, then one for each of its pictures, all stamped `now`, when the engine heard
+    /// it, and the generation the coordinator is in.
+    fn delivery(
+        &mut self,
+        now: Instant,
+        generation: Generation,
+        of: Generation,
+        why: Why,
+        sent: Instant,
+        pictures: impl ExactSizeIterator<Item = (WindowId, ScreenRect, Instant)>,
+    ) {
+        let before = |at: Instant| micros(now.saturating_duration_since(at));
+        let delivery = Mark::Delivery { of, why, pictures: count(pictures.len()), sent_before_us: before(sent) };
+        self.push(now, generation, delivery);
+        for (window, frame, taken) in pictures {
+            self.push(now, generation, Mark::Delivered { window, frame, taken_before_us: before(taken) });
+        }
+    }
+
     fn push(&mut self, at: Instant, generation: Generation, mark: Mark) {
         if self.ring.len() == RING {
             self.ring.pop_front();
@@ -402,8 +444,9 @@ impl Journal {
     }
 }
 
-/// The lifecycle with its journal, driven as one: every event the coordinator takes and every command
-/// it gives is marked, and while the journal is written a burst is given once it settles.
+/// The lifecycle with its journal, driven as one: every event the coordinator takes, every command it
+/// gives and every delivery of pictures the engine hears is marked, and while the journal is written a
+/// burst is given once it settles.
 #[derive(Default)]
 pub struct Journalled {
     coordinator: Coordinator,
@@ -430,6 +473,20 @@ impl Journalled {
         (commands, burst)
     }
 
+    /// A delivery of the pictures service under the engine's tag, heard `now`, before the engine turns
+    /// it into events: `of` the generation it was for, `sent` when the service sent it, and each picture's
+    /// window, the frame it was taken at and when its capture started.
+    pub fn delivery(
+        &mut self,
+        now: Instant,
+        of: Generation,
+        why: Why,
+        sent: Instant,
+        pictures: impl ExactSizeIterator<Item = (WindowId, ScreenRect, Instant)>,
+    ) {
+        self.journal.delivery(now, self.coordinator.generation(), of, why, sent, pictures);
+    }
+
     /// Writing turned on or off. Turned on with no burst up, it gives what the ring holds at once; in
     /// a burst, that burst's settle gives it.
     pub fn set_writing(&mut self, on: bool) -> Option<Burst> {
@@ -448,7 +505,6 @@ mod tests {
     use rini_geometry::space::{Point, Size};
 
     use super::*;
-    use crate::pictures::domain::watch::Why;
     use crate::transitions::domain::lifecycle::EndWatch;
     use crate::transitions::domain::lifecycle::testing::{PLAYS, pan, r, w};
     use crate::transitions::domain::timing::{LIFT_GRACE, SETTLE_BEFORE_CAPTURES};
@@ -631,6 +687,51 @@ mod tests {
     }
 
     #[test]
+    fn a_delivery_marks_when_it_was_sent_and_each_picture_when_its_capture_started() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        flights.drive(Event::Begin(pan()), now);
+        flights.drive(Event::FrameZero(flights.coordinator().generation()), now);
+        let first = flights.coordinator().generation();
+        flights.drive(Event::Tick { settled: false, landed: false }, now + PLAYS);
+        flights.drive(Event::Merge { stage: pan(), moved: false }, now + PLAYS);
+        let merged = flights.coordinator().generation();
+        let heard = now + PLAYS + Duration::from_millis(40);
+        let frame = |x| r(x, 32.0, 864.0, 1085.0);
+        let pictures = [
+            (w(1), frame(0.0), heard - Duration::from_micros(37_500)),
+            (w(2), frame(864.0), heard - Duration::from_millis(37)),
+        ];
+        let before = held(&flights).len();
+        flights.delivery(heard, first, Why::Landed, heard - Duration::from_micros(4_100), pictures.into_iter());
+        let marks = &held(&flights)[before..];
+        assert_eq!(marks.iter().map(|stamped| stamped.mark).collect::<Vec<_>>(), [
+            Mark::Delivery { of: first, why: Why::Landed, pictures: 2, sent_before_us: 4_100 },
+            Mark::Delivered { window: w(1), frame: frame(0.0), taken_before_us: 37_500 },
+            Mark::Delivered { window: w(2), frame: frame(864.0), taken_before_us: 37_000 },
+        ]);
+        assert_ne!(first, merged);
+        assert!(
+            marks.iter().all(|stamped| stamped.at == heard && stamped.generation == merged),
+            "stamped when the engine heard it, in the generation it was in: stale, since `of` is the one before"
+        );
+    }
+
+    #[test]
+    fn an_empty_frame_zero_delivery_is_one_mark() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        flights.drive(Event::Begin(pan()), now);
+        let g = flights.coordinator().generation();
+        let before = held(&flights).len();
+        flights.delivery(now + Duration::from_millis(30), g, Why::FrameZero, now + Duration::from_millis(28), std::iter::empty());
+        let marks = &held(&flights)[before..];
+        assert_eq!(marks.iter().map(|stamped| stamped.mark).collect::<Vec<_>>(), [
+            Mark::Delivery { of: g, why: Why::FrameZero, pictures: 0, sent_before_us: 2_000 },
+        ]);
+    }
+
+    #[test]
     fn the_ring_keeps_the_last_8192_and_counts_what_it_overwrote_unwritten() {
         let now = Instant::now();
         let mut journal = Journal::default();
@@ -720,6 +821,25 @@ mod tests {
         assert_eq!(
             line(&anchor, &stamped(Mark::Quiet { of: Generation(41) })),
             r#"{"t":81234567895123,"g":42,"mark":"quiet","of":41}"#
+        );
+        assert_eq!(
+            line(&anchor, &stamped(Mark::Delivery {
+                of: Generation(42),
+                why: Why::FrameZero,
+                pictures: 1,
+                sent_before_us: 4_100,
+            })),
+            r#"{"t":81234567895123,"g":42,"mark":"delivery","of":42,"why":"frame_zero","pictures":1,"sent_before_us":4100}"#
+        );
+        let taken_at = r(0.0, 32.0, 864.0, 1085.0);
+        assert_eq!(
+            line(&anchor, &stamped(Mark::Delivered { window: w(3104), frame: taken_at, taken_before_us: 31_200 })),
+            r#"{"t":81234567895123,"g":42,"mark":"delivered","window":[1,3104],"frame":[0.0,32.0,864.0,1085.0],"taken_before_us":31200}"#
+        );
+        let whys = [Why::FrameZero, Why::Landed, Why::FocusChanged, Why::Background, Why::Final];
+        assert_eq!(
+            whys.map(|why| serde_json::to_value(why).unwrap()),
+            ["frame_zero", "landed", "focus_changed", "background", "final"]
         );
         let burst = Burst { marks: Vec::new(), lost: 3 };
         assert_eq!(

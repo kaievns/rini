@@ -383,8 +383,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 
 ## Watching transitions: the journal
 
-- rini MUST record every step of a transition's lifecycle: each thing it hears and each thing it
-  decides, with when, so a glitch seen while moving around can be read back afterwards.
+- rini MUST record every step of a transition: each thing its lifecycle hears and decides, and each
+  delivery of pictures to it with when the pictures service sent it and when each picture's capture
+  started, all with when, so a glitch seen while moving around can be read back afterwards, and the
+  time a capture took told apart from the time the transition waited to hear of it.
 - rini MUST keep the last 8192 steps of its transitions in memory at all times, so a record can be
   written of a glitch seen with the journal off.
 - Unless the journal is turned off (`animations { journal { off; } }`), rini MUST write each burst of
@@ -403,7 +405,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > picture for debugging, you can log CPU/GPU utilisation in the moment too if it doesn't cost anything
 > in terms of slowing down". The `scratch/handover` prototype had kept a text journal from about 135
 > call sites, with a lock and an allocation for each mark. This one marks the lifecycle where it is
-> driven, keeps its marks in a ring allocated once, and writes them by default.
+> driven and each delivery of pictures where the transition hears it, keeps its marks in a ring
+> allocated once, and writes them by default.
 
 ## Where it lives
 
