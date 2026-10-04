@@ -582,6 +582,7 @@ impl Reactor {
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.communication_manager.transitions_tx = transitions_tx;
+        reactor.publish_journal();
         reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
@@ -1856,6 +1857,7 @@ impl Reactor {
             // warp_cursor_between_stacked_displays applies without a restart.
             self.publish_cursor_warp_screens();
             self.publish_animation_display();
+            self.publish_journal();
         }
         for line in outcome.stdout_lines {
             println!("{line}");
@@ -4162,6 +4164,13 @@ impl Reactor {
 
     pub(crate) fn publish_animation_display(&self) {
         self.publish_animation_display_for(None);
+    }
+
+    /// Tells the transitions engine whether to write its journal.
+    fn publish_journal(&self) {
+        if let Some(tx) = &self.communication_manager.transitions_tx {
+            _ = tx.send(crate::transitions::platform::engine::Event::Journal(self.config.settings.journal));
+        }
     }
 
     /// Points the animation overlay at the display holding `space`.

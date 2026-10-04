@@ -44,6 +44,25 @@ fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
 }
 
 #[test]
+fn a_config_reload_tells_the_transitions_engine_whether_to_write_its_journal() {
+    let mut reactor = test_reactor();
+    let (transitions_tx, mut transitions_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(transitions_tx);
+
+    let mut updated = reactor.config.clone();
+    updated.settings.journal.write = false;
+    reactor.handle_event(Event::ConfigUpdated(updated));
+
+    let mut told = Vec::new();
+    while let Ok((_, event)) = transitions_rx.try_recv() {
+        if let crate::transitions::platform::engine::Event::Journal(settings) = event {
+            told.push(settings.write);
+        }
+    }
+    assert_eq!(told, [false]);
+}
+
+#[test]
 fn known_window_server_appearance_restores_layout_membership_without_reassignment() {
     let (mut reactor, wid, wsid, user_space, _other_space, frame) = reactor_with_window_on_space1();
 

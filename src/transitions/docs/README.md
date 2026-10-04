@@ -22,7 +22,10 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the reveal hold, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for |
-| **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it holds the coordinator, stages each request and merges each pass, and carries out what the coordinator says on the renderer and the pictures service, placing the real windows through the reactor |
+| **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, every event it takes and every command it gives a mark in a ring of 8192, and the burst due once a transition settles; the JSON lines a burst is written as |
+| **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer and the pictures service, placing the real windows through the reactor |
+| **The journal's writer** | `platform/journal.rs` — `Writer`: the `journal` thread, which appends each burst to `~/Library/Logs/rini/transitions.jsonl` and starts it afresh past 50MB |
+| **Settings** | `settings.rs` — `JournalSettings`: whether the journal is written (`animations › journal`) |
 
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
 requests, travel, the frame writes and what the coordinator hears and asks for in `Screen`, a strip
@@ -39,7 +42,8 @@ as one movement.
 **The reactor asks, and hears two things back.** It sends a layout pass (`Event::Animate`), a strip
 movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as
 it went out, a bounce, the windows whose look each change of the key window turned
-(`Event::LooksTurned`), and the display the overlay flies on. A pass, a movement and a bounce each name
+(`Event::LooksTurned`), the display the overlay flies on, and whether the journal is written
+(`Event::Journal`). A pass, a movement and a bounce each name
 the `Look` a flight they begin moves by, and a movement and a bounce the press (`Cue`): the engine
 hands both to the look and matches on neither. The pictures service's sink, wired in
 `src/main.rs`, tells the engine what it delivered under the engine's tag and which watched windows'
@@ -50,6 +54,11 @@ whether a flight is up (`OnFlight`, to the bar). The reactor never learns more o
 **The decisions are pure and the actor is not.** What `domain/` decides is tested over plain rects
 and instants; the engine reads the window server and the clock, and holds what each flight composed
 between events.
+
+**The journal observes, and nothing reads it back.** Every event the coordinator takes and every
+command it gives is a mark, pushed by `Journalled::drive` and nowhere else; the engine branches on
+nothing the journal holds, and only hands each burst it gives to the writer, once a transition has
+settled. What each mark says and when it is written: [`journal.md`](journal.md).
 
 **One lifecycle for every kind.** `domain/lifecycle.rs` is the lifecycle as a state machine: a kind
 says what it stages, which pictures frame zero needs, whether it writes frames and what the lift must
@@ -62,7 +71,8 @@ from the begin to the lift.
 
 `domain/request.rs` → `domain/pass.rs` → `domain/travel.rs` → `domain/admission.rs` →
 `domain/flight.rs` → `domain/flight_score.rs` → `domain/timing.rs` → `domain/lifecycle.rs` (`Kind`,
-then `StageSummary`, then `Coordinator::on`) → `platform/engine.rs`, the actor and the largest file.
+then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalled::drive`) →
+`platform/engine.rs`, the actor and the largest file → `platform/journal.rs`.
 
 ## Detail
 
@@ -71,6 +81,8 @@ then `StageSummary`, then `Coordinator::on`) → `platform/engine.rs`, the actor
 - [`coordination.md`](coordination.md) — how a flight runs: the lifecycle, layout changes and strip
   movements, routing, passes arriving mid-flight and pictures landing in one, focus changing during
   one, the capture work in flight, entrances and holds, the handover and the lift
+- [`journal.md`](journal.md) — the journal: what each mark says, the line format, the clock, the
+  ring and when it is written
 - [`src/animation/docs/animation-smoothness.md`](../../animation/docs/animation-smoothness.md) — how
   a flight moves once it runs
 

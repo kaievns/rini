@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayRect, ScreenRect, SurfacePoint};
 use rini_geometry::{is_off_screen, to_overlay_space};
+use serde::Serialize;
 
 use crate::animation::domain::motion::tile::snap_to;
 use crate::pictures::domain::watch::{Accept, Client, END_SLACK, Tag, Why, near, wholly_on};
@@ -29,7 +30,7 @@ pub const FINAL_NOT_BEFORE: Duration = Duration::from_millis(40);
 
 /// One press, or one burst merged in flight. Every picture asked for carries it, so one taken for an
 /// end its tile no longer has is never drawn.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Generation(pub u64);
 
 impl Generation {
@@ -41,7 +42,8 @@ impl Generation {
 
 /// What kind of change a transition is. The lifecycle is the same for all; each kind decides the few
 /// things below.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Kind {
     /// The strip scrolling to bring a window into view.
     Pan,
@@ -954,65 +956,15 @@ fn wholly_inside(frame: ScreenRect, display: ScreenRect) -> bool {
 }
 
 #[cfg(test)]
+pub(in crate::transitions) mod testing;
+
+#[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
+    use rini_geometry::space::{Point, Size, SurfaceRect};
 
-    use rini_geometry::space::{Point, ScreenPoint, ScreenSize, Size, SurfaceRect};
-
+    use super::testing::{DISPLAY, PLAYS, pan, r, running, tile, w};
     use super::*;
     use crate::transitions::domain::timing::SETTLE_BEFORE_CAPTURES;
-
-    fn w(idx: u32) -> WindowId {
-        WindowId { pid: 1, idx: NonZeroU32::new(idx).unwrap() }
-    }
-
-    fn r(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
-        ScreenRect::new(ScreenPoint::new(x, y), ScreenSize::new(w, h))
-    }
-
-    const DISPLAY: ScreenRect = ScreenRect::new(ScreenPoint::new(0.0, 0.0), ScreenSize::new(1728.0, 1117.0));
-    const PLAYS: Duration = Duration::from_millis(350);
-
-    fn tile(window: WindowId, start: ScreenRect, end: ScreenRect) -> TileSummary {
-        TileSummary { window, start, end, floating: false, companion: false }
-    }
-
-    /// The strip scrolling one column left: window 1 leaves on the right, window 2 comes in from the
-    /// left, focused. Window 9 floats behind the strip and stays.
-    fn pan() -> StageSummary {
-        let a_start = r(3.0, 35.0, 860.0, 1079.0);
-        let a_end = r(866.0, 35.0, 860.0, 1079.0);
-        let b_start = r(-860.0, 35.0, 860.0, 1079.0);
-        let b_end = r(3.0, 35.0, 860.0, 1079.0);
-        let floating = r(224.0, 95.0, 600.0, 400.0);
-        StageSummary {
-            kind: Kind::Pan,
-            tiles: vec![
-                tile(w(1), a_start, a_end),
-                tile(w(2), b_start, b_end),
-                TileSummary { window: w(9), start: floating, end: floating, floating: true, companion: false },
-            ],
-            final_frames: vec![(w(1), a_end), (w(2), b_end)],
-            focus: Some(w(2)),
-            losing_focus: Some(w(1)),
-            key: Some(w(1)),
-            focused_look: None,
-            awaiting: Vec::new(),
-            repainting: Vec::new(),
-            start: Start::Immediate,
-            duration: PLAYS,
-            display: DISPLAY,
-            opaque: Vec::new(),
-        }
-    }
-
-    fn running(stage: StageSummary, at: Instant) -> Coordinator {
-        let mut c = Coordinator::default();
-        c.on(Event::Begin(stage), at);
-        let g = c.generation();
-        c.on(Event::FrameZero(g), at);
-        c
-    }
 
     fn has(out: &[Command], f: impl Fn(&Command) -> bool) -> bool {
         out.iter().any(f)

@@ -56,7 +56,8 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
     ("layout/min-column-width", &["proportion"]),
     ("layout/max-column-width", &["proportion"]),
     ("layout/preset-column-widths", &["proportion"]),
-    ("animations", &["off", "slowdown"]),
+    ("animations", &["off", "slowdown", "journal"]),
+    ("animations/journal", &["off"]),
     ("gestures", &[
         "swipe-workspace-switch",
         "swipe-view-scroll",

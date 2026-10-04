@@ -65,6 +65,8 @@ pub struct Settings {
     pub gestures: GestureSettings,
     pub switcher: crate::switcher::settings::SwitcherSettings,
     pub bar: crate::bar::settings::BarSettings,
+    /// `animations › journal`: whether every transition's journal is written.
+    pub journal: crate::transitions::settings::JournalSettings,
     pub window_snapping: WindowSnappingSettings,
     pub run_on_start: Vec<StartupCommand>,
     /// Mark every bar while the config file cannot be used, until it can.
@@ -92,6 +94,7 @@ impl Default for Settings {
             gestures: GestureSettings::default(),
             switcher: Default::default(),
             bar: Default::default(),
+            journal: Default::default(),
             window_snapping: WindowSnappingSettings::default(),
             run_on_start: Vec::new(),
             mark_failed_config: true,

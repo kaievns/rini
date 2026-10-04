@@ -118,6 +118,13 @@ animations {
 
     // Multiplies the length of every animation. 1.0 is a 0.35s movement; below 1 is faster.
     slowdown 1.0
+
+    // Every step of every transition is written to ~/Library/Logs/rini/transitions.jsonl once it
+    // has settled (src/transitions/docs/journal.md). Uncomment to stop writing it; the last steps
+    // are kept in memory either way, and written once it is turned back on.
+    // journal {
+    //     off
+    // }
 }
 
 gestures {

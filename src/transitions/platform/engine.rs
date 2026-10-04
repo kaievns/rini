@@ -1,9 +1,11 @@
-//! The flight engine: the actor that carries out every transition. It holds the lifecycle
-//! (`crate::transitions::domain::lifecycle`'s `Coordinator`), stages each request and merges each
+//! The flight engine: the actor that carries out every transition. It holds the lifecycle with its
+//! journal (`crate::transitions::domain::journal`'s `Journalled`, over
+//! `crate::transitions::domain::lifecycle`'s `Coordinator`), stages each request and merges each
 //! pass into the flight running, and does what the coordinator says: it hands the renderer
 //! (`crate::animation::platform::overlay`) the edits of each flight's score
 //! (`crate::transitions::domain::flight_score`) and asks and watches the pictures service
-//! (`crate::pictures::platform::service`). When anything happens is the coordinator's. Runs on the
+//! (`crate::pictures::platform::service`), and sends each burst of the journal to its writer
+//! (`crate::transitions::platform::journal`). When anything happens is the coordinator's. Runs on the
 //! main thread because Core Animation requires it.
 //!
 //! Design in `src/transitions/docs/coordination.md`; how a flight moves in
@@ -45,13 +47,16 @@ use crate::pictures::platform::skylight::capture_via_framed;
 use crate::transitions::domain::admission::*;
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::flight_score::FlightScore;
+use crate::transitions::domain::journal::Journalled;
 use crate::transitions::domain::lifecycle::{
-    self, Command, Coordinator, EndWatch, Generation, Kind, Start, StageSummary, TileSummary,
-    drawn_focused, extend_latest, losing_focus,
+    self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
+    extend_latest, losing_focus,
 };
 use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
 use crate::transitions::domain::timing::*;
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
+use crate::transitions::platform::journal::Writer;
+use crate::transitions::settings::JournalSettings;
 
 /// What the engine is told.
 #[derive(Debug)]
@@ -133,6 +138,8 @@ pub enum Event {
     LooksTurned(Vec<(WindowId, ScreenRect)>),
     /// What the pictures service landed. Posted by its sink.
     Pictures(crate::pictures::event::Event),
+    /// Whether the journal is written. Sent by the reactor at start and at each config reload.
+    Journal(JournalSettings),
 }
 
 /// Called with real-window frames to apply while the overlay covers them.
@@ -732,8 +739,12 @@ pub struct FlightEngine {
     /// while its coordinates stay the full display's, so a captured desktop and the tiles keep their
     /// registration. Zero with the bar off.
     top_band: f64,
-    /// When everything happens.
-    coordinator: Coordinator,
+    /// When everything happens, and the journal of it.
+    flights: Journalled,
+    /// What the reactor last said of the journal; `None` until it has.
+    journal: Option<JournalSettings>,
+    /// Writes each burst `flights` gives while the journal is written.
+    writer: Option<Writer>,
     running: Option<RunningAnimation>,
     /// The latest picture delivered of each window, under its generation, until it is swapped in: the
     /// coordinator holds a landing back from over a focused look until focus hands over.
@@ -768,7 +779,9 @@ impl FlightEngine {
             display: None,
             display_id: None,
             top_band: 0.0,
-            coordinator: Coordinator::default(),
+            flights: Journalled::default(),
+            journal: None,
+            writer: None,
             running: None,
             delivered: HashMap::new(),
             watches: EndWatches::default(),
@@ -847,15 +860,39 @@ impl FlightEngine {
             }
             Event::Pictures(landed) => self.pictures_landed(landed),
             Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
+            Event::Journal(settings) => self.set_journal(settings),
         }
     }
 
-    /// Tells the coordinator `event` and carries out what it says.
+    /// Tells the coordinator `event`, carries out what it says, and sends the writer the burst due.
     fn drive(&mut self, event: lifecycle::Event) {
         let now = Instant::now();
-        for command in self.coordinator.on(event, now) {
+        let (commands, burst) = self.flights.drive(event, now);
+        for command in commands {
             self.carry_out(command, now);
         }
+        if let (Some(burst), Some(writer)) = (burst, &self.writer) {
+            writer.send(burst);
+        }
+    }
+
+    /// The journal written or not, as the reactor says. Turned on, what the ring holds is written at
+    /// once, or at the settle of the burst up.
+    fn set_journal(&mut self, settings: JournalSettings) {
+        if self.journal == Some(settings) {
+            return;
+        }
+        if !settings.write {
+            self.flights.set_writing(false);
+            self.writer = None;
+        } else {
+            let Some(writer) = Writer::start(rini_core::paths::journal_file()) else { return };
+            if let Some(burst) = self.flights.set_writing(true) {
+                writer.send(burst);
+            }
+            self.writer = Some(writer);
+        }
+        self.journal = Some(settings);
     }
 
     fn carry_out(&mut self, command: Command, now: Instant) {
@@ -961,10 +998,10 @@ impl FlightEngine {
     /// go up; once it is up without them, each is offered to its tile as a swap, and frame zero is
     /// never installed again under a moving flight.
     fn frame_zero(&mut self, generation: Generation, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
-        if self.coordinator.is_shown() {
+        if self.flights.coordinator().is_shown() {
             self.offer(generation, Why::FrameZero, pictures);
-        } else if self.coordinator.generation() == generation
-            && self.coordinator.is_flying()
+        } else if self.flights.coordinator().generation() == generation
+            && self.flights.coordinator().is_flying()
             && let Some(running) = self.running.as_mut()
             && running.wear(pictures.into_iter().map(|(window, picture, _)| (window, picture)).collect()) > 0
         {
@@ -1012,7 +1049,7 @@ impl FlightEngine {
     /// A reserved entrance's tile, with its first picture: it joins frame zero, or the flight for what
     /// is left of it, merged in as a pass holding it alone.
     fn admit_entrance(&mut self, tile: OverlayTile, now: Instant) {
-        let left = self.coordinator.remaining(now).unwrap_or_default();
+        let left = self.flights.coordinator().remaining(now).unwrap_or_default();
         let viewport = self.viewport();
         let Some(running) = self.running.as_mut() else { return };
         debug!(
@@ -1278,7 +1315,7 @@ impl FlightEngine {
             awaiting: Vec::new(),
             repainting: Vec::new(),
         };
-        if !self.coordinator.is_flying() {
+        if !self.flights.coordinator().is_flying() {
             let requested = windows
                 .iter()
                 .map(|request| TileSummary {
@@ -1631,7 +1668,7 @@ impl FlightEngine {
     /// off the display flies its focused look, as the first pass's does.
     fn merge_group(&mut self, pass: Composed) {
         let at = media_now();
-        let left = self.coordinator.remaining(Instant::now()).unwrap_or_default();
+        let left = self.flights.coordinator().remaining(Instant::now()).unwrap_or_default();
         let viewport = self.viewport();
         let display = self.display.map(|(frame, _)| frame);
         let Self { overlay, running, .. } = self;
@@ -1779,7 +1816,7 @@ impl FlightEngine {
             awaiting: Vec::new(),
             repainting: Vec::new(),
         };
-        if !self.coordinator.is_flying() {
+        if !self.flights.coordinator().is_flying() {
             let requested = windows
                 .iter()
                 .map(|w| {
@@ -1927,7 +1964,7 @@ impl FlightEngine {
         duration: Duration,
         (look, cue): (Look, Cue),
     ) {
-        if !self.coordinator.is_flying() {
+        if !self.flights.coordinator().is_flying() {
             let at_rest = SurfacePoint::origin();
             // A push against an end moves no focus.
             self.start_surface(
@@ -1960,7 +1997,7 @@ impl FlightEngine {
     /// The motion starts: the look composes it from frame zero, with the accents that waited for it,
     /// and the renderer plays it in one transaction; the clock runs on for as long as the score does.
     fn start_moving(&mut self, now: Instant) {
-        let duration = self.coordinator.remaining(now).unwrap_or_default();
+        let duration = self.flights.coordinator().remaining(now).unwrap_or_default();
         let Self { overlay, running, .. } = self;
         let Some(running) = running.as_mut() else { return };
         running.flown = true;
@@ -1996,10 +2033,10 @@ impl FlightEngine {
         if let Some(overlay) = self.overlay.as_ref() {
             overlay.trace(media_now());
         }
-        if !self.coordinator.is_flying() {
+        if !self.flights.coordinator().is_flying() {
             return;
         }
-        let (settled, landed) = if self.coordinator.wants_landing(Instant::now()) {
+        let (settled, landed) = if self.flights.coordinator().wants_landing(Instant::now()) {
             let now = media_now();
             let settled = self.running.as_ref().is_none_or(|running| running.score.settled(now));
             let landed = self.handover().as_ref().is_none_or(|report| report.count_over == 0);

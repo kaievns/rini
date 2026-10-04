@@ -381,6 +381,30 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > focused application changes band: every other application keeps the server's order among the rest,
 > which one container behind the strip already expresses.
 
+## Watching transitions: the journal
+
+- rini MUST record every step of a transition's lifecycle: each thing it hears and each thing it
+  decides, with when, so a glitch seen while moving around can be read back afterwards.
+- rini MUST keep the last 8192 steps of its transitions in memory at all times, so a record can be
+  written of a glitch seen with the journal off.
+- Unless the journal is turned off (`animations { journal { off; } }`), rini MUST write each burst of
+  transitions once it has settled, and MUST NOT start a write while a transition is up, so writing
+  adds nothing to the durations it records. The record MUST be at most two files: the current one,
+  started afresh once it passes 50MB, and the one before it.
+- Turning the journal on or off MUST NOT change what is drawn or when.
+- Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial
+  and rini's steps line up with no wall clock between them.
+- CPU and GPU use MAY be recorded only once what reading them costs is measured, and found to slow
+  nothing down.
+
+> **Reported 2026-10-03.** "can you add transitions logs? as in log timing for every transition step,
+> make sure you don't flush until after the transition settles so the disk io didn't add to the
+> durations. i want you to have a record overything as i move around so you could have a postmortem
+> picture for debugging, you can log CPU/GPU utilisation in the moment too if it doesn't cost anything
+> in terms of slowing down". The `scratch/handover` prototype had kept a text journal from about 135
+> call sites, with a lock and an allocation for each mark. This one marks the lifecycle where it is
+> driven, keeps its marks in a ring allocated once, and writes them by default.
+
 ## Where it lives
 
 `src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
@@ -393,7 +417,9 @@ plays the score on Core Animation. When each step happens is `src/transitions/`:
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
 `src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
-`src/transitions/platform/engine.rs` is the actor that carries them out. The pictures a flight
+`src/transitions/platform/engine.rs` is the actor that carries them out. The journal is kept with the
+lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
+what each line says is `src/transitions/docs/journal.md`. The pictures a flight
 draws are `src/pictures/`: whether one covers and fits its window, the stand-in, the blur, and the
 schedule that holds background capture off while a flight runs in `src/pictures/domain/`; the
 captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs` for the framed capture with

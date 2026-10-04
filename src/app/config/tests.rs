@@ -312,6 +312,17 @@ fn animations_map_onto_animate_and_the_movement_length() {
     );
 }
 
+#[test]
+fn the_journal_is_written_unless_turned_off() {
+    assert!(parse("").settings.journal.write, "absent");
+    assert!(parse("animations {\n    journal {\n    }\n}\n").settings.journal.write);
+    assert!(!parse("animations {\n    journal {\n        off\n    }\n}\n").settings.journal.write);
+    assert!(parse("animations {\n    journal {\n        off false\n    }\n}\n").settings.journal.write);
+    assert!(
+        refused("animations {\n    journal {\n        of\n    }\n}\n").contains("did you mean `off`?")
+    );
+}
+
 /// The two swipes are configured in one `gestures` block and reach the taps as two settings.
 #[test]
 fn input_settings_are_assembled_from_both_swipes() {

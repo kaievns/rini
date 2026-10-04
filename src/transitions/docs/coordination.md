@@ -40,8 +40,9 @@ ended in the overlay's favour.
 
 ## The lifecycle
 
-The engine holds the coordinator (`Coordinator` in `src/transitions/domain/lifecycle.rs`) and decides
-nothing about when: it stages each request, merges each pass and does what the coordinator says. A
+The engine holds the coordinator (`Coordinator` in `src/transitions/domain/lifecycle.rs`) with its
+journal (`Journalled` in `src/transitions/domain/journal.rs`; `journal.md`) and decides nothing about
+when: it stages each request, merges each pass and does what the coordinator says. A
 request that finds no transition running opens one from what it alone says, before anything is
 composed (`Event::Begin`): the coordinator holds the pictures service and asks, through SkyLight and
 under the transition's generation, for the strip windows wholly on screen where they start and the
