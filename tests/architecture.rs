@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FEATURES: [&str; 9] = [
+const FEATURES: [&str; 10] = [
     "windows",
     "displays",
     "layout",
@@ -15,6 +15,7 @@ const FEATURES: [&str; 9] = [
     "input",
     "pictures",
     "animation",
+    "transitions",
     "switcher",
     "bar",
 ];
