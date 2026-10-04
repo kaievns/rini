@@ -65,14 +65,10 @@ pub(in crate::transitions) fn apply_frames_at(kind: FlightKind, any_resize: bool
 /// A real window further than this from its intended frame at lift is a handover miss.
 pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 
-/// The longest a flight stands still at frame zero for a reveal.
+/// How long a flight stands still at frame zero for a reveal: a grow's pixels at its new size, or an
+/// entrance's first picture, whatever the flight's duration.
 /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
-
-/// How long a grow may hold at frame zero for its reveal pixels, capped at `HOLD_CAP`.
-pub(in crate::transitions) fn reveal_hold_limit(duration: Duration) -> Duration {
-    duration.mul_f64(0.4).max(Duration::from_millis(300)).min(HOLD_CAP)
-}
 
 /// Time a holding flight still waits before flying the stand-in; `None` once past the deadline.
 pub(in crate::transitions) fn hold_wait(

@@ -760,7 +760,7 @@ changes is how the picture maps onto it (`content_mode` in
   app has painted. `claim` requires the fit; a smaller picture is refused
   and the hold goes on. `claim_reveal` adds the zero-width tile to the
   frame-zero composition (`install`). The flight starts when the last
-  awaited picture lands or `reveal_hold_limit` passes, so every tile flies
+  awaited picture lands or `HOLD_CAP` passes, so every tile flies
   in one `fly` transaction. A picture landing after lift-off is admitted
   (`admit_entrance`, `add_tile` under `StripLoose`) with
   `late_join_duration`: what is left of the flight. A picture that misses
@@ -805,8 +805,9 @@ changes is how the picture maps onto it (`content_mode` in
   entrance has. When it lands (`claim_reveal`), the tile's grid re-maps to it
   and the flight begins: the moving edge reveals genuine final-size content,
   1:1. A shrink crops the picture it has and flies immediately. The hold is
-  capped at 300ms (`HOLD_CAP`; `reveal_hold_limit` is 40%-of-flight with a
-  300ms floor, then the cap, so the cap wins for every duration). The old
+  300ms (`HOLD_CAP`) whatever the flight's duration. A share of the flight
+  with a 300ms floor was computed and then capped at 300ms, so it was the cap
+  for every duration, and it went. The old
   chase held 235ms median (min 173, max 299; 25ms poll, two framed captures,
   then a separate harvest), and 22 of about 45 holds timed out at 300ms
   anyway. A 150ms cap was tried for a blink-length freeze and raised back

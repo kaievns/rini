@@ -100,8 +100,8 @@ pub(in crate::transitions) fn entrance_reservation(
     window: WindowId,
     to: CGRect,
     floating: bool,
-) -> (PendingEntrance, Option<(WindowId, CGSize)>) {
-    (PendingEntrance { window, to, floating }, Some((window, to.size)))
+) -> (PendingEntrance, (WindowId, CGSize)) {
+    (PendingEntrance { window, to, floating }, (window, to.size))
 }
 
 /// Whether a flight that does not hold chases the real picture of a window flying as the stand-in:
@@ -337,7 +337,7 @@ mod tests {
         assert!(entrance.floating);
         assert_eq!(
             hold,
-            Some((window(9), to.size)),
+            (window(9), to.size),
             "the hold carries the size to wait for"
         );
     }

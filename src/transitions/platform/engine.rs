@@ -156,7 +156,7 @@ struct RunningAnimation {
     /// Windows whose pixels are still rendering, with the size that counts as ready. The flight
     /// holds at frame zero until this empties or `hold_deadline` passes.
     awaiting: Vec<(WindowId, CGSize)>,
-    /// When to stop waiting for reveal pixels and fly the stand-in (`reveal_hold_limit`).
+    /// When to stop waiting for reveal pixels and fly the stand-in (`HOLD_CAP` after the hold began).
     hold_deadline: Option<Instant>,
     /// The recapture of the focus change's two ends. See `refresh_destination_among`.
     refresh: FocusRefresh,
@@ -496,7 +496,6 @@ impl RunningAnimation {
         &mut self,
         awaiting: &[(WindowId, CGSize)],
         in_flight: bool,
-        duration: Duration,
         now: Instant,
     ) -> Option<Vec<(WindowId, CGRect)>> {
         if in_flight || awaiting.is_empty() {
@@ -510,7 +509,7 @@ impl RunningAnimation {
             }
         }
         if self.hold_deadline.is_none() {
-            self.hold_deadline = Some(now + reveal_hold_limit(duration));
+            self.hold_deadline = Some(now + HOLD_CAP);
         }
         self.frames_applied = true;
         Some(self.final_frames.clone())
@@ -1362,7 +1361,7 @@ impl FlightEngine {
                                 request.floating,
                             );
                             entrances.push(entrance);
-                            awaiting.extend(waiting);
+                            awaiting.push(waiting);
                         }
                     }
                 }
@@ -1483,7 +1482,7 @@ impl FlightEngine {
                 }
                 // Merged before the hold reads them, so a held merge re-requests this pass's frames.
                 frames_changed = merge_final_frames(&mut running.final_frames, final_frames);
-                hold_frames = running.extend_hold(&awaiting, in_flight, duration, Instant::now());
+                hold_frames = running.extend_hold(&awaiting, in_flight, Instant::now());
                 focus_before = running.focus;
                 running.merge_pass(tiles, focus);
                 if !in_flight
@@ -1707,7 +1706,7 @@ impl FlightEngine {
             duration,
             apply_at,
             entrances,
-            hold_deadline: holding.then(|| Instant::now() + reveal_hold_limit(duration)),
+            hold_deadline: holding.then(|| Instant::now() + HOLD_CAP),
             awaiting,
             refresh: FocusRefresh::default(),
             harvested: HashSet::new(),
@@ -2780,14 +2779,13 @@ mod tests {
         /// T8 (1.4). See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
         #[test]
         fn a_hold_is_short_and_settles_on_the_first_repaint() {
-            let limit = reveal_hold_limit(Duration::from_millis(300));
             let p = vec![10u8; 64];
             let q = vec![200u8; 64];
             let settled = chase_settled(None, &p, Some(&q));
             let wrong: Vec<String> = [
                 (
-                    limit <= HOLD_CAP,
-                    format!("reveal_hold_limit(300ms) = {limit:?}"),
+                    HOLD_CAP <= Duration::from_millis(300),
+                    format!("HOLD_CAP = {HOLD_CAP:?}"),
                 ),
                 (
                     REVEAL_CHASE_INTERVAL == Duration::from_millis(8),
@@ -2823,9 +2821,9 @@ mod tests {
             running.final_frames = final_frames.clone();
             let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
             running.entrances.push(entrance);
-            let awaiting: Vec<_> = waiting.into_iter().collect();
+            let awaiting = vec![waiting];
             let sent = running
-                .extend_hold(&awaiting, false, Duration::from_millis(300), Instant::now())
+                .extend_hold(&awaiting, false, Instant::now())
                 .expect("a held merge sends frames");
             assert_eq!(sent, final_frames, "the newcomer's slot went out with the rest");
             assert!(running.frames_applied);
@@ -3140,7 +3138,7 @@ mod tests {
             running.refresh.ask(vec![wid(3)], Instant::now());
             let (entrance, waiting) = entrance_reservation(wid(4), slot, false);
             running.entrances.push(entrance);
-            running.awaiting.extend(waiting);
+            running.awaiting.push(waiting);
 
             assert_eq!(
                 running.tile_state(wid(1), &picture),
@@ -3419,11 +3417,6 @@ mod tests {
             assert!(over_seen > 0, "generator sanity: no misses in {RUNS} runs");
         }
 
-        /// The hold bound before Change D, kept here so the cap is checked against it.
-        fn reveal_hold_limit_old(duration: Duration) -> Duration {
-            duration.mul_f64(0.4).max(Duration::from_millis(300))
-        }
-
         /// 2.4.
         #[test]
         fn chase_settled_on_a_match_or_a_repaint() {
@@ -3445,29 +3438,12 @@ mod tests {
         /// 2.4. See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
         #[test]
         fn the_hold_is_capped_at_a_blink() {
-            for ms in [180u64, 300, 375, 500, 1000] {
-                let d = Duration::from_millis(ms);
-                assert_eq!(reveal_hold_limit(d), HOLD_CAP, "{ms}ms flight");
-                assert!(reveal_hold_limit(d) <= reveal_hold_limit_old(d), "{ms}ms flight");
-            }
             assert_eq!(HOLD_CAP, Duration::from_millis(300));
             assert_eq!(REVEAL_CHASE_INTERVAL, Duration::from_millis(8));
             assert_eq!(
                 REVEAL_CHASE_INTERVAL * REVEAL_CHASE_ATTEMPTS as u32,
                 Duration::from_secs(1)
             );
-        }
-
-        /// 2.4. Seed 98, 200 runs.
-        #[test]
-        fn the_hold_cap_holds_for_any_duration() {
-            let mut rng = Gen(98);
-            for _ in 0..RUNS {
-                let d = Duration::from_millis(rng.below(3000));
-                let limit = reveal_hold_limit(d);
-                assert!(limit <= HOLD_CAP, "seed 98: {d:?} -> {limit:?}");
-                assert!(limit <= reveal_hold_limit_old(d), "seed 98: {d:?} -> {limit:?}");
-            }
         }
 
         /// 2.4. A stand-in tile is a reveal in waiting after a hold timeout and after a mid-flight join.
@@ -3528,9 +3504,9 @@ mod tests {
             running.final_frames = final_frames.clone();
             let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
             running.entrances.push(entrance);
-            let awaiting: Vec<(WindowId, CGSize)> = waiting.into_iter().collect();
+            let awaiting: Vec<(WindowId, CGSize)> = vec![waiting];
             let now = Instant::now();
-            let requested = running.extend_hold(&awaiting, false, Duration::from_millis(300), now);
+            let requested = running.extend_hold(&awaiting, false, now);
             assert_eq!(
                 requested,
                 Some(final_frames.clone()),
@@ -3561,7 +3537,7 @@ mod tests {
             let mut running = flight(None);
             let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
             running.entrances.push(entrance);
-            running.awaiting.extend(waiting);
+            running.awaiting.push(waiting);
             let spawn = test_picture(CGSize::new(572.0, 540.0));
             assert_eq!(
                 running.claim(newcomer, &spawn),
@@ -3838,8 +3814,7 @@ mod tests {
                 assert!(holding, "seed 91");
                 assert_eq!(chase, awaiting, "seed 91");
 
-                let duration = Duration::from_millis(rng.pt(100.0, 600.0) as u64);
-                let limit = reveal_hold_limit(duration);
+                let limit = HOLD_CAP;
                 let now = Instant::now();
                 let mut running = flight(None);
                 let mut tile = stacked(wid(1), small, to, Some(0), false);
@@ -4161,11 +4136,10 @@ mod tests {
                 }
                 checked += 1;
                 let now = Instant::now();
-                let duration = Duration::from_millis(rng.pt(100.0, 600.0) as u64);
-                let requested = flight.extend_hold(&incoming, false, duration, now);
+                let requested = flight.extend_hold(&incoming, false, now);
                 assert_eq!(requested, Some(frames.clone()));
                 assert!(flight.frames_applied);
-                assert_eq!(flight.hold_deadline, Some(now + reveal_hold_limit(duration)));
+                assert_eq!(flight.hold_deadline, Some(now + HOLD_CAP));
                 for (window, size) in &incoming {
                     let held: Vec<_> =
                         flight.awaiting.iter().filter(|(w, _)| w == window).collect();
@@ -4183,16 +4157,15 @@ mod tests {
         #[test]
         fn a_hold_never_stops_a_flight_in_motion() {
             let now = Instant::now();
-            let duration = Duration::from_millis(300);
             let mut flight = running(vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))]);
             flight.started = Some(now);
             let grow = [(wid(1), CGSize::new(1720.0, 1081.0))];
-            assert_eq!(flight.extend_hold(&grow, true, duration, now), None);
+            assert_eq!(flight.extend_hold(&grow, true, now), None);
             assert!(!flight.frames_applied);
             assert!(flight.awaiting.is_empty());
             assert!(flight.hold_deadline.is_none());
             flight.started = None;
-            assert_eq!(flight.extend_hold(&[], false, duration, now), None);
+            assert_eq!(flight.extend_hold(&[], false, now), None);
             assert!(!flight.frames_applied);
         }
 
@@ -4351,7 +4324,7 @@ mod tests {
                 let (entrance, waiting) = entrance_reservation(wid(3), to, false);
                 assert_eq!(entrance.window, wid(3));
                 assert_eq!(entrance.to, to);
-                let awaiting: Vec<(WindowId, CGSize)> = waiting.into_iter().collect();
+                let awaiting: Vec<(WindowId, CGSize)> = vec![waiting];
                 let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
                 assert!(apply_now);
                 assert!(
@@ -4647,7 +4620,7 @@ mod tests {
             let mut flight = flight(None);
             let (entrance, waiting) = entrance_reservation(window, to, floating);
             flight.entrances.push(entrance);
-            flight.awaiting.extend(waiting);
+            flight.awaiting.push(waiting);
             flight.frames_applied = true;
             flight
         }
@@ -4678,7 +4651,7 @@ mod tests {
                 let to = rng.on_screen();
                 let floating = rng.coin();
                 let (entrance, waiting) = entrance_reservation(wid(2), to, floating);
-                assert_eq!(waiting, Some((wid(2), to.size)), "seed 61: {to:?}");
+                assert_eq!(waiting, (wid(2), to.size), "seed 61: {to:?}");
                 assert_eq!(entrance.to, to);
                 assert_eq!(entrance.floating, floating);
             }
@@ -4982,8 +4955,9 @@ mod tests {
             let zoom = rect(224.0, 95.0, 1280.0, 960.0);
             let (entrance, waiting) = entrance_reservation(wid(3), zoom, true);
             assert_eq!(entrance.window, wid(3));
-            assert!(
-                waiting.is_some(),
+            assert_eq!(
+                waiting,
+                (wid(3), zoom.size),
                 "the entrance is reserved but never drawn here"
             );
             assert!(!worth_flying(moving_drawable(&tiles), false));
@@ -4996,7 +4970,7 @@ mod tests {
             let tiles = vec![stacked(wid(1), before, after, Some(1), false)];
             let (_, waiting) =
                 entrance_reservation(wid(2), rect(867.0, 32.0, 859.0, 1081.0), false);
-            assert!(waiting.is_some());
+            assert_eq!(waiting.0, wid(2));
             assert!(worth_flying(moving_drawable(&tiles), false));
         }
 
@@ -6426,12 +6400,7 @@ mod tests {
                 nudge: None,
                 _clock: None,
             };
-            let frames = running.extend_hold(
-                &[(wid(1), grown.size)],
-                false,
-                running.duration,
-                Instant::now(),
-            );
+            let frames = running.extend_hold(&[(wid(1), grown.size)], false, Instant::now());
             assert_eq!(running.awaiting, vec![(wid(1), grown.size)]);
             assert!(running.hold_deadline.is_some());
             assert_eq!(
@@ -6538,8 +6507,7 @@ mod tests {
                 apply_at: 0.0,
                 entrances: Vec::new(),
                 awaiting: awaiting.clone(),
-                hold_deadline: holding
-                    .then(|| Instant::now() + reveal_hold_limit(Duration::from_millis(350))),
+                hold_deadline: holding.then(|| Instant::now() + HOLD_CAP),
                 refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: Some(wid(9)),
