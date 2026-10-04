@@ -25,13 +25,13 @@ use crate::animation::domain::motion::glide::{Leg, spring_omega};
 use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::plan::{
     AnimationTarget, Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented,
-    animation_targets, carries_out_and_back, group_relative, stale_overlay_layers,
+    animation_targets, carries_out_and_back, group_relative, overlay_of, stale_overlay_layers,
 };
 use crate::animation::domain::motion::score::{Curve, Value};
 use crate::animation::domain::motion::strip_move::nudge_samples;
 use crate::animation::domain::motion::tile::{
     ContentMode, DressingAction, WHOLE, content_mode, crop_pieces, dressing_rebuild_allowed,
-    resize_in_flight, within,
+    resize_in_flight, snap_to, within,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::displays::domain::screen::CoordinateConverter;
@@ -207,6 +207,11 @@ impl Timing {
         animation.setTimingFunction(Some(&timing_function(self.curve)));
         animation.setDuration(self.seconds);
         animation.setBeginTime(self.begin);
+    }
+
+    /// Whether the leg is still playing at `now` on the media clock.
+    fn plays_at(&self, now: f64) -> bool {
+        self.begin <= now && now < self.begin + self.seconds
     }
 
     /// When the leg ends, on the wall clock.
@@ -489,8 +494,9 @@ struct Tile {
     region: CGRect,
     /// When the installed resize animation ends; a mismatched hairline is deferred until then.
     resize_until: Option<Instant>,
-    /// The resize leg the tile is riding, so a picture swap re-installs it on the same timing.
-    resize_leg: Option<(CGRect, CGRect, Timing)>,
+    /// The leg the tile was last given, a move or a resize, so a picture swap or a snap
+    /// re-installs it on the same timing.
+    leg: Option<(CGRect, CGRect, Timing)>,
     /// The container the layers hang under; layer frames are in its space.
     key: Option<GroupKey>,
     companion: bool,
@@ -776,7 +782,7 @@ impl TileOverlay {
             layout_crop_grid(entry, final_rect.size);
             // Re-installed on the same timing when riding a leg, so only the pixels cut.
             if remaining.is_some_and(|left| !left.is_zero()) {
-                rekey = Some(match entry.resize_leg {
+                rekey = Some(match entry.leg {
                     Some((from, to, timing)) => (from, to, timing),
                     None => {
                         // SAFETY: `presentationLayer` returns a read-only copy of the layer.
@@ -802,7 +808,7 @@ impl TileOverlay {
             apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale, true, resizing);
         }
         if let Some((from, to, timing)) = rekey {
-            self.animate_tile_resize(window, from, to, timing);
+            animate_tile_resize(entry, from, to, timing);
         }
         commit_now();
     }
@@ -1094,6 +1100,7 @@ impl TileOverlay {
         entry.picture.setContentsScale(self.scale);
         clip_corners(&entry.picture, None);
         entry.resize_until = None;
+        entry.leg = None;
         let covered = tile.snapshot.coverage.covered;
         let mode = content_mode(covered, tile.from.size, tile.to.size);
         set_tile_content(entry, &tile.snapshot, mode, tile.from.size, self.scale);
@@ -1384,76 +1391,25 @@ impl TileOverlay {
             return;
         };
         place_tile(entry, to, z);
-        let timing = Timing::starting_now(duration);
-        // Proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move.
-        if !rini_geometry::stretch::is_a_resize(from.size, to.size) {
-            entry.resize_leg = None;
-            // addAnimation copies, so one instance serves picture and shadow.
-            let animation = position_animation(from.origin, to.origin, timing);
-            let key = NSString::from_str(TILE_ANIMATION_KEY);
-            entry.picture.addAnimation_forKey(&animation, Some(&key));
-            entry.shadow.addAnimation_forKey(&animation, Some(&key));
-            return;
-        }
-        self.animate_tile_resize(window, from, to, timing);
+        animate_tile_leg(entry, from, to, Timing::starting_now(duration));
     }
 
-    /// The resize: every layer of the tile rides its own pair of endpoint geometries on the shared
-    /// curve. See "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
-    fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, timing: Timing) {
-        let Some(entry) = self.tile_layers.get_mut(&window) else {
-            return;
+    /// Moves a tile onto its window's real frame, `real` in the overlay's coordinates, when the
+    /// tile ends 0.25 to 20pt off it (`snap_to`), and says whether it moved. A tile riding a leg of
+    /// its own goes on along it, on the same timing, to the real frame; one riding its container
+    /// moves inside it at once. Shadow, mask, crop pieces and hairline follow. When to snap, once per
+    /// window per generation, is the caller's. See "Tiles snap to the real frame" in
+    /// `src/animation/docs/animation-smoothness.md`.
+    pub fn snap_tile(&mut self, window: WindowId, real: CGRect) -> bool {
+        let offset = self.tile_layers.get(&window).map(|entry| self.container_position(entry.key));
+        let Some((entry, offset)) = self.tile_layers.get_mut(&window).zip(offset) else {
+            return false;
         };
-        entry.resize_until = Some(timing.ends_at());
-        entry.resize_leg = Some((from, to, timing));
-
-        // Same key prefix as the plain move, or a move retargeted into a resize leaves its old
-        // position animation fighting this one.
-        animate_layer_frame(&entry.picture, from, to, timing, "rini.tile");
-        animate_layer_frame(&entry.shadow, from, to, timing, "rini.tile");
-
-        let origin = CGPoint::new(0.0, 0.0);
-        let shadow_path = path_animation(
-            "shadowPath",
-            &silhouette_path(from.size, origin),
-            &silhouette_path(to.size, origin),
-            timing,
-        );
-        entry
-            .shadow
-            .addAnimation_forKey(&shadow_path, Some(&NSString::from_str("rini.tile.shadow.path")));
-        animate_layer_frame(
-            &entry.shadow_mask,
-            shadow_mask_frame(from.size),
-            shadow_mask_frame(to.size),
-            timing,
-            "rini.tile.mask",
-        );
-        let mask_path = path_animation("path", &ring_path(from.size), &ring_path(to.size), timing);
-        entry
-            .shadow_mask
-            .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
-
-        animate_crop_grid(entry, from.size, to.size, timing);
-
-        if let (Some(from_layout), Some(to_layout)) =
-            (boundary_layout(from.size), boundary_layout(to.size))
-        {
-            let rect_at = |layout: &crate::pictures::platform::edge_dressing::DressingLayout,
-                           index: usize| {
-                if index < 4 {
-                    layout.strips[index]
-                } else {
-                    layout.corners[index - 4]
-                }
-            };
-            for (index, layer) in &entry.dressing {
-                let a = rect_at(&from_layout, *index);
-                let b = rect_at(&to_layout, *index);
-                layer.setFrame(b);
-                animate_layer_frame(layer, a, b, timing, "rini.dressing");
-            }
-        }
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        let snapped = snap_onto(entry, offset, real, objc2_quartz_core::CACurrentMediaTime());
+        commit_now();
+        snapped
     }
 
     /// Shows the overlay; only an alpha change.
@@ -1532,6 +1488,92 @@ impl TileOverlay {
         commit_now();
         let _ = self.mtm;
     }
+}
+
+/// Carries a tile from `from` to `to` on `timing`, its model already at `to`: a plain move, or a
+/// resize when the sizes differ by more than a re-fit. Callers hold the transaction.
+fn animate_tile_leg(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timing) {
+    // Proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move.
+    if rini_geometry::stretch::is_a_resize(from.size, to.size) {
+        animate_tile_resize(entry, from, to, timing);
+        return;
+    }
+    entry.leg = Some((from, to, timing));
+    // addAnimation copies, so one instance serves picture and shadow.
+    let animation = position_animation(from.origin, to.origin, timing);
+    let key = NSString::from_str(TILE_ANIMATION_KEY);
+    entry.picture.addAnimation_forKey(&animation, Some(&key));
+    entry.shadow.addAnimation_forKey(&animation, Some(&key));
+}
+
+/// The resize: every layer of the tile rides its own pair of endpoint geometries on the shared
+/// curve. See "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
+fn animate_tile_resize(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timing) {
+    entry.resize_until = Some(timing.ends_at());
+    entry.leg = Some((from, to, timing));
+
+    // Same key prefix as the plain move, or a move retargeted into a resize leaves its old
+    // position animation fighting this one.
+    animate_layer_frame(&entry.picture, from, to, timing, "rini.tile");
+    animate_layer_frame(&entry.shadow, from, to, timing, "rini.tile");
+
+    let origin = CGPoint::new(0.0, 0.0);
+    let shadow_path = path_animation(
+        "shadowPath",
+        &silhouette_path(from.size, origin),
+        &silhouette_path(to.size, origin),
+        timing,
+    );
+    entry
+        .shadow
+        .addAnimation_forKey(&shadow_path, Some(&NSString::from_str("rini.tile.shadow.path")));
+    animate_layer_frame(
+        &entry.shadow_mask,
+        shadow_mask_frame(from.size),
+        shadow_mask_frame(to.size),
+        timing,
+        "rini.tile.mask",
+    );
+    let mask_path = path_animation("path", &ring_path(from.size), &ring_path(to.size), timing);
+    entry
+        .shadow_mask
+        .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
+
+    animate_crop_grid(entry, from.size, to.size, timing);
+
+    if let (Some(from_layout), Some(to_layout)) =
+        (boundary_layout(from.size), boundary_layout(to.size))
+    {
+        let rect_at = |layout: &crate::pictures::platform::edge_dressing::DressingLayout,
+                       index: usize| {
+            if index < 4 {
+                layout.strips[index]
+            } else {
+                layout.corners[index - 4]
+            }
+        };
+        for (index, layer) in &entry.dressing {
+            let a = rect_at(&from_layout, *index);
+            let b = rect_at(&to_layout, *index);
+            layer.setFrame(b);
+            animate_layer_frame(layer, a, b, timing, "rini.dressing");
+        }
+    }
+}
+
+/// Moves a tile under a container at `offset` onto `real`, both in the overlay's coordinates, when
+/// `snap_to` says it ends off it; on its leg's own timing while that plays at `now`. Callers hold
+/// the transaction.
+fn snap_onto(entry: &mut Tile, offset: CGPoint, real: CGRect, now: f64) -> bool {
+    let Some(real) = snap_to(overlay_of(entry.picture.frame(), offset), real) else {
+        return false;
+    };
+    let to = group_relative(real, offset);
+    place_tile(entry, to, entry.picture.zPosition());
+    if let Some((from, _, timing)) = entry.leg.filter(|(_, _, timing)| timing.plays_at(now)) {
+        animate_tile_leg(entry, from, to, timing);
+    }
+    true
 }
 
 /// The bar's picture at the strip's origin, at the size it covers, never stretched. See "The bar
@@ -1647,7 +1689,7 @@ fn new_tile(container: &CALayer) -> Tile {
         crop_of: None,
         region: WHOLE,
         resize_until: None,
-        resize_leg: None,
+        leg: None,
         key: None,
         companion: false,
     }
@@ -2524,5 +2566,140 @@ mod tests {
         };
         assert_eq!(path(animation.fromValue()), from);
         assert_eq!(path(animation.toValue()), to);
+    }
+
+    fn animation_value<T>(layer: &CALayer, key: &str, read: impl Fn(&NSValue) -> T) -> (T, T, f64) {
+        // SAFETY: a read of the layer's own animation.
+        let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) }
+            .expect("an animation under the key")
+            .downcast::<CABasicAnimation>()
+            .expect("a basic animation");
+        let value = |v: Option<Retained<objc2::runtime::AnyObject>>| {
+            read(v.expect("a value").downcast_ref::<NSValue>().expect("an NSValue"))
+        };
+        (
+            value(animation.fromValue()),
+            value(animation.toValue()),
+            animation.beginTime(),
+        )
+    }
+
+    fn point_of(value: &NSValue) -> CGPoint {
+        // SAFETY: the value was made from a point.
+        unsafe { value.pointValue() }
+    }
+
+    fn rect_of(value: &NSValue) -> CGRect {
+        // SAFETY: the value was made from a rect.
+        unsafe { value.rectValue() }
+    }
+
+    /// The strip's container, model at -861: a tile at 865 in it ends at 4 on screen.
+    const STRIP_AT: CGPoint = CGPoint { x: -861.0, y: 0.0 };
+
+    fn strip_tile(frame: CGRect) -> Tile {
+        let container = CALayer::layer();
+        let tile = new_tile(&container);
+        place_tile(&tile, frame, 0.0);
+        tile
+    }
+
+    /// The measured case, a tile 861 wide over a window 860 wide, riding its container: it is
+    /// moved inside the container at once, its shadow, mask and silhouette with it.
+    #[test]
+    fn a_tile_riding_its_container_snaps_onto_its_window_at_once() {
+        let mut tile = strip_tile(rect(865.0, 32.0, 861.0, 1081.0));
+        let real = rect(4.0, 32.0, 860.0, 1081.0);
+        assert!(snap_onto(&mut tile, STRIP_AT, real, 100.0));
+        let snapped = rect(865.0, 32.0, 860.0, 1081.0);
+        assert_eq!(tile.picture.frame(), snapped);
+        assert_eq!(tile.shadow.frame(), snapped);
+        assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size));
+        let silhouette = tile.shadow.shadowPath().expect("a silhouette");
+        assert_eq!(
+            objc2_core_graphics::CGPath::bounding_box(Some(&silhouette)).size,
+            snapped.size
+        );
+        assert!(tile.picture.animationKeys().is_none_or(|keys| keys.count() == 0));
+    }
+
+    /// A tile on a move of its own goes on along it to the window's frame: the same begin and
+    /// start, a new end.
+    #[test]
+    fn a_tile_on_its_own_leg_snaps_on_the_same_timing() {
+        let from = rect(1726.0, 32.0, 861.0, 1081.0);
+        let to = rect(865.0, 32.0, 861.0, 1081.0);
+        let timing = Timing {
+            begin: 100.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let mut tile = strip_tile(to);
+        animate_tile_leg(&mut tile, from, to, timing);
+        assert!(snap_onto(
+            &mut tile,
+            STRIP_AT,
+            rect(5.0, 32.0, 861.0, 1081.0),
+            100.2
+        ));
+        let snapped = rect(866.0, 32.0, 861.0, 1081.0);
+        assert_eq!(tile.picture.frame(), snapped);
+        for layer in [&tile.picture, &tile.shadow] {
+            assert_eq!(
+                animation_value(layer, TILE_ANIMATION_KEY, point_of),
+                (from.origin, snapped.origin, 100.0)
+            );
+        }
+        assert_eq!(tile.leg, Some((from, snapped, timing)));
+
+        let resized_from = rect(1726.0, 32.0, 1200.0, 1081.0);
+        let mut tile = strip_tile(to);
+        animate_tile_leg(&mut tile, resized_from, to, timing);
+        let real = rect(4.0, 32.0, 860.0, 1081.0);
+        assert!(snap_onto(&mut tile, STRIP_AT, real, 100.2));
+        let (start, end, begin) = animation_value(&tile.picture, "rini.tile.size", rect_of);
+        assert_eq!(
+            (start.size, end.size, begin),
+            (resized_from.size, real.size, 100.0)
+        );
+    }
+
+    /// Once its leg has played, the tile's model moves and nothing is installed again.
+    #[test]
+    fn a_tile_whose_leg_has_ended_snaps_by_its_model() {
+        let from = rect(1726.0, 32.0, 861.0, 1081.0);
+        let to = rect(865.0, 32.0, 861.0, 1081.0);
+        let timing = Timing {
+            begin: 100.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let mut tile = strip_tile(to);
+        animate_tile_leg(&mut tile, from, to, timing);
+        assert!(snap_onto(
+            &mut tile,
+            STRIP_AT,
+            rect(5.0, 32.0, 861.0, 1081.0),
+            100.5
+        ));
+        assert_eq!(tile.picture.frame().origin, CGPoint::new(866.0, 32.0));
+        assert_eq!(
+            animation_value(&tile.picture, TILE_ANIMATION_KEY, point_of).1,
+            to.origin,
+            "the leg that played is left as it was"
+        );
+    }
+
+    #[test]
+    fn a_tile_on_its_window_or_far_from_it_does_not_snap() {
+        let frame = rect(865.0, 32.0, 861.0, 1081.0);
+        for real in [
+            rect(4.1, 32.0, 861.0, 1081.0),
+            rect(40.0, 32.0, 861.0, 1081.0),
+        ] {
+            let mut tile = strip_tile(frame);
+            assert!(!snap_onto(&mut tile, STRIP_AT, real, 100.0), "{real:?}");
+            assert_eq!(tile.picture.frame(), frame);
+        }
     }
 }

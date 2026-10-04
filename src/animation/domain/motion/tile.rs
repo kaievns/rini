@@ -169,6 +169,32 @@ pub fn within(outer: CGRect, inner: CGRect) -> CGRect {
     )
 }
 
+/// Off by less than this, a tile and its window agree: under a quarter point nothing shows at the
+/// lift.
+pub const SNAP_FROM: f64 = 0.25;
+
+/// Off by more than this, the window has not landed where its tile ends: the slack a landing is
+/// judged within. See "Tiles snap to the real frame" in
+/// `src/animation/docs/animation-smoothness.md`.
+pub const SNAP_UP_TO: f64 = 20.0;
+
+/// Where a tile ending at `model` goes when its window really landed at `real`: onto `real` when
+/// an edge or a side is `SNAP_FROM` to `SNAP_UP_TO` off, nowhere otherwise. A strip pans by a
+/// fractional vector and the window server rounds each window on its own, so a tile of a rigid
+/// group can end a point from its window.
+pub fn snap_to(model: CGRect, real: CGRect) -> Option<CGRect> {
+    let off = [
+        real.origin.x - model.origin.x,
+        real.origin.y - model.origin.y,
+        real.size.width - model.size.width,
+        real.size.height - model.size.height,
+    ]
+    .into_iter()
+    .map(f64::abs)
+    .fold(0.0, f64::max);
+    (SNAP_FROM..=SNAP_UP_TO).contains(&off).then_some(real)
+}
+
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
 /// that looks almost right, which is much harder to debug than one that is obviously broken.
 pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
@@ -544,5 +570,32 @@ mod tests {
                 assert!((cut.size.width - whole.size.width * region.size.width).abs() < eps);
             }
         }
+    }
+
+    /// The measured case: a rigid pan ended a tile 861 wide against its window's 860.
+    #[test]
+    fn a_tile_a_point_off_its_window_snaps_onto_it() {
+        let model = rect(4.0, 32.0, 861.0, 1081.0);
+        let real = rect(4.0, 32.0, 860.0, 1081.0);
+        assert_eq!(snap_to(model, real), Some(real));
+        let moved = rect(3.0, 32.0, 861.0, 1081.0);
+        assert_eq!(snap_to(model, moved), Some(moved));
+    }
+
+    #[test]
+    fn a_tile_snaps_only_from_a_quarter_point_to_twenty_points_off() {
+        let model = rect(4.0, 32.0, 861.0, 1081.0);
+        let off = |d: f64| rect(4.0 + d, 32.0, 861.0, 1081.0);
+        for d in [0.25, -0.25, 1.0, 19.5, 20.0, -20.0] {
+            assert_eq!(snap_to(model, off(d)), Some(off(d)), "{d}");
+        }
+        for d in [0.0, 0.2, -0.24, 20.5, -21.0, 400.0] {
+            assert_eq!(snap_to(model, off(d)), None, "{d}");
+        }
+        assert_eq!(
+            snap_to(model, rect(4.5, 32.0, 861.0, 1111.0)),
+            None,
+            "half a point across but 30 taller: judged by the furthest edge"
+        );
     }
 }

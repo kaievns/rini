@@ -420,6 +420,21 @@ caster is never clipped, and every install puts the picture back to whole
 (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
 is in `docs/pictures-motion-transitions.md`; nothing bakes a picture yet.
 
+**Tiles snap to the real frame.** A strip pans by a fractional vector and the
+window server rounds each window on its own, so a tile of a rigid group can end
+a point from its window: 861 against 860 wide ("The handover, measured" in
+`capture-overlay-research.md`). `TileOverlay::snap_tile` takes the window's real
+frame and moves the tile onto it when the two are 0.25 to 20pt apart at any edge
+(`snap_to`): under a quarter point nothing shows at the lift, and past 20pt the
+window has not landed where its tile ends. A tile riding its container moves
+inside it at once, while the container carries it on. A tile on a leg of its
+own is given the same leg, its begin, start and curve, ending on the real frame,
+so it lands there with the leg instead of popping at the lift
+(`a_tile_on_its_own_leg_snaps_on_the_same_timing`); once the leg has played
+only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
+Nothing calls it yet: when to snap, once per window per generation, is the
+coordinator's.
+
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
@@ -854,7 +869,8 @@ changes is how the picture maps onto it (`content_mode` in
   mid-flight after all, it is hard-cut onto the tile before 0.6 progress
   (`Swap("reveal")`) and `set_tile_picture` re-installs the resize leg on
   the SAME `Timing` (begin on the media clock plus duration, kept per tile
-  in `resize_leg`): the frame keeps its curve and only the pixels cut.
+  in `leg`, which a plain move keeps too, so a crop-drawn tile on a move
+  re-keys the same way): the frame keeps its curve and only the pixels cut.
   Re-keying from the presented frame over the remaining duration restarted
   the ease-out and the tile lurched at every swap. Later than 0.6 the
   picture is cached for the next flight.
