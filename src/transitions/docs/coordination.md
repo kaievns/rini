@@ -175,7 +175,7 @@ included; a merge that moves nothing runs the clock on only for what it started 
 clock, a step (`FlightScore::outlasting`, `Event::Extend`). Extended for every such merge, a pass
 after the clock ran out moved its end up to that pass, and the lift's 350ms grace with it: while a
 window had not landed, each pass repeating the destinations held the overlay up 350ms more. A pass
-arriving before the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead, and frame zero posed again (`fold_before_moving`). It is
+arriving before the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead, and frame zero posed again (`RunningAnimation::take_pass`). It is
 folded by the flight's look (`FlightScore::fold`; Slide's is `merge_plans`, as a pass in flight is),
 with every container where frame zero installs it and taken to be where the last pass sends it: the
 reactor builds a pass from the layout where the press before left it, so its frames are places on the
@@ -412,15 +412,16 @@ workspace pulls the row up. It was 36pt and was reported as too small to
 notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a transition of
 the bounce kind when none is running: every tile at rest, nothing written and nothing watched, the
 bounce played as the motion starts, once frame zero is up. On a flight that moves it adds the bounce at
-once; on one that does not move yet it waits for the motion (`FlightScore::wait`), the latest push in
-place of any before it, and plays as the motion starts. Either way the coordinator's clock runs on for
+once; on one that does not move yet it waits for the motion (`RunningAnimation::push`, which keeps it
+with `FlightScore::wait`), the latest push in place of any before it, and plays as the motion starts. Either way the coordinator's clock runs on for
 as long as the score plays (`Event::Extend`). Every push that reaches a moving flight shows: each
 container's bounce is a track in the flight's score, and a push while it plays starts that
 container's next from where it is drawn, the clock extended to the new ones' return. Frame zero posed
 again has nothing playing, and the lift drops the score, so the next push starts every bounce from
 rest; an engine's record of the bounce kept past either pushed from where nothing was drawn and the
 surface jumped. Both are pinned by `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`, the
-wait by `an_accent_before_the_motion_waits_for_it`. How the bounce is drawn, and how a push
+wait by `an_accent_before_the_motion_waits_for_it` and, where the flight decides it,
+`a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once`. How the bounce is drawn, and how a push
 re-kicks it, is "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
 
 ## The move flight, staged
@@ -479,8 +480,8 @@ move that does not step keeps both columns crossing.
 
 The step starts only on a flight that moves: one still collecting passes
 poses frame zero again with each, which has nothing playing, so a move
-arriving then waits (`FlightScore::wait`, a later step in place of the earlier) and steps when the
-flight starts moving; it used to be dropped, and a full-width move merged into a collecting layout
+arriving then waits (`RunningAnimation::take_pass` keeps it with `FlightScore::wait`, a later step in
+place of the earlier) and steps when the flight starts moving; it used to be dropped, and a full-width move merged into a collecting layout
 pass showed nothing. A step is taken only while none plays (`step_tracks`), one per burst. The look
 stretches a flight that steps to `NUDGE_STRETCH` (1.3x) the plain duration when it takes the step, so
 a flight that does not step keeps its length; the reactor asked for the stretch with every step it

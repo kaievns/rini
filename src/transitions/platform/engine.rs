@@ -25,7 +25,7 @@ use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::plan::{self, entrance_from};
-use crate::animation::domain::motion::score::{Node, Value};
+use crate::animation::domain::motion::score::{Edit, Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay, media_now};
 use crate::pictures::domain::knowledge::{Call, Knowledge};
@@ -515,10 +515,22 @@ impl RunningAnimation {
         outcomes
     }
 
-    /// A later pass folded into a flight not yet moving, by its look (`FlightScore::fold`): a burst
-    /// composes as one movement from frame zero, which shows the pass's press, and each tile starts
-    /// where its container installs it.
-    fn fold_before_moving(&mut self, pass: &Pass) {
+    /// A later pass reaching the flight. Before it moves, folded into frame zero by its look
+    /// (`FlightScore::fold`), the accent it brings waiting for the motion: a burst composes as one
+    /// movement from frame zero, which shows the pass's press, each tile starting where its container
+    /// installs it, and frame zero is posed again (`None`). Once it moves, bent by its look from the
+    /// score at `at`, the tiles following the merged plan: what the merge changed, and the edits that
+    /// carry it out.
+    fn take_pass(&mut self, pass: &Pass, at: f64) -> Option<(plan::PlanDelta, Vec<Edit>)> {
+        if self.flown {
+            let merged = self.score.merge(&self.plan, pass, at);
+            self.plan = merged.plan;
+            sync_tiles_to_plan(&mut self.tiles, &self.plan);
+            return Some((merged.delta, merged.edits));
+        }
+        if let Some(accent) = pass.accent {
+            self.score.wait(accent);
+        }
         self.plan = self.score.fold(&self.plan, pass);
         self.cue = pass.cue;
         for tile in self.tiles.iter_mut() {
@@ -527,6 +539,17 @@ impl RunningAnimation {
             }
         }
         sync_tiles_to_plan(&mut self.tiles, &self.plan);
+        None
+    }
+
+    /// A push against `wall` reaching the flight: waiting for the motion until the flight moves, the
+    /// latest push winning (`None`), and played on the score at `at` once it does.
+    fn push(&mut self, cue: &Cue, wall: CGPoint, seconds: f64, at: f64) -> Option<Vec<Edit>> {
+        if !self.flown {
+            self.score.wait(Accent::Push { wall, seconds });
+            return None;
+        }
+        Some(self.score.push(cue, wall, seconds, at))
     }
 
     /// The windows the flight draws a tile of.
@@ -1643,18 +1666,9 @@ impl FlightEngine {
             accent: pass.accent,
         };
         let mut moved = false;
-        if !running.flown {
-            if let Some(accent) = pass.accent {
-                running.score.wait(accent);
-            }
-            running.fold_before_moving(&folded);
-        } else {
-            // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
-            let mut merged = running.score.merge(&running.plan, &folded, at);
-            merged.delta.focus_changed = pass_focus.is_some() && pass_focus != focus_before;
-            running.plan = merged.plan;
-            sync_tiles_to_plan(&mut running.tiles, &running.plan);
-            let delta = &merged.delta;
+        // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
+        if let Some((mut delta, mut edits)) = running.take_pass(&folded, at) {
+            delta.focus_changed = pass_focus.is_some() && pass_focus != focus_before;
             if !delta.is_empty() {
                 debug!(
                     groups = running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
@@ -1708,7 +1722,6 @@ impl FlightEngine {
             }
             moved = delta.moves_anything();
             let banding = band_plan(&running.plan, &running.tiles, running.focus);
-            let mut edits = merged.edits;
             edits.push(running.score.bank(banding));
             if let Some(overlay) = overlay.as_mut() {
                 overlay.play(&edits, &running.tiles);
@@ -1931,13 +1944,8 @@ impl FlightEngine {
         }
         let Self { overlay, running, .. } = self;
         let Some(running) = running.as_mut() else { return };
-        let seconds = duration.as_secs_f64();
-        if !running.flown {
-            running.score.wait(Accent::Push { wall: overshoot, seconds });
-            return;
-        }
         let at = media_now();
-        let edits = running.score.push(&cue, overshoot, seconds, at);
+        let Some(edits) = running.push(&cue, overshoot, duration.as_secs_f64(), at) else { return };
         if let Some(overlay) = overlay.as_mut() {
             overlay.play(&edits, &running.tiles);
         }
@@ -2484,6 +2492,90 @@ mod tests {
             assert_eq!(running.tiles.len(), 2);
         }
 
+        /// Two columns stepping one column left, frame zero posed.
+        fn posed() -> (RunningAnimation, plan::ReflowPlan) {
+            let (a, b) = (rect(4.0, 32.0, 859.0, 1081.0), rect(867.0, 32.0, 859.0, 1081.0));
+            let shifted = |frame: CGRect, dx: f64| rect(frame.origin.x + dx, frame.origin.y, frame.size.width, frame.size.height);
+            let requests = [(wid(1), a, shifted(a, -863.0), false), (wid(2), b, shifted(b, -863.0), false)];
+            let mut running = flight();
+            running.tiles = requests.iter().map(|&(w, from, to, _)| stacked(w, from, to, Some(0), false)).collect();
+            running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
+            pose(&mut running);
+            let again = requests.map(|(w, _, to, floating)| (w, to, shifted(to, -863.0), floating));
+            (running, plan::reflow_plan(&again, DISPLAY))
+        }
+
+        fn pose(running: &mut RunningAnimation) {
+            let (plan, drawn) = (running.plan.clone(), running.drawn());
+            running.score.pose(&stage(&plan, &drawn), plan::Banding::default());
+        }
+
+        fn stage<'a>(plan: &'a plan::FlightPlan, drawn: &'a [WindowId]) -> Stage<'a> {
+            Stage { plan, drawn, seconds: 0.35, cue: Cue::Plain, accents: &[] }
+        }
+
+        fn strip_key(running: &RunningAnimation) -> plan::GroupKey {
+            running.plan.groups.iter().find(|g| g.members.iter().any(|m| m.window == wid(1))).map(|g| g.key).expect("rigid")
+        }
+
+        /// A push before the flight moves waits for the motion, the latest winning, and plays as the
+        /// motion starts; one pushed into a flight that moves plays at once.
+        #[test]
+        fn a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once() {
+            use crate::animation::domain::motion::bounce::Bounce;
+            let (mut running, _) = posed();
+            let (left, right) = (CGPoint::new(-72.0, 0.0), CGPoint::new(72.0, 0.0));
+            assert_eq!(running.push(&Cue::Plain, left, 0.35, 10.0), None);
+            assert_eq!(running.push(&Cue::Plain, right, 0.35, 10.0), None);
+            running.flown = true;
+            let (plan, drawn) = (running.plan.clone(), running.drawn());
+            let start = running.score.start_moving(&stage(&plan, &drawn), 10.0);
+            let key = strip_key(&running);
+            let plays = Duration::from_secs_f64(0.35);
+            assert!(start.contains(&Edit::Add(Bounce::from_rest(right, plays).track(key, 10.0))), "the latest push");
+            assert!(!start.contains(&Edit::Add(Bounce::from_rest(left, plays).track(key, 10.0))));
+            let pushed = running.push(&Cue::Plain, CGPoint::new(0.0, 72.0), 0.35, 10.1).expect("at once");
+            assert!(!pushed.is_empty());
+            assert!(pushed.iter().all(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)), "{pushed:?}");
+        }
+
+        /// A pass before the flight moves is folded into frame zero with its step waiting for the
+        /// motion, which takes it as it starts; one once the flight moves bends it, the tiles following
+        /// the merged plan.
+        #[test]
+        fn a_pass_before_the_flight_moves_is_folded_with_its_step_waiting_and_one_after_bends_it() {
+            use crate::animation::domain::motion::score::Channel;
+            let (mut running, again) = posed();
+            let step = Accent::Step { offset: CGPoint::new(-576.0, 0.0) };
+            let drawn = running.drawn();
+            let pass = Pass {
+                plan: &again,
+                pan: Some(CGPoint::new(-863.0, 0.0)),
+                focus: None,
+                viewport: DISPLAY,
+                drawn: &drawn,
+                seconds: 0.35,
+                cue: Cue::Plain,
+                accent: Some(step),
+            };
+            assert!(running.take_pass(&pass, 10.0).is_none(), "folded");
+            let key = strip_key(&running);
+            assert_eq!(running.plan.position_of(key), CGPoint::new(-1726.0, 0.0), "both pans from frame zero");
+            pose(&mut running);
+            running.flown = true;
+            let (plan, drawn) = (running.plan.clone(), running.drawn());
+            let start = running.score.start_moving(&stage(&plan, &drawn), 10.0);
+            assert!(start.iter().any(|e| matches!(e, Edit::Add(t) if t.channel() == Channel::Nudge && t.begin() == 10.0)), "the step waited");
+
+            let further = Pass { pan: Some(CGPoint::new(-863.0, 0.0)), accent: None, ..pass };
+            let (delta, edits) = running.take_pass(&further, 10.1).expect("bent");
+            assert!(delta.retargeted_groups.iter().any(|(k, _)| *k == key));
+            assert!(edits.iter().any(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)));
+            assert_eq!(running.plan.position_of(key), CGPoint::new(-2589.0, 0.0));
+            let tile = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
+            assert_eq!(tile.to.origin.x, 4.0 - 2589.0, "the tile follows the merged plan");
+        }
+
         #[test]
         fn focus_handing_over_draws_the_target_focused_and_the_window_left_not() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
@@ -2679,7 +2771,7 @@ mod tests {
                 cue,
                 accent: None,
             };
-            running.fold_before_moving(&pass);
+            assert!(running.take_pass(&pass, 0.0).is_none(), "folded, not bent");
         }
 
         fn path(running: &RunningAnimation, window: WindowId) -> (CGRect, CGRect) {
