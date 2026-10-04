@@ -33,8 +33,8 @@ pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
 /// How often, and how many times at most, a window that has to repaint is captured once it is where
 /// it ends: about a second. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
-pub const REPAINT_EVERY: Duration = Duration::from_millis(8);
-pub const REPAINT_TRIES: usize = 125;
+const REPAINT_EVERY: Duration = Duration::from_millis(8);
+const REPAINT_TRIES: usize = 125;
 /// The least time between two refreshes of the windows behind the strip.
 pub const LIVE_EVERY: Duration = Duration::from_millis(16);
 /// A refresh behind the strip waits for a change capture due this soon.

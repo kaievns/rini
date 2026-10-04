@@ -191,7 +191,8 @@ a transition draws it: a crop handed to Core Animation costs the main thread 2-5
 quarter window, and a copy of each 14ms per flight ("Where a moving focus change spends its time" in
 `src/animation/docs/capture-overlay-research.md`). A region keeps its whole composite alive, so at a
 release every region in the cache is replaced by a copy of its own, made on the service's thread, and
-only where the cache still holds the picture it was made of.
+only where the cache still holds the picture it was made of; what each client was delivered, which it
+names only while its flight is up (`keep_focused`), is dropped there and then rather than copied.
 
 ## Reading order
 

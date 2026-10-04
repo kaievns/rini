@@ -545,6 +545,7 @@ impl Service {
                 }
                 shared.schedule.hold(hold, now);
                 if hold == Hold::Released {
+                    shared.delivered.clear();
                     drop(shared);
                     self.at_rest();
                 }
@@ -1162,13 +1163,16 @@ mod tests {
         assert!(matches!(commands.try_recv(), Ok((_, Command::Watch(id, _))) if id == second));
     }
 
-    /// No region stays in the cache past a release: each is replaced by a copy of its own, stamped as
-    /// it was, and a picture that is not a region is left as it is.
+    /// No region stays past a release: each the cache holds is replaced by a copy of its own, stamped
+    /// as it was, a picture that is not a region is left as it is, and what each client was delivered
+    /// is dropped, since nothing names it after its flight.
     #[test]
-    fn a_release_keeps_every_region_as_a_copy() {
+    fn a_release_keeps_every_region_as_a_copy_and_drops_what_was_delivered() {
         let (mut service, shared) = detached_service();
         let region = crate::pictures::platform::picture::test_region();
         let taken = region.taken;
+        let tag = Tag { client: crate::pictures::domain::watch::Client(1), generation: 3 };
+        shared.lock().unwrap().delivered.record(tag, wid(1), region.clone());
         shared.lock().unwrap().cache.insert(wid(1), region);
         shared.lock().unwrap().cache.insert(wid(2), sized(859.0, 1081.0));
         service.apply(Command::Hold(Hold::Transition));
@@ -1176,12 +1180,14 @@ mod tests {
             shared.lock().unwrap().cache.get(wid(1)).unwrap().image,
             Pixels::Region { .. }
         ), "held: still a region");
+        assert!(shared.lock().unwrap().delivered.under(tag, wid(1)).is_some(), "held: still delivered");
         service.apply(Command::Hold(Hold::Released));
         let shared = shared.lock().unwrap();
         let kept = shared.cache.get(wid(1)).unwrap();
         assert!(matches!(kept.image, Pixels::Bitmap(_)));
         assert_eq!(kept.taken, taken);
         assert!(matches!(shared.cache.get(wid(2)).unwrap().image, Pixels::Bitmap(_)));
+        assert!(shared.delivered.under(tag, wid(1)).is_none(), "its composite goes with it");
     }
 
     /// The switcher draws what `usable_many` returns, in its own order, and never a sliver.

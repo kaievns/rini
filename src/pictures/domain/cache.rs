@@ -160,6 +160,9 @@ impl<T> Delivered<T> {
     }
 
     pub fn forget(&mut self, window: WindowId) { self.last.retain(|(_, held), _| *held != window); }
+
+    /// Every client is done with what it was delivered: what a region holds of its composite goes.
+    pub fn clear(&mut self) { self.last.clear(); }
 }
 
 #[cfg(test)]
