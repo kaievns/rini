@@ -597,8 +597,7 @@ impl Reactor {
         );
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
-        reactor.communication_manager.transitions_tx = transitions_tx;
-        reactor.publish_journal();
+        reactor.connect_transitions(transitions_tx);
         reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
@@ -4187,6 +4186,13 @@ impl Reactor {
 
     pub(crate) fn publish_animation_display(&self) {
         self.publish_animation_display_for(None);
+    }
+
+    /// The transitions engine the reactor drives, told at once whether to write its journal and
+    /// measure each lift's handover: it writes nothing until it hears.
+    fn connect_transitions(&mut self, transitions_tx: Option<crate::transitions::platform::engine::Sender>) {
+        self.communication_manager.transitions_tx = transitions_tx;
+        self.publish_journal();
     }
 
     /// Tells the transitions engine whether to write its journal and measure each lift's handover.
