@@ -58,15 +58,21 @@ const SKYLIGHT_VALUE_TYPES: [&str; 5] = [
 const TYPED: [&str; 3] = ["pictures", "animation", "transitions"];
 
 /// CG geometry, and the conversions into it and out of it, that a typed feature leaves to its
-/// `platform/`.
-const CG_GEOMETRY: [&str; 6] = [
+/// `platform/`. Bare names, so a conversion called, passed as a path or imported as a trait all count.
+const CG_GEOMETRY: [&str; 8] = [
     "objc2_core_foundation",
     "CGRect",
     "CGPoint",
     "CGSize",
-    ".to_cg(",
-    "from_cg(",
+    "to_cg",
+    "from_cg",
+    "ToCg",
+    "FromCg",
 ];
+
+/// The one place a size or a displacement crosses point spaces: `Respace`'s two impls, each a
+/// `fn respace` line in this file.
+const RESPACE: &str = "crates/rini-geometry/src/space.rs";
 
 /// Still on both sides of the domain/platform line: a pure model mixed with the reads that fill it.
 /// `screen.rs` wants splitting on the `System` trait it is already generic over. Nothing may be added
@@ -215,10 +221,12 @@ fn a_typed_feature_names_no_cg_geometry_outside_platform() {
             }
         }
     }
-    for path in rust_files(Path::new("src")) {
+    for path in rust_files(Path::new("src")).into_iter().chain(rust_files(Path::new("crates"))) {
+        let name = slash(&path);
         for (line, code) in code_lines(&path) {
-            if code.contains("cast_unit") {
-                broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+            let respace = name == RESPACE && code.starts_with("fn respace");
+            if code.contains("cast_unit") && !respace {
+                broken.push(format!("{name}:{line}: {}", code.trim()));
             }
         }
     }

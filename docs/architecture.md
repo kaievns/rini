@@ -93,7 +93,7 @@ permission, builds every actor and joins them.
    features not yet on rini-geometry's spaces, where they are the arithmetic
    every layout decision is in; `TYPED` in `tests/architecture.rs` lists those
    that are, and outside their `platform/` they name no CG geometry and convert
-   into it nowhere. So are the window server's
+   to or from it nowhere. So are the window server's
    plain value types (`SpaceId`, `WindowServerId`, `DisplayReconfigFlags`), which
    are vocabulary rather than API.
 3. **Features depend on features in one direction.** `windows` is the most
@@ -136,7 +136,8 @@ permission, builds every actor and joins them.
 dependency on it. One file is named as an exception, and a further test fails if
 it stops needing to be. `a_typed_feature_names_no_cg_geometry_outside_platform`
 holds each feature in `TYPED` to rini-geometry's spaces outside its `platform/`, no CG geometry and
-no `from_cg` or `to_cg` there, and keeps `cast_unit` out of `src/`. Rule 4 the compiler checks: a crate cannot name the
+no `from_cg`, `to_cg`, `FromCg` or `ToCg` there, and keeps `cast_unit` in `src/` and `crates/` to
+`Respace`'s two impls. Rule 4 the compiler checks: a crate cannot name the
 application's modules. `cargo build` catches the crudest breaches of rule 7 —
 an unread field or an unreachable branch is a warning, and the build carries
 none. Rules 3, 5, 6 and the rest of 7 are conventions.
