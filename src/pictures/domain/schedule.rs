@@ -20,7 +20,8 @@ use crate::pictures::domain::watch::{Hint, OnScreen, Outcome, Seen, Set, Tag, Wa
 pub enum Priority {
     /// A focus target ending clipped by the display's edge, which SkyLight cannot picture whole.
     Focus,
-    /// Every window on the display, after a display change or on the debug command.
+    /// Every window on the display, after a display change or on the debug command; and a window whose
+    /// look turned with the key window, which keeps the size the cache holds it at.
     Background,
     /// Windows named for a later transition or the switcher: skipped where the picture held fits and is
     /// fresh.
@@ -780,8 +781,8 @@ mod tests {
         assert!(schedule.owed().all(|window| window != wid(1)), "dropped, not kept waiting");
     }
 
-    /// A clipped focus end and the display's visible windows are captured whatever is held: neither is
-    /// about a size the cache could already have.
+    /// A clipped focus end, the display's visible windows and a turned look are captured whatever is
+    /// held: none is about a size the cache could already have.
     #[test]
     fn only_a_warm_is_filtered() {
         let now = Instant::now();

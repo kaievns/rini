@@ -213,6 +213,12 @@ names only while its flight is up (`keep_focused`), is dropped there and then ra
 **Nothing hints a window placed.** `Hint::Placed` reads a window's frame at once rather than at the
 next poll; nothing sends it yet, so a landing is seen at the next 1ms poll.
 
+**A look turned at rest is a capture of the window alone.** A change of the key window is pictured
+again through ScreenCaptureKit, and the cache keeps a picture carrying its window's blur over a capture
+of the same size without it. A window with a material keeps the look of its last SkyLight picture
+until a flight next pictures it on screen. A SkyLight ask of the turned windows wholly on screen would
+carry the blur.
+
 **The cache is a registry too.** A border companion may never be a window rini manages, and the engine
 learns which those are from `Pictures::windows`, the windows with a picture held or owed. The managed
 set belongs to the reactor's world; it comes from there once the coordinator composes flights.

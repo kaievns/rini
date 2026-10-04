@@ -240,6 +240,9 @@ pub enum Event {
     Quiet(Generation),
     /// The shell could not stage or show the transition: no overlay, no display.
     Abandon,
+    /// The key window changed, which turned these windows' looks, each at the frame it is at: the one
+    /// that became key and the one that stopped being.
+    LooksTurned(Vec<(WindowId, CGRect)>),
 }
 
 /// What the shell carries out.
@@ -285,6 +288,9 @@ pub enum Command {
     Lift { generation: Generation },
     /// Pictures for the next transition of every window the flight drew, at the frame each ended at.
     Warm(Vec<(WindowId, CGRect)>),
+    /// Fresh pictures of windows whose look turned with the key window, whatever the cache holds of
+    /// them: a warm skips a picture that fits, and a focus change never changes a size.
+    Refresh(Vec<(WindowId, CGRect)>),
     /// The overlay went up for a flight not already reported.
     ReportUp,
     ReportSettled,
@@ -365,6 +371,10 @@ struct Flight {
     /// Every window this flight drew, across its merged passes, at the frame it last ended at: what
     /// the quiet warms.
     animated: Vec<(WindowId, CGRect)>,
+    /// Every window whose look the key window turned while the flight ran that no picture since has
+    /// shown: what the quiet pictures afresh. The window losing focus that ends clipped or parked,
+    /// and a target whose change no capture saw, are never pictured in flight.
+    turned: Vec<(WindowId, CGRect)>,
 }
 
 impl Flight {
@@ -429,7 +439,8 @@ enum State {
     #[default]
     Idle,
     Flying(Box<Flight>),
-    Settling { generation: Generation, owed: Vec<(WindowId, CGRect)> },
+    /// `owed` is warmed at the quiet, and `turned` pictured afresh then (`Flight::turned`).
+    Settling { generation: Generation, owed: Vec<(WindowId, CGRect)>, turned: Vec<(WindowId, CGRect)> },
 }
 
 /// The lifecycle. One per overlay.
@@ -514,19 +525,28 @@ impl Coordinator {
                     out.push(Command::StopWatches);
                     out.push(Command::Release);
                     out.push(Command::Warm(f.animated));
+                    refresh(f.turned, &mut out);
                     out.push(Command::ReportSettled);
                 }
             }
             Event::Quiet(generation) => {
-                if let State::Settling { generation: g, owed } = &mut self.state
+                if let State::Settling { generation: g, owed, turned } = &mut self.state
                     && *g == generation
                 {
                     out.push(Command::Release);
                     out.push(Command::Warm(std::mem::take(owed)));
+                    refresh(std::mem::take(turned), &mut out);
                     out.push(Command::ReportSettled);
                     self.state = State::Idle;
                 }
             }
+            // At rest nothing else will picture them; a flight pictures the ends it lands and swaps,
+            // and its quiet the rest.
+            Event::LooksTurned(windows) => match &mut self.state {
+                State::Idle => refresh(windows, &mut out),
+                State::Flying(f) => extend_latest(&mut f.turned, windows.into_iter()),
+                State::Settling { turned, .. } => extend_latest(turned, windows.into_iter()),
+            },
         }
         out
     }
@@ -534,9 +554,9 @@ impl Coordinator {
     fn begin(&mut self, stage: StageSummary, now: Instant, out: &mut Vec<Command>) {
         // A press inside the quiet carries the work owed to the next quiet, and the flight already
         // reported stays the one reported.
-        let (owed, reported) = match std::mem::take(&mut self.state) {
-            State::Settling { owed, .. } => (owed, true),
-            State::Idle => (Vec::new(), false),
+        let (owed, turned, reported) = match std::mem::take(&mut self.state) {
+            State::Settling { owed, turned, .. } => (owed, turned, true),
+            State::Idle => (Vec::new(), Vec::new(), false),
             flying @ State::Flying(_) => {
                 self.state = flying;
                 let moved = true;
@@ -575,6 +595,7 @@ impl Coordinator {
             end_since,
             held: Vec::new(),
             animated,
+            turned,
         }));
         if !reported {
             out.push(Command::ReportUp);
@@ -631,6 +652,11 @@ impl Coordinator {
 
     fn picture(&mut self, generation: Generation, window: WindowId, frame: CGRect, why: Why, now: Instant, out: &mut Vec<Command>) {
         let State::Flying(f) = &mut self.state else { return };
+        // Every delivery is in the cache, so the window's look now is too; frame zero's was taken at
+        // the press, before any turn.
+        if why != Why::FrameZero {
+            f.turned.retain(|(w, _)| *w != window);
+        }
         let Some(tile) = f.stage.tile(window) else { return };
         if why == Why::FrameZero {
             // Taken at the press, before any picture of the end: the cache's picture it replaces is
@@ -724,10 +750,11 @@ impl Coordinator {
                 if (settled && landed) || overdue {
                     let generation = f.generation;
                     let owed = std::mem::take(&mut f.animated);
+                    let turned = std::mem::take(&mut f.turned);
                     out.push(Command::StopWatches);
                     out.push(Command::Lift { generation });
                     out.push(Command::Settle);
-                    self.state = State::Settling { generation, owed };
+                    self.state = State::Settling { generation, owed, turned };
                 }
             }
         }
@@ -772,6 +799,12 @@ fn show(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
         f.phase = Phase::Coalescing { until: now + COALESCE_WINDOW };
     } else {
         hold_or_move(f, now, out);
+    }
+}
+
+fn refresh(turned: Vec<(WindowId, CGRect)>, out: &mut Vec<Command>) {
+    if !turned.is_empty() {
+        out.push(Command::Refresh(turned));
     }
 }
 
@@ -1666,15 +1699,83 @@ mod tests {
     }
 
     #[test]
-    fn an_abandoned_transition_places_its_windows_and_releases_the_hold() {
+    fn an_abandoned_transition_places_its_windows_pictures_the_looks_it_owed_and_releases_the_hold() {
         let now = Instant::now();
         let mut c = Coordinator::default();
         c.on(Event::Begin(pan()), now);
+        let turned = vec![(w(2), pan().tiles[1].end), (w(1), pan().tiles[0].start)];
+        c.on(Event::LooksTurned(turned.clone()), now);
         let out = c.on(Event::Abandon, now);
         assert_eq!(writes(&out), pan().final_frames);
         assert!(has(&out, |c| *c == Command::Release) && has(&out, |c| *c == Command::ReportSettled));
+        assert!(has(&out, |c| *c == Command::Refresh(turned.clone())), "nothing flew to picture them");
         assert!(!c.is_flying());
         assert!(c.on(Event::Abandon, now).is_empty());
+    }
+
+    /// A focus change alters a window's look and never its size, and a warm skips a picture that
+    /// fits: with nothing flying, both ends are asked for again at once.
+    #[test]
+    fn a_look_turned_at_rest_is_pictured_afresh_at_once() {
+        let now = Instant::now();
+        let mut c = Coordinator::default();
+        let turned = vec![(w(2), r(3.0, 35.0, 860.0, 1079.0)), (w(1), r(866.0, 35.0, 860.0, 1079.0))];
+        assert_eq!(c.on(Event::LooksTurned(turned.clone()), now), vec![Command::Refresh(turned)]);
+        assert!(c.on(Event::LooksTurned(Vec::new()), now).is_empty());
+        assert!(!c.is_flying());
+    }
+
+    /// In flight, the watches picture the ends they can and the quiet pictures the rest: here the
+    /// target's change came in, while the window losing focus had only its frame-zero picture, taken
+    /// before the turn, and the window parked at both ends had none.
+    #[test]
+    fn a_look_turned_in_flight_is_pictured_at_the_quiet_unless_the_flight_pictured_it_since() {
+        let now = Instant::now();
+        let stage = pan();
+        let (a_start, a_end, b_end) = (stage.tiles[0].start, stage.tiles[0].end, stage.tiles[1].end);
+        let parked = r(1727.0, 35.0, 860.0, 1079.0);
+        let mut c = running(stage, now);
+        let turned = vec![(w(2), b_end), (w(1), a_end), (w(5), parked)];
+        assert!(c.on(Event::LooksTurned(turned), now).is_empty(), "nothing is asked behind the overlay");
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(1), frame: a_start, why: Why::FrameZero }, now);
+        let changed = Duration::from_millis(60);
+        c.on(Event::Picture { generation: g, window: w(2), frame: b_end, why: Why::FocusChanged }, now + changed);
+        let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
+        let Some(Command::Lift { generation }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!("{out:?}") };
+        let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
+        assert_eq!(
+            out,
+            vec![
+                Command::Release,
+                Command::Warm(vec![(w(1), a_end), (w(2), b_end), (w(9), r(224.0, 95.0, 600.0, 400.0))]),
+                Command::Refresh(vec![(w(1), a_end), (w(5), parked)]),
+                Command::ReportSettled,
+            ]
+        );
+    }
+
+    /// A turn reported after the lift waits for the quiet, and a press inside the quiet carries it to
+    /// its own quiet, unless that flight pictures it.
+    #[test]
+    fn a_look_turned_while_settling_waits_for_the_quiet_a_press_inside_it_carries() {
+        let now = Instant::now();
+        let mut c = running(pan(), now);
+        let lifted = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
+        let Some(Command::Lift { generation: first }) = lifted.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
+        let parked = r(1727.0, 35.0, 860.0, 1079.0);
+        let after = now + PLAYS + Duration::from_millis(50);
+        assert!(c.on(Event::LooksTurned(vec![(w(5), parked), (w(2), pan().tiles[1].end)]), after).is_empty());
+        let pressed = after + Duration::from_millis(50);
+        c.on(Event::Begin(pan()), pressed);
+        assert!(c.on(Event::Quiet(first), now + PLAYS + SETTLE_BEFORE_CAPTURES).is_empty());
+        let g = c.generation();
+        c.on(Event::FrameZero(g), pressed);
+        c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::Landed }, pressed);
+        let out = c.on(Event::Tick { settled: true, landed: true }, pressed + PLAYS);
+        let Some(Command::Lift { generation: second }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
+        let out = c.on(Event::Quiet(second), pressed + PLAYS + SETTLE_BEFORE_CAPTURES);
+        assert!(has(&out, |c| *c == Command::Refresh(vec![(w(5), parked)])), "{out:?}");
     }
 
     #[test]

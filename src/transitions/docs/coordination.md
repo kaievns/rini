@@ -215,8 +215,8 @@ focused look, and focus hands over (`HandOverFocus`): the target's ring and shad
 and the window left's not (`TileOverlay::set_tile_focused`). The window left is pictured again by the
 final capture if it ends wholly on screen and its look has changed by then; one ending clipped by the
 display's edge keeps its frame-zero picture to the lift, only its ring and shadow turning, and its look
-turns at rest: SkyLight returns only its visible part, and the one ScreenCaptureKit capture a flight
-lets through is the target's ("Decisions taken while Kai was away" in
+turns at rest, pictured again at the quiet: SkyLight returns only its visible part, and the one
+ScreenCaptureKit capture a flight lets through is the target's ("Decisions taken while Kai was away" in
 `docs/pictures-motion-transitions.md`). The target is pictured again by the final capture too, if its
 change watch ran out first, and that hands focus over. If nothing has handed it over when the final capture is asked, focus
 hands over then, while the flight still moves: the window is reported focused, and a look that never
@@ -228,6 +228,22 @@ target clipped by the display edge where it ends takes one ScreenCaptureKit capt
 only one a transition lets through: SkyLight returns only its visible sliver ("A clipped destination
 needs ScreenCaptureKit, not SkyLight" in `src/pictures/docs/capture-research.md`). A flight that moves
 focus nowhere watches no change.
+
+**Looks turned with the key window.** Every change of the key window the reactor hears of, rini's own
+raise included, reaches the engine as the two windows whose look it turned, each at the frame the
+reactor has it at (`Event::LooksTurned`; the key window is `MainWindowTracker::key_window`, the window
+server's report while the application in front owns it, so another application's panel taking the keys
+turns the window under it too). With nothing flying the coordinator asks for both at once
+(`Command::Refresh`): a warm drops a picture that fits and a focus change never changes a size, so a
+window kept the look it had until it was resized, in the switcher and in the next flight. In flight it
+owes them to the quiet, and any picture the flight is delivered of one after the turn, a landing, its
+focus change or the final capture, pays that one off, since the cache holds it. What is left, the
+window losing focus that ends clipped or parked and a target whose change no capture saw, is asked for
+at the quiet after the warm; a press inside the quiet carries it to its own. A refresh is a
+ScreenCaptureKit capture at background priority, which waits through any hold: a click whose report
+reaches the engine just before the request for the flight it starts would otherwise have started two
+captures under that flight's frame zero, as focus priority does. A window whose picture carries its blur
+keeps it, since the capture is of the window alone ("Known debt" in `src/pictures/docs/README.md`).
 
 The recapture this replaced cut both ends of a focus change mid-flight, at 0.25 and 0.55 of the
 flight, through ScreenCaptureKit and a framed capture. Asked at 0.53 through the service, its pictures
@@ -286,7 +302,9 @@ display on its first pass was tried first and missed most of them: apps are
 found one by one, and that pass knew one window of 21, so the first switch
 still flew 8 of 16 windows with no picture. After the lift the owed captures wait for a quiet period
 (`SETTLE_BEFORE_CAPTURES`, 400ms; the coordinator's `Event::Quiet`), which warms every window the
-flight drew, across its merged passes, at the frame it last ended at.
+flight drew, across its merged passes, at the frame it last ended at, and asks afresh for every window
+whose look the key window turned that the flight did not picture since ("Looks turned with the key
+window").
 They used to run the instant the overlay lifted and took 600-800ms (8-15
 window captures and the desktop render), so a press inside that window flew
 the next flight against a busy compositor: frame-difference profiles of a

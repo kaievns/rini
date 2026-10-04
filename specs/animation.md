@@ -289,6 +289,15 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A flight that moves focus nowhere MUST NOT recapture through ScreenCaptureKit, and MUST NOT watch for
   a change of focus: no report comes to arm the watch, and one left waiting holds the windows behind
   the strip back for the whole flight.
+- Both windows a change of the key window turns, the one that becomes key and the one that stops being,
+  MUST be pictured again for the next flight and the switcher, whoever moved focus: a click, rini's own
+  move, or another application's panel taking the keys. With nothing flying both MUST be asked for at
+  once; in flight, each one no picture of the flight showed after the change MUST be asked for at the
+  quiet after the lift, the window losing focus that ends clipped or parked among them. A focus change
+  alters a window's look and never its size, and a picture that still fits was never taken again for
+  its own sake, so a window kept the look it had until it was resized, and its tile turned at the lift.
+  A window whose picture carries its blur keeps it over this capture of the window alone, and its look
+  turns when a flight next pictures it on screen.
 - Once the overlay is up, a tile MUST change its picture only for one the flight took: frame zero's
   coming after the overlay went up without it, as its window lands, as the window gaining focus
   changes its look, as a floating window behind the strip is refreshed, or just before the lift. A

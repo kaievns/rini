@@ -461,12 +461,17 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
 }
 
 /// Every focus report reaches the pictures service as a hint, rini's own raise's included: the hint
-/// arms the watch on the focus target's look, which is how a flight draws focus handing over, and
-/// nothing is captured through ScreenCaptureKit for it.
+/// arms the watch on the focus target's look, which is how a flight draws focus handing over. Every
+/// report that changes the key window tells the flight engine both windows whose look it turned, at
+/// their frames, so they are pictured again with nothing flying; a report of the window already key
+/// turns none. The reactor asks for no picture of either itself: the engine knows whether a flight
+/// will picture them.
 #[test]
-fn every_focus_report_hints_the_pictures_service() {
+fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_whose_look_turned() {
+    use crate::pictures::domain::schedule::Priority;
     use crate::pictures::domain::watch::Hint;
     use crate::pictures::platform::service::Command as Asked;
+    use crate::transitions::platform::engine::Event as Engine;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -476,15 +481,16 @@ fn every_focus_report_hints_the_pictures_service() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
+    reactor.main_window_tracker.set_focus_for_test(leaving);
 
     let mut pictures = reactor.connect_test_pictures();
+    let (transitions_tx, mut transitions_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(transitions_tx);
 
-    // A click elsewhere, and rini's own raise coming back.
-    for window in [arriving, leaving] {
+    // A click elsewhere, rini's own raise coming back, and the window already key reported again.
+    for window in [arriving, leaving, leaving] {
         reactor.handle_event(Event::WindowServerFocusChanged(window, space));
     }
-    reactor.send_layout_event(LayoutEvent::WindowFocused(space, arriving));
-    reactor.handle_event(Event::WindowServerFocusChanged(arriving, space));
 
     let asked = pictures_asked(&mut pictures);
     let hinted: Vec<WindowId> = asked
@@ -494,10 +500,23 @@ fn every_focus_report_hints_the_pictures_service() {
             _ => None,
         })
         .collect();
-    assert_eq!(hinted, [arriving, leaving, arriving]);
+    assert_eq!(hinted, [arriving, leaving, leaving]);
+    for priority in [Priority::Focus, Priority::Background] {
+        assert!(asked_at(&asked, priority).is_empty(), "the reactor captures neither end itself: {priority:?}");
+    }
+    let frame = |window: WindowId| reactor.state.windows.window(window).unwrap().frame_monotonic;
+    let mut turned = Vec::new();
+    while let Ok((_, event)) = transitions_rx.try_recv() {
+        if let Engine::LooksTurned(windows) = event {
+            turned.push(windows);
+        }
+    }
+    let ends: Vec<Vec<WindowId>> =
+        turned.iter().map(|ends| ends.iter().map(|(window, _)| *window).collect()).collect();
+    assert_eq!(ends, vec![vec![arriving, leaving], vec![leaving, arriving]]);
     assert!(
-        asked_at(&asked, crate::pictures::domain::schedule::Priority::Focus).is_empty(),
-        "no ScreenCaptureKit capture of either end"
+        turned.iter().flatten().all(|(window, at)| at.size == frame(*window).size),
+        "each at the frame the reactor has it at: {turned:?}"
     );
 }
 

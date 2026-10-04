@@ -106,6 +106,9 @@ pub enum Event {
     Tick,
     /// The quiet after the lift of `Generation` ran out. Posted by the quiet timer.
     Quiet(Generation),
+    /// The key window changed, which turned these windows' looks, each at the frame it is at. Sent by
+    /// the reactor for every change it hears of, rini's own raises' included.
+    LooksTurned(Vec<(WindowId, CGRect)>),
     /// What the pictures service landed. Posted by its sink.
     Pictures(crate::pictures::event::Event),
 }
@@ -559,9 +562,19 @@ fn on_screen(
     }
 }
 
-/// The warms the quiet asks for: each window at the size it ended at.
-fn warm_targets(windows: Vec<(WindowId, CGRect)>) -> Vec<PictureTarget> {
+/// Each window at the size of `frame`: what the quiet warms, at the frame each ended at, and what a
+/// turned look is asked for at.
+fn sized_targets(windows: Vec<(WindowId, CGRect)>) -> Vec<PictureTarget> {
     windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
+}
+
+/// Windows whose look turned with the key window, at background priority: no warm filter drops it
+/// for a picture that fits, and it waits for any transition's release.
+fn refresh(windows: Vec<(WindowId, CGRect)>) -> Ask {
+    Ask {
+        priority: Priority::Background,
+        targets: sized_targets(windows),
+    }
 }
 
 /// The radius a tile of `size` clips its picture to: a SkyLight picture of a window baked with the
@@ -776,6 +789,7 @@ impl FlightEngine {
                 self.drive(lifecycle::Event::Quiet(generation));
             }
             Event::Pictures(landed) => self.pictures_landed(landed),
+            Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
         }
     }
 
@@ -838,10 +852,11 @@ impl FlightEngine {
                 if !windows.is_empty() {
                     self.pictures.ask(Ask {
                         priority: Priority::Warm,
-                        targets: warm_targets(windows),
+                        targets: sized_targets(windows),
                     });
                 }
             }
+            Command::Refresh(windows) => self.pictures.ask(refresh(windows)),
             Command::ReportUp => self.report(true),
             Command::ReportSettled => self.report(false),
         }
@@ -2268,7 +2283,17 @@ mod tests {
             assert_eq!(ask.strip, vec![(target, at)]);
             assert_eq!(ask.background.len(), 1);
             assert_eq!(ask.behind, vec![WindowServerId::new(9)]);
-            assert_eq!(warm_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
+            assert_eq!(sized_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
+        }
+
+        /// A turned look keeps the size it had, so a warm would drop it; asked at focus priority, it
+        /// would start ScreenCaptureKit through the hold of a flight the same click begins.
+        #[test]
+        fn a_turned_look_is_asked_at_background_priority_at_the_size_it_is_at() {
+            let at = rect(4.0, 32.0, 859.0, 1081.0);
+            let ask = refresh(vec![(wid(1), at)]);
+            assert_eq!(ask.priority, Priority::Background);
+            assert_eq!(ask.targets, sized_targets(vec![(wid(1), at)]));
         }
 
         #[test]
