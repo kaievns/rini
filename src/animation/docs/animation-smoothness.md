@@ -717,7 +717,14 @@ changes is how the picture maps onto it (`content_mode` in
   stretching); it kept the corners but read as the window stretching, which
   it is. Wrong-shaped cached pictures use the same mapping instead of being
   dropped — rapid preset cycling used to drop the resized window's tile
-  because its picture lagged one press behind.
+  because its picture lagged one press behind. A picture that is a region of
+  a composite (step 2 of `docs/pictures-motion-transitions.md`) is drawn the
+  same way: each piece's contents are composed with the tile's region
+  (`within`), at rest and at both ends of a resize, and the pieces stay inside
+  it however the frame grows, so no piece shows the composite's next window
+  (`a_region_pictures_crop_pieces_show_only_the_region`,
+  `the_crop_grid_of_a_region_stays_in_the_region`). Until pictures are regions
+  the region is the whole picture.
 - **The animation is Core Animation end to end.** Piece frames and
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids

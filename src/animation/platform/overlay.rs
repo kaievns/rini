@@ -30,8 +30,8 @@ use crate::animation::domain::motion::plan::{
 use crate::animation::domain::motion::score::{Curve, Value};
 use crate::animation::domain::motion::strip_move::nudge_samples;
 use crate::animation::domain::motion::tile::{
-    ContentMode, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
-    resize_in_flight,
+    ContentMode, DressingAction, WHOLE, content_mode, crop_pieces, dressing_rebuild_allowed,
+    resize_in_flight, within,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::displays::domain::screen::CoordinateConverter;
@@ -482,6 +482,10 @@ struct Tile {
     crop_grid: Option<CropGrid>,
     /// Size in points of the picture the crop pieces show; `None` when stretching.
     crop_of: Option<CGSize>,
+    /// The part of the contents image that is the tile's picture, in unit coordinates, which the
+    /// crop pieces' contents are composed with: all of it until a picture is a region of a
+    /// composite.
+    region: CGRect,
     /// When the installed resize animation ends; a mismatched hairline is deferred until then.
     resize_until: Option<Instant>,
     /// The resize leg the tile is riding, so a picture swap re-installs it on the same timing.
@@ -1415,18 +1419,7 @@ impl TileOverlay {
             .shadow_mask
             .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
 
-        if let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) {
-            let from_pieces = crop_pieces(picture, from.size);
-            let to_pieces = crop_pieces(picture, to.size);
-            for ((layer, a), b) in grid.pieces.iter().zip(from_pieces).zip(to_pieces) {
-                animate_layer_frame(layer, a.frame, b.frame, timing, "rini.piece");
-                let contents = rect_animation("contentsRect", a.contents, b.contents, timing);
-                layer.addAnimation_forKey(
-                    &contents,
-                    Some(&NSString::from_str("rini.piece.contents")),
-                );
-            }
-        }
+        animate_crop_grid(entry, from.size, to.size, timing);
 
         if let (Some(from_layout), Some(to_layout)) =
             (boundary_layout(from.size), boundary_layout(to.size))
@@ -1636,6 +1629,7 @@ fn new_tile(container: &CALayer) -> Tile {
         dressing: Vec::new(),
         crop_grid: None,
         crop_of: None,
+        region: WHOLE,
         resize_until: None,
         resize_leg: None,
         key: None,
@@ -1761,7 +1755,25 @@ fn layout_crop_grid(entry: &Tile, frame: CGSize) {
     };
     for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
         layer.setFrame(piece.frame);
-        layer.setContentsRect(piece.contents);
+        layer.setContentsRect(within(entry.region, piece.contents));
+    }
+}
+
+/// Carries a crop-drawn tile's pieces between the grids of two frame sizes on `timing`.
+fn animate_crop_grid(entry: &Tile, from: CGSize, to: CGSize, timing: Timing) {
+    let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) else {
+        return;
+    };
+    let pieces = crop_pieces(picture, from).into_iter().zip(crop_pieces(picture, to));
+    for (layer, (a, b)) in grid.pieces.iter().zip(pieces) {
+        animate_layer_frame(layer, a.frame, b.frame, timing, "rini.piece");
+        let contents = rect_animation(
+            "contentsRect",
+            within(entry.region, a.contents),
+            within(entry.region, b.contents),
+            timing,
+        );
+        layer.addAnimation_forKey(&contents, Some(&NSString::from_str("rini.piece.contents")));
     }
 }
 
@@ -2389,5 +2401,60 @@ mod tests {
         }
         assert!(kept(10.0, 10.0));
         assert!(kept(1700.0, 1080.0));
+    }
+
+    /// A crop-drawn tile whose picture is a region of a composite shows that region in every
+    /// piece: each piece's contents composed with it, at rest and at both ends of a resize.
+    #[test]
+    fn a_region_pictures_crop_pieces_show_only_the_region() {
+        let container = CALayer::layer();
+        let mut tile = new_tile(&container);
+        tile.crop_grid = Some(new_crop_grid(&tile.picture));
+        let picture = CGSize::new(856.0, 1081.0);
+        tile.crop_of = Some(picture);
+        tile.region = rect(0.5, 0.0, 0.5, 1.0);
+        let frame = CGSize::new(600.0, 1081.0);
+        layout_crop_grid(&tile, frame);
+        let grid = tile.crop_grid.as_ref().unwrap();
+        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+            assert_eq!(layer.contentsRect(), within(tile.region, piece.contents));
+            assert!(
+                layer.contentsRect().origin.x >= 0.5,
+                "{:?}",
+                layer.contentsRect()
+            );
+        }
+        let timing = Timing {
+            begin: 5.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let to = CGSize::new(300.0, 1081.0);
+        animate_crop_grid(&tile, frame, to, timing);
+        let ends = crop_pieces(picture, frame).into_iter().zip(crop_pieces(picture, to));
+        for (layer, (a, b)) in grid.pieces.iter().zip(ends) {
+            // SAFETY: a read of the layer's own animation.
+            let animation =
+                unsafe { layer.animationForKey(&NSString::from_str("rini.piece.contents")) }
+                    .expect("the contents ride the resize");
+            let animation = animation.downcast::<CABasicAnimation>().expect("a basic animation");
+            let value = |v: Option<Retained<objc2::runtime::AnyObject>>| {
+                let v = v.expect("a value");
+                // SAFETY: the value was made from a rect.
+                unsafe { v.downcast_ref::<NSValue>().expect("an NSValue").rectValue() }
+            };
+            assert_eq!(value(animation.fromValue()), within(tile.region, a.contents));
+            assert_eq!(value(animation.toValue()), within(tile.region, b.contents));
+        }
+        tile.region = WHOLE;
+        layout_crop_grid(&tile, frame);
+        let grid = tile.crop_grid.as_ref().unwrap();
+        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+            assert_eq!(
+                layer.contentsRect(),
+                piece.contents,
+                "a whole picture is unchanged"
+            );
+        }
     }
 }
