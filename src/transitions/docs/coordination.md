@@ -497,7 +497,7 @@ second in all. The frame resizes instantly
 while the app's pixels lag behind, and
 a capture taken between the two is a half-painted surface: delivering one
 flew the whole reveal with garbage. So a capture counts only when settled
-(`chase_settled`): it matches the previous print (`renderings_match` on
+(`repaint_settled`): it matches the previous print (`renderings_match` on
 32x32 RGBA thumbprints, a sample differing when any channel moves by more
 than 8, up to 3% of samples allowed so cursors and clocks do not stall it), or it differs from
 the picture cached before the resize, which means the app has repainted.

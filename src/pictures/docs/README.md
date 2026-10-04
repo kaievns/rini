@@ -16,7 +16,7 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, its corner radius, and the radius a window is drawn with until its own is measured; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
-| **Settled** | `domain/settle.rs` — when a chase's capture is the window's settled rendering, by thumbprint |
+| **Settled** | `domain/settle.rs` — when a capture of a window that has to repaint is its settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |
 | **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be, and the id a window rini does not manage is pictured under |
@@ -89,8 +89,8 @@ until a time, or nothing.
 
 | Rule | Why |
 |---|---|
-| While a transition holds the service, only frame-zero and focus captures start | ScreenCaptureKit work queued at a focus change slows every step of it; what the transition waits for is the exception |
-| What waited starts at the release, most urgent first: frame zero, focus, background, warm | a capture of a focus end is never queued behind warms |
+| While a transition holds the service, only a focus capture starts, of a focus target clipped by the display's edge | ScreenCaptureKit work queued at a focus change slows every step of it: with four captures out the frame-zero capture took 92-97ms against 26-33; what the transition waits for is the exception |
+| What waited starts at the release, most urgent first: focus, background, warm | a capture of a focus end is never queued behind warms |
 | A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | a pass's warm is sent just after the flight it starts, and usually reaches the service before that flight's hold |
 | A capture listed and unable to start through a hold is listed again at the release, as is one asked again at another size | the buffer a listing prepares is the size it found the window at, and the transition may resize it |
 | A warm is dropped where the picture held fits and is fresh (`wants_warm`) | re-capturing every animated window per keystroke is churn |
@@ -121,7 +121,7 @@ release: it is what a transition waits on.
 | Frame zero takes the windows within 2pt of where their tiles start and wholly on the display, the strip in one set and the background in another, and delivers everything in one delivery, even an empty one | the overlay waits for it, so it must always come; in one composite with the strip, a translucent window would bake what is behind it |
 | No two overlapping windows are in one call, and windows with different `behind` are never in one call | the crop of the window behind would show the one in front; a material blurs what is composited after it |
 | `Landing` reads each window's frame every 1ms, captures it once it is within `slack` (20pt) of its end and wholly on the display, and reports it `Lost` at `until`; `Placed` reads at once | the server rounds each window on its own and an app may settle a point or two off; a window that never lands must not hold anything up |
-| `Settle::Repainted` keeps capturing every 8ms, 125 times at most once there, until `chase_settled`, and delivers that capture whatever its band print; out of tries it is `Lost` | a grow or an entrance is not painted at its new size yet; the flight holds for it, so the picture must come or the hold must hear it will not |
+| `Settle::Repainted` keeps capturing every 8ms, 125 times at most once there, until `repaint_settled`, and delivers that capture whatever its band print; out of tries it is `Lost` | a grow or an entrance is not painted at its new size yet; the flight holds for it, so the picture must come or the hold must hear it will not |
 | `Change` starts at the window's focus report, captures it where it ends every 15ms, six times at most, and stops at the first band print that differs from the last picture delivered of it; with none delivered, the first capture is delivered as landed and the change judged from it; it spends no try before the window is there | a focus change shows in the title band; with nothing to compare, a first capture cannot be called a change |
 | A focus report is remembered for a second, and a `Change` watch created after it starts armed | the report came before the watch in 136 of 225 flights of the prototype, and 135 of those never captured the focus (D1) |
 | A `Change` window whose frame is where it ends but cut by the display's edge takes one ScreenCaptureKit capture, at focus priority, through the hold, delivered as its focus change; one already out is followed by its own | SkyLight captures only what is on a display, and `specs/animation.md` has the window gaining focus recaptured even clipped (`docs/pictures-motion-transitions.md`) |
@@ -212,17 +212,14 @@ only where the cache still holds the picture it was made of.
 **Nothing hints a window placed.** `Hint::Placed` reads a window's frame at once rather than at the
 next poll; nothing sends it yet, so a landing is seen at the next 1ms poll.
 
-**Frame zero's ScreenCaptureKit priority has no client.** The flight engine asks for the windows a
-flight has no picture of as warms, and the reactor hints a focus change instead of asking for both of
-its ends; `Priority::FrameZero` is asked by nothing, and `Priority::Focus` only by the clipped focus end.
-
 **The cache is a registry too.** A border companion may never be a window rini manages, and the engine
 learns which those are from `Pictures::windows`, the windows with a picture held or owed. The managed
 set belongs to the reactor's world; it comes from there once the coordinator composes flights.
 
 **A transition on a display before its first render lands composites on the main thread.** `dressing`
 takes the desktop, and the first time the bar, synchronously while the service holds none of that
-display. Step 4's coordinator waits for frame-zero pictures instead.
+display. The coordinator waits for frame zero's window pictures, not for a desktop: that would be one
+more ask at the begin.
 
 **The bar still captures on its own.** Its menu extras and its ground are pictured on the bar's own
 thread (`src/bar/platform/menu_extras.rs`), with its own pacing and its own pause for flights.

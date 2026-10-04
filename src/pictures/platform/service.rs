@@ -349,9 +349,6 @@ impl Pictures {
             .collect()
     }
 
-    /// The picture held of `window`, worth drawing or not.
-    pub fn get(&self, window: WindowId) -> Option<Picture> { self.lock().cache.get(window).cloned() }
-
     /// The last picture of `window` delivered as showing it focused, until a newer capture shows
     /// different content.
     pub fn focused(&self, window: WindowId) -> Option<Picture> { self.lock().cache.focused(window).cloned() }

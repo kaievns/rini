@@ -215,8 +215,8 @@ fn region(
     )
 }
 
-/// One framed capture of a window: the reveal chase's, the focus refresh's and a new window's at its
-/// spawn frame. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+/// One framed capture of a window: a new window's at its spawn frame. See "A window that opens" in
+/// `src/transitions/docs/coordination.md`.
 ///
 /// For a window wholly on a display, the picture also gets its blur back: a second capture of the
 /// window with everything below it, merged in by `translucency::merge`. About 14ms, measured, which is

@@ -15,8 +15,7 @@ use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::CGRectExt;
 
 use crate::pictures::domain::print::print_changed;
-use crate::pictures::domain::schedule::{REVEAL_CHASE_ATTEMPTS, REVEAL_CHASE_INTERVAL};
-use crate::pictures::domain::settle::chase_settled;
+use crate::pictures::domain::settle::repaint_settled;
 use crate::pictures::domain::target::PictureTarget;
 
 /// A window whose server frame is this close to where it ends, in each of x, y, width and height,
@@ -32,6 +31,10 @@ pub const LANDING_POLL: Duration = Duration::from_millis(1);
 /// How often, and how many times, a window reported focused is captured until its look changes.
 pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
+/// How often, and how many times at most, a window that has to repaint is captured once it is where
+/// it ends: about a second. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+pub const REPAINT_EVERY: Duration = Duration::from_millis(8);
+pub const REPAINT_TRIES: usize = 125;
 /// The least time between two refreshes of the windows behind the strip.
 pub const LIVE_EVERY: Duration = Duration::from_millis(16);
 /// A refresh behind the strip waits for a change capture due this soon.
@@ -100,9 +103,9 @@ pub struct WatchId(pub u64);
 pub enum Settle {
     /// The first capture once the window is there.
     AsSoonAsThere,
-    /// The first capture whose rendering has settled, by `chase_settled`: for a window a transition
+    /// The first capture whose rendering has settled, by `repaint_settled`: for a window a transition
     /// holds its flight for, which grows or opens and is not painted at its new size yet. Captured every
-    /// `REVEAL_CHASE_INTERVAL`, `REVEAL_CHASE_ATTEMPTS` times at most once there.
+    /// `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there.
     Repainted,
 }
 
@@ -840,7 +843,7 @@ fn land(
             lands.state = Arrival::Pending;
             return;
         }
-        Arrival::Pending => (REVEAL_CHASE_ATTEMPTS, None),
+        Arrival::Pending => (REPAINT_TRIES, None),
         Arrival::Settling { left, last, .. } => (left, last),
         done @ (Arrival::Arrived | Arrival::Lost) => {
             lands.state = done;
@@ -858,7 +861,7 @@ fn land(
     let thumb = there.and_then(|(_, seen)| seen.thumb.clone());
     let settled = thumb
         .as_deref()
-        .is_some_and(|thumb| chase_settled(last.as_deref(), thumb, lands.before.as_deref()));
+        .is_some_and(|thumb| repaint_settled(last.as_deref(), thumb, lands.before.as_deref()));
     match there {
         Some((frame, seen)) if settled => {
             news(prints, tag.client, window, &seen.band);
@@ -872,7 +875,7 @@ fn land(
             lands.state = Arrival::Settling {
                 left: left - 1,
                 last: thumb,
-                next: now + REVEAL_CHASE_INTERVAL,
+                next: now + REPAINT_EVERY,
             }
         }
     }
@@ -1343,7 +1346,7 @@ mod tests {
                 painting.set(painting.get() + 1);
             }
             assert!(watches.next(at + ms(7)).is_none(), "every 8ms");
-            at += REVEAL_CHASE_INTERVAL;
+            at += REPAINT_EVERY;
         };
         assert_eq!(rounds, 4, "1, 2, 3, then 3 again");
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
@@ -1365,7 +1368,7 @@ mod tests {
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
     }
 
-    /// One that never settles is given up on after the chase's attempts, as the reveal chase did.
+    /// One that never settles is given up on after `REPAINT_TRIES` captures.
     #[test]
     fn a_repainting_landing_that_never_settles_is_lost() {
         let start = Instant::now();
@@ -1379,7 +1382,7 @@ mod tests {
         let counter = std::cell::Cell::new(0u8);
         let mut at = start;
         let mut lost = Vec::new();
-        for _ in 0..REVEAL_CHASE_ATTEMPTS {
+        for _ in 0..REPAINT_TRIES {
             let (_, outcome) = round(
                 &mut watches,
                 at,
@@ -1392,7 +1395,7 @@ mod tests {
             .unwrap();
             assert!(outcome.deliveries.is_empty());
             lost.extend(outcome.lost);
-            at += REVEAL_CHASE_INTERVAL;
+            at += REPAINT_EVERY;
         }
         assert_eq!(lost, vec![(tag(1), wid(1))]);
         assert!(watches.next(at).is_none());
@@ -1832,5 +1835,12 @@ mod tests {
             !clipped(rect(2000.0, 32.0, 859.0, 1081.0), LAPTOP),
             "wholly off it"
         );
+    }
+
+    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+    #[test]
+    fn a_window_that_has_to_repaint_is_captured_every_8ms_for_a_second() {
+        assert_eq!(REPAINT_EVERY, Duration::from_millis(8));
+        assert_eq!(REPAINT_EVERY * REPAINT_TRIES as u32, Duration::from_secs(1));
     }
 }

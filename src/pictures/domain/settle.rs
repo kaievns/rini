@@ -20,8 +20,8 @@ fn renderings_match(a: &[u8], b: &[u8]) -> bool {
     (differing as f64) <= (a.len() as f64) * STABLE_MAX_DIFFERING
 }
 
-/// Whether a chase capture counts as the window's settled rendering.
-pub fn chase_settled(prev: Option<&[u8]>, print: &[u8], pre_resize: Option<&[u8]>) -> bool {
+/// Whether a capture of a window that has to repaint counts as its settled rendering.
+pub fn repaint_settled(prev: Option<&[u8]>, print: &[u8], pre_resize: Option<&[u8]>) -> bool {
     prev.is_some_and(|previous| renderings_match(previous, print))
         || pre_resize.is_some_and(|before| !renderings_match(before, print))
 }
@@ -53,18 +53,18 @@ mod tests {
     }
 
     #[test]
-    fn chase_settled_on_a_match_or_a_repaint() {
+    fn repaint_settled_on_a_match_or_a_repaint() {
         let p = vec![10u8; 64];
         let q = vec![200u8; 64];
-        assert!(!chase_settled(None, &p, None), "nothing to compare against");
-        assert!(chase_settled(Some(&p), &p, None), "two consecutive match");
+        assert!(!repaint_settled(None, &p, None), "nothing to compare against");
+        assert!(repaint_settled(Some(&p), &p, None), "two consecutive match");
         assert!(
-            chase_settled(None, &p, Some(&q)),
+            repaint_settled(None, &p, Some(&q)),
             "differs from the pre-resize picture"
         );
-        assert!(!chase_settled(None, &p, Some(&p)), "still the old rendering");
+        assert!(!repaint_settled(None, &p, Some(&p)), "still the old rendering");
         assert!(
-            chase_settled(Some(&q), &p, Some(&q)),
+            repaint_settled(Some(&q), &p, Some(&q)),
             "a repaint settles even after a change"
         );
     }
