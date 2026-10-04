@@ -1,5 +1,5 @@
 //! `gestures` and `animations`: the two trackpad swipes, dragging one window onto another, how the
-//! movements are drawn, and whether their journal is written.
+//! movements are drawn, and whether their journal is written and each lift's handover measured.
 
 use knus::span::Span;
 

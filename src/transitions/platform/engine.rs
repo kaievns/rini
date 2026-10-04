@@ -150,7 +150,8 @@ pub enum Event {
     LooksTurned(Vec<(WindowId, ScreenRect)>),
     /// What the pictures service landed. Posted by its sink.
     Pictures(crate::pictures::event::Event),
-    /// Whether the journal is written. Sent by the reactor at start and at each config reload.
+    /// Whether the journal is written and each lift's handover measured, which holds a lift's hide for
+    /// the overlay's own picture. Sent by the reactor at start and at each config reload.
     Journal(JournalSettings),
 }
 

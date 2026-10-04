@@ -4189,7 +4189,7 @@ impl Reactor {
         self.publish_animation_display_for(None);
     }
 
-    /// Tells the transitions engine whether to write its journal.
+    /// Tells the transitions engine whether to write its journal and measure each lift's handover.
     fn publish_journal(&self) {
         if let Some(tx) = &self.communication_manager.transitions_tx {
             _ = tx.send(crate::transitions::platform::engine::Event::Journal(self.config.settings.journal));

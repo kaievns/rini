@@ -70,7 +70,7 @@ HANDOVER = [
     ("edge_out", "edge out"),
 ]
 HEADLINE_KIND = "pan"
-RESEARCH = "research: 53.13 deployed engine, 2.67 prototype"
+RESEARCH = 'against "The handover, measured" in src/animation/docs/capture-overlay-research.md'
 
 
 def read(paths):

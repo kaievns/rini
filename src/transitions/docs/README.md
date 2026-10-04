@@ -43,8 +43,8 @@ as one movement.
 movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as
 it went out, a bounce, each of the three carrying its press (`Cause`: when the reactor took the event
 it answers, and what that was), the windows whose look each change of the key window turned
-(`Event::LooksTurned`), the display the overlay flies on, and whether the journal is written
-(`Event::Journal`). A pass, a movement and a bounce each name
+(`Event::LooksTurned`), the display the overlay flies on, and whether the journal is written and each
+lift's handover measured (`Event::Journal`). A pass, a movement and a bounce each name
 the `Look` a flight they begin moves by, and a movement and a bounce the press (`Cue`): the engine
 hands both to the look and matches on neither. The pictures service's sink, wired in
 `src/main.rs`, tells the engine what it delivered under the engine's tag, which watched windows'

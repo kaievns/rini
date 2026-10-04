@@ -396,7 +396,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   transitions once it has settled, and MUST NOT start a write while a transition is up, so writing
   adds nothing to the durations it records. The record MUST be at most two files: the current one,
   started afresh once it passes 50MB, and the one before it.
-- Turning the journal on or off MUST NOT change what is drawn or when.
+- Writing the journal or not MUST NOT change what is drawn or when; only measuring the handover may
+  (below), and `off` turns measuring off with the writing.
 - With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
   window ending wholly on screen, the mean RGB difference between the overlay's own picture just
   before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,

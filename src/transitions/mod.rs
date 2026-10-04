@@ -6,7 +6,8 @@
 //! picture is swapped in, when frames go out, when the overlay lifts, the lifecycle as a state
 //! machine, and its journal. `platform` is the flight engine, the actor that carries them out on the
 //! main thread with `crate::animation`'s renderer and `crate::pictures`' service, and the journal's
-//! writer. `settings` is whether the journal is written. Driven by the reactor. See
+//! writer. `settings` is whether the journal is written and each lift's handover measured, which holds
+//! a lift's hide for the overlay's own picture. Driven by the reactor. See
 //! `src/transitions/docs/README.md`.
 
 pub mod domain;

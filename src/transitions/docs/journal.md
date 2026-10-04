@@ -283,9 +283,9 @@ the rest it gives:
 `handover` reads every `handover` mark. Each window takes the kind and focus target of the generation
 that lifted, as the last `begin` or `merge` in it says, and is the focused window when it is that
 target. It prints the lifts measured against every lift held for the overlay's picture (each
-`hide`), how long each held, and interior, edge in and edge out
-by kind, focused window and other. The headline is edge in p99 of the focused window on `pan` flights,
-the research's 53.13 levels for the engine before the end-state mirror and 2.67 for the prototype.
+`hide`), how long each held, and interior, edge in and edge out by kind, focused window and other.
+The headline is edge in p99 of the focused window on `pan` flights, the row to read against "The
+handover, measured" in `src/animation/docs/capture-overlay-research.md`.
 
 ## What it does not record yet
 

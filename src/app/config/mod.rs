@@ -65,7 +65,8 @@ pub struct Settings {
     pub gestures: GestureSettings,
     pub switcher: crate::switcher::settings::SwitcherSettings,
     pub bar: crate::bar::settings::BarSettings,
-    /// `animations › journal`: whether every transition's journal is written.
+    /// `animations › journal`: whether every transition's journal is written, and each lift's handover
+    /// measured, which holds a lift's hide for the overlay's own picture.
     pub journal: crate::transitions::settings::JournalSettings,
     pub window_snapping: WindowSnappingSettings,
     pub run_on_start: Vec<StartupCommand>,
