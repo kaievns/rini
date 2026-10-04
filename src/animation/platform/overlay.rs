@@ -16,22 +16,21 @@ use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
-    CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
+    CATransaction, kCAMediaTimingFunctionLinear,
 };
 
-pub use crate::animation::domain::motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE, ease};
+use crate::animation::domain::motion::bounce::Bounce;
+use crate::animation::domain::motion::easing::{CubicBezier, MOTION_CURVE};
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
-pub(crate) use crate::animation::domain::motion::plan::{
-    AnimationTarget, animation_targets, carries_out_and_back,
-};
 use crate::animation::domain::motion::plan::{
-    Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented, group_relative,
-    stale_overlay_layers,
+    AnimationTarget, Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented,
+    animation_targets, carries_out_and_back, group_relative, stale_overlay_layers,
 };
+use crate::animation::domain::motion::score::{Curve, Value};
 use crate::animation::domain::motion::strip_move::nudge_samples;
-pub use crate::animation::domain::motion::tile::{
-    ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
-    lerp_rect, placeholder_mode, resize_in_flight,
+use crate::animation::domain::motion::tile::{
+    ContentMode, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
+    resize_in_flight,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::domain::timing::OutAndBack;
@@ -258,31 +257,47 @@ fn leg_animation(leg: &Leg) -> Retained<CAKeyframeAnimation> {
 /// One key per container bounce, separate from the movement's so the two compose.
 const BOUNCE_ANIMATION_KEY: &str = "rini.group.bounce";
 
-/// An additive position animation out to `overshoot` and back, so it rides a movement in flight
-/// and leaves the model position alone.
-fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAnimation> {
+/// The bounce on the container `key` from `begin`, as `Bounce::track` has it: its keys at their key
+/// times and a curve per way, additive so it rides a movement in flight and leaves the model
+/// position alone.
+fn bounce_animation(bounce: &Bounce, key: GroupKey, begin: f64) -> Retained<CAKeyframeAnimation> {
+    let track = bounce.track(key, begin);
     let animation =
         CAKeyframeAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
-    let rest = CGPoint::new(0.0, 0.0);
     // SAFETY: NSValues holding CGPoints are the value type Core Animation expects for "position".
     unsafe {
-        let values: Vec<Retained<objc2::runtime::AnyObject>> = [rest, overshoot, rest]
-            .into_iter()
+        let values: Vec<Retained<objc2::runtime::AnyObject>> = track
+            .keys()
+            .iter()
+            .map(|(_, value)| match value {
+                Value::Point(p) => *p,
+                Value::Rect(_) => unreachable!("a container's track holds points"),
+            })
             .map(|p| Retained::into_super(Retained::into_super(NSValue::valueWithPoint(p))))
             .collect();
         animation.setValues(Some(&NSArray::from_retained_slice(&values)));
     }
     let key_times: Vec<Retained<NSNumber>> =
-        [0.0, BOUNCE_TURN, 1.0].into_iter().map(NSNumber::numberWithDouble).collect();
+        track.keys().iter().map(|(t, _)| NSNumber::numberWithDouble(*t)).collect();
     animation.setKeyTimes(Some(&NSArray::from_retained_slice(&key_times)));
-    animation.setTimingFunctions(Some(&NSArray::from_retained_slice(&[
-        timing_function(MOTION_CURVE),
-        CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseInEaseOut }),
-    ])));
-    animation.setAdditive(true);
-    animation.setDuration(timing.seconds);
-    animation.setBeginTime(timing.begin);
+    let curves: Vec<Retained<CAMediaTimingFunction>> =
+        track.curves().iter().map(|curve| curve_function(*curve)).collect();
+    animation.setTimingFunctions(Some(&NSArray::from_retained_slice(&curves)));
+    animation.setAdditive(track.channel().is_additive());
+    animation.setDuration(track.seconds());
+    animation.setBeginTime(track.begin());
     animation
+}
+
+/// A score segment's curve as the timing function Core Animation runs it on.
+fn curve_function(curve: Curve) -> Retained<CAMediaTimingFunction> {
+    match curve {
+        Curve::Bezier(c) => timing_function(c),
+        // SAFETY: Core Animation's own timing function name.
+        Curve::Linear => {
+            CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionLinear })
+        }
+    }
 }
 
 /// One key for a move's nudge, apart from the bounce's so neither stops the other.
@@ -905,7 +920,9 @@ impl TileOverlay {
             }
             for layer in self.layers_of(key) {
                 let animation = match kind {
-                    OutAndBack::Bounce => bounce_animation(offset, timing),
+                    OutAndBack::Bounce => {
+                        bounce_animation(&Bounce::from_rest(offset, duration), key, timing.begin)
+                    }
                     OutAndBack::Nudge => nudge_animation(offset, timing),
                 };
                 layer.addAnimation_forKey(&animation, Some(&key_name));
@@ -1648,6 +1665,7 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::domain::motion::easing::{EASE_IN_OUT, ease};
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the
@@ -1696,7 +1714,6 @@ mod tests {
     /// crosses on.
     #[test]
     fn the_clock_and_the_render_server_run_one_curve() {
-        use crate::animation::domain::motion::easing::EASE_IN_OUT;
         for step in 0..=1000 {
             let s = step as f64 / 1000.0;
             let (x, y) = MOTION_CURVE.at(s);
@@ -1919,5 +1936,94 @@ mod tests {
         assert_ne!(NUDGE_ANIMATION_KEY, BOUNCE_ANIMATION_KEY);
         assert_ne!(NUDGE_ANIMATION_KEY, GROUP_ANIMATION_KEY);
         assert_ne!(BOUNCE_ANIMATION_KEY, GROUP_ANIMATION_KEY);
+    }
+
+    /// The `float[2]` a control point is written into: passed as a pointer, encoded as the array.
+    #[repr(transparent)]
+    struct Pair(*mut f32);
+
+    // SAFETY: a C array parameter is passed as a pointer to its first element.
+    unsafe impl objc2::encode::Encode for Pair {
+        const ENCODING: objc2::encode::Encoding =
+            objc2::encode::Encoding::Array(2, &<f32 as objc2::encode::Encode>::ENCODING);
+    }
+
+    /// The four numbers Core Animation runs a timing function on.
+    fn control_points(function: &CAMediaTimingFunction) -> [f32; 4] {
+        let (mut first, mut second) = ([0.0_f32; 2], [0.0_f32; 2]);
+        // SAFETY: indices 1 and 2 are the two control points, each written as two floats.
+        unsafe {
+            let _: () = msg_send![function, getControlPointAtIndex: 1_usize, values: Pair(first.as_mut_ptr())];
+            let _: () = msg_send![function, getControlPointAtIndex: 2_usize, values: Pair(second.as_mut_ptr())];
+        }
+        [first[0], first[1], second[0], second[1]]
+    }
+
+    fn bezier_points(curve: Curve) -> [f32; 4] {
+        match curve {
+            Curve::Bezier(c) => [c.x1 as f32, c.y1 as f32, c.x2 as f32, c.y2 as f32],
+            Curve::Linear => [0.0, 0.0, 1.0, 1.0],
+        }
+    }
+
+    /// What `bounce_animation` hands Core Animation is `Bounce::track`, key for key and curve for
+    /// curve, from rest and pushed mid-way, so the domain's tests pin what is drawn.
+    #[test]
+    fn the_bounce_installed_is_its_track() {
+        let wall = CGPoint::new(-72.0, 0.0);
+        let plays = Duration::from_millis(350);
+        let first = Bounce::from_rest(wall, plays);
+        for bounce in [first, first.pushed(Duration::from_millis(90), wall, plays)] {
+            let track = bounce.track(GroupKey::STILL, 7.0);
+            let animation = bounce_animation(&bounce, GroupKey::STILL, 7.0);
+            assert_eq!(
+                animation.keyPath().map(|k| k.to_string()),
+                Some("position".into())
+            );
+            let values = animation.values().expect("values");
+            let drawn: Vec<CGPoint> = values
+                .iter()
+                .map(|value| {
+                    let value = value.downcast_ref::<NSValue>().expect("an NSValue");
+                    // SAFETY: every value was made from a point.
+                    unsafe { value.pointValue() }
+                })
+                .collect();
+            let key_times: Vec<f64> = animation
+                .keyTimes()
+                .expect("key times")
+                .iter()
+                .map(|t| t.doubleValue())
+                .collect();
+            let keys: Vec<(f64, Value)> =
+                key_times.into_iter().zip(drawn.into_iter().map(Value::Point)).collect();
+            assert_eq!(keys, track.keys());
+            let curves: Vec<[f32; 4]> = animation
+                .timingFunctions()
+                .expect("timing functions")
+                .iter()
+                .map(|f| control_points(&f))
+                .collect();
+            let expected: Vec<[f32; 4]> =
+                track.curves().iter().map(|c| bezier_points(*c)).collect();
+            assert_eq!(curves, expected);
+            assert!(animation.isAdditive());
+            assert_eq!(
+                (animation.beginTime(), animation.duration()),
+                (7.0, track.seconds())
+            );
+        }
+    }
+
+    #[test]
+    fn a_linear_segment_runs_on_the_linear_function() {
+        assert_eq!(
+            control_points(&curve_function(Curve::Linear)),
+            bezier_points(Curve::Linear)
+        );
+        assert_eq!(
+            control_points(&curve_function(Curve::Bezier(EASE_IN_OUT))),
+            bezier_points(Curve::Bezier(EASE_IN_OUT))
+        );
     }
 }

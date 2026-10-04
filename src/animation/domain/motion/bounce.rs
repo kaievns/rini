@@ -220,9 +220,8 @@ mod tests {
         }
     }
 
-    /// From rest, the track is what `bounce_animation` installs today: `0, overshoot, 0` at `0,
-    /// BOUNCE_TURN, 1`, the motion curve out and `kCAMediaTimingFunctionEaseInEaseOut` home, whose
-    /// control points Core Animation reports as `EASE_IN_OUT`'s.
+    /// From rest, the track the overlay installs: `0, overshoot, 0` at `0, BOUNCE_TURN, 1`, the
+    /// motion curve out and `EASE_IN_OUT` home.
     #[test]
     fn a_bounce_from_rest_is_the_keyframes_the_overlay_installs() {
         let track = Bounce::from_rest(WALL, PLAYS).track(GroupKey::STILL, 7.0);

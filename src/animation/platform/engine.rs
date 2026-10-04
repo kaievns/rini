@@ -6940,7 +6940,7 @@ mod tests {
                 vec![(wid(1), settings, shifted(settings, 40.0, 20.0))]
             );
             let flight = FlightPlan::from(plan);
-            let targets = crate::animation::platform::overlay::animation_targets(&flight);
+            let targets = crate::animation::domain::motion::plan::animation_targets(&flight);
             assert_eq!(targets.len(), 1, "the floating tile flies on its own");
         }
 
@@ -7108,7 +7108,7 @@ mod tests {
             plan.entrances.push((wid(9), from, to));
             assert_eq!(plan.member(wid(9)), Some(Member::Entrance { from, to }));
             let targets =
-                crate::animation::platform::overlay::animation_targets(&FlightPlan::from(plan));
+                crate::animation::domain::motion::plan::animation_targets(&FlightPlan::from(plan));
             assert_eq!(targets.len(), 1);
         }
 
@@ -7393,7 +7393,7 @@ mod tests {
         /// and nothing else.
         #[test]
         fn animation_targets_name_every_moving_piece_once_and_no_rigid_member() {
-            use crate::animation::platform::overlay::{AnimationTarget, animation_targets};
+            use crate::animation::domain::motion::plan::{AnimationTarget, animation_targets};
             let mut rng = Gen(137);
             for run in 0..RUNS {
                 let requests = random_requests(&mut rng);

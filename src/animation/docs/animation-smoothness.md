@@ -471,17 +471,18 @@ no travel when none is running (every tile at rest, `final_frames` the layout
 the windows already sit at) and adds the bounce to whatever is running
 otherwise, extending the clock to cover the return (`clock_for_bounce`). The
 overlay's `out_and_back` with `OutAndBack::Bounce` is one additive
-`CAKeyframeAnimation` per container
-(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; the motion curve out,
-`kCAMediaTimingFunctionEaseInEaseOut` home) under
+`CAKeyframeAnimation` per container, built from `Bounce::track`
+(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; the motion curve out, `EASE_IN_OUT`
+home, the control points of `kCAMediaTimingFunctionEaseInEaseOut`) under
 its own key, so an in-flight movement is neither replaced nor disturbed and
 the model positions stay put; `settled` reads false until it is home, which
 holds the lift. The floating container rides only a vertical bounce
 (`carries_out_and_back`), the rule a pan (pinned) and a switch (carried) already
 follow. Real windows never move. The shape is `Bounce::from_rest`
 (`src/animation/domain/motion/bounce.rs`), pinned by
-`a_first_push_goes_out_once_and_comes_home`, and `Bounce::track` is those
-keyframes as a score track (`a_bounce_from_rest_is_the_keyframes_the_overlay_installs`).
+`a_first_push_goes_out_once_and_comes_home`. The overlay installs its track key
+for key and curve for curve (`the_bounce_installed_is_its_track`), so
+`a_bounce_from_rest_is_the_keyframes_the_overlay_installs` pins what is drawn.
 `Bounce::pushed` is the handover prototype's re-kick, a new bounce from wherever
 the last is drawn; the engine does not play it. A push while a bounce is still
 playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
@@ -1000,8 +1001,9 @@ channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
 model value each node ends at. `Score::sample` is what Core Animation draws at a
 media time, so a merge can bend a flight from the score instead of reading the
 presentation layer back (step 5 of `docs/pictures-motion-transitions.md`).
-Nothing plays a score yet: the overlay still builds its animations itself, and
-`Leg::track`, `nudge_track` and `Bounce::track` are the tracks it installs today.
+Nothing plays a score yet. The overlay builds the bounce from `Bounce::track`,
+and a spring leg and the nudge from the samples `Leg::track` and `nudge_track`
+are made of (`Leg::samples`, `nudge_samples`).
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
 an off-screen window, its presentation read at chosen `timeOffset`s.
