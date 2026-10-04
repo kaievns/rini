@@ -123,7 +123,7 @@ pub enum Watch {
     },
     /// Armed by the window's focus report: captured where it ends every `every`, `tries` times at most,
     /// until its band print changes from the last picture delivered of it as the watch starts, even
-    /// when another watch delivered the changed look first.
+    /// when another watch delivered the changed look first, or until the cache refuses a capture.
     Change {
         tag: Tag,
         window: PictureTarget,
@@ -346,7 +346,8 @@ struct Change {
     left: u32,
     armed: bool,
     next: Instant,
-    /// Its look changed, its tries ran out, or it was handed to ScreenCaptureKit.
+    /// Its look changed, its tries ran out, the cache refused its capture, or it was handed to
+    /// ScreenCaptureKit.
     done: bool,
 }
 
@@ -736,7 +737,8 @@ impl Watches {
                                 change.spend(now);
                             }
                         }
-                        Some((_, Capture::Refused)) => change.spend(now),
+                        // Every later capture at this size is refused too.
+                        Some((_, Capture::Refused)) => change.done = true,
                         Some((_, Capture::Missed)) | None => {
                             let frame = of(window).and_then(|seen| seen.frame);
                             if let (Some(frame), Some(display)) = (frame, display)
@@ -1645,44 +1647,38 @@ mod tests {
         assert!(watches.next(start).is_none(), "another window's");
     }
 
-    /// A change capture the cache refuses spends a try and is neither delivered nor judged: the watch
-    /// goes on, and is done only once its tries are spent.
+    /// A change capture the cache refuses finishes the watch, delivering nothing: every later capture
+    /// of the window at that size is refused too. The windows behind the strip that wait on it refresh
+    /// at once, and nothing judges the window's look again, a retarget of it included.
     #[test]
-    fn a_change_capture_the_cache_refuses_spends_a_try_and_finishes_nothing() {
+    fn a_change_capture_the_cache_refuses_finishes_the_watch() {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.ask(frame_zero(&[(1, LEFT)], &[]));
         round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
         watches.hint(Hint::Focused(wid(1)), start);
         watches.watch(WatchId(1), change(1, LEFT), start, &none);
-        let mut at = start;
-        for _ in 1..CHANGE_TRIES {
-            let (_, outcome) =
-                round_of(&mut watches, at, |_| Some(LEFT), |_| Capture::Refused).unwrap();
-            assert!(outcome.deliveries.is_empty());
-            assert!(watches.next(at + ms(14)).is_none(), "a try spent: the next is 15ms off");
-            at += CHANGE_EVERY;
-        }
-        let (_, outcome) = round(&mut watches, at, |_| Some(LEFT), |_| Some(2)).unwrap();
-        assert_eq!(
-            delivered(&outcome),
-            vec![(Why::FocusChanged, vec![wid(1)])],
-            "the last try"
-        );
+        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start, &none);
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        let (_, outcome) = round(&mut watches, start, at, |_| Some(1)).unwrap();
+        assert!(outcome.deliveries.is_empty(), "unchanged: a try spent");
+
+        let next = start + CHANGE_EVERY;
+        let (sets, outcome) = round_of(&mut watches, next, at, |_| Capture::Refused).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(1)]], "the background waits for it");
+        assert!(outcome.deliveries.is_empty());
+        assert_eq!(looked(&watches.next(next).unwrap()), vec![vec![wid(4)]], "done: the background now");
+        watches.retarget(WatchId(1), change(1, LEFT), next, &none);
+        let later = next + CHANGE_EVERY;
+        let (sets, _) = round(&mut watches, later, at, |_| Some(2)).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(4)]], "its look is never captured again");
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
         watches.watch(WatchId(1), change(1, LEFT), start, &none);
-        let mut at = start;
-        let mut tries = 0;
-        while let Some((_, outcome)) =
-            round_of(&mut watches, at, |_| Some(LEFT), |_| Capture::Refused)
-        {
-            assert!(outcome.deliveries.is_empty(), "not delivered as landed either");
-            tries += 1;
-            at += CHANGE_EVERY;
-        }
-        assert_eq!(tries, CHANGE_TRIES);
+        let (_, outcome) = round_of(&mut watches, start, |_| Some(LEFT), |_| Capture::Refused).unwrap();
+        assert!(outcome.deliveries.is_empty(), "not delivered as landed either");
+        assert!(watches.next(start + CHANGE_EVERY).is_none());
     }
 
     /// Until the window is where it ends, a change watch only watches it land: no try is spent.

@@ -232,7 +232,9 @@ final capture if it ends wholly on screen and its look has changed by then; one 
 display's edge keeps its frame-zero picture to the lift, only its ring and shadow turning, and its look
 turns at rest, pictured again at the quiet: SkyLight returns only its visible part, and the one
 ScreenCaptureKit capture a flight lets through is the target's ("Decisions taken while Kai was away" in
-`docs/pictures-motion-transitions.md`). The target is pictured again by the final capture too, if its
+`docs/pictures-motion-transitions.md`). A capture of the target the cache refuses ends its watch,
+delivering nothing: the cache refuses a picture without the blur in place of one with it at the same
+size, and so every later capture there. The target is pictured again by the final capture too, if its
 change watch ran out first, and that hands focus over. If nothing has handed it over when the final capture is asked, focus
 hands over then, while the flight still moves: the window is reported focused, and a look that never
 showed a change (one already focused when the watch started, or an app whose title band looks the

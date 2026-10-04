@@ -1086,7 +1086,7 @@ mod tests {
 
     /// A landing whose capture the cache refuses for the blurred picture it holds is lost at once, so
     /// the hold hears that its picture will not come; a refused change capture delivers nothing,
-    /// records nothing as delivered, and the watch tries again.
+    /// records nothing as delivered, and finishes its watch.
     #[test]
     fn a_refused_landing_is_lost_and_a_refused_change_delivers_nothing() {
         let now = Instant::now();
@@ -1107,10 +1107,7 @@ mod tests {
             Event::Lost { tag: lost_tag, window: lost },
         ] if *lost_tag == tag(1) && *lost == wid(1)));
         assert!(delivered.under(tag(1), wid(2)).is_none());
-        assert!(matches!(
-            schedule.next(now, |_| None),
-            Next::WaitUntil(at) if at == now + CHANGE_EVERY
-        ), "the change watch tries again");
+        assert!(matches!(schedule.next(now, |_| None), Next::Idle), "nothing more is asked of either");
     }
 
     /// A final capture the cache refused was never delivered, so the next one showing the same is news.
