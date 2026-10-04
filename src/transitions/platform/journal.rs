@@ -43,6 +43,13 @@ impl Writer {
         }
     }
 
+    /// A writer with no thread behind it, whose bursts the caller reads.
+    #[cfg(test)]
+    pub fn detached() -> (Writer, mpsc::Receiver<Burst>) {
+        let (bursts, sent) = mpsc::channel::<Burst>();
+        (Writer { bursts }, sent)
+    }
+
     pub fn send(&self, burst: Burst) {
         _ = self.bursts.send(burst);
     }

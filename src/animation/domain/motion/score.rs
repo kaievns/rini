@@ -4,6 +4,7 @@
 //! retarget starts from the score instead of the presentation layer. What Core Animation was
 //! measured to play is "The score" in `src/animation/docs/animation-smoothness.md`.
 use std::collections::HashMap;
+use std::time::Instant;
 
 use rini_core::ids::WindowId;
 #[cfg(test)]
@@ -430,8 +431,31 @@ impl Score {
     }
 }
 
+/// The media time Core Animation's begin times are on, against `Instant`: one reading of both, which
+/// maps any instant to its media time, since both count mach absolute time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MediaClock {
+    instant: Instant,
+    media: f64,
+}
+
+impl MediaClock {
+    /// The clock that read `media` at `instant`.
+    pub fn anchored(instant: Instant, media: f64) -> Self { Self { instant, media } }
+
+    /// The media time at `now`, before the anchor as after it.
+    pub fn at(&self, now: Instant) -> f64 {
+        match now.checked_duration_since(self.instant) {
+            Some(after) => self.media + after.as_secs_f64(),
+            None => self.media - self.instant.duration_since(now).as_secs_f64(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
 
@@ -1303,5 +1327,21 @@ mod tests {
         let riding = x(score.track(strip(), Channel::Nudge).unwrap().at(now));
         assert!(riding > 200.0, "{riding}");
         assert!((x(bent.sample(strip(), now)) - (drawn + riding)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn media_time_follows_the_instant_it_was_anchored_to() {
+        let anchor = Instant::now();
+        let clock = MediaClock::anchored(anchor, 5_000.0);
+        assert_eq!(clock.at(anchor), 5_000.0);
+        assert!((clock.at(anchor + Duration::from_millis(250)) - 5_000.25).abs() < 1e-9);
+    }
+
+    /// A harness's clock can be read before the anchor, where `Instant` subtraction saturates.
+    #[test]
+    fn media_time_runs_back_before_the_anchor() {
+        let anchor = Instant::now() + Duration::from_secs(1);
+        let clock = MediaClock::anchored(anchor, 5_000.0);
+        assert!((clock.at(anchor - Duration::from_millis(40)) - 4_999.96).abs() < 1e-9);
     }
 }

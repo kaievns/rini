@@ -9,7 +9,9 @@
 //! the journal to its writer (`crate::transitions::platform::journal`). When anything happens is the
 //! coordinator's, but for the hide of a lift held, while the handover is measured, for the overlay's
 //! own picture, which the journal decides (`crate::transitions::domain::journal::Journalled::heard`).
-//! Runs on the main thread because Core Animation requires it.
+//! Runs on the main thread beside the renderer, which it reaches only through `Draw` and hears only
+//! as `Event::Rendered`; every instant it reads is its `Clock`'s, and every begin time its
+//! `MediaClock`'s (`Parts`).
 //!
 //! Design in `src/transitions/docs/coordination.md`; how a flight moves in
 //! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
@@ -18,7 +20,6 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use objc2_foundation::MainThreadMarker;
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
     FromCg, GroupRect, Overlay, OverlayPoint, OverlayRect, OverlayVector, Point, Respace,
@@ -33,10 +34,10 @@ use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::plan::{self, entrance_from};
-use crate::animation::domain::motion::score::{Edit, Node, Value};
+use crate::animation::domain::motion::score::{Edit, MediaClock, Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
-use crate::animation::platform::overlay::{OverlayTile, media_now, same_layout, window_origin};
-use crate::animation::platform::renderer::{Batch, Render, Renderer, in_order};
+use crate::animation::platform::overlay::{OverlayTile, same_layout, window_origin};
+use crate::animation::platform::renderer::{Batch, Render};
 use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
@@ -156,7 +157,12 @@ pub enum Event {
     /// Whether the journal is written and each lift's handover measured, which holds a lift's hide for
     /// the overlay's own picture. Sent by the reactor at start and at each config reload.
     Journal(JournalSettings),
+    /// What the renderer made of the batches it drew last. Posted by its report.
+    Rendered(crate::animation::event::Event),
 }
+
+/// Hands the renderer a batch of render commands, which it answers as `Event::Rendered`.
+pub type Draw = Box<dyn Fn(Batch)>;
 
 /// Called with real-window frames to apply while the overlay covers them.
 pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, ScreenRect)>)>;
@@ -165,8 +171,29 @@ pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, ScreenRect)>)>;
 /// after its lift; the coordinator's `ReportUp` and `ReportSettled`.
 pub type OnFlight = Box<dyn Fn(bool)>;
 
+/// The instant now.
+pub type Clock = Box<dyn Fn() -> Instant>;
+
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
+
+/// What the engine is made from: its queue, the pictures service as `client`, and how it reaches
+/// everything else.
+pub struct Parts {
+    pub rx: Receiver,
+    /// Timers post back into the engine's own queue through it.
+    pub tx: Sender,
+    /// Tells the engine what lands through its sink, as `Event::Pictures`.
+    pub pictures: Pictures,
+    /// The engine as the application numbers the service's clients.
+    pub client: Client,
+    pub draw: Draw,
+    pub place_frames: PlaceFrames,
+    pub on_flight: OnFlight,
+    /// The renderer's media clock, which every track begins on.
+    pub media: MediaClock,
+    pub clock: Clock,
+}
 
 /// What a flight composed: its tiles and the pictures they draw, its plan, the entrances still
 /// waiting for a picture, and what the renderer has been handed. When any of it changes is the
@@ -740,7 +767,7 @@ pub struct FlightEngine {
     rx: Receiver,
     /// Timers post back into this actor's own queue through it.
     tx: Sender,
-    renderer: Renderer,
+    draw: Draw,
     /// The render commands of the event being handled, handed to the renderer as one batch at its end.
     batch: Option<Batch>,
     /// What waits for a batch to be drawn.
@@ -777,32 +804,27 @@ pub struct FlightEngine {
     delivered: HashMap<WindowId, (Generation, Picture)>,
     watches: EndWatches,
     /// The frame clock, from a transition's begin to its lift.
-    clock: Option<RepeatingTimer>,
+    frame_clock: Option<RepeatingTimer>,
     /// The quiet after the lift of a generation.
     quiet: Option<(Generation, RepeatingTimer)>,
     /// The end windows the last watch named, ending wholly on screen: what a measured lift compares.
     ends: Vec<(WindowId, ScreenRect)>,
     /// The lift held for the overlay's own picture, while the handover is measured.
     held: Option<HeldLift>,
-    /// Places the real windows once the overlay covers them. Supplied by the owner.
-    place_frames: Option<PlaceFrames>,
-    on_flight: Option<OnFlight>,
+    /// Places the real windows once the overlay covers them.
+    place_frames: PlaceFrames,
+    on_flight: OnFlight,
+    media: MediaClock,
+    clock: Clock,
 }
 
 impl FlightEngine {
-    /// `pictures` tells this engine what lands through its sink, as `Event::Pictures`; `client` is
-    /// the engine as the application numbers the service's clients.
-    pub fn new(
-        rx: Receiver,
-        tx: Sender,
-        mtm: MainThreadMarker,
-        pictures: Pictures,
-        client: Client,
-    ) -> Self {
+    pub fn new(parts: Parts) -> Self {
+        let Parts { rx, tx, pictures, client, draw, place_frames, on_flight, media, clock } = parts;
         Self {
             rx,
             tx,
-            renderer: Renderer::new(mtm),
+            draw,
             batch: None,
             drawn: Drawn::default(),
             shown: 0,
@@ -820,21 +842,15 @@ impl FlightEngine {
             running: None,
             delivered: HashMap::new(),
             watches: EndWatches::default(),
-            clock: None,
+            frame_clock: None,
             quiet: None,
             ends: Vec::new(),
             held: None,
-            place_frames: None,
-            on_flight: None,
+            place_frames,
+            on_flight,
+            media,
+            clock,
         }
-    }
-
-    pub fn set_place_frames(&mut self, place: PlaceFrames) {
-        self.place_frames = Some(place);
-    }
-
-    pub fn set_on_flight(&mut self, on_flight: OnFlight) {
-        self.on_flight = Some(on_flight);
     }
 
     pub async fn run(mut self) {
@@ -845,8 +861,8 @@ impl FlightEngine {
     }
 
     /// One event. A request first hides a lift waiting for the overlay's picture, and gives the
-    /// journal its press, for the request's first drive to mark. What the event draws is played at its
-    /// end, and what that releases carried out.
+    /// journal its press, for the request's first drive to mark. What the event draws goes to the
+    /// renderer as one batch at its end, and what that waits for is carried out as its commit is heard.
     fn handle(&mut self, event: Event) {
         match event {
             Event::SetDisplay {
@@ -914,10 +930,13 @@ impl FlightEngine {
             Event::Pictures(landed) => self.pictures_landed(landed),
             Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
             Event::Journal(settings) => self.set_journal(settings),
+            Event::Rendered(answer) => self.rendered(answer),
         }
-        self.draw();
+        self.send_batch();
         self.flights.answered();
     }
+
+    fn now(&self) -> Instant { (self.clock)() }
 
     /// A request: a press never waits on a measurement.
     fn take_request(&mut self, cause: Cause) {
@@ -927,7 +946,7 @@ impl FlightEngine {
 
     /// Tells the coordinator `event`, carries out what it says, and sends the writer the burst due.
     fn drive(&mut self, event: lifecycle::Event) {
-        let now = Instant::now();
+        let now = self.now();
         let (commands, burst) = self.flights.drive(event, now);
         for command in commands {
             self.carry_out(command, now);
@@ -982,7 +1001,7 @@ impl FlightEngine {
                 .pictures
                 .ask_on_screen(on_screen(self.tag(generation), Moment::Final, &windows, &[], &behind)),
             Command::Swap { generation, window } => self.swap(generation, window, now),
-            Command::Snap { window, frame } => self.snap(window, frame),
+            Command::Snap { window, frame } => self.snap(window, frame, now),
             Command::KeepFocusedLook { generation, window } => {
                 self.pictures.keep_focused(self.tag(generation), window)
             }
@@ -1017,11 +1036,7 @@ impl FlightEngine {
         }
     }
 
-    fn report(&self, flying: bool) {
-        if let Some(on_flight) = &self.on_flight {
-            on_flight(flying);
-        }
-    }
+    fn report(&self, flying: bool) { (self.on_flight)(flying) }
 
     /// `command` into the event's batch, numbered as its first command goes in: that batch's number.
     fn render(&mut self, command: Render) -> u64 {
@@ -1064,17 +1079,16 @@ impl FlightEngine {
         }
     }
 
-    /// The renderer plays the event's batch; what its answer releases is carried out, and so on until
-    /// that draws nothing more.
-    fn draw(&mut self) {
-        while let Some(batch) = self.batch.take() {
-            let answer = self.renderer.play(in_order(vec![batch]));
-            self.rendered(answer);
+    /// The event's batch to the renderer, if it drew anything.
+    fn send_batch(&mut self) {
+        if let Some(batch) = self.batch.take() {
+            (self.draw)(batch);
         }
     }
 
     /// The renderer's answer: a commit releases what waited for it, and with no overlay to draw on the
-    /// flight is abandoned, everything it owed dropped, since its `Abandon` writes the final frames.
+    /// flight is abandoned, everything it owed dropped, since its `Abandon` writes the final frames at
+    /// once: a show sent since draws nothing either.
     fn rendered(&mut self, answer: crate::animation::event::Event) {
         match answer {
             crate::animation::event::Event::Committed { seq, overlay } => {
@@ -1090,6 +1104,7 @@ impl FlightEngine {
                 self.drawn.committed(seq);
                 self.dressed = false;
                 if self.flights.coordinator().is_flying() {
+                    self.shown = self.shown.min(seq);
                     self.abandon();
                 }
             }
@@ -1107,7 +1122,7 @@ impl FlightEngine {
             crate::pictures::event::Event::Delivered { tag, why, sent, pictures } => {
                 let Some(generation) = Generation::for_client(tag, self.client) else { return };
                 let taken = pictures.iter().map(|(window, picture, frame)| (*window, *frame, picture.taken));
-                self.flights.delivery(Instant::now(), generation, why, sent, taken);
+                self.flights.delivery(self.now(), generation, why, sent, taken);
                 if why == Why::FrameZero {
                     self.frame_zero(generation, pictures);
                     return;
@@ -1125,7 +1140,7 @@ impl FlightEngine {
             }
             crate::pictures::event::Event::Handover { tag, windows } => {
                 let Some(generation) = Generation::for_client(tag, self.client) else { return };
-                self.flights.handover(Instant::now(), generation, windows);
+                self.flights.handover(self.now(), generation, windows);
             }
         }
     }
@@ -1179,9 +1194,10 @@ impl FlightEngine {
 
     /// The coordinator's snap of `window`'s tile onto `frame`, its window's, as an edit of the score
     /// played on the renderer.
-    fn snap(&mut self, window: WindowId, frame: OverlayRect) {
+    fn snap(&mut self, window: WindowId, frame: OverlayRect, now: Instant) {
+        let at = self.media.at(now);
         let Some(running) = self.running.as_mut() else { return };
-        let edits = running.score.snap(window, frame, media_now());
+        let edits = running.score.snap(window, frame, at);
         self.play(edits);
     }
 
@@ -1189,6 +1205,7 @@ impl FlightEngine {
     /// is left of it, merged in as a pass holding it alone.
     fn admit_entrance(&mut self, tile: OverlayTile, now: Instant) {
         let left = self.flights.coordinator().remaining(now).unwrap_or_default();
+        let at = self.media.at(now);
         let viewport = self.viewport();
         let Some(running) = self.running.as_mut() else { return };
         debug!(
@@ -1217,7 +1234,7 @@ impl FlightEngine {
             cue: Cue::Plain,
             accent: None,
         };
-        let merged = running.score.merge(&running.plan, &pass, media_now());
+        let merged = running.score.merge(&running.plan, &pass, at);
         running.plan = merged.plan;
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         let mut edits = merged.edits;
@@ -1363,11 +1380,11 @@ impl FlightEngine {
         );
         self.quiet = None;
         let tx = self.tx.clone();
-        self.clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
+        self.frame_clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
             _ = tx.send(Event::Tick);
         });
         self.drive(lifecycle::Event::Begin(stage));
-        if self.clock.is_none() {
+        if self.frame_clock.is_none() {
             warn!("could not start the frame clock; placing the windows directly");
             self.abandon();
             return false;
@@ -1380,7 +1397,7 @@ impl FlightEngine {
     fn abandon(&mut self) {
         self.hide(Vec::new());
         self.running = None;
-        self.clock = None;
+        self.frame_clock = None;
         self.ends.clear();
         self.delivered.clear();
         self.drive(lifecycle::Event::Abandon);
@@ -1787,8 +1804,9 @@ impl FlightEngine {
     /// plays, folded into frame zero and posed again before. A pass moving focus to a target parked
     /// off the display flies its focused look, as the first pass's does.
     fn merge_group(&mut self, pass: Composed) {
-        let at = media_now();
-        let left = self.flights.coordinator().remaining(Instant::now()).unwrap_or_default();
+        let now = self.now();
+        let at = self.media.at(now);
+        let left = self.flights.coordinator().remaining(now).unwrap_or_default();
         let viewport = self.viewport();
         let display = self.display.map(|(frame, _)| frame);
         let Some(running) = self.running.as_mut() else { return };
@@ -2098,8 +2116,8 @@ impl FlightEngine {
                 Some(Kind::Bounce),
             );
         }
+        let at = self.media.at(self.now());
         let Some(running) = self.running.as_mut() else { return };
-        let at = media_now();
         let Some(edits) = running.push(&cue, overshoot, duration.as_secs_f64(), at) else { return };
         let remaining = running.score.remaining(at);
         self.play(edits);
@@ -2114,6 +2132,7 @@ impl FlightEngine {
     /// and the renderer plays it in one transaction; the clock runs on for as long as the score does.
     fn start_moving(&mut self, now: Instant) {
         let duration = self.flights.coordinator().remaining(now).unwrap_or_default();
+        let at = self.media.at(now);
         let Some(running) = self.running.as_mut() else { return };
         running.flown = true;
         // The acceptance greps count this line against "overlay lifted".
@@ -2125,7 +2144,6 @@ impl FlightEngine {
             floating = flight.floating.len(),
             "flight composed"
         );
-        let at = media_now();
         let drawn = running.drawn();
         let stage = Stage {
             plan: &running.plan,
@@ -2141,24 +2159,24 @@ impl FlightEngine {
     }
 
     /// One frame of the clock: where the tiles are drawn and where the windows are, read only once
-    /// the clock is done. It draws only the trace of where each container is presented, and that
-    /// only while its target is on.
+    /// the clock is done; the tiles are where they end only once every batch is committed. It draws
+    /// only the trace of where each container is presented, and that only while its target is on.
     fn tick(&mut self) {
+        if self.flights.coordinator().is_flying() {
+            let now = self.now();
+            let (settled, landed) = if self.flights.coordinator().wants_landing(now) {
+                let at = self.media.at(now);
+                let scored = self.running.as_ref().is_none_or(|running| running.score.settled(at));
+                let landed = self.handover().as_ref().is_none_or(|report| report.count_over == 0);
+                (scored && self.drawn.caught_up(), landed)
+            } else {
+                (false, false)
+            };
+            self.drive(lifecycle::Event::Tick { settled, landed });
+        }
         if tracing::enabled!(target: "rini::animation::trace", tracing::Level::TRACE) {
             self.render(Render::Trace);
         }
-        if !self.flights.coordinator().is_flying() {
-            return;
-        }
-        let (settled, landed) = if self.flights.coordinator().wants_landing(Instant::now()) {
-            let now = media_now();
-            let settled = self.running.as_ref().is_none_or(|running| running.score.settled(now));
-            let landed = self.handover().as_ref().is_none_or(|report| report.count_over == 0);
-            (settled, landed)
-        } else {
-            (false, false)
-        };
-        self.drive(lifecycle::Event::Tick { settled, landed });
     }
 
     /// Overlay down, over the real windows where they end; the quiet after it begins once that is
@@ -2174,7 +2192,7 @@ impl FlightEngine {
             None => self.hide(vec![Owed::Quiet(generation)]),
         }
         self.running = None;
-        self.clock = None;
+        self.frame_clock = None;
         self.delivered.clear();
     }
 
@@ -2224,7 +2242,7 @@ impl FlightEngine {
 
     /// What a lift held for the overlay's picture hears: it hides once the journal says so.
     fn lift_heard(&mut self, heard: Heard) {
-        if self.flights.heard(heard, Instant::now())
+        if self.flights.heard(heard, self.now())
             && let Some(held) = self.held.take()
         {
             self.hide(held.owed);
@@ -2302,12 +2320,8 @@ impl FlightEngine {
         if frames.is_empty() {
             return;
         }
-        let Some(place) = &self.place_frames else {
-            warn!("no frame sink; cannot place windows at their final frames");
-            return;
-        };
         debug!(count = frames.len(), "placing real windows behind the overlay");
-        place(frames);
+        (self.place_frames)(frames);
     }
 
     /// Slides every window on screen in from an offset; touches no real window.
@@ -3898,6 +3912,506 @@ mod tests {
                 "where W is drawn, step and all"
             );
             assert!(dest(&merged, wid(20)).unwrap().same_as(border.to));
+        }
+    }
+
+    /// The engine against the renderer, the reactor, the bar and the pictures service it talks to:
+    /// everything it sends them, in the order sent, and the renderer's answers given by the test, on a
+    /// clock the test advances. No Core Animation, no window and no live window server.
+    mod protocol {
+        use std::sync::mpsc::{Receiver as Bursts, TryRecvError};
+        use std::sync::{Arc, Mutex};
+
+        use super::*;
+        use crate::animation::domain::motion::score::Score;
+        use crate::animation::event::Event::{Committed, Unavailable};
+        use crate::pictures::platform::service::Command as Asked;
+
+        const CLIENT: Client = Client(1);
+        /// The overlay's window, as the renderer reports the window server numbers it.
+        const OVERLAY: WindowServerId = WindowServerId(4_242);
+        /// The band the bar keeps clear at the display's top.
+        const BAND: f64 = 32.0;
+
+        /// Where the pan starts `wid(1)`'s tile, wholly on screen.
+        fn start() -> ScreenRect { rect(867.0, 0.0, 859.0, 1081.0) }
+
+        /// Where it ends: at the display's top-left, where the window server's test answer has every
+        /// window, so the window reads as landed.
+        fn end() -> ScreenRect { rect(0.0, 0.0, 859.0, 1081.0) }
+
+        /// One thing the engine sent.
+        enum Sent {
+            Asked(Asked),
+            Drawn(Batch),
+            Placed(Vec<(WindowId, ScreenRect)>),
+            Flying(bool),
+        }
+
+        /// What the engine sent, in order: what it asked of the pictures service is read off before
+        /// each other thing it sends, so the two keep the order they were sent in.
+        struct Outbox {
+            asked: channel::Receiver<Asked>,
+            sent: Vec<Sent>,
+        }
+
+        impl Outbox {
+            fn read_asked(&mut self) {
+                while let Ok((_, asked)) = self.asked.try_recv() {
+                    self.sent.push(Sent::Asked(asked));
+                }
+            }
+
+            fn push(&mut self, sent: Sent) {
+                self.read_asked();
+                self.sent.push(sent);
+            }
+        }
+
+        /// Puts what it is handed in the outbox, as `sent` makes it.
+        fn sink<T: 'static>(outbox: &Arc<Mutex<Outbox>>, sent: fn(T) -> Sent) -> impl Fn(T) + 'static {
+            let outbox = outbox.clone();
+            move |what| outbox.lock().unwrap().push(sent(what))
+        }
+
+        struct Harness {
+            engine: FlightEngine,
+            outbox: Arc<Mutex<Outbox>>,
+            now: Arc<Mutex<Instant>>,
+            media: MediaClock,
+        }
+
+        impl Harness {
+            /// An engine on `DISPLAY`, its display drawn, holding a picture of `wid(1)`.
+            fn new() -> Harness {
+                let (pictures, asked) = Pictures::detached();
+                pictures.insert(wid(1), test_picture(end().size));
+                let outbox = Arc::new(Mutex::new(Outbox { asked, sent: Vec::new() }));
+                let begun = Instant::now();
+                let now = Arc::new(Mutex::new(begun));
+                let media = MediaClock::anchored(begun, 5_000.0);
+                let (tx, rx) = channel::channel();
+                let engine = FlightEngine::new(Parts {
+                    rx,
+                    tx,
+                    pictures,
+                    client: CLIENT,
+                    draw: Box::new(sink(&outbox, Sent::Drawn)),
+                    place_frames: Box::new(sink(&outbox, Sent::Placed)),
+                    on_flight: Box::new(sink(&outbox, Sent::Flying)),
+                    media,
+                    clock: Box::new({
+                        let now = now.clone();
+                        move || *now.lock().unwrap()
+                    }),
+                });
+                let mut harness = Harness { engine, outbox, now, media };
+                let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
+                harness.step(Event::Rendered(Committed { seq: only_batch(&display).seq, overlay: None }));
+                harness
+            }
+
+            /// One that measures each lift's handover, as `measure-handover` does, the journal unwritten.
+            fn measuring() -> Harness {
+                let mut harness = Harness::new();
+                harness.step(Event::Journal(JournalSettings { write: false, measure_handover: true }));
+                harness
+            }
+
+            /// The journal written through a writer whose bursts the test reads, as `Event::Journal`
+            /// turning writing on would start the real one.
+            fn writing(&mut self) -> Bursts<crate::transitions::domain::journal::Burst> {
+                let (writer, bursts) = Writer::detached();
+                if let Some(burst) = self.engine.flights.set_writing(true) {
+                    writer.send(burst);
+                }
+                self.engine.writer = Some(writer);
+                self.engine.journal = Some(JournalSettings { write: true, measure_handover: false });
+                bursts
+            }
+
+            fn at(&self) -> Instant { *self.now.lock().unwrap() }
+
+            fn advance(&mut self, by: Duration) { *self.now.lock().unwrap() += by }
+
+            fn generation(&self) -> u64 { self.engine.flights.coordinator().generation().0 }
+
+            /// `event` handled: everything it sent.
+            fn step(&mut self, event: Event) -> Vec<Sent> {
+                self.engine.handle(event);
+                let mut outbox = self.outbox.lock().unwrap();
+                outbox.read_asked();
+                std::mem::take(&mut outbox.sent)
+            }
+
+            /// The renderer committed every batch up to `seq`.
+            fn commit(&mut self, seq: u64) -> Vec<Sent> {
+                self.step(Event::Rendered(Committed { seq, overlay: Some(OVERLAY) }))
+            }
+
+            /// A pan bringing `wid(1)` from `start` to `end`, pressed now.
+            fn pan(&self) -> Event { self.strip_pan(SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0)) }
+
+            /// The strip panned on from where `pan` leaves it.
+            fn pan_on(&self) -> Event {
+                self.strip_pan(SurfacePoint::new(867.0, 0.0), SurfacePoint::new(967.0, 0.0))
+            }
+
+            fn strip_pan(&self, from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
+                let frame = rect(867.0, 0.0, 859.0, 1081.0);
+                let window = SurfaceWindow {
+                    window: wid(1),
+                    server_id: WindowServerId::new(1),
+                    frame,
+                    pinned: false,
+                    floating: false,
+                    from: None,
+                };
+                let (_, ends) = window.travel(from_offset, to_offset);
+                Event::AnimateSurface {
+                    windows: vec![window],
+                    from_offset,
+                    to_offset,
+                    final_frames: vec![(wid(1), screen(ends))],
+                    focus: None,
+                    focused_before: None,
+                    key: None,
+                    duration: Duration::from_millis(300),
+                    look: Look::default(),
+                    cue: Cue::Plain,
+                    accent: None,
+                    cause: self.cause(),
+                }
+            }
+
+            /// A push against the strip's end, pressed now.
+            fn bounce(&self) -> Event {
+                Event::Bounce {
+                    windows: Vec::new(),
+                    overshoot: OverlayVector::new(-40.0, 0.0),
+                    final_frames: Vec::new(),
+                    focus: None,
+                    duration: Duration::from_millis(200),
+                    look: Look::default(),
+                    cue: Cue::Plain,
+                    cause: self.cause(),
+                }
+            }
+
+            fn cause(&self) -> Cause { Cause { at: self.at(), what: "move_focus" } }
+
+            /// Frame zero's picture of `wid(1)` where the pan starts it, for the flight running.
+            fn frame_zero(&self) -> Event {
+                Event::Pictures(crate::pictures::event::Event::Delivered {
+                    tag: Tag { client: CLIENT, generation: self.generation() },
+                    why: Why::FrameZero,
+                    sent: self.at(),
+                    pictures: vec![(wid(1), test_picture(start().size), start())],
+                })
+            }
+
+            /// A pan pressed and shown 5ms later: the press's batch and the show's, neither committed.
+            fn shown(&mut self) -> (u64, u64) {
+                let pan = self.pan();
+                let begun = only_batch(&self.step(pan)).seq;
+                self.advance(Duration::from_millis(5));
+                let frame_zero = self.frame_zero();
+                (begun, only_batch(&self.step(frame_zero)).seq)
+            }
+
+            /// A pan shown, committed, and run to its lift 400ms on: what the tick that lifts sent.
+            fn lifted(&mut self) -> Vec<Sent> {
+                let (_, shown) = self.shown();
+                self.commit(shown);
+                self.advance(Duration::from_millis(400));
+                let lifted = self.step(Event::Tick);
+                assert!(
+                    lifted.iter().any(|sent| matches!(sent, Sent::Asked(Asked::Stop(_)))),
+                    "the tick lifts: its watches stop"
+                );
+                lifted
+            }
+        }
+
+        fn batches(sent: &[Sent]) -> Vec<&Batch> {
+            sent.iter().filter_map(|sent| if let Sent::Drawn(batch) = sent { Some(batch) } else { None }).collect()
+        }
+
+        fn only_batch(sent: &[Sent]) -> &Batch {
+            let batches = batches(sent);
+            assert_eq!(batches.len(), 1, "one batch an event");
+            batches[0]
+        }
+
+        fn placed(sent: &[Sent]) -> Vec<Vec<(WindowId, ScreenRect)>> {
+            sent.iter().filter_map(|sent| if let Sent::Placed(frames) = sent { Some(frames.clone()) } else { None }).collect()
+        }
+
+        fn holds(sent: &[Sent]) -> Vec<Hold> {
+            sent.iter().filter_map(|sent| if let Sent::Asked(Asked::Hold(hold)) = sent { Some(*hold) } else { None }).collect()
+        }
+
+        fn kind(command: &Render) -> &'static str {
+            match command {
+                Render::Display { .. } => "display",
+                Render::Dress { .. } => "dress",
+                Render::Stage { .. } => "stage",
+                Render::Play { .. } => "play",
+                Render::Swap { .. } => "swap",
+                Render::Corner { .. } => "corner",
+                Render::Focus { .. } => "focus",
+                Render::Holes(_) => "holes",
+                Render::Show => "show",
+                Render::Lift => "lift",
+                Render::Trace => "trace",
+            }
+        }
+
+        fn kinds(batch: &Batch) -> Vec<&'static str> { batch.commands.iter().map(kind).collect() }
+
+        /// The batch holding the lift, among what was sent.
+        fn lift_batch(sent: &[Sent]) -> Option<&Batch> {
+            batches(sent).into_iter().find(|batch| kinds(batch).contains(&"lift"))
+        }
+
+        /// The begin time of every track the batches' plays add.
+        fn begins(sent: &[Sent]) -> Vec<f64> {
+            let plays = batches(sent).into_iter().flat_map(|batch| &batch.commands);
+            let edits = plays.filter_map(|command| if let Render::Play { edits, .. } = command { Some(edits) } else { None });
+            edits.flatten().filter_map(|edit| if let Edit::Add(track) = edit { Some(track.begin()) } else { None }).collect()
+        }
+
+        #[test]
+        fn the_frame_zero_ask_is_out_before_the_stage_batch() {
+            let mut h = Harness::new();
+            let pan = h.pan();
+            let sent = h.step(pan);
+            let asked = sent.iter().position(|sent| {
+                matches!(sent, Sent::Asked(Asked::AskOnScreen(ask)) if ask.moment == Moment::FrameZero)
+            });
+            let staged = sent.iter().position(|sent| matches!(sent, Sent::Drawn(batch) if kinds(batch).contains(&"stage")));
+            assert!(asked.expect("frame zero asked") < staged.expect("frame zero posed"));
+        }
+
+        #[test]
+        fn frame_zero_pictures_and_the_show_are_one_batch() {
+            let mut h = Harness::new();
+            let pan = h.pan();
+            h.step(pan);
+            let frame_zero = h.frame_zero();
+            let sent = h.step(frame_zero);
+            assert_eq!(kinds(only_batch(&sent)), ["stage", "show", "holes", "play"], "posed again with its pictures, holed and moving");
+        }
+
+        #[test]
+        fn no_frame_is_written_until_the_show_is_committed() {
+            let mut h = Harness::new();
+            let pan = h.pan();
+            let begun = only_batch(&h.step(pan)).seq;
+            let frame_zero = h.frame_zero();
+            let sent = h.step(frame_zero);
+            let shown = only_batch(&sent).seq;
+            assert!(placed(&sent).is_empty(), "shown, not drawn");
+            assert!(placed(&h.commit(begun)).is_empty(), "the press's batch shows nothing");
+            assert_eq!(placed(&h.commit(shown)), [vec![(wid(1), end())]]);
+            assert!(placed(&h.commit(shown)).is_empty(), "written once");
+        }
+
+        #[test]
+        fn a_merge_after_the_show_is_committed_writes_at_once() {
+            let mut h = Harness::new();
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            let pan_on = h.pan_on();
+            let sent = h.step(pan_on);
+            assert_eq!(placed(&sent), [vec![(wid(1), rect(-100.0, 0.0, 859.0, 1081.0))]], "in the press's own handler");
+        }
+
+        #[test]
+        fn the_bar_is_not_pictured_until_the_lift_is_drawn() {
+            let mut h = Harness::new();
+            let sent = h.lifted();
+            let lift = lift_batch(&sent).expect("lifted").seq;
+            assert!(!holds(&sent).contains(&Hold::Settling), "the overlay may still be on screen");
+            assert_eq!(holds(&h.commit(lift)), [Hold::Settling]);
+        }
+
+        #[test]
+        fn the_quiet_counts_from_the_lift_being_drawn() {
+            let mut h = Harness::new();
+            let lift = lift_batch(&h.lifted()).expect("lifted").seq;
+            assert!(h.engine.quiet.is_none(), "not armed at the lift's call");
+            h.commit(lift);
+            assert_eq!(h.engine.quiet.as_ref().map(|(generation, _)| *generation), Some(Generation(1)));
+        }
+
+        #[test]
+        fn a_measured_lift_holds_its_lift_and_the_bar_until_the_journal_hides_it() {
+            let taken = |h: &mut Harness| {
+                let tag = Tag { client: CLIENT, generation: h.generation() };
+                h.step(Event::Pictures(crate::pictures::event::Event::OverlayTaken { tag, taken: true }))
+            };
+            let patience = |h: &mut Harness| {
+                h.advance(OVERLAY_TAKE_PATIENCE);
+                h.step(Event::LiftPatience)
+            };
+            let moved = |h: &mut Harness| {
+                h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0 })
+            };
+            let hearings: [(&str, &dyn Fn(&mut Harness) -> Vec<Sent>); 3] =
+                [("its picture", &taken), ("the patience", &patience), ("the overlay moving", &moved)];
+            for (what, hears) in hearings {
+                let mut h = Harness::measuring();
+                let sent = h.lifted();
+                let check = sent.iter().find_map(|sent| match sent {
+                    Sent::Asked(Asked::CheckHandover(check)) => Some(check.clone()),
+                    _ => None,
+                });
+                let check = check.expect("measured");
+                assert_eq!(check.overlay, OVERLAY, "the window the renderer reported");
+                assert_eq!(check.overlay_origin, window_origin(DISPLAY, BAND), "the display last sent");
+                assert_eq!(check.windows, [(wid(1), end())]);
+                assert!(lift_batch(&sent).is_none(), "held");
+                assert!(!holds(&sent).contains(&Hold::Settling), "held with the lift");
+
+                let sent = hears(&mut h);
+                let batch = only_batch(&sent);
+                let lift = kinds(batch).iter().position(|kind| *kind == "lift").unwrap_or_else(|| panic!("{what}: hidden"));
+                if let Some(display) = kinds(batch).iter().position(|kind| *kind == "display") {
+                    assert!(lift < display, "{what}: hidden before the overlay moves");
+                }
+                assert!(!holds(&sent).contains(&Hold::Settling), "{what}: owed to the hide");
+                assert!(h.engine.quiet.is_none(), "{what}: owed to the hide");
+                let seq = batch.seq;
+                assert_eq!(holds(&h.commit(seq)), [Hold::Settling], "{what}");
+                assert!(h.engine.quiet.is_some(), "{what}");
+            }
+
+            let mut h = Harness::measuring();
+            h.lifted();
+            h.advance(Duration::from_millis(10));
+            let pan = h.pan();
+            let sent = h.step(pan);
+            assert_eq!(kinds(only_batch(&sent))[0], "lift", "a press never waits for the overlay's picture");
+            assert_eq!(holds(&sent), [Hold::Transition]);
+        }
+
+        #[test]
+        fn a_press_before_the_lift_is_drawn_keeps_its_hold() {
+            let mut h = Harness::new();
+            let lift = lift_batch(&h.lifted()).expect("lifted").seq;
+            h.advance(Duration::from_millis(10));
+            let pan = h.pan();
+            let pressed = h.step(pan);
+            assert_eq!(holds(&pressed), [Hold::Transition]);
+            let drawn = h.commit(lift);
+            assert!(holds(&drawn).is_empty(), "the last lift's bar is not pictured under the new flight");
+            assert!(h.engine.quiet.is_none(), "nor its quiet armed");
+        }
+
+        #[test]
+        fn a_flight_is_not_settled_while_a_batch_is_unacknowledged() {
+            let mut h = Harness::new();
+            let (begun, shown) = h.shown();
+            h.commit(begun);
+            h.advance(Duration::from_millis(400));
+            assert!(lift_batch(&h.step(Event::Tick)).is_none(), "the show's batch is not drawn");
+            h.commit(shown);
+            h.advance(FRAME_INTERVAL);
+            assert!(lift_batch(&h.step(Event::Tick)).is_some());
+        }
+
+        #[test]
+        fn an_event_that_draws_nothing_sends_no_batch() {
+            let mut h = Harness::new();
+            let (begun, shown) = h.shown();
+            assert!(batches(&h.commit(begun)).is_empty(), "a commit");
+            assert!(batches(&h.commit(shown)).is_empty(), "a commit releasing the writes");
+            h.advance(FRAME_INTERVAL);
+            assert!(batches(&h.step(Event::Tick)).is_empty(), "a tick");
+            assert!(batches(&h.step(Event::LooksTurned(vec![(wid(1), end())]))).is_empty(), "a turned look");
+        }
+
+        #[test]
+        fn every_track_begins_on_the_lifecycle_clock() {
+            let mut h = Harness::new();
+            let pan = h.pan();
+            h.step(pan);
+            h.advance(Duration::from_millis(7));
+            let delivered = h.at();
+            let frame_zero = h.frame_zero();
+            let started = begins(&h.step(frame_zero));
+            assert!(!started.is_empty());
+            assert!(started.iter().all(|begin| *begin == h.media.at(delivered)), "{started:?}: the motion at the drive's instant");
+            h.advance(Duration::from_millis(60));
+            let pushed = h.at();
+            let bounce = h.bounce();
+            let bounced = begins(&h.step(bounce));
+            assert!(!bounced.is_empty());
+            assert!(bounced.iter().all(|begin| *begin == h.media.at(pushed)), "{bounced:?}: a push at its press's");
+        }
+
+        #[test]
+        fn a_stage_the_renderer_cannot_draw_is_abandoned_and_written() {
+            let mut h = Harness::new();
+            let pan = h.pan();
+            let begun = only_batch(&h.step(pan)).seq;
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            let sent = h.step(Event::Rendered(Unavailable { seq: begun }));
+            assert_eq!(placed(&sent), [vec![(wid(1), end())]], "at once: the show sent since draws nothing");
+            assert_eq!(kinds(only_batch(&sent)), ["lift"]);
+            assert_eq!(holds(&sent), [Hold::Released]);
+            assert!(sent.iter().any(|sent| matches!(sent, Sent::Flying(false))));
+            assert!(!h.engine.flights.coordinator().is_flying());
+            let sent = h.step(Event::Rendered(Unavailable { seq: shown }));
+            assert!(placed(&sent).is_empty() && batches(&sent).is_empty(), "abandoned once");
+        }
+
+        #[test]
+        fn the_renderer_replica_and_the_score_agree() {
+            let mut h = Harness::new();
+            let pan = h.pan();
+            let mut sent = h.step(pan);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            sent.extend(h.step(frame_zero));
+            h.advance(Duration::from_millis(50));
+            let pan_on = h.pan_on();
+            sent.extend(h.step(pan_on));
+            h.advance(Duration::from_millis(30));
+            let bounce = h.bounce();
+            sent.extend(h.step(bounce));
+            let mut replica = Score::default();
+            for command in batches(&sent).into_iter().flat_map(|batch| &batch.commands) {
+                match command {
+                    Render::Stage { score, .. } => replica = score.clone(),
+                    Render::Play { edits, .. } => edits.iter().for_each(|edit| replica.apply(edit)),
+                    _ => {}
+                }
+            }
+            let running = h.engine.running.as_ref().expect("flying");
+            assert_eq!(&replica, running.score.score());
+        }
+
+        #[test]
+        fn the_engine_sends_the_writer_each_burst_journalled_gives() {
+            let mut h = Harness::new();
+            let bursts = h.writing();
+            let lift = lift_batch(&h.lifted()).expect("lifted").seq;
+            h.commit(lift);
+            assert!(matches!(bursts.try_recv(), Err(TryRecvError::Empty)), "nothing while it settles");
+            h.step(Event::Quiet(Generation(h.generation())));
+            let burst = bursts.try_recv().expect("the settled burst");
+            assert!(!burst.marks.is_empty());
+            assert!(matches!(bursts.try_recv(), Err(TryRecvError::Empty)), "once");
+
+            h.step(Event::Journal(JournalSettings { write: false, measure_handover: false }));
+            let lift = lift_batch(&h.lifted()).expect("lifted").seq;
+            h.commit(lift);
+            h.step(Event::Quiet(Generation(h.generation())));
+            assert!(matches!(bursts.try_recv(), Err(TryRecvError::Disconnected)), "the writer let go, nothing sent");
         }
     }
 }

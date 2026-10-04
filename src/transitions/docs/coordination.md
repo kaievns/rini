@@ -17,18 +17,9 @@ renderer `src/animation/platform/renderer.rs` and the overlay it draws on,
 bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "Real windows land before lift"). Layout passes, strip pans, moves along
 the strip, workspace switches, resizes, entrances and the edge bounce are all
-flights of it. When each step of one happens is the coordinator's ("The lifecycle").
+flights of it. When each step of one happens is the coordinator's ("The lifecycle"); how the engine
+and the renderer talk is "Threads".
 
-The engine hands the renderer what each event draws as one batch of render commands, numbered, and
-the renderer answers with the highest it committed. What must not happen before the overlay's change
-is on screen waits for the batch that carries it (`src/transitions/domain/drawn.rs`): the real frames
-for the `Show`'s, since a window written before the overlay covering it is up jumps to its end while
-its tile still starts; the bar's picture (`Settle`) and the quiet for the `Lift`'s, since the bar is
-read off the screen 250ms after `Settling` (`BAR_REFRESH_DELAY`) and must not find the overlay there.
-A new hold drops the last lift's `Settle` and quiet: one thread always carried them out before it,
-which the schedule nets to a transition hold with no bar due. The engine still owns the renderer on
-the main thread, so it plays each batch at the end of the event that drew it and carries out there
-what the commit releases.
 `AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
 `crate::transitions::domain::pass::plan` (moves, unmoved windows the overlay must still
@@ -49,6 +40,38 @@ closes, and the AX engine's last job was the `overlay_animations = false`
 fallback. That switch is gone: animation is on or off (`animations › off`), on means
 the overlay, off means placement. The AX resize trial ("Detour" in earlier revisions)
 ended in the overlay's favour.
+
+## Threads
+
+The engine and the renderer are two actors, and talk only by message. The engine hands the renderer
+what each event draws as one numbered batch of render commands (`Draw`); an event that draws nothing
+sends none, so a tick is no transaction. The renderer (`Renderer::run`) wakes on a batch, takes every
+batch queued behind it, plays them in order as one drain in one `CATransaction`, flushed, and answers
+once, with the highest number (`Event::Rendered`): a busy main thread costs one late commit, never a
+backlog of them. The answer is `Committed`, with the overlay's window number once the window server
+has numbered it, or `Unavailable` when the drain dressed or posed a flight and there is no overlay to
+draw it on. The engine then abandons the flight, whose `Abandon` writes the final frames at once:
+nothing waits for a show sent since, which draws nothing either.
+
+What must not happen before the overlay's change is on screen waits for the batch that carries it
+(`src/transitions/domain/drawn.rs`): the real frames for the `Show`'s, since a window written before
+the overlay covering it is up jumps to its end while its tile still starts; the bar's picture
+(`Settle`) and the quiet for the `Lift`'s, since the bar is read off the screen 250ms after
+`Settling` (`BAR_REFRESH_DELAY`) and must not find the overlay there. Everything else goes out at
+once. A new hold drops the last lift's `Settle` and quiet: one thread always carried them out before
+it, which the schedule nets to a transition hold with no bar due. A flight is settled only once its
+score has ended and every batch is committed, since until then its tiles may not be drawn where they
+end. `protocol` in `src/transitions/platform/engine.rs` pins each wait against the renderer's answers
+given by hand.
+
+Every instant the engine reads is the clock it is handed (`Parts`), and every track begins on the
+media clock the renderer read on the main thread (`MediaClock`: `Instant` and `CACurrentMediaTime`
+read together, within 0.1ms of each other by `the_media_clock_reads_what_core_animation_does`; both
+count mach absolute time, so the two are inferred, not measured, never to drift apart): a command's
+at the instant of the drive that gave it, a merge's, a push's and an entrance's at the instant of the
+event. The engine never calls QuartzCore, and a batch played after it was sent plays from where the
+score already is. Both actors are joined on the main thread's loop, so a batch's answer comes a
+run-loop pass after the event that sent it, behind whatever else the loop runs first.
 
 ## The lifecycle
 
@@ -362,7 +385,7 @@ the next flight against a busy compositor: frame-difference profiles of a
 screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
 beginning inside the quiet period holds the service
 again; the work carries over to its own quiet. The same quiet period is what
-`set_on_flight` reports as settled (`ReportUp`, `ReportSettled`): `true` when a transition
+the engine reports as settled through `OnFlight` (`ReportUp`, `ReportSettled`): `true` when a transition
 begins, `false` at its quiet, so a burst of flights is one `true` and
 one `false`. rini's own bar sits above the overlay and is never pictured, so
 with it on a flight looks for no bar at all. Another app's bar, under the

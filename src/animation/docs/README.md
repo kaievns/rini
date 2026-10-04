@@ -14,7 +14,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/surface.rs` | How a strip movement carries a surface: what the viewport at an offset shows (`viewport`), `surface_travel`, `pan_travel`, and what a window on the surface and a tile have to say (`SurfaceGeometry`, `TileGeometry`) |
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score has its movement (`Score::along`) and as fast as its leg is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
-| `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, which container each tile rides and how deep each is drawn, evaluating to what Core Animation draws; the fold of its `Edit`s (a place, a track added or cut, a ride, a drop, a bank), the one way in; each track's `Form`, the class that plays it; `ending_at`, a track's end moved; `presented`, where every container is; `plays`, whether a channel plays |
+| `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, which container each tile rides and how deep each is drawn, evaluating to what Core Animation draws; the fold of its `Edit`s (a place, a track added or cut, a ride, a drop, a bank), the one way in; each track's `Form`, the class that plays it; `ending_at`, a track's end moved; `presented`, where every container is; `plays`, whether a channel plays; `MediaClock`, the media time an `Instant` is at, from one reading of both |
 | `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving where one is drawn (`from_drawn`), and its track |
 | `domain/motion/nudge.rs` | A move's nudge: the step's share and stretch, its keyframes and track, and the curve a stepping flight flies on |
 | `domain/motion/accents.rs` | `Accent`, what a press asks to ride its movement (a push, a step), and the tracks each plays on its carriers: `push_tracks`, each container's bounce from where its own is drawn, never held off; `steps`, whether a step is taken, only while none plays; `step_tracks`, the step on every carrier |
@@ -25,7 +25,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/choreography.rs` | The looks: `Look`, every look by name (`ALL`), its `Choreography` for a flight (the plan, frame zero posed, the motion composed, a press before it folded and one after it bent) and its staging of a press on the strip (`stage`, over a `Cue`, a `Strip` and its `PairStart`s, giving a `Staging`); what a look composes from (`Stage`), bends with (`Pass`) and gives back (`Retarget`); and the tests every look passes |
 | `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
 | `platform/overlay.rs` | `TileOverlay`, the window the renderer draws on: it poses frame zero and plays a score's edits, every animation installed from a track, and commits nothing itself; its `Tree` (the `CALayer` tree and the replica it reads only to install) hangs off any root layer, so it is tested without a window; `server_id()` is its window's number, which a handover check pictures alone; `window_origin` is where the window over a display starts on screen, which that picture is read from, and `same_layout` whether a display lays the window out again |
-| `platform/renderer.rs` | `Renderer`: it owns the overlay, makes it on the first flight it dresses or poses, and plays the flight engine's `Batch`es of `Render` commands, each one of the overlay's calls; batches played together are one drain (`in_order`), played in one `CATransaction` with the window's alpha and background set around it |
+| `platform/renderer.rs` | `Renderer`, the main thread's actor: it owns the overlay, makes it on the first flight it dresses or poses, and plays the flight engine's `Batch`es of `Render` commands, each one of the overlay's calls; the batches queued when it wakes are one drain (`in_order`), played in one `CATransaction` with the window's alpha and background set around it and answered once (`run`); `media_clock`, Core Animation's media clock read against `Instant`, which the engine begins every track on |
 | `event.rs` | What the renderer answers each drain with: `Committed`, with the overlay's window number once the window server has numbered it, or `Unavailable`, a flight dressed or posed with no overlay to draw it on |
 
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
@@ -45,8 +45,8 @@ legs, which the user saw as a teleport.
 **One `CATransaction`, one timebase, one curve per flight.** Model layers jump to their
 destinations; the animations carry the presentation.
 
-**One transaction a drain, flushed.** The renderer plays the batches it is handed together, one
-drain, in one `CATransaction` and flushes it, so its answer means the render server has it: an explicit commit
+**One transaction a drain, flushed.** The renderer plays every batch queued when it wakes together,
+one drain, in one `CATransaction` and flushes it, so its answer means the render server has it: an explicit commit
 nested in the run loop's implicit transaction is otherwise sent only as that pass of the main
 thread's loop ends, after whatever else runs in it. Sent late, a flight skipped its first frames.
 The window's alpha and background are the window's, not the layers', so they are set around the

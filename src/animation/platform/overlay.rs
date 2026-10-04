@@ -173,7 +173,7 @@ fn container_key(channel: Channel) -> &'static str {
 }
 
 /// The media clock Core Animation's begin times are on.
-pub fn media_now() -> f64 {
+fn media_now() -> f64 {
     objc2_quartz_core::CACurrentMediaTime()
 }
 
@@ -822,7 +822,8 @@ impl TileOverlay {
     /// flight however many presses" in `src/animation/docs/animation-smoothness.md`. Asked for only
     /// while that target is on. The one read of the presentation layer left, and nothing is decided
     /// by it.
-    pub fn trace(&self, at: f64) {
+    pub fn trace(&self) {
+        let at = media_now();
         for (key, layer) in &self.tree.containers {
             // SAFETY: `presentationLayer` returns a read-only copy of the layer.
             let presented =

@@ -1,18 +1,22 @@
-//! The renderer: it owns the tile overlay and plays the render commands the flight engine hands it, a
-//! batch an event. The batches played together are one drain, in one `CATransaction`, flushed so its
-//! answer means the render server has it; the window's alpha and background, which are not the
-//! layers', are set around it. It decides nothing: every motion it plays is an edit of
-//! the coordinator's score. See "One transaction a drain, flushed" in `src/animation/docs/README.md`.
+//! The renderer: the main thread's actor that owns the tile overlay and plays the render commands the
+//! flight engine sends it, a batch an event. The batches queued when it wakes are one drain, played
+//! in one `CATransaction`, flushed so its answer means the render server has it; the window's alpha
+//! and background, which are not the layers', are set around it. It decides nothing: every motion it
+//! plays is an edit of the coordinator's score, begun on the media clock `media_clock` reads. See
+//! "One transaction a drain, flushed" in `src/animation/docs/README.md`.
+
+use std::time::Instant;
 
 use objc2::MainThreadMarker;
 use objc2_quartz_core::CATransaction;
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayRect, ScreenRect};
+use rini_runloop::channel::Receiver;
 use tracing::warn;
 
-use crate::animation::domain::motion::score::{Edit, Score};
+use crate::animation::domain::motion::score::{Edit, MediaClock, Score};
 use crate::animation::event::Event;
-use crate::animation::platform::overlay::{OverlayTile, TileOverlay, media_now};
+use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
 use crate::pictures::platform::picture::Picture;
 
 /// Everything the engine asks of the overlay, each one of its calls. Nothing asks for anything back.
@@ -71,26 +75,48 @@ pub fn in_order(mut batches: Vec<Batch>) -> Drained {
     Drained { commands, seq, shown }
 }
 
+/// Core Animation's media clock against `Instant`, read now: what the engine begins every track on.
+pub fn media_clock() -> MediaClock {
+    MediaClock::anchored(Instant::now(), objc2_quartz_core::CACurrentMediaTime())
+}
+
 pub struct Renderer {
+    rx: Receiver<Batch>,
     /// Made by the first `Dress` or `Stage` after a `Display`, and kept: making it costs too much to
     /// pay a flight ("Toggle alpha, do not order the window in and out" in
     /// `src/animation/docs/capture-overlay-research.md`).
     overlay: Option<TileOverlay>,
     /// The display last laid out: the frame, the bar's band and the scale.
     display: Option<(ScreenRect, f64, f64)>,
+    /// Tells the engine what each drain came to.
+    report: Box<dyn Fn(Event)>,
     mtm: MainThreadMarker,
 }
 
 impl Renderer {
-    pub fn new(mtm: MainThreadMarker) -> Self {
-        Self { overlay: None, display: None, mtm }
+    pub fn new(rx: Receiver<Batch>, report: Box<dyn Fn(Event)>, mtm: MainThreadMarker) -> Self {
+        Self { rx, overlay: None, display: None, report, mtm }
+    }
+
+    /// Each time a batch comes, it and every batch queued behind it are played as one drain, and
+    /// answered once: a busy main thread costs one late commit, never a backlog of them.
+    pub async fn run(mut self) {
+        while let Some((span, batch)) = self.rx.recv().await {
+            let mut batches = vec![batch];
+            while let Ok((_, batch)) = self.rx.try_recv() {
+                batches.push(batch);
+            }
+            let _guard = span.enter();
+            let answer = self.play(in_order(batches));
+            (self.report)(answer);
+        }
     }
 
     /// Plays a drain in one transaction, flushed: the overlay brought down before it when the drain
     /// lifts it, put up after when the drain shows it, and the window's background set once the
     /// holes' mask is committed. Without an overlay every command but `Display` does nothing; a drain
     /// that dressed or posed a flight on none is `Unavailable`.
-    pub fn play(&mut self, drained: Drained) -> Event {
+    fn play(&mut self, drained: Drained) -> Event {
         let Drained { commands, seq, shown } = drained;
         let draws_a_flight =
             commands.iter().any(|command| matches!(command, Render::Dress { .. } | Render::Stage { .. }));
@@ -146,7 +172,7 @@ impl Renderer {
                 overlay.clear_holes();
                 overlay.release_tiles();
             }
-            Render::Trace => overlay.trace(media_now()),
+            Render::Trace => overlay.trace(),
         }
     }
 
@@ -213,5 +239,12 @@ mod tests {
         fn crosses<T: Send>() {}
         crosses::<Batch>();
         crosses::<Event>();
+    }
+
+    #[test]
+    fn the_media_clock_reads_what_core_animation_does() {
+        let clock = media_clock();
+        let (at, media) = (clock.at(Instant::now()), objc2_quartz_core::CACurrentMediaTime());
+        assert!((at - media).abs() < 0.000_1, "{at} against {media}");
     }
 }

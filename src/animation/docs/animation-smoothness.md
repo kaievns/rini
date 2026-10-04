@@ -36,9 +36,10 @@ once: an explicit commit nested in the run loop's implicit transaction is
 only sent when that pass of the main thread's loop ends, after whatever
 else runs in it. Sent late, a flight skipped its first frames. Every
 animation is installed from a track (`src/animation/domain/motion/score.rs`)
-and carries the track's explicit `beginTime`, read off the media clock as
-the engine makes the edits, so the render server's clock and the actor's
-agree.
+and carries the track's explicit `beginTime`, which the engine stamps on the
+media clock the renderer read (`MediaClock`) at the instant the coordinator
+was driven, so the render server's clock and the coordinator's agree, and a
+batch played after it was sent plays from where the score already is.
 
 The model has been round the loop twice. The original manual tick loop
 (60Hz `RepeatingTimer` posting into the actor queue) was not vsync-aligned

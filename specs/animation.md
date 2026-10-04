@@ -177,8 +177,10 @@ destination for a window already moving.
   starts, and the floating windows seen behind them, a pass merged before the overlay is up included.
   The overlay MUST wait for them no longer than 80ms, and then flies what the cache holds until they
   come: each then replaces the cache's on its tile, and the flight MUST NOT start again.
-- A real window MUST NOT be written before the overlay is up, whatever the flight: written earlier, it
-  jumps on screen before the overlay hides it. Every frame MUST be written as the overlay goes up.
+- A real window MUST NOT move before the overlay covering it is on screen, whatever the flight: a
+  write that reaches the app first shows the window jumping to its end while its tile still starts.
+  Every frame MUST be written as soon as the overlay is on screen, so the window has the whole flight
+  to land in.
 - A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
   window that ends wholly on screen, so the window server counts it visible. Covered wholly, a
   terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
@@ -203,6 +205,9 @@ destination for a window already moving.
   before anything flies. After a restart nothing moves, and a pass that moves nothing asked for no
   pictures, so the first flights had none to draw. Per window, not per display: apps are found one
   by one at startup, and the first pass on the display knew one window of 21.
+- A picture read off the screen after a lift, such as the bar's, MUST NOT show the overlay: the bar's
+  is drawn over every flight after it, so one taken with the overlay up draws the overlay where the
+  bar should be.
 - A change of display MUST NOT drop the window pictures being captured. Only the desktop render belongs
   to a display; with a second display attached, every flight on the other one threw the window captures
   in flight away.

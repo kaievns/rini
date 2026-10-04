@@ -24,7 +24,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for |
 | **What waits for the screen** | `domain/drawn.rs` — `Drawn`: the batches of render commands handed to the renderer by number, the last it committed, and what waits for one (`Owed`): the real frames for the `Show`'s, the bar's picture and the quiet for the `Lift`'s; a new hold drops the last lift's |
 | **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, the press each request answers, every command it gives, every event it takes but a picture and frame zero, a tick only by the first `at_rest` and `landed` it reads in a generation, every delivery of pictures to it and each held lift's hide and handover a mark in a ring of 8192, and the burst due once a transition settles; the JSON lines a burst is written as; and which lifts are held for the overlay's own picture (`measures`) and when one hides (`Journalled::heard`) |
-| **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer, each event's render commands one batch, and the pictures service, placing the real windows through the reactor once the overlay covering them is drawn; while the handover is measured, it holds each lift's hide for the overlay's own picture until the journal says it hides, and the bar's picture and the quiet with it |
+| **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread, made from `Parts`: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer, each event's render commands one batch sent through `Draw` and its commit heard as `Event::Rendered`, and on the pictures service, placing the real windows through the reactor once the overlay covering them is drawn; every instant it reads is its clock's, and every track begins on the renderer's media clock; while the handover is measured, it holds each lift's hide for the overlay's own picture until the journal says it hides, and the bar's picture and the quiet with it |
 | **The journal's writer** | `platform/journal.rs` — `Writer`: the `journal` thread, which appends each burst to `~/Library/Logs/rini/transitions.jsonl` and starts it afresh past 50MB |
 | **Settings** | `settings.rs` — `JournalSettings`: whether the journal is written and the handover measured (`animations › journal`) |
 
@@ -50,12 +50,16 @@ the `Look` a flight they begin moves by, and a movement and a bounce the press (
 hands both to the look and matches on neither. The pictures service's sink, wired in
 `src/main.rs`, tells the engine what it delivered under the engine's tag, which watched windows'
 pictures will not come, and a handover check's overlay picture taken and its measure. The engine answers through
-the callbacks `src/main.rs` installs: the frames to write (`PlaceFrames`, back to the reactor) and
-whether a flight is up (`OnFlight`, to the bar). The reactor never learns more of a flight than that.
+what `src/main.rs` hands it in `Parts`: the frames to write (`PlaceFrames`, back to the reactor),
+whether a flight is up (`OnFlight`, to the bar), and each batch to draw (`Draw`, to the renderer,
+whose answer comes back as `Event::Rendered`). The reactor never learns more of a flight than the
+frames.
 
 **The decisions are pure and the actor is not.** What `domain/` decides is tested over plain rects
-and instants; the engine reads the window server and the clock, and holds what each flight composed
-between events.
+and instants; the engine reads the window server and the clock it is handed, and holds what each
+flight composed between events. Its messages are tested as sent (`protocol` in `platform/engine.rs`):
+over a pictures service with nothing behind it, a clock the test advances, and the renderer's
+answers given by the test.
 
 **The journal observes, and nothing reads it back.** Every command the coordinator gives and every
 event it takes is a mark pushed by `Journalled::drive`, but a picture and frame zero, which their

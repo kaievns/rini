@@ -287,8 +287,14 @@ fn capture_below_and_including(
     )
 }
 
+/// A test takes no framed capture: its window ids can name the developer's own windows. See "A unit
+/// test must not read the live window server" in `docs/testing.md`.
+#[cfg(test)]
+fn capture_window_rect(_: WindowServerId, _: CGRect, _: f64) -> Option<CFRetained<CGImage>> { None }
+
 /// One framed capture of the window's own rect, or `None` when the window server returned an image
 /// of another size.
+#[cfg(not(test))]
 fn capture_window_rect(
     server_id: WindowServerId,
     frame: CGRect,
