@@ -12,9 +12,10 @@ use objc2_io_surface::IOSurfaceRef;
 
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, dressing_after_insert, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
+use crate::pictures::domain::knowledge::CORNER_RADIUS;
 use crate::pictures::domain::region::{WHOLE, unit_rect};
 use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
-use crate::pictures::platform::edge_dressing::{CORNER_RADIUS, EdgeDressing};
+use crate::pictures::platform::edge_dressing::EdgeDressing;
 
 /// A window's pixels, whichever API produced them. Core Animation accepts each form.
 #[derive(Clone, Debug)]

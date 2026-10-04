@@ -206,7 +206,7 @@ carries the wallpaper in the window's rounded corners, where the window itself
 is transparent. `TileOverlay::set_tile_corner_clip` clips the tile's picture
 layer, crop pieces included, to a rounded rect of the window's radius
 (`cornerRadius` with `masksToBounds`, which follows a resize); the shadow
-caster is never clipped, and every install puts the picture back to whole
+caster and the hairline are never clipped, and every install puts the picture back to whole
 (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
 is in `docs/pictures-motion-transitions.md`. The pictures service bakes them
 (`capture_on_screen`), and nothing asks it for one yet.
@@ -224,6 +224,34 @@ so it lands there with the leg instead of popping at the lift
 (`a_tile_on_its_own_leg_snaps_on_the_same_timing`); once the leg has played
 only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
 Nothing calls it yet: when to snap, once per window per generation, is the
+coordinator's.
+
+**The hairline.** No capture carries the hairline macOS composites around a
+window ("The hairline is composited outside every capture" in
+`src/pictures/docs/capture-research.md`), so the overlay draws it over every
+tile as a constant (`domain::motion::hairline`). The ring is a `CALayer` with a
+1pt border (`RING_PT`) of white at 0.20 on the focused window and 0.18 on the
+rest (`ring_alpha`), the fit measured there in dark mode; light mode is not
+measured. The outline is a `CAShapeLayer` stroking 0.5pt (`OUTLINE_PT`) of
+black at 0.9 along a rounded rect a quarter point outside the window
+(`outline`), so the stroke covers the half point just past its edge; a border
+layer at a half-point origin landed one pixel too far out ("The handover,
+measured" in `capture-overlay-research.md`). Both round to the window's radius
+as `pictures` measured it (`OverlayTile::radius`, which the flight engine fills
+from `Pictures::knowledge`), else 10pt, never past half the shorter side
+(`corner_radius`). The ring is a third layer beside the picture and the
+caster, an eighth step in front of the picture and under a companion's quarter
+step (`RING_Z`), with the outline as its child: inside the picture, a corner
+clip would cut the outline away (`a_corner_clip_leaves_the_hairline_whole`).
+It rides every move with the picture; a resize carries its bounds on the
+tile's own leg and animates its corner and the outline's path between the two
+sizes (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it
+with the tile. Both are laid after the tile's frame, on every placement, or a
+pooled layer's autoresizing carries the old size, and a pooled tile's radius
+can have been measured since its last flight. Companions wear none.
+`TileOverlay::set_tile_focused` switches the ring's white and the shadow's
+depth in a hard cut, for focus handing over mid-flight; the prototype set the
+ring only at install. Nothing calls it yet: when focus hands over is the
 coordinator's.
 
 Mechanics worth remembering:
@@ -412,8 +440,8 @@ changes is how the picture maps onto it (`content_mode` in
   anchors to the BOTTOM (a terminal's prompt rides the bottom edge), so the
   seam sits just below the title bar; cutting at the bottom instead read as
   the window sliding into a slot. Content never stretches — the moving edges
-  swallow or reveal it — and all four rounded corners plus the harvested
-  hairline ride through intact. A first cut used `contentsCenter` (nine-part
+  swallow or reveal it — and all four rounded corners ride through intact,
+  under a hairline drawn at every size ("The hairline"). A first cut used `contentsCenter` (nine-part
   stretching); it kept the corners but read as the window stretching, which
   it is. Wrong-shaped cached pictures use the same mapping instead of being
   dropped — rapid preset cycling used to drop the resized window's tile
@@ -430,7 +458,7 @@ changes is how the picture maps onto it (`content_mode` in
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
   IS the per-frame crop layout; one transaction installs frame, contentsRect,
-  shadow-path, ring-mask and hairline-band animations on the shared curve.
+  shadow-path, ring-mask, hairline-corner and outline-path animations on the shared curve.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
   seam a few points mid-flight inside the window's own content. A loose
   tile's retarget continues from the PRESENTED position and size, so rapid
@@ -438,19 +466,6 @@ changes is how the picture maps onto it (`content_mode` in
 - **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, so it
   degrades continuously into a plain reveal as a frame approaches zero — no
   seam pops mid-flight, no band ever wider than its frame.
-- **A fresh picture or hairline swaps in place.** Rebuilding the dressing on a
-  mid-flight recapture snapped the border to its final layout while the tile
-  was still travelling; a matching harvest now swaps pixels into the existing
-  layers and rides their animations. The match is on harvested pieces only,
-  not on the tile's size: a run with no extent (an entrance dressed at zero
-  width) still gets a zero-size layer, so a tile wears the same 8 pieces at
-  every size. A harvest can still come back short: a corner the alpha check
-  rejects on a partly covered window, or a window caught mid-resize. A
-  mismatched set is never rebuilt while a resize animates
-  (`dressing_rebuild_allowed`, `Tile.resize_until`): the worn ring stays on
-  the resize timeline, the new dressing is already on the cached snapshot,
-  and the next `install` wears it. Rebuilding placed the pieces at the
-  destination rectangle while the picture was still halfway.
 - The caster's ring mask is created once per tile and reshaped in place; a
   resize animates its path and the shadow's silhouette between the two
   endpoint shapes, which interpolate because both are built by the same

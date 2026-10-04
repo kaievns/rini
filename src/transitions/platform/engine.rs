@@ -227,6 +227,7 @@ fn border_tile(
         depth: anchor.depth,
         companion: Some(anchor.window),
         focused: false,
+        radius: None,
     }
 }
 
@@ -349,6 +350,7 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture) -> OverlayTile 
         depth: 0,
         companion: None,
         focused: true,
+        radius: None,
     }
 }
 
@@ -964,18 +966,15 @@ impl FlightEngine {
             .ok();
     }
 
-    /// Takes a finished hairline harvest: onto the cached snapshot, and onto a tile in flight.
+    /// Takes a finished hairline harvest onto the cached snapshot.
     fn dressing_ready(
         &mut self,
         window: WindowId,
         dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
     ) {
-        self.pictures.set_dressing(window, dressing.clone());
+        self.pictures.set_dressing(window, dressing);
         let Some(running) = self.running.as_mut() else { return };
         running.harvested.insert(window);
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tile_dressing(window, &dressing);
-        }
     }
 
     /// Takes a framed recapture: a chase's reveal, or the destination refresh.
@@ -1302,6 +1301,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: focus == Some(request.window),
+                        radius: self.pictures.knowledge(request.server_id).radius,
                     });
                     starts.push((request.window, start));
                     resolved.push((request.window, start, end, request.floating));
@@ -1359,6 +1359,7 @@ impl FlightEngine {
                                 depth: 0,
                                 companion: None,
                                 focused: standing && focus == Some(request.window) || !standing,
+                                radius: self.pictures.knowledge(request.server_id).radius,
                             });
                             if standing {
                                 starts.push((request.window, from));
@@ -1838,6 +1839,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: focus == Some(window.window),
+                        radius: self.pictures.knowledge(window.server_id).radius,
                     });
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
@@ -2391,6 +2393,7 @@ mod tests {
             depth: 0,
             companion: None,
             focused: false,
+            radius: None,
         }
     }
 
@@ -3252,6 +3255,7 @@ mod tests {
                 depth: 0,
                 companion: None,
                 focused: true,
+                radius: None,
             };
             let awaiting: Vec<(WindowId, CGSize)> = Vec::new();
             let (holding, chase_set, now) = frame_zero_work(

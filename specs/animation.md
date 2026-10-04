@@ -207,6 +207,25 @@ destination for a window already moving.
 > had already been measured returning the same flat grey. The window captured together with what is
 > below it carries the real blur and leaves out anything above it, measured the same day.
 
+## The window's hairline
+
+- Every tile MUST wear the hairline macOS composites around each window, which no capture carries: a
+  1pt ring of white on the window's outermost point, at 20% on the focused window and 18% on any
+  other, and a 0.5pt stroke of black at 90% in the half point just outside it.
+- Both MUST round to the window's own corner radius once `pictures` has measured it, and to 10pt
+  until then, never past half the tile's shorter side.
+- Both MUST follow the tile through a resize, on the tile's own timing, and onto its window's real
+  frame when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
+  its corners.
+- When focus hands over during a flight, the ring MUST follow it: the window gaining focus brighter,
+  the window losing it dimmer.
+
+The ring's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
+applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
+measured. Before it, a tile wore a hairline cut out of a capture of its window, and none until that
+capture had run: the 53-level p99 at the focused window's edge in "The handover, measured"
+(`src/animation/docs/capture-overlay-research.md`).
+
 ## Focus changing during a flight
 
 - When a flight moves focus from one window to another, both MUST land in their new focus rendering:
@@ -271,7 +290,7 @@ destination for a window already moving.
 ## Where it lives
 
 `src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
-depth bands, the edge bounce and the nudge. `src/animation/platform/overlay.rs` plays it on Core
+depth bands, the edge bounce and the nudge, and the hairline every tile wears. `src/animation/platform/overlay.rs` plays it on Core
 Animation. When each step happens is `src/transitions/`: `src/transitions/domain/strip_move.rs` stages
 the move along the strip, `src/transitions/domain/admission.rs` and `src/transitions/domain/flight.rs`
 hold the mid-flight rules, and `src/transitions/platform/engine.rs` is the actor that runs every
