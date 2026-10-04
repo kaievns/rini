@@ -208,7 +208,8 @@ layer, crop pieces included, to a rounded rect of the window's radius
 (`cornerRadius` with `masksToBounds`, which follows a resize); the shadow
 caster is never clipped, and every install puts the picture back to whole
 (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
-is in `docs/pictures-motion-transitions.md`; nothing bakes a picture yet.
+is in `docs/pictures-motion-transitions.md`. The pictures service bakes them
+(`capture_on_screen`), and nothing asks it for one yet.
 
 **Tiles snap to the real frame.** A strip pans by a fractional vector and the
 window server rounds each window on its own, so a tile of a rigid group can end
@@ -422,8 +423,9 @@ changes is how the picture maps onto it (`content_mode` in
   (`within`), at rest and at both ends of a resize, and the pieces stay inside
   it however the frame grows, so no piece shows the composite's next window
   (`a_region_pictures_crop_pieces_show_only_the_region`,
-  `the_crop_grid_of_a_region_stays_in_the_region`). Until pictures are regions
-  the region is the whole picture.
+  `the_crop_grid_of_a_region_stays_in_the_region`). A tile's region is its
+  picture's (`Pixels::unit_rect`), all of the image for anything but a region
+  (`a_crop_drawn_tile_takes_its_region_from_its_picture`).
 - **The animation is Core Animation end to end.** Piece frames and
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids

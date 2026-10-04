@@ -176,14 +176,9 @@ struct RunningAnimation {
     _clock: Option<RepeatingTimer>,
 }
 
-/// The thumbprint of a snapshot's bitmap; `None` for a surface, which cannot be compared.
+/// The thumbprint of a snapshot's bitmap or region; `None` for a surface, which cannot be compared.
 fn bitmap_thumbprint(snapshot: &Picture) -> Option<Vec<u8>> {
-    match &snapshot.image {
-        crate::pictures::platform::picture::Pixels::Bitmap(image) => {
-            crate::pictures::platform::bitmap::thumbprint(image)
-        }
-        _ => None,
-    }
+    crate::pictures::platform::bitmap::thumbprint(&*snapshot.image.bitmap()?)
 }
 
 /// Writes every tile's destination back from the merged plan: a member the pass did not compose
@@ -795,6 +790,10 @@ impl FlightEngine {
         let (window, taken) = match landed {
             crate::pictures::event::Event::Taken { window, picture } => (window, Some(picture)),
             crate::pictures::event::Event::Refused { window } => (window, None),
+            // Asked for by watches and asks of windows on screen, which the engine makes none of.
+            crate::pictures::event::Event::Delivered { .. } | crate::pictures::event::Event::Lost { .. } => {
+                return;
+            }
         };
         let covered = taken.as_ref().is_none_or(Picture::is_usable);
         if harvests_landing(self.running.is_some(), covered) {

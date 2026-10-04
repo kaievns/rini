@@ -30,12 +30,13 @@ use crate::animation::domain::motion::plan::{
 use crate::animation::domain::motion::nudge::nudge_samples;
 use crate::animation::domain::motion::score::{Curve, Value};
 use crate::animation::domain::motion::tile::{
-    ContentMode, DressingAction, WHOLE, content_mode, crop_pieces, dressing_rebuild_allowed,
-    resize_in_flight, snap_to, within,
+    ContentMode, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
+    resize_in_flight, snap_to,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
+use crate::pictures::domain::region::{WHOLE, within};
 use crate::pictures::platform::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::pictures::platform::layer::{set_contents, set_layer_contents, stretch_region};
 use crate::pictures::platform::picture::Picture;
@@ -489,7 +490,7 @@ struct Tile {
     /// Size in points of the picture the crop pieces show; `None` when stretching.
     crop_of: Option<CGSize>,
     /// The part of the contents image that is the tile's picture, in unit coordinates, which the
-    /// crop pieces' contents are composed with: all of it until a picture is a region of a
+    /// crop pieces' contents are composed with: all of it unless the picture is a region of a
     /// composite.
     region: CGRect,
     /// When the installed resize animation ends; a mismatched hairline is deferred until then.
@@ -780,8 +781,7 @@ impl TileOverlay {
                     set_layer_contents(piece, snapshot);
                 }
             }
-            let covered = snapshot.coverage.covered;
-            entry.crop_of = Some(CGSize::new(covered.0, covered.1));
+            crop_to(entry, snapshot);
             let final_rect = entry.picture.frame();
             layout_crop_grid(entry, final_rect.size);
             // Re-installed on the same timing when riding a leg, so only the pixels cut.
@@ -1798,8 +1798,7 @@ fn set_tile_content(
                 piece.setHidden(false);
                 set_layer_contents(piece, snapshot);
             }
-            let covered = snapshot.coverage.covered;
-            entry.crop_of = Some(CGSize::new(covered.0, covered.1));
+            crop_to(entry, snapshot);
             layout_crop_grid(entry, frame);
         }
         ContentMode::Stretch => {
@@ -1815,6 +1814,14 @@ fn set_tile_content(
     // Written on every install because tile layers are pooled: a layer that last held a stand-in must
     // not stretch the next window's picture nine-slice.
     entry.picture.setContentsCenter(stretch_region(snapshot));
+}
+
+/// Points a crop-drawn tile at `snapshot`: the size its pieces cut, and the part of the contents
+/// image that is the picture.
+fn crop_to(entry: &mut Tile, snapshot: &Picture) {
+    let covered = snapshot.coverage.covered;
+    entry.crop_of = Some(CGSize::new(covered.0, covered.1));
+    entry.region = snapshot.image.unit_rect();
 }
 
 /// Lays the crop grid out for the tile's current frame size.
@@ -2524,6 +2531,26 @@ mod tests {
                 "a whole picture is unchanged"
             );
         }
+    }
+
+    /// A crop-drawn tile takes its region from its picture: a region of a composite crops inside
+    /// it, and the next picture, whole, puts the region back to all of the image.
+    #[test]
+    fn a_crop_drawn_tile_takes_its_region_from_its_picture() {
+        use crate::pictures::platform::picture::{test_picture, test_region};
+        let container = CALayer::layer();
+        let mut tile = new_tile(&container);
+        let frame = CGSize::new(2.0, 2.0);
+        let region = test_region();
+        set_tile_content(&mut tile, &region, ContentMode::Crop, frame, 2.0);
+        assert_eq!(tile.region, region.image.unit_rect());
+        assert_eq!(tile.region, rect(0.5, 0.0, 0.5, 1.0));
+        let grid = tile.crop_grid.as_ref().unwrap();
+        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(frame, frame)) {
+            assert_eq!(layer.contentsRect(), within(tile.region, piece.contents));
+        }
+        set_tile_content(&mut tile, &test_picture(frame), ContentMode::Crop, frame, 2.0);
+        assert_eq!(tile.region, WHOLE);
     }
 
     /// A baked picture's corners are clipped to the window's radius, and only the picture is: the

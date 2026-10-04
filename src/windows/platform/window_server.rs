@@ -500,6 +500,15 @@ pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
     window_info_from_query(&query)
 }
 
+/// The frame the window server has for `id` now, answered without asking the app: it has a written
+/// frame within 0.1ms of the write returning ("Where a moving focus change spends its time" in
+/// `src/animation/docs/capture-overlay-research.md`).
+pub fn server_frame(id: WindowServerId) -> Option<CGRect> {
+    let mut frame = CGRect::default();
+    let read = unsafe { SLSGetWindowBounds(*G_CONNECTION, id.as_u32(), &mut frame) };
+    (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
+}
+
 pub fn get_num(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<i64> {
     dict.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
 }

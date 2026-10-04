@@ -6,6 +6,7 @@ pub mod bitmap;
 pub mod desktop;
 pub mod edge_dressing;
 pub mod layer;
+pub mod measure;
 pub mod picture;
 pub mod screencapturekit;
 pub mod service;

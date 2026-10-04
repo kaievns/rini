@@ -12,20 +12,54 @@ use objc2_io_surface::IOSurfaceRef;
 
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, dressing_after_insert, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
-use crate::pictures::platform::bitmap::rgba_bitmap_context;
+use crate::pictures::domain::region::{WHOLE, unit_rect};
+use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
 use crate::pictures::platform::edge_dressing::{CORNER_RADIUS, EdgeDressing};
 
-/// A window's pixels, whichever API produced them. Core Animation accepts either form.
+/// A window's pixels, whichever API produced them. Core Animation accepts each form.
 #[derive(Clone, Debug)]
 pub enum Pixels {
     /// CPU-side bitmap, from `SLSHWCaptureWindowList`.
     Bitmap(CFRetained<CGImage>),
     /// GPU-side surface, from ScreenCaptureKit; off the process's heap.
     Surface(CFRetained<IOSurfaceRef>),
+    /// One window's part of a batched SkyLight composite, `rect` in the composite's pixels. Drawn
+    /// through `contentsRect`, so nothing is copied out of it; it keeps the whole composite alive, so
+    /// it is replaced by a copy of its own once no transition holds the service.
+    Region {
+        composite: CFRetained<CGImage>,
+        rect: CGRect,
+    },
 }
 
 // SAFETY: CGImage is immutable and IOSurface is shareable across threads and processes.
 unsafe impl Send for Pixels {}
+
+impl Pixels {
+    /// The pixels as an image of their own: the bitmap, or a crop of a region, which decodes nothing
+    /// until it is drawn. `None` for a surface.
+    pub fn bitmap(&self) -> Option<CFRetained<CGImage>> {
+        match self {
+            Self::Bitmap(image) => Some(image.clone()),
+            Self::Region { composite, rect } => CGImage::with_image_in_rect(Some(composite), *rect),
+            Self::Surface(_) => None,
+        }
+    }
+
+    /// The part of the layer contents these pixels are, in unit space: a region's rect in its
+    /// composite, the whole of anything else.
+    pub fn unit_rect(&self) -> CGRect {
+        match self {
+            Self::Region { composite, rect } => unit_rect(*rect, image_size(composite)),
+            Self::Bitmap(_) | Self::Surface(_) => WHOLE,
+        }
+    }
+}
+
+/// An image's size in pixels.
+pub fn image_size(image: &CGImage) -> (f64, f64) {
+    (CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
+}
 
 /// A window's pixels, plus how much of the window they cover and how they were taken.
 #[derive(Clone, Debug)]
@@ -61,6 +95,19 @@ pub enum Route {
 impl Picture {
     pub fn is_usable(&self) -> bool {
         self.coverage.is_usable()
+    }
+
+    /// This picture as one to keep: a region copied into an image of its own, so it no longer holds
+    /// its composite alive. `None` for any other kind, which holds nothing but itself.
+    pub fn kept(&self) -> Option<Picture> {
+        let Pixels::Region { .. } = &self.image else {
+            return None;
+        };
+        let copy = standalone_copy(&*self.image.bitmap()?)?;
+        Some(Picture {
+            image: Pixels::Bitmap(copy),
+            ..self.clone()
+        })
     }
 
     /// Can this picture be drawn at `size` without visibly distorting it? See [`fits_frame`].
@@ -143,8 +190,8 @@ impl CarriesOver for Picture {
         )
     }
 
-    /// A stand-in is drawn and never kept: cached, it would be lent to the switcher as a picture and
-    /// taken for one by the next flight.
+    /// A stand-in is drawn and never kept: cached, the switcher would read it as a picture and the next
+    /// flight would take it for one.
     fn cacheable(&self) -> bool {
         self.source != Route::StandIn
     }
@@ -185,6 +232,20 @@ pub(crate) fn test_bitmap() -> CFRetained<CGImage> {
     .expect("image")
 }
 
+/// The right half of a 4x2 composite, as a region picture of a 2x2 window.
+#[cfg(test)]
+pub(crate) fn test_region() -> Picture {
+    let ctx = rgba_bitmap_context(4, 2).expect("a context");
+    let composite = objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)).expect("an image");
+    Picture {
+        image: Pixels::Region {
+            composite,
+            rect: CGRect::new(CGPoint::new(2.0, 0.0), CGSize::new(2.0, 2.0)),
+        },
+        ..test_picture(CGSize::new(2.0, 2.0))
+    }
+}
+
 /// A usable picture that claims to cover a window of `size`, for tests about geometry.
 #[cfg(test)]
 pub(crate) fn test_picture(size: CGSize) -> Picture {
@@ -208,7 +269,7 @@ mod tests {
     use super::*;
     use crate::pictures::domain::cache::PictureCache;
 
-    /// A stand-in never enters the cache, where it would be lent to the switcher as a picture.
+    /// A stand-in never enters the cache, where the switcher would read it as a picture.
     #[test]
     fn a_stand_in_is_never_cached() {
         let mut cache: PictureCache<Picture> = PictureCache::new();
@@ -225,6 +286,30 @@ mod tests {
         assert_eq!(corner, 20.0, "10pt at 2x");
         assert_eq!(CGImage::width(Some(&image)), 42);
         assert_eq!(CGImage::height(Some(&image)), 42);
+    }
+
+    /// A region is kept as a copy of its own pixels, stamped as it was; any other kind is kept as it is.
+    #[test]
+    fn a_region_is_kept_as_a_copy_and_anything_else_as_it_is() {
+        let region = test_region();
+        let kept = region.kept().expect("a copy");
+        assert!(matches!(kept.image, Pixels::Bitmap(_)));
+        assert_eq!(kept.taken, region.taken);
+        assert_eq!(kept.coverage, region.coverage);
+        assert!(test_picture(CGSize::new(1.0, 1.0)).kept().is_none());
+    }
+
+    /// A region's own image is a crop of its rect, and its unit rect is that rect over the composite.
+    #[test]
+    fn a_region_is_its_rect_of_the_composite() {
+        let region = test_region();
+        let crop = region.image.bitmap().expect("a crop");
+        assert_eq!((CGImage::width(Some(&crop)), CGImage::height(Some(&crop))), (2, 2));
+        assert_eq!(
+            region.image.unit_rect(),
+            CGRect::new(CGPoint::new(0.5, 0.0), CGSize::new(0.5, 1.0))
+        );
+        assert_eq!(test_picture(CGSize::new(1.0, 1.0)).image.unit_rect(), WHOLE);
     }
 
     /// The reported flicker: a blurred window's picture, taken on screen with its blur, must not be

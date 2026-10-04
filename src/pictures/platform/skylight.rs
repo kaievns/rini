@@ -1,34 +1,38 @@
-//! Every SkyLight and `CGWindowList` capture: one composite of a list of windows, and the framed
-//! capture of one window with its hairline and, wholly on a display, its blur.
+//! Every SkyLight and `CGWindowList` capture: one composite of a list of windows, the batched capture
+//! of the windows on screen as regions of it, and the framed capture of one window with its hairline
+//! and, wholly on a display, its blur.
 //!
 //! SkyLight captures what is on screen, fresh. Constraints and costs:
 //! `src/pictures/docs/capture-research.md`.
 
+use std::collections::HashMap;
 use std::ffi::c_int;
+use std::time::Instant;
 
 use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGImage, CGWindowListOption};
-use rini_core::ids::WindowServerId;
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 
 use crate::pictures::domain::coverage::Coverage;
+use crate::pictures::domain::knowledge::{Call, Learned};
+use crate::pictures::domain::region::{composite_frame, composite_scale, contains, pixel_rect};
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
+use crate::pictures::platform::desktop::DesktopBackdrop;
 use crate::pictures::platform::edge_dressing::{
     harvest_from_capture, picture_within_ring, ring_expanded,
 };
-use crate::pictures::platform::picture::{Picture, Pixels, Route};
+use crate::pictures::platform::measure::{first_sight, shows_material};
+use crate::pictures::platform::picture::{Picture, Pixels, Route, image_size};
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
 /// actually does" in `src/animation/docs/capture-overlay-research.md`.
 const CAPTURE_OPTIONS: u32 = (1 << 11) | (1 << 8);
 
-/// One `SLSHWCaptureWindowList` call, for several windows composited together: the desktop backdrop,
-/// and another app's bar.
-pub fn capture_list_via_skylight(
-    windows: &[WindowServerId],
-    covers: (f64, f64),
-    scale: f64,
-) -> Option<Picture> {
+/// One `SLSHWCaptureWindowList` call: one composite of `windows`, the first listed in front, covering
+/// what each has on its display. The only SkyLight capture call; every picture of a list of windows is
+/// cut from what it returns.
+fn composite(windows: &[WindowServerId]) -> Option<CFRetained<CGImage>> {
     if windows.is_empty() {
         return None;
     }
@@ -36,15 +40,20 @@ pub fn capture_list_via_skylight(
     let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
     let array: *mut CFArray<CGImage> =
         unsafe { SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS) };
-    if array.is_null() {
-        return None;
-    }
     // SAFETY: SLSHWCaptureWindowList returns a +1 CFArray of CGImage, so ownership transfers here.
     let array = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(array)?) };
-    let image = array.iter().next()?;
+    array.iter().next()
+}
+
+/// One composite of several windows, as one picture: the desktop backdrop, and another app's bar.
+pub fn capture_list_via_skylight(
+    windows: &[WindowServerId],
+    covers: (f64, f64),
+    scale: f64,
+) -> Option<Picture> {
+    let image = composite(windows)?;
     let scale = if scale > 0.0 { scale } else { 1.0 };
-    let px_w = CGImage::width(Some(&image)) as f64;
-    let px_h = CGImage::height(Some(&image)) as f64;
+    let (px_w, px_h) = image_size(&image);
     Some(Picture {
         image: Pixels::Bitmap(image),
         coverage: Coverage {
@@ -56,6 +65,159 @@ pub fn capture_list_via_skylight(
         taken: std::time::Instant::now(),
         carries_blur: false,
     })
+}
+
+/// A window to capture, at the frame the window server has it at.
+#[derive(Clone, Copy, Debug)]
+pub struct OnScreen {
+    pub window: WindowId,
+    pub server_id: WindowServerId,
+    pub frame: CGRect,
+}
+
+/// What one batched capture brought back.
+pub struct Batch {
+    pub pictures: Vec<(WindowId, Picture)>,
+    /// The baked call came back another shape than its windows, the desktop listed after them
+    /// included: a desktop window listed is no longer there.
+    pub desktop_stale: bool,
+}
+
+/// The windows in `windows`, wholly on `display` at their server frames and none overlapping
+/// another, each as a region of the call it was captured in. What is known of each decides the call
+/// (`crate::pictures::domain::knowledge`):
+///
+/// - the alpha call, the windows alone, keeps a translucent window translucent, so the overlay draws
+///   what is really behind it; a window seen for the first time is measured from it;
+/// - the baked call lists the opaque windows, then `behind`, then the desktop, so a material carries the
+///   blur of what is below it. A window opaque and of unknown material is in both, and its material is
+///   learned from the difference.
+///
+/// A composite of another shape than its windows yields no picture. Measured in "A batched call
+/// composites in the order given" in `src/pictures/docs/capture-research.md`.
+pub fn capture_on_screen(
+    windows: &[OnScreen],
+    behind: &[(WindowServerId, CGRect)],
+    desktop: &DesktopBackdrop,
+    display: CGRect,
+    learned: &mut Learned,
+) -> Batch {
+    let taken = Instant::now();
+    let mut pictures = Vec::new();
+    let (alpha, mut baked): (Vec<OnScreen>, Vec<OnScreen>) = windows
+        .iter()
+        .partition(|window| learned.get(window.server_id).first_call() == Call::Alpha);
+    let mut alone = HashMap::new();
+    if let Some((composite, origin, scale)) = call(&alpha, &[], None, display) {
+        for window in alpha {
+            let Some((rect, crop)) = cut(&composite, origin, scale, window.frame) else { continue };
+            if learned.get(window.server_id).translucent.is_none() {
+                let (translucent, radius) = first_sight(&crop, scale);
+                learned.saw_alpha(window.server_id, translucent, radius);
+            }
+            match learned.get(window.server_id).after_alpha() {
+                Call::Alpha => pictures.push(region(&window, &composite, rect, taken, false)),
+                Call::Baked => {
+                    alone.insert(window.server_id, crop);
+                    baked.push(window);
+                }
+            }
+        }
+    }
+    let mut desktop_stale = false;
+    if !baked.is_empty() {
+        match call(&baked, behind, Some(desktop), display) {
+            Some((composite, origin, scale)) => {
+                for window in baked {
+                    let Some((rect, crop)) = cut(&composite, origin, scale, window.frame) else {
+                        continue;
+                    };
+                    if let Some(alone) = alone.get(&window.server_id) {
+                        learned.saw_material(window.server_id, shows_material(alone, &crop));
+                    }
+                    let material = learned.get(window.server_id).material == Some(true);
+                    pictures.push(region(&window, &composite, rect, taken, material));
+                }
+            }
+            None => desktop_stale = true,
+        }
+    }
+    Batch {
+        pictures,
+        desktop_stale,
+    }
+}
+
+/// One call for `windows`, then `behind` not already listed, then the desktop when given, and where
+/// the composite it returns lies: its top-left in global points and its scale. `None` when it is not
+/// the shape of what was listed.
+fn call(
+    windows: &[OnScreen],
+    behind: &[(WindowServerId, CGRect)],
+    desktop: Option<&DesktopBackdrop>,
+    display: CGRect,
+) -> Option<(CFRetained<CGImage>, CGPoint, f64)> {
+    if windows.is_empty() {
+        return None;
+    }
+    let mut ids: Vec<WindowServerId> = windows.iter().map(|window| window.server_id).collect();
+    let mut frames: Vec<CGRect> = windows.iter().map(|window| window.frame).collect();
+    for (id, frame) in behind {
+        if !ids.contains(id) {
+            ids.push(*id);
+            frames.push(*frame);
+        }
+    }
+    if let Some(desktop) = desktop {
+        ids.extend(&desktop.windows);
+        frames.extend(desktop.bounds);
+    }
+    let image = composite(&ids)?;
+    let covers = composite_frame(&frames, display)?;
+    let scale = composite_scale(covers, image_size(&image))?;
+    Some((image, covers.origin, scale))
+}
+
+/// The pixel rect of a window at `frame` in a composite whose top-left is `origin`, and its crop, if the
+/// composite holds it.
+fn cut(
+    composite: &CGImage,
+    origin: CGPoint,
+    scale: f64,
+    frame: CGRect,
+) -> Option<(CGRect, CFRetained<CGImage>)> {
+    let rect = pixel_rect(frame, origin, scale);
+    if !contains(image_size(composite), rect) {
+        return None;
+    }
+    Some((rect, CGImage::with_image_in_rect(Some(composite), rect)?))
+}
+
+fn region(
+    window: &OnScreen,
+    composite: &CFRetained<CGImage>,
+    rect: CGRect,
+    taken: Instant,
+    carries_blur: bool,
+) -> (WindowId, Picture) {
+    let size = (window.frame.size.width, window.frame.size.height);
+    (
+        window.window,
+        Picture {
+            image: Pixels::Region {
+                composite: composite.clone(),
+                rect,
+            },
+            coverage: Coverage {
+                covered: size,
+                window: size,
+            },
+            source: Route::SkyLight,
+            dressing: None,
+            taken,
+            carries_blur,
+        },
+    )
 }
 
 /// One framed capture that yields the picture and its hairline: the reveal chase's capture, and the

@@ -147,28 +147,6 @@ pub fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     ]
 }
 
-/// The whole of a picture, in its unit coordinates.
-pub const WHOLE: CGRect = CGRect {
-    origin: CGPoint { x: 0.0, y: 0.0 },
-    size: CGSize { width: 1.0, height: 1.0 },
-};
-
-/// `inner`, a rect in a picture's unit coordinates, in the unit coordinates of the image that
-/// `outer` cuts the picture from: a crop piece's `contents` composed with a picture that is a region
-/// of a larger composite.
-pub fn within(outer: CGRect, inner: CGRect) -> CGRect {
-    CGRect::new(
-        CGPoint::new(
-            outer.origin.x + inner.origin.x * outer.size.width,
-            outer.origin.y + inner.origin.y * outer.size.height,
-        ),
-        CGSize::new(
-            inner.size.width * outer.size.width,
-            inner.size.height * outer.size.height,
-        ),
-    )
-}
-
 /// Off by less than this, a tile and its window agree: under a quarter point nothing shows at the
 /// lift.
 pub const SNAP_FROM: f64 = 0.25;
@@ -213,6 +191,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::pictures::domain::region::within;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -520,29 +499,6 @@ mod tests {
         assert_eq!(crop_band(CGSize::new(859.0, 1081.0)), 40.0);
         assert!((crop_band(CGSize::new(60.0, 1081.0)) - 27.0).abs() < 1e-9);
         assert_eq!(crop_band(CGSize::new(0.0, 1081.0)), 0.0);
-    }
-
-    #[test]
-    fn within_the_whole_picture_a_rect_is_itself() {
-        let piece = rect(0.25, 0.0, 0.5, 0.04);
-        assert_eq!(within(WHOLE, piece), piece);
-        assert_eq!(within(piece, WHOLE), piece);
-    }
-
-    /// A picture that is the right half of a composite, from a quarter down: its unit rects land
-    /// in that half, scaled to it.
-    #[test]
-    fn a_rect_of_a_region_lands_in_the_region() {
-        let region = rect(0.5, 0.25, 0.5, 0.5);
-        assert_eq!(within(region, rect(0.0, 0.0, 1.0, 1.0)), region);
-        assert_eq!(
-            within(region, rect(0.5, 0.5, 0.5, 0.5)),
-            rect(0.75, 0.5, 0.25, 0.25)
-        );
-        assert_eq!(
-            within(region, rect(0.0, 0.9, 1.0, 0.1)),
-            rect(0.5, 0.7, 0.5, 0.05)
-        );
     }
 
     /// Every crop piece of a region picture stays inside the region, scaled to it, growing or

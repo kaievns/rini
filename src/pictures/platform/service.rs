@@ -1,38 +1,54 @@
 //! The pictures service: the thread that takes every background picture of a window, the desktop and
 //! the bar, the cache those pictures land in, and the handle every client holds.
 //!
-//! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`). ScreenCaptureKit is
-//! asked from it and its completions post back to it; the bar is composited on it. A client asks,
-//! holds and forgets through a channel, reads from any thread through one lock, and hears of what lands
-//! through the sink it was started with. See "The service" in `src/pictures/docs/README.md`.
+//! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`). Every SkyLight call
+//! is made on it, one at a time; ScreenCaptureKit is asked from it and its completions post back to it.
+//! A client asks, watches, hints, holds and forgets through a channel, reads from any thread through
+//! one lock, and hears of what lands through the sink it was started with. See "The service" in
+//! `src/pictures/docs/README.md`.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CFRetained, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
-use rini_core::ids::WindowId;
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_runloop::channel::{self, Receiver, Sender};
 use tracing::{debug, warn};
 
-use crate::pictures::domain::cache::PictureCache;
+use crate::pictures::domain::cache::{Delivered, PictureCache};
 use crate::pictures::domain::coverage::{is_backdrop_worth_drawing, spans_display};
+use crate::pictures::domain::knowledge::{Knowledge, Learned};
+use crate::pictures::domain::print::bodies_differ;
+use crate::pictures::domain::region::apart;
 use crate::pictures::domain::schedule::{
     Ask, Display, Held, Hold, Next, Priority, Schedule, wants_warm,
 };
 use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
+use crate::pictures::domain::watch::{Hint, OnScreen, Outcome, Prints, Seen, Set, Tag, Watch, WatchId, Why};
 use crate::pictures::event::Event;
-use crate::pictures::platform::desktop::{bar_strip, desktop_backdrop_windows};
+use crate::pictures::platform::bitmap::thumbprint;
+use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
 use crate::pictures::platform::edge_dressing::EdgeDressing;
-use crate::pictures::platform::picture::{Picture, stand_in_picture, stand_in_image};
+use crate::pictures::platform::measure::{band_print, body_samples};
+use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
-use crate::pictures::platform::skylight::capture_list_via_skylight;
+use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
+use crate::windows::platform::window_server::server_frame;
 
 /// What a client asks of the service.
 #[derive(Debug)]
 pub enum Command {
     Ask(Ask),
+    AskOnScreen(OnScreen),
+    Watch(WatchId, Watch),
+    Retarget(WatchId, Watch),
+    Stop(WatchId),
+    Hint(Hint),
+    /// The picture last delivered of the window under the tag shows it focused.
+    KeepFocused(Tag, WindowId),
     Hold(Hold),
     Forget(WindowId),
     SetDisplay { display: Display, picture_bar: bool },
@@ -76,23 +92,163 @@ pub struct Pictures {
     /// Bumped by every `hold(Hold::Transition)` before it is sent: the overlay can go up while the
     /// service is reading the bar off the framebuffer, before the hold has reached it.
     transitions: Arc<AtomicU64>,
+    /// The last watch id handed out.
+    watches: Arc<AtomicU64>,
 }
 
 #[derive(Default)]
 struct Shared {
     cache: PictureCache<Picture>,
     schedule: Schedule<Prepared>,
-    /// The pictures of the display the overlay flies on, which belong to it alone.
-    display: Option<DisplayPictures>,
+    /// The pictures of the schedule's display, which belong to it alone.
+    display: DisplayPictures,
+    learned: Learned,
+    delivered: Delivered<Picture>,
     stand_in: Option<StandIn>,
 }
 
+/// The pictures of the display the overlay flies on. Which display that is, the schedule holds.
+#[derive(Default)]
 struct DisplayPictures {
-    display: Display,
     /// The desktop as ScreenCaptureKit rendered it: the only source that reliably has the wallpaper.
     desktop: Option<Picture>,
     /// The last usable picture of the bar, and the strip it covers.
     bar: Option<(Picture, CGRect)>,
+    /// The desktop's windows, listed after a baked call's: read once per display, and again when a
+    /// baked composite comes back another shape, which a desktop window gone from it makes.
+    desktop_windows: Option<DesktopBackdrop>,
+}
+
+impl DisplayPictures {
+    /// What is held for a transition on `display`: nothing for any display but the one held, and no
+    /// bar once none is on screen.
+    fn for_display(
+        &self,
+        held: Option<Display>,
+        display: Display,
+        bar_on_screen: bool,
+    ) -> (Option<Picture>, Option<(Picture, CGRect)>) {
+        if held != Some(display) {
+            return (None, None);
+        }
+        (self.desktop.clone(), self.bar.clone().filter(|_| bar_on_screen))
+    }
+}
+
+/// The overlay now flies on `display`. A change leaves nothing of the display left behind; a bar
+/// no longer pictured is dropped. True when the display changed.
+fn set_display<P>(
+    schedule: &mut Schedule<P>,
+    held: &mut DisplayPictures,
+    display: Display,
+    picture_bar: bool,
+    now: Instant,
+) -> bool {
+    let changed = schedule.set_display(display, picture_bar, now);
+    if changed {
+        *held = DisplayPictures::default();
+    } else if !picture_bar {
+        held.bar = None;
+    }
+    changed
+}
+
+/// A render of `display`'s desktop came back. Held only when it spans the display it was asked of
+/// and that display is still the one held: a render of the external drawn behind a flight on the
+/// built-in display shows its top-left corner, zoomed.
+fn land_desktop<P>(
+    schedule: &mut Schedule<P>,
+    held: &mut DisplayPictures,
+    display: Display,
+    picture: Option<Picture>,
+) -> bool {
+    let size = (display.frame.size.width, display.frame.size.height);
+    let picture = picture.filter(|picture| spans_display(picture.coverage.covered, size));
+    let kept = schedule.desktop_rendered(display, picture.as_ref().map(|picture| picture.taken));
+    if kept {
+        held.desktop = picture;
+    }
+    kept
+}
+
+/// What a background capture that came back tells the clients, once the cache has had it: `Taken`
+/// when its pixels are now the ones held, and then to each client owed it as a focus change, a
+/// delivery; `Refused` when it covered the window and the cache kept the blurred one it holds; nothing
+/// for a sliver, an empty capture, or a window forgotten meanwhile (`kept` is `None`).
+fn landing(
+    cache: &mut PictureCache<Picture>,
+    delivered: &mut Delivered<Picture>,
+    window: WindowId,
+    kept: Option<Vec<(Tag, CGRect)>>,
+    picture: Option<Picture>,
+) -> Vec<Event> {
+    let (Some(owed), Some(picture)) = (kept, picture) else {
+        return Vec::new();
+    };
+    let usable = picture.is_usable();
+    if !cache.insert(window, picture.clone()) {
+        return usable.then_some(Event::Refused { window }).into_iter().collect();
+    }
+    let mut events = vec![Event::Taken {
+        window,
+        picture: picture.clone(),
+    }];
+    for (tag, frame) in owed {
+        delivered.record(tag, window, picture.clone());
+        events.push(Event::Delivered {
+            tag,
+            why: Why::FocusChanged,
+            pictures: vec![(window, picture.clone(), frame)],
+        });
+    }
+    events
+}
+
+/// What a round of SkyLight captures tells the clients: each picture the cache took, once however many
+/// clients it is delivered to, and each delivery the schedule decided, of the pictures the cache took.
+/// A frame-zero delivery is sent even with none.
+fn deliver(
+    cache: &mut PictureCache<Picture>,
+    delivered: &mut Delivered<Picture>,
+    captured: Vec<(WindowId, Picture)>,
+    outcome: Outcome,
+) -> Vec<Event> {
+    let mut events = Vec::new();
+    let mut took = HashMap::new();
+    for (window, picture) in captured {
+        if cache.insert(window, picture.clone()) {
+            events.push(Event::Taken {
+                window,
+                picture: picture.clone(),
+            });
+            took.insert(window, picture);
+        }
+    }
+    for delivery in outcome.deliveries {
+        let pictures: Vec<(WindowId, Picture, CGRect)> = delivery
+            .windows
+            .iter()
+            .filter_map(|(window, frame)| Some((*window, took.get(window)?.clone(), *frame)))
+            .collect();
+        for (window, picture, _) in &pictures {
+            delivered.record(delivery.tag, *window, picture.clone());
+        }
+        if delivery.why == Why::FrameZero || !pictures.is_empty() {
+            events.push(Event::Delivered {
+                tag: delivery.tag,
+                why: delivery.why,
+                pictures,
+            });
+        }
+    }
+    events.extend(outcome.lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }));
+    events
+}
+
+/// Whether a bar read is free of the overlay: no transition was asked before it that the thread had
+/// not yet applied, and none was asked while it ran.
+fn bar_read_kept(asked_before: u64, applied: u64, asked_after: u64) -> bool {
+    asked_before == applied && asked_after == asked_before
 }
 
 /// The stand-in's pixels, drawn once per scale.
@@ -113,6 +269,7 @@ impl Pictures {
             commands,
             shared: Arc::default(),
             transitions: Arc::default(),
+            watches: Arc::default(),
         };
         let service = Service {
             requests,
@@ -121,6 +278,7 @@ impl Pictures {
             shared: pictures.shared.clone(),
             transitions: pictures.transitions.clone(),
             applied_transitions: 0,
+            looks_checked: HashMap::new(),
             sinks,
         };
         std::thread::Builder::new()
@@ -138,11 +296,33 @@ impl Pictures {
             commands,
             shared: Arc::default(),
             transitions: Arc::default(),
+            watches: Arc::default(),
         };
         (pictures, requests)
     }
 
     pub fn ask(&self, ask: Ask) { self.commands.send(Command::Ask(ask)) }
+
+    /// Windows on screen, captured now through SkyLight and delivered under the ask's tag.
+    pub fn ask_on_screen(&self, ask: OnScreen) { self.commands.send(Command::AskOnScreen(ask)) }
+
+    /// Starts `watch`, which runs until stopped.
+    pub fn watch(&self, watch: Watch) -> WatchId {
+        let id = WatchId(self.watches.fetch_add(1, Ordering::AcqRel) + 1);
+        self.commands.send(Command::Watch(id, watch));
+        id
+    }
+
+    pub fn retarget(&self, id: WatchId, watch: Watch) { self.commands.send(Command::Retarget(id, watch)) }
+
+    pub fn stop(&self, id: WatchId) { self.commands.send(Command::Stop(id)) }
+
+    pub fn hint(&self, hint: Hint) { self.commands.send(Command::Hint(hint)) }
+
+    /// The picture `tag` was last delivered of `window` shows it focused: kept as its focused look.
+    pub fn keep_focused(&self, tag: Tag, window: WindowId) {
+        self.commands.send(Command::KeepFocused(tag, window))
+    }
 
     pub fn hold(&self, hold: Hold) {
         if hold == Hold::Transition {
@@ -175,6 +355,13 @@ impl Pictures {
 
     /// The picture held of `window`, worth drawing or not.
     pub fn get(&self, window: WindowId) -> Option<Picture> { self.lock().cache.get(window).cloned() }
+
+    /// The last picture of `window` delivered as showing it focused, until a newer capture shows
+    /// different content.
+    pub fn focused(&self, window: WindowId) -> Option<Picture> { self.lock().cache.focused(window).cloned() }
+
+    /// What is known of the window: its translucency, material and corner radius.
+    pub fn knowledge(&self, window: WindowServerId) -> Knowledge { self.lock().learned.get(window) }
 
     /// Every window with a picture held or one on its way.
     pub fn windows(&self) -> Vec<WindowId> {
@@ -212,32 +399,31 @@ impl Pictures {
         }
     }
 
-    /// The desktop and the bar to dress a transition on `display` with. What the service holds of that
-    /// display, or, before it holds any, the first transition after a start or a display change,
-    /// composites taken now on the caller's thread: without them that transition draws the display
-    /// left behind, or black. `backdrop_drawn` says whether a desktop of `display` is already drawn,
-    /// which a desktop without its wallpaper must not replace.
+    /// The desktop and the bar to dress a transition on `display` with: what the service holds of that
+    /// display, and, until its first render lands, a desktop composited now on the caller's thread,
+    /// which without one draws the display left behind, or black. The bar is read for presence on
+    /// every transition, so a bar that has gone is not drawn, and composited once per display.
+    /// `backdrop_drawn` says whether a desktop of `display` is already drawn, which a desktop without
+    /// its wallpaper must not replace.
     pub fn dressing(&self, display: Display, picture_bar: bool, backdrop_drawn: bool) -> Dressing {
+        let strip = picture_bar.then(|| bar_strip(display.frame));
+        let bar_on_screen = strip.as_ref().is_some_and(|strip| strip.bounds.is_some());
         let (desktop, bar) = {
             let shared = self.lock();
-            let held = shared.display.as_ref().filter(|held| held.display == display);
-            (
-                held.and_then(|held| held.desktop.clone()),
-                held.and_then(|held| held.bar.clone()),
-            )
+            shared.display.for_display(shared.schedule.display(), display, bar_on_screen)
         };
         let desktop = desktop.or_else(|| composite_desktop(display, backdrop_drawn));
-        if !picture_bar {
+        let Some(strip) = strip else {
             return Dressing {
                 desktop,
                 bar: None,
                 strip: None,
             };
-        }
+        };
         let (bar, strip) = match bar {
             Some((picture, strip)) => (Some(picture), Some(strip)),
             None => {
-                let (picture, strip) = bar_of(display);
+                let (picture, strip) = bar_of(&strip, display.scale);
                 if let (Some(picture), Some(strip)) = (&picture, strip) {
                     self.keep_bar(display, picture.clone(), strip);
                 }
@@ -248,13 +434,22 @@ impl Pictures {
     }
 
     fn keep_bar(&self, display: Display, picture: Picture, strip: CGRect) {
-        if let Some(held) = self.lock().display.as_mut().filter(|held| held.display == display) {
-            held.bar = Some((picture, strip));
+        let mut shared = self.lock();
+        if shared.schedule.display() == Some(display) {
+            shared.display.bar = Some((picture, strip));
         }
     }
 
     fn lock(&self) -> MutexGuard<'_, Shared> { self.shared.lock().unwrap() }
 }
+
+/// The thumbprint of what the cache holds of `window`, which a repainting window settles against.
+fn held_print(cache: &PictureCache<Picture>, window: WindowId) -> Option<Vec<u8>> {
+    picture_thumbprint(cache.get(window)?)
+}
+
+/// A picture's thumbprint; `None` for a surface.
+fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> { thumbprint(&*picture.image.bitmap()?) }
 
 /// What the cache holds of `window` that is worth drawing, as the warm filter reads it.
 fn held(cache: &PictureCache<Picture>, window: WindowId) -> Option<Held> {
@@ -284,17 +479,16 @@ fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
     usable
 }
 
-/// The bar of `display`, captured on its own to keep its alpha, and the strip it covers. See "The bar
-/// has to be captured on its own" in `src/pictures/docs/capture-research.md`.
-fn bar_of(display: Display) -> (Option<Picture>, Option<CGRect>) {
-    let strip = bar_strip(display.frame);
+/// The bar listed in `strip`, captured on its own to keep its alpha, and the strip it covers. See "The
+/// bar has to be captured on its own" in `src/pictures/docs/capture-research.md`.
+fn bar_of(strip: &BarStrip, scale: f64) -> (Option<Picture>, Option<CGRect>) {
     let Some(bounds) = strip.bounds else {
         return (None, None);
     };
     let picture = capture_list_via_skylight(
         &strip.windows,
         (bounds.size.width, bounds.size.height),
-        display.scale,
+        scale,
     )
     .filter(|picture| picture.fits(bounds.size));
     (picture, Some(bounds))
@@ -309,6 +503,9 @@ struct Service {
     transitions: Arc<AtomicU64>,
     /// How many `Hold::Transition` this thread has applied, against `transitions` asked.
     applied_transitions: u64,
+    /// The focused look and the newer picture last compared for each window, by when each was taken:
+    /// a pair is compared once.
+    looks_checked: HashMap<WindowId, (Instant, Instant)>,
     sinks: Vec<Sink>,
 }
 
@@ -321,6 +518,11 @@ impl Service {
                     Some((span, command)) => {
                         let _guard = span.enter();
                         self.apply(command);
+                        // Everything already asked is applied before the next call, so the newest wins.
+                        while let Ok((span, command)) = self.requests.try_recv() {
+                            let _guard = span.enter();
+                            self.apply(command);
+                        }
                     }
                     None => break,
                 },
@@ -338,38 +540,115 @@ impl Service {
         let mut shared = self.shared.lock().unwrap();
         match command {
             Command::Ask(ask) => shared.schedule.ask(ask, now),
+            Command::AskOnScreen(ask) => shared.schedule.ask_on_screen(ask),
+            Command::Watch(id, watch) => {
+                let Shared { cache, schedule, .. } = &mut *shared;
+                schedule.watch(id, watch, now, &|window| held_print(cache, window));
+            }
+            Command::Retarget(id, watch) => {
+                let Shared { cache, schedule, .. } = &mut *shared;
+                schedule.retarget(id, watch, now, &|window| held_print(cache, window));
+            }
+            Command::Stop(id) => shared.schedule.stop(id),
+            Command::Hint(hint) => shared.schedule.hint(hint, now),
+            Command::KeepFocused(tag, window) => {
+                if let Some(look) = shared.delivered.under(tag, window).cloned() {
+                    shared.cache.keep_focused(window, look);
+                }
+            }
             Command::Hold(hold) => {
                 if hold == Hold::Transition {
                     self.applied_transitions += 1;
                 }
                 shared.schedule.hold(hold, now);
+                if hold == Hold::Released {
+                    drop(shared);
+                    self.at_rest();
+                }
             }
             Command::Forget(window) => {
                 shared.cache.forget(window);
                 shared.schedule.forget(window);
+                shared.learned.forget(WindowServerId::from(window));
+                shared.delivered.forget(window);
+                self.looks_checked.remove(&window);
             }
             Command::SetDisplay { display, picture_bar } => {
-                if shared.schedule.set_display(display, picture_bar, now) {
-                    shared.display = Some(DisplayPictures {
-                        display,
-                        desktop: None,
-                        bar: None,
-                    });
+                let Shared { schedule, display: held, .. } = &mut *shared;
+                if set_display(schedule, held, display, picture_bar, now) {
                     drop(shared);
                     self.warm_visible(display);
-                } else if !picture_bar
-                    && let Some(held) = shared.display.as_mut()
-                {
-                    held.bar = None;
                 }
             }
             Command::WarmVisible => {
-                let display = shared.display.as_ref().map(|held| held.display);
+                let display = shared.schedule.display();
                 drop(shared);
                 match display {
                     Some(display) => self.warm_visible(display),
                     None => warn!("no display geometry yet; cannot warm the snapshot cache"),
                 }
+            }
+        }
+    }
+
+    /// What no transition holding the service allows: regions kept as copies, and focused looks
+    /// compared with what was captured since.
+    fn at_rest(&mut self) {
+        self.keep_copies();
+        self.check_focused();
+    }
+
+    /// Every region the cache holds, as a picture or a focused look, replaced by a copy of its own: a
+    /// region keeps its whole composite alive. Copied off the lock, and put back only over the picture
+    /// it was made of. Why a transition draws regions at all: "A region is drawn in a transition" in
+    /// `src/pictures/docs/README.md`.
+    fn keep_copies(&self) {
+        let is_region = |picture: &&Picture| matches!(picture.image, Pixels::Region { .. });
+        let (pictures, looks): (Vec<(WindowId, Picture)>, Vec<(WindowId, Picture)>) = {
+            let shared = self.shared.lock().unwrap();
+            let regions = |held: &mut dyn Iterator<Item = (&WindowId, &Picture)>| {
+                held.filter(|(_, picture)| is_region(picture)).map(|(window, picture)| (*window, picture.clone())).collect()
+            };
+            (regions(&mut shared.cache.iter()), regions(&mut shared.cache.focused_looks()))
+        };
+        for (window, region) in pictures {
+            let Some(copy) = region.kept() else { continue };
+            let taken = region.taken;
+            self.shared.lock().unwrap().cache.replace_if(window, |held| held.taken == taken, copy);
+        }
+        for (window, region) in looks {
+            let Some(copy) = region.kept() else { continue };
+            let taken = region.taken;
+            self.shared.lock().unwrap().cache.replace_focused_if(window, |held| held.taken == taken, copy);
+        }
+    }
+
+    /// Drops each focused look a newer capture of its window shows different content than, below the
+    /// band where focus shows. Compared off the lock, once per pair.
+    fn check_focused(&mut self) {
+        let pairs: Vec<(WindowId, Picture, Picture)> = {
+            let shared = self.shared.lock().unwrap();
+            shared
+                .cache
+                .focused_looks()
+                .filter_map(|(window, look)| {
+                    let newer = shared.cache.get(*window).filter(|newer| newer.taken > look.taken)?;
+                    Some((*window, look.clone(), newer.clone()))
+                })
+                .collect()
+        };
+        for (window, look, newer) in pairs {
+            let pair = (look.taken, newer.taken);
+            if self.looks_checked.insert(window, pair) == Some(pair) {
+                continue;
+            }
+            let stale = match (body_samples(&look), body_samples(&newer)) {
+                (Some(look), Some(newer)) => bodies_differ(&look, &newer),
+                _ => true,
+            };
+            if stale {
+                let taken = look.taken;
+                self.shared.lock().unwrap().cache.drop_focused_if(window, |held| held.taken == taken);
             }
         }
     }
@@ -410,6 +689,11 @@ impl Service {
             };
             let done = self.done_tx.clone();
             match next {
+                Next::Lost(lost) => {
+                    let events = lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }).collect();
+                    self.tell(events);
+                }
+                Next::Sky(sets) => self.look(sets),
                 Next::List(targets) => screencapturekit::list(targets, move |target, prepared| {
                     done.send(Done::Listed { target, prepared })
                 }),
@@ -431,6 +715,90 @@ impl Service {
         }
     }
 
+    /// Reads the server frame of every window `sets` names, captures those where they are wanted, set
+    /// by set and never two overlapping windows in one call, and hands the schedule what was seen; then
+    /// tells the clients what it decided. What is learned of a window on the way is kept.
+    fn look(&mut self, sets: Vec<Set>) {
+        let display = self.shared.lock().unwrap().schedule.display();
+        // Taken from the shared state only once something is captured: most looks are landing polls.
+        let mut known: Option<(Learned, Option<DesktopBackdrop>)> = None;
+        let mut seen = Vec::new();
+        let mut captured: Vec<(WindowId, Picture)> = Vec::new();
+        let mut desktop_stale = false;
+        for set in sets {
+            let frames: Vec<Option<CGRect>> =
+                set.looks.iter().map(|look| server_frame(look.target.server_id)).collect();
+            let wanted: Vec<skylight::OnScreen> = set
+                .looks
+                .iter()
+                .zip(&frames)
+                .filter_map(|(look, frame)| {
+                    let (frame, display) = ((*frame)?, display?);
+                    look.accepts.iter().any(|accept| accept.accepts(frame, display.frame)).then_some(
+                        skylight::OnScreen {
+                            window: look.target.window,
+                            server_id: look.target.server_id,
+                            frame,
+                        },
+                    )
+                })
+                .collect();
+            if let (Some(display), false) = (display, wanted.is_empty()) {
+                let behind: Vec<(WindowServerId, CGRect)> =
+                    set.behind.iter().filter_map(|id| Some((*id, server_frame(*id)?))).collect();
+                let (learned, desktop) = known.get_or_insert_with(|| {
+                    let shared = self.shared.lock().unwrap();
+                    (shared.learned.clone(), shared.display.desktop_windows.clone())
+                });
+                let desktop = desktop.get_or_insert_with(|| desktop_backdrop_windows(display.frame));
+                let frames: Vec<CGRect> = wanted.iter().map(|window| window.frame).collect();
+                for group in apart(&frames) {
+                    let windows: Vec<skylight::OnScreen> = group.into_iter().map(|at| wanted[at]).collect();
+                    let batch = skylight::capture_on_screen(&windows, &behind, desktop, display.frame, learned);
+                    desktop_stale |= batch.desktop_stale;
+                    captured.extend(batch.pictures);
+                }
+            }
+            for (look, frame) in set.looks.iter().zip(frames) {
+                let picture = captured.iter().find(|(window, _)| *window == look.target.window);
+                let prints = picture.and_then(|(_, picture)| {
+                    Some(Prints {
+                        band: band_print(picture)?,
+                        thumb: look.thumbprint.then(|| picture_thumbprint(picture)).flatten(),
+                    })
+                });
+                seen.push(Seen {
+                    window: look.target.window,
+                    frame,
+                    prints,
+                });
+            }
+        }
+        let took_any = !captured.is_empty();
+        let (events, released) = {
+            let mut shared = self.shared.lock().unwrap();
+            if let Some((learned, desktop)) = known {
+                shared.learned = learned;
+                shared.display.desktop_windows = desktop.filter(|_| !desktop_stale);
+            }
+            let outcome = shared.schedule.seen(Instant::now(), &seen);
+            let Shared { cache, delivered, schedule, .. } = &mut *shared;
+            (deliver(cache, delivered, captured, outcome), !schedule.held())
+        };
+        self.tell(events);
+        if released && took_any {
+            self.at_rest();
+        }
+    }
+
+    fn tell(&self, events: Vec<Event>) {
+        for event in events {
+            for sink in &self.sinks {
+                sink(event.clone());
+            }
+        }
+    }
+
     /// SkyLight reads the framebuffer, so a bar read while a transition was on its way, or began, may
     /// have the overlay in it, and is not kept: that transition's lift asks again.
     fn picture_bar(&self, display: Display) {
@@ -438,17 +806,15 @@ impl Service {
         if before != self.applied_transitions {
             return;
         }
-        let (picture, strip) = bar_of(display);
-        if self.transitions.load(Ordering::Acquire) != before {
+        let (picture, strip) = bar_of(&bar_strip(display.frame), display.scale);
+        let after = self.transitions.load(Ordering::Acquire);
+        if !bar_read_kept(before, self.applied_transitions, after) {
             return;
         }
         let (Some(picture), Some(strip)) = (picture, strip) else {
             return;
         };
-        let mut shared = self.shared.lock().unwrap();
-        if let Some(held) = shared.display.as_mut().filter(|held| held.display == display) {
-            held.bar = Some((picture, strip));
-        }
+        self.shared.lock().unwrap().display.bar = Some((picture, strip));
     }
 
     fn finish(&mut self, done: Done) {
@@ -457,10 +823,10 @@ impl Service {
                 self.shared.lock().unwrap().schedule.listed(target.window, prepared);
             }
             Done::Captured { window, picture } => {
-                let event = {
+                let (events, released) = {
                     let mut shared = self.shared.lock().unwrap();
                     let kept = shared.schedule.captured(window);
-                    picture.filter(|_| kept).and_then(|picture| {
+                    if let Some(picture) = picture.as_ref().filter(|_| kept.is_some()) {
                         debug!(
                             pid = window.pid,
                             idx = window.idx.get(),
@@ -475,34 +841,409 @@ impl Service {
                             usable = picture.is_usable(),
                             "background snapshot landed"
                         );
-                        let usable = picture.is_usable();
-                        if shared.cache.insert(window, picture.clone()) {
-                            Some(Event::Taken { window, picture })
-                        } else {
-                            usable.then_some(Event::Refused { window })
-                        }
-                    })
-                };
-                if let Some(event) = event {
-                    for sink in &self.sinks {
-                        sink(event.clone());
                     }
+                    let Shared { cache, delivered, schedule, .. } = &mut *shared;
+                    (landing(cache, delivered, window, kept, picture), !schedule.held())
+                };
+                self.tell(events);
+                if released {
+                    self.check_focused();
                 }
             }
             Done::Desktop { display, picture } => {
-                let size = (display.frame.size.width, display.frame.size.height);
-                // A render of another size than the display asked of is no picture of it.
-                let picture =
-                    picture.filter(|picture| spans_display(picture.coverage.covered, size));
                 let mut shared = self.shared.lock().unwrap();
-                if shared.schedule.desktop_rendered(display, picture.as_ref().map(|p| p.taken))
-                    && let Some(held) =
-                        shared.display.as_mut().filter(|held| held.display == display)
-                {
-                    debug!(covered = format!("{:.0}x{:.0}", size.0, size.1), "desktop capture landed");
-                    held.desktop = picture;
+                let Shared { schedule, display: held, .. } = &mut *shared;
+                let display_id = display.id;
+                if land_desktop(schedule, held, display, picture) {
+                    debug!(display_id, "desktop capture landed");
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::CGPoint;
+
+    use super::*;
+    use crate::pictures::platform::picture::test_picture;
+
+    fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
+
+    fn sized(width: f64, height: f64) -> Picture { test_picture(CGSize::new(width, height)) }
+
+    fn sliver() -> Picture {
+        let mut picture = sized(859.0, 1081.0);
+        picture.coverage.covered = (40.0, 1081.0);
+        picture
+    }
+
+    fn display(id: u32, width: f64, height: f64) -> Display {
+        Display {
+            id,
+            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width, height)),
+            scale: 2.0,
+        }
+    }
+
+    fn built_in() -> Display { display(1, 1728.0, 1117.0) }
+
+    fn external() -> Display { display(2, 3008.0, 1692.0) }
+
+    fn strip() -> CGRect { CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 32.0)) }
+
+    /// What every client hears of a background capture: the switcher redraws on `Taken`, the engine
+    /// harvests on `Refused`, and a closed window's capture is never put back in the cache.
+    #[test]
+    fn a_capture_the_cache_took_is_taken_and_one_it_refused_for_a_blur_is_refused() {
+        let mut cache = PictureCache::new();
+        let mut delivered = Delivered::default();
+        let kept = || Some(Vec::new());
+        assert!(landing(&mut cache, &mut delivered, wid(1), None, Some(sized(859.0, 1081.0))).is_empty());
+        assert!(cache.get(wid(1)).is_none(), "forgotten meanwhile: not cached");
+        assert!(landing(&mut cache, &mut delivered, wid(1), kept(), None).is_empty(), "no picture");
+
+        assert!(matches!(
+            landing(&mut cache, &mut delivered, wid(1), kept(), Some(sized(859.0, 1081.0))).as_slice(),
+            [Event::Taken { window, .. }] if *window == wid(1)
+        ));
+
+        let mut blurred = sized(859.0, 1081.0);
+        blurred.carries_blur = true;
+        landing(&mut cache, &mut delivered, wid(2), kept(), Some(blurred));
+        assert!(matches!(
+            landing(&mut cache, &mut delivered, wid(2), kept(), Some(sized(859.0, 1081.0))).as_slice(),
+            [Event::Refused { window }] if *window == wid(2)
+        ));
+        assert!(
+            landing(&mut cache, &mut delivered, wid(2), kept(), Some(sliver())).is_empty(),
+            "a sliver refused is no news"
+        );
+    }
+
+    fn tag(generation: u64) -> Tag {
+        Tag {
+            client: crate::pictures::domain::watch::Client(1),
+            generation,
+        }
+    }
+
+    fn frame() -> CGRect { CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(859.0, 1081.0)) }
+
+    /// The one ScreenCaptureKit capture of a clipped focus end is delivered to the client owed it as
+    /// its focus change, once the cache has it; refused, it is delivered to no one.
+    #[test]
+    fn a_capture_owed_as_a_focus_change_is_delivered_when_the_cache_takes_it() {
+        let mut cache = PictureCache::new();
+        let mut delivered = Delivered::default();
+        let events = landing(&mut cache, &mut delivered, wid(1), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        assert!(matches!(&events[..], [
+            Event::Taken { .. },
+            Event::Delivered { tag: t, why: Why::FocusChanged, pictures },
+        ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == frame()));
+        assert!(delivered.under(tag(3), wid(1)).is_some(), "recorded, so it can be kept as a look");
+
+        let mut blurred = sized(859.0, 1081.0);
+        blurred.carries_blur = true;
+        cache.insert(wid(2), blurred);
+        let events = landing(&mut cache, &mut delivered, wid(2), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        assert!(matches!(&events[..], [Event::Refused { .. }]));
+    }
+
+    fn delivery(generation: u64, why: Why, windows: &[u32]) -> crate::pictures::domain::watch::Delivery {
+        crate::pictures::domain::watch::Delivery {
+            tag: tag(generation),
+            why,
+            windows: windows.iter().map(|idx| (wid(*idx), frame())).collect(),
+        }
+    }
+
+    /// A round of captures puts each picture in the cache once, delivers only what the cache took,
+    /// and sends a frame-zero delivery even when nothing could be taken.
+    #[test]
+    fn a_round_delivers_only_what_the_cache_took_and_frame_zero_always() {
+        let mut cache = PictureCache::new();
+        let mut delivered = Delivered::default();
+        let mut blurred = sized(859.0, 1081.0);
+        blurred.carries_blur = true;
+        cache.insert(wid(2), blurred);
+        let outcome = Outcome {
+            deliveries: vec![delivery(1, Why::Landed, &[1, 2]), delivery(1, Why::Final, &[1])],
+            lost: vec![(tag(1), wid(3))],
+            clipped: Vec::new(),
+        };
+        let events = deliver(
+            &mut cache,
+            &mut delivered,
+            vec![(wid(1), sized(859.0, 1081.0)), (wid(2), sized(859.0, 1081.0))],
+            outcome,
+        );
+        let taken: Vec<WindowId> =
+            events.iter().filter_map(|e| if let Event::Taken { window, .. } = e { Some(*window) } else { None }).collect();
+        assert_eq!(taken, vec![wid(1)], "the grey one was refused for the blurred one held");
+        let landed: Vec<Vec<WindowId>> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Delivered { pictures, .. } => Some(pictures.iter().map(|(w, _, _)| *w).collect()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(landed, vec![vec![wid(1)], vec![wid(1)]]);
+        assert!(events.iter().any(|e| matches!(e, Event::Lost { window, .. } if *window == wid(3))));
+
+        let events = deliver(
+            &mut cache,
+            &mut delivered,
+            Vec::new(),
+            Outcome {
+                deliveries: vec![delivery(2, Why::FrameZero, &[]), delivery(2, Why::Landed, &[4])],
+                ..Outcome::default()
+            },
+        );
+        assert!(matches!(&events[..], [Event::Delivered { why: Why::FrameZero, pictures, .. }] if pictures.is_empty()));
+    }
+    /// A display change leaves nothing of the display left behind, its desktop's windows included,
+    /// and a bar no longer pictured goes on its own.
+    #[test]
+    fn a_display_change_empties_what_is_held_and_a_bar_turned_off_drops_only_the_bar() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        let mut held = DisplayPictures::default();
+        assert!(set_display(&mut schedule, &mut held, built_in(), true, now));
+        held.desktop = Some(sized(1728.0, 1117.0));
+        held.bar = Some((sized(1728.0, 32.0), strip()));
+        held.desktop_windows = Some(DesktopBackdrop::default());
+
+        assert!(!set_display(&mut schedule, &mut held, built_in(), false, now));
+        assert!(held.desktop.is_some(), "the desktop stays");
+        assert!(held.bar.is_none(), "the bar goes");
+
+        held.bar = Some((sized(1728.0, 32.0), strip()));
+        assert!(set_display(&mut schedule, &mut held, external(), true, now));
+        assert!(held.desktop.is_none() && held.bar.is_none() && held.desktop_windows.is_none());
+    }
+
+    /// The reported case: a render of the external display, landing after the overlay moved to the
+    /// built-in one, was drawn at its own size and showed its top-left corner. A render is held only
+    /// at the size of the display it was asked of, and only while that display is held.
+    #[test]
+    fn a_render_is_held_only_for_the_display_held_and_only_at_its_size() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        let mut held = DisplayPictures::default();
+        set_display(&mut schedule, &mut held, built_in(), false, now);
+        let _ = schedule.next(now, |_| None);
+        assert!(!land_desktop(&mut schedule, &mut held, built_in(), Some(sized(3008.0, 1692.0))));
+        assert!(held.desktop.is_none(), "the wrong size");
+
+        set_display(&mut schedule, &mut held, external(), false, now);
+        assert!(!land_desktop(&mut schedule, &mut held, built_in(), Some(sized(1728.0, 1117.0))));
+        assert!(held.desktop.is_none(), "the display left");
+
+        let _ = schedule.next(now, |_| None);
+        assert!(land_desktop(&mut schedule, &mut held, external(), Some(sized(3008.0, 1692.0))));
+        assert!(held.desktop.is_some());
+    }
+
+    /// A transition is dressed only with the pictures of its own display, and with no bar once the
+    /// bar is off the screen.
+    #[test]
+    fn a_transition_is_dressed_only_with_its_own_displays_pictures() {
+        let held = DisplayPictures {
+            desktop: Some(sized(1728.0, 1117.0)),
+            bar: Some((sized(1728.0, 32.0), strip())),
+            desktop_windows: None,
+        };
+        let (desktop, bar) = held.for_display(Some(built_in()), built_in(), true);
+        assert!(desktop.is_some() && bar.is_some());
+        let (desktop, bar) = held.for_display(Some(built_in()), external(), true);
+        assert!(desktop.is_none() && bar.is_none(), "another display");
+        let (desktop, bar) = held.for_display(None, built_in(), true);
+        assert!(desktop.is_none() && bar.is_none(), "no display held");
+        let (desktop, bar) = held.for_display(Some(built_in()), built_in(), false);
+        assert!(desktop.is_some() && bar.is_none(), "the bar has gone from the screen");
+    }
+
+    /// SkyLight reads the framebuffer: a bar read with a transition asked and not yet applied, or
+    /// asked while it ran, may have the overlay in it.
+    #[test]
+    fn a_bar_read_is_kept_only_when_no_transition_was_on_its_way() {
+        assert!(bar_read_kept(3, 3, 3), "quiet");
+        assert!(!bar_read_kept(4, 3, 4), "asked, not yet applied");
+        assert!(!bar_read_kept(3, 3, 4), "began during the read");
+    }
+
+    /// The thread's side of a service with no thread, ScreenCaptureKit or sink behind it.
+    fn detached_service() -> (Service, Arc<Mutex<Shared>>) {
+        let (_commands, requests) = channel::channel();
+        let (done_tx, done) = channel::channel();
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let service = Service {
+            requests,
+            done,
+            done_tx,
+            shared: shared.clone(),
+            transitions: Arc::default(),
+            applied_transitions: 0,
+            looks_checked: HashMap::new(),
+            sinks: Vec::new(),
+        };
+        (service, shared)
+    }
+
+    /// A window drawn grey at `level`, 40x30 pixels.
+    fn flat(level: f64, taken: Instant) -> Picture {
+        use objc2_core_graphics::CGContext;
+        let ctx = crate::pictures::platform::bitmap::rgba_bitmap_context(40, 30).unwrap();
+        CGContext::set_rgb_fill_color(Some(&ctx), level, level, level, 1.0);
+        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(40.0, 30.0)));
+        Picture {
+            image: Pixels::Bitmap(objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)).unwrap()),
+            taken,
+            ..sized(20.0, 15.0)
+        }
+    }
+
+    /// A client keeps as a window's focused look only a picture it was delivered under the tag it
+    /// names; the look stays through a newer capture of the same content, goes with one of different
+    /// content, and is judged only once no transition holds the service.
+    #[test]
+    fn a_focused_look_is_kept_by_its_tag_and_dropped_when_newer_content_differs() {
+        let (mut service, shared) = detached_service();
+        let start = Instant::now();
+        shared.lock().unwrap().delivered.record(tag(2), wid(1), flat(0.5, start));
+        service.apply(Command::KeepFocused(tag(1), wid(1)));
+        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_none(), "not delivered under that tag");
+        service.apply(Command::KeepFocused(tag(2), wid(1)));
+        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_some());
+
+        service.apply(Command::Hold(Hold::Transition));
+        shared.lock().unwrap().cache.insert(wid(1), flat(0.5, start + Duration::from_millis(5)));
+        service.apply(Command::Hold(Hold::Released));
+        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_some(), "the same content");
+
+        service.apply(Command::Hold(Hold::Transition));
+        shared.lock().unwrap().cache.insert(wid(1), flat(0.1, start + Duration::from_millis(10)));
+        service.apply(Command::Hold(Hold::Settling));
+        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_some(), "not judged while held");
+        service.apply(Command::Hold(Hold::Released));
+        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_none(), "content changed");
+    }
+
+    /// A window that is gone takes everything known of it: its pictures, its focused look, what it was
+    /// delivered, and its knowledge, whose id may come back on another window (D9).
+    #[test]
+    fn a_forgotten_window_leaves_nothing_behind() {
+        let (mut service, shared) = detached_service();
+        {
+            let mut shared = shared.lock().unwrap();
+            shared.cache.insert(wid(1), sized(859.0, 1081.0));
+            shared.cache.keep_focused(wid(1), sized(859.0, 1081.0));
+            shared.delivered.record(tag(1), wid(1), sized(859.0, 1081.0));
+            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true, Some(10.0));
+        }
+        service.apply(Command::Forget(wid(1)));
+        let shared = shared.lock().unwrap();
+        assert!(shared.cache.get(wid(1)).is_none());
+        assert!(shared.cache.focused(wid(1)).is_none());
+        assert!(shared.delivered.under(tag(1), wid(1)).is_none());
+        assert_eq!(shared.learned.get(WindowServerId::from(wid(1))), Knowledge::default());
+    }
+
+    /// A focused look that is a region is kept as a copy at a release too.
+    #[test]
+    fn a_release_keeps_a_focused_look_that_is_a_region_as_a_copy() {
+        let (mut service, shared) = detached_service();
+        shared.lock().unwrap().cache.keep_focused(wid(1), crate::pictures::platform::picture::test_region());
+        service.apply(Command::Hold(Hold::Released));
+        assert!(matches!(shared.lock().unwrap().cache.focused(wid(1)).unwrap().image, Pixels::Bitmap(_)));
+    }
+
+    /// Watch ids are the handle's, handed out at once, and the watch goes to the thread after them.
+    #[test]
+    fn a_watch_is_named_by_the_handle_and_sent_on() {
+        let (pictures, mut commands) = Pictures::detached();
+        let watch = || Watch::Live {
+            tag: tag(1),
+            windows: Vec::new(),
+            every: Duration::from_millis(16),
+            after: None,
+            initial: None,
+        };
+        let first = pictures.watch(watch());
+        let second = pictures.clone().watch(watch());
+        assert_ne!(first, second, "clones share the count");
+        assert!(matches!(commands.try_recv(), Ok((_, Command::Watch(id, _))) if id == first));
+        assert!(matches!(commands.try_recv(), Ok((_, Command::Watch(id, _))) if id == second));
+    }
+
+    /// No region stays in the cache past a release: each is replaced by a copy of its own, stamped as
+    /// it was, and a picture that is not a region is left as it is.
+    #[test]
+    fn a_release_keeps_every_region_as_a_copy() {
+        let (mut service, shared) = detached_service();
+        let region = crate::pictures::platform::picture::test_region();
+        let taken = region.taken;
+        shared.lock().unwrap().cache.insert(wid(1), region);
+        shared.lock().unwrap().cache.insert(wid(2), sized(859.0, 1081.0));
+        service.apply(Command::Hold(Hold::Transition));
+        assert!(matches!(
+            shared.lock().unwrap().cache.get(wid(1)).unwrap().image,
+            Pixels::Region { .. }
+        ), "held: still a region");
+        service.apply(Command::Hold(Hold::Released));
+        let shared = shared.lock().unwrap();
+        let kept = shared.cache.get(wid(1)).unwrap();
+        assert!(matches!(kept.image, Pixels::Bitmap(_)));
+        assert_eq!(kept.taken, taken);
+        assert!(matches!(shared.cache.get(wid(2)).unwrap().image, Pixels::Bitmap(_)));
+    }
+
+    /// The switcher draws what `usable_many` returns, in its own order, and never a sliver.
+    #[test]
+    fn usable_many_keeps_the_order_asked_and_leaves_out_what_is_not_worth_drawing() {
+        let (pictures, _commands) = Pictures::detached();
+        {
+            let mut shared = pictures.lock();
+            shared.cache.insert(wid(1), sized(859.0, 1081.0));
+            shared.cache.insert(wid(2), sliver());
+            shared.cache.insert(wid(3), sized(1720.0, 1081.0));
+        }
+        let drawn: Vec<WindowId> = pictures
+            .usable_many(&[wid(3), wid(2), wid(4), wid(1)])
+            .into_iter()
+            .map(|(window, _)| window)
+            .collect();
+        assert_eq!(drawn, vec![wid(3), wid(1)]);
+    }
+
+    /// Every window with a picture held or one on its way, but not one forgotten while its capture was
+    /// out.
+    #[test]
+    fn windows_are_those_held_and_those_owed() {
+        let (pictures, _commands) = Pictures::detached();
+        let now = Instant::now();
+        let target = |idx| PictureTarget {
+            window: wid(idx),
+            server_id: rini_core::ids::WindowServerId::new(idx),
+            size: CGSize::new(859.0, 1081.0),
+        };
+        {
+            let mut shared = pictures.lock();
+            shared.cache.insert(wid(1), sized(859.0, 1081.0));
+            shared.schedule.ask(
+                Ask {
+                    priority: Priority::Focus,
+                    targets: vec![target(2), target(3)],
+                },
+                now,
+            );
+            let _ = shared.schedule.next(now, |_| None);
+            shared.schedule.forget(wid(3));
+        }
+        let mut windows = pictures.windows();
+        windows.sort();
+        assert_eq!(windows, vec![wid(1), wid(2)]);
     }
 }

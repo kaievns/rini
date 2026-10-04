@@ -351,7 +351,8 @@ unsafe extern "C" {
     pub fn CGAssociateMouseAndMouseCursorPosition(connected: u32) -> CGError;
     pub fn CGEventSourceSetLocalEventsSuppressionInterval(source: *mut CFType, interval: f64);
 
-    pub fn CGSGetWindowBounds(cid: cid_t, wid: u32, frame: *mut CGRect) -> i32;
+    /// The frame the window server has for a window, answered without asking the app.
+    pub fn SLSGetWindowBounds(cid: cid_t, wid: u32, frame: *mut CGRect) -> i32;
     pub fn CGSSetConnectionProperty(
         cid: cid_t,
         target_cid: cid_t,

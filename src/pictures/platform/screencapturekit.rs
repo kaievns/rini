@@ -159,7 +159,7 @@ unsafe impl Send for Prepared {}
 /// The scale every window is captured at, whatever display it is on: ScreenCaptureKit charges per
 /// call, not per pixel ("Capture cost" in `src/pictures/docs/capture-research.md`), and a
 /// window captured at 1x would fly soft on a Retina display.
-pub const WINDOW_SCALE: f64 = 2.0;
+const WINDOW_SCALE: f64 = 2.0;
 
 /// Finds `targets` in one ScreenCaptureKit listing and prepares a capture of each, handing `done` each
 /// target with what was prepared for it, or `None` for a window the listing did not have.

@@ -20,7 +20,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **What a flight is** | `domain/flight.rs` — when a picture landing in flight is swapped in, the focus refresh, border companions, the handover report, when a pass is worth an overlay, the flight report |
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the apply points, the reveal hold, the lift and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
-| **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine; not yet wired |
+| **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the shell carries out; generations tag every picture it asks for. Not yet wired |
 | **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it composes each flight, keeps it running, places the real windows through the reactor and lifts the overlay; the renderer and the pictures service do the drawing and the capturing |
 
 ## The shape that matters
@@ -39,13 +39,16 @@ whether a flight is up (`OnFlight`, to the bar). The reactor never learns more o
 and instants; the engine reads the window server and the clock, and holds the state between events.
 
 **One lifecycle for every kind, still to come.** `domain/lifecycle.rs` is the lifecycle as a state
-machine: a kind says what it stages, and the coordinator decides only when. Nothing drives it yet.
+machine: a kind says what it stages, which pictures frame zero needs, whether it writes frames and what
+the lift must match; the coordinator sees a `StageSummary` and decides only when. Every event carries
+its instant, so a lifecycle is a test of events in and commands out. Nothing drives it yet.
 
 ## Reading order
 
 `domain/request.rs` → `domain/pass.rs` → `domain/travel.rs` → `domain/admission.rs` →
 `domain/flight.rs` → `domain/timing.rs` → `platform/engine.rs`, the actor and the largest file.
-`domain/lifecycle.rs` is what replaces the engine's lifecycle.
+`domain/lifecycle.rs` is what replaces the engine's lifecycle: `Kind`, then `StageSummary`, then
+`Coordinator::on`.
 
 ## Detail
 

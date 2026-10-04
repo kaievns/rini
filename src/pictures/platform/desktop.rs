@@ -15,10 +15,14 @@ use crate::windows::platform::window_server::{
     bounds_from_dict, get_num, get_string, get_windows_raw, overlaps,
 };
 
-/// The windows making up the desktop backdrop, and which of them are the wallpaper.
+/// The windows making up the desktop backdrop, which of them are the wallpaper, and the rect they
+/// cover together.
+#[derive(Clone, Debug, Default)]
 pub struct DesktopBackdrop {
     pub windows: Vec<WindowServerId>,
     pub wallpaper: Vec<WindowServerId>,
+    /// The union of the windows' bounds, or `None` with none listed.
+    pub bounds: Option<CGRect>,
 }
 
 impl DesktopBackdrop {
@@ -32,6 +36,7 @@ impl DesktopBackdrop {
 pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
     let mut windows = Vec::new();
     let mut wallpaper = Vec::new();
+    let mut union: Option<CGRect> = None;
     for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
         CGWindowListOption::OptionOnScreenOnly,
         kCGNullWindowID,
@@ -66,9 +71,14 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
         {
             wallpaper.push(id);
         }
+        union = Some(union.map_or(bounds, |union| union.union(&bounds)));
         windows.push(id);
     }
-    DesktopBackdrop { windows, wallpaper }
+    DesktopBackdrop {
+        windows,
+        wallpaper,
+        bounds: union,
+    }
 }
 /// The bar's windows and the rect they occupy together.
 pub struct BarStrip {
