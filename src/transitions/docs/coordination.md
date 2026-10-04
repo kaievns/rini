@@ -244,7 +244,9 @@ focused look, and focus hands over (`HandOverFocus`): the target's ring and shad
 and the window left's not (`TileOverlay::set_tile_focused`). The window left is pictured again by the
 final capture if it ends wholly on screen and its look has changed by then; one ending clipped by the
 display's edge keeps its frame-zero picture to the lift, only its ring and shadow turning, and its look
-turns at rest, pictured again at the quiet: SkyLight returns only its visible part, and the one
+turns at rest, pictured again at the quiet, unless it has a material: then it keeps its blurred picture
+until a flight next pictures it on screen ("Known debt" in `src/pictures/docs/README.md`). SkyLight
+returns only its visible part, and the one
 ScreenCaptureKit capture a flight lets through is the target's ("Decisions taken while Kai was away" in
 `docs/pictures-motion-transitions.md`). A capture of the target the cache refuses ends its watch,
 delivering nothing: the cache refuses a picture without the blur in place of one with it at the same
@@ -270,11 +272,15 @@ window kept the look it had until it was resized, in the switcher and in the nex
 owes them to the quiet, and any picture the flight is delivered of one after the turn, a landing, its
 focus change or the final capture, pays that one off, since the cache holds it. What is left, the
 window losing focus that ends clipped or parked and a target whose change no capture saw, is asked for
-at the quiet after the warm; a press inside the quiet carries it to its own. A refresh is a
-ScreenCaptureKit capture at background priority, which waits through any hold: a click whose report
-reaches the engine just before the request for the flight it starts would otherwise have started two
-captures under that flight's frame zero, as focus priority does. A window whose picture carries its blur
-keeps it, since the capture is of the window alone ("Known debt" in `src/pictures/docs/README.md`).
+at the quiet after the warm; a press inside the quiet carries it to its own. The pictures service
+decides how each is pictured (`Pictures::refresh`): a window the window server has wholly on the
+display through SkyLight, its blur baked in, captured until its title band differs from its first
+capture's; any other through ScreenCaptureKit at background priority, whose capture the cache refuses for a
+window with a material ("The schedule" and "Known debt" in `src/pictures/docs/README.md`). Neither starts through a
+hold, and a refresh holds every one already being captured until its own first look: a click whose
+report reaches the engine just before the request for the flight it starts would otherwise have put
+captures under that flight's frame zero. A SkyLight call already out when the hold arrives cannot be
+recalled; it is the most a frame zero waits behind.
 
 The recapture this replaced cut both ends of a focus change mid-flight, at 0.25 and 0.55 of the
 flight, through ScreenCaptureKit and a framed capture. Asked at 0.53 through the service, its pictures
@@ -317,7 +323,7 @@ is a warm, for the next flight. The
 rest waits and starts at the release, most urgent first. The reactor's
 `warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
 start) waits; so does the desktop render. A warm
-also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: the reactor
+also settles `SETTLE_BEFORE_STARTING` (50ms) before it is listed: the reactor
 sends a pass's warm straight to the service just after the request for its
 flight, so it usually arrives before the hold the engine sends as it takes that
 request, and one listed before a later hold is listed again at the release.

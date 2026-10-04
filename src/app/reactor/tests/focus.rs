@@ -505,6 +505,10 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
     for priority in [Priority::Focus, Priority::Background] {
         assert!(asked_at(&asked, priority).is_empty(), "the reactor captures neither end itself: {priority:?}");
     }
+    assert!(
+        !asked.iter().any(|command| matches!(command, Asked::Refresh(_))),
+        "the reactor refreshes neither end itself"
+    );
     let frame = |window: WindowId| reactor.state.windows.window(window).unwrap().frame_monotonic;
     let mut turned = Vec::new();
     while let Ok((_, event)) = transitions_rx.try_recv() {

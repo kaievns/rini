@@ -646,15 +646,6 @@ fn sized_targets(windows: Vec<(WindowId, ScreenRect)>) -> Vec<PictureTarget> {
     windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
 }
 
-/// Windows whose look turned with the key window, at background priority: no warm filter drops it
-/// for a picture that fits, and it waits for any transition's release.
-fn refresh(windows: Vec<(WindowId, ScreenRect)>) -> Ask {
-    Ask {
-        priority: Priority::Background,
-        targets: sized_targets(windows),
-    }
-}
-
 /// The radius a tile of `size` clips its picture to: a SkyLight picture of a window baked with the
 /// desktop behind it has the wallpaper in its corners. `None` draws it whole.
 fn corner_clip(knowledge: Knowledge, picture: &Picture, size: TileSize) -> Option<f64> {
@@ -989,7 +980,7 @@ impl FlightEngine {
                     });
                 }
             }
-            Command::Refresh(windows) => self.pictures.ask(refresh(windows)),
+            Command::Refresh(windows) => self.pictures.refresh(sized_targets(windows)),
             Command::ReportUp => self.report(true),
             Command::ReportSettled => self.report(false),
         }
@@ -2513,16 +2504,6 @@ mod tests {
             assert_eq!(ask.background.len(), 1);
             assert_eq!(ask.behind, vec![WindowServerId::new(9)]);
             assert_eq!(sized_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
-        }
-
-        /// A turned look keeps the size it had, so a warm would drop it; asked at focus priority, it
-        /// would start ScreenCaptureKit through the hold of a flight the same click begins.
-        #[test]
-        fn a_turned_look_is_asked_at_background_priority_at_the_size_it_is_at() {
-            let at: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
-            let ask = refresh(vec![(wid(1), at)]);
-            assert_eq!(ask.priority, Priority::Background);
-            assert_eq!(ask.targets, sized_targets(vec![(wid(1), at)]));
         }
 
         #[test]

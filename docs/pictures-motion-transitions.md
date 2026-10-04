@@ -58,6 +58,7 @@ evaluates to exactly what the render server draws, so the coordinator retargets 
   pictures ride warm);
 - `ask_on_screen` windows on screen under a tag, at frame zero or for the last capture before the
   lift (`Moment::FrameZero`, `Moment::Final`);
+- `refresh` windows whose look has just turned, wherever they are, once no transition holds it;
 - `watch` windows: until each lands where it ends or is lost (`Landing`, its deadline the watch's
   `until`), until a window's look changes from a print (`Change`), or kept fresh at a rate (`Live`);
   `retarget` or `stop` a watch;
@@ -78,7 +79,8 @@ backends, first-sight measurement, and the service thread. Rules the schedule ke
 frame zero first; a focus capture never queued behind a background or warm ask; a landing read from
 the window server's own frame; windows that overlap a translucent one never share a composite;
 ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end and,
-while the handover is measured, the screen a lift's check takes as the transition settles.
+while the handover is measured, the screen a lift's check takes as the transition settles; a refresh
+only while none does, through SkyLight where its window is wholly on the display.
 
 ## `animation`
 
@@ -124,7 +126,7 @@ service remembers it for a second.
 | Decision | Why | Alternative |
 |---|---|---|
 | Make-key stays after the raise's Accessibility calls (the prototype's `mkfirst` is not carried) | it measured no gain, and making the window key before the cancellation checks breaks `specs/focus.md` | carry it behind the raise mutex |
-| A focus target clipped by the display edge takes one ScreenCaptureKit capture through the hold; the window losing focus, ending clipped, takes none, turns at rest after the lift and is pictured again at the quiet | keeps `specs/animation.md`'s rule that the window gaining focus is recaptured wherever it ends, with one ScreenCaptureKit capture a flight: four out made frame zero three times as slow | let a clipped end change at rest; or a second capture through the hold for the window losing focus |
+| A focus target clipped by the display edge takes one ScreenCaptureKit capture through the hold; the window losing focus, ending clipped, takes none, turns at rest after the lift and is pictured again at the quiet, one with a material keeping its blurred picture until a flight next pictures it on screen (Known debt in `src/pictures/docs/README.md`) | keeps `specs/animation.md`'s rule that the window gaining focus is recaptured wherever it ends, with one ScreenCaptureKit capture a flight: four out made frame zero three times as slow | let a clipped end change at rest; or a second capture through the hold for the window losing focus |
 | Baked pictures are clipped to the window's measured corner radius | a crop of a desktop composite fills the rounded corners with wallpaper | capture the corners' alpha separately |
 | The bar's menu-extras thread stays in `bar` for now | it has its own pacing and pauses for flights already | move it behind the pictures thread |
 | A transition's hold has three states: up at its begin, before anything is composed, settling at the lift, released at the quiet after it | the bar is pictured 250ms after the lift, as it always was, while the warms the flight held wait for the quiet, which keeps a burst of presses off a busy compositor | release at the lift, and picture the bar 250ms after the quiet instead |
@@ -135,7 +137,8 @@ service remembers it for a second.
 | `set_tile_focused` switches the shadow's depth with the ring's white | a tile drawn with one focus and a shadow of the other matches neither end of the handover | switch the ring alone |
 | A tile's corner radius is read from `pictures` when the flight composes it | the tile is described once, like its focus; a window first measured by the frame-zero capture flies that flight at 10pt | an overlay setter the coordinator calls when a window's knowledge lands |
 | The radius a window is drawn with until its own is measured, `CORNER_RADIUS`, is `pictures`' (`domain::knowledge`); the hairline's geometry is `animation`'s (`domain::motion::hairline`) | the stand-in draws its corners with that radius, and `pictures` may not name `animation` | one constant in each feature |
-| A change of the key window reaches the engine as the two looks it turned; at rest both are asked for at once, in flight what the flight does not picture is asked for at its quiet, at background priority either way | the engine alone knows whether a flight will picture them, and background priority waits through a hold, so a click that also starts a flight starts no ScreenCaptureKit capture under it | the reactor asks both ends at focus priority whenever no flight is reported up: a report just ahead of the request it causes starts both captures under that flight's frame zero, and one the quiet would have covered is asked twice |
+| A change of the key window reaches the engine as the two looks it turned; at rest both are refreshed at once, in flight what the flight does not picture is refreshed at its quiet | the engine alone knows whether a flight will picture them, and a refresh waits through a hold, so a click that also starts a flight starts no capture under it | the reactor asks both ends at focus priority whenever no flight is reported up: a report just ahead of the request it causes starts both captures under that flight's frame zero, and one the quiet would have covered is asked twice |
+| A refresh is split by the pictures service, by where the window server has each window as it is looked at: SkyLight wholly on the display, ScreenCaptureKit anywhere else | the switcher and an exposé want the same rule, and the frame a capture is taken at is the server's then, not the one the reactor sent | `Command::Refresh` split by the coordinator over the frames it carries |
 | The end state is an on-screen ask at `Moment::Final`, not a priority of `ask` | on-screen captures are tagged, batched SkyLight calls with delivery rules of their own: only what is news, under the asker's generation | an end-state priority on `ask` |
 | The transitions journal is a module of `transitions` (`domain::journal`, `platform::journal`), not a crate | every mark is in transitions' terms (`Generation`, `Kind`, `Command`); a crate would hold a ring and a writer for one client, and `crates/` holds libraries | `crates/rini-journal` once a second feature journals, the marks staying in each feature |
 | The coordinator and the journal are one pure unit, `Journalled`, whose `drive` returns the commands and the burst due | what is marked and when a burst is written are tested without a `FlightEngine`, which needs a `MainThreadMarker` until step 7 | mark calls in the engine's `drive`, tested only through step 7's harness |

@@ -28,7 +28,9 @@ const FRAME_ZERO_SLACK: f64 = 2.0;
 const ON_DISPLAY_SLACK: f64 = 1.0;
 /// How often a window not yet landed has its server frame read.
 pub const LANDING_POLL: Duration = Duration::from_millis(1);
-/// How often, and how many times, a window reported focused is captured until its look changes.
+/// How often, and how many times, a window whose look turned with the key window is captured until
+/// its look changes: by a `Change` watch in flight, and by a refresh at rest
+/// (`crate::pictures::domain::refresh`).
 pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
 /// How often, and how many times at most, a window that has to repaint is captured once it is where

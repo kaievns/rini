@@ -21,8 +21,9 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |
 | **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be, and the id a window rini does not manage is pictured under |
-| **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
+| **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, refreshes, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus and placement hints, and the band prints each client was last delivered, which decide what is news |
+| **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, which capture shows the turn, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come, and a handover check's overlay picture taken and its measure |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
@@ -45,17 +46,16 @@ its private helpers and structs.
 ## The service
 
 One thread, `pictures`, makes every background capture of a window, the desktop and the bar, every
-capture of windows on screen a transition asks for or watches, one SkyLight call at a time, and a
-measured lift's two pictures. Two
-kinds of capture are not its yet: a transition's desktop and bar, composited on the caller's thread
-until its display's first render lands, and the flight engine's spawn capture of a window that has just
-opened, taken on the main thread as it composes (both Known debt). It is started once, in
-`src/main.rs`, with a sink per client; the flight engine, the reactor and the switcher each hold a
-`Pictures` handle.
+capture of windows on screen a transition asks for or watches, every refresh, one SkyLight call at a
+time, and a measured lift's two pictures. Two kinds of capture are not its yet: a transition's desktop
+and bar, composited on the caller's thread until its display's first render lands, and the flight
+engine's spawn capture of a window that has just opened, taken on the main thread as it composes
+(both Known debt). It is started once, in `src/main.rs`, with a sink per client; the flight engine,
+the reactor and the switcher each hold a `Pictures` handle.
 
 | A client | Through the handle |
 |---|---|
-| asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it |
+| asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `refresh` windows whose look has just turned, wherever they are, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it |
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
 | measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared on a thread of the check's own |
@@ -63,8 +63,8 @@ opened, taken on the main thread as it composes (both Known debt). It is started
 | reads | `usable`, `usable_many`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
 | hands over | `insert`, for the flight engine's one capture of its own, of a window that has just opened |
 
-Asks, watches, hints, holds and forgets are messages, applied in order on the thread, every one already
-queued before the next call is made, so the newest wins. Reads are not: they lock the shared state and
+Asks, refreshes, watches, hints, holds and forgets are messages, applied in order on the thread, every
+one already queued before the next call is made, so the newest wins. Reads are not: they lock the shared state and
 copy out, so the switcher draws without a round trip and the engine composes frame zero with what is
 held at that instant. Every capture that comes back goes into the cache first, and every sink hears of
 each one the cache took (`event.rs`): a client draws only a picture the cache took, so a flight and the
@@ -110,7 +110,9 @@ listed window, render the desktop, picture the bar, wait until a time, or nothin
 | While a transition holds the service, only a focus capture starts, of a focus target clipped by the display's edge, and, with the handover measured, the screen a check takes while the transition settles | ScreenCaptureKit work queued at a focus change slows every step of it: with four captures out the frame-zero capture took 92-97ms against 26-33; what the transition waits for is the exception, and the check is opt-in and taken once the overlay is down |
 | A handover check's overlay picture is the next call, ahead of every other; the screen comes `AFTER_LIFT` (45ms) after it, once, and never when the overlay's picture was not taken; a transition beginning drops the check and the overlay's picture it holds, and neither picture is taken while a transition is asked and not yet applied | the lift's hide waits for the overlay's picture; the research took the screen 45ms after its hide; a screen taken once the next overlay is up would measure that overlay, and a press asks its frame zero of this thread, so it waits at most for the one call under way as it lands |
 | What waited starts at the release, most urgent first: focus, background, warm | a capture of a focus end is never queued behind warms |
-| A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | the reactor sends a pass's warm just after the request for its flight, which the engine holds for as it takes it: the settle usually covers the gap, and what it does not is listed again at the release (below) |
+| A background or warm ask settles `SETTLE_BEFORE_STARTING` before it is listed, and a refresh, with every refresh already owed, before its next look | the reactor sends a pass's warm just after the request for its flight, and the engine a click's refresh just before the request for the flight the click starts, which the engine holds for as it takes it: the settle usually covers the gap; a warm it does not cover is listed again at the release (below), and a refresh's SkyLight call already out cannot be recalled |
+| A refresh is looked at only while nothing holds the service, one window a round, after the transition's SkyLight work and before any ScreenCaptureKit call is issued, wholly on the display wherever the window server has it, with only the desktop composited behind it; a window the window server does not have wholly on the display is owed one ScreenCaptureKit capture at background priority | SkyLight returns a material window's blur and ScreenCaptureKit's capture of the window alone does not, and the cache keeps a blurred picture over one without at the same size, so through ScreenCaptureKit a window with a material keeps its old look (Known debt); SkyLight captures only what is on a display; calls are served one at a time and the thread applies every command queued before its next call, so one round is the most a press's frame zero can wait behind: one SkyLight call, two for a window seen for the first time |
+| A refresh captures its window every `CHANGE_EVERY`, `CHANGE_TRIES` times at most, until a capture's band print differs from its first capture's, the cache holding the last; a capture that missed a window wholly on the display spends a try, and a window no try captured is owed ScreenCaptureKit's capture; a capture the cache refuses ends it | the window server changes the front process 1.1-1.6ms after the make-key call, and the app shows its new look 47ms after it at p50, 68ms at p90 for Chrome and 54ms for Ghostty (idle; "Where a moving focus change spends its time" in `src/animation/docs/capture-overlay-research.md`); the focus report rini hears comes from that change (inferred, not timed), so a capture at the report shows the look before; the picture held from before can differ in its band for other reasons, a title changed or what was composited behind it, so the turn is judged from the refresh's own captures; a focus change shows in the title band, as it does for `Change`; a call that comes back empty, as one does once the desktop's windows have changed, succeeds once they are listed again; the cache refuses every later capture of the window at that size too |
 | A capture listed and unable to start through a hold is listed again at the release, as is one asked again at another size | the buffer a listing prepares is the size it found the window at, and the transition may resize it |
 | A warm is dropped where the picture held fits and is fresh (`wants_warm`) | re-capturing every animated window per keystroke is churn |
 | One listing serves every window that may start; at most `MAX_CONCURRENT` captures are out | a fresh listing costs about 83ms against 26ms for the capture; ScreenCaptureKit serialises past four |
@@ -129,15 +131,16 @@ handle. Every other picture a transition draws it asks for or watches.
 
 ## The watches
 
-`domain/watch.rs` is the SkyLight half of the schedule: windows on screen, captured at the frames the
-window server has them at (`SLSGetWindowBounds`: a parked window's written frame is there within 0.1ms
-of the write returning, an app still activating applies a write late) and delivered under the asker's
-`Tag`, a client and its generation. None of it waits for a
-release: it is what a transition waits on.
+`domain/watch.rs` is the SkyLight half of the schedule a transition drives: windows on screen, captured
+at the frames the window server has them at (`SLSGetWindowBounds`: a parked window's written frame is
+there within 0.1ms of the write returning, an app still activating applies a write late) and delivered
+under the asker's `Tag`, a client and its generation. None of it waits for a release: it is what a
+transition waits on. The schedule's other SkyLight work, a refresh at rest, waits for one
+(`domain/refresh.rs`, "The schedule").
 
 | Rule | Why |
 |---|---|
-| SkyLight work goes before any ScreenCaptureKit call is issued: frame zero first, one ask at a time, then every strip capture due in one round, then the windows behind the strip | a SkyLight call behind four ScreenCaptureKit captures took 204ms against 27; a focus capture is never behind the background |
+| SkyLight work goes before any ScreenCaptureKit call is issued: frame zero first, one ask at a time, then every strip capture due in one round, then the windows behind the strip, and a refresh last, once released | a SkyLight call behind four ScreenCaptureKit captures took 204ms against 27; a focus capture is never behind the background |
 | Frame zero takes the windows within 2pt of where their tiles start and wholly on the display, the strip in one set and the background in another, and delivers everything in one delivery, even an empty one | the overlay waits for it, so it must always come; in one composite with the strip, a translucent window would bake what is behind it |
 | No two overlapping windows are in one call, and windows with different `behind` are never in one call | the crop of the window behind would show the one in front; a material blurs what is composited after it |
 | `Landing` reads each window's frame every 1ms, captures it once it is within `slack` (20pt) of its end and wholly on the display, and reports it `Lost` at `until`; `Placed` reads at once | the server rounds each window on its own and an app may settle a point or two off; a window that never lands must not hold anything up |
@@ -179,7 +182,7 @@ cached: cached, the switcher would read it as a picture and the next flight woul
 
 **Two routes, chosen by visibility.** SkyLight is fresh and cheap but captures only what is on screen;
 ScreenCaptureKit captures a window anywhere but costs about 40ms, so it fills the cache in the
-background and is never waited on.
+background and is never waited on. A refresh takes whichever its window's place allows.
 
 **One SkyLight call, two ways of making it.** `SLSHWCaptureWindowList` with several ids returns one
 composite of them, the first listed in front, covering what each has on its display, and calls are
@@ -220,8 +223,9 @@ names only while its flight is up (`keep_focused`), is dropped there and then ra
 ## Reading order
 
 `domain/coverage.rs` → `domain/cache.rs` → `platform/picture.rs` → `domain/region.rs` →
-`domain/knowledge.rs` → `domain/schedule.rs` → `domain/watch.rs` → `platform/service.rs` →
-`platform/skylight.rs` → `platform/measure.rs` → `platform/screencapturekit.rs`.
+`domain/knowledge.rs` → `domain/schedule.rs` → `domain/watch.rs` → `domain/refresh.rs` →
+`platform/service.rs` → `platform/skylight.rs` → `platform/measure.rs` →
+`platform/screencapturekit.rs`.
 
 ## Detail
 
@@ -236,11 +240,18 @@ names only while its flight is up (`keep_focused`), is dropped there and then ra
 **Nothing hints a window placed.** `Hint::Placed` reads a window's frame at once rather than at the
 next poll; nothing sends it yet, so a landing is seen at the next 1ms poll.
 
-**A look turned at rest is a capture of the window alone.** A change of the key window is pictured
-again through ScreenCaptureKit, and the cache keeps a picture carrying its window's blur over a capture
-of the same size without it. A window with a material keeps the look of its last SkyLight picture
-until a flight next pictures it on screen. A SkyLight ask of the turned windows wholly on screen would
-carry the blur.
+**A look turned off the display is a capture of the window alone.** A window the window server does
+not have wholly on the overlay's display at the look, clipped, parked or on another display, is
+refreshed through ScreenCaptureKit, and the cache keeps a picture carrying its blur over a capture of
+the same size without it: a window with a material keeps its old look, in the switcher and the next
+flight, until a flight next pictures it on screen. The overlay's display is the only one whose frame
+and desktop windows the service holds, so a window wholly on another display is refreshed this way
+too. The window losing focus that ends a flight clipped or parked is one.
+
+**A refresh blurs only the desktop.** Its baked call lists the window and then the display's desktop
+windows, with nothing in `behind`: the service knows nothing of what lies below a window at rest, so a
+floating window below a window with a material is missing from that picture's blur until a flight next
+pictures it on screen.
 
 **The cache is a registry too.** A border companion may never be a window rini manages, and the engine
 learns which those are from `Pictures::windows`, the windows with a picture held or owed. The managed
