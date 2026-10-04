@@ -1,12 +1,13 @@
 //! What the pictures service tells its clients: every capture the cache took, for any window, whoever
-//! asked for it; and to each client, under its tag, the pictures it asked for or watched, and the
-//! landings whose picture will not come.
+//! asked for it; and to each client, under its tag, the pictures it asked for or watched, the
+//! landings whose picture will not come, and a handover check's two steps.
 
 use std::time::Instant;
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::ScreenRect;
 
+use crate::pictures::domain::handover::HandoverDiff;
 use crate::pictures::domain::watch::{Tag, Why};
 use crate::pictures::platform::picture::Picture;
 
@@ -27,4 +28,9 @@ pub enum Event {
     /// A window `tag` watched land whose picture will not come: it was not where it ends by the
     /// deadline, it never settled, or the cache refused its capture for the picture it holds.
     Lost { tag: Tag, window: WindowId },
+    /// The overlay's own picture for the handover check `tag` asked was taken, or could not be: the
+    /// overlay may come down.
+    OverlayTaken { tag: Tag },
+    /// The check's measure: each window, the screen `AFTER_LIFT` after the overlay's picture against it.
+    Handover { tag: Tag, windows: Vec<(WindowId, HandoverDiff)> },
 }

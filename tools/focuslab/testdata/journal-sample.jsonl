@@ -1,4 +1,4 @@
-{"t":81235344000000,"mark":"burst","journal":1,"unix_ms":1791043200784,"lost":0}
+{"t":81235344000000,"mark":"burst","journal":1,"unix_ms":1791043200784,"lost":0,"measure_handover":true}
 {"t":81234557600000,"g":1,"mark":"press","what":"move_focus"}
 {"t":81234560000000,"g":1,"mark":"begin","kind":"pan","coalesced":false,"tiles":3,"awaiting":0,"repainting":0,"focus":[1,2],"losing_focus":[1,1],"key":[1,1],"duration_ms":350}
 {"t":81234560000000,"g":1,"mark":"hold"}
@@ -39,11 +39,13 @@
 {"t":81234943700000,"g":1,"mark":"stop_watches"}
 {"t":81234943700000,"g":1,"mark":"lift","at_rest":true,"landed":true}
 {"t":81234943700000,"g":1,"mark":"settle"}
+{"t":81235040300000,"g":1,"mark":"handover","of":1,"window":[1,2],"interior":0.26,"interior_over":0.0012,"edge_in":0.37,"edge_out":1.56,"waited_us":31400}
+{"t":81235040300000,"g":1,"mark":"handover","of":1,"window":[1,1],"interior":0.79,"interior_over":0.004,"edge_in":1.08,"edge_out":2.26,"waited_us":31400}
 {"t":81235343700000,"g":1,"mark":"quiet","of":1}
 {"t":81235343700000,"g":1,"mark":"release"}
 {"t":81235343700000,"g":1,"mark":"warm","windows":3}
 {"t":81235343700000,"g":1,"mark":"report_settled"}
-{"t":81238810300000,"mark":"burst","journal":1,"unix_ms":1791043204250,"lost":0}
+{"t":81238810300000,"mark":"burst","journal":1,"unix_ms":1791043204250,"lost":0,"measure_handover":true}
 {"t":81237558200000,"g":2,"mark":"press","what":"move_focus"}
 {"t":81237560000000,"g":2,"mark":"begin","kind":"pan","coalesced":false,"tiles":3,"awaiting":0,"repainting":0,"focus":[1,2],"losing_focus":[1,1],"key":[1,1],"duration_ms":350}
 {"t":81237560000000,"g":2,"mark":"hold"}

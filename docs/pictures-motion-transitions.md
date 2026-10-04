@@ -18,7 +18,7 @@ This section goes when the last row is done.
 | 5 | `animation` plays a `Score`; choreographies and accents produce one | done |
 | 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | done |
 | 7 | The coordinator on its own thread; the main thread renders only | |
-| 8 | The transitions journal | |
+| 8 | The transitions journal | done |
 
 ## Three concerns, three owners
 
@@ -62,6 +62,8 @@ evaluates to exactly what the render server draws, so the coordinator retargets 
   `until`), until a window's look changes from a print (`Change`), or kept fresh at a rate (`Live`);
   `retarget` or `stop` a watch;
 - `hint` that a window was placed or focused; `hold` off-screen capture while a transition runs;
+- `check_handover` a lift: the overlay alone, then the screen 45ms later, compared over every window
+  ending wholly on screen;
 - read the cache: `usable`, `focused`, `knowledge` (radius, translucency, material), and `dressing`
   (the desktop and the bar);
 - `set_layer_contents(layer, picture)` draws any picture into any layer, regions through
@@ -75,7 +77,8 @@ per-window knowledge, the cache policy; and on the platform side the SkyLight an
 backends, first-sight measurement, and the service thread. Rules the schedule keeps, each a test:
 frame zero first; a focus capture never queued behind a background or warm ask; a landing read from
 the window server's own frame; windows that overlap a translucent one never share a composite;
-ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end.
+ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end and,
+while the handover is measured, the screen a lift's check takes as the transition settles.
 
 ## `animation`
 
@@ -147,3 +150,6 @@ service remembers it for a second.
 | The press is when the reactor takes the event, named by its variant or, for a command, the command's IPC name | the research measured from there ("ms after rini takes the press"); a nested event puts the outer one back, so the passes after it carry the outer event | the key-down's own `CGEvent` timestamp, which the tap would carry through the reactor's queue |
 | `tools/focuslab/journal.py probe` joins a probe's trial to the first press rini took within 250ms after the probe posted it, and `overlay.swift` writes one JSON line a press for it | the probe and the journal read one clock, so the join needs no wall clock, and only the window list says when the overlay is seen up after its `show` | leave the time from the show to the overlay seen up unmeasured |
 | CPU and GPU use are not journalled | Kai allowed them if they cost nothing; what the IOKit read costs is not measured | sample them at the overlay up and the lift, as the prototype did |
+| The handover check is opt-in (`animations { journal { measure-handover; } }`), with the research's sampling | it holds every lift for the overlay's own picture, one SkyLight call of 16-43ms, and its screen capture goes through ScreenCaptureKit's delivery queue; the same sampling keeps its numbers comparable with "The handover, measured" | always on: it perturbs the thing it measures |
+| While measuring, the lift's hide waits in `journal::hides`, outside the `Coordinator`, for the overlay's picture, any request, or 60ms; only the hide and the tiles' release move | it is instrumentation that never runs unmeasured; the quiet and `Settle` go out at the lift as ever, and a lift that hid on a request or the patience is not measured | a lifecycle `Command::Lift` that hides on `Event::OverlayTaken`: a lifecycle state and its tests for a measuring-only path |
+| A transition beginning drops the handover check under way, and the overlay's picture with it | the screen 45ms after the lift would show the next flight's overlay, and a press never waits on a measurement | the engine drops the measure of any lift a request followed, which also drops one whose screen was taken before the press |

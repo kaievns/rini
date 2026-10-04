@@ -1151,6 +1151,11 @@ swap, other window      edge in   5.68 / 24.78               5.30 / 6.07
 resize, focused window  interior  0.11 / 14.23               1.57 / 1.66
 ```
 
+This metric, sampled the same way, is `src/pictures/domain/handover.rs`. `animations { journal {
+measure-handover; } }` measures every lift with it, and `tools/focuslab/journal.py handover` prints
+these rows from the journal, the strip's as `pan` (`src/transitions/docs/journal.md`, "The handover,
+measured").
+
 What each part of the prototype fixed:
 
 - **A constant hairline and outline replace the harvest.** A 1pt ring of white at 20% (18%

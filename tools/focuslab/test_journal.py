@@ -124,6 +124,30 @@ class Summary(unittest.TestCase):
         self.assertEqual(rows[1]["press_to_show"], "")
 
 
+class Handover(unittest.TestCase):
+    def setUp(self):
+        self.bursts, _ = sample()
+
+    def test_each_window_is_named_by_the_kind_and_focus_of_the_generation_that_lifted(self):
+        rows = journal.handovers(self.bursts)
+        self.assertEqual([(row["of"], row["kind"], row["focused"]) for row in rows], [(1, "pan", True), (1, "pan", False)])
+        self.assertEqual([(row["interior"], row["edge_in"], row["edge_out"]) for row in rows],
+                         [(0.26, 0.37, 1.56), (0.79, 1.08, 2.26)])
+        self.assertAlmostEqual(rows[0]["waited"], 31.4, places=6)
+
+    def test_a_lift_in_a_measured_burst_with_no_handover_went_unmeasured(self):
+        self.assertTrue(all(header["measure_handover"] for header, _ in self.bursts))
+        self.assertIn("1 of 2 lifts measured, 2 windows", journal.handover(self.bursts))
+
+    def test_the_headline_is_edge_in_p99_of_the_focused_window_on_pan_flights(self):
+        text = journal.handover(self.bursts)
+        self.assertIn("edge in p99, focused window, pan: 0.37 n=1", text)
+        self.assertIn("pan, focused window", text)
+        self.assertIn("pan, other window", text)
+        for _, label in journal.HANDOVER:
+            self.assertIn(label, text)
+
+
 class Probe(unittest.TestCase):
     def setUp(self):
         _, found = sample()

@@ -120,10 +120,13 @@ animations {
     slowdown 1.0
 
     // Every step of every transition is written to ~/Library/Logs/rini/transitions.jsonl once it
-    // has settled (src/transitions/docs/journal.md). Uncomment to stop writing it; the last steps
-    // are kept in memory either way, and written once it is turned back on.
+    // has settled (src/transitions/docs/journal.md). Uncomment `off` to stop writing it; the last
+    // steps are kept in memory either way, and written once it is turned back on. Uncomment
+    // `measure-handover` instead to measure each lift against the screen just after it, which
+    // holds each lift up to 60ms.
     // journal {
     //     off
+    //     measure-handover
     // }
 }
 

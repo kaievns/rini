@@ -1,9 +1,10 @@
 //! The transitions journal: the press each request answers, every event the lifecycle takes, every
-//! command it gives and every delivery of pictures to it, a mark in a ring kept with the coordinator,
-//! and the JSON lines a burst of marks is written as. Pure: the engine drives the lifecycle, tells it
-//! each request's press and each delivery through [`Journalled`], and hands each burst it gives to the
-//! writer (`crate::transitions::platform::journal`). The marks, the clock and when a burst is given:
-//! `src/transitions/docs/journal.md`.
+//! command it gives, every delivery of pictures to it and each measured lift's handover, a mark in a
+//! ring kept with the coordinator, and the JSON lines a burst of marks is written as; and, while the
+//! handover is measured, when a lift hides ([`hides`]). Pure: the engine drives the lifecycle, tells
+//! it each request's press, each delivery and each handover through [`Journalled`], and hands each
+//! burst it gives to the writer (`crate::transitions::platform::journal`). The marks, the clock and
+//! when a burst is given: `src/transitions/docs/journal.md`.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -15,6 +16,7 @@ use serde_with::{SerializeAs, serde_as};
 
 use super::lifecycle::{Command, Coordinator, Event, Generation, Kind, Start};
 use super::request::Cause;
+use crate::pictures::domain::handover::HandoverDiff;
 use crate::pictures::domain::watch::Why;
 
 /// How many marks the ring holds.
@@ -158,6 +160,18 @@ pub enum Mark {
         at_rest: bool,
         landed: bool,
     },
+    /// A window of a measured lift: the screen just after it against the overlay just before, and how
+    /// long the lift held for the overlay's picture.
+    Handover {
+        of: Generation,
+        #[serde_as(as = "PidIdx")]
+        window: WindowId,
+        interior: f32,
+        interior_over: f32,
+        edge_in: f32,
+        edge_out: f32,
+        waited_us: u32,
+    },
     ReportUp,
     ReportSettled,
 }
@@ -197,13 +211,21 @@ impl Anchor {
     }
 }
 
-/// A burst as it is written: its header, then one line a mark, oldest first.
-pub fn lines<'a>(anchor: &'a Anchor, unix_ms: u64, burst: &'a Burst) -> impl Iterator<Item = String> + 'a {
-    std::iter::once(header(anchor, unix_ms, burst)).chain(burst.marks.iter().map(|stamped| line(anchor, stamped)))
+/// A burst as it is written: its header, then one line a mark, oldest first. `measure_handover`:
+/// whether its lifts were held to be measured.
+pub fn lines<'a>(
+    anchor: &'a Anchor,
+    unix_ms: u64,
+    measure_handover: bool,
+    burst: &'a Burst,
+) -> impl Iterator<Item = String> + 'a {
+    let header = header(anchor, unix_ms, measure_handover, burst);
+    std::iter::once(header).chain(burst.marks.iter().map(|stamped| line(anchor, stamped)))
 }
 
-/// The line ahead of a burst's marks: when it was written, on both clocks, and how many marks it lost.
-fn header(anchor: &Anchor, unix_ms: u64, burst: &Burst) -> String {
+/// The line ahead of a burst's marks: when it was written, on both clocks, how many marks it lost, and
+/// whether its lifts were held to be measured.
+fn header(anchor: &Anchor, unix_ms: u64, measure_handover: bool, burst: &Burst) -> String {
     #[derive(Serialize)]
     struct Header {
         t: u64,
@@ -211,8 +233,10 @@ fn header(anchor: &Anchor, unix_ms: u64, burst: &Burst) -> String {
         journal: u32,
         unix_ms: u64,
         lost: u64,
+        measure_handover: bool,
     }
-    json(&Header { t: anchor.uptime_ns, mark: "burst", journal: FORMAT, unix_ms, lost: burst.lost })
+    let lost = burst.lost;
+    json(&Header { t: anchor.uptime_ns, mark: "burst", journal: FORMAT, unix_ms, lost, measure_handover })
 }
 
 fn line(anchor: &Anchor, stamped: &Stamped) -> String {
@@ -434,6 +458,22 @@ impl Journal {
         self.push(cause.at, generation, Mark::Press { what: cause.what });
     }
 
+    /// One window of the handover of `of`'s lift, stamped `now`, when the engine heard it.
+    fn handover(
+        &mut self,
+        now: Instant,
+        generation: Generation,
+        of: Generation,
+        window: WindowId,
+        diff: HandoverDiff,
+        waited: Duration,
+    ) {
+        let HandoverDiff { interior, interior_over, edge_in, edge_out } = diff;
+        let waited_us = micros(waited);
+        let mark = Mark::Handover { of, window, interior, interior_over, edge_in, edge_out, waited_us };
+        self.push(now, generation, mark);
+    }
+
     fn push(&mut self, at: Instant, generation: Generation, mark: Mark) {
         if self.ring.len() == RING {
             self.ring.pop_front();
@@ -522,6 +562,21 @@ impl Journalled {
         self.journal.delivery(now, self.coordinator.generation(), of, why, sent, pictures);
     }
 
+    /// The handover of `of`'s measured lift, as the pictures service compared it, heard `now`: one mark
+    /// a window, each with how long the lift `waited` for the overlay's picture.
+    pub fn handover(
+        &mut self,
+        now: Instant,
+        of: Generation,
+        windows: impl IntoIterator<Item = (WindowId, HandoverDiff)>,
+        waited: Duration,
+    ) {
+        let generation = self.coordinator.generation();
+        for (window, diff) in windows {
+            self.journal.handover(now, generation, of, window, diff, waited);
+        }
+    }
+
     /// Writing turned on or off. Turned on with no burst up, it gives what the ring holds at once; in
     /// a burst, that burst's settle gives it.
     pub fn set_writing(&mut self, on: bool) -> Option<Burst> {
@@ -532,6 +587,50 @@ impl Journalled {
         }
         self.journal.start_writing();
         if self.up { None } else { self.journal.unwritten() }
+    }
+}
+
+/// How long a measured lift waits for the overlay's own picture before it hides unmeasured: past the
+/// 43.3ms the coldest SkyLight call took, at an 800ms gap ("A SkyLight capture costs what the time
+/// since the previous one says" in `src/pictures/docs/capture-research.md`).
+pub const OVERLAY_TAKE_PATIENCE: Duration = Duration::from_millis(60);
+
+/// A lift whose hide waits, while the handover is measured, for the overlay's own picture: the
+/// generation that lifted, and when.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LiftWait {
+    pub generation: Generation,
+    pub since: Instant,
+}
+
+/// What a lift waiting to hide hears.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Heard {
+    /// The pictures service took the overlay's picture for this generation's lift.
+    OverlayTaken(Generation),
+    /// A request: a press never waits on a measurement.
+    Request,
+    /// The patience's timer.
+    Patience,
+}
+
+/// How a waiting lift hides.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Hide {
+    /// On its own overlay picture, `waited` after the lift: its handover is journalled when it comes.
+    Measured { waited: Duration },
+    /// On a request or once the patience ran out: the overlay may be gone from its picture, so the
+    /// lift is not measured.
+    Unmeasured,
+}
+
+/// Whether the lift `waiting` hides on what it `heard` at `now`, and how.
+pub fn hides(waiting: LiftWait, heard: Heard, now: Instant) -> Option<Hide> {
+    let waited = now.saturating_duration_since(waiting.since);
+    match heard {
+        Heard::OverlayTaken(generation) => (generation == waiting.generation).then_some(Hide::Measured { waited }),
+        Heard::Request => Some(Hide::Unmeasured),
+        Heard::Patience => (waited >= OVERLAY_TAKE_PATIENCE).then_some(Hide::Unmeasured),
     }
 }
 
@@ -904,10 +1003,26 @@ mod tests {
             whys.map(|why| serde_json::to_value(why).unwrap()),
             ["frame_zero", "landed", "focus_changed", "background", "final"]
         );
+        let handover = Mark::Handover {
+            of: Generation(41),
+            window: w(3104),
+            interior: 0.26,
+            interior_over: 0.0012,
+            edge_in: 0.37,
+            edge_out: 1.56,
+            waited_us: 31_400,
+        };
+        assert_eq!(
+            line(&anchor, &stamped(handover)),
+            concat!(
+                r#"{"t":81234567895123,"g":42,"mark":"handover","of":41,"window":[1,3104],"interior":0.26,"#,
+                r#""interior_over":0.0012,"edge_in":0.37,"edge_out":1.56,"waited_us":31400}"#
+            )
+        );
         let burst = Burst { marks: Vec::new(), lost: 3 };
         assert_eq!(
-            header(&anchor, 1_791_043_200_123, &burst),
-            r#"{"t":81234567890123,"mark":"burst","journal":1,"unix_ms":1791043200123,"lost":3}"#
+            header(&anchor, 1_791_043_200_123, false, &burst),
+            r#"{"t":81234567890123,"mark":"burst","journal":1,"unix_ms":1791043200123,"lost":3,"measure_handover":false}"#
         );
     }
 
@@ -1016,6 +1131,54 @@ mod tests {
         assert_eq!(burst.marks, held(&flights));
     }
 
+    #[test]
+    fn hides_on_its_overlay_picture_a_request_or_patience_only() {
+        let since = Instant::now();
+        let waiting = LiftWait { generation: Generation(4), since };
+        let at = |ms| since + Duration::from_millis(ms);
+        let measured = Some(Hide::Measured { waited: Duration::from_millis(31) });
+        assert_eq!(hides(waiting, Heard::OverlayTaken(Generation(4)), at(31)), measured);
+        assert_eq!(hides(waiting, Heard::OverlayTaken(Generation(3)), at(31)), None, "another lift's");
+        assert_eq!(hides(waiting, Heard::Request, at(5)), Some(Hide::Unmeasured), "a press never waits");
+        assert_eq!(hides(waiting, Heard::Patience, at(59)), None, "early, or another wait's timer");
+        assert_eq!(hides(waiting, Heard::Patience, since + OVERLAY_TAKE_PATIENCE), Some(Hide::Unmeasured));
+    }
+
+    #[test]
+    fn a_measured_lift_waits_for_the_overlay_picture_and_journals_the_handover() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        flights.set_writing(true);
+        flights.drive(Event::Begin(pan()), now);
+        let g = flights.coordinator().generation();
+        flights.drive(Event::FrameZero(g), now);
+        let lifted = now + PLAYS;
+        let (commands, _) = flights.drive(Event::Tick { settled: true, landed: true }, lifted);
+        assert!(commands.contains(&Command::Lift { generation: g }));
+        let waiting = LiftWait { generation: g, since: lifted };
+        assert_eq!(hides(waiting, Heard::Patience, lifted + Duration::from_millis(20)), None, "held");
+        let taken = lifted + Duration::from_millis(31);
+        let Some(Hide::Measured { waited }) = hides(waiting, Heard::OverlayTaken(g), taken) else { panic!() };
+        let diff = |interior| HandoverDiff { interior, interior_over: 0.0, edge_in: 0.4, edge_out: 1.5 };
+        flights.handover(taken + Duration::from_millis(70), g, [(w(2), diff(0.3)), (w(1), diff(0.8))], waited);
+        let (_, burst) = flights.drive(Event::Quiet(g), lifted + SETTLE_BEFORE_CAPTURES);
+        let marks = burst.expect("given at the settle").marks;
+        let handover = |window, interior| Mark::Handover {
+            of: g,
+            window,
+            interior,
+            interior_over: 0.0,
+            edge_in: 0.4,
+            edge_out: 1.5,
+            waited_us: 31_000,
+        };
+        let found: Vec<Mark> =
+            marks.iter().map(|stamped| stamped.mark).filter(|mark| matches!(mark, Mark::Handover { .. })).collect();
+        assert_eq!(found, [handover(w(2), 0.3), handover(w(1), 0.8)]);
+        let at = |name: &str| names(&marks).iter().position(|found| found == name).unwrap();
+        assert!(at("lift") < at("handover") && at("handover") < at("report_settled"), "in its own burst");
+    }
+
     /// A script of drives, deliveries and presses `us` microseconds from `base`, collecting the bursts
     /// they give.
     struct Script {
@@ -1047,6 +1210,11 @@ mod tests {
             self.flights.delivery(self.at(us), of, why, self.at(sent), taken.into_iter());
         }
 
+        fn handover(&mut self, us: i64, of: Generation, windows: &[(WindowId, HandoverDiff)], waited_us: u64) {
+            let waited = Duration::from_micros(waited_us);
+            self.flights.handover(self.at(us), of, windows.iter().copied(), waited);
+        }
+
         /// A delivery and the pictures the engine offers the coordinator from it, 0.1ms later.
         fn offer(&mut self, us: i64, of: Generation, why: Why, sent: i64, pictures: &[(WindowId, ScreenRect, i64)]) {
             self.deliver(us, of, why, sent, pictures);
@@ -1056,10 +1224,11 @@ mod tests {
         }
     }
 
-    /// Two bursts as the journal writes them, which `tools/focuslab/test_journal.py` reads, and the
-    /// numbers it must find there. A pan with focus handed over by the target's focused picture; then
-    /// one whose frame zero comes after the patience, a second press merged into it, a stale
-    /// delivery, a window lost and an overdue lift.
+    /// Two bursts as the journal writes them, the handover measured, which
+    /// `tools/focuslab/test_journal.py` reads, and the numbers it must find there. A pan with focus
+    /// handed over by the target's focused picture, its lift measured; then one whose frame zero comes
+    /// after the patience, a second press merged into it, a stale delivery, a window lost and an
+    /// overdue lift, which hid unmeasured.
     #[test]
     fn the_sample_the_tools_read_is_what_the_journal_writes() {
         let mut script = Script { flights: Journalled::default(), base: Instant::now(), bursts: Vec::new() };
@@ -1084,6 +1253,9 @@ mod tests {
         script.drive(273_600, Event::Tick { settled: false, landed: false });
         script.offer(312_000, g, Why::Final, 309_500, &[(w(1), left, 280_200)]);
         script.drive(383_700, Event::Tick { settled: true, landed: true });
+        let diff = |interior, interior_over, edge_in, edge_out| HandoverDiff { interior, interior_over, edge_in, edge_out };
+        let measured = [(w(2), diff(0.26, 0.0012, 0.37, 1.56)), (w(1), diff(0.79, 0.004, 1.08, 2.26))];
+        script.handover(480_300, g, &measured, 31_400);
         script.drive(783_700, Event::Quiet(g));
 
         let wider = r(866.0, 35.0, 600.0, 1079.0);
@@ -1117,7 +1289,7 @@ mod tests {
         for (settled, burst) in &script.bursts {
             let anchor = anchor(*settled + Duration::from_micros(300));
             let unix_ms = 1_791_043_200_000 + u64::from(millis(anchor.at - script.base));
-            for text in lines(&anchor, unix_ms, burst) {
+            for text in lines(&anchor, unix_ms, true, burst) {
                 written.push_str(&text);
                 written.push('\n');
             }

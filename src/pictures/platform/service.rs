@@ -2,10 +2,11 @@
 //! the bar, the cache those pictures land in, and the handle every client holds.
 //!
 //! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`) and makes the
-//! service's own calls: its SkyLight captures, one at a time, and its ScreenCaptureKit asks, whose
-//! completions post back to it. A transition's dressing is composited on the caller's thread until its
-//! display's first render lands, and the flight engine takes its spawn capture of a window that has
-//! just opened on the main thread as it composes (Known debt in `src/pictures/docs/README.md`).
+//! service's own calls: its SkyLight captures, one at a time, a handover check's two pictures, and its
+//! ScreenCaptureKit asks, whose completions post back to it. A transition's dressing is composited on
+//! the caller's thread until its display's first render lands, and the flight engine takes its spawn
+//! capture of a window that has just opened on the main thread as it composes (Known debt in
+//! `src/pictures/docs/README.md`).
 //! A client asks, watches, hints, holds and forgets through a channel, reads from any thread through
 //! one lock, and hears of what lands through the sink it was started with. See "The service" in
 //! `src/pictures/docs/README.md`.
@@ -24,6 +25,7 @@ use tracing::{debug, warn};
 
 use crate::pictures::domain::cache::{Delivered, PictureCache};
 use crate::pictures::domain::coverage::{is_backdrop_worth_drawing, spans_display};
+use crate::pictures::domain::handover::{HandoverCheck, compare};
 use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
@@ -35,7 +37,7 @@ use crate::pictures::domain::watch::{
 use crate::pictures::event::Event;
 use crate::pictures::platform::bitmap::thumbprint;
 use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
-use crate::pictures::platform::measure::{band_print, body_samples};
+use crate::pictures::platform::measure::{Drawn, band_print, body_samples, rgba};
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
@@ -57,6 +59,7 @@ pub enum Command {
     SetDisplay { display: Display, picture_bar: bool },
     /// Every window on screen on the display, pictured in the background: the debug command's warm.
     WarmVisible,
+    CheckHandover(HandoverCheck),
 }
 
 /// What a call the service made brought back, posted from ScreenCaptureKit's queues.
@@ -340,6 +343,7 @@ impl Pictures {
             transitions: pictures.transitions.clone(),
             applied_transitions: 0,
             looks_checked: HashMap::new(),
+            overlay_picture: None,
             sinks,
         };
         std::thread::Builder::new()
@@ -399,6 +403,10 @@ impl Pictures {
     }
 
     pub fn warm_visible(&self) { self.commands.send(Command::WarmVisible) }
+
+    /// Measures a lift: the overlay alone as the next SkyLight call, its client told `OverlayTaken`,
+    /// then the screen `AFTER_LIFT` later, and each window compared, told as `Handover`.
+    pub fn check_handover(&self, check: HandoverCheck) { self.commands.send(Command::CheckHandover(check)) }
 
     /// The picture held of `window` if it is worth drawing, however old it is.
     pub fn usable(&self, window: WindowId) -> Option<Picture> {
@@ -550,6 +558,8 @@ struct Service {
     /// The focused look and the newer picture last compared for each window, by when each was taken:
     /// a pair is compared once.
     looks_checked: HashMap<WindowId, (Instant, Instant)>,
+    /// The overlay's own picture for the handover check under way, until the screen is taken.
+    overlay_picture: Option<(Tag, Drawn)>,
     sinks: Vec<Sink>,
 }
 
@@ -603,6 +613,7 @@ impl Service {
             Command::Hold(hold) => {
                 if hold == Hold::Transition {
                     self.applied_transitions += 1;
+                    self.overlay_picture = None;
                 }
                 shared.schedule.hold(hold, now);
                 if hold == Hold::Released {
@@ -633,6 +644,7 @@ impl Service {
                     None => warn!("no display geometry yet; cannot warm the snapshot cache"),
                 }
             }
+            Command::CheckHandover(check) => shared.schedule.check_handover(check),
         }
     }
 
@@ -755,6 +767,8 @@ impl Service {
                     done.send(Done::Desktop { display, picture })
                 }),
                 Next::Bar(display) => self.picture_bar(display),
+                Next::Overlay(overlay) => self.take_overlay(overlay),
+                Next::Screen(check) => self.compare_screen(check),
                 Next::WaitUntil(at) => return Some(at.saturating_duration_since(now)),
                 Next::Idle => return None,
             }
@@ -835,6 +849,35 @@ impl Service {
                 sink(event.clone());
             }
         }
+    }
+
+    /// The overlay alone, for the handover check under way: its client hears at once that the overlay
+    /// may come down, and the picture is drawn whole to wait for the screen.
+    fn take_overlay(&mut self, overlay: WindowServerId) {
+        let picture = skylight::capture_alone(overlay);
+        let tag = self.shared.lock().unwrap().schedule.overlay_taken(Instant::now(), picture.is_some());
+        let Some(tag) = tag else { return };
+        self.tell(vec![Event::OverlayTaken { tag }]);
+        self.overlay_picture = picture.and_then(|picture| rgba(&picture)).map(|drawn| (tag, drawn));
+    }
+
+    /// The screen, against the overlay's picture taken for `check`, over each of its windows; both
+    /// pictures dropped once compared.
+    fn compare_screen(&mut self, check: HandoverCheck) {
+        let Some((tag, overlay)) = self.overlay_picture.take().filter(|(tag, _)| *tag == check.tag) else {
+            return;
+        };
+        let Some(screen) = skylight::capture_screen(check.display).and_then(|screen| rgba(&screen)) else {
+            debug!("no picture of the screen for the handover check");
+            return;
+        };
+        let (overlay, screen) = (overlay.at(check.overlay_origin, check.scale), screen.at(check.display.origin, check.scale));
+        let windows = check
+            .windows
+            .iter()
+            .filter_map(|&(window, frame)| Some((window, compare(&overlay, &screen, frame)?)))
+            .collect();
+        self.tell(vec![Event::Handover { tag, windows }]);
     }
 
     /// SkyLight reads the framebuffer, so a bar read while a transition was on its way, or began, may
@@ -1314,6 +1357,7 @@ mod tests {
             transitions: Arc::default(),
             applied_transitions: 0,
             looks_checked: HashMap::new(),
+            overlay_picture: None,
             sinks: Vec::new(),
         };
         (service, shared)
@@ -1517,6 +1561,7 @@ mod tests {
         pictures.stop(WatchId(3));
         pictures.hint(Hint::Placed(wid(1)));
         pictures.keep_focused(tag(2), wid(1));
+        pictures.check_handover(check());
         let sent: Vec<Command> =
             std::iter::from_fn(|| commands.try_recv().ok().map(|(_, command)| command)).collect();
         assert!(matches!(&sent[..], [
@@ -1525,7 +1570,9 @@ mod tests {
             Command::Stop(WatchId(3)),
             Command::Hint(Hint::Placed(placed)),
             Command::KeepFocused(kept, focused),
-        ] if ask.moment == Moment::Final && *placed == wid(1) && *kept == tag(2) && *focused == wid(1)));
+            Command::CheckHandover(checked),
+        ] if ask.moment == Moment::Final && *placed == wid(1) && *kept == tag(2) && *focused == wid(1)
+            && *checked == check()));
 
         let now = Instant::now();
         {
@@ -1536,6 +1583,32 @@ mod tests {
         assert_eq!(pictures.focused(wid(1)).map(|look| look.taken), Some(now));
         assert!(pictures.focused(wid(2)).is_none());
         assert_eq!(pictures.knowledge(WindowServerId::from(wid(1))).translucent, Some(true));
+    }
+
+    fn check() -> HandoverCheck {
+        HandoverCheck {
+            tag: tag(4),
+            overlay: WindowServerId::new(77),
+            overlay_origin: ScreenPoint::new(0.0, 32.0),
+            display: built_in().frame,
+            scale: 2.0,
+            windows: vec![(wid(1), frame())],
+        }
+    }
+
+    /// The overlay's picture for a handover check goes with the check when a transition begins, so it
+    /// is never compared with a screen showing the next overlay; the lift's own settle keeps it.
+    #[test]
+    fn a_transition_beginning_drops_the_overlays_picture() {
+        let (mut service, shared) = detached_service();
+        let drawn = || Drawn { width: 1, height: 1, stride: 4, bytes: vec![0; 4] };
+        shared.lock().unwrap().schedule.check_handover(check());
+        service.overlay_picture = Some((tag(4), drawn()));
+        service.apply(Command::Hold(Hold::Settling));
+        assert!(service.overlay_picture.is_some(), "settling: the lift it measures");
+        service.apply(Command::Hold(Hold::Transition));
+        assert!(service.overlay_picture.is_none());
+        assert!(matches!(shared.lock().unwrap().schedule.next(Instant::now(), |_| None), Next::Idle));
     }
 
     /// Watch ids are the handle's, handed out at once, and the watch goes to the thread after them.

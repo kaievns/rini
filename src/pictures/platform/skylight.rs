@@ -1,6 +1,6 @@
 //! Every SkyLight and `CGWindowList` capture: one composite of a list of windows, the batched capture
-//! of the windows on screen as regions of it, and the framed capture of one window with, wholly on a
-//! display, its blur.
+//! of the windows on screen as regions of it, the framed capture of one window with, wholly on a
+//! display, its blur, and a handover check's two: a window alone and the whole screen.
 //!
 //! SkyLight captures what is on screen, fresh. Constraints and costs:
 //! `src/pictures/docs/capture-research.md`.
@@ -62,6 +62,22 @@ pub fn capture_list_via_skylight(
         taken: std::time::Instant::now(),
         carries_blur: false,
     })
+}
+
+/// One window alone, as SkyLight has it now: what the overlay draws, for a handover check.
+pub fn capture_alone(window: WindowServerId) -> Option<CFRetained<CGImage>> { composite(&[window]) }
+
+/// What `display` shows, every window on it, the overlay included while it is up. Through
+/// `CGWindowList`, which is proxied through ScreenCaptureKit's delivery queue: never called from a
+/// ScreenCaptureKit completion, where it deadlocks.
+pub fn capture_screen(display: ScreenRect) -> Option<CFRetained<CGImage>> {
+    #[allow(deprecated)]
+    objc2_core_graphics::CGWindowListCreateImage(
+        display.to_cg(),
+        CGWindowListOption::OptionOnScreenOnly,
+        0,
+        objc2_core_graphics::CGWindowImageOption::empty(),
+    )
 }
 
 /// A window to capture, at the frame the window server has it at.

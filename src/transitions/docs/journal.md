@@ -17,9 +17,10 @@ and calls `Journalled::answered` after: the request's first drive pushes a `pres
 event's own, in the generation that drive left, and a request declined before any drive has none.
 Its pictures inbox hands each delivery under its tag to `Journalled::delivery` as it comes, before
 turning it into `FrameZero` and `Picture` events: a `delivery` mark, then a `delivered` mark for each
-picture in it, stamped with when the engine heard it and the generation the coordinator is in. No mark
-call sits anywhere else, and the engine never reads the journal back: of what a drive returns, it
-carries out the commands and sends the writer the burst, if one is due.
+picture in it, stamped with when the engine heard it and the generation the coordinator is in. The
+same inbox hands a measured lift's handover to `Journalled::handover`, a `handover` mark for each
+window (below). No mark call sits anywhere else, and the engine never reads the journal back: of what
+a drive returns, it carries out the commands and sends the writer the burst, if one is due.
 
 Both matches, over `Event` and over `Command`, have no `_` arm, so a new variant does not compile
 until it has a mark.
@@ -47,11 +48,12 @@ until it has a mark.
 | `HandOverFocus { to, from }` | `hand_over_focus` | `to`, `from` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
+| a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out` (levels, and a share for `interior_over`), `waited_us` |
 
 How to read them:
 
 - **`g` is the generation after the event.** A merge that starts a generation is marked in it. `of`
-  is the generation a delivery, a loss, a swap or a quiet was under; `of != g` is stale.
+  is the generation a delivery, a loss, a swap, a quiet or a handover was under; `of != g` is stale.
 - **A delivery carries its times as ages,** in microseconds before its own `t`: `sent_before_us` is
   when the service sent it, and each `delivered`'s `taken_before_us` when that picture's capture
   started (below).
@@ -75,7 +77,7 @@ How to read them:
 One JSON object a line. Each burst opens with a header, then one line a mark, oldest first:
 
 ```
-{"t":81235020000000,"mark":"burst","journal":1,"unix_ms":1791043200123,"lost":0}
+{"t":81235020000000,"mark":"burst","journal":1,"unix_ms":1791043200123,"lost":0,"measure_handover":false}
 {"t":81234561290123,"g":42,"mark":"press","what":"move_focus"}
 {"t":81234567890123,"g":42,"mark":"begin","kind":"pan","coalesced":false,"tiles":3,"awaiting":0,"repainting":0,"focus":[812,3104],"losing_focus":[812,3090],"key":[812,3090],"duration_ms":350}
 {"t":81234567890123,"g":42,"mark":"hold"}
@@ -85,11 +87,11 @@ One JSON object a line. Each burst opens with a header, then one line a mark, ol
 ```
 
 The header's `t` is when the burst was written, `journal` the format's version (1), `unix_ms` the wall
-clock then, and `lost` how many marks the ring overwrote before they were written. A press's `what`
-is the event's name (below). A window is
-`[pid, idx]`, its `idx` the window server's id; a rect is `[x, y, w, h]` as `f32`; a generation is a
-number; a `why` is `frame_zero`, `landed`, `focus_changed`, `background` or `final`; `null` is none.
-`a_line_is_one_object_with_t_g_and_mark` pins the format, and
+clock then, `lost` how many marks the ring overwrote before they were written, and `measure_handover`
+whether its lifts were held to be measured (below). A press's `what` is the event's name (below). A
+window is `[pid, idx]`, its `idx` the window server's id; a rect is `[x, y, w, h]` as `f32`; a
+generation is a number; a `why` is `frame_zero`, `landed`, `focus_changed`, `background` or `final`;
+`null` is none. `a_line_is_one_object_with_t_g_and_mark` pins the format, and
 `the_sample_the_tools_read_is_what_the_journal_writes` two whole bursts of it (below).
 
 ## The press
@@ -161,9 +163,39 @@ so the record is at most two files.
 `animations { journal { off; } }` stops the writing. The config is read live, and the reactor tells
 the engine at start and at each reload; the engine acts only on a change. Off drops the writer, whose
 thread ends once it has written what it was sent. On starts it, and the ring is written at once, or at
-the settle of the burst up; what the ring overwrote while off is not counted lost.
+the settle of the burst up; what the ring overwrote while off is not counted lost. Turning
+`measure-handover` on or off starts the writer afresh, so each header says how its burst was taken.
 
 A crash loses the marks not yet written: a panic hook cannot reach the engine's state.
+
+## The handover, measured
+
+`animations { journal { measure-handover; } }` measures every lift as "The handover, measured" in
+`src/animation/docs/capture-overlay-research.md` did: the overlay's own picture just before it comes
+down against the screen just after, over every window that ends wholly on screen, the ones the last
+watch of the flight named (`landing` and `awaiting`), which are the windows the overlay is holed over.
+It is off unless asked for, and `off` turns it off with the writing.
+
+- **The engine.** At `Lift` it asks the pictures service for the check (`Pictures::check_handover`)
+  and holds back only the hide and the tiles' release; the quiet, `Settle` and the rest go out at the
+  lift as ever. The hide comes on what `journal::hides` says: the overlay's picture taken for that
+  lift (`OverlayTaken`), any request, since a press never waits on a measurement, or
+  `OVERLAY_TAKE_PATIENCE` (60ms, past the 43.3ms of the coldest SkyLight call). Only a lift that hid on
+  its own picture is measured; on a request or the patience the overlay may be gone from the picture,
+  and its measure, if one comes, is dropped.
+- **The pictures service.** The overlay window alone is its next SkyLight call, ahead of any other
+  (`TileOverlay::server_id` names it). It tells the engine `OverlayTaken` at once, draws the picture
+  whole, and `AFTER_LIFT` (45ms) after it, as the research waited after its hide, takes the screen
+  through `CGWindowListCreateImage` on its own thread. The research hid as its picture returned; here
+  the hide waits for the hop to the main thread, so the screen comes that much less after it. It compares the two over each window
+  (`src/pictures/domain/handover.rs`: the research's sampling and thresholds) and tells the engine
+  `Handover`, which the engine marks as it comes, usually before the quiet and so in the lift's own
+  burst. A transition beginning drops the check and the overlay's picture: the screen would show the
+  next overlay.
+- **What it costs.** Each lift's hide comes up to 60ms later: `handover`'s `waited_us` says how much.
+  The screen capture goes through ScreenCaptureKit's delivery queue while the transition settles, the
+  one capture besides a clipped focus end's that the hold lets through. The two pictures, a display's
+  worth each, are drawn and compared on the pictures thread and dropped.
 
 ## Reading it
 
@@ -228,6 +260,13 @@ the rest it gives:
   final change (`e1.py`'s `look`);
 - for an `overlay.swift` line, its `up_ms` against post to show, which is the window server showing
   the overlay after `show`, and its `lift_ms` against post to lift.
+
+`handover` reads every `handover` mark. Each window takes the kind and focus target of the generation
+that lifted, as the last `begin` or `merge` in it says, and is the focused window when it is that
+target. It prints the lifts measured against every `lift` in a burst whose header says
+`measure_handover`, how long each held for the overlay's picture, and interior, edge in and edge out
+by kind, focused window and other. The headline is edge in p99 of the focused window on `pan` flights,
+the research's 53.13 levels for the engine before the end-state mirror and 2.67 for the prototype.
 
 ## What it does not record yet
 

@@ -1,17 +1,19 @@
 //! The capture schedule: which call the pictures service makes next.
 //!
-//! Pure. Asks, watches, hints, holds, display changes and what each call brought back go in, with `now`
-//! wherever time matters; the next call comes out. The SkyLight half, windows on screen captured as a
-//! transition asks and watches, is `crate::pictures::domain::watch`; this orders it ahead of the
-//! ScreenCaptureKit half. `crate::pictures::platform::service` makes the calls, on its own thread. The
-//! rules and why each holds: "The schedule" and "The watches" in `src/pictures/docs/README.md`.
+//! Pure. Asks, watches, hints, holds, display changes, handover checks and what each call brought back
+//! go in, with `now` wherever time matters; the next call comes out. The SkyLight half, windows on
+//! screen captured as a transition asks and watches, is `crate::pictures::domain::watch`; this orders it
+//! ahead of the ScreenCaptureKit half, and a handover check ahead of both.
+//! `crate::pictures::platform::service` makes the calls, on its own thread. The rules and why each
+//! holds: "The schedule" and "The watches" in `src/pictures/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
-use rini_core::ids::WindowId;
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{ScreenRect, ScreenSize};
 
 use crate::pictures::domain::coverage::{Coverage, needs_capture, picture_is_stale};
+use crate::pictures::domain::handover::{AFTER_LIFT, HandoverCheck};
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{Hint, OnScreen, Outcome, Seen, Set, Tag, Watch, WatchId, Watches};
 
@@ -45,7 +47,8 @@ pub struct Ask {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hold {
     /// A transition runs: of ScreenCaptureKit's work only a focus capture starts, and the bar is not
-    /// pictured, since a picture of it is read off the framebuffer the overlay covers.
+    /// pictured, since a picture of it is read off the framebuffer the overlay covers. A handover check
+    /// under way is dropped: the screen it would take may show the overlay again.
     Transition,
     /// The overlay has lifted and the transition is settling: the bar is pictured again, and the rest
     /// still waits.
@@ -115,6 +118,11 @@ pub enum Next<P> {
     Desktop(Display),
     /// Picture the bar of this display.
     Bar(Display),
+    /// Picture this overlay window alone, for the handover check under way, and say when it was taken
+    /// (`Schedule::overlay_taken`).
+    Overlay(WindowServerId),
+    /// Picture the screen, and compare it over each window with the overlay's picture.
+    Screen(HandoverCheck),
     /// Nothing before then, unless something arrives.
     WaitUntil(Instant),
     /// Nothing until something arrives.
@@ -131,6 +139,15 @@ pub struct Schedule<P> {
     picture_bar: bool,
     desktop: Desktop,
     bar_due: Option<Instant>,
+    check: Option<Checking>,
+}
+
+/// A handover check under way: its overlay's own picture the next call, being taken, then the screen
+/// `AFTER_LIFT` after it was.
+enum Checking {
+    Overlay(HandoverCheck),
+    Taking(HandoverCheck),
+    Screen { check: HandoverCheck, due: Instant },
 }
 
 /// One window owed a capture.
@@ -186,6 +203,7 @@ impl<P> Default for Schedule<P> {
             picture_bar: false,
             desktop: Desktop::default(),
             bar_due: None,
+            check: None,
         }
     }
 }
@@ -236,7 +254,10 @@ impl<P> Schedule<P> {
             }
         }
         match hold {
-            Hold::Transition => self.bar_due = None,
+            Hold::Transition => {
+                self.bar_due = None;
+                self.check = None;
+            }
             Hold::Settling => self.arm_bar(now),
             Hold::Released => {
                 let stale = self
@@ -248,6 +269,20 @@ impl<P> Schedule<P> {
                 }
             }
         }
+    }
+
+    /// A lift to measure, in place of any check under way: its overlay's own picture is the next call.
+    pub fn check_handover(&mut self, check: HandoverCheck) { self.check = Some(Checking::Overlay(check)) }
+
+    /// The overlay's own picture of the check under way was taken at `at`, or could not be: the screen
+    /// is due `AFTER_LIFT` later, or never. The check's tag, to tell its client.
+    pub fn overlay_taken(&mut self, at: Instant, taken: bool) -> Option<Tag> {
+        let Some(Checking::Taking(check)) = self.check.take() else { return None };
+        let tag = check.tag;
+        if taken {
+            self.check = Some(Checking::Screen { check, due: at + AFTER_LIFT });
+        }
+        Some(tag)
     }
 
     /// Windows on screen, wanted now: see [`OnScreen`].
@@ -394,6 +429,16 @@ impl<P> Schedule<P> {
     /// The next call to make. `held` is what the cache holds worth drawing of a window, for the warm
     /// filter.
     pub fn next(&mut self, now: Instant, held: impl Fn(WindowId) -> Option<Held>) -> Next<P> {
+        // A measured lift holds its hide for the overlay's own picture.
+        match self.check.take() {
+            Some(Checking::Overlay(check)) => {
+                let overlay = check.overlay;
+                self.check = Some(Checking::Taking(check));
+                return Next::Overlay(overlay);
+            }
+            Some(Checking::Screen { check, due }) if due <= now => return Next::Screen(check),
+            other => self.check = other,
+        }
         // What a transition waits on starts before any ScreenCaptureKit call is issued: queued
         // ScreenCaptureKit work slows every SkyLight call behind it.
         let lost = self.watches.expire(now);
@@ -464,7 +509,12 @@ impl<P> Schedule<P> {
             .filter(|job| matches!(job.stage, Stage::Waiting) && may_start(job.priority))
             .map(Job::listable_from);
         let watching = self.watches.wake(now);
-        match self.bar_due.filter(|_| self.display.is_some()).into_iter().chain(settling).chain(watching).min() {
+        let screen = match &self.check {
+            Some(Checking::Screen { due, .. }) => Some(*due),
+            _ => None,
+        };
+        let bar = self.bar_due.filter(|_| self.display.is_some());
+        match bar.into_iter().chain(settling).chain(watching).chain(screen).min() {
             Some(at) => Next::WaitUntil(at),
             None => Next::Idle,
         }
@@ -1135,5 +1185,73 @@ mod tests {
         assert!(matches!(schedule.next(now + BAR_REFRESH_DELAY, nothing_held), Next::Idle));
         schedule.set_display(built_in(), true, now);
         assert!(schedule.picture_bar(), "another app's bar, under the overlay");
+    }
+
+    fn check() -> HandoverCheck {
+        HandoverCheck {
+            tag: tag(),
+            overlay: WindowServerId::new(77),
+            overlay_origin: ScreenPoint::new(0.0, 32.0),
+            display: built_in().frame,
+            scale: 2.0,
+            windows: vec![(wid(1), end())],
+        }
+    }
+
+    /// A measured lift holds its hide for the overlay's own picture, so that is the next call, ahead of
+    /// a landing to look at and a focus capture to list; they follow while it is taken.
+    #[test]
+    fn a_handover_check_takes_the_overlay_ahead_of_queued_work() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.set_display(built_in(), false, now);
+        schedule.hold(Hold::Settling, now);
+        schedule.ask(ask(Priority::Focus, &[1]), now);
+        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now, &no_print);
+        schedule.check_handover(check());
+        assert!(matches!(schedule.next(now, nothing_held), Next::Overlay(id) if id == WindowServerId::new(77)));
+        assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)), "the overlay is being taken");
+        let _ = schedule.seen(now, &[]);
+        assert_eq!(schedule.overlay_taken(now, true), Some(tag()));
+        assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
+    }
+
+    /// The screen is taken `AFTER_LIFT` after the overlay's picture, as the research waited after the
+    /// hide, once, and never when the overlay's picture could not be taken.
+    #[test]
+    fn the_screen_is_not_due_before_after_lift() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.check_handover(check());
+        assert!(matches!(schedule.next(now, nothing_held), Next::Overlay(_)));
+        let taken = now + Duration::from_millis(30);
+        assert_eq!(schedule.overlay_taken(taken, true), Some(tag()));
+        let early = taken + AFTER_LIFT - Duration::from_millis(1);
+        assert!(matches!(schedule.next(early, nothing_held), Next::WaitUntil(at) if at == taken + AFTER_LIFT));
+        assert!(matches!(schedule.next(taken + AFTER_LIFT, nothing_held), Next::Screen(due) if due == check()));
+        assert!(matches!(schedule.next(taken + AFTER_LIFT, nothing_held), Next::Idle), "once");
+
+        schedule.check_handover(check());
+        let _ = schedule.next(now, nothing_held);
+        assert_eq!(schedule.overlay_taken(now, false), Some(tag()), "its client is told all the same");
+        assert!(matches!(schedule.next(now + AFTER_LIFT, nothing_held), Next::Idle), "nothing to compare");
+        assert_eq!(schedule.overlay_taken(now, true), None, "no check under way");
+    }
+
+    /// A transition beginning drops the check under way, before its overlay's picture or after: the
+    /// screen would show the new overlay, and a press never waits on a measurement.
+    #[test]
+    fn a_transition_beginning_drops_the_handover_check() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.check_handover(check());
+        schedule.hold(Hold::Transition, now);
+        assert!(matches!(schedule.next(now, nothing_held), Next::Idle), "before");
+        schedule.hold(Hold::Settling, now);
+        schedule.check_handover(check());
+        let _ = schedule.next(now, nothing_held);
+        schedule.overlay_taken(now, true);
+        schedule.hold(Hold::Transition, now);
+        assert!(matches!(schedule.next(now + AFTER_LIFT, nothing_held), Next::Idle), "after");
     }
 }

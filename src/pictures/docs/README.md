@@ -16,17 +16,18 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, its corner radius, and the radius a window is drawn with until its own is measured; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
+| **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window and either side of its outline, sampled as the research measured it |
 | **Settled** | `domain/settle.rs` — when a capture of a window that has to repaint is its settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |
 | **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be, and the id a window rini does not manage is pictured under |
-| **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, hints, holds and display changes in, the next call out; the warm filter, and the capture budgets and cadences |
+| **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus and placement hints, and the band prints each client was last delivered, which decide what is news |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
-| **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, and a landing whose picture will not come |
+| **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come, and a handover check's overlay picture taken and its measure |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
-| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, and the framed capture of one window with, wholly on a display, its blur |
-| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency and corner, and whether its baked picture shows a material |
+| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
+| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency and corner, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
@@ -43,8 +44,9 @@ its private helpers and structs.
 
 ## The service
 
-One thread, `pictures`, makes every background capture of a window, the desktop and the bar, and
-every capture of windows on screen a transition asks for or watches, one SkyLight call at a time. Two
+One thread, `pictures`, makes every background capture of a window, the desktop and the bar, every
+capture of windows on screen a transition asks for or watches, one SkyLight call at a time, and a
+measured lift's two pictures. Two
 kinds of capture are not its yet: a transition's desktop and bar, composited on the caller's thread
 until its display's first render lands, and the flight engine's spawn capture of a window that has just
 opened, taken on the main thread as it composes (both Known debt). It is started once, in
@@ -56,6 +58,7 @@ opened, taken on the main thread as it composes (both Known debt). It is started
 | asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it |
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
+| measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared |
 | holds | `hold` at a transition's begin, before anything is composed, `Settling` at its lift, `Released` at its quiet |
 | reads | `usable`, `usable_many`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
 | hands over | `insert`, for the flight engine's one capture of its own, of a window that has just opened |
@@ -73,7 +76,8 @@ delivery, and a client takes its own by the tag's client.
 
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels
 out and post them back. No capture call is made there: `CGWindowListCreateImage` is proxied through the
-same delivery queue and deadlocks.
+same delivery queue and deadlocks. A handover check's screen is the one `CGWindowListCreateImage` of a
+whole display, made on the thread while a transition settles: it goes through that queue too.
 
 Window captures are taken at 2x on any display: ScreenCaptureKit costs per call, not per pixel, and a
 picture taken at 1x flies soft on a Retina display. What is read off a display's framebuffer, the
@@ -96,12 +100,13 @@ picture that a transition began during or before.
 ## The schedule
 
 `domain/schedule.rs` is pure: what goes in carries `now`, and nothing reads a clock. `next(now)` says
-what to call next: list windows, capture one listed window, render the desktop, picture the bar, wait
-until a time, or nothing.
+what to call next: picture the overlay or the screen for a handover check, list windows, capture one
+listed window, render the desktop, picture the bar, wait until a time, or nothing.
 
 | Rule | Why |
 |---|---|
-| While a transition holds the service, only a focus capture starts, of a focus target clipped by the display's edge | ScreenCaptureKit work queued at a focus change slows every step of it: with four captures out the frame-zero capture took 92-97ms against 26-33; what the transition waits for is the exception |
+| While a transition holds the service, only a focus capture starts, of a focus target clipped by the display's edge, and, with the handover measured, the screen a check takes while the transition settles | ScreenCaptureKit work queued at a focus change slows every step of it: with four captures out the frame-zero capture took 92-97ms against 26-33; what the transition waits for is the exception, and the check is opt-in and taken once the overlay is down |
+| A handover check's overlay picture is the next call, ahead of every other; the screen comes `AFTER_LIFT` (45ms) after it, once, and never when the overlay's picture could not be taken; a transition beginning drops the check | the lift's hide waits for the overlay's picture; the research took the screen 45ms after its hide; a screen taken once the next overlay is up would measure that overlay, and a press never waits on a measurement |
 | What waited starts at the release, most urgent first: focus, background, warm | a capture of a focus end is never queued behind warms |
 | A background or warm ask settles `SETTLE_BEFORE_LISTING` before it is listed | the reactor sends a pass's warm just after the request for its flight, which the engine holds for as it takes it: the settle usually covers the gap, and what it does not is listed again at the release (below) |
 | A capture listed and unable to start through a hold is listed again at the release, as is one asked again at another size | the buffer a listing prepares is the size it found the window at, and the transition may resize it |

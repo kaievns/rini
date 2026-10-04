@@ -310,7 +310,9 @@ The coordinator holds it at the begin, before anything is composed (`Hold::Trans
 bar be pictured again at the lift (`Hold::Settling`), and releases it at
 the quiet (`Hold::Released`), or at once for a transition it abandons. While it holds, only the
 transition's SkyLight work runs, the frame-zero and final asks and the watches, and one
-ScreenCaptureKit capture of a clipped focus end. A pass's ask for the windows it has no picture of
+ScreenCaptureKit capture of a clipped focus end; and, with the handover measured, the lift's check:
+the overlay alone through SkyLight, then the screen through `CGWindowList`, which goes through
+ScreenCaptureKit's queue, while the transition settles (`journal.md`, "The handover, measured"). A pass's ask for the windows it has no picture of
 is a warm, for the next flight. The
 rest waits and starts at the release, most urgent first. The reactor's
 `warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
@@ -367,7 +369,8 @@ screen at lift, 1000-3446pt from its park. The handover metric
 2pt, the total measured, and the worst visible error. A park clamped by
 macOS (y=1116 on a 1117pt display, clamped to 1051) had reported 65pt on 180
 flights and masked every smaller error. The lift logs "overlay lifted", so
-the placing-to-lift gap can be read from the log. The lift itself waits for
+the placing-to-lift gap can be read from the log; with the handover measured, the overlay comes down
+up to 60ms after it. The lift itself waits for
 the render server and the real windows (the coordinator's tick, `FlightScore::settled`,
 `handover_report`): the clock has
 to run out AND every track of the flight's score has to have ended (`Score::settled`, which the

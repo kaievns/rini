@@ -19,7 +19,7 @@ use objc2_quartz_core::{
     CAAnimation, CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming,
     CAMediaTimingFunction, CAPropertyAnimation, CATransaction, kCAMediaTimingFunctionLinear,
 };
-use rini_core::ids::WindowId;
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
     ContentsRect, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenRect, TileSize, ToCg,
 };
@@ -570,6 +570,12 @@ pub struct TileOverlay {
     mtm: MainThreadMarker,
 }
 
+/// A window's number as the window server's id; `None` for a window it has not numbered, which
+/// AppKit gives as 0 or less.
+fn numbered(number: isize) -> Option<WindowServerId> {
+    u32::try_from(number).ok().filter(|number| *number != 0).map(WindowServerId::new)
+}
+
 /// The overlay window's rect: the display below the bar's band. In CoreGraphics coordinates, y grows
 /// downward, so the top band is removed by moving the origin down and shrinking the height.
 fn window_rect(frame: CGRect, top_band: f64) -> CGRect {
@@ -861,6 +867,9 @@ impl TileOverlay {
             );
         }
     }
+
+    /// The overlay's window as the window server numbers it, which a handover check pictures alone.
+    pub fn server_id(&self) -> Option<WindowServerId> { numbered(self.window.windowNumber()) }
 
     /// Shows the overlay; only an alpha change.
     pub fn show(&mut self) {
@@ -1613,6 +1622,15 @@ mod tests {
 
         assert_eq!(window_rect(display, 0.0), display);
         assert_eq!(canvas_rect(display, 0.0).origin, CGPoint::new(0.0, 0.0));
+    }
+
+    /// A handover check pictures the overlay by its number, which AppKit gives as 0 or less until the
+    /// window server has numbered the window.
+    #[test]
+    fn only_a_numbered_window_has_a_server_id() {
+        assert_eq!(numbered(4812), Some(WindowServerId::new(4812)));
+        assert_eq!(numbered(0), None);
+        assert_eq!(numbered(-1), None);
     }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {

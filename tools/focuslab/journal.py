@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Reads rini's transitions journal: where each flight's time goes, and each probe press joined to
-the flight it began.
+"""Reads rini's transitions journal: where each flight's time goes, each probe press joined to the
+flight it began, and each measured lift's handover.
 
     journal.py summary [--kind KIND] [--csv OUT] [JOURNAL ...]
     journal.py probe PROBE [JOURNAL ...]
+    journal.py handover [JOURNAL ...]
 
 JOURNAL is ~/Library/Logs/rini/transitions.1.jsonl, then transitions.jsonl, unless named. PROBE is
 the JSON lines `focuslab.swift` or `overlay.swift` wrote. What every row measures is defined in
@@ -63,6 +64,13 @@ PROBE = [
     ("post_to_lift", "post to lift"),
     ("gone_after_lift", "overlay seen gone after lift"),
 ]
+HANDOVER = [
+    ("interior", "interior"),
+    ("edge_in", "edge in"),
+    ("edge_out", "edge out"),
+]
+HEADLINE_KIND = "pan"
+RESEARCH = "research: 53.13 deployed engine, 2.67 prototype"
 
 
 def read(paths):
@@ -248,17 +256,17 @@ def percentile(values, p):
     return values[max(0, math.ceil(p / 100 * len(values)) - 1)]
 
 
-def spread(values):
+def spread(values, digits=1):
     values = sorted(value for value in values if value is not None)
     if not values:
         return f"{'-':>7s}  {'-':>7s}  {'-':>7s}  n=0"
     p50, p90, p99 = (percentile(values, p) for p in (50, 90, 99))
-    return f"{p50:7.1f}  {p90:7.1f}  {p99:7.1f}  n={len(values)}"
+    return f"{p50:7.{digits}f}  {p90:7.{digits}f}  {p99:7.{digits}f}  n={len(values)}"
 
 
-def table(title, rows, keys):
+def table(title, rows, keys, digits=1):
     lines = [f"{title:34s}     p50      p90      p99"]
-    lines += [f"  {label:32s} {spread([row[key] for row in rows])}" for key, label in keys]
+    lines += [f"  {label:32s} {spread([row[key] for row in rows], digits)}" for key, label in keys]
     return lines
 
 
@@ -362,6 +370,61 @@ def probe(trials, found):
     return "\n".join(lines)
 
 
+def generations(bursts):
+    """Each generation's kind and focus target, as the last begin or merge in it says."""
+    named = {}
+    for _, marks in bursts:
+        for mark in marks:
+            if mark["mark"] in ("begin", "merge"):
+                named[mark["g"]] = (mark["kind"], tuple(mark["focus"]) if mark["focus"] else None)
+    return named
+
+
+def handovers(bursts):
+    """Each window of each measured lift: the kind of the generation that lifted, whether the window
+    is its focus target, its differences, and how long the lift waited for the overlay's picture."""
+    named = generations(bursts)
+    rows = []
+    for _, marks in bursts:
+        for mark in marks:
+            if mark["mark"] != "handover":
+                continue
+            kind, focus = named.get(mark["of"], (None, None))
+            rows.append({
+                "of": mark["of"],
+                "kind": kind,
+                "focused": focus is not None and tuple(mark["window"]) == focus,
+                "interior": mark["interior"],
+                "edge_in": mark["edge_in"],
+                "edge_out": mark["edge_out"],
+                "waited": mark["waited_us"] / 1000,
+            })
+    return rows
+
+
+def handover(bursts):
+    rows = handovers(bursts)
+    lifts = sum(1 for header, marks in bursts if header.get("measure_handover")
+                for mark in marks if mark["mark"] == "lift")
+    waited = {row["of"]: row["waited"] for row in rows}
+    headline = sorted(row["edge_in"] for row in rows if row["kind"] == HEADLINE_KIND and row["focused"])
+    p99 = f"{percentile(headline, 99):.2f}" if headline else "-"
+    lines = [
+        f"{len(waited)} of {lifts} lifts measured, {len(rows)} windows",
+        f"edge in p99, focused window, {HEADLINE_KIND}: {p99} n={len(headline)} ({RESEARCH})",
+        "",
+    ]
+    lines += table("lift held for the overlay's picture (ms)", [{"waited": ms} for ms in waited.values()],
+                   [("waited", "waited")])
+    for kind in sorted({row["kind"] for row in rows if row["kind"]}):
+        for focused in (True, False):
+            group = [row for row in rows if row["kind"] == kind and row["focused"] == focused]
+            if group:
+                title = f"{kind}, {'focused' if focused else 'other'} window (levels)"
+                lines += [""] + table(title, group, HANDOVER, digits=2)
+    return "\n".join(lines)
+
+
 def journals(named):
     if named:
         return named
@@ -379,10 +442,14 @@ def main(argv):
     joining = commands.add_parser("probe")
     joining.add_argument("probe")
     joining.add_argument("journal", nargs="*")
+    measuring = commands.add_parser("handover")
+    measuring.add_argument("journal", nargs="*")
     args = parser.parse_args(argv)
     bursts = read(journals(args.journal))
     found = flights(bursts)
-    if args.command == "summary":
+    if args.command == "handover":
+        print(handover(bursts))
+    elif args.command == "summary":
         if args.kind:
             found = [flight for flight in found if flight.kind() == args.kind]
         print(summary(found, bursts))

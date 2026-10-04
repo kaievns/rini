@@ -1,7 +1,8 @@
-//! Pictures read small, on the service's thread: a picture's band print and its body samples, which
-//! say whether it shows anything new (`crate::pictures::domain::print`), and what a window's first
-//! picture says of it (`crate::pictures::domain::knowledge`). Each draws only as much of the picture as
-//! it needs, never the whole decoded.
+//! Pictures read on the service's thread: a picture's band print and its body samples, which say
+//! whether it shows anything new (`crate::pictures::domain::print`), and what a window's first picture
+//! says of it (`crate::pictures::domain::knowledge`), each drawing only as much of the picture as it
+//! needs; and the overlay and the screen drawn whole for a handover check
+//! (`crate::pictures::domain::handover`).
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
@@ -9,7 +10,9 @@ use objc2_core_graphics::{
     CGInterpolationQuality,
 };
 use objc2_io_surface::{IOSurfaceLockOptions, IOSurfaceRef};
+use rini_geometry::space::ScreenPoint;
 
+use crate::pictures::domain::handover::Rgba;
 use crate::pictures::domain::knowledge::{
     CORNER_SIDE_PT, MATERIAL_SIDE, TRANSLUCENCY_SIDE, corner_radius, has_material, is_translucent,
 };
@@ -133,6 +136,29 @@ pub fn shows_material(alone: &CGImage, baked: &CGImage) -> bool {
         (Some((alone, stride)), Some((baked, _))) => has_material(&alone, &baked, stride),
         _ => false,
     }
+}
+
+/// A picture drawn whole into RGBA8, its bytes top row first.
+pub struct Drawn {
+    pub width: usize,
+    pub height: usize,
+    pub stride: usize,
+    pub bytes: Vec<u8>,
+}
+
+impl Drawn {
+    /// Its pixels as a handover check reads them: its top-left at `origin` on screen, `scale` pixels a
+    /// point.
+    pub fn at(&self, origin: ScreenPoint, scale: f64) -> Rgba<'_> {
+        Rgba { width: self.width, height: self.height, stride: self.stride, bytes: &self.bytes, origin, scale }
+    }
+}
+
+/// `image` drawn whole, pixel for pixel.
+pub fn rgba(image: &CGImage) -> Option<Drawn> {
+    let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
+    let (bytes, stride) = drawn(image, width, height, CGInterpolationQuality::None)?;
+    Some(Drawn { width, height, stride, bytes })
 }
 
 /// `image` drawn into a fresh `width` x `height` RGBA context, and its bytes top row first, with the
@@ -337,6 +363,22 @@ mod tests {
         });
         assert!(!shows_material(&alone, &alone));
         assert!(shows_material(&alone, &blurred));
+    }
+
+    /// Drawn whole, an image keeps every pixel where it is, the top row first: the handover check reads
+    /// it at screen points.
+    #[test]
+    fn a_picture_drawn_whole_keeps_its_pixels_top_row_first() {
+        let top_red = image(4, 2, |ctx| {
+            fill(ctx, rect(0.0, 0.0, 4.0, 2.0), (0.0, 0.0, 1.0, 1.0));
+            fill(ctx, rect(0.0, 1.0, 4.0, 1.0), (1.0, 0.0, 0.0, 1.0));
+        });
+        let drawn = rgba(&top_red).unwrap();
+        assert_eq!((drawn.width, drawn.height), (4, 2));
+        assert_eq!(&drawn.bytes[..4], &[255, 0, 0, 255], "the top row");
+        assert_eq!(&drawn.bytes[drawn.stride..drawn.stride + 4], &[0, 0, 255, 255]);
+        let read = drawn.at(ScreenPoint::new(10.0, 20.0), 2.0);
+        assert_eq!((read.origin, read.scale, read.bytes.len()), (ScreenPoint::new(10.0, 20.0), 2.0, drawn.stride * 2));
     }
 
     fn test_surface(width: i64, height: i64, bgra_of_rgba: [u8; 4]) -> CFRetained<IOSurfaceRef> {

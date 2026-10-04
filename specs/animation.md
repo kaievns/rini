@@ -303,8 +303,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
 - Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the
-  press to the quiet after the lift. With four of its captures out, the capture the overlay waits for
-  at the press took three times as long.
+  press to the quiet after the lift, but for the screen a measured lift's handover check takes once
+  its overlay is down (`journal { measure-handover; }`, below). With four of its captures out, the
+  capture the overlay waits for at the press took three times as long.
 - A flight that moves focus nowhere MUST NOT recapture through ScreenCaptureKit, and MUST NOT watch for
   a change of focus: no report comes to arm the watch, and one left waiting holds the windows behind
   the strip back for the whole flight.
@@ -395,6 +396,12 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   adds nothing to the durations it records. The record MUST be at most two files: the current one,
   started afresh once it passes 50MB, and the one before it.
 - Turning the journal on or off MUST NOT change what is drawn or when.
+- With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
+  window ending wholly on screen, how far the screen just after it differs from the overlay's own
+  picture just before it, inside the window and either side of its outline, sampled as "The handover,
+  measured" in `src/animation/docs/capture-overlay-research.md` was, so a lift can be read against
+  those numbers. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture, MUST
+  NOT hold a press, and MUST be off unless asked for.
 - Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial
   and rini's steps line up with no wall clock between them.
 - CPU and GPU use MAY be recorded only once what reading them costs is measured, and found to slow
@@ -424,6 +431,7 @@ finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/platform/engine.rs` is the actor that carries them out. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
 what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.
+A measured lift's handover is compared in `src/pictures/domain/handover.rs`.
 The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
 stand-in, the blur, and the schedule that holds background capture off while a flight runs in
 `src/pictures/domain/`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`

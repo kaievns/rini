@@ -8,10 +8,12 @@ use serde::Serialize;
 pub struct JournalSettings {
     /// Each burst written once it settles.
     pub write: bool,
+    /// Each lift held for the overlay's own picture and measured against the screen after it.
+    pub measure_handover: bool,
 }
 
 impl Default for JournalSettings {
-    fn default() -> Self { JournalSettings { write: true } }
+    fn default() -> Self { JournalSettings { write: true, measure_handover: false } }
 }
 
 #[cfg(test)]
@@ -21,5 +23,10 @@ mod tests {
     #[test]
     fn the_journal_is_written_unless_turned_off() {
         assert!(JournalSettings::default().write);
+    }
+
+    #[test]
+    fn the_handover_is_measured_only_when_asked() {
+        assert!(!JournalSettings::default().measure_handover);
     }
 }

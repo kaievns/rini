@@ -2,11 +2,12 @@
 //! and fits the frame it is drawn into, what the cache keeps, where a window lies in a batched
 //! composite, what is known of each window, when a window has settled, when a window flies a stand-in,
 //! and which capture the service makes next, the windows on screen a transition watches among them.
-//! Also the blur merge, over plain bytes.
+//! Also the blur merge and the handover check, over plain bytes.
 
 pub mod backdrop;
 pub mod cache;
 pub mod coverage;
+pub mod handover;
 pub mod knowledge;
 pub mod print;
 pub mod region;
