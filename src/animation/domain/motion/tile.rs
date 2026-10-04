@@ -1,5 +1,6 @@
-//! How one tile fits its picture to the frame it is drawn in, and how its frame interpolates.
-//! Sizes and rects only; the layers that realise these live in the overlay.
+//! How one tile fits its picture to the frame it is drawn in, how its frame interpolates, and when
+//! it snaps onto its window's real frame. Sizes and rects only; the layers that realise these live
+//! in the overlay.
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
