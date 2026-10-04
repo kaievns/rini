@@ -65,7 +65,8 @@ held lift's hide and its handover are pushed by `Journalled::heard` and `Journal
 mark is pushed anywhere else. The engine branches on nothing the journal holds, and only hands each
 burst it gives to the writer, once a transition has settled. The one thing measuring changes is when a
 lift's overlay comes down: with `measure-handover` on, a lift with a window ending on screen is held,
-up to 60ms, for the overlay's own picture, and `Journalled::heard` says when it hides. What each mark
+up to 60ms, for the overlay's own picture, and `Journalled::heard` says when it hides: on that picture,
+a request, the overlay about to move, or the patience. What each mark
 says and when it is written: [`journal.md`](journal.md).
 
 **One lifecycle for every kind.** `domain/lifecycle.rs` is the lifecycle as a state machine: a kind

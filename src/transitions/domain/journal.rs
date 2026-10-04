@@ -163,7 +163,8 @@ pub enum Mark {
         landed: bool,
     },
     /// The overlay of a lift held for its own picture comes down, `waited_us` after the lift: on that
-    /// picture, measured, or not, on word that it was not taken, on a request or on the patience.
+    /// picture, measured, or not, on word that it was not taken, on a request, on the overlay moving or
+    /// on the patience.
     Hide {
         measured: bool,
         waited_us: u32,
@@ -623,6 +624,9 @@ pub enum Heard {
     OverlayTaken { generation: Generation, taken: bool },
     /// A request: a press never waits for the overlay's picture.
     Request,
+    /// The overlay is about to be moved to another display, or laid out for another band or scale:
+    /// it would move with the finished flight's tiles on it.
+    Moved,
     /// The patience's timer.
     Patience,
 }
@@ -632,8 +636,9 @@ pub enum Heard {
 enum Hide {
     /// On its own overlay picture: its handover is marked when it comes.
     Measured,
-    /// On word that its picture was not taken, on a request, or once the patience ran out: the overlay
-    /// may be gone from a picture taken later, so the lift is not measured.
+    /// On word that its picture was not taken, on a request, on the overlay moving, or once the
+    /// patience ran out: the overlay may be gone from a picture taken later, so the lift is not
+    /// measured.
     Unmeasured,
 }
 
@@ -642,7 +647,7 @@ fn hides(waiting: LiftWait, heard: Heard, now: Instant) -> Option<Hide> {
     match heard {
         Heard::OverlayTaken { generation, taken } => (generation == waiting.generation)
             .then_some(if taken { Hide::Measured } else { Hide::Unmeasured }),
-        Heard::Request => Some(Hide::Unmeasured),
+        Heard::Request | Heard::Moved => Some(Hide::Unmeasured),
         Heard::Patience => (now.saturating_duration_since(waiting.since) >= OVERLAY_TAKE_PATIENCE).then_some(Hide::Unmeasured),
     }
 }
@@ -1157,6 +1162,7 @@ mod tests {
         assert_eq!(hides(waiting, taken(4, false), at(31)), Some(Hide::Unmeasured), "no picture to compare");
         assert_eq!(hides(waiting, taken(3, true), at(31)), None, "another lift's");
         assert_eq!(hides(waiting, Heard::Request, at(5)), Some(Hide::Unmeasured), "a press never waits");
+        assert_eq!(hides(waiting, Heard::Moved, at(5)), Some(Hide::Unmeasured), "never moved with its tiles on");
         assert_eq!(hides(waiting, Heard::Patience, at(59)), None, "early, or another wait's timer");
         assert_eq!(hides(waiting, Heard::Patience, since + OVERLAY_TAKE_PATIENCE), Some(Hide::Unmeasured));
     }
@@ -1239,6 +1245,21 @@ mod tests {
         assert_eq!(found(&marks, "hide"), [Mark::Hide { measured: false, waited_us: 5_000 }]);
         assert!(found(&marks, "handover").is_empty());
         assert!(!flights.heard(Heard::Request, pressed), "nothing waits any more");
+    }
+
+    /// The overlay moving to another display hides a held lift first, unmeasured: it would carry the
+    /// finished flight's tiles there.
+    #[test]
+    fn the_overlay_moving_hides_a_held_lift_first_unmeasured() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        let (g, lifted) = held_lift(&mut flights, now);
+        let moved = lifted + Duration::from_millis(12);
+        assert!(flights.heard(Heard::Moved, moved));
+        flights.handover(moved + Duration::from_millis(80), g, [(w(2), diff(0.3))]);
+        let marks = held(&flights);
+        assert_eq!(found(&marks, "hide"), [Mark::Hide { measured: false, waited_us: 12_000 }]);
+        assert!(found(&marks, "handover").is_empty());
     }
 
     /// Only the handover of the lift that hid on its picture is journalled, once.

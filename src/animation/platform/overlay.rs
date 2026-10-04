@@ -586,6 +586,12 @@ fn window_rect(frame: CGRect, top_band: f64) -> CGRect {
     )
 }
 
+/// Whether an overlay laid out for `held` is laid out for `wanted`: each a display's frame, the band
+/// the bar reserves at its top, and the scale.
+fn same_layout(held: (CGRect, f64, f64), wanted: (CGRect, f64, f64)) -> bool {
+    held.0 == wanted.0 && held.1 == wanted.1 && (held.2 - wanted.2).abs() < f64::EPSILON
+}
+
 /// Where the overlay window's top-left is on screen, as `window_rect` places it.
 fn window_origin(frame: CGRect, top_band: f64) -> ScreenPoint {
     ScreenPoint::from_cg(window_rect(frame, top_band).origin)
@@ -765,15 +771,13 @@ impl TileOverlay {
     /// Repoints the overlay at a different display, a resolution change, or a change of the band the
     /// bar reserves at the top, and puts its window back wherever macOS has moved it.
     pub fn set_frame(&mut self, frame: ScreenRect, top_band: f64, scale: f64) {
+        let laid_out = self.laid_out_for(frame, top_band, scale);
         let frame = frame.to_cg();
         let converter = CoordinateConverter::from_height(primary_display_height());
         if let Some(cocoa) = converter.reframe(window_rect(frame, top_band), self.window.frame()) {
             self.window.setFrame_display(cocoa, false);
         }
-        if self.frame == frame
-            && self.top_band == top_band
-            && (self.tree.scale - scale).abs() < f64::EPSILON
-        {
+        if laid_out {
             return;
         }
         self.clear_holes();
@@ -787,6 +791,12 @@ impl TileOverlay {
         }
         self.tree.root.setFrame(canvas_rect(frame, top_band));
         self.tree.root.setContentsScale(scale);
+    }
+
+    /// Whether the overlay is laid out for `frame`, `top_band` and `scale` already, so `set_frame`
+    /// with them moves nothing and keeps its holes.
+    pub fn laid_out_for(&self, frame: ScreenRect, top_band: f64, scale: f64) -> bool {
+        same_layout((self.frame, self.top_band, self.tree.scale), (frame.to_cg(), top_band, scale))
     }
 
     /// Frame zero: the tree rebuilt as `score` has it, every tile dressed from `tiles`, and the
@@ -1631,6 +1641,18 @@ mod tests {
 
         assert_eq!(window_rect(display, 0.0), display);
         assert_eq!(canvas_rect(display, 0.0).origin, CGPoint::new(0.0, 0.0));
+    }
+
+    /// A display names the overlay's layout by its frame, its band and its scale: the same three move
+    /// nothing, and any other one moves the window or lays it out again.
+    #[test]
+    fn a_display_moves_the_overlay_unless_its_frame_band_and_scale_are_the_ones_held() {
+        let display = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3008.0, 1692.0));
+        let other = CGRect::new(CGPoint::new(3008.0, 0.0), CGSize::new(1920.0, 1080.0));
+        assert!(same_layout((display, 32.0, 2.0), (display, 32.0, 2.0)));
+        assert!(!same_layout((display, 32.0, 2.0), (other, 32.0, 2.0)), "another display");
+        assert!(!same_layout((display, 32.0, 2.0), (display, 0.0, 2.0)), "the bar's band gone");
+        assert!(!same_layout((display, 32.0, 2.0), (display, 32.0, 1.0)), "another scale");
     }
 
     /// A picture of the overlay alone starts where its window does: the display's top-left, a band

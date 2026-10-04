@@ -185,13 +185,16 @@ It is off unless asked for, and `off` turns it off with the writing.
   (`Pictures::check_handover`), tells `Journalled::lifted`, and holds back only the hide and the
   tiles' release; the quiet, `Settle` and the rest go out at the lift as ever. The hide comes when
   `Journalled::heard` says so: on the service's word for that lift's picture (`OverlayTaken`), on any
-  request, since a press never waits for the overlay's picture, or on `OVERLAY_TAKE_PATIENCE`. That
+  request, since a press never waits for the overlay's picture, on the overlay about to move to
+  another display or be laid out for another band or scale (a `SetDisplay`: ahead of a request onto
+  another display, at a config reload and at the debug warm), so it never moves with the finished
+  flight's tiles on it, or on `OVERLAY_TAKE_PATIENCE`. That
   is 60ms, past a cold SkyLight call: p50 43.3ms at an 800ms gap, 39-47ms cold ("A SkyLight capture
   costs what the time since the previous one says" in `src/pictures/docs/capture-research.md`). Its
   `hide` mark says whether it hid on its picture and how long it held. Only a lift that hid on its own
-  picture, taken, is measured: on word that the picture was not taken, on a request or on the
-  patience, the overlay may be gone from a picture taken later, and its measure, if one comes, is
-  dropped.
+  picture, taken, is measured: on word that the picture was not taken, on a request, on the overlay
+  moving or on the patience, the overlay may be gone from a picture taken later, and its measure, if
+  one comes, is dropped.
 - **The pictures service.** The overlay window alone is its next SkyLight call, ahead of any other
   (`TileOverlay::server_id` names it, and `TileOverlay::origin` says where it starts on screen), and
   it tells the engine `OverlayTaken` at once. `AFTER_LIFT` (45ms) after that picture, as the research

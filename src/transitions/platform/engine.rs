@@ -1150,8 +1150,12 @@ impl FlightEngine {
             .unwrap_or(OverlayRect::new(Point::new(-1e9, -1e9), Size::new(2e9, 2e9)))
     }
 
-    /// The overlay's geometry. The pictures of the display are the service's, told by the reactor.
+    /// The overlay's geometry. The pictures of the display are the service's, told by the reactor. A
+    /// lift held for the overlay's picture hides first when the overlay is to move.
     fn set_display(&mut self, id: u32, frame: ScreenRect, scale: f64, top_band: f64) {
+        if self.overlay.as_ref().is_some_and(|overlay| !overlay.laid_out_for(frame, top_band, scale)) {
+            self.lift_heard(Heard::Moved);
+        }
         self.display = Some((frame, scale));
         self.display_id = Some(id);
         self.top_band = top_band;
