@@ -52,6 +52,13 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 - The bar MUST NOT ask the window manager for anything. It is sent what it shows, when that changes,
   and a burst of events that changes nothing on it MUST cost it nothing.
 - At rest the bar MUST do no work but the minute tick and picturing the menu extras.
+- With no input for a minute, the bar MUST picture the menu extras at most every 30 seconds, and
+  MUST picture them again within a second of any input.
+
+> **Reported 2026-10-06.** "any optimisations worth doing on the menu bar at this point?" The
+> extras were pictured every second whatever, and each capture cost replayd and tccd about 20ms of
+> CPU besides rini's 4ms. With the display kept on overnight, the bar captured every second for
+> up to 15 hours.
 - The bar MUST stay live over a flight. It is drawn above the flight overlay rather than pictured by
   the overlay and redrawn frozen.
 - The bar MUST NOT picture menu extras while a flight runs or settles.

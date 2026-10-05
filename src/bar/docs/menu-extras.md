@@ -59,6 +59,14 @@ One batched call per pass is what the bar does. WindowServer CPU for batched cap
 about 0.8ms a batch of 14, against 2 to 4ms per single capture. Each call blocks for one to three
 frames, so the captures run on their own thread and never on the main one.
 
+The call's real cost is outside rini and WindowServer. SkyLight hands any window list a client may
+not capture directly to ScreenCaptureKit's `SLSWindowListCreateImageFromArrayProxying`, which asks
+replayd over XPC; only the private `com.apple.private.SkyLight.screencapturedirect` and
+`screencaptureproxying` entitlements skip that. Each capture, replayd makes one
+`kTCCServiceScreenCapture` request of tccd and rewrites `ScreenCaptureApprovals.plist` in its group
+container. Over 60s at a capture a second, 2026-10-06: rini's `bar-extras` thread 4.2 to 4.4ms of CPU
+a second, replayd 12.8ms, the root tccd 7.7ms and the user's 1.2ms, so about 25ms a capture in all.
+
 Flag `1 << 11` crops each picture to its opaque bounds, which loses where the icon sits vertically;
 the bar reads the ink from the pixels instead.
 
@@ -67,11 +75,21 @@ the bar reads the ink from the pixels instead.
 The same thread pictures the desktop behind each bar for its ground, once a minute; see "The ground
 is a still picture" in `README.md`.
 
-Once a second the `bar-extras` thread lists the status windows, keeps the active menu bar's, selects,
-captures the selection in one call and cuts it apart. The composite is the union of the selection's
-bounds at one scale: 892 x 66 pixels for 12 extras over 446 x 33pt at 2x, every one cut out whole.
-Its pixels are read once into an RGBA bitmap of the bar's own. That gives each extra's columns, and
-so its ink, and a hash of its pixels. An extra with no ink is left out.
+Once a second, or every 30s while the input is idle (below), the `bar-extras` thread lists the
+status windows, keeps the active menu bar's, selects, captures the selection in one call and cuts it
+apart. The composite is the union of the selection's bounds at one scale: 892 x 66 pixels for 12
+extras over 446 x 33pt at 2x, every one cut out whole. Its pixels are read once into an RGBA bitmap
+of the bar's own. That gives each extra's columns, and so its ink, and a hash of its pixels. An
+extra with no ink is left out.
+
+With no keyboard, mouse or trackpad input for a minute (`CGEventSourceSecondsSinceLastEventType`
+on the HID system state, which costs under a microsecond), a pass is taken only every 30s
+(`AWAY_AFTER`, `AWAY_TICK` in `domain/extras.rs`). The thread still wakes every second to look, so
+the first tick after any input pictures the extras. A refresh pictures them at once however long
+the input has been idle. The display staying on all night under `caffeinate -di` had the bar capture
+every second for up to 15 hours, about 22 minutes of CPU across those processes. While idle, a change
+macOS makes with no input, a charger plugged in, the battery level or a Wi-Fi drop, shows up to 30s
+late.
 
 The extras are sent only when the windows, their kinds or their order differ from the last send, or
 any hash does. An extra whose window, kind and hash match one in the last send goes with the picture
