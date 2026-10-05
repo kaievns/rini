@@ -323,14 +323,18 @@ what the engine was delivered of it as the watch started, frame zero's for a win
 press. It is judged from that, not from the latest delivery: the landing watch is looked at first in a
 round, and a window focused before it landed delivered its focused look as its landing, which the
 change watch then never saw change. The window losing focus is the watch's second end
-(`EndWatch::losing_focus`) when it ends wholly on screen: captured in the same rounds, in the same
-call as the target where their kinds and frames allow, and done at its own change from its own
-frame-zero picture, out of its own tries, or at a refusal; the watch is done when both are. Kai,
+(`EndWatch::losing_focus`) when it ends wholly on screen and no pass opened or grew it: captured in
+the same rounds, in the same call as the target where their kinds and frames allow, and done at its
+own change from its own frame-zero picture, out of its own tries, or at a refusal; the watch is done
+when both are. An end not there yet is looked for alone every 1ms between the rounds, so the target
+landing after the old window was captured is seen as soon as it is there. The windows behind the
+strip wait only for the target's end. Kai,
 2026-10-05: "old window blur often animates _after_ the new window focus. i understand that blur
 actually renders _before_ focus in macos itself." So the window losing focus turns first: its changed
 picture is swapped in and its tile drawn unfocused (`Command::Focus`), and the target's changed
 picture waits for it, up to `CHANGE_EVERY` (15ms) checked on the flight's ticks, then is swapped in
-anyway; two in one round swap old, then new. The target's changed picture is kept as its focused look,
+anyway; two in one round swap old, then new. The watch reports the old window `Lost` once it is done
+with no change, out of tries, refused or found clipped, and the target's picture waits no longer. The target's changed picture is kept as its focused look,
 and its tile is drawn focused: focus hands over. Each tile's ring and shadow turn with its own picture
 (`TileOverlay::set_tile_focused`); Kai, 2026-10-05: "i'd like them to be orchestrated independently
 whenever blur or focus are done switching." A window losing focus whose turn has not shown when the

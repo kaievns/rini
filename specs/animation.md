@@ -303,8 +303,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   counts as changed. Each MUST be drawn with its turned picture as it comes in, its ring and its shadow
   turning with it: the window losing focus unfocused, the window gaining focus focused.
 - The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
-  focus MUST wait for the other's at most 15ms, one capture interval, and two that come in together
-  MUST turn old, then new. A window losing focus whose turn has not shown by then, one ending clipped
+  focus MUST wait for the other's at most 15ms, one capture interval, and not at all once the other's
+  turn can no longer be pictured; two that come in together MUST turn old, then new. Waiting for the
+  other MUST NOT delay looking at the window gaining focus: it MUST be looked for as often as any
+  window landing until it is where it ends, and the windows behind the strip MUST wait only for its
+  turn. A window losing focus whose turn has not shown by then, one ending clipped
   or parked, or one whose watch ran out, MUST be drawn unfocused just before the window gaining focus
   is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
   the same, old then new, while the flight still moves. Until its turn the window losing focus MUST be

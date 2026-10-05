@@ -250,7 +250,8 @@ pub enum Event {
     /// came after the overlay went up without it. Frame zero's in time come as `FrameZero`.
     Picture { generation: Generation, window: WindowId, frame: ScreenRect, why: Why },
     /// The end window watched under `generation` whose picture will not come: it was not where it ends
-    /// by the watch's deadline, it never settled, or the cache refused its capture.
+    /// by the watch's deadline, it never settled, or the cache refused its capture. For the window
+    /// losing focus, its turn will not be seen either.
     Lost { generation: Generation, window: WindowId },
     /// The score plays this much longer from now: composed as the motion starts, or added to by a
     /// push or a merge that moves nothing. The clock runs on to cover it.
@@ -382,6 +383,9 @@ struct Flight {
     /// with its own turned picture or just before the target's. A press moving focus back to it finds
     /// it drawn unfocused, so focus moves to it as to any other window.
     unfocused: Option<WindowId>,
+    /// The window focus leaves whose turn the pictures service will not see, until focus moves again:
+    /// what the target's changed picture waits for no longer.
+    unseen: Option<WindowId>,
     /// The focus target's changed picture, not swapped while the window losing focus is watched to
     /// turn first: under its generation, at its frame, since when. Swapped at that turn, or
     /// `CHANGE_EVERY` after.
@@ -583,6 +587,10 @@ impl Coordinator {
                 if let State::Flying(f) = &mut self.state
                     && f.generation == generation
                 {
+                    if f.stage.losing_focus == Some(window) {
+                        f.unseen = Some(window);
+                        f.swap_held_change(&mut out);
+                    }
                     hold_no_longer(f, window, now, &mut out);
                 }
             }
@@ -670,6 +678,7 @@ impl Coordinator {
             frame_zero_owed: 1,
             focus_in: false,
             unfocused: None,
+            unseen: None,
             held_change: None,
             held_back: None,
             final_asked: false,
@@ -713,6 +722,7 @@ impl Coordinator {
             f.focus_in = false;
             f.held_back = None;
             f.held_change = None;
+            f.unseen = None;
         }
         let holdable = f.holdable();
         // Until the motion starts, a newcomer is held for too; once moving, it joins as it lands.
@@ -960,12 +970,16 @@ fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
     (!is_off_screen(f.stage.display, end)).then_some((window, end))
 }
 
-/// The window focus leaves and its end, watched beside the target while its own turn is to come, if
-/// it ends wholly on the display: SkyLight pictures only that, and the one ScreenCaptureKit capture a
-/// flight lets through is the target's.
+/// The window focus leaves and its end, watched beside the target while its own turn is to come and
+/// can be seen, if it ends wholly on the display: SkyLight pictures only that, and the one
+/// ScreenCaptureKit capture a flight lets through is the target's. One a pass opened or grew is
+/// watched to repaint instead.
 fn watched_losing(f: &Flight) -> Option<(WindowId, ScreenRect)> {
     watched_focus(f)?;
-    let window = f.stage.losing_focus.filter(|w| f.unfocused != Some(*w))?;
+    let window = f
+        .stage
+        .losing_focus
+        .filter(|w| f.unfocused != Some(*w) && f.unseen != Some(*w) && !f.awaiting.contains(w))?;
     let end = f.stage.tile(window)?.end;
     wholly_inside(end, f.stage.display).then_some((window, end))
 }
@@ -1552,6 +1566,45 @@ mod tests {
         assert!(matches!(out[0], Command::AskFinal { .. }), "{out:?}");
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "swapped as the last capture is asked");
         assert_eq!(focus(&out), handed_over());
+    }
+
+    /// The old window's turn given up on, clipped where it is, out of tries or refused, the target's
+    /// held change waits for it no longer, and nothing more does; under a generation before, it was
+    /// given up on for another end.
+    #[test]
+    fn the_targets_change_waits_no_longer_for_an_old_window_whose_turn_will_not_be_seen() {
+        let now = Instant::now();
+        let new = pan().tiles[1].end;
+        let mut c = running(pan(), now);
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
+        let out = c.on(Event::Lost { generation: Generation(g.0 - 1), window: w(1) }, now + Duration::from_millis(2));
+        assert_eq!(turns(&out), Vec::new());
+        let out = c.on(Event::Lost { generation: g, window: w(1) }, now + Duration::from_millis(3));
+        assert_eq!(
+            turns(&out),
+            vec![
+                Command::Focus { window: w(1), focused: false },
+                Command::Swap { generation: g, window: w(2) },
+                Command::KeepFocusedLook { generation: g, window: w(2) },
+                Command::Focus { window: w(2), focused: true },
+            ]
+        );
+
+        let mut c = running(pan(), now);
+        c.on(Event::Lost { generation: g, window: w(1) }, now);
+        let out = c.on(Event::Merge { stage: pan(), moved: false }, now + Duration::from_millis(2));
+        assert_eq!(watch(&out).unwrap().losing_focus, None, "watched no more");
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(4));
+        assert_eq!(focus(&out), handed_over(), "nothing to wait for");
+
+        let mut growing = pan();
+        growing.awaiting = vec![w(1)];
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(growing), now);
+        let watched = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
+        assert_eq!(watched.losing_focus, None, "watched to repaint instead");
     }
 
     /// A rapid switch, 1 to 2 and back before 2 turns: window 1, drawn unfocused with its own

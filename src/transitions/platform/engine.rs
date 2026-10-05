@@ -1117,9 +1117,9 @@ impl FlightEngine {
         }
     }
 
-    /// What the pictures service landed: the deliveries and the lost landings under this engine's tag
-    /// go to the coordinator, each delivery journalled as it came and frame zero's onto their tiles
-    /// first. The overlay's picture for a handover check is what a lift waiting for it hears, and the
+    /// What the pictures service landed: the deliveries, the lost landings and the lost turns under
+    /// this engine's tag go to the coordinator, each delivery journalled as it came and frame zero's
+    /// onto their tiles first. The overlay's picture for a handover check is what a lift waiting for it hears, and the
     /// check's measure is journalled for a lift that hid on that picture. Any other capture is the
     /// cache's alone.
     fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
