@@ -16,6 +16,10 @@ one reaches the strip.
   policy change, its finished launch and each of its windows are reported once, and one report that
   fails or goes missing MUST NOT leave the application unmanaged for as long as it runs.
 - A thread that gives up MUST say so in the info-level log.
+- An application's thread MUST end when the application quits, whether rini hears of the quit or finds
+  it at a request that fails because the application has gone, and everything the thread holds MUST go
+  with it: its observer, its Accessibility elements and its record of the application's windows. A raise
+  queued or under way for that application MUST NOT keep the thread.
 
 > **Reported 2026-10-01.** "also the docker window is not in the strip for some reason". Fixed.
 >
@@ -37,6 +41,15 @@ one reaches the strip.
 > failed one is inferred, not seen, since that line is debug-level; a KVO report that never arrived
 > fits the same logs. Kiro Crew, also Electron, failed an Accessibility read with "could not complete"
 > after 1 s at 08:01:55 the same day, as it drew its first window.
+
+> **Reported 2026-10-06.** "fix that runaway thread and stale cache cleaning". Fixed.
+>
+> Measured: rini (pid 96921), up 16h, still ran threads for two applications that had quit, pids 3096
+> (zoom) and 9726. Read from the code: the thread's task ran its requests and its raises side by side,
+> and only the requests ended at a quit. The raises waited on a channel whose sender the thread itself
+> held, so they never ended, and the thread runs until its task does. A raise waiting for a gone
+> application to activate also asked it every 10ms whether it was frontmost, until the raise was
+> cancelled.
 
 ## Admission
 
