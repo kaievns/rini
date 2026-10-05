@@ -341,7 +341,7 @@ pub struct EndWatch {
     /// while `focus` is watched and its own turn is still to come, and only for one ending wholly on
     /// the display.
     pub losing_focus: Option<(WindowId, ScreenRect)>,
-    /// Floating windows that stay put, kept fresh once `focus`'s watch is done, if there is one...
+    /// Floating windows that stay put, kept fresh once `focus`'s own change is in, if it is watched...
     pub background: Vec<(WindowId, ScreenRect)>,
     /// ... except one capture this soon when they were left out of frame zero.
     pub background_initial: Option<Instant>,
