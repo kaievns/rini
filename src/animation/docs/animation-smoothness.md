@@ -211,8 +211,8 @@ what `restack` computes for `tile.depth` and what the reactor's regroup
 (`regroup_tiled`, "Real order" in `capture-overlay-research.md`) puts on the
 real screen at lift. Core Animation sorts `zPosition` among siblings only,
 so a floating tile can never land between two strip tiles whatever its own
-depth: that is the structural fix for the 50/50 interleave (the 1.1 case in
-`.kiro/specs/exit-entrance-animation-regressions`). Within a band the
+depth: that is the structural fix for a floating tile drawn between two strip
+tiles. Within a band the
 window server's order is kept; a window the server did not report goes to
 the back of its own band. An entrance carries `server_order: Some(0)`
 because a window is raised on open.
@@ -291,10 +291,10 @@ sizes (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it
 with the tile. Both are laid after the tile's frame, on every placement, or a
 pooled layer's autoresizing carries the old size, and a pooled tile's radius
 can have been measured since its last flight. Companions wear none.
-`TileOverlay::set_tile_focused` switches the ring's white and the shadow's
-depth in a hard cut, for focus handing over mid-flight; the prototype set the
-ring only at install. When focus hands over is the coordinator's
-(`HandOverFocus`).
+`TileOverlay::set_tile_focused` switches one tile's ring white and shadow
+depth in a hard cut, as that window's turned picture comes in mid-flight; the
+prototype set the ring only at install. When each tile turns is the
+coordinator's (`Command::Focus`).
 
 Mechanics worth remembering:
 

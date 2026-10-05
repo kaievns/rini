@@ -13,7 +13,7 @@
 {"t":81234593600000,"g":1,"mark":"show"}
 {"t":81234593600000,"g":1,"mark":"write","windows":2}
 {"t":81234593600000,"g":1,"mark":"holes","windows":2}
-{"t":81234593600000,"g":1,"mark":"watch","landing":2,"awaiting":0,"background":1,"focus":[1,2]}
+{"t":81234593600000,"g":1,"mark":"watch","landing":2,"awaiting":0,"background":1,"focus":[1,2],"losing_focus":[1,1]}
 {"t":81234593600000,"g":1,"mark":"start_moving"}
 {"t":81234594500000,"g":1,"mark":"extend","ms":349}
 {"t":81234595500000,"g":1,"mark":"drawn","seq":3,"shown":true,"queued_us":300,"applied_us":300,"flushed_before_us":300}
@@ -26,9 +26,10 @@
 {"t":81234672100000,"g":1,"mark":"swap","of":1,"window":[1,1]}
 {"t":81234701000000,"g":1,"mark":"delivery","of":1,"why":"focus_changed","pictures":1,"sent_before_us":2000}
 {"t":81234701000000,"g":1,"mark":"delivered","window":[1,2],"frame":[3.0,35.0,861.0,1079.0],"taken_before_us":9500}
-{"t":81234701100000,"g":1,"mark":"swap","of":1,"window":[1,2]}
-{"t":81234701100000,"g":1,"mark":"keep_focused_look","of":1,"window":[1,2]}
-{"t":81234701100000,"g":1,"mark":"hand_over_focus","to":[1,2],"from":[1,1]}
+{"t":81234716100000,"g":1,"mark":"focus","window":[1,1],"focused":false}
+{"t":81234716100000,"g":1,"mark":"swap","of":1,"window":[1,2]}
+{"t":81234716100000,"g":1,"mark":"keep_focused_look","of":1,"window":[1,2]}
+{"t":81234716100000,"g":1,"mark":"focus","window":[1,2],"focused":true}
 {"t":81234720000000,"g":1,"mark":"delivery","of":1,"why":"background","pictures":1,"sent_before_us":1600}
 {"t":81234720000000,"g":1,"mark":"delivered","window":[1,9],"frame":[224.0,95.0,600.0,400.0],"taken_before_us":8000}
 {"t":81234720100000,"g":1,"mark":"swap","of":1,"window":[1,9]}
@@ -59,7 +60,7 @@
 {"t":81237640000000,"g":2,"mark":"show"}
 {"t":81237640000000,"g":2,"mark":"write","windows":2}
 {"t":81237640000000,"g":2,"mark":"holes","windows":2}
-{"t":81237640000000,"g":2,"mark":"watch","landing":2,"awaiting":0,"background":1,"focus":[1,2]}
+{"t":81237640000000,"g":2,"mark":"watch","landing":2,"awaiting":0,"background":1,"focus":[1,2],"losing_focus":[1,1]}
 {"t":81237640000000,"g":2,"mark":"start_moving"}
 {"t":81237640900000,"g":2,"mark":"extend","ms":349}
 {"t":81237642300000,"g":2,"mark":"drawn","seq":12,"shown":true,"queued_us":400,"applied_us":500,"flushed_before_us":400}
@@ -73,7 +74,7 @@
 {"t":81237710000000,"g":3,"mark":"merge","kind":"pan","moved":true,"tiles":3,"awaiting":0,"repainting":0,"focus":[1,2],"focused_look":null,"duration_ms":350}
 {"t":81237710000000,"g":3,"mark":"write","windows":1}
 {"t":81237710000000,"g":3,"mark":"holes","windows":2}
-{"t":81237710000000,"g":3,"mark":"watch","landing":2,"awaiting":0,"background":1,"focus":[1,2]}
+{"t":81237710000000,"g":3,"mark":"watch","landing":2,"awaiting":0,"background":1,"focus":[1,2],"losing_focus":[1,1]}
 {"t":81237730000000,"g":3,"mark":"delivery","of":2,"why":"landed","pictures":1,"sent_before_us":2000}
 {"t":81237730000000,"g":3,"mark":"delivered","window":[1,2],"frame":[3.0,35.0,861.0,1079.0],"taken_before_us":29000}
 {"t":81237730100000,"g":3,"mark":"swap","of":2,"window":[1,2]}
@@ -83,7 +84,8 @@
 {"t":81237760100000,"g":3,"mark":"swap","of":3,"window":[1,2]}
 {"t":81237890000000,"g":3,"mark":"lost","of":3,"window":[1,1]}
 {"t":81237950000000,"g":3,"mark":"ask_final","windows":2,"behind":1}
-{"t":81237950000000,"g":3,"mark":"hand_over_focus","to":[1,2],"from":[1,1]}
+{"t":81237950000000,"g":3,"mark":"focus","window":[1,1],"focused":false}
+{"t":81237950000000,"g":3,"mark":"focus","window":[1,2],"focused":true}
 {"t":81238060100000,"g":3,"mark":"at_rest"}
 {"t":81238410000000,"g":3,"mark":"stop_watches"}
 {"t":81238410000000,"g":3,"mark":"lift","at_rest":true,"landed":false}

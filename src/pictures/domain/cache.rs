@@ -61,20 +61,22 @@ impl<T: HasCoverage> Default for PictureCache<T> {
 impl<T: HasCoverage + CarriesOver> PictureCache<T> {
     pub fn new() -> Self { Self::default() }
 
-    /// Stores a picture, subject to [`should_replace`] and to what the one held keeps over it
-    /// ([`CarriesOver`]). True when its pixels are now the ones held.
+    /// Whether `insert` would hold `picture` as `window`'s: [`should_replace`], and what the one held
+    /// keeps over it ([`CarriesOver`]).
+    pub fn takes(&self, window: WindowId, picture: &T) -> bool {
+        picture.cacheable()
+            && self.entries.get(&window).is_none_or(|existing| {
+                should_replace(Some(existing.coverage()), picture.coverage()) && !existing.keeps_over(picture)
+            })
+    }
+
+    /// Stores a picture the cache takes (`takes`). True when its pixels are now the ones held.
     pub fn insert(&mut self, window: WindowId, picture: T) -> bool {
-        if !picture.cacheable() {
-            return false;
+        let takes = self.takes(window, &picture);
+        if takes {
+            self.entries.insert(window, picture);
         }
-        if let Some(existing) = self.entries.get(&window)
-            && (!should_replace(Some(existing.coverage()), picture.coverage())
-                || existing.keeps_over(&picture))
-        {
-            return false;
-        }
-        self.entries.insert(window, picture);
-        true
+        takes
     }
 
     pub fn get(&self, window: WindowId) -> Option<&T> { self.entries.get(&window) }
@@ -227,6 +229,22 @@ mod tests {
         cache.insert(wid(1), coverage((40.0, 1081.0), (859.0, 1081.0)));
         assert_eq!(cache.get(wid(1)).unwrap().covered.width, 859.0);
         assert!(cache.usable(wid(1)).is_some());
+    }
+
+    /// What the cache would take is judged without putting anything in: a refresh holds its captures
+    /// until its window settles, and one the cache would refuse ends it.
+    #[test]
+    fn the_cache_says_what_it_would_take_without_taking_it() {
+        let mut cache = cache();
+        let whole = coverage((859.0, 1081.0), (859.0, 1081.0));
+        let sliver = coverage((40.0, 1081.0), (859.0, 1081.0));
+        assert!(cache.takes(wid(1), &sliver), "nothing held");
+        assert!(cache.get(wid(1)).is_none(), "nor put");
+        cache.insert(wid(1), whole);
+        assert!(!cache.takes(wid(1), &sliver), "no downgrade");
+        assert!(cache.takes(wid(1), &whole));
+        assert!(!cache.insert(wid(1), sliver));
+        assert_eq!(cache.get(wid(1)), Some(&whole));
     }
 
     #[test]

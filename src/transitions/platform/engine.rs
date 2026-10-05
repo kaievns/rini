@@ -207,7 +207,8 @@ struct RunningAnimation {
     entrances: Vec<PendingEntrance>,
     /// The window gaining focus, from the latest pass that named one; its group is banded in front.
     focus: Option<WindowId>,
-    /// The window drawn focused until focus hands over: the one focused as the flight began.
+    /// The window focus is drawn leaving until it hands over: the one focused as the flight began,
+    /// then the target drawn focused.
     shown_focus: Option<WindowId>,
     /// The key window as the flight's first pass went out.
     key: Option<WindowId>,
@@ -526,21 +527,20 @@ impl RunningAnimation {
         true
     }
 
-    /// Focus handed over: `to` is drawn focused from now, `from` not.
-    fn hand_over_focus(&mut self, to: WindowId, from: Option<WindowId>) {
-        self.shown_focus = Some(to);
-        for tile in self.tiles.iter_mut() {
-            if tile.window == to {
-                tile.focused = true;
-            } else if Some(tile.window) == from {
-                tile.focused = false;
-            }
+    /// `window`'s tile drawn focused or not from now; drawn focused, focus has handed over to it.
+    fn draw_focused(&mut self, window: WindowId, focused: bool) {
+        if focused {
+            self.shown_focus = Some(window);
+        }
+        for tile in self.tiles.iter_mut().filter(|t| t.window == window) {
+            tile.focused = focused;
         }
     }
 
     /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`. A
-    /// pass moving focus redraws which tiles are drawn focused, and none flies a focused look until
-    /// the engine gives the new target its own.
+    /// pass moving focus redraws which tiles are drawn focused, but for the window focus is drawn
+    /// leaving, which stays as its own turn left it, focus moving back to it or on, and none flies a
+    /// focused look until the engine gives the new target its own.
     fn merge_pass(
         &mut self,
         tiles: Vec<OverlayTile>,
@@ -559,7 +559,8 @@ impl RunningAnimation {
             .collect();
         if focus_moved {
             let losing = losing_focus(self.focus, self.shown_focus);
-            for tile in self.tiles.iter_mut().filter(|t| t.companion.is_none()) {
+            let shown = self.shown_focus;
+            for tile in self.tiles.iter_mut().filter(|t| t.companion.is_none() && Some(t.window) != shown) {
                 tile.focused = drawn_focused(tile.window, self.focus, losing);
             }
             self.focused_look = None;
@@ -719,6 +720,7 @@ impl EndWatches {
                 tag,
                 window: target_at(window, frame),
                 end: frame,
+                losing: end.losing_focus.map(|(window, frame)| (target_at(window, frame), frame)),
                 behind: behind.clone(),
                 every: CHANGE_EVERY,
                 tries: CHANGE_TRIES,
@@ -802,7 +804,8 @@ pub struct FlightEngine {
     writer: Option<Writer>,
     running: Option<RunningAnimation>,
     /// The latest picture delivered of each window, under its generation, until it is swapped in: the
-    /// coordinator holds a landing back from over a focused look until focus hands over.
+    /// coordinator holds a landing back from over a focused look until focus hands over, and the
+    /// target's change until the window focus leaves has turned.
     delivered: HashMap<WindowId, (Generation, Picture)>,
     watches: EndWatches,
     /// The frame clock, from a transition's begin to its lift.
@@ -1007,14 +1010,11 @@ impl FlightEngine {
             Command::KeepFocusedLook { generation, window } => {
                 self.pictures.keep_focused(self.tag(generation), window)
             }
-            Command::HandOverFocus { to, from } => {
+            Command::Focus { window, focused } => {
                 if let Some(running) = self.running.as_mut() {
-                    running.hand_over_focus(to, from);
+                    running.draw_focused(window, focused);
                 }
-                self.render(Render::Focus { window: to, focused: true });
-                if let Some(from) = from {
-                    self.render(Render::Focus { window: from, focused: false });
-                }
+                self.render(Render::Focus { window, focused });
             }
             Command::Lift { generation } => self.lift(generation, now),
             Command::Warm(windows) => {
@@ -1117,9 +1117,9 @@ impl FlightEngine {
         }
     }
 
-    /// What the pictures service landed: the deliveries and the lost landings under this engine's tag
-    /// go to the coordinator, each delivery journalled as it came and frame zero's onto their tiles
-    /// first. The overlay's picture for a handover check is what a lift waiting for it hears, and the
+    /// What the pictures service landed: the deliveries, the lost landings and the lost turns under
+    /// this engine's tag go to the coordinator, each delivery journalled as it came and frame zero's
+    /// onto their tiles first. The overlay's picture for a handover check is what a lift waiting for it hears, and the
     /// check's measure is journalled for a lift that hid on that picture. Any other capture is the
     /// cache's alone.
     fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
@@ -2503,6 +2503,7 @@ mod tests {
                 landing_until: now + Duration::from_millis(150),
                 awaiting_until: now + HOLD_CAP,
                 focus: Some((wid(1), rect(4.0, 32.0, 859.0, 1081.0))),
+                losing_focus: Some((wid(3), rect(867.0, 32.0, 859.0, 1081.0))),
                 background: vec![(wid(9), rect(224.0, 95.0, 600.0, 400.0))],
                 background_initial: Some(now + Duration::from_millis(30)),
                 behind: vec![wid(9)],
@@ -2539,9 +2540,11 @@ mod tests {
                 other => panic!("{other:?}"),
             }
             match &first[2] {
-                Asked::Watch(id, Watch::Change { window, every, tries, .. }) => {
+                Asked::Watch(id, Watch::Change { window, losing, every, tries, .. }) => {
                     assert_eq!(Some(*id), watches.change);
                     assert_eq!(window.window, wid(1));
+                    let (losing, at) = losing.expect("the window focus leaves, beside it");
+                    assert_eq!((losing.window, losing.size, at), (wid(3), at.size, rect(867.0, 32.0, 859.0, 1081.0)));
                     assert_eq!((*every, *tries), (CHANGE_EVERY, CHANGE_TRIES));
                 }
                 other => panic!("{other:?}"),
@@ -2560,6 +2563,7 @@ mod tests {
             let mut next = end(4, now);
             next.landing.clear();
             next.focus = None;
+            next.losing_focus = None;
             let (awaiting, live) = (watches.awaiting, watches.live);
             watches.watch(&pictures, client, &next);
             let second = asked(&mut commands);
@@ -2806,8 +2810,10 @@ mod tests {
             assert_eq!(tile.to.origin.x, 4.0 - 2589.0, "the tile follows the merged plan");
         }
 
+        /// Each tile is drawn focused or not on its own. The window left turning unfocused first, focus
+        /// still leaves it until the target is drawn focused, which hands focus over.
         #[test]
-        fn focus_handing_over_draws_the_target_focused_and_the_window_left_not() {
+        fn each_tile_is_drawn_focused_on_its_own_and_focus_hands_over_with_the_target() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles = vec![
@@ -2818,9 +2824,12 @@ mod tests {
             running.tiles[0].focused = true;
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            running.hand_over_focus(wid(2), Some(wid(1)));
-            let focused: Vec<bool> = running.tiles.iter().map(|t| t.focused).collect();
-            assert_eq!(focused, vec![false, true, false]);
+            let focused = |running: &RunningAnimation| running.tiles.iter().map(|t| t.focused).collect::<Vec<_>>();
+            running.draw_focused(wid(1), false);
+            assert_eq!(focused(&running), vec![false, false, false]);
+            assert_eq!(losing_focus(running.focus, running.shown_focus), Some(wid(1)), "still leaving it");
+            running.draw_focused(wid(2), true);
+            assert_eq!(focused(&running), vec![false, true, false]);
             assert_eq!(losing_focus(running.focus, running.shown_focus), None, "a later merge moves none");
         }
 
@@ -2884,9 +2893,10 @@ mod tests {
             assert_eq!(running.focused_look, Some(wid(2)), "a pass naming the same focus moves none");
         }
 
-        /// A pass moving focus on: the window focused as the flight began is still drawn focused
-        /// until focus hands over, the target before it no longer is, and nothing flies a focused look
-        /// until the new target is given its own.
+        /// A pass moving focus on: the window focused as the flight began is still drawn as its own
+        /// turn left it, focused until then, the target before it no longer is, and nothing flies a
+        /// focused look until the new target is given its own. Focus moving back to it, or on again,
+        /// leaves it as its turn left it.
         #[test]
         fn a_pass_moving_focus_on_redraws_which_tiles_are_drawn_focused() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
@@ -2901,9 +2911,18 @@ mod tests {
             running.shown_focus = Some(wid(1));
             assert!(running.fly_focused_look(wid(2), Some(test_picture(park.size))));
             running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
-            let focused: Vec<(WindowId, bool)> = running.tiles.iter().map(|t| (t.window, t.focused)).collect();
-            assert_eq!(focused, vec![(wid(1), true), (wid(2), false), (wid(3), false)]);
+            let focused = |running: &RunningAnimation| {
+                running.tiles.iter().map(|t| (t.window, t.focused)).collect::<Vec<(WindowId, bool)>>()
+            };
+            assert_eq!(focused(&running), vec![(wid(1), true), (wid(2), false), (wid(3), false)]);
             assert_eq!(running.focused_look, None);
+            running.draw_focused(wid(1), false);
+            running.merge_pass(vec![stacked(wid(4), park, slot, Some(3), false)], Some(wid(4)));
+            assert_eq!(focused(&running)[0], (wid(1), false), "turned unfocused with its own picture, it stays so");
+            running.merge_pass(vec![stacked(wid(1), slot, slot, Some(0), false)], Some(wid(1)));
+            assert_eq!(focused(&running)[0], (wid(1), false), "focus back on it before its focused picture");
+            running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
+            assert_eq!(focused(&running)[0], (wid(1), false), "and on again");
         }
 
         #[test]

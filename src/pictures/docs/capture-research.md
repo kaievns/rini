@@ -8,9 +8,10 @@ scale, with 35 real app windows across 4 rini workspaces; later sections date th
 `src/animation/docs/capture-overlay-research.md`.
 
 Status: the approach is viable. The design is a hybrid: capture on-screen
-windows fresh through SkyLight at switch time, and serve off-strip and
-hidden-workspace windows from a ScreenCaptureKit cache refreshed in the
-background.
+windows fresh through SkyLight at the press, as they land, as their look turns
+and before the lift, and again at rest once a change of focus has turned their
+look; serve off-strip and hidden-workspace windows from a cache ScreenCaptureKit
+warms in the background.
 
 ## Verdict
 
@@ -351,13 +352,16 @@ Bundling is not a factor. A signed `.app` bundle with
 
 ## Consequences for the design
 
-**Warm cache, refreshed in the background.** At switch time the main thread
-captures nothing. It composites bitmaps the cache holds, but for the windows on
-screen at the press, which one batched SkyLight call on the pictures service's
-thread pictures while the overlay waits for it at most 80ms ("Nothing is captured
-on the main thread on the way in" below). This matches the original instinct that
-only on-screen and incoming windows need fresh pixels, and the rest can be
-refreshed occasionally.
+**Warm cache, refreshed in the background.** At switch time the flight engine,
+on the `transitions` thread, captures nothing itself. It composes from bitmaps the
+cache holds, but for the windows on screen at the press, which one batched
+SkyLight call on the pictures service's thread pictures while the overlay waits
+for it at most 80ms ("Nothing is captured on the main thread on the way in"
+below). This matches the original instinct that only on-screen and incoming
+windows need fresh pixels, and the rest can be refreshed occasionally: through
+ScreenCaptureKit for the windows off the strip, and through SkyLight for a window
+on screen whose look a change of focus turned, which keeps its blur only that way
+("The schedule" in `README.md`).
 
 **Staleness is acceptable for a window that was off screen.** The bitmap is on
 screen for the duration of one animation and is replaced by the real window at the
@@ -372,8 +376,10 @@ written. (The rift-inherited overview overlay that first carried a
 ScreenCaptureKit pipeline has since been removed;
 `src/pictures/platform/screencapturekit.rs` is the pipeline now.)
 
-**Capture in a background thread.** At 14.5ms per window, refreshing even a few
-windows would blow several frames if it ran on the animation thread.
+**Capture on a thread of its own.** At 14.5ms per window, refreshing even a few
+windows would blow several frames on the `transitions` thread, which composes a
+flight, or on the main thread, which runs the renderer. Every capture runs on the
+`pictures` thread.
 
 ## Reproducing
 

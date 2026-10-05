@@ -87,10 +87,9 @@ mod tests {
         order.iter().map(|(w, _)| *w).collect()
     }
 
-    /// T5 (1.3) of `.kiro/specs/flight-render-stability/bugfix.md`. A strip switch interleaves
-    /// the leaving window's park with the arriving windows' slots; each write is four serialized
-    /// AX round trips, so a park nobody will see must not delay a slot everybody will. Asserts the
-    /// fixed order; unfixed sends frames as given.
+    /// A strip switch interleaves the leaving window's park with the arriving windows' slots; each
+    /// write is four serialized AX round trips, so a park nobody will see must not delay a slot
+    /// everybody will.
     #[test]
     fn on_screen_destinations_are_sent_before_parks() {
         let leaving = WindowId::new(1, 1);
@@ -106,9 +105,6 @@ mod tests {
         );
     }
 
-    /// 2.3 of `flight-render-stability`. Mixed frames: every on-screen destination first, then
-    /// every park, each class in the order given. All parked, all on screen, and empty inputs
-    /// come back as given.
     /// A window parked on one side re-parked on the other is not written; a window leaving or
     /// arriving is.
     #[test]
@@ -182,6 +178,8 @@ mod tests {
         );
     }
 
+    /// Mixed frames: every on-screen destination first, then every park, each class in the order
+    /// given. All parked, all on screen, and empty inputs come back as given.
     #[test]
     fn frame_send_order_partitions_stably() {
         let w = |i| WindowId::new(1, i);
@@ -208,7 +206,7 @@ mod tests {
         assert!(frame_send_order(Vec::new(), display()).is_empty());
     }
 
-    /// 2.3. For random mixes of slots and parks, the order is a permutation with every on-screen
+    /// For random mixes of slots and parks, the order is a permutation with every on-screen
     /// frame before every park and each class in its given order. Seed 98, 200 runs.
     #[test]
     fn frame_send_order_is_a_stable_partition() {

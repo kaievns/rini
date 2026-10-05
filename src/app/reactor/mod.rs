@@ -4024,7 +4024,6 @@ impl Reactor {
         let height = row_pitch;
 
         let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
-        let mut final_frames: Vec<(WindowId, ScreenRect)> = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else {
                 continue;
@@ -4060,7 +4059,6 @@ impl Reactor {
                     floating: self.layout_manager.layout_engine.is_window_floating(wid),
                     from: None,
                 });
-                let _ = &mut final_frames;
             }
         }
 
@@ -4069,7 +4067,7 @@ impl Reactor {
         // belonging to other workspaces. Placing only the destination's windows left all the others
         // wherever they happened to be, so windows from one workspace showed up as phantoms on
         // another until something else moved the strip.
-        final_frames = layout
+        let final_frames: Vec<(WindowId, ScreenRect)> = layout
             .iter()
             .filter(|(wid, _)| Some(*wid) != skip_wid)
             .map(|&(wid, frame)| (wid, ScreenRect::from_cg(frame)))

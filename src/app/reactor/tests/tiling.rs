@@ -1272,8 +1272,8 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     );
 }
 
-/// P-3.13 (`.kiro/specs/exit-entrance-animation-regressions`): with animations off, a
-/// close sends the engine no flight, and the window state is still removed.
+/// With animations off, a close sends the engine no flight, and the window state is still removed:
+/// animation is never load-bearing (`specs/animation.md`).
 #[test]
 fn a_destroyed_window_does_not_exit_when_animations_are_off() {
     let (mut apps, mut reactor) = test_context();

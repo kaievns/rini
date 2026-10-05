@@ -100,9 +100,15 @@ fn answer(
     }
 }
 
-/// Core Animation's media clock against `Instant`, read now: what the engine begins every track on.
+/// Core Animation's media clock against `Instant`, read now: what the engine begins every track on,
+/// the tightest of four reads (`MediaClock::tightest`).
 pub fn media_clock() -> MediaClock {
-    MediaClock::anchored(Instant::now(), objc2_quartz_core::CACurrentMediaTime())
+    let read = |_| {
+        let before = Instant::now();
+        let media = objc2_quartz_core::CACurrentMediaTime();
+        (before, media, Instant::now())
+    };
+    MediaClock::tightest((0..4).map(read)).expect("four reads")
 }
 
 pub struct Renderer {
@@ -312,7 +318,10 @@ mod tests {
     #[test]
     fn the_media_clock_reads_what_core_animation_does() {
         let clock = media_clock();
-        let (at, media) = (clock.at(Instant::now()), objc2_quartz_core::CACurrentMediaTime());
-        assert!((at - media).abs() < 0.000_1, "{at} against {media}");
+        let before = Instant::now();
+        let media = objc2_quartz_core::CACurrentMediaTime();
+        let after = Instant::now();
+        let (from, to) = (clock.at(before), clock.at(after));
+        assert!(from - 0.000_1 <= media && media <= to + 0.000_1, "{media} outside {from}..{to}");
     }
 }

@@ -207,6 +207,10 @@ destination for a window already moving.
 
 - The frame written to a window is the layout's answer, never the animation's. A window parked off the
   strip is written its real park position; the tile is merely drawn heading off the edge.
+- A flight's frames MUST be written to the windows ending on the display before the windows ending
+  parked off it. Each write is several round trips the app answers one after another, and a strip
+  switch interleaves the leaving window's park with the arriving windows' places: written first, a
+  park nobody sees delays a window everybody does, which lands late, after the lift.
 - A window MUST NOT be left at an animation's intermediate frame if a pass is interrupted.
 - The overlay MUST stop drawing a tile whose window is gone, and MUST drop a container once the last
   tile leaves it. An empty container is a layer the compositor keeps compositing.
@@ -277,8 +281,9 @@ destination for a window already moving.
 - Both MUST follow the tile through a resize, on the tile's own timing, and onto its window's real
   frame when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
   its corners.
-- When focus hands over during a flight, the ring MUST follow it: the window gaining focus brighter,
-  the window losing it dimmer.
+- When focus moves during a flight, each window's ring and shadow MUST turn with its own picture: the
+  window losing focus dimmer as its picture turns unfocused, the window gaining focus brighter as its
+  picture turns focused, each at its own time.
 
 The ring's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
 applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
@@ -286,22 +291,44 @@ measured. Before it, a tile wore a hairline cut out of a capture of its window, 
 capture had run: the 53-level p99 at the focused window's edge in "The handover, measured"
 (`src/animation/docs/capture-overlay-research.md`).
 
+> **Reported 2026-10-05.** "regarding the ring and shadow. i'd like them to be orchestrated
+> independently whenever blur or focus are done switching." Both tiles turned in one cut when the
+> picture of the window gaining focus turned, whenever the other window's picture had. Each tile's
+> ring and shadow now turn with its own picture.
+
 ## Focus changing during a flight
 
 - When a flight moves focus from one window to another, both MUST land in their new focus rendering:
   the window gaining focus active, the window losing it inactive. The change MUST reach each tile while
   the flight still moves, so nothing changes at rest after the lift.
-- The window gaining focus MUST be pictured where it ends from the moment the window server reports it
-  focused until its look changes, and drawn focused from that picture on: its ring and its shadow with
-  it. A look it already had when it landed counts as changed. If no picture shows the change by the
-  last capture before the lift, it MUST be drawn focused from then on all the same, while the flight
-  still moves. Until then the window losing focus MUST be drawn focused, as it was on screen when the
-  flight began, and after it unfocused. Ending wholly on a display, it MUST be pictured again before
-  the lift if its look has changed. Ending clipped by the display's edge, it keeps its picture to the
-  lift, only its ring and its shadow turning unfocused, and its look turns at rest, unless it has a
-  material: then it keeps its blurred picture until a flight next pictures it on screen (below). SkyLight
-  returns only its visible part, and the one ScreenCaptureKit capture below is the window gaining
-  focus's.
+- From the moment the window server reports the window gaining focus focused, it MUST be pictured
+  where it ends until its look changes, and the window losing focus with it, in the same rounds, until
+  its own look changes, if it ends wholly on a display and no pass opened or grew it: one a pass
+  opened or grew is pictured once it has repainted instead. A look a window already had when it landed
+  counts as changed. Each MUST be drawn with its turned picture as it comes in, its ring and its shadow
+  turning with it: the window losing focus unfocused, the window gaining focus focused.
+- The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
+  focus MUST wait for the other's at most 15ms, one capture interval, and not at all once the other's
+  turn can no longer be pictured; two that come in together MUST turn old, then new. Waiting for the
+  other MUST NOT delay looking at the window gaining focus: it MUST be looked for as often as any
+  window landing until it is where it ends, and the windows behind the strip MUST wait only for its
+  turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
+  pass opened or grew, or one whose watch ran out, MUST be drawn unfocused just before the window
+  gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
+  the same, old then new, while the flight still moves. Until its turn the window losing focus MUST be
+  drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
+  keeps its picture to the lift, only its ring and its shadow turning unfocused, and its look turns at
+  rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on
+  screen (below). SkyLight returns only its visible part, and the one ScreenCaptureKit capture below is
+  the window gaining focus's.
+- A press moving focus back to a window already drawn unfocused, before the window it went to has
+  turned, MUST leave it drawn unfocused, ring and shadow with it, until its focused picture comes in,
+  and MUST then turn it focused as any window gaining focus. A press moving focus on before then MUST
+  NOT turn it again. One starting off the display flies its focused look instead (below), drawn
+  focused again, and a press moving focus on MUST turn it unfocused again: no tile is left drawn
+  focused beside the window gaining focus. A turned picture waiting for the old window's MUST be dropped when a press moves
+  focus on, and one that no longer fits its tile MUST turn nothing: drawn focused over the picture
+  from before, a ring disagrees with its window.
 - A focus report that arrives before the flight watches for it MUST still count, and so MUST one that
   arrives before the request it causes, as a click's or an app activation's does: the window focused
   before it is the one the flight begins drawn focused.
@@ -333,15 +360,22 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   alters a window's look and never its size, and a picture that still fits was never taken again for
   its own sake, so a window kept the look it had until it was resized, and its tile turned at the lift.
 - Pictured again at rest, a window wholly on the overlay's display MUST be pictured with its blur and
-  with its look turned. A capture of the window alone has no blur, and a picture with its blur is never
-  replaced by one without, so a window with a material kept its old look until a flight next pictured
-  it on screen; a capture made as the change is reported shows the look from before the app repaints;
-  and the picture held from before can differ in its title band for reasons other than focus, so the
-  turn is judged only from captures taken after the change.
+  with its look turned. Both windows of one change MUST be looked at together, and each MUST be
+  pictured once, with the look it settled on. A capture of the window alone has no blur, and a picture
+  with its blur is never replaced by one without, so a window with a material kept its old look until a
+  flight next pictured it on screen; a capture made as the change is reported shows the look from
+  before the app repaints; the picture held from before can differ in its title band for reasons
+  other than focus, so the turn is judged only from captures taken after the change; and a look has
+  settled once two captures in a row, the later taken 70ms or more after the change, show the same
+  title band, past the 68ms (p90) the app takes to repaint. Looked at one window at a time, a click
+  took twice the rounds, and every capture went to the cache and to every client as news.
 - A capture at rest MUST NOT start from a press to the quiet after the lift, as no ScreenCaptureKit
   capture does: SkyLight serves one call at a time, and one already out delays the one the overlay
-  waits for. A call already out when the press's hold arrives cannot be recalled, so at most one
-  SkyLight call at rest, two for a window never pictured before, MAY be ahead of a frame zero.
+  waits for. A press MUST cancel the polling of a window being pictured again at rest, and the quiet
+  MUST ask again for each window the flight did not picture at least 70ms after its look turned: the
+  app repaints up to 68ms after the change (p90), so a picture taken sooner, frame zero's among them,
+  can show the look from before. A call already out when the press comes cannot be recalled, so at
+  most one SkyLight call at rest MAY be ahead of a frame zero.
 - A window with a material that is not wholly on the overlay's display when it is pictured again at
   rest, clipped, parked or on another display, keeps its blurred picture, and its look turns when a
   flight next pictures it on screen: ScreenCaptureKit's capture of it has no blur, and SkyLight's
@@ -356,6 +390,30 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A picture of a window that was not wholly on one display while it was captured MUST NOT be drawn,
   cached as a picture, or cut onto a tile. The capture comes back full-size with the off-screen part
   transparent, and drawn it is a half or fully missing window.
+
+> **Reported 2026-10-05.** "i noticed that old window blur often animates _after_ the new window focus.
+> i understand that blur actually renders _before_ focus in macos itself." Only the window gaining
+> focus was watched in flight. The window losing focus kept its frame-zero picture, its focused look,
+> until a landing or the last capture before the lift showed it unfocused, so it turned after the
+> other. Both are now watched in the same rounds, and the turn of the window gaining focus waits up to
+> 15ms for the old window's.
+
+> **Reported 2026-10-05.** "did you want that in case of rapid switch? in case current polling starts
+> interferring with the next position? how do you manage that btw? cancel the previous polling and let
+> the last capture finish?" A press paused the polling and the release resumed it with the tries it
+> had left, judged from a capture taken before the flight moved the window, and the two calls of a
+> window never pictured before ran back to back, so two could be ahead of a frame zero. A press now
+> cancels the polling, only the call already out finishing, and the quiet asks again.
+
+> **Reported 2026-10-05.** "why are you capturing each old/new window independently? seems like a
+> waste, could capture both at the same time as a group call, no? stop polling when both re-rendered."
+> Each round looked at one window, so a click's two ends took twice the rounds. Both are now captured
+> in one round, each dropping out once its look has settled, and the polling stops when both have.
+
+> **Reported 2026-10-05.** "about focus refresh. are you pushing new images on every scan or only once
+> when they change?" Every capture of a refresh went to the cache and to every client, identical or
+> not, and a window whose first look already showed the turn was captured all six times. A window is
+> now pictured once, with the look it settled on.
 
 > **Reported 2026-10-03.** "fcache doesn't bother me … windows arrive in focus every single time". The
 > prototype flew a focus target parked off the display with its last focused picture, which can be
@@ -422,12 +480,12 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   commit.
 - rini MUST keep the last 8192 steps of its transitions in memory at all times, so a record can be
   written of a glitch seen with the journal off.
-- Unless the journal is turned off (`animations { journal { off; } }`), rini MUST write each burst of
-  transitions once it has settled, and MUST NOT start a write while a transition is up, so writing
-  adds nothing to the durations it records. The record MUST be at most two files: the current one,
-  started afresh once it passes 50MB, and the one before it.
+- rini MUST NOT write the journal unless it is turned on (`animations { journal; }`). With it on,
+  rini MUST write each burst of transitions once it has settled, and MUST NOT start a write while a
+  transition is up, so writing adds nothing to the durations it records. The record MUST be at most
+  two files: the current one, started afresh once it passes 50MB, and the one before it.
 - Writing the journal or not MUST NOT change what is drawn or when; only measuring the handover may
-  (below), and `off` turns measuring off with the writing.
+  (below), and `journal false` turns measuring off with the writing.
 - With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
   window ending wholly on screen, the mean RGB difference between the overlay's own picture just
   before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,
@@ -449,7 +507,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > in terms of slowing down". The `scratch/handover` prototype had kept a text journal from about 135
 > call sites, with a lock and an allocation for each mark. This one stamps each press where the
 > reactor takes it, marks the lifecycle where it is driven and each delivery of pictures where the
-> transition hears it, keeps its marks in a ring allocated once, and writes them by default.
+> transition hears it, keeps its marks in a ring allocated once, and writes them once asked.
+
+> **Reported 2026-10-05.** "journal off by default, on on my laptop for dev tracing." The journal had
+> been written unless turned off, as the record of everything above asked; it is now off unless
+> `animations { journal; }` asks for it, and the ring is kept either way.
 
 ## Where it lives
 
@@ -463,7 +525,8 @@ plays the score on Core Animation on the main thread, on the overlay in
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
-`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
+`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted,
+`src/transitions/domain/frame_writes.rs` which frames are written and in what order, and
 `src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
 which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;

@@ -133,6 +133,8 @@ pub enum Mark {
         background: u16,
         #[serde_as(as = "Option<PidIdx>")]
         focus: Option<WindowId>,
+        #[serde_as(as = "Option<PidIdx>")]
+        losing_focus: Option<WindowId>,
     },
     AskFinal {
         windows: u16,
@@ -154,11 +156,10 @@ pub enum Mark {
         #[serde_as(as = "Xywh")]
         frame: OverlayRect,
     },
-    HandOverFocus {
+    Focus {
         #[serde_as(as = "PidIdx")]
-        to: WindowId,
-        #[serde_as(as = "Option<PidIdx>")]
-        from: Option<WindowId>,
+        window: WindowId,
+        focused: bool,
     },
     /// What the tick that lifted it read: either false, `LIFT_GRACE` ran out.
     Lift {
@@ -424,6 +425,7 @@ impl Journal {
                 awaiting: count(watch.awaiting.len()),
                 background: count(watch.background.len()),
                 focus: watch.focus.map(|(window, _)| window),
+                losing_focus: watch.losing_focus.map(|(window, _)| window),
             },
             Command::StopWatches => Mark::StopWatches,
             Command::StartMoving => Mark::StartMoving,
@@ -435,7 +437,7 @@ impl Journal {
             Command::KeepFocusedLook { generation, window } => {
                 Mark::KeepFocusedLook { of: *generation, window: *window }
             }
-            Command::HandOverFocus { to, from } => Mark::HandOverFocus { to: *to, from: *from },
+            Command::Focus { window, focused } => Mark::Focus { window: *window, focused: *focused },
             Command::Lift { .. } => Mark::Lift { at_rest, landed },
             Command::Warm(windows) => Mark::Warm { windows: count(windows.len()) },
             Command::Refresh(windows) => Mark::Refresh { windows: count(windows.len()) },
@@ -748,6 +750,7 @@ mod tests {
             landing_until: Instant::now(),
             awaiting_until: Instant::now(),
             focus: Some((w(2), r(0.0, 0.0, 200.0, 200.0))),
+            losing_focus: Some((w(1), r(200.0, 0.0, 200.0, 200.0))),
             background: Vec::new(),
             background_initial: None,
             behind: vec![w(9)],
@@ -768,7 +771,7 @@ mod tests {
             (Command::Swap { generation: g, window: w(1) }, "swap"),
             (Command::Snap { window: w(1), frame: snap }, "snap"),
             (Command::KeepFocusedLook { generation: g, window: w(1) }, "keep_focused_look"),
-            (Command::HandOverFocus { to: w(2), from: Some(w(1)) }, "hand_over_focus"),
+            (Command::Focus { window: w(1), focused: false }, "focus"),
             (Command::Lift { generation: g }, "lift"),
             (Command::Warm(frames.clone()), "warm"),
             (Command::Refresh(frames), "refresh"),
@@ -780,7 +783,7 @@ mod tests {
         }
         assert_eq!(
             Journal::mark(&Command::Watch(watch), (false, false)),
-            Mark::Watch { landing: 1, awaiting: 0, background: 0, focus: Some(w(2)) }
+            Mark::Watch { landing: 1, awaiting: 0, background: 0, focus: Some(w(2)), losing_focus: Some(w(1)) }
         );
         assert_eq!(Journal::mark(&Command::Lift { generation: g }, (true, false)), Mark::Lift { at_rest: true, landed: false });
     }
@@ -1022,8 +1025,8 @@ mod tests {
             r#"{"t":81234567895123,"g":42,"mark":"press","what":"focus_window"}"#
         );
         assert_eq!(
-            line(&anchor, &stamped(Mark::HandOverFocus { to: w(2), from: None })),
-            r#"{"t":81234567895123,"g":42,"mark":"hand_over_focus","to":[1,2],"from":null}"#
+            line(&anchor, &stamped(Mark::Focus { window: w(2), focused: true })),
+            r#"{"t":81234567895123,"g":42,"mark":"focus","window":[1,2],"focused":true}"#
         );
         assert_eq!(
             line(&anchor, &stamped(Mark::Merge {
@@ -1418,7 +1421,8 @@ mod tests {
 
     /// Two bursts as the journal writes them, the handover measured, which
     /// `tools/focuslab/test_journal.py` reads, and the numbers it must find there. A pan with focus
-    /// handed over by the target's focused picture, its lift measured; then one whose frame zero comes
+    /// handed over by the target's focused picture, swapped in 15ms after it came as the window losing
+    /// focus showed no turn of its own, its lift measured; then one whose frame zero comes
     /// after the patience, a second press merged into it, a stale delivery, a window lost and an
     /// overdue lift, which hid unmeasured. The renderer's commits of each show and each hide are
     /// marked, and of the first press's composed flight before its show.
@@ -1444,6 +1448,7 @@ mod tests {
         script.offer(95_000, g, Why::Landed, 93_100, &[(w(2), target, 88_400)]);
         script.offer(112_000, g, Why::Landed, 110_200, &[(w(1), left, 104_000)]);
         script.offer(141_000, g, Why::FocusChanged, 139_000, &[(w(2), target, 131_500)]);
+        script.drive(156_100, Event::Tick { settled: false, landed: false });
         script.offer(160_000, g, Why::Background, 158_400, &[(w(9), floating, 152_000)]);
         script.drive(273_600, Event::Tick { settled: false, landed: false });
         script.offer(312_000, g, Why::Final, 309_500, &[(w(1), left, 280_200)]);
