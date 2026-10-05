@@ -211,8 +211,8 @@ what `restack` computes for `tile.depth` and what the reactor's regroup
 (`regroup_tiled`, "Real order" in `capture-overlay-research.md`) puts on the
 real screen at lift. Core Animation sorts `zPosition` among siblings only,
 so a floating tile can never land between two strip tiles whatever its own
-depth: that is the structural fix for the 50/50 interleave (the 1.1 case in
-`.kiro/specs/exit-entrance-animation-regressions`). Within a band the
+depth: that is the structural fix for a floating tile drawn between two strip
+tiles. Within a band the
 window server's order is kept; a window the server did not report goes to
 the back of its own band. An entrance carries `server_order: Some(0)`
 because a window is raised on open.

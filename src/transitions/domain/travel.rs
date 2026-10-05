@@ -349,8 +349,8 @@ mod tests {
         assert!(is_moving(frame, widened));
     }
 
-    /// Change 5 of `.kiro/specs/exit-entrance-animation-regressions`: the park remap is decided
-    /// from both the server's frame and the request's, before the synthetic-start test.
+    /// The park remap is decided from both the server's frame and the request's, before the
+    /// synthetic-start test.
     mod park_remap {
         use super::*;
 

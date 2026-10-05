@@ -87,7 +87,7 @@ mod tests {
         order.iter().map(|(w, _)| *w).collect()
     }
 
-    /// T5 (1.3) of `.kiro/specs/flight-render-stability/bugfix.md`. A strip switch interleaves
+    /// A strip switch interleaves
     /// the leaving window's park with the arriving windows' slots; each write is four serialized
     /// AX round trips, so a park nobody will see must not delay a slot everybody will. Asserts the
     /// fixed order; unfixed sends frames as given.
