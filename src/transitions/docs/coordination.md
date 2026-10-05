@@ -349,8 +349,8 @@ focus change or the final capture, pays that one off, since the cache holds it. 
 window losing focus that ends clipped or parked and a target whose change no capture saw, is asked for
 at the quiet after the warm; a press inside the quiet carries it to its own. The pictures service
 decides how each is pictured (`Pictures::refresh`): a window the window server has wholly on the
-display through SkyLight, its blur baked in, captured until its title band differs from its first
-capture's; any other through ScreenCaptureKit at background priority, whose capture the cache refuses for a
+display through SkyLight, its blur baked in, both ends in one round until each one's title band has
+settled, and put once; any other through ScreenCaptureKit at background priority, whose capture the cache refuses for a
 window with a material ("The schedule" and "Known debt" in `src/pictures/docs/README.md`). Neither starts through a
 hold, and a refresh holds every one already being captured until its own first look: a click whose
 report reaches the engine just before the request for the flight it starts would otherwise have put

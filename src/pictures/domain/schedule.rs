@@ -121,8 +121,9 @@ pub enum Next<P, O> {
     /// Read these windows' server frames, capture those where they are wanted through SkyLight, set by
     /// set, and say what was seen (`Schedule::seen`).
     Sky(Vec<Set>),
-    /// The same for a refresh at rest, whose calls stop short once a transition is asked: what is not
-    /// called is left out of what is seen.
+    /// The same for a refresh at rest, every window due in the one set, and say what was seen
+    /// (`Schedule::refreshed`). Its calls stop short once a transition is asked: what is not called
+    /// is left out of what is seen.
     Refresh(Set),
     /// Find these windows in one ScreenCaptureKit listing, and prepare a capture of each.
     List(Vec<PictureTarget>),
@@ -144,11 +145,11 @@ pub enum Next<P, O> {
 }
 
 /// Every capture owed and under way, and the holds over them. `P` and `O` are the platform's, as in
-/// [`Next`].
-pub struct Schedule<P, O> {
+/// [`Next`]; `C` a capture a refresh holds until its window's look settles.
+pub struct Schedule<P, O, C> {
     hold: Hold,
     watches: Watches,
-    refreshes: Refreshes,
+    refreshes: Refreshes<C>,
     jobs: Vec<Job<P>>,
     asked: u64,
     display: Option<Display>,
@@ -208,7 +209,7 @@ struct Desktop {
     taken: Option<Instant>,
 }
 
-impl<P, O> Default for Schedule<P, O> {
+impl<P, O, C> Default for Schedule<P, O, C> {
     fn default() -> Self {
         Self {
             hold: Hold::Released,
@@ -225,7 +226,7 @@ impl<P, O> Default for Schedule<P, O> {
     }
 }
 
-impl<P, O> Schedule<P, O> {
+impl<P, O, C> Schedule<P, O, C> {
     /// Owes each target a capture at `ask.priority`. A window already owed one is not asked twice: it
     /// keeps the more urgent priority, and the latest size while it still waits. One listed at another
     /// size is listed again: what the listing prepared is a buffer of the size it found.
@@ -332,26 +333,35 @@ impl<P, O> Schedule<P, O> {
 
     pub fn hint(&mut self, hint: Hint, now: Instant) { self.watches.hint(hint, now) }
 
-    /// What the window server and the captures said of the windows `Next::Sky` or `Next::Refresh`
-    /// named. A window a changing watch found cut by the display's edge is owed one ScreenCaptureKit
-    /// capture, which starts through any hold; one a refresh cannot capture through SkyLight, one at
-    /// background priority.
+    /// What the window server and the captures said of the windows `Next::Sky` named. A window a
+    /// changing watch found cut by the display's edge is owed one ScreenCaptureKit capture, which
+    /// starts through any hold.
     pub fn seen(&mut self, now: Instant, seen: &[Seen]) -> Outcome {
         let display = self.display.map(|display| display.frame);
         let mut outcome = self.watches.seen(now, seen, display);
         for (tag, target, frame) in std::mem::take(&mut outcome.clipped) {
             self.ask_clipped(tag, target, frame, now);
         }
-        if let Some(target) = self.refreshes.seen(now, seen, display) {
+        outcome
+    }
+
+    /// What the window server and the captures said of the windows `Next::Refresh` named, with the
+    /// capture of each the cache would take: the capture each window whose look settled is pictured
+    /// with, once (see [`Refreshes::seen`]). One a refresh cannot capture through SkyLight is owed a
+    /// ScreenCaptureKit capture at background priority.
+    pub fn refreshed(&mut self, now: Instant, seen: &[Seen], captures: Vec<(WindowId, C)>) -> Vec<(WindowId, C)> {
+        let display = self.display.map(|display| display.frame);
+        let refreshed = self.refreshes.seen(now, seen, captures, display);
+        if !refreshed.elsewhere.is_empty() {
             self.ask(
                 Ask {
                     priority: Priority::Background,
-                    targets: vec![target],
+                    targets: refreshed.elsewhere,
                 },
                 now,
             );
         }
-        outcome
+        refreshed.settled
     }
 
     /// One capture of `target` for `tag`'s focus change. A capture already out began before the focus,
@@ -637,7 +647,7 @@ mod tests {
     }
 
     /// Lists and prepares everything that may start, then hands out the captures one by one.
-    fn captures(schedule: &mut Schedule<(), ()>, now: Instant) -> Vec<WindowId> {
+    fn captures(schedule: &mut Schedule<(), (), ()>, now: Instant) -> Vec<WindowId> {
         let mut started = Vec::new();
         loop {
             match schedule.next(now, nothing_held) {
@@ -659,7 +669,7 @@ mod tests {
     fn held_work_waits_and_only_a_focus_capture_starts_through_a_hold() {
         for hold in [Hold::Transition, Hold::Settling] {
             let now = Instant::now();
-            let mut schedule = Schedule::<(), ()>::default();
+            let mut schedule = Schedule::<(), (), ()>::default();
             schedule.hold(hold, now);
             schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
             schedule.ask(ask(Priority::Background, &[2]), settled_by(now));
@@ -679,7 +689,7 @@ mod tests {
         for hold in [Hold::Released, Hold::Transition, Hold::Settling] {
             for priority in PRIORITIES {
                 let now = Instant::now();
-                let mut schedule = Schedule::<(), ()>::default();
+                let mut schedule = Schedule::<(), (), ()>::default();
                 schedule.hold(hold, now);
                 schedule.ask(ask(priority, &[1]), settled_by(now));
                 let starts = !captures(&mut schedule, now).is_empty();
@@ -697,7 +707,7 @@ mod tests {
     #[test]
     fn a_warm_asked_just_before_its_flight_holds_waits_out_the_flight() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1]), now);
         assert!(matches!(
             schedule.next(now, nothing_held),
@@ -716,7 +726,7 @@ mod tests {
     #[test]
     fn a_focus_capture_is_listed_at_once() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Focus, &[1]), now);
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
     }
@@ -726,7 +736,7 @@ mod tests {
     #[test]
     fn a_capture_listed_before_the_transition_waits_for_its_release() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2, 3, 4, 5, 6]), settled_by(now));
         let Next::List(targets) = schedule.next(now, nothing_held) else { panic!("a listing") };
         for target in targets {
@@ -744,7 +754,7 @@ mod tests {
     #[test]
     fn a_capture_listed_before_a_hold_is_listed_again_at_the_release() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
         schedule.listed(wid(1), Some(()));
@@ -766,7 +776,7 @@ mod tests {
     #[test]
     fn a_listing_that_returns_into_a_hold_is_listed_again_at_the_release() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         let _ = schedule.next(now, nothing_held);
         schedule.hold(Hold::Transition, now);
@@ -781,7 +791,7 @@ mod tests {
     #[test]
     fn a_listed_window_asked_for_at_another_size_is_listed_again() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2]), settled_by(now));
         let _ = schedule.next(now, nothing_held);
         schedule.listed(wid(1), Some(()));
@@ -806,13 +816,13 @@ mod tests {
     #[test]
     fn a_held_warm_asked_again_at_focus_starts_through_the_hold() {
         let now = Instant::now();
-        let mut waiting = Schedule::<(), ()>::default();
+        let mut waiting = Schedule::<(), (), ()>::default();
         waiting.ask(ask(Priority::Warm, &[1]), settled_by(now));
         waiting.hold(Hold::Transition, now);
         waiting.ask(ask(Priority::Focus, &[1]), now);
         assert_eq!(captures(&mut waiting, now), vec![wid(1)], "waiting");
 
-        let mut listed = Schedule::<(), ()>::default();
+        let mut listed = Schedule::<(), (), ()>::default();
         listed.ask(ask(Priority::Warm, &[1]), settled_by(now));
         let _ = listed.next(now, nothing_held);
         listed.listed(wid(1), Some(()));
@@ -825,7 +835,7 @@ mod tests {
     #[test]
     fn a_forgotten_window_asked_for_again_keeps_its_capture() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
         schedule.forget(wid(1));
@@ -838,7 +848,7 @@ mod tests {
     #[test]
     fn a_window_asked_for_twice_while_it_waits_is_captured_once_at_the_latest_size() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.hold(Hold::Transition, now);
         schedule.ask(Ask {
             priority: Priority::Warm,
@@ -876,7 +886,7 @@ mod tests {
         let later = now + Duration::from_secs(3);
         assert!(wants_warm(Some(fits), ScreenSize::new(859.0, 1081.0), later), "stale");
 
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2]), settled_by(now));
         let held = |window: WindowId| (window == wid(1)).then_some(fits);
         assert_eq!(listed_windows(schedule.next(now, held)), vec![wid(2)]);
@@ -896,7 +906,7 @@ mod tests {
             taken: now,
         };
         for priority in [Priority::Focus, Priority::Background] {
-            let mut schedule = Schedule::<(), ()>::default();
+            let mut schedule = Schedule::<(), (), ()>::default();
             schedule.ask(ask(priority, &[1]), settled_by(now));
             assert_eq!(listed_windows(schedule.next(now, |_| Some(fits))), vec![wid(1)]);
         }
@@ -905,7 +915,7 @@ mod tests {
     #[test]
     fn a_window_being_captured_is_not_captured_again() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
         schedule.ask(ask(Priority::Focus, &[1]), settled_by(now));
@@ -918,7 +928,7 @@ mod tests {
     #[test]
     fn at_most_four_captures_are_out_at_once() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2, 3, 4, 5, 6]), settled_by(now));
         assert_eq!(captures(&mut schedule, now), vec![wid(1), wid(2), wid(3), wid(4)]);
         assert!(schedule.captured(wid(2)).is_some());
@@ -930,7 +940,7 @@ mod tests {
     #[test]
     fn everything_that_may_start_is_listed_together() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2, 3, 4, 5, 6]), settled_by(now));
         assert_eq!(listed_windows(schedule.next(now, nothing_held)).len(), 6);
     }
@@ -939,7 +949,7 @@ mod tests {
     #[test]
     fn a_focus_capture_is_never_queued_behind_warms() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2, 3, 4, 5, 6]), settled_by(now));
         assert_eq!(captures(&mut schedule, now).len(), MAX_CONCURRENT);
         schedule.ask(ask(Priority::Focus, &[7]), settled_by(now));
@@ -950,7 +960,7 @@ mod tests {
     #[test]
     fn a_window_the_listing_did_not_find_can_be_asked_for_again() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         let _ = schedule.next(now, nothing_held);
         schedule.listed(wid(1), None);
@@ -963,7 +973,7 @@ mod tests {
     #[test]
     fn a_forgotten_window_is_captured_no_further() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.hold(Hold::Transition, now);
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         schedule.forget(wid(1));
@@ -991,7 +1001,7 @@ mod tests {
     #[test]
     fn a_display_change_keeps_the_window_captures_out() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
@@ -1012,7 +1022,7 @@ mod tests {
     #[test]
     fn a_display_change_renders_the_new_displays_desktop_after_the_old_one_is_refused() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         assert!(matches!(schedule.next(now, nothing_held), Next::Desktop(d) if d == built_in()));
         schedule.set_display(external(), false, now);
@@ -1031,7 +1041,7 @@ mod tests {
     #[test]
     fn the_desktop_is_rendered_again_at_release_only_when_missing_or_stale() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.hold(Hold::Transition, now);
         schedule.set_display(built_in(), false, now);
         assert!(matches!(schedule.next(now, nothing_held), Next::Idle), "held");
@@ -1059,7 +1069,7 @@ mod tests {
     #[test]
     fn the_bar_is_pictured_after_the_overlay_lifts_and_never_while_it_is_up() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), true, now);
         assert!(matches!(schedule.next(now, nothing_held), Next::Desktop(_)));
         assert!(matches!(
@@ -1113,7 +1123,7 @@ mod tests {
     #[test]
     fn skylight_work_a_transition_waits_on_goes_before_any_screencapturekit_call() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
         schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now, &no_print);
@@ -1132,7 +1142,7 @@ mod tests {
             Next::Sky(sets) => sets.iter().flat_map(|set| &set.looks).map(|look| look.target.window).collect(),
             _ => Vec::new(),
         };
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.watch(WatchId(1), landing(1, end(), until), now, &no_print);
         schedule.retarget(WatchId(1), landing(2, end(), until), now, &no_print);
         schedule.retarget(WatchId(2), landing(3, end(), until), now, &no_print);
@@ -1147,7 +1157,7 @@ mod tests {
     #[test]
     fn a_lost_window_is_reported_first_and_the_schedule_wakes_for_its_watches() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now, &no_print);
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
         let _ = schedule.seen(now, &[]);
@@ -1168,7 +1178,7 @@ mod tests {
     fn a_clipped_focus_end_takes_one_capture_through_the_hold() {
         use crate::pictures::domain::watch::{CHANGE_EVERY, CHANGE_TRIES, Capture, Hint, Seen};
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         let _ = schedule.next(now, nothing_held);
         let _ = schedule.desktop_rendered(built_in(), Some(now));
@@ -1207,7 +1217,7 @@ mod tests {
     #[test]
     fn a_clipped_focus_end_is_captured_after_a_capture_already_out() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Focus, &[1]), now);
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
         schedule.ask_clipped(tag(), target(1, 859.0), end(), now);
@@ -1251,7 +1261,7 @@ mod tests {
     #[test]
     fn a_hold_cancels_a_refresh_and_the_release_asks_again_ahead_of_screencapturekit() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Background, &[2]), settled_by(now));
         schedule.refresh(vec![target(1, 859.0)], now);
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(2)], "the refresh settles");
@@ -1290,13 +1300,14 @@ mod tests {
         assert!(matches!(schedule.next(release, pictured), Next::WaitUntil(at) if at == due));
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(2), wid(4), wid(1)], "the flight pictured 3");
         assert_eq!(refreshed(schedule.next(due, pictured)), vec![wid(1)]);
-        let _ = schedule.seen(due, &[seen(1, end(), band(1))]);
+        assert!(schedule.refreshed(due, &[seen(1, end(), band(1))], vec![(wid(1), ())]).is_empty());
         assert_eq!(listed_windows(schedule.next(due, pictured)), vec![wid(4)]);
     }
 
-    /// A refreshed window the window server does not have wholly on the display is owed one
-    /// ScreenCaptureKit capture at background priority, whatever is held, since its turned look keeps
-    /// its size; until done, a refreshed window is owed, and a forgotten one is not.
+    /// Both windows of a refresh are looked at in one round. One the window server does not have
+    /// wholly on the display is owed one ScreenCaptureKit capture at background priority, whatever is
+    /// held, since its turned look keeps its size; until done, a refreshed window is owed, its capture
+    /// held rather than put, and a forgotten one is not.
     #[test]
     fn a_refreshed_window_off_the_display_is_owed_one_capture_at_background_priority() {
         use crate::pictures::domain::watch::Capture;
@@ -1308,18 +1319,16 @@ mod tests {
             },
             taken: now,
         };
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         let _ = schedule.next(now, nothing_held);
         let _ = schedule.desktop_rendered(built_in(), Some(now));
         schedule.refresh(vec![target(1, 859.0), target(2, 859.0)], settled_by(now));
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1), wid(2)]);
-        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(1)]);
+        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(1), wid(2)], "one round");
         let parked = rect(1727.0, 32.0, 859.0, 1081.0);
-        let outcome = schedule.seen(now, &[seen(1, parked, Capture::Missed)]);
-        assert_eq!(outcome, Outcome::default(), "nothing is delivered of a refresh");
-        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(2)], "before the listing");
-        let _ = schedule.seen(now, &[seen(2, end(), band(1))]);
+        let seen = [seen(1, parked, Capture::Missed), seen(2, end(), band(1))];
+        assert!(schedule.refreshed(now, &seen, vec![(wid(2), ())]).is_empty(), "a first capture is held");
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1), wid(2)], "window 2 is looked at again");
         schedule.forget(wid(2));
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1)], "owed ScreenCaptureKit's capture");
@@ -1331,7 +1340,7 @@ mod tests {
     #[test]
     fn no_bar_is_pictured_while_rini_draws_its_own() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         assert!(!schedule.picture_bar(), "a transition before the first display is dressed with none");
         schedule.set_display(built_in(), false, now);
         assert!(!schedule.picture_bar());
@@ -1358,7 +1367,7 @@ mod tests {
     #[test]
     fn a_handover_check_takes_the_overlay_ahead_of_queued_work() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), ()>::default();
+        let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.hold(Hold::Settling, now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
@@ -1376,7 +1385,7 @@ mod tests {
     #[test]
     fn the_screen_is_not_due_before_after_lift() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), u8>::default();
+        let mut schedule = Schedule::<(), u8, ()>::default();
         schedule.check_handover(check());
         assert!(matches!(schedule.next(now, nothing_held), Next::Overlay(_)));
         let taken = now + Duration::from_millis(30);
@@ -1398,7 +1407,7 @@ mod tests {
     #[test]
     fn a_transition_beginning_drops_the_handover_check() {
         let now = Instant::now();
-        let mut schedule = Schedule::<(), Rc<()>>::default();
+        let mut schedule = Schedule::<(), Rc<()>, ()>::default();
         schedule.check_handover(check());
         schedule.hold(Hold::Transition, now);
         assert!(matches!(schedule.next(now, nothing_held), Next::Idle), "before");

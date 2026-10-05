@@ -333,11 +333,15 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   alters a window's look and never its size, and a picture that still fits was never taken again for
   its own sake, so a window kept the look it had until it was resized, and its tile turned at the lift.
 - Pictured again at rest, a window wholly on the overlay's display MUST be pictured with its blur and
-  with its look turned. A capture of the window alone has no blur, and a picture with its blur is never
-  replaced by one without, so a window with a material kept its old look until a flight next pictured
-  it on screen; a capture made as the change is reported shows the look from before the app repaints;
-  and the picture held from before can differ in its title band for reasons other than focus, so the
-  turn is judged only from captures taken after the change.
+  with its look turned. Both windows of one change MUST be looked at together, and each MUST be
+  pictured once, with the look it settled on. A capture of the window alone has no blur, and a picture
+  with its blur is never replaced by one without, so a window with a material kept its old look until a
+  flight next pictured it on screen; a capture made as the change is reported shows the look from
+  before the app repaints; the picture held from before can differ in its title band for reasons
+  other than focus, so the turn is judged only from captures taken after the change; and a look has
+  settled once two captures in a row, the later taken 70ms or more after the change, show the same
+  title band, past the 68ms (p90) the app takes to repaint. Looked at one window at a time, a click
+  took twice the rounds, and every capture went to the cache and to every client as news.
 - A capture at rest MUST NOT start from a press to the quiet after the lift, as no ScreenCaptureKit
   capture does: SkyLight serves one call at a time, and one already out delays the one the overlay
   waits for. A press MUST cancel the polling of a window being pictured again at rest, and the quiet
@@ -366,6 +370,16 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > had left, judged from a capture taken before the flight moved the window, and the two calls of a
 > window never pictured before ran back to back, so two could be ahead of a frame zero. A press now
 > cancels the polling, only the call already out finishing, and the quiet asks again.
+
+> **Reported 2026-10-05.** "why are you capturing each old/new window independently? seems like a
+> waste, could capture both at the same time as a group call, no? stop polling when both re-rendered."
+> Each round looked at one window, so a click's two ends took twice the rounds. Both are now captured
+> in one round, each dropping out once its look has settled, and the polling stops when both have.
+
+> **Reported 2026-10-05.** "about focus refresh. are you pushing new images on every scan or only once
+> when they change?" Every capture of a refresh went to the cache and to every client, identical or
+> not, and a window whose first look already showed the turn was captured all six times. A window is
+> now pictured once, with the look it settled on.
 
 > **Reported 2026-10-03.** "fcache doesn't bother me … windows arrive in focus every single time". The
 > prototype flew a focus target parked off the display with its last focused picture, which can be

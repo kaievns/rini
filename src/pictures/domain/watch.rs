@@ -236,9 +236,9 @@ pub struct Seen {
 pub enum Capture {
     /// No picture: the window was not where it was wanted, or the call brought none back.
     Missed,
-    /// A picture the cache refused for the one it holds.
+    /// A picture the cache refused for the one it holds, or in a refresh's round would refuse.
     Refused,
-    /// A picture the cache took, with its prints.
+    /// A picture the cache took, or in a refresh's round would take, with its prints.
     Taken(Prints),
 }
 
