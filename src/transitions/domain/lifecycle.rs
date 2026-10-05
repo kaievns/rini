@@ -378,8 +378,9 @@ struct Flight {
     frame_zero_owed: usize,
     /// The focus target is drawn focused: focus has handed over.
     focus_in: bool,
-    /// The window focus leaves, drawn unfocused: with its own turned picture, or just before the
-    /// target's.
+    /// The window this flight drew unfocused, until it is drawn focused again: the one focus leaves,
+    /// with its own turned picture or just before the target's. A press moving focus back to it finds
+    /// it drawn unfocused, so focus moves to it as to any other window.
     unfocused: Option<WindowId>,
     /// The focus target's changed picture, not swapped while the window losing focus is watched to
     /// turn first: under its generation, at its frame, since when. Swapped at that turn, or
@@ -425,6 +426,9 @@ impl Flight {
     fn hand_over(&mut self, to: WindowId, out: &mut Vec<Command>) {
         self.focus_in = true;
         self.unfocus_losing(out);
+        if self.unfocused == Some(to) {
+            self.unfocused = None;
+        }
         if let Some((generation, frame)) = self.held_back.take()
             && self.takes(generation, to, frame)
         {
@@ -443,19 +447,27 @@ impl Flight {
         }
     }
 
-    /// The target's changed picture held for the window losing focus, swapped in, kept as its
-    /// focused look if it still fits, and focus handed over.
+    /// The target's changed picture held for the window losing focus, swapped in and kept as its
+    /// focused look, and focus handed over, if it still fits. One that no longer does is dropped: its
+    /// ring turns with the next picture of it that fits, or at the last capture's ask.
     fn swap_held_change(&mut self, out: &mut Vec<Command>) {
         let (Some((generation, frame, _)), Some(to)) = (self.held_change.take(), self.stage.focus) else {
             return;
         };
-        self.unfocus_losing(out);
-        if self.takes(generation, to, frame) {
-            out.push(Command::Swap { generation, window: to });
-            out.push(Command::KeepFocusedLook { generation, window: to });
+        if !self.takes(generation, to, frame) {
+            return;
         }
+        self.unfocus_losing(out);
+        out.push(Command::Swap { generation, window: to });
+        out.push(Command::KeepFocusedLook { generation, window: to });
         self.held_back = None;
         self.hand_over(to, out);
+    }
+
+    /// Whether focus moves in this flight: away from a window drawn focused, or back to one drawn
+    /// unfocused.
+    fn focus_moving(&self) -> bool {
+        self.stage.losing_focus.is_some() || self.unfocused.is_some() && self.unfocused == self.stage.focus
     }
 
     /// The windows watched until they repaint, and the end windows watched only until they are there.
@@ -824,7 +836,7 @@ impl Coordinator {
                     // watched it: it is reported focused, and turning at the lift is the flicker.
                     f.swap_held_change(out);
                     if !f.focus_in
-                        && f.stage.losing_focus.is_some()
+                        && f.focus_moving()
                         && let Some(to) = f.stage.focus.filter(|w| f.stage.tile(*w).is_some())
                     {
                         f.hand_over(to, out);
@@ -943,7 +955,7 @@ fn end_watch(f: &Flight, now: Instant) -> EndWatch {
 /// The focus target and its end, while a focus report is coming and its focused look is not in. A
 /// watch armed by a report that never comes would hold the background back for the whole flight.
 fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
-    let window = f.stage.focus.filter(|w| f.stage.losing_focus.is_some() && !f.focus_in && !f.awaiting.contains(w))?;
+    let window = f.stage.focus.filter(|w| f.focus_moving() && !f.focus_in && !f.awaiting.contains(w))?;
     let end = f.stage.tile(window)?.end;
     (!is_off_screen(f.stage.display, end)).then_some((window, end))
 }
@@ -1540,6 +1552,105 @@ mod tests {
         assert!(matches!(out[0], Command::AskFinal { .. }), "{out:?}");
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "swapped as the last capture is asked");
         assert_eq!(focus(&out), handed_over());
+    }
+
+    /// A rapid switch, 1 to 2 and back before 2 turns: window 1, drawn unfocused with its own
+    /// picture, is the target again, watched and handed focus with its focused picture. On to 3
+    /// before then, it stays drawn unfocused and is not turned again; on to 3 after, it turns again.
+    #[test]
+    fn focus_moved_back_to_a_window_already_turned_unfocused_turns_it_again_only_with_its_picture() {
+        let now = Instant::now();
+        let old = pan().tiles[0].end;
+        let third = r(3.0, 35.0, 860.0, 1079.0);
+        let back = StageSummary { focus: Some(w(1)), losing_focus: None, ..pan() };
+        let on = || {
+            let mut stage = StageSummary { focus: Some(w(3)), losing_focus: Some(w(1)), ..pan() };
+            stage.tiles.push(tile(w(3), r(-1723.0, 35.0, 860.0, 1079.0), third));
+            stage.final_frames.push((w(3), third));
+            stage
+        };
+        let turned_and_back = || {
+            let mut c = running(pan(), now);
+            let g = c.generation();
+            let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now);
+            assert_eq!(focus(&out), vec![(w(1), false)]);
+            let out = c.on(Event::Merge { stage: back.clone(), moved: false }, now + Duration::from_millis(10));
+            assert_eq!(focus(&out), Vec::new(), "drawn unfocused until its focused picture: {out:?}");
+            let watched = watch(&out).unwrap();
+            assert_eq!((watched.focus, watched.losing_focus), (Some((w(1), old)), None), "focus moves back to it");
+            c
+        };
+
+        let mut c = turned_and_back();
+        let out = c.on(Event::Merge { stage: on(), moved: false }, now + Duration::from_millis(20));
+        assert_eq!(watch(&out).unwrap().losing_focus, None, "already drawn unfocused");
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(3), frame: third, why: Why::FocusChanged }, now + Duration::from_millis(30));
+        assert_eq!(focus(&out), vec![(w(3), true)], "nothing waits for it, nothing turns it again");
+
+        let mut c = turned_and_back();
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now + Duration::from_millis(20));
+        assert_eq!(
+            turns(&out),
+            vec![
+                Command::Swap { generation: g, window: w(1) },
+                Command::KeepFocusedLook { generation: g, window: w(1) },
+                Command::Focus { window: w(1), focused: true },
+            ]
+        );
+        let out = c.on(Event::Merge { stage: on(), moved: false }, now + Duration::from_millis(30));
+        assert_eq!(watch(&out).unwrap().losing_focus, Some((w(1), old)), "drawn focused again, it turns again");
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(3), frame: third, why: Why::FocusChanged }, now + Duration::from_millis(40));
+        assert_eq!(focus(&out), Vec::new(), "waits for it");
+        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(40) + CHANGE_EVERY);
+        assert_eq!(focus(&out), vec![(w(1), false), (w(3), true)]);
+    }
+
+    /// The target's change held for the old window is of the target focus left: a press moving focus
+    /// on drops it, and the new target is not handed focus with it.
+    #[test]
+    fn a_held_change_is_dropped_when_a_press_moves_focus_on() {
+        let now = Instant::now();
+        let mut three = pan();
+        three.tiles.push(tile(w(3), r(-1723.0, 35.0, 860.0, 1079.0), pan().tiles[1].end));
+        let mut c = running(three.clone(), now);
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
+        c.on(Event::Merge { stage: StageSummary { focus: Some(w(3)), ..three }, moved: false }, now + Duration::from_millis(5));
+        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(5) + CHANGE_EVERY);
+        assert_eq!(turns(&out), Vec::new(), "{out:?}");
+        let out = c.on(Event::Picture { generation: c.generation(), window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now + Duration::from_millis(30));
+        assert_eq!(turns(&out), vec![Command::Swap { generation: c.generation(), window: w(1) }, Command::Focus { window: w(1), focused: false }]);
+    }
+
+    /// A held change no longer fitting its tile, a press resizing the target meanwhile, turns nothing:
+    /// its ring waits for a picture of it that fits.
+    #[test]
+    fn a_held_change_that_no_longer_fits_hands_nothing_over() {
+        let now = Instant::now();
+        let mut c = running(pan(), now);
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
+        let mut wider = pan();
+        wider.tiles[1].end.size.width = 1200.0;
+        wider.final_frames[1].1.size.width = 1200.0;
+        let end = wider.tiles[1].end;
+        c.on(Event::Merge { stage: wider, moved: true }, now + Duration::from_millis(5));
+        let out = c.on(Event::Tick { settled: false, landed: false }, now + CHANGE_EVERY);
+        assert_eq!(turns(&out), Vec::new(), "{out:?}");
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now + Duration::from_millis(20));
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now + Duration::from_millis(30));
+        assert_eq!(
+            turns(&out),
+            vec![
+                Command::Swap { generation: g, window: w(2) },
+                Command::KeepFocusedLook { generation: g, window: w(2) },
+                Command::Focus { window: w(2), focused: true },
+            ]
+        );
     }
 
     #[test]

@@ -281,8 +281,14 @@ the pass's slot (`retarget_entrances`).
 A tile the pass retargets keeps the picture it has and how focus is drawn on it: a pass is composed
 from the cache, and copied over it erased frame zero's picture, a picture the flight took or a parked
 target's focused look, before the overlay was up as much as after. A pass moving focus on redraws which
-tiles are drawn focused, the window focused as the flight began still among them until focus hands
-over, and a new target parked off the display flies its focused look, as the first pass's does.
+tiles are drawn focused, the window focus is drawn leaving kept as its own turn left it: focused until
+its changed picture turns it, unfocused after. A rapid switch back to it before the window it went to
+has turned finds it drawn unfocused, so focus moves to it as to any other window: watched, and drawn
+focused only with its focused picture. A switch on again before then does not turn it a second time.
+A target's changed picture held for the old window is dropped when focus moves on, and one that no
+longer fits its tile, a press having resized it, hands nothing over: its ring turns with the next
+picture of it that fits, or as the final capture is asked. A new target parked off the display flies
+its focused look, as the first pass's does.
 
 A pass merged once the overlay is up writes every final frame it changed, a parked window's included.
 Parked windows have no tile, so a tile-only check missed their moves and left them at the old park.

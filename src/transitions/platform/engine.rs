@@ -539,8 +539,8 @@ impl RunningAnimation {
 
     /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`. A
     /// pass moving focus redraws which tiles are drawn focused, but for the window focus is drawn
-    /// leaving, which stays as its own turn left it, and none flies a focused look until the engine
-    /// gives the new target its own.
+    /// leaving, which stays as its own turn left it, focus moving back to it or on, and none flies a
+    /// focused look until the engine gives the new target its own.
     fn merge_pass(
         &mut self,
         tiles: Vec<OverlayTile>,
@@ -559,7 +559,8 @@ impl RunningAnimation {
             .collect();
         if focus_moved {
             let losing = losing_focus(self.focus, self.shown_focus);
-            for tile in self.tiles.iter_mut().filter(|t| t.companion.is_none() && Some(t.window) != losing) {
+            let shown = self.shown_focus;
+            for tile in self.tiles.iter_mut().filter(|t| t.companion.is_none() && Some(t.window) != shown) {
                 tile.focused = drawn_focused(tile.window, self.focus, losing);
             }
             self.focused_look = None;
@@ -2894,7 +2895,8 @@ mod tests {
 
         /// A pass moving focus on: the window focused as the flight began is still drawn as its own
         /// turn left it, focused until then, the target before it no longer is, and nothing flies a
-        /// focused look until the new target is given its own.
+        /// focused look until the new target is given its own. Focus moving back to it, or on again,
+        /// leaves it as its turn left it.
         #[test]
         fn a_pass_moving_focus_on_redraws_which_tiles_are_drawn_focused() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
@@ -2917,6 +2919,10 @@ mod tests {
             running.draw_focused(wid(1), false);
             running.merge_pass(vec![stacked(wid(4), park, slot, Some(3), false)], Some(wid(4)));
             assert_eq!(focused(&running)[0], (wid(1), false), "turned unfocused with its own picture, it stays so");
+            running.merge_pass(vec![stacked(wid(1), slot, slot, Some(0), false)], Some(wid(1)));
+            assert_eq!(focused(&running)[0], (wid(1), false), "focus back on it before its focused picture");
+            running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
+            assert_eq!(focused(&running)[0], (wid(1), false), "and on again");
         }
 
         #[test]

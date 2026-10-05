@@ -313,6 +313,12 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on
   screen (below). SkyLight returns only its visible part, and the one ScreenCaptureKit capture below is
   the window gaining focus's.
+- A press moving focus back to a window already drawn unfocused, before the window it went to has
+  turned, MUST leave it drawn unfocused, ring and shadow with it, until its focused picture comes in,
+  and MUST then turn it focused as any window gaining focus. A press moving focus on before then MUST
+  NOT turn it again. A turned picture waiting for the old window's MUST be dropped when a press moves
+  focus on, and one that no longer fits its tile MUST turn nothing: drawn focused over the picture
+  from before, a ring disagrees with its window.
 - A focus report that arrives before the flight watches for it MUST still count, and so MUST one that
   arrives before the request it causes, as a click's or an app activation's does: the window focused
   before it is the one the flight begins drawn focused.
