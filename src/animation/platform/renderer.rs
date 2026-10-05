@@ -101,8 +101,18 @@ fn answer(
 }
 
 /// Core Animation's media clock against `Instant`, read now: what the engine begins every track on.
+/// The tightest of a few reads is kept, so a thread preempted between the two clocks does not skew it.
 pub fn media_clock() -> MediaClock {
-    MediaClock::anchored(Instant::now(), objc2_quartz_core::CACurrentMediaTime())
+    (0..4)
+        .map(|_| {
+            let before = Instant::now();
+            let media = objc2_quartz_core::CACurrentMediaTime();
+            let after = Instant::now();
+            (after - before, MediaClock::anchored(before + (after - before) / 2, media))
+        })
+        .min_by_key(|(spread, _)| *spread)
+        .map(|(_, clock)| clock)
+        .expect("four reads")
 }
 
 pub struct Renderer {
@@ -312,7 +322,10 @@ mod tests {
     #[test]
     fn the_media_clock_reads_what_core_animation_does() {
         let clock = media_clock();
-        let (at, media) = (clock.at(Instant::now()), objc2_quartz_core::CACurrentMediaTime());
-        assert!((at - media).abs() < 0.000_1, "{at} against {media}");
+        let before = Instant::now();
+        let media = objc2_quartz_core::CACurrentMediaTime();
+        let after = Instant::now();
+        let (from, to) = (clock.at(before), clock.at(after));
+        assert!(from - 0.000_1 <= media && media <= to + 0.000_1, "{media} outside {from}..{to}");
     }
 }
