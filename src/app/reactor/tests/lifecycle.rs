@@ -43,10 +43,10 @@ fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
     );
 }
 
-/// The engine writes nothing until it hears, so the reactor tells it as it is connected: the journal is
-/// written from the first transition, with no config reload.
+/// The engine writes nothing until it hears, so the reactor tells it as it is connected: the setting
+/// reaches the engine from the first transition, with no config reload.
 #[test]
-fn the_transitions_engine_is_told_to_write_its_journal_as_it_is_connected() {
+fn the_transitions_engine_is_told_whether_to_write_its_journal_as_it_is_connected() {
     let mut reactor = test_reactor();
     let (transitions_tx, mut transitions_rx) = channels::channel();
     reactor.connect_transitions(Some(transitions_tx));
@@ -58,7 +58,7 @@ fn the_transitions_engine_is_told_to_write_its_journal_as_it_is_connected() {
         }
     }
     assert_eq!(told, [reactor.config.settings.journal]);
-    assert!(told[0].write, "written by default");
+    assert!(!told[0].write, "not written by default");
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn a_config_reload_tells_the_transitions_engine_whether_to_write_its_journal() {
     reactor.communication_manager.transitions_tx = Some(transitions_tx);
 
     let mut updated = reactor.config.clone();
-    updated.settings.journal.write = false;
+    updated.settings.journal.write = true;
     reactor.handle_event(Event::ConfigUpdated(updated));
 
     let mut told = Vec::new();
@@ -77,7 +77,7 @@ fn a_config_reload_tells_the_transitions_engine_whether_to_write_its_journal() {
             told.push(settings.write);
         }
     }
-    assert_eq!(told, [false]);
+    assert_eq!(told, [true]);
 }
 
 #[test]

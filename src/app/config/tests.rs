@@ -313,13 +313,18 @@ fn animations_map_onto_animate_and_the_movement_length() {
 }
 
 #[test]
-fn the_journal_is_written_unless_turned_off() {
-    assert!(parse("").settings.journal.write, "absent");
-    assert!(parse("animations {\n    journal {\n    }\n}\n").settings.journal.write);
-    assert!(!parse("animations {\n    journal {\n        off\n    }\n}\n").settings.journal.write);
-    assert!(parse("animations {\n    journal {\n        off false\n    }\n}\n").settings.journal.write);
+fn the_journal_is_written_only_when_asked() {
+    let written = |text: &str| parse(text).settings.journal.write;
+    assert!(!written(""), "absent");
+    assert!(!written("animations {\n}\n"), "no node");
+    assert!(written("animations {\n    journal\n}\n"));
+    assert!(written("animations {\n    journal true\n}\n"));
+    assert!(written("animations {\n    journal {\n    }\n}\n"));
+    assert!(!written("animations {\n    journal false\n}\n"));
+    assert!(refused("animations {\n    jurnal\n}\n").contains("did you mean `journal`?"));
     assert!(
-        refused("animations {\n    journal {\n        of\n    }\n}\n").contains("did you mean `off`?")
+        refused("animations {\n    journal {\n        off\n    }\n}\n")
+            .contains("unknown node `off` in `animations › journal`")
     );
 }
 
@@ -331,8 +336,8 @@ fn the_handover_is_measured_only_when_asked_and_never_off() {
     let measured = journal("        measure-handover\n");
     assert!(measured.write && measured.measure_handover);
     assert!(!journal("        measure-handover false\n").measure_handover);
-    let off = journal("        off\n        measure-handover\n");
-    assert!(!off.write && !off.measure_handover, "off turns both off");
+    let off = parse("animations {\n    journal false {\n        measure-handover\n    }\n}\n").settings.journal;
+    assert!(!off.write && !off.measure_handover, "false turns both off");
     assert!(
         refused("animations {\n    journal {\n        measure-handovers\n    }\n}\n")
             .contains("did you mean `measure-handover`?")

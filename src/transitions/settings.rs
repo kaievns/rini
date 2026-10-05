@@ -13,7 +13,7 @@ pub struct JournalSettings {
 }
 
 impl Default for JournalSettings {
-    fn default() -> Self { JournalSettings { write: true, measure_handover: false } }
+    fn default() -> Self { JournalSettings { write: false, measure_handover: false } }
 }
 
 #[cfg(test)]
@@ -21,8 +21,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_journal_is_written_unless_turned_off() {
-        assert!(JournalSettings::default().write);
+    fn the_journal_is_written_only_when_asked() {
+        assert!(!JournalSettings::default().write);
     }
 
     #[test]

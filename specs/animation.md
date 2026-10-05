@@ -422,12 +422,12 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   commit.
 - rini MUST keep the last 8192 steps of its transitions in memory at all times, so a record can be
   written of a glitch seen with the journal off.
-- Unless the journal is turned off (`animations { journal { off; } }`), rini MUST write each burst of
-  transitions once it has settled, and MUST NOT start a write while a transition is up, so writing
-  adds nothing to the durations it records. The record MUST be at most two files: the current one,
-  started afresh once it passes 50MB, and the one before it.
+- rini MUST NOT write the journal unless it is turned on (`animations { journal; }`). With it on,
+  rini MUST write each burst of transitions once it has settled, and MUST NOT start a write while a
+  transition is up, so writing adds nothing to the durations it records. The record MUST be at most
+  two files: the current one, started afresh once it passes 50MB, and the one before it.
 - Writing the journal or not MUST NOT change what is drawn or when; only measuring the handover may
-  (below), and `off` turns measuring off with the writing.
+  (below), and `journal false` turns measuring off with the writing.
 - With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
   window ending wholly on screen, the mean RGB difference between the overlay's own picture just
   before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,
@@ -449,7 +449,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > in terms of slowing down". The `scratch/handover` prototype had kept a text journal from about 135
 > call sites, with a lock and an allocation for each mark. This one stamps each press where the
 > reactor takes it, marks the lifecycle where it is driven and each delivery of pictures where the
-> transition hears it, keeps its marks in a ring allocated once, and writes them by default.
+> transition hears it, keeps its marks in a ring allocated once, and writes them once asked.
+
+> **Reported 2026-10-05.** "journal off by default, on on my laptop for dev tracing." The journal had
+> been written unless turned off, as the record of everything above asked; it is now off unless
+> `animations { journal; }` asks for it, and the ring is kept either way.
 
 ## Where it lives
 

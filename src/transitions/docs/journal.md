@@ -160,7 +160,7 @@ converts every instant in it through that. The clock stops while the machine sle
 it on the thread that already holds the event: no lock, no allocation, no syscall. It costs 2.1 to
 3.8ns, the mean of 1M pushes over five runs of `a_push_costs_a_few_nanoseconds` (a release build,
 2026-10-05). It is kept whether the journal is
-written or not, so a glitch seen with it off is still in memory when it is turned back on; at 40 to
+written or not, so a glitch seen with it off is still in memory when it is turned on; at 40 to
 100 marks a flight that is the last 80 to 200 flights (inferred, not counted). A burst longer than the
 ring loses its oldest marks, and its header says how many.
 
@@ -176,7 +176,8 @@ The file is `~/Library/Logs/rini/transitions.jsonl` (`rini_core::paths::journal_
 past 50MB the next burst renames it `transitions.1.jsonl`, over the one before, and starts it afresh,
 so the record is at most two files.
 
-`animations { journal { off; } }` stops the writing. The config is read live, and the reactor tells
+The journal is written only once asked: `animations { journal; }` starts the writing, and
+`journal false` or no `journal` node leaves it off. The config is read live, and the reactor tells
 the engine at start and at each reload; the engine acts only on a change. Off drops the writer, whose
 thread ends once it has written what it was sent. On starts it, and the ring is written at once, or at
 the settle of the burst up; what the ring overwrote while off is not counted lost. Whether a lift was
@@ -191,7 +192,7 @@ A crash loses the marks not yet written: a panic hook cannot reach the engine's 
 `src/animation/docs/capture-overlay-research.md` did: the overlay's own picture just before it comes
 down against the screen just after, over every window that ends wholly on screen, the ones the last
 watch of the flight named (`landing` and `awaiting`), which are the windows the overlay is holed over.
-It is off unless asked for, and `off` turns it off with the writing.
+It is off unless asked for, and `journal false` turns it off with the writing.
 
 - **The engine.** A lift is held when the last watch named a window ending wholly on screen
   (`journal::measures`). At `Lift` the engine asks the pictures service for the check

@@ -85,13 +85,13 @@ pub struct AnimationsPart {
     pub journal: Option<JournalPart>,
 }
 
-/// `animations › journal`: the record of every transition, written unless `off`, and each lift
-/// measured with `measure-handover`.
-#[derive(knus::Decode, Debug, Default)]
+/// `animations › journal`: the record of every transition, written once the node is written and not
+/// `false`, and each lift measured with `measure-handover`.
+#[derive(knus::Decode, Debug)]
 #[knus(span_type = Span)]
 pub struct JournalPart {
-    #[knus(child)]
-    pub off: Option<Flag>,
+    #[knus(argument, default = true)]
+    pub on: bool,
     #[knus(child)]
     pub measure_handover: Option<Flag>,
 }
