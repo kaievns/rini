@@ -82,7 +82,9 @@ renderer's answers given by hand.
 
 Every instant the engine reads is the clock it is handed (`Parts`), and every track begins on the
 media clock the renderer read on the main thread (`MediaClock`: `Instant` and `CACurrentMediaTime`
-read together, within 0.1ms of each other by `the_media_clock_reads_what_core_animation_does`; both
+read together four times, the tightest read kept and anchored halfway (`MediaClock::tightest`), so a
+thread preempted inside one read skews only that one, within 0.1ms of each other by
+`the_media_clock_reads_what_core_animation_does`; both
 count mach absolute time, so the two are inferred, not measured, never to drift apart): a command's
 at the instant of the drive that gave it, a merge's, a push's and an entrance's at the instant of the
 event. The engine never calls QuartzCore, and a batch played after it was sent plays from where the

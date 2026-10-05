@@ -443,6 +443,15 @@ impl MediaClock {
     /// The clock that read `media` at `instant`.
     pub fn anchored(instant: Instant, media: f64) -> Self { Self { instant, media } }
 
+    /// The clock of the read whose two `Instant`s around its media time are closest, anchored halfway
+    /// between them: a thread preempted inside a read skews only that read. `None` for no reads.
+    pub fn tightest(reads: impl IntoIterator<Item = (Instant, f64, Instant)>) -> Option<Self> {
+        reads
+            .into_iter()
+            .min_by_key(|(before, _, after)| after.saturating_duration_since(*before))
+            .map(|(before, media, after)| Self::anchored(before + after.saturating_duration_since(before) / 2, media))
+    }
+
     /// The media time at `now`, before the anchor as after it.
     pub fn at(&self, now: Instant) -> f64 {
         match now.checked_duration_since(self.instant) {
@@ -1343,5 +1352,23 @@ mod tests {
         let anchor = Instant::now() + Duration::from_secs(1);
         let clock = MediaClock::anchored(anchor, 5_000.0);
         assert!((clock.at(anchor - Duration::from_millis(40)) - 4_999.96).abs() < 1e-9);
+    }
+
+    /// Three reads a few microseconds wide beside one preempted for 5ms between its first `Instant`
+    /// and its media time: the clock is the tightest's, anchored halfway, off by under a microsecond.
+    #[test]
+    fn the_media_clock_is_the_tightest_reads_anchored_halfway() {
+        let base = Instant::now();
+        let truth = |at: Instant| 1_000.0 + (at - base).as_secs_f64();
+        let us = Duration::from_micros;
+        let read = |before: Instant, media_at: Instant, after: Instant| (before, truth(media_at), after);
+        let preempted = read(base, base + Duration::from_millis(5), base + Duration::from_millis(5) + us(1));
+        let tight = |from: Instant, wide: Duration| read(from, from + wide / 2, from + wide);
+        let reads = [preempted, tight(base + us(5_010), us(30)), tight(base + us(5_050), us(20)), tight(base + us(5_080), us(40))];
+        let clock = MediaClock::tightest(reads).unwrap();
+        for at in [base, base + Duration::from_millis(200)] {
+            assert!((clock.at(at) - truth(at)).abs() < 1e-6, "{} against {}", clock.at(at), truth(at));
+        }
+        assert_eq!(MediaClock::tightest([]), None);
     }
 }

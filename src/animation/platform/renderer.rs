@@ -100,19 +100,15 @@ fn answer(
     }
 }
 
-/// Core Animation's media clock against `Instant`, read now: what the engine begins every track on.
-/// The tightest of a few reads is kept, so a thread preempted between the two clocks does not skew it.
+/// Core Animation's media clock against `Instant`, read now: what the engine begins every track on,
+/// the tightest of four reads (`MediaClock::tightest`).
 pub fn media_clock() -> MediaClock {
-    (0..4)
-        .map(|_| {
-            let before = Instant::now();
-            let media = objc2_quartz_core::CACurrentMediaTime();
-            let after = Instant::now();
-            (after - before, MediaClock::anchored(before + (after - before) / 2, media))
-        })
-        .min_by_key(|(spread, _)| *spread)
-        .map(|(_, clock)| clock)
-        .expect("four reads")
+    let read = |_| {
+        let before = Instant::now();
+        let media = objc2_quartz_core::CACurrentMediaTime();
+        (before, media, Instant::now())
+    };
+    MediaClock::tightest((0..4).map(read)).expect("four reads")
 }
 
 pub struct Renderer {
