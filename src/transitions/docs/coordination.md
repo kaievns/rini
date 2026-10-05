@@ -285,6 +285,8 @@ tiles are drawn focused, the window focus is drawn leaving kept as its own turn 
 its changed picture turns it, unfocused after. A rapid switch back to it before the window it went to
 has turned finds it drawn unfocused, so focus moves to it as to any other window: watched, and drawn
 focused only with its focused picture. A switch on again before then does not turn it a second time.
+One starting off the display flies its focused look instead, drawn focused again, so a switch on turns
+it unfocused again as focus leaves it.
 A target's changed picture held for the old window is dropped when focus moves on, and one that no
 longer fits its tile, a press having resized it, hands nothing over: its ring turns with the next
 picture of it that fits, or as the final capture is asked. A new target parked off the display flies
@@ -334,7 +336,9 @@ actually renders _before_ focus in macos itself." So the window losing focus tur
 picture is swapped in and its tile drawn unfocused (`Command::Focus`), and the target's changed
 picture waits for it, up to `CHANGE_EVERY` (15ms) checked on the flight's ticks, then is swapped in
 anyway; two in one round swap old, then new. The watch reports the old window `Lost` once it is done
-with no change, out of tries, refused or found clipped, and the target's picture waits no longer. The target's changed picture is kept as its focused look,
+with no change, out of tries, refused or found clipped, and the target's picture waits no longer. A
+merge's retarget that carries it on reports it again under the new tag: the coordinator drops a report
+under the generation before. The target's changed picture is kept as its focused look,
 and its tile is drawn focused: focus hands over. Each tile's ring and shadow turn with its own picture
 (`TileOverlay::set_tile_focused`); Kai, 2026-10-05: "i'd like them to be orchestrated independently
 whenever blur or focus are done switching." A window losing focus whose turn has not shown when the

@@ -319,7 +319,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A press moving focus back to a window already drawn unfocused, before the window it went to has
   turned, MUST leave it drawn unfocused, ring and shadow with it, until its focused picture comes in,
   and MUST then turn it focused as any window gaining focus. A press moving focus on before then MUST
-  NOT turn it again. A turned picture waiting for the old window's MUST be dropped when a press moves
+  NOT turn it again. One starting off the display flies its focused look instead (below), drawn
+  focused again, and a press moving focus on MUST turn it unfocused again: no tile is left drawn
+  focused beside the window gaining focus. A turned picture waiting for the old window's MUST be dropped when a press moves
   focus on, and one that no longer fits its tile MUST turn nothing: drawn focused over the picture
   from before, a ring disagrees with its window.
 - A focus report that arrives before the flight watches for it MUST still count, and so MUST one that

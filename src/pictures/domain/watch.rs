@@ -296,6 +296,8 @@ pub struct Watches {
     /// The tag whose frame zero each client's prints were last started afresh by.
     started: HashMap<Client, Tag>,
     plan: Plan,
+    /// Windows losing focus a retarget carried on given up on, to report lost under its new tag.
+    lost: Vec<(Tag, WindowId)>,
 }
 
 /// What the round handed out was for.
@@ -367,13 +369,15 @@ struct Turning {
     /// Its look changed, its tries ran out, the cache refused its capture, it was handed to
     /// ScreenCaptureKit, or, the window losing focus, it was found clipped.
     done: bool,
+    /// Its look changed.
+    turned: bool,
     /// The last look found it not where it ends.
     missed: bool,
 }
 
 impl Turning {
     fn new(target: PictureTarget, end: ScreenRect, baseline: Option<Vec<u8>>, tries: u32) -> Self {
-        Self { target, baseline, end, left: tries, done: tries == 0, missed: false }
+        Self { target, baseline, end, left: tries, done: tries == 0, turned: false, missed: false }
     }
 
     /// A try spent: with none left it is done.
@@ -391,6 +395,7 @@ impl Turning {
             self.baseline = old.baseline;
             self.left = old.left.min(self.left);
             self.done = old.done;
+            self.turned = old.turned;
             self.missed = old.missed;
         }
         kept
@@ -457,7 +462,8 @@ impl Watches {
     /// ends stays landed, a repainting window that has not landed settles against the picture held
     /// when the watch first named it, or on two captures in a row if none was, a focus report already
     /// seen stays seen, a change watch at the same size keeps its baseline, its tries and whether it is
-    /// done, and the background keeps its pace. A window that landed and is watched to land
+    /// done, the window losing focus given up on reported lost again under the new tag, and the
+    /// background keeps its pace. A window that landed and is watched to land
     /// somewhere new settles against the picture held now, the one it landed with. A window watched to
     /// land somewhere new starts its print afresh: what the client was delivered of it was taken for
     /// the end before, which the client no longer draws.
@@ -500,8 +506,14 @@ impl Watches {
                     new.next = old.next;
                     new.poll = old.poll;
                 }
-                if let (Some(new), Some(old)) = (&mut new.losing, old.losing) {
-                    new.carry_on(old);
+                let retagged = new.tag != old.tag;
+                if let (Some(losing), Some(old)) = (&mut new.losing, old.losing)
+                    && losing.carry_on(old)
+                    && losing.done
+                    && !losing.turned
+                    && retagged
+                {
+                    self.lost.push((new.tag, losing.target.window));
                 }
             }
             (Watching::Live(new), Watching::Live(old)) => new.last = old.last,
@@ -577,9 +589,10 @@ impl Watches {
         self.prints.retain(|(_, held), _| *held != window);
     }
 
-    /// Windows a landing watch waited for until its deadline, each reported once.
+    /// Windows a landing watch waited for until its deadline, each reported once, and the windows
+    /// losing focus a retarget carried on given up on.
     pub fn expire(&mut self, now: Instant) -> Vec<(Tag, WindowId)> {
-        let mut lost = Vec::new();
+        let mut lost = std::mem::take(&mut self.lost);
         for (_, watching) in &mut self.watches {
             if let Watching::Landing(landing) = watching
                 && now >= landing.until
@@ -687,7 +700,7 @@ impl Watches {
 
     /// When something is next due, if anything is.
     pub fn wake(&self, now: Instant) -> Option<Instant> {
-        let mut at: Option<Instant> = (!self.asks.is_empty()).then_some(now);
+        let mut at: Option<Instant> = (!self.asks.is_empty() || !self.lost.is_empty()).then_some(now);
         let mut take = |t: Instant| at = Some(at.map_or(t, |at| at.min(t)));
         for (_, watching) in &self.watches {
             match watching {
@@ -787,7 +800,6 @@ impl Watches {
                         slack: END_SLACK,
                     };
                     end.missed = false;
-                    let mut turned = false;
                     match looked_at(window, accept) {
                         Some((frame, Capture::Taken(prints))) => {
                             let client = tag.client;
@@ -802,7 +814,7 @@ impl Watches {
                                 && print_changed(Some(baseline), &prints.band)
                             {
                                 end.done = true;
-                                turned = true;
+                                end.turned = true;
                                 out.deliver(tag, Why::FocusChanged, window, frame);
                             } else {
                                 // With nothing delivered to judge a change by, the first capture is
@@ -831,7 +843,7 @@ impl Watches {
                             }
                         }
                     }
-                    if losing && end.done && !turned {
+                    if losing && end.done && !end.turned {
                         out.lost.push((tag, window));
                     }
                     let captured = !end.missed;
@@ -2033,6 +2045,44 @@ mod tests {
         watches.retarget(WatchId(1), changing(rect(4.0, 32.0, 860.0, 1081.0)), later, &none);
         assert!(watches.next(later).is_none());
         assert_eq!(watches.wake(later), Some(start + CHANGE_EVERY), "at another size");
+    }
+
+    /// A window losing focus given up on is reported lost again when a retarget carries it on under a
+    /// new tag: the client may have dropped the report under the tag before. Under the same tag, or
+    /// once its look changed, it is not.
+    #[test]
+    fn a_window_losing_focus_given_up_on_is_reported_lost_again_under_a_retargets_new_tag() {
+        let start = Instant::now();
+        let cut = rect(1300.0, 32.0, 859.0, 1081.0);
+        let under = |generation: u64, losing: ScreenRect| match changing(losing) {
+            Watch::Change { window, end, losing, behind, every, tries, .. } => {
+                Watch::Change { tag: tag(generation), window, end, losing, behind, every, tries }
+            }
+            _ => unreachable!(),
+        };
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(2)), start);
+        watches.watch(WatchId(1), under(1, cut), start, &none);
+        let at = |w: WindowId| Some(if w == wid(1) { cut } else { RIGHT });
+        let (_, outcome) = round(&mut watches, start, at, |_| Some(1)).unwrap();
+        assert_eq!(outcome.lost, vec![(tag(1), wid(1))]);
+        let later = start + ms(2);
+        watches.retarget(WatchId(1), under(1, cut), later, &none);
+        assert!(watches.expire(later).is_empty(), "the same tag");
+        watches.retarget(WatchId(1), under(2, cut), later, &none);
+        assert_eq!(watches.wake(later), Some(later));
+        assert_eq!(watches.expire(later), vec![(tag(2), wid(1))]);
+        assert!(watches.expire(later).is_empty(), "once");
+
+        let mut watches = Watches::default();
+        watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
+        round(&mut watches, start, |w| Some(if w == wid(1) { LEFT } else { RIGHT }), |_| Some(1)).unwrap();
+        watches.hint(Hint::Focused(wid(2)), start);
+        watches.watch(WatchId(1), under(1, LEFT), start, &none);
+        round(&mut watches, start, |w| Some(if w == wid(1) { LEFT } else { RIGHT }), |w| Some(if w == wid(1) { 2 } else { 1 }))
+            .unwrap();
+        watches.retarget(WatchId(1), under(2, LEFT), later, &none);
+        assert!(watches.expire(later).is_empty(), "its look changed");
     }
 
     /// A retarget keeps each end's baseline, tries and finish while that end keeps its size.
