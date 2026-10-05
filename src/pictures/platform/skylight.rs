@@ -94,6 +94,8 @@ pub struct Batch {
     /// The baked call came back another shape than its windows, the desktop listed after them
     /// included: a desktop window listed is no longer there.
     pub desktop_stale: bool,
+    /// The windows whose call `halt` stopped before it was made.
+    pub halted: Vec<WindowId>,
 }
 
 /// The windows in `windows`, wholly on `display` at their server frames and none overlapping
@@ -107,13 +109,15 @@ pub struct Batch {
 ///   learned from the difference.
 ///
 /// A composite of another shape than its windows yields no picture. Measured in "A batched call
-/// composites in the order given" in `src/pictures/docs/capture-research.md`.
+/// composites in the order given" in `src/pictures/docs/capture-research.md`. `halt` is asked before
+/// each call, and once it says stop no call is made.
 pub fn capture_on_screen(
     windows: &[OnScreen],
     behind: &[(WindowServerId, CGRect)],
     desktop: &DesktopBackdrop,
     display: CGRect,
     learned: &mut Learned,
+    halt: &dyn Fn() -> bool,
 ) -> Batch {
     let taken = Instant::now();
     let mut pictures = Vec::new();
@@ -121,6 +125,15 @@ pub fn capture_on_screen(
         .iter()
         .partition(|window| learned.get(window.server_id).first_call() == Call::Alpha);
     let mut alone = HashMap::new();
+    let mut halted = Vec::new();
+    if !alpha.is_empty() && halt() {
+        halted.extend(alpha.iter().chain(&baked).map(|window| window.window));
+        return Batch {
+            pictures,
+            desktop_stale: false,
+            halted,
+        };
+    }
     if let Some((composite, origin, scale)) = call(&alpha, &[], None, display) {
         for window in alpha {
             let Some((rect, crop)) = cut(&composite, origin, scale, window.frame) else { continue };
@@ -138,7 +151,9 @@ pub fn capture_on_screen(
         }
     }
     let mut desktop_stale = false;
-    if !baked.is_empty() {
+    if !baked.is_empty() && halt() {
+        halted.extend(baked.iter().map(|window| window.window));
+    } else if !baked.is_empty() {
         match call(&baked, behind, Some(desktop), display) {
             Some((composite, origin, scale)) => {
                 for window in baked {
@@ -158,6 +173,7 @@ pub fn capture_on_screen(
     Batch {
         pictures,
         desktop_stale,
+        halted,
     }
 }
 

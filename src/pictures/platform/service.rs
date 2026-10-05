@@ -780,7 +780,14 @@ impl Service {
                     let events = lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }).collect();
                     self.tell(events);
                 }
-                Next::Sky(sets) => self.look(sets),
+                Next::Sky(sets) => {
+                    self.look(sets, false);
+                }
+                Next::Refresh(set) => {
+                    if self.look(vec![set], true) {
+                        return Some(Duration::ZERO);
+                    }
+                }
                 Next::List(targets) => screencapturekit::list(targets, move |target, prepared| {
                     done.send(Done::Listed { target, prepared })
                 }),
@@ -806,8 +813,11 @@ impl Service {
 
     /// Reads the server frame of every window `sets` names, captures those where they are wanted, set
     /// by set and never two overlapping windows in one call, and puts what came back where it belongs
-    /// (`put_round`).
-    fn look(&mut self, sets: Vec<Set>) {
+    /// (`put_round`). A `halting` round makes no call once a transition is asked, and what it did not
+    /// call is not seen; true when it stopped so.
+    fn look(&mut self, sets: Vec<Set>, halting: bool) -> bool {
+        let (asked, applied) = (self.transitions.clone(), self.applied_transitions);
+        let halt = move || halting && transition_asked(asked.load(Ordering::Acquire), applied);
         let display = self.shared.lock().unwrap().schedule.display();
         // Taken from the shared state only once something is captured: most looks are landing polls.
         let mut known: Option<(Learned, Option<DesktopBackdrop>)> = None;
@@ -815,6 +825,7 @@ impl Service {
         let mut looked = Vec::new();
         let mut captured: Vec<(WindowId, Picture)> = Vec::new();
         let mut desktop_stale = false;
+        let mut halted: Vec<WindowId> = Vec::new();
         for set in sets {
             let frames: Vec<Option<CGRect>> =
                 set.looks.iter().map(|look| server_frame(look.target.server_id)).collect();
@@ -833,16 +844,19 @@ impl Service {
                     let windows: Vec<skylight::OnScreen> = group.into_iter().map(|at| wanted[at]).collect();
                     let on = display.frame.to_cg();
                     let batch =
-                        skylight::capture_on_screen(&windows, &behind, desktop, on, learned);
+                        skylight::capture_on_screen(&windows, &behind, desktop, on, learned, &halt);
                     desktop_stale |= batch.desktop_stale;
                     captured.extend(batch.pictures);
+                    halted.extend(batch.halted);
                 }
             }
-            looked.extend(set.looks.iter().map(|look| look.target.window).zip(frames));
+            let windows = set.looks.iter().map(|look| look.target.window);
+            looked.extend(windows.zip(frames).filter(|(window, _)| !halted.contains(window)));
             looks.extend(set.looks);
         }
         let captured = with_prints(&looks, captured);
         self.put_round(looked, captured, known, desktop_stale);
+        !halted.is_empty()
     }
 
     /// What a round of SkyLight captures brought back, put where it belongs: what was learned of each
@@ -1137,6 +1151,7 @@ mod tests {
     fn sky<P, O>(next: Next<P, O>) -> Vec<Look> {
         match next {
             Next::Sky(sets) => sets.into_iter().flat_map(|set| set.looks).collect(),
+            Next::Refresh(set) => set.looks,
             _ => panic!("not a SkyLight round"),
         }
     }
@@ -1630,18 +1645,22 @@ mod tests {
     }
 
     /// No call is made while a command is queued: the thread applies it first, so a hold that arrives
-    /// during a call is in force before the next, and a refresh due then waits for the release.
+    /// during a call is in force before the next. It cancels a refresh due then, and the release asks
+    /// again for it, looked at once the settle has passed.
     #[test]
     fn no_call_is_made_while_a_command_is_queued() {
+        use crate::pictures::domain::schedule::SETTLE_BEFORE_STARTING;
         let (mut service, shared, commands) = detached_service_and_commands();
-        let settled = Instant::now() - crate::pictures::domain::schedule::SETTLE_BEFORE_STARTING;
-        shared.lock().unwrap().schedule.refresh(vec![target(1)], settled);
+        shared.lock().unwrap().schedule.refresh(vec![target(1)], Instant::now() - SETTLE_BEFORE_STARTING);
         commands.send(Command::Hold(Hold::Transition));
         assert_eq!(service.make_calls(), Some(Duration::ZERO), "the queue first");
         while let Ok((_, command)) = service.requests.try_recv() {
             service.apply(command);
         }
-        assert_eq!(service.make_calls(), None, "held: no refresh look");
+        assert_eq!(service.make_calls(), None, "held: nothing looked at, nothing to wake for");
+        service.apply(Command::Hold(Hold::Released));
+        let wait = service.make_calls().expect("asked again");
+        assert!(wait > Duration::ZERO && wait <= SETTLE_BEFORE_STARTING, "{wait:?}");
         assert_eq!(shared.lock().unwrap().schedule.owed().collect::<Vec<_>>(), vec![wid(1)]);
     }
 

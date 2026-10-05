@@ -340,8 +340,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   turn is judged only from captures taken after the change.
 - A capture at rest MUST NOT start from a press to the quiet after the lift, as no ScreenCaptureKit
   capture does: SkyLight serves one call at a time, and one already out delays the one the overlay
-  waits for. A call already out when the press's hold arrives cannot be recalled, so at most one
-  SkyLight call at rest, two for a window never pictured before, MAY be ahead of a frame zero.
+  waits for. A press MUST cancel the polling of a window being pictured again at rest, and the quiet
+  MUST ask again for each window the flight did not picture at least 70ms after its look turned: the
+  app repaints up to 68ms after the change (p90), so a picture taken sooner, frame zero's among them,
+  can show the look from before. A call already out when the press comes cannot be recalled, so at
+  most one SkyLight call at rest MAY be ahead of a frame zero.
 - A window with a material that is not wholly on the overlay's display when it is pictured again at
   rest, clipped, parked or on another display, keeps its blurred picture, and its look turns when a
   flight next pictures it on screen: ScreenCaptureKit's capture of it has no blur, and SkyLight's
@@ -356,6 +359,13 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A picture of a window that was not wholly on one display while it was captured MUST NOT be drawn,
   cached as a picture, or cut onto a tile. The capture comes back full-size with the off-screen part
   transparent, and drawn it is a half or fully missing window.
+
+> **Reported 2026-10-05.** "did you want that in case of rapid switch? in case current polling starts
+> interferring with the next position? how do you manage that btw? cancel the previous polling and let
+> the last capture finish?" A press paused the polling and the release resumed it with the tries it
+> had left, judged from a capture taken before the flight moved the window, and the two calls of a
+> window never pictured before ran back to back, so two could be ahead of a frame zero. A press now
+> cancels the polling, only the call already out finishing, and the quiet asks again.
 
 > **Reported 2026-10-03.** "fcache doesn't bother me … windows arrive in focus every single time". The
 > prototype flew a focus target parked off the display with its last focused picture, which can be
