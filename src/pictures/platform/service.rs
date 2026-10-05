@@ -1189,6 +1189,7 @@ mod tests {
             tag: tag(1),
             window: target(idx),
             end: frame(),
+            losing: None,
             behind: Vec::new(),
             every: CHANGE_EVERY,
             tries: CHANGE_TRIES,

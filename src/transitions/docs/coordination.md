@@ -309,29 +309,41 @@ was the key window as the request went out (the request's `key`, from `MainWindo
 `frame_zero_look`): a click's report has made its target key before the request it causes, and another
 application's panel taking the keys, Spotlight's or Raycast's, leaves the window drawn unfocused while
 the layout still has it focused. Kept, either picture flew the window in as its focused look looking
-unfocused. Its tile is still drawn focused until focus hands over ("Known debt" in `src/transitions/docs/README.md`). The target's `Change` watch, armed by its report (one remembered for
-a second arms a watch started after it), captures it where it ends every 15ms, six times at most, until
-its band print differs from what the engine was delivered of it as the watch started, frame zero's for
-a window on screen at the press. It is judged from that, not from the latest delivery: the landing
-watch is looked at first in a round, and a window focused before it landed delivered its focused look
-as its landing, which the change watch then never saw change. That picture is swapped in, kept as its
-focused look, and focus hands over (`HandOverFocus`): the target's ring and shadow are drawn focused
-and the window left's not (`TileOverlay::set_tile_focused`). The window left is pictured again by the
-final capture if it ends wholly on screen and its look has changed by then; one ending clipped by the
-display's edge keeps its frame-zero picture to the lift, only its ring and shadow turning, and its look
-turns at rest, pictured again at the quiet, unless it has a material: then it keeps its blurred picture
-until a flight next pictures it on screen ("Known debt" in `src/pictures/docs/README.md`). SkyLight
-returns only its visible part, and the one
+unfocused. Its tile is still drawn focused until its turn ("Known debt" in `src/transitions/docs/README.md`).
+
+The target's `Change` watch, armed by its report (one remembered for a second arms a watch started
+after it), captures it where it ends every 15ms, six times at most, until its band print differs from
+what the engine was delivered of it as the watch started, frame zero's for a window on screen at the
+press. It is judged from that, not from the latest delivery: the landing watch is looked at first in a
+round, and a window focused before it landed delivered its focused look as its landing, which the
+change watch then never saw change. The window losing focus is the watch's second end
+(`EndWatch::losing_focus`) when it ends wholly on screen: captured in the same rounds, in the same
+call as the target where their kinds and frames allow, and done at its own change from its own
+frame-zero picture, out of its own tries, or at a refusal; the watch is done when both are. Kai,
+2026-10-05: "old window blur often animates _after_ the new window focus. i understand that blur
+actually renders _before_ focus in macos itself." So the window losing focus turns first: its changed
+picture is swapped in and its tile drawn unfocused (`Command::Focus`), and the target's changed
+picture waits for it, up to `CHANGE_EVERY` (15ms) checked on the flight's ticks, then is swapped in
+anyway; two in one round swap old, then new. The target's changed picture is kept as its focused look,
+and its tile is drawn focused: focus hands over. Each tile's ring and shadow turn with its own picture
+(`TileOverlay::set_tile_focused`); Kai, 2026-10-05: "i'd like them to be orchestrated independently
+whenever blur or focus are done switching." A window losing focus whose turn has not shown when the
+target's does, one clipped, parked, never watched or out of tries, is drawn unfocused just before the
+target is drawn focused. One ending clipped by the display's edge keeps its frame-zero picture to the
+lift, only its ring and shadow turning, and its look turns at rest, pictured again at the quiet,
+unless it has a material: then it keeps its blurred picture until a flight next pictures it on screen
+("Known debt" in `src/pictures/docs/README.md`). SkyLight returns only its visible part, and the one
 ScreenCaptureKit capture a flight lets through is the target's ("Decisions taken while Kai was away" in
-`docs/pictures-motion-transitions.md`). A capture of the target the cache refuses ends its watch,
+`docs/pictures-motion-transitions.md`). A capture the cache refuses ends that end of the watch,
 delivering nothing: the cache refuses a picture without the blur in place of one with it at the same
 size, and so every later capture there. The target is pictured again by the final capture too, if its
-change watch ran out first, and that hands focus over. If nothing has handed it over when the final capture is asked, focus
-hands over then, while the flight still moves: the window is reported focused, and a look that never
-showed a change (one already focused when the watch started, or an app whose title band looks the
-same either way) would otherwise turn at the lift. A target a layout pass opened, grew or flies as a
-stand-in hands over with its repainted picture; a stand-in on a strip movement is pictured as it lands
-and hands over on its focus change or the final capture, as any target does. A
+change watch ran out first, and that hands focus over. If nothing has handed it over when the final
+capture is asked, both tiles turn then, old then new, while the flight still moves: the window is
+reported focused, and a look that never showed a change (one already focused when the watch started,
+or an app whose title band looks the same either way) would otherwise turn at the lift. A target a
+layout pass opened, grew or flies as a stand-in hands over with its repainted picture, watched with no
+second end; a stand-in on a strip movement is pictured as it lands and hands over on its focus change
+or the final capture, as any target does. A
 target clipped by the display edge where it ends takes one ScreenCaptureKit capture through the hold, the
 only one a transition lets through: SkyLight returns only its visible sliver ("A clipped destination
 needs ScreenCaptureKit, not SkyLight" in `src/pictures/docs/capture-research.md`). A flight that moves
@@ -346,7 +358,7 @@ turns the window under it too). With nothing flying the coordinator asks for bot
 window kept the look it had until it was resized, in the switcher and in the next flight. In flight it
 owes them to the quiet, and any picture the flight is delivered of one after the turn, a landing, its
 focus change or the final capture, pays that one off, since the cache holds it. What is left, the
-window losing focus that ends clipped or parked and a target whose change no capture saw, is asked for
+window losing focus that ends clipped or parked and either end whose change no capture saw, is asked for
 at the quiet after the warm; a press inside the quiet carries it to its own. The pictures service
 decides how each is pictured (`Pictures::refresh`): a window the window server has wholly on the
 display through SkyLight, its blur baked in, both ends in one round until each one's title band has

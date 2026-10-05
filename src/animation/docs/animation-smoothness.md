@@ -291,10 +291,10 @@ sizes (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it
 with the tile. Both are laid after the tile's frame, on every placement, or a
 pooled layer's autoresizing carries the old size, and a pooled tile's radius
 can have been measured since its last flight. Companions wear none.
-`TileOverlay::set_tile_focused` switches the ring's white and the shadow's
-depth in a hard cut, for focus handing over mid-flight; the prototype set the
-ring only at install. When focus hands over is the coordinator's
-(`HandOverFocus`).
+`TileOverlay::set_tile_focused` switches one tile's ring white and shadow
+depth in a hard cut, as that window's turned picture comes in mid-flight; the
+prototype set the ring only at install. When each tile turns is the
+coordinator's (`Command::Focus`).
 
 Mechanics worth remembering:
 

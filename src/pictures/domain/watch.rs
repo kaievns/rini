@@ -127,10 +127,13 @@ pub enum Watch {
     /// Armed by the window's focus report: captured where it ends every `every`, `tries` times at most,
     /// until its band print changes from the last picture delivered of it as the watch starts, even
     /// when another watch delivered the changed look first, or until the cache refuses a capture.
+    /// `losing`, the window focus leaves and where it ends, is captured in the same rounds and done the
+    /// same way on its own, but never handed to ScreenCaptureKit; the watch is done when both are.
     Change {
         tag: Tag,
         window: PictureTarget,
         end: ScreenRect,
+        losing: Option<(PictureTarget, ScreenRect)>,
         behind: Vec<WindowServerId>,
         every: Duration,
         tries: u32,
@@ -339,27 +342,65 @@ enum Arrival {
 
 struct Change {
     tag: Tag,
+    target: Turning,
+    losing: Option<Turning>,
+    behind: Vec<WindowServerId>,
+    every: Duration,
+    armed: bool,
+    /// When its ends not done are next looked at, together.
+    next: Instant,
+}
+
+/// One end of a `Change` watch.
+struct Turning {
     target: PictureTarget,
     /// The band print a change is judged from: what the client was delivered of the window as the
     /// watch started; with none then, what it was delivered by the first capture, else that capture.
     baseline: Option<Vec<u8>>,
     end: ScreenRect,
-    behind: Vec<WindowServerId>,
-    every: Duration,
     left: u32,
-    armed: bool,
-    next: Instant,
-    /// Its look changed, its tries ran out, the cache refused its capture, or it was handed to
-    /// ScreenCaptureKit.
+    /// Its look changed, its tries ran out, the cache refused its capture, it was handed to
+    /// ScreenCaptureKit, or, the window losing focus, it was found clipped.
     done: bool,
 }
 
-impl Change {
-    /// A try spent: the next is `every` from now, and with none left the watch is done.
-    fn spend(&mut self, now: Instant) {
+impl Turning {
+    fn new(target: PictureTarget, end: ScreenRect, baseline: Option<Vec<u8>>, tries: u32) -> Self {
+        Self { target, baseline, end, left: tries, done: tries == 0 }
+    }
+
+    /// A try spent: with none left it is done.
+    fn spend(&mut self) {
         self.left = self.left.saturating_sub(1);
         self.done = self.left == 0;
-        self.next = now + self.every;
+    }
+
+    /// Carries on from `old`, the same window's, while its end keeps its size: a band print is drawn
+    /// from the window's whole width, so one taken at another size never matches, and the cache
+    /// refuses a capture only at the size of what it holds. Whether it did.
+    fn carry_on(&mut self, old: Turning) -> bool {
+        let kept = self.target.window == old.target.window && self.end.size == old.end.size;
+        if kept {
+            self.baseline = old.baseline;
+            self.left = old.left.min(self.left);
+            self.done = old.done;
+        }
+        kept
+    }
+}
+
+impl Change {
+    /// Its ends, the window losing focus first: its look turns first on screen.
+    fn ends(&self) -> impl Iterator<Item = &Turning> {
+        self.losing.iter().chain([&self.target])
+    }
+
+    fn end_of(&mut self, window: WindowId) -> Option<&mut Turning> {
+        self.losing.iter_mut().chain([&mut self.target]).find(|end| end.target.window == window)
+    }
+
+    fn done(&self) -> bool {
+        self.ends().all(|end| end.done)
     }
 }
 
@@ -431,16 +472,14 @@ impl Watches {
                 }
             }
             (Watching::Change(new), Watching::Change(old))
-                if new.target.window == old.target.window =>
+                if new.target.target.window == old.target.target.window =>
             {
                 new.armed = old.armed;
-                // A band print is drawn from the window's whole width, so one taken at another size
-                // never matches; and the cache refuses a capture only at the size of what it holds.
-                if new.end.size == old.end.size {
-                    new.baseline = old.baseline;
-                    new.left = old.left.min(new.left);
+                if new.target.carry_on(old.target) {
                     new.next = old.next;
-                    new.done = old.done;
+                }
+                if let (Some(new), Some(old)) = (&mut new.losing, old.losing) {
+                    new.carry_on(old);
                 }
             }
             (Watching::Live(new), Watching::Live(old)) => new.last = old.last,
@@ -461,7 +500,7 @@ impl Watches {
                 self.focused.push((window, now));
                 for (_, watching) in &mut self.watches {
                     if let Watching::Change(change) = watching
-                        && change.target.window == window
+                        && change.target.target.window == window
                         && !change.armed
                     {
                         change.armed = true;
@@ -480,7 +519,8 @@ impl Watches {
                             landing.poll = now;
                         }
                         Watching::Change(change)
-                            if change.target.window == window && change.armed && !change.done =>
+                            if change.armed
+                                && change.ends().any(|end| end.target.window == window && !end.done) =>
                         {
                             change.next = change.next.min(now);
                         }
@@ -502,7 +542,10 @@ impl Watches {
                 landing.windows.retain(|l| l.target.window != window);
                 true
             }
-            Watching::Change(change) => change.target.window != window,
+            Watching::Change(change) => {
+                change.losing = change.losing.take().filter(|end| end.target.window != window);
+                change.target.target.window != window
+            }
             Watching::Live(live) => {
                 live.targets.retain(|target| target.window != window);
                 true
@@ -547,20 +590,15 @@ impl Watches {
         let mut due = Vec::new();
         for (id, watching) in &self.watches {
             match watching {
-                Watching::Change(change) if change.armed && !change.done && change.next <= now => {
-                    add(
-                        &mut sets,
-                        &change.behind,
-                        look(
-                            change.target,
-                            Accept::Near {
-                                end: change.end,
-                                slack: END_SLACK,
-                            },
-                            false,
-                        ),
-                    );
-                    due.push((*id, change.target.window));
+                Watching::Change(change) if change.armed && !change.done() && change.next <= now => {
+                    for end in change.ends().filter(|end| !end.done) {
+                        let accept = Accept::Near {
+                            end: end.end,
+                            slack: END_SLACK,
+                        };
+                        add(&mut sets, &change.behind, look(end.target, accept, false));
+                        due.push((*id, end.target.window));
+                    }
                 }
                 Watching::Landing(landing) => {
                     for lands in &landing.windows {
@@ -630,7 +668,7 @@ impl Watches {
         let mut take = |t: Instant| at = Some(at.map_or(t, |at| at.min(t)));
         for (_, watching) in &self.watches {
             match watching {
-                Watching::Change(change) if change.armed && !change.done => take(change.next),
+                Watching::Change(change) if change.armed && !change.done() => take(change.next),
                 Watching::Landing(landing) => {
                     for lands in &landing.windows {
                         match &lands.state {
@@ -716,16 +754,22 @@ impl Watches {
                     }
                 }
                 Watching::Change(change) => {
+                    let (tag, every) = (change.tag, change.every);
+                    let losing = change.losing.as_ref().is_some_and(|end| end.target.window == window);
+                    let Some(end) = change.end_of(window) else { continue };
                     let accept = Accept::Near {
-                        end: change.end,
+                        end: end.end,
                         slack: END_SLACK,
                     };
+                    // Looked at again together `every` from now once either end was captured, and
+                    // polled until one is there.
+                    let mut next = Some(now + every);
                     match looked_at(window, accept) {
                         Some((frame, Capture::Taken(prints))) => {
-                            let client = change.tag.client;
+                            let client = tag.client;
                             // A landing may have delivered the changed look first: the change is
                             // judged from what was delivered before it, not from the latest delivery.
-                            let judged = change
+                            let judged = end
                                 .baseline
                                 .take()
                                 .or_else(|| self.prints.get(&(client, window)).cloned());
@@ -733,32 +777,39 @@ impl Watches {
                             if let Some(baseline) = judged.as_deref()
                                 && print_changed(Some(baseline), &prints.band)
                             {
-                                change.done = true;
-                                out.deliver(change.tag, Why::FocusChanged, window, frame);
+                                end.done = true;
+                                out.deliver(tag, Why::FocusChanged, window, frame);
                             } else {
                                 // With nothing delivered to judge a change by, the first capture is
                                 // delivered as the window where it ends, and the change judged from it.
                                 if judged.is_none() {
-                                    out.deliver(change.tag, Why::Landed, window, frame);
+                                    out.deliver(tag, Why::Landed, window, frame);
                                 }
-                                change.baseline = Some(judged.unwrap_or_else(|| prints.band.clone()));
-                                change.spend(now);
+                                end.baseline = Some(judged.unwrap_or_else(|| prints.band.clone()));
+                                end.spend();
                             }
                         }
                         // Every later capture at this size is refused too.
-                        Some((_, Capture::Refused)) => change.done = true,
+                        Some((_, Capture::Refused)) => end.done = true,
                         Some((_, Capture::Missed)) | None => {
                             let frame = of(window).and_then(|seen| seen.frame);
                             if let (Some(frame), Some(display)) = (frame, display)
-                                && near(frame, change.end, END_SLACK)
+                                && near(frame, end.end, END_SLACK)
                                 && clipped(frame, display)
                             {
-                                change.done = true;
-                                out.clipped.push((change.tag, change.target, frame));
+                                end.done = true;
+                                if !losing {
+                                    out.clipped.push((tag, end.target, frame));
+                                }
                             } else {
-                                change.next = now + LANDING_POLL;
+                                next = None;
                             }
                         }
+                    }
+                    match next {
+                        Some(next) => change.next = next,
+                        None if change.next <= now => change.next = now + LANDING_POLL,
+                        None => {}
                     }
                 }
                 Watching::Live(live) => {
@@ -811,6 +862,7 @@ impl Watches {
                 tag,
                 window,
                 end,
+                losing,
                 behind,
                 every,
                 tries,
@@ -818,17 +870,18 @@ impl Watches {
                 let armed = self.focused.iter().any(|(held, at)| {
                     *held == window.window && now.saturating_duration_since(*at) <= FOCUS_REMEMBERED
                 });
+                let turning = |(target, end): (PictureTarget, ScreenRect)| {
+                    let baseline = self.prints.get(&(tag.client, target.window)).cloned();
+                    Turning::new(target, end, baseline, tries)
+                };
                 Watching::Change(Change {
                     tag,
-                    target: window,
-                    baseline: self.prints.get(&(tag.client, window.window)).cloned(),
-                    end,
+                    target: turning((window, end)),
+                    losing: losing.map(turning),
                     behind,
                     every,
-                    left: tries,
                     armed,
                     next: now,
-                    done: tries == 0,
                 })
             }
             Watch::Live {
@@ -857,7 +910,7 @@ impl Watches {
         });
         let change_soon = self.watches.iter().any(|(_, watching)| {
             matches!(watching, Watching::Change(change)
-                if change.armed && !change.done && change.next <= now + LIVE_YIELDS_WITHIN)
+                if change.armed && !change.done() && change.next <= now + LIVE_YIELDS_WITHIN)
         });
         if landing || change_soon || live.targets.is_empty() {
             return None;
@@ -875,7 +928,7 @@ impl Watches {
     fn after_done(&self, after: Option<WatchId>) -> bool {
         let Some(after) = after else { return true };
         self.watches.iter().all(|(id, watching)| {
-            *id != after || !matches!(watching, Watching::Change(change) if !change.done)
+            *id != after || !matches!(watching, Watching::Change(change) if !change.done())
         })
     }
 }
@@ -1175,9 +1228,26 @@ mod tests {
             tag: tag(1),
             window: target(idx),
             end,
+            losing: None,
             behind: vec![WindowServerId::new(9)],
             every: CHANGE_EVERY,
             tries: CHANGE_TRIES,
+        }
+    }
+
+    /// Window 2 gaining focus where it ends at `RIGHT`, window 1 losing it where it ends at `losing`.
+    fn changing(losing: ScreenRect) -> Watch {
+        match change(2, RIGHT) {
+            Watch::Change { tag, window, end, behind, every, tries, .. } => Watch::Change {
+                tag,
+                window,
+                end,
+                losing: Some((target(1), losing)),
+                behind,
+                every,
+                tries,
+            },
+            _ => unreachable!(),
         }
     }
 
@@ -1758,6 +1828,121 @@ mod tests {
         assert!(outcome.deliveries.is_empty());
         assert_eq!(outcome.clipped, vec![(tag(1), target(1), end)]);
         assert!(watches.next(start + ms(100)).is_none(), "once");
+    }
+
+    /// The window losing focus is captured in the same rounds as the target, in one set, listed first,
+    /// each judged from its own baseline and done at its own change; a report of its own focus arms
+    /// nothing.
+    #[test]
+    fn a_change_watch_captures_the_window_losing_focus_beside_the_target_each_done_at_its_own_change() {
+        let start = Instant::now();
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        let started = |watches: &mut Watches| {
+            watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
+            round(watches, start, at, |w| Some(if w == wid(1) { 1 } else { 5 })).unwrap();
+            watches.watch(WatchId(1), changing(LEFT), start, &none);
+        };
+        let mut watches = Watches::default();
+        started(&mut watches);
+        watches.hint(Hint::Focused(wid(1)), start);
+        assert!(watches.next(start).is_none(), "armed by the target's report only");
+        watches.hint(Hint::Focused(wid(2)), start);
+        let (sets, outcome) = round(&mut watches, start, at, |w| Some(if w == wid(1) { 1 } else { 5 })).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(1), wid(2)]], "one set, the old window first");
+        assert!(outcome.deliveries.is_empty());
+        let next = start + CHANGE_EVERY;
+        let (_, outcome) = round(&mut watches, next, at, |w| Some(if w == wid(1) { 2 } else { 5 })).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(1)])], "from its own frame zero's");
+        let next = next + CHANGE_EVERY;
+        let (sets, outcome) = round(&mut watches, next, at, |w| Some(if w == wid(1) { 2 } else { 6 })).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(2)]], "done, it drops out");
+        assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(2)])]);
+        assert!(watches.next(next + ms(100)).is_none(), "done when both are");
+
+        let mut watches = Watches::default();
+        started(&mut watches);
+        watches.hint(Hint::Focused(wid(2)), start);
+        let (_, outcome) = round(&mut watches, start, at, |w| Some(if w == wid(1) { 2 } else { 6 })).unwrap();
+        assert_eq!(
+            delivered(&outcome),
+            vec![(Why::FocusChanged, vec![wid(1), wid(2)])],
+            "in one round, the old window first"
+        );
+    }
+
+    /// Each end spends its own tries, only on its own captures. While one is not there yet the other is
+    /// looked at every 15ms, not polled with it every 1ms.
+    #[test]
+    fn a_change_watch_spends_each_ends_tries_on_its_own_captures() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(2)), start);
+        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        let landed_at = start + CHANGE_EVERY * 3;
+        let mut at = start;
+        let mut rounds = Vec::new();
+        while let Some((sets, _)) = round(
+            &mut watches,
+            at,
+            |w| Some(if w == wid(2) { RIGHT } else if at < landed_at { PARKED } else { LEFT }),
+            |_| Some(1),
+        ) {
+            rounds.push(looked(&sets).concat());
+            at += CHANGE_EVERY;
+        }
+        let both = vec![wid(1), wid(2)];
+        assert_eq!(rounds.len(), 3 + CHANGE_TRIES as usize, "{rounds:?}");
+        assert!(rounds[..CHANGE_TRIES as usize].iter().all(|looked| *looked == both), "together, 15ms apart");
+        assert!(
+            rounds[CHANGE_TRIES as usize..].iter().all(|looked| *looked == vec![wid(1)]),
+            "the old window's own six"
+        );
+    }
+
+    /// A window losing focus that ends cut by the display's edge is done with no capture: the one
+    /// ScreenCaptureKit capture a flight lets through is the target's. Forgotten, it is watched no more,
+    /// and the target still is.
+    #[test]
+    fn a_window_losing_focus_ending_clipped_is_done_with_no_capture_elsewhere() {
+        let start = Instant::now();
+        let cut = rect(1300.0, 32.0, 859.0, 1081.0);
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(2)), start);
+        watches.watch(WatchId(1), changing(cut), start, &none);
+        let at = |w: WindowId| Some(if w == wid(1) { cut } else { RIGHT });
+        let (_, outcome) = round(&mut watches, start, at, |_| Some(1)).unwrap();
+        assert!(outcome.clipped.is_empty());
+        let (sets, _) = round(&mut watches, start + CHANGE_EVERY, at, |_| Some(1)).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(2)]]);
+
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(2)), start);
+        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        watches.forget(wid(1));
+        assert_eq!(looked(&watches.next(start).unwrap()), vec![vec![wid(2)]]);
+    }
+
+    /// A retarget keeps each end's baseline, tries and finish while that end keeps its size.
+    #[test]
+    fn a_change_watch_retargeted_carries_each_end_on_while_it_keeps_its_size() {
+        let start = Instant::now();
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        let mut watches = Watches::default();
+        watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
+        round(&mut watches, start, at, |_| Some(1)).unwrap();
+        watches.hint(Hint::Focused(wid(2)), start);
+        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        let (_, outcome) = round(&mut watches, start, at, |w| Some(if w == wid(1) { 2 } else { 1 })).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(1)])]);
+        let next = start + CHANGE_EVERY;
+        watches.retarget(WatchId(1), changing(rect(14.0, 32.0, 859.0, 1081.0)), next, &none);
+        assert_eq!(looked(&watches.next(next).unwrap()), vec![vec![wid(2)]], "the same size: still done");
+        let wider = rect(4.0, 32.0, 860.0, 1081.0);
+        watches.retarget(WatchId(1), changing(wider), next, &none);
+        let at = |w: WindowId| Some(if w == wid(1) { wider } else { RIGHT });
+        let (sets, outcome) = round(&mut watches, next, at, |_| Some(2)).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(1), wid(2)]], "another size: watched afresh");
+        assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(2)])], "the target's baseline kept");
     }
 
     /// Windows behind the strip refresh every 16ms, every capture the cache took delivered whatever its

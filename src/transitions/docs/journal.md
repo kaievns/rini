@@ -47,11 +47,11 @@ until it has a mark.
 | `AskFrameZero` | `ask_frame_zero` | `strip`, `background`, `behind` (counts) |
 | `Show` / `StartMoving` / `StopWatches` | `show` / `start_moving` / `stop_watches` | |
 | `Write` / `Holes` / `Warm` / `Refresh` | `write` / `holes` / `warm` / `refresh` | `windows` (a count) |
-| `Watch(EndWatch)` | `watch` | `landing`, `awaiting`, `background` (counts), `focus` |
+| `Watch(EndWatch)` | `watch` | `landing`, `awaiting`, `background` (counts), `focus`, `losing_focus` |
 | `AskFinal` | `ask_final` | `windows`, `behind` (counts) |
 | `Swap` / `KeepFocusedLook` | `swap` / `keep_focused_look` | `of`, `window` |
 | `Snap { window, frame }` | `snap` | `window`, `frame` (overlay points) |
-| `HandOverFocus { to, from }` | `hand_over_focus` | `to`, `from` |
+| `Focus { window, focused }` | `focus` | `window`, `focused` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
 | the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `queued_us`, `applied_us`, `flushed_before_us` |

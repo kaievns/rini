@@ -277,8 +277,9 @@ destination for a window already moving.
 - Both MUST follow the tile through a resize, on the tile's own timing, and onto its window's real
   frame when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
   its corners.
-- When focus hands over during a flight, the ring MUST follow it: the window gaining focus brighter,
-  the window losing it dimmer.
+- When focus moves during a flight, each window's ring and shadow MUST turn with its own picture: the
+  window losing focus dimmer as its picture turns unfocused, the window gaining focus brighter as its
+  picture turns focused, each at its own time.
 
 The ring's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
 applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
@@ -286,22 +287,32 @@ measured. Before it, a tile wore a hairline cut out of a capture of its window, 
 capture had run: the 53-level p99 at the focused window's edge in "The handover, measured"
 (`src/animation/docs/capture-overlay-research.md`).
 
+> **Reported 2026-10-05.** "regarding the ring and shadow. i'd like them to be orchestrated
+> independently whenever blur or focus are done switching." Both tiles turned in one cut when the
+> picture of the window gaining focus turned, whenever the other window's picture had. Each tile's
+> ring and shadow now turn with its own picture.
+
 ## Focus changing during a flight
 
 - When a flight moves focus from one window to another, both MUST land in their new focus rendering:
   the window gaining focus active, the window losing it inactive. The change MUST reach each tile while
   the flight still moves, so nothing changes at rest after the lift.
-- The window gaining focus MUST be pictured where it ends from the moment the window server reports it
-  focused until its look changes, and drawn focused from that picture on: its ring and its shadow with
-  it. A look it already had when it landed counts as changed. If no picture shows the change by the
-  last capture before the lift, it MUST be drawn focused from then on all the same, while the flight
-  still moves. Until then the window losing focus MUST be drawn focused, as it was on screen when the
-  flight began, and after it unfocused. Ending wholly on a display, it MUST be pictured again before
-  the lift if its look has changed. Ending clipped by the display's edge, it keeps its picture to the
-  lift, only its ring and its shadow turning unfocused, and its look turns at rest, unless it has a
-  material: then it keeps its blurred picture until a flight next pictures it on screen (below). SkyLight
-  returns only its visible part, and the one ScreenCaptureKit capture below is the window gaining
-  focus's.
+- From the moment the window server reports the window gaining focus focused, it MUST be pictured
+  where it ends until its look changes, and the window losing focus with it, in the same rounds, until
+  its own look changes, if it ends wholly on a display. A look a window already had when it landed
+  counts as changed. Each MUST be drawn with its turned picture as it comes in, its ring and its shadow
+  turning with it: the window losing focus unfocused, the window gaining focus focused.
+- The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
+  focus MUST wait for the other's at most 15ms, one capture interval, and two that come in together
+  MUST turn old, then new. A window losing focus whose turn has not shown by then, one ending clipped
+  or parked, or one whose watch ran out, MUST be drawn unfocused just before the window gaining focus
+  is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
+  the same, old then new, while the flight still moves. Until its turn the window losing focus MUST be
+  drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
+  keeps its picture to the lift, only its ring and its shadow turning unfocused, and its look turns at
+  rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on
+  screen (below). SkyLight returns only its visible part, and the one ScreenCaptureKit capture below is
+  the window gaining focus's.
 - A focus report that arrives before the flight watches for it MUST still count, and so MUST one that
   arrives before the request it causes, as a click's or an app activation's does: the window focused
   before it is the one the flight begins drawn focused.
@@ -363,6 +374,13 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A picture of a window that was not wholly on one display while it was captured MUST NOT be drawn,
   cached as a picture, or cut onto a tile. The capture comes back full-size with the off-screen part
   transparent, and drawn it is a half or fully missing window.
+
+> **Reported 2026-10-05.** "i noticed that old window blur often animates _after_ the new window focus.
+> i understand that blur actually renders _before_ focus in macos itself." Only the window gaining
+> focus was watched in flight. The window losing focus kept its frame-zero picture, its focused look,
+> until a landing or the last capture before the lift showed it unfocused, so it turned after the
+> other. Both are now watched in the same rounds, and the turn of the window gaining focus waits up to
+> 15ms for the old window's.
 
 > **Reported 2026-10-05.** "did you want that in case of rapid switch? in case current polling starts
 > interferring with the next position? how do you manage that btw? cancel the previous polling and let

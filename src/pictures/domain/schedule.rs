@@ -1191,6 +1191,7 @@ mod tests {
                 tag: tag(),
                 window: target(1, 859.0),
                 end: clipped,
+                losing: None,
                 behind: Vec::new(),
                 every: CHANGE_EVERY,
                 tries: CHANGE_TRIES,

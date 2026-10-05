@@ -14,7 +14,7 @@ use rini_geometry::{is_off_screen, to_overlay_space};
 use serde::Serialize;
 
 use crate::animation::domain::motion::tile::snap_to;
-use crate::pictures::domain::watch::{Accept, Client, END_SLACK, Tag, Why, near, wholly_on};
+use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
 
 use super::request::SurfaceWindow;
 use super::timing::{COALESCE_WINDOW, HOLD_CAP, LIFT_GRACE};
@@ -143,8 +143,8 @@ pub struct StageSummary {
     pub opaque: Vec<WindowId>,
 }
 
-/// Whether `window`'s tile is drawn focused until focus hands over: the window focus is on as the
-/// flight begins, and the focus target only when focus is not moving to it. What frame zero pictures
+/// Whether `window`'s tile is drawn focused until its turn: the window focus is on as the flight
+/// begins, and the focus target only when focus is not moving to it. What frame zero pictures
 /// of either shows the same, unless another application's panel had the keys (`frame_zero_look`). A
 /// focus target flying its focused look (`StageSummary::parked_focus`) is drawn focused with it.
 pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Option<WindowId>) -> bool {
@@ -302,10 +302,11 @@ pub enum Command {
     Snap { window: WindowId, frame: OverlayRect },
     /// The picture just swapped in shows the window focused: keep it as its focused look.
     KeepFocusedLook { generation: Generation, window: WindowId },
-    /// Focus handed over: draw `to`'s tile focused and `from`'s not. Until then the tiles are drawn
-    /// focused where frame zero pictured focus: on `from`, and on `to` only when it flies its focused
-    /// look (`StageSummary::parked_focus`).
-    HandOverFocus { to: WindowId, from: Option<WindowId> },
+    /// Draw `window`'s tile focused or not, its ring and its shadow, as its turned picture comes in:
+    /// the window focus leaves unfocused, and the focus target focused, which is focus handing over.
+    /// Until then the tiles are drawn focused where frame zero pictured focus: on the window focus
+    /// leaves, and on the target only when it flies its focused look (`StageSummary::parked_focus`).
+    Focus { window: WindowId, focused: bool },
     /// Overlay down. The quiet that follows ends with `Event::Quiet(generation)`.
     Lift { generation: Generation },
     /// Pictures for the next transition of every window the flight drew, at the frame each ended at.
@@ -335,6 +336,10 @@ pub struct EndWatch {
     /// to it and its focused look is still to come, never for a window `awaiting` watches, and never
     /// for one ending off the display.
     pub focus: Option<(WindowId, ScreenRect)>,
+    /// The window focus leaves and where it ends, watched with `focus` until its own look changes: only
+    /// while `focus` is watched and its own turn is still to come, and only for one ending wholly on
+    /// the display.
+    pub losing_focus: Option<(WindowId, ScreenRect)>,
     /// Floating windows that stay put, kept fresh once `focus`'s watch is done, if there is one...
     pub background: Vec<(WindowId, ScreenRect)>,
     /// ... except one capture this soon when they were left out of frame zero.
@@ -371,8 +376,15 @@ struct Flight {
     asked: Vec<(WindowId, ScreenRect)>,
     /// ... and how many of those asks have not delivered yet.
     frame_zero_owed: usize,
-    /// The focus target's focused look came in: focus has handed over.
+    /// The focus target is drawn focused: focus has handed over.
     focus_in: bool,
+    /// The window focus leaves, drawn unfocused: with its own turned picture, or just before the
+    /// target's.
+    unfocused: Option<WindowId>,
+    /// The focus target's changed picture, not swapped while the window losing focus is watched to
+    /// turn first: under its generation, at its frame, since when. Swapped at that turn, or
+    /// `CHANGE_EVERY` after.
+    held_change: Option<(Generation, ScreenRect, Instant)>,
     /// The focus target's latest landing, not swapped over the focused look its tile flies until focus
     /// hands over: under its generation, at its frame.
     held_back: Option<(Generation, ScreenRect)>,
@@ -395,7 +407,7 @@ struct Flight {
     animated: Vec<(WindowId, ScreenRect)>,
     /// Every window whose look the key window turned while the flight ran that no picture since has
     /// shown: what the quiet pictures afresh. The window losing focus that ends clipped or parked,
-    /// and a target whose change no capture saw, are never pictured in flight.
+    /// and either end whose change no capture saw, are never pictured in flight.
     turned: Vec<(WindowId, ScreenRect)>,
 }
 
@@ -407,16 +419,43 @@ impl Flight {
             && self.stage.tile(window).is_some_and(|tile| near(frame, tile.end, END_SLACK))
     }
 
-    /// Focus handed over to the target: drawn focused from now, the window left not; with the landing
-    /// held back from over its focused look, if one still fits, swapped in.
+    /// Focus handed over to the target: the window left drawn unfocused first, if its own turn has
+    /// not, then the target focused; with the landing held back from over its focused look, if one
+    /// still fits, swapped in.
     fn hand_over(&mut self, to: WindowId, out: &mut Vec<Command>) {
         self.focus_in = true;
+        self.unfocus_losing(out);
         if let Some((generation, frame)) = self.held_back.take()
             && self.takes(generation, to, frame)
         {
             out.push(Command::Swap { generation, window: to });
         }
-        out.push(Command::HandOverFocus { to, from: self.stage.losing_focus });
+        out.push(Command::Focus { window: to, focused: true });
+    }
+
+    /// The window focus leaves drawn unfocused, once.
+    fn unfocus_losing(&mut self, out: &mut Vec<Command>) {
+        if let Some(window) = self.stage.losing_focus
+            && self.unfocused != Some(window)
+        {
+            self.unfocused = Some(window);
+            out.push(Command::Focus { window, focused: false });
+        }
+    }
+
+    /// The target's changed picture held for the window losing focus, swapped in, kept as its
+    /// focused look if it still fits, and focus handed over.
+    fn swap_held_change(&mut self, out: &mut Vec<Command>) {
+        let (Some((generation, frame, _)), Some(to)) = (self.held_change.take(), self.stage.focus) else {
+            return;
+        };
+        self.unfocus_losing(out);
+        if self.takes(generation, to, frame) {
+            out.push(Command::Swap { generation, window: to });
+            out.push(Command::KeepFocusedLook { generation, window: to });
+        }
+        self.held_back = None;
+        self.hand_over(to, out);
     }
 
     /// The windows watched until they repaint, and the end windows watched only until they are there.
@@ -618,6 +657,8 @@ impl Coordinator {
             asked,
             frame_zero_owed: 1,
             focus_in: false,
+            unfocused: None,
+            held_change: None,
             held_back: None,
             final_asked: false,
             snapped: HashSet::new(),
@@ -659,6 +700,7 @@ impl Coordinator {
         if focus_moved {
             f.focus_in = false;
             f.held_back = None;
+            f.held_change = None;
         }
         let holdable = f.holdable();
         // Until the motion starts, a newcomer is held for too; once moving, it joins as it lands.
@@ -706,6 +748,13 @@ impl Coordinator {
             return;
         }
         let target = f.stage.focus == Some(window);
+        // The focus target's look changing is the handover; one opened or grown shows it repainted;
+        // and the last capture before the lift shows it as it lands, if its change watch ran out first.
+        let handover = target
+            && !f.focus_in
+            && (matches!(why, Why::FocusChanged | Why::Final) || f.awaiting.contains(&window));
+        // macOS turns the window focus leaves first: the target's change waits for it a little.
+        let held = handover && why == Why::FocusChanged && watched_losing(f).is_some();
         // A landing is often taken before the window repaints focused: the focused look it flies
         // stays until focus hands over.
         let over_look = target
@@ -713,28 +762,38 @@ impl Coordinator {
             && !f.focus_in
             && !f.awaiting.contains(&window)
             && why == Why::Landed;
-        if over_look {
+        if held {
+            let since = f.held_change.map_or(now, |(_, _, since)| since);
+            f.held_change = Some((generation, frame, since));
+        } else if over_look {
             f.held_back = Some((generation, frame));
         } else {
+            if handover {
+                f.unfocus_losing(out);
+            }
             out.push(Command::Swap { generation, window });
         }
         extend_latest(&mut f.landed, [(window, frame)].into_iter());
         f.snap(window, frame, out);
-        if target && why == Why::FocusChanged {
+        if target && why == Why::FocusChanged && !held {
             out.push(Command::KeepFocusedLook { generation, window });
         }
-        // The focus target's look changing is the handover; one opened or grown shows it repainted;
-        // and the last capture before the lift shows it as it lands, if its change watch ran out first.
-        let handover = matches!(why, Why::FocusChanged | Why::Final) || f.awaiting.contains(&window);
-        if target && !f.focus_in && handover {
+        if handover && !held {
             f.held_back = None;
             f.hand_over(window, out);
+        }
+        if f.stage.losing_focus == Some(window) && why == Why::FocusChanged {
+            f.unfocus_losing(out);
+            f.swap_held_change(out);
         }
         hold_no_longer(f, window, now, out);
     }
 
     fn tick(&mut self, settled: bool, landed: bool, now: Instant, out: &mut Vec<Command>) {
         let State::Flying(f) = &mut self.state else { return };
+        if f.held_change.is_some_and(|(_, _, since)| now >= since + CHANGE_EVERY) {
+            f.swap_held_change(out);
+        }
         match f.phase.clone() {
             Phase::Preparing { deadline } => {
                 if now >= deadline {
@@ -763,6 +822,7 @@ impl Coordinator {
                     });
                     // Nothing showed the target's look change, or it looked focused before anything
                     // watched it: it is reported focused, and turning at the lift is the flicker.
+                    f.swap_held_change(out);
                     if !f.focus_in
                         && f.stage.losing_focus.is_some()
                         && let Some(to) = f.stage.focus.filter(|w| f.stage.tile(*w).is_some())
@@ -873,6 +933,7 @@ fn end_watch(f: &Flight, now: Instant) -> EndWatch {
         landing_until: now + LANDING_PATIENCE,
         awaiting_until: now + HOLD_CAP,
         focus: watched_focus(f),
+        losing_focus: watched_losing(f),
         background: f.stage.background(),
         background_initial: f.background_later.then(|| now + Duration::from_millis(30)),
         behind: f.stage.behind(),
@@ -885,6 +946,16 @@ fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
     let window = f.stage.focus.filter(|w| f.stage.losing_focus.is_some() && !f.focus_in && !f.awaiting.contains(w))?;
     let end = f.stage.tile(window)?.end;
     (!is_off_screen(f.stage.display, end)).then_some((window, end))
+}
+
+/// The window focus leaves and its end, watched beside the target while its own turn is to come, if
+/// it ends wholly on the display: SkyLight pictures only that, and the one ScreenCaptureKit capture a
+/// flight lets through is the target's.
+fn watched_losing(f: &Flight) -> Option<(WindowId, ScreenRect)> {
+    watched_focus(f)?;
+    let window = f.stage.losing_focus.filter(|w| f.unfocused != Some(*w))?;
+    let end = f.stage.tile(window)?.end;
+    wholly_inside(end, f.stage.display).then_some((window, end))
 }
 
 fn final_at(started: Instant, duration: Duration) -> Instant {
@@ -976,6 +1047,24 @@ mod tests {
 
     fn watch(out: &[Command]) -> Option<EndWatch> {
         out.iter().find_map(|c| if let Command::Watch(w) = c { Some(w.clone()) } else { None })
+    }
+
+    /// Each tile drawn focused or not, in the order commanded.
+    fn focus(out: &[Command]) -> Vec<(WindowId, bool)> {
+        out.iter().filter_map(|c| if let Command::Focus { window, focused } = c { Some((*window, *focused)) } else { None }).collect()
+    }
+
+    /// The pan's window 1 drawn unfocused, then window 2 focused.
+    fn handed_over() -> Vec<(WindowId, bool)> {
+        vec![(w(1), false), (w(2), true)]
+    }
+
+    /// The swaps, kept looks and focus drawn, in order.
+    fn turns(out: &[Command]) -> Vec<Command> {
+        out.iter()
+            .filter(|c| matches!(c, Command::Swap { .. } | Command::KeepFocusedLook { .. } | Command::Focus { .. }))
+            .cloned()
+            .collect()
     }
 
     #[test]
@@ -1274,8 +1363,8 @@ mod tests {
         let out = c.on(Event::Lost { generation: c.generation(), window: w(2) }, now);
         assert_eq!(out, vec![Command::StartMoving]);
         let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(matches!(out.as_slice(), [Command::AskFinal { .. }, Command::HandOverFocus { to, .. }] if *to == w(2)),
-            "{out:?}");
+        assert!(matches!(out.as_slice(), [Command::AskFinal { .. }, Command::Focus { .. }, Command::Focus { .. }]), "{out:?}");
+        assert_eq!(focus(&out), handed_over());
 
         stage.awaiting = vec![w(1), w(2)];
         let mut c = running(stage.clone(), now);
@@ -1340,6 +1429,7 @@ mod tests {
         let now = Instant::now();
         let end = pan().tiles[1].end;
         let mut c = running(pan(), now);
+        c.on(Event::Picture { generation: c.generation(), window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
         c.on(Event::Picture { generation: c.generation(), window: w(2), frame: end, why: Why::FocusChanged }, now);
         let out = c.on(Event::Merge { stage: pan(), moved: false }, now);
         assert_eq!(watch(&out).unwrap().focus, None, "its look is in");
@@ -1362,6 +1452,94 @@ mod tests {
         let mut clipped = pan();
         clipped.tiles[1].end = r(-200.0, 35.0, 860.0, 1079.0);
         assert!(focus_of(clipped).is_some(), "a clipped end takes its one capture");
+    }
+
+    #[test]
+    fn the_window_losing_focus_is_watched_beside_the_target_while_its_own_turn_is_to_come() {
+        let now = Instant::now();
+        let losing_of = |stage: StageSummary| {
+            let mut c = Coordinator::default();
+            c.on(Event::Begin(stage), now);
+            watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap().losing_focus
+        };
+        let end = pan().tiles[0].end;
+        assert_eq!(losing_of(pan()), Some((w(1), end)));
+        let mut opened = pan();
+        opened.awaiting = vec![w(2)];
+        assert_eq!(losing_of(opened), None, "only beside a watched target");
+        let mut clipped = pan();
+        clipped.tiles[0].end = r(1300.0, 35.0, 860.0, 1079.0);
+        assert_eq!(losing_of(clipped), None, "SkyLight pictures it only whole, and ScreenCaptureKit's capture is the target's");
+        let mut parked = pan();
+        parked.tiles[0].end = r(1727.0, 35.0, 860.0, 1079.0);
+        assert_eq!(losing_of(parked), None);
+
+        let mut c = running(pan(), now);
+        c.on(Event::Picture { generation: c.generation(), window: w(1), frame: end, why: Why::FocusChanged }, now);
+        let watched = watch(&c.on(Event::Merge { stage: pan(), moved: false }, now)).unwrap();
+        assert_eq!((watched.focus.map(|(window, _)| window), watched.losing_focus), (Some(w(2)), None), "its turn is in");
+    }
+
+    /// macOS turns the window focus leaves before the one gaining it. The target's change waits for
+    /// the old window's, at most 15ms, and each tile is drawn focused or not with its own picture.
+    #[test]
+    fn the_target_turns_after_the_window_losing_focus_and_each_ring_with_its_own_picture() {
+        let now = Instant::now();
+        let (old, new) = (pan().tiles[0].end, pan().tiles[1].end);
+        let mut c = running(pan(), now);
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
+        assert_eq!(turns(&out), Vec::new(), "waits for the old window: {out:?}");
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now + Duration::from_millis(5));
+        assert_eq!(
+            turns(&out),
+            vec![
+                Command::Swap { generation: g, window: w(1) },
+                Command::Focus { window: w(1), focused: false },
+                Command::Swap { generation: g, window: w(2) },
+                Command::KeepFocusedLook { generation: g, window: w(2) },
+                Command::Focus { window: w(2), focused: true },
+            ]
+        );
+
+        let mut c = running(pan(), now);
+        c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
+        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(14));
+        assert_eq!(turns(&out), Vec::new());
+        let out = c.on(Event::Tick { settled: false, landed: false }, now + CHANGE_EVERY);
+        assert_eq!(
+            turns(&out),
+            vec![
+                Command::Focus { window: w(1), focused: false },
+                Command::Swap { generation: g, window: w(2) },
+                Command::KeepFocusedLook { generation: g, window: w(2) },
+                Command::Focus { window: w(2), focused: true },
+            ],
+            "15ms at most, the old window turning unfocused just before"
+        );
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now + Duration::from_millis(20));
+        assert_eq!(turns(&out), vec![Command::Swap { generation: g, window: w(1) }], "drawn unfocused once");
+
+        let mut c = running(pan(), now);
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now);
+        assert_eq!(focus(&out), vec![(w(1), false)], "the old window first, with its own picture");
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "nothing left to wait for");
+        assert_eq!(focus(&out), vec![(w(2), true)]);
+
+        let mut clipped = pan();
+        clipped.tiles[0].end = r(1300.0, 35.0, 860.0, 1079.0);
+        let mut c = running(clipped, now);
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
+        assert_eq!(focus(&out), handed_over(), "an old window no watch sees turns just before the target");
+        assert_eq!(turns(&out)[1], Command::Swap { generation: g, window: w(2) });
+
+        let mut c = running(pan(), now);
+        c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(230));
+        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
+        assert!(matches!(out[0], Command::AskFinal { .. }), "{out:?}");
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "swapped as the last capture is asked");
+        assert_eq!(focus(&out), handed_over());
     }
 
     #[test]
@@ -1403,10 +1581,11 @@ mod tests {
         let end = pan().tiles[1].end;
         c.on(Event::Merge { stage: pan(), moved: false }, now);
         assert_ne!(c.generation(), old);
+        c.on(Event::Picture { generation: old, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
         let out = c.on(Event::Picture { generation: old, window: w(2), frame: end, why: Why::FocusChanged }, now);
         assert!(has(&out, |c| *c == Command::Swap { generation: old, window: w(2) }), "{out:?}");
         assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: old, window: w(2) }), "named as it was delivered");
-        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert_eq!(focus(&out), vec![(w(2), true)]);
     }
 
     #[test]
@@ -1513,7 +1692,7 @@ mod tests {
         assert_eq!(watch.landing, vec![(w(1), stage.tiles[0].end)]);
         assert_eq!(watch.focus, None, "its repainted picture is the handover");
         let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now);
-        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert_eq!(focus(&out), handed_over());
 
         // Merged in while the overlay holds for another, it does not add to the hold.
         let mut grown = pan();
@@ -1636,19 +1815,20 @@ mod tests {
         let g = c.generation();
         let end = pan().tiles[1].end;
         let out = c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
-        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. } | Command::HandOverFocus { .. })), "only the focus target's");
+        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "only the focus target's");
+        assert_eq!(focus(&out), vec![(w(1), false)], "the window left turns unfocused with it");
         let landed = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
-        assert!(!has(&landed, |c| matches!(c, Command::HandOverFocus { .. })), "a landing is not the handover");
+        assert_eq!(focus(&landed), Vec::new(), "a landing is not the handover");
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now);
         assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }));
-        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert_eq!(focus(&out), vec![(w(2), true)]);
 
         // A window opened or grown as the focus target hands over when it has repainted.
         let mut opened = pan();
         opened.awaiting = vec![w(2)];
         let mut c = running(opened, now);
         let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: end, why: Why::Landed }, now);
-        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert_eq!(focus(&out), handed_over());
         assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })));
     }
 
@@ -1658,10 +1838,10 @@ mod tests {
         let mut c = running(pan(), now);
         let g = c.generation();
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::Final }, now);
-        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert_eq!(focus(&out), handed_over());
         assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "not known to be its focused look");
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
-        assert!(!has(&out, |c| matches!(c, Command::HandOverFocus { .. })), "handed over once");
+        assert_eq!(focus(&out), Vec::new(), "handed over once");
     }
 
     /// The target looked focused before anything watched it change, or its look shows focus no other
@@ -1672,19 +1852,19 @@ mod tests {
         let mut c = running(pan(), now);
         let g = c.generation();
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::Landed }, now);
-        assert!(!has(&out, |c| matches!(c, Command::HandOverFocus { .. })));
+        assert_eq!(focus(&out), Vec::new());
         let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(matches!(out.as_slice(), [Command::AskFinal { .. }, Command::HandOverFocus { to, from: Some(from) }] if *to == w(2) && *from == w(1)),
-            "{out:?}");
+        assert!(matches!(out.as_slice(), [Command::AskFinal { .. }, Command::Focus { .. }, Command::Focus { .. }]), "{out:?}");
+        assert_eq!(focus(&out), handed_over(), "neither turn showed: both flip, the old window first");
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
         assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }), "a change after it is still its look");
-        assert!(!has(&out, |c| matches!(c, Command::HandOverFocus { .. })), "handed over once");
+        assert_eq!(focus(&out), Vec::new(), "handed over once");
 
         let mut staying = pan();
         staying.losing_focus = None;
         let mut c = running(staying, now);
         let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(!has(&out, |c| matches!(c, Command::HandOverFocus { .. })), "focus moves nowhere");
+        assert_eq!(focus(&out), Vec::new(), "focus moves nowhere");
     }
 
     /// A parked target flying its focused look: its landing is often taken before it repaints
@@ -1700,10 +1880,11 @@ mod tests {
         let g = c.generation();
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
         assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "{out:?}");
+        c.on(Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].end, why: Why::FocusChanged }, now);
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now);
         assert_eq!(out[0], Command::Swap { generation: g, window: w(2) });
         assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }));
-        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert_eq!(focus(&out), vec![(w(2), true)]);
         assert_eq!(out.iter().filter(|c| matches!(c, Command::Swap { .. })).count(), 1, "the landing held back is not swapped as well");
 
         let mut c = running(stage.clone(), now);
@@ -1711,7 +1892,7 @@ mod tests {
         c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
         let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "swapped in as focus hands over: {out:?}");
-        assert!(has(&out, |c| matches!(c, Command::HandOverFocus { .. })));
+        assert_eq!(focus(&out), handed_over());
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
         assert!(has(&out, |c| matches!(c, Command::Swap { .. })), "once handed over, a landing is swapped");
 
