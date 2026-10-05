@@ -338,8 +338,8 @@ pub struct EndWatch {
     /// for one ending off the display.
     pub focus: Option<(WindowId, ScreenRect)>,
     /// The window focus leaves and where it ends, watched with `focus` until its own look changes: only
-    /// while `focus` is watched and its own turn is still to come, and only for one ending wholly on
-    /// the display.
+    /// while `focus` is watched and its own turn is still to come and can be seen, never for a window
+    /// `awaiting` watches, and only for one ending wholly on the display.
     pub losing_focus: Option<(WindowId, ScreenRect)>,
     /// Floating windows that stay put, kept fresh once `focus`'s own change is in, if it is watched...
     pub background: Vec<(WindowId, ScreenRect)>,
@@ -388,8 +388,9 @@ struct Flight {
     /// what the target's changed picture waits for no longer.
     unseen: Option<WindowId>,
     /// The focus target's changed picture, not swapped while the window losing focus is watched to
-    /// turn first: under its generation, at its frame, since when. Swapped at that turn, or
-    /// `CHANGE_EVERY` after.
+    /// turn first: under its generation, at its frame, since when. Swapped at that turn, once that
+    /// turn is reported unseen, as the last capture is asked, or `CHANGE_EVERY` after; dropped when
+    /// focus moves on, and handing nothing over once it no longer fits its tile.
     held_change: Option<(Generation, ScreenRect, Instant)>,
     /// The focus target's latest landing, not swapped over the focused look its tile flies until focus
     /// hands over: under its generation, at its frame.
@@ -1575,7 +1576,8 @@ mod tests {
 
     /// The old window's turn given up on, clipped where it is, out of tries or refused, the target's
     /// held change waits for it no longer, and nothing more does; under a generation before, it was
-    /// given up on for another end.
+    /// given up on for another end. One a pass grew is watched to repaint instead, and drawn unfocused
+    /// just before the target.
     #[test]
     fn the_targets_change_waits_no_longer_for_an_old_window_whose_turn_will_not_be_seen() {
         let now = Instant::now();
@@ -1608,8 +1610,11 @@ mod tests {
         growing.awaiting = vec![w(1)];
         let mut c = Coordinator::default();
         c.on(Event::Begin(growing), now);
-        let watched = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
+        let g = c.generation();
+        let watched = watch(&c.on(Event::FrameZero(g), now)).unwrap();
         assert_eq!(watched.losing_focus, None, "watched to repaint instead");
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(4));
+        assert_eq!(focus(&out), handed_over(), "drawn unfocused just before the target");
     }
 
     /// A rapid switch, 1 to 2 and back before 2 turns: window 1, drawn unfocused with its own

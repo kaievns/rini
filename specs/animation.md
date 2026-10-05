@@ -207,6 +207,10 @@ destination for a window already moving.
 
 - The frame written to a window is the layout's answer, never the animation's. A window parked off the
   strip is written its real park position; the tile is merely drawn heading off the edge.
+- A flight's frames MUST be written to the windows ending on the display before the windows ending
+  parked off it. Each write is several round trips the app answers one after another, and a strip
+  switch interleaves the leaving window's park with the arriving windows' places: written first, a
+  park nobody sees delays a window everybody does, which lands late, after the lift.
 - A window MUST NOT be left at an animation's intermediate frame if a pass is interrupted.
 - The overlay MUST stop drawing a tile whose window is gone, and MUST drop a container once the last
   tile leaves it. An empty container is a layer the compositor keeps compositing.
@@ -299,7 +303,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   the flight still moves, so nothing changes at rest after the lift.
 - From the moment the window server reports the window gaining focus focused, it MUST be pictured
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
-  its own look changes, if it ends wholly on a display. A look a window already had when it landed
+  its own look changes, if it ends wholly on a display and no pass opened or grew it: one a pass
+  opened or grew is pictured once it has repainted instead. A look a window already had when it landed
   counts as changed. Each MUST be drawn with its turned picture as it comes in, its ring and its shadow
   turning with it: the window losing focus unfocused, the window gaining focus focused.
 - The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
@@ -307,9 +312,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   turn can no longer be pictured; two that come in together MUST turn old, then new. Waiting for the
   other MUST NOT delay looking at the window gaining focus: it MUST be looked for as often as any
   window landing until it is where it ends, and the windows behind the strip MUST wait only for its
-  turn. A window losing focus whose turn has not shown by then, one ending clipped
-  or parked, or one whose watch ran out, MUST be drawn unfocused just before the window gaining focus
-  is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
+  turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
+  pass opened or grew, or one whose watch ran out, MUST be drawn unfocused just before the window
+  gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
   the same, old then new, while the flight still moves. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
   keeps its picture to the lift, only its ring and its shadow turning unfocused, and its look turns at
@@ -520,7 +525,8 @@ plays the score on Core Animation on the main thread, on the overlay in
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
-`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
+`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted,
+`src/transitions/domain/frame_writes.rs` which frames are written and in what order, and
 `src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
 which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
