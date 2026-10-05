@@ -411,9 +411,13 @@ impl Change {
         self.ends().all(|end| end.done)
     }
 
-    /// When it is next looked at: its round, or a poll for an end missed before it.
+    /// When it is next looked at: its round, or a poll before it while an end the last look missed is
+    /// still watched. A poll left by an end forgotten or retargeted since would hand out nothing.
     fn wake(&self) -> Instant {
-        self.poll.map_or(self.next, |poll| poll.min(self.next))
+        match self.poll {
+            Some(poll) if self.ends().any(|end| !end.done && end.missed) => poll.min(self.next),
+            _ => self.next,
+        }
     }
 
     fn due(&self, now: Instant) -> bool {
@@ -2002,6 +2006,33 @@ mod tests {
         watches.watch(WatchId(1), changing(LEFT), start, &none);
         watches.forget(wid(1));
         assert_eq!(looked(&watches.next(start).unwrap()), vec![vec![wid(2)]]);
+    }
+
+    /// A poll lasts only while an end it is for is still missed: with that end forgotten, or
+    /// retargeted to another size, the watch wakes at its round and not at a poll gone by.
+    #[test]
+    fn a_change_watch_with_no_end_missed_left_wakes_at_its_round() {
+        let start = Instant::now();
+        let short = rect(14.0, 32.0, 700.0, 1081.0);
+        let missed = || {
+            let mut watches = Watches::default();
+            watches.hint(Hint::Focused(wid(2)), start);
+            watches.watch(WatchId(1), changing(LEFT), start, &none);
+            round(&mut watches, start, |w| Some(if w == wid(1) { short } else { RIGHT }), |_| Some(1)).unwrap();
+            assert_eq!(watches.wake(start), Some(start + LANDING_POLL), "the old window polled for");
+            watches
+        };
+        let later = start + LANDING_POLL * 3;
+
+        let mut watches = missed();
+        watches.forget(wid(1));
+        assert!(watches.next(later).is_none());
+        assert_eq!(watches.wake(later), Some(start + CHANGE_EVERY), "forgotten");
+
+        let mut watches = missed();
+        watches.retarget(WatchId(1), changing(rect(4.0, 32.0, 860.0, 1081.0)), later, &none);
+        assert!(watches.next(later).is_none());
+        assert_eq!(watches.wake(later), Some(start + CHANGE_EVERY), "at another size");
     }
 
     /// A retarget keeps each end's baseline, tries and finish while that end keeps its size.
