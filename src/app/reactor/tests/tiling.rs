@@ -1407,6 +1407,11 @@ impl Strip {
     /// Two columns and gaps all round, so rini's full width is smaller than the screen an app
     /// zooms to.
     fn new() -> Self {
+        Self::with_columns(2)
+    }
+
+    /// `count` columns of one window each, `window` the first and `other` the second.
+    fn with_columns(count: usize) -> Self {
         let (mut apps, mut reactor) = test_context();
         reactor.config.settings.layout.gaps.struts = Edges {
             top: 8.,
@@ -1419,7 +1424,8 @@ impl Strip {
             .layout_engine
             .set_layout_settings(&reactor.config.settings.layout);
         let space = SpaceId::new(1);
-        set_space_membership(&[(space, &[1, 2])]);
+        let members: Vec<u32> = (1..=count as u32).collect();
+        set_space_membership(&[(space, members.as_slice())]);
         reactor.handle_event(space_state_event_from_screens(vec![ScreenInfo {
             id: rini_core::ids::ScreenId::new(0),
             frame: VISIBLE,
@@ -1430,7 +1436,7 @@ impl Strip {
             is_builtin: false,
             scale: 2.0,
         }]));
-        make_active_app_with_count(&mut apps, &mut reactor, 1, 2, Some(WindowId::new(1, 1)));
+        make_active_app_with_count(&mut apps, &mut reactor, 1, count, Some(WindowId::new(1, 1)));
         let window = WindowId::new(1, 1);
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
         apps.simulate_until_quiet(&mut reactor);
@@ -1536,6 +1542,34 @@ fn the_drag_session_keeps_the_end_its_reports_moved_last_until_the_release() {
     let wider = rect(start.origin.x, start.origin.y, start.size.width + 40., start.size.height);
     strip.app_reports(strip.window, wider, MouseState::Down);
     assert_eq!(active_session(&strip).dragged_end, None, "the next drag");
+}
+
+/// Every report of a drag measures from the frame the drag started at, not the report before it.
+/// Under `"always"` the middle column takes twice the edge's travel: 100pt over two reports is
+/// 200pt, where measuring each report from the last would end at 150.
+#[test]
+fn every_report_of_a_drag_measures_from_where_the_drag_started() {
+    let mut strip = Strip::with_columns(3);
+    strip.reactor.config.settings.layout.scrolling.center_focused_column =
+        crate::layout::settings::CenterFocusedColumn::Always;
+    strip
+        .reactor
+        .layout_manager
+        .layout_engine
+        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
+    strip.settle(strip.other);
+    let start = strip.on_screen(strip.other);
+
+    for travel in [50., 100.] {
+        let wider = rect(start.origin.x, start.origin.y, start.size.width + travel, start.size.height);
+        strip.app_reports(strip.other, wider, MouseState::Down);
+    }
+    strip.reactor.handle_event(Event::MouseUp);
+    strip.settle(strip.other);
+
+    let width = strip.on_screen(strip.other).size.width;
+    assert!((width - (start.size.width + 200.)).abs() <= 3., "{start:?} -> {width}");
 }
 
 /// The window the window server finds under the cursor, for as long as the guard lives.

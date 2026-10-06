@@ -267,6 +267,9 @@ mod tests {
         let written = ron::ser::to_string(&dragged).unwrap();
 
         let old: before_dragged_widths::Slot = ron::from_str(&written).expect("an older rini reads it");
+        assert_eq!(old.title, dragged.title);
+        assert_eq!(old.display_uuid, dragged.display_uuid);
+        assert_eq!(old.workspace_index, dragged.workspace_index);
         assert_eq!(old.width, Some(before_dragged_widths::ColumnWidth::Offset(0.33797)));
         assert_eq!(ron::from_str::<Slot>(&written).unwrap(), dragged);
 

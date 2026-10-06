@@ -309,12 +309,18 @@ mod tests {
     #[test]
     fn a_dragged_width_is_written_so_a_rini_from_before_it_reads_the_file() {
         let mut setup = Setup::default();
+        setup.window_home.insert(win(1), "built-in".to_owned());
+        setup.home_by_intent.insert(win(1));
+        setup.display_strip.insert("built-in".to_owned(), vec![win(1), win(2)]);
         let widths = setup.window_width.entry("built-in".to_owned()).or_default();
         widths.insert(win(1), ColumnWidth::Dragged(0.33797));
         widths.insert(win(2), ColumnWidth::Offset(0.25));
         let written = ron::ser::to_string(&setup).unwrap();
 
         let old: before_dragged_widths::Setup = ron::from_str(&written).expect("an older rini reads it");
+        assert_eq!(old.window_home, setup.window_home);
+        assert_eq!(old.home_by_intent, setup.home_by_intent);
+        assert_eq!(old.display_strip, setup.display_strip);
         let old_widths = &old.window_width["built-in"];
         assert_eq!(old_widths[&win(1)], before_dragged_widths::ColumnWidth::Offset(0.33797));
         assert_eq!(old_widths[&win(2)], before_dragged_widths::ColumnWidth::Offset(0.25));

@@ -4495,6 +4495,18 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (39.0, 1443.0));
     }
 
+    /// Clamped up to `min-column-width`, the shrink would grow it to 572pt.
+    #[test]
+    fn a_shrink_key_on_a_column_dragged_below_min_does_nothing() {
+        let (mut system, layout, w) = kai_s_strip();
+        app_sizes(&mut system, layout, w[1], 597.0);
+        drag(&mut system, layout, w[1], xw(600.0, 595.0), xw(708.0, 487.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+
+        system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 485.0));
+    }
+
     /// Dragged to 0.69977 of the tiling width, one step down is 0.64977, 1117pt after the gap
     /// share; from the bound it would be 1060. From 1443pt the step lands past the bound, on it.
     #[test]
@@ -4639,6 +4651,43 @@ mod tests {
         assert_near(scroll_offset(&system, layout), 884.0, "offset");
     }
 
+    /// A request for the dragged window made after its report and before the pass wins over the
+    /// pin, which would put its right edge back at 1482 and its x at 336: centring, the reveal a key
+    /// or `ctrl-F` asks for, and the alignment a focus move that finds no window asks for.
+    #[test]
+    fn a_scroll_request_after_a_left_edge_report_wins_over_the_kept_edge() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        system.center_selected_column(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (291.0, 1147.0), "centred");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        system.resize_selection_by(layout, 0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (577.0, 1148.0), "a key, revealed");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        assert!(system.toggle_full_width(layout, w[1]));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "ctrl-F, revealed");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        assert_eq!(system.move_focus(layout, Direction::Down).0, None);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1147.0), "a focus move that finds none");
+    }
+
+    /// Any frame under a held button counts as the drag, rini's own write to a neighbour coming
+    /// back included.
+    #[test]
+    fn a_drag_report_for_a_window_other_than_the_focused_one_changes_no_width() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(3.0, 694.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 594.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 882.0));
+    }
+
     /// The release refocuses the window it let go of before its pass, which must not cost the pin.
     #[test]
     fn refocusing_the_window_after_a_left_edge_report_keeps_its_right_edge() {
@@ -4746,6 +4795,27 @@ mod tests {
         assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 269.0), "top");
         assert_eq!(laid_out_yh(&system, layout, w[1]), (275.0, 468.0), "middle");
         assert_eq!(laid_out_yh(&system, layout, w[2]), (746.0, 368.0), "bottom");
+    }
+
+    /// A window that sizes itself takes its height from the rest of its column in their
+    /// proportions. Unequal first, 268.667 and 368.333 around a 468.333 middle, so sharing differs
+    /// from trading with one neighbour.
+    #[test]
+    fn a_stacked_window_sizing_itself_takes_its_height_from_the_others_in_proportion() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = at_yh(&system, layout, w[1], 374.0, 368.0);
+        let out = at_yh(&system, layout, w[1], 274.0, 468.0);
+        drag(&mut system, layout, w[1], from, out);
+
+        let grown = at_yh(&system, layout, w[1], 275.0, 568.0);
+        system.on_window_resized(layout, w[1], None, grown, KAI_SCREEN, &kai_s_gaps());
+
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows[1].1, 568.0, "the window's own height");
+        let (top, bottom) = (rows[0].1, rows[2].1);
+        assert!((top / bottom - 268.667 / 368.333).abs() < 0.01, "{rows:?}");
+        assert!((top + 568.0 + bottom - 1105.0).abs() <= 1.0, "{rows:?}");
     }
 
     /// Every report carries the frame the drag started from; each trades only what changed since
