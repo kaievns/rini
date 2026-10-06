@@ -10,7 +10,7 @@ press").
 
 | Feature | Owns | Never touches |
 |---|---|---|
-| **`decorations`** | what a window wears: the hairline's and the shadow's shape, their paint by focus and their depth, and the corner radius a tile is drawn with until its window's own is measured | captures, how a tile moves, when a transition does what |
+| **`decorations`** | what a window wears: the hairline's and the shadow's shape, their paint by focus and their depth, the Core Animation layers each tile wears them on, and the corner radius a tile is drawn with until its window's own is measured | captures, how a tile moves, when a transition does what |
 | **`pictures`** | every capture of a window, the desktop or the bar; the cache; what is known about each window (translucency, material, corner radius, its focused look); the capture schedule and its thread | layouts, the overlay's layer tree (it only sets a layer's contents), when a transition does what |
 | **`animation`** | how things move: the `Score`, choreographies that compose one, accents (the edge bounce, a move's nudge), and the renderer that plays a score on Core Animation | captures, window frames, focus |
 | **`transitions`** | when things happen: frame zero, the overlay up, frame writes, picture swaps in flight, merged presses, the handover and the lift | how pixels are obtained, what a curve looks like |

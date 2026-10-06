@@ -950,7 +950,7 @@ the window's own colour over white would be 0.55
 
 So a tile is two layers now: the picture, and a caster behind it carrying nothing
 but the shadow, masked by a `CAShapeLayer` whose path is the mask's own rect plus
-the window's rounded rect, wound even-odd, so only the ring outside the window is
+the window's rounded rect, wound even-odd, so only what lies outside the window is
 drawn. `SHADOW_REACH` is 70pt: the focused style (radius 14, offset 12) spends
 its ramp by about 54pt (three radii plus the offset), so the 40pt reach that fit
 the unfocused style clipped it into a straight edge.

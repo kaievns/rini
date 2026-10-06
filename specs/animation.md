@@ -556,7 +556,7 @@ into it and bend it at a press after, and stage a press on the strip. `src/anima
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
 `src/decorations/domain/` is what each tile wears: the hairline's and the shadow's shape, style and
-depth, which the overlay draws. When each step happens is `src/transitions/`:
+depth, which the overlay draws on the layers in `src/decorations/platform/layers.rs`. When each step happens is `src/transitions/`:
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,

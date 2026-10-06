@@ -1035,8 +1035,8 @@ from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
   the inner hairline had the caster's shadow bleeding straight against it, so
   the border read darker mid-flight and snapped at the handover. The renderer
   therefore draws the outline too, 0.5pt of black at 0.9 (the handover
-  prototype's value) in the half point outside the window ("The hairline" in
-  `src/animation/docs/animation-smoothness.md`).
+  prototype's value) in the half point outside the window ("The hairline and the shadow, as drawn"
+  in `src/decorations/docs/README.md`).
 
 ### The outline is captured, but it can be the wrong one
 
@@ -1218,7 +1218,7 @@ after a flight had run: the 53-level tail at the handover ("The handover, measur
 pixel instead, a constant does match: white at 20% focused and 18% unfocused, within 0.3 levels rms
 over 27 edges in 11 apps, the translucent terminal included ("The hairline is composited outside
 every capture" above; dark mode only). The renderer draws that ring and the outline outside it on
-every tile ("The hairline" in `src/animation/docs/animation-smoothness.md`).
+every tile ("The hairline and the shadow, as drawn" in `src/decorations/docs/README.md`).
 
 ## Snapshot staleness
 
