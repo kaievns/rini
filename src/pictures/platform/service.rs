@@ -547,8 +547,8 @@ impl Pictures {
 
     /// The desktop and the bar to dress a transition on `display` with: what the service holds of that
     /// display, and, until its first render lands, a desktop composited now on the caller's thread,
-    /// which without one draws the display left behind, or black. The bar is read for presence on
-    /// every transition, so a bar that has gone is not drawn, and composited once per display.
+    /// without which it draws black. The bar is read for presence on every transition, so a bar that
+    /// has gone is not drawn, and composited once per display.
     /// Whether there is a bar to picture is the service's, as the display it was last told says.
     pub fn dressing(&self, display: Display) -> Dressing {
         let picture_bar = self.lock().schedule.picture_bar();

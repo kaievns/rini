@@ -90,13 +90,13 @@ desktop and the bar, is taken at that display's own scale.
 
 **The desktop and the bar belong to their display.** The service keeps one display's pictures, and a
 read names the display it is for, so a transition can never be dressed with the display left behind;
-which display that is, only the schedule records. A transition is dressed with a desktop composited on
-the caller's thread until the first render of its display lands, which is what rini always did:
-without one it draws black, or the other display's wallpaper at its own size. That render starts only
-once the service is released, at the quiet after a flight, so a burst of transitions on a newly
-entered display composites the desktop on every one, and a render that comes back empty or the wrong
-size is asked again at the next quiet. The bar is composited once per display and kept, and read for
-presence on every transition, so a bar that has gone is not drawn.
+which display that is, only the schedule records. A transition is dressed with a desktop composited
+on the caller's thread until the first render of its display lands, which is what rini always did:
+without one it draws black. That render starts only once the service is released, at the quiet after
+a flight, so a burst of transitions on a newly entered display composites the desktop on every one,
+and a render that comes back empty or the wrong size is asked again at the next quiet. The bar is
+composited once per display and kept, and read for presence on every transition, so a bar that has
+gone is not drawn.
 
 **SkyLight reads the framebuffer.** A bar read while the overlay goes up has the overlay in it. The
 handle counts every `hold(Transition)` as it is asked, ahead of the message, and the thread drops a bar
