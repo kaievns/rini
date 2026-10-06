@@ -15,7 +15,7 @@ principle, and deliberately is not reused — see "Why this shape" in
 | `domain/scrolling.rs` | `ScrollingLayoutSystem`: the columns, the selection, the scroll offset, and `calculate_layout`. The one layout system there is |
 | `domain/strip.rs` | Where the strip sits and how wide its columns are: `anchor_x` and `centres`, `column_starts`, `gap_share`, `reveal_offset`, `offset_keeping_right_edge` |
 | `domain/edge_drag.rs` | Which edge of a window a mouse drag moves, read off the frame it started from and the one it has now, the width the drag asks of its column, and the height a stacked edge trades with the window across it |
-| `domain/constraints.rs` | `column_ratio` for how wide a column asks to be, `solve_axis_lengths` for row heights, and `clamp_to_constraints` for what a window will accept |
+| `domain/constraints.rs` | `column_ratio` for how wide a column asks to be by its `ColumnKind`, `solve_axis_lengths` for row heights, and `clamp_to_constraints` for what a window will accept |
 | `domain/preset_width.rs` | Which width the next `ctrl-R` asks for, and whether that width is the maximise mode |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
 | `domain/boundary.rs` | What a swipe means once the strip has run out: which workspace step a strip edge implies, and the inversion flag that swaps it |
@@ -39,8 +39,9 @@ strip-relative x, so the column still scrolls. The second mode rift had is delet
 
 **Maximized is a width, and also a mode.** It is the widest entry in the preset cycle,
 so `ctrl-R` reaches it and a step off it unmaximizes. It cannot be stored as a ratio
-because `max-column-width` is below 1.0 on purpose, which is why every rule that
-asks how wide a column is has to ask `column_ratio` rather than adding up the offset.
+because `max-column-width`, which bounds every ratio but a dragged one, is below 1.0 on
+purpose, which is why every rule that asks how wide a column is has to ask
+`column_ratio` rather than adding up the offset.
 
 ## Reading order
 

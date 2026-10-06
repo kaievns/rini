@@ -16,8 +16,8 @@ is borrowed.
   `ctrl-R` looked dead on a maximized window: the cycle wrote a `width_offset`
   that `calculate_layout` then ignored, because a column holding a maximized
   window is 1.0 whatever its stored width says. It cannot be a ratio like the
-  others — `max-column-width` is below 1.0, 0.9 by default, so 1.0 asked for
-  as a ratio comes back clamped to it — so `preset_width::next_preset`
+  others — `max-column-width` is below 1.0, 0.9 by default, so a preset of 1.0
+  asked for as a ratio comes back clamped to it — so `preset_width::next_preset`
   answers `Full` or `Ratio` and the caller applies the matching transition.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
   keys both do it, and the window stays where it is rather than going back to
@@ -25,12 +25,18 @@ is borrowed.
   kept one turned the next `ctrl-F` pair into a teleport — maximizing an already
   lone window records no new origin, so the press that unmaximized it read the
   stale one and dropped the window into a stack untouched since.
-- **Growing a maximized column does nothing.** Nothing is wider than the
-  viewport. Stepping it would unmaximize onto `max-column-width`, which is
-  *narrower* than what it has, so "grow" would visibly shrink the window. A
-  shrink does unmaximize, starting from 1.0 rather than the width it had before.
+- **A key never moves a width against its direction.** A grow at or above
+  `max-column-width` and a shrink at or below `min-column-width` do nothing,
+  because the bound would pull the width back across itself. Growing a
+  maximized column used to unmaximize it onto `max-column-width`, *narrower*
+  than what it had, so "grow" visibly shrank the window; a column dragged past
+  the bound would have done the same. A shrink from above starts from the
+  width the column has, 1.0 for a maximized one rather than the width it had
+  before.
 - **One place applies the width bounds.** `constraints::column_ratio`, read by
-  the layout pass, by the scroll-gesture arithmetic and by the default width.
+  the layout pass, by the scroll-gesture arithmetic, by the default width, by the
+  resize keys and by a resize report, each with the column's `ColumnKind`: full
+  width, dragged, or bounded.
   The gesture used to compute its own and did not know about maximized columns,
   so it stepped the strip by two thirds of a screen for a column occupying all
   of it and one swipe left the next column part-way on.
@@ -309,9 +315,21 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   shrink of a strip at its start, which leaves empty space before the first column until the view
   next moves. rini's offset clamp never shows that space, so the shrink keeps the left edge instead,
   and a strip scrolled by less than the shrink keeps the right edge only until the offset reaches 0.
-- **The width bounds still apply.** A drag past `max-column-width` or under `min-column-width`
-  lands on the bound with the right edge kept, so the dragged edge snaps back to where the bound puts
-  it. A centred column's width is doubled first and bounded after.
+- **A drag passes the width bounds.** `min-column-width` and `max-column-width` keep the resize keys
+  from crawling to 100%, and they snapped a drag back: presses 15 and 16 reached 1413 and 1443pt and
+  landed at 1148. A drag that moves the left or right edge marks its column `width_dragged`, and
+  `column_ratio` holds a `ColumnKind::Dragged` column only to the viewport and a twentieth of it; the
+  windows' own limits still apply in `column_width`. niri has neither key: its interactive resize is
+  held only by the window and the working area. A centred column's width is doubled, then held the
+  same way. A stacked edge's drag leaves the mark as it was. The app's own resize keeps it, because
+  an app reports its own size after rini's write, as a terminal snapping to its cell grid does, and a
+  clamp there would undo the drag. The mark is saved with the column and carried with the width
+  (`ColumnWidth::Dragged`); a key or a preset clears it.
+- **Full width and a drag.** A drag on a full-width column's left or right edge ends full width at
+  the dragged width, through `leave_full_width_in_place`; anything else under full width, the app
+  settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in
+  its column full width, with the drag's start width to go back to, so one width has one record. A
+  stacked window stays a column at 1.0, because the mode would pull it out of its stack.
 - **1-2pt short.** The column's ratio is the reported width over the tiling width, and
   `column_width` then subtracts the gap share, so a drag lands that much narrower than dragged.
 

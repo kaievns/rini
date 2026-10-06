@@ -45,13 +45,16 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - **Full width is the widest of the preset widths, not a state outside them.** `ctrl-R` MUST size a
   full-width window like any other, and MUST reach full width when the cycle comes round to it — even
   though full width is above `max-column-width`, which deliberately stops the incremental resize
-  keys from crawling to 100%.
+  keys, and not a mouse drag, from crawling to 100%.
 - **Being given a width is what ends full width.** A window sized by `ctrl-R` or by a resize key MUST
   stay where it is and MUST NOT be returned to the stack `ctrl-F` pulled it out of. It becomes an
   ordinary column with nowhere to return to, and the next `ctrl-F` MAY maximise it afresh.
-- Growing an already-full-width column MUST do nothing: there is nothing wider than the viewport, and
-  a "grow" that lands on `max-column-width` would make the window smaller. Shrinking one MUST
-  end full width and start from the width it HAS, not the width it had before being maximised.
+- **A resize key MUST NOT move a width against its own direction.** A grow at or above
+  `max-column-width`, and a shrink at or below `min-column-width`, MUST do nothing: the bound would
+  pull the width back across itself. So growing a full-width column does nothing, where a "grow"
+  landing on `max-column-width` would make the window smaller. A shrink from above the bound, out of
+  full width or a dragged width, MUST end full width and start from the width the column HAS, not
+  the width it had before being maximised.
 - **A window the user zooms from its title bar MUST become the full-width column**, the same one
   `ctrl-F` makes, whatever size the app zooms it to: the screen, or its content as Safari and Finder
   do. It MUST end exactly at rini's full-width frame and stay there when it is clicked again. Zooming
@@ -113,14 +116,21 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   centred column MUST take twice the dragged edge's travel, so it stays centred and the dragged edge
   ends where the cursor let go. The first and last columns sit flush, so they MUST take the dragged
   width and grow away from their flush edge.
-- At `min-column-width` or `max-column-width` the column MUST take the bound and keep its right
-  edge, so the dragged edge ends where the bound puts it. A centred column's doubled width is
-  bounded the same way.
+- **A drag MUST NOT be held to `min-column-width` or `max-column-width`.** Those bound the resize
+  keys and the default width. A dragged column takes the dragged width, held only by its windows'
+  own limits and the viewport, and keeps its right edge; a centred column's doubled width likewise.
+  The width MUST stay unbounded while the app settles its own size, when the window moves to another
+  workspace or display, and across a restart, until a resize key or `ctrl-R` gives the column a
+  width the bounds hold again. A drag that moves neither the left nor the right edge leaves the
+  column as bounded as it was.
 - The kept edge belongs to the window dragged. When focus moves to another column, or the dragged
   window closes, before the strip is laid out again, the column focused next MUST be placed as any
   focus change places it.
-- A full-width column MUST ignore a drag and stay full width. Ending full width at a width under
-  `max-column-width` would snap a window filling the screen to two thirds for any small shrink.
+- A drag on a full-width column's left or right edge MUST end full width at the dragged width. A
+  drag that moves neither, or the app settling its own size under it, MUST leave it full width.
+- A drag across the whole viewport MUST make a window alone in its column the full-width column, with
+  the width the drag started from to go back to. A stacked window MUST stay in its stack, as a column
+  the whole viewport wide, because full width would pull it out.
 - A drag MUST resize only the focused window. Any frame reported under a held button counts as the
   drag, including rini's own write to a neighbour coming back, and resizing that neighbour would
   fight the user.
@@ -139,7 +149,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > will stop resizing". rini placed every column by its start along the strip and took the dragged
 > window's new width without its origin, so every left-edge drag kept the left edge and moved the
 > right one. A grow then stopped at `max-column-width`, two thirds, 1148pt on that display, and the
-> reveal had put that column flush with the screen's right edge: that is the stop Kai saw. macOS
+> reveal had put that column flush with the screen's right edge: that is the stop Kai saw, and a drag
+> no longer meets either bound. macOS
 > played no part: in all 17 edge presses recorded, the pressed window took the resize and no
 > neighbour resized across the 3pt gap.
 

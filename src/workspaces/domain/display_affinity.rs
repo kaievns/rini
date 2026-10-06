@@ -68,6 +68,17 @@ pub enum ColumnWidth {
     FullWidth,
     /// A deliberate width, as an offset from the configured `column_width_ratio`.
     Offset(f64),
+    /// A width given by a mouse drag, as `Offset` is, and like it held by no display's
+    /// `min-column-width` or `max-column-width`. A variant rather than a flag on `Offset`, so a
+    /// record written before it reads as it did.
+    Dragged(f64),
+}
+
+impl ColumnWidth {
+    /// The record of a column's offset, by whether a drag gave it.
+    pub fn from_offset(offset: f64, dragged: bool) -> Self {
+        if dragged { Self::Dragged(offset) } else { Self::Offset(offset) }
+    }
 }
 
 /// What naming an arrangement turned out to mean.
@@ -742,6 +753,24 @@ mod tests {
         // A display it has never been on has no opinion, so the window adopts that
         // display's configured default rather than inheriting another display's size.
         assert_eq!(affinity.window_width("third", win(1)), None);
+    }
+
+    /// A dragged width comes back dragged, so no display's bounds clamp it after a restart. An
+    /// `Offset` is written as it was before `Dragged` existed, so an old file reads unchanged.
+    #[test]
+    fn a_dragged_width_round_trips_and_an_old_record_reads_as_before() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width("built-in", win(1), ColumnWidth::from_offset(0.33797, true));
+        affinity.set_window_width("built-in", win(2), ColumnWidth::from_offset(0.25, false));
+
+        let written = ron::ser::to_string(&affinity).unwrap();
+        assert!(written.contains("Offset(0.25)"), "{written}");
+        let read: DisplayAffinity = ron::from_str(&written).unwrap();
+        assert_eq!(
+            read.window_width("built-in", win(1)),
+            Some(ColumnWidth::Dragged(0.33797))
+        );
+        assert_eq!(read.window_width("built-in", win(2)), Some(ColumnWidth::Offset(0.25)));
     }
 
     /// Clearing must forget, not freeze the last value: toggling a deliberate width off is an

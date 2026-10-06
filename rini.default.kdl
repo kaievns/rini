@@ -74,8 +74,9 @@ layout {
     // A new column's width, as a fraction of the display's tiling width.
     default-column-width { proportion 0.7; }
 
-    // The narrowest and widest set-column-width makes a column. Full width (maximize-column, or
-    // `proportion 1.0` below) is a mode rather than a width, so these do not hold it back.
+    // The narrowest and widest set-column-width makes a column, with the default width between
+    // them. Full width (maximize-column, or `proportion 1.0` below) is a mode rather than a width,
+    // and a mouse drag is not a key, so these hold back neither.
     min-column-width { proportion 0.3; }
     max-column-width { proportion 0.9; }
 
@@ -370,7 +371,8 @@ binds {
     //   maximize-column                               the column fills the tiling area and keeps scrolling with
     //                                                 the strip; macOS's own fullscreen stays the green button
     //   switch-preset-column-width                    step through layout's preset-column-widths
-    //   set-column-width "+5%" / "-5%"                within min-column-width and max-column-width
+    //   set-column-width "+5%" / "-5%"                within min-column-width and max-column-width;
+    //                                                 from outside them, only toward them
     //   set-window-height "+5%" / "-5%"               windows stacked in one column
     //   set-column-width-or-window-height "+5%"       the height in a stacked column, the width otherwise
     //   center-column

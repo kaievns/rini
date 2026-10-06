@@ -11,8 +11,9 @@ application.
 
 - `window_home`: the display UUID the window belongs to, written on first sighting and
   on an explicit move, never by the forced reassignment that follows an unplug.
-- `window_width`: the `ColumnWidth` it last had **on each display**, stored as a ratio
-  or the `FullWidth` mode rather than in points, so it survives a resolution change.
+- `window_width`: the `ColumnWidth` it last had **on each display**, stored as a ratio,
+  a dragged ratio (`Dragged`, which no width bound holds) or the `FullWidth` mode rather
+  than in points, so it survives a resolution change.
 
 `WorkspaceAssignments` (`src/workspaces/domain/assignment.rs`) records which workspace
 each window is assigned to. All three are written to `~/.rini/layout.ron` on save.

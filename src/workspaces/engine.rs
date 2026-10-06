@@ -1135,8 +1135,8 @@ impl LayoutEngine {
             if tree.is_window_full_width(layout, window) {
                 return Some(Some(ColumnWidth::FullWidth));
             }
-            if let Some(offset) = tree.column_width_offset(layout, window) {
-                return Some(Some(ColumnWidth::Offset(offset)));
+            if let Some((offset, dragged)) = tree.column_width_offset(layout, window) {
+                return Some(Some(ColumnWidth::from_offset(offset, dragged)));
             }
             consulted |= tree.contains_window(layout, window);
         }
@@ -1338,8 +1338,9 @@ impl LayoutEngine {
             return;
         }
         match tree.column_width_offset(layout, window) {
-            Some(offset) => {
-                memory.affinity.set_window_width(&display, window, ColumnWidth::Offset(offset));
+            Some((offset, dragged)) => {
+                let width = ColumnWidth::from_offset(offset, dragged);
+                memory.affinity.set_window_width(&display, window, width);
             }
             // Toggled back to the default. Forget rather than pin, so the window follows
             // each display's configured ratio again.
@@ -1397,7 +1398,11 @@ impl LayoutEngine {
             }
             ColumnWidth::Offset(offset) => {
                 self.workspace_tree_mut(workspace_id)
-                    .set_column_width_offset(layout, window, offset);
+                    .set_column_width_offset(layout, window, offset, false);
+            }
+            ColumnWidth::Dragged(offset) => {
+                self.workspace_tree_mut(workspace_id)
+                    .set_column_width_offset(layout, window, offset, true);
             }
         }
     }
@@ -4934,6 +4939,84 @@ mod tests {
                 Some(expected)
             );
         }
+    }
+
+    /// The default bounds stop a column at 0.9 of the tiling width; the drag took it to 0.95, and
+    /// the workspace it arrives on has to know that no bound holds it.
+    #[test]
+    fn a_window_moved_to_another_workspace_keeps_its_dragged_width() {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
+        let space = SpaceId::new(97);
+        let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
+        let gaps = LayoutSettings::default().gaps.effective_for_display(None);
+        let wid = WindowId::new(6003, 1);
+        memory.affinity.set_display_space("built-in", space);
+
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, screen.size),
+        );
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowsOnScreenUpdated(
+                space,
+                wid.pid,
+                vec![(
+                    wid,
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    CGSize::new(500.0, 500.0),
+                    None,
+                    None,
+                )],
+                None,
+            ),
+        );
+        let width_of = |engine: &mut LayoutEngine| {
+            let frames = engine.calculate_layout(space, screen, &gaps);
+            frames.iter().find(|(window, _)| *window == wid).expect("laid out").1.size.width
+        };
+        let start = engine.calculate_layout(space, screen, &gaps)[0].1;
+        let tiling = crate::layout::domain::area::compute_tiling_area(screen, &gaps);
+        let dragged = (tiling.size.width * 0.95).round();
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowResized {
+                wid,
+                dragged_from: Some(start),
+                new_frame: CGRect::new(start.origin, CGSize::new(dragged, start.size.height)),
+                screens: vec![(space, screen, None)],
+            },
+        );
+        assert_eq!(width_of(&mut engine), dragged);
+
+        let _ = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::CreateWorkspace,
+        );
+        let _ = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::MoveWindowToWorkspace {
+                workspace: WorkspaceSelector::Name("next".into()),
+                follow: true,
+                window_id: Some(wid.idx.get()),
+            },
+        );
+        let target = engine.virtual_workspace_manager_mut().list_workspaces(space)[1].0;
+        assert_eq!(engine.active_workspace(space), Some(target));
+        assert_eq!(width_of(&mut engine), dragged);
     }
 
     #[test]
