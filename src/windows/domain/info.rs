@@ -74,6 +74,8 @@ mod tests {
     fn a_reported_radius_is_the_largest_corner_above_zero() {
         assert_eq!(reported_radius(&[16.0; 4]), Some(16.0));
         assert_eq!(reported_radius(&[8.0, 8.0, 0.0, 0.0]), Some(8.0));
+        assert_eq!(reported_radius(&[8.0, 16.0, 0.0, 12.0]), Some(16.0), "unequal corners: the largest");
+        assert_eq!(reported_radius(&[f64::NAN, 12.0, 0.0, 0.0]), Some(12.0));
         assert_eq!(reported_radius(&[0.0; 4]), None);
         assert_eq!(reported_radius(&[]), None);
         assert_eq!(reported_radius(&[f64::NAN; 4]), None);
