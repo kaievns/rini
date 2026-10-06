@@ -118,7 +118,8 @@ struct Shared {
     display: DisplayPictures,
     learned: Learned,
     delivered: Delivered<Picture>,
-    stand_in: Option<StandIn>,
+    /// The stand-in's pixel, drawn once.
+    stand_in: Option<CFRetained<CGImage>>,
 }
 
 impl Shared {
@@ -397,12 +398,6 @@ fn bar_read_kept(asked_before: u64, applied: u64, asked_after: u64) -> bool {
 /// A picture of a handover check, the overlay's own or the screen's, undrawn until it is compared.
 struct Whole(CFRetained<CGImage>);
 
-/// The stand-in's pixels, drawn once per scale.
-struct StandIn {
-    scale: f64,
-    image: CFRetained<CGImage>,
-}
-
 impl Pictures {
     /// Starts the service on its own thread. Every sink hears of every picture the cache takes.
     pub fn start(sinks: Vec<Sink>) -> Self {
@@ -520,15 +515,13 @@ impl Pictures {
     /// Every window with a picture held or one on its way.
     pub fn windows(&self) -> Vec<WindowId> { self.lock().windows() }
 
-    /// A stand-in for a window of `size` at `scale`, never cached. `None` only if its pixels cannot be
-    /// drawn.
-    pub fn stand_in(&self, size: ScreenSize, scale: f64) -> Option<Picture> {
+    /// A stand-in for a window of `size`, never cached. `None` only if its pixel cannot be drawn.
+    pub fn stand_in(&self, size: ScreenSize) -> Option<Picture> {
         let mut shared = self.lock();
-        if shared.stand_in.as_ref().is_none_or(|drawn| drawn.scale != scale) {
-            let (image, _) = stand_in_image(scale)?;
-            shared.stand_in = Some(StandIn { scale, image });
+        if shared.stand_in.is_none() {
+            shared.stand_in = stand_in_image();
         }
-        Some(stand_in_picture(size, shared.stand_in.as_ref()?.image.clone()))
+        Some(stand_in_picture(size, shared.stand_in.clone()?))
     }
 
     /// `display` held as the overlay's, with `desktop` as its desktop, as a render landed for it.
@@ -538,6 +531,14 @@ impl Pictures {
         let Shared { schedule, display: held, .. } = &mut *shared;
         set_display(schedule, held, display, false, Instant::now());
         held.desktop = Some(desktop);
+    }
+
+    /// `window` known as a first alpha capture and a material check would have found it.
+    #[cfg(test)]
+    pub fn learn(&self, window: WindowServerId, translucent: bool, material: bool) {
+        let mut shared = self.lock();
+        shared.learned.saw_alpha(window, translucent, None);
+        shared.learned.saw_material(window, material);
     }
 
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.

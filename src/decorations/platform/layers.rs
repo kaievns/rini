@@ -147,10 +147,15 @@ impl DecorationLayers {
             self.shadow_mask.setFrame(shape::shadow_mask_frame(size).to_cg());
             self.shadow_mask.setPath(Some(&shadow_mask_path(size)));
         }
-        let corner = shape::radius(self.radius, size);
+        let corner = self.corner_at(size);
         self.hairline.setCornerRadius(corner);
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
+    }
+
+    /// The corner a tile of `size` rounds to: its window's radius, clamped to the tile.
+    pub fn corner_at(&self, size: TileSize) -> f64 {
+        shape::radius(self.radius, size)
     }
 
     /// Paints the hairline's white and the shadow's depth as `style` has them.
@@ -186,7 +191,7 @@ impl DecorationLayers {
         add_under(&self.shadow_mask, &mask_bounds, MASK_SIZE_KEY);
         let mask_path = resize.path("path", |size| CFRetained::from(&*shadow_mask_path(size)));
         add_under(&self.shadow_mask, &mask_path, MASK_PATH_KEY);
-        let corner = |size: TileSize| shape::radius(self.radius, size);
+        let corner = |size: TileSize| self.corner_at(size);
         if resize.changes(corner) {
             add_under(
                 &self.hairline,

@@ -40,7 +40,7 @@ use crate::decorations::platform::layers::{DecorationLayers, Resize, add_under, 
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
-use crate::pictures::platform::layer::{clear_contents, set_layer_contents, stretch_region};
+use crate::pictures::platform::layer::{clear_contents, set_layer_contents};
 use crate::pictures::platform::picture::Picture;
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
@@ -86,6 +86,9 @@ pub struct OverlayTile {
     pub focused: bool,
     /// The window's corner radius in points, as `pictures` measured it; `None` until it is.
     pub radius: Option<f64>,
+    /// Whether the overlay clips the tile's picture to its corner: a picture whose corners carry
+    /// what was behind its window, or the stand-in, which has no corners of its own.
+    pub clipped: bool,
 }
 
 impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
@@ -736,20 +739,11 @@ impl TileOverlay {
         self.tree.play(edits, tiles);
     }
 
-    /// Swaps a fresh picture into a tile mid-flight, leaving its movement alone: a crop-drawn tile
-    /// on a track of its own has its grid re-keyed along that track, so only the pixels cut.
-    pub fn swap(&mut self, window: WindowId, picture: &Picture) {
-        self.tree.swap(window, picture, media_now());
-    }
-
-    /// Clips a tile's picture to a rounded rect of `radius`, for a picture whose corners carry what
-    /// was behind its window, as a crop of a composite of the desktop does; `None` draws it whole,
-    /// which every dressing starts from.
-    pub fn set_tile_corner_clip(&mut self, window: WindowId, radius: Option<f64>) {
-        let Some(entry) = self.tree.tile_layers.get(&window) else {
-            return;
-        };
-        clip_corners(&entry.picture, radius);
+    /// Swaps a fresh picture into a tile mid-flight, `clipped` to its corner or whole, leaving its
+    /// movement alone: a crop-drawn tile on a track of its own has its grid re-keyed along that
+    /// track, so only the pixels cut.
+    pub fn swap(&mut self, window: WindowId, picture: &Picture, clipped: bool) {
+        self.tree.swap(window, picture, clipped, media_now());
     }
 
     /// Draws a tile focused or not, a hard cut: its hairline's white and its shadow's depth. For
@@ -1144,8 +1138,9 @@ impl Tree {
         }
     }
 
-    /// `picture` onto `window`'s tile, re-keyed along the tile's own track while it plays at `at`.
-    fn swap(&mut self, window: WindowId, picture: &Picture, at: f64) {
+    /// `picture` onto `window`'s tile, `clipped` or whole, re-keyed along the tile's own track while
+    /// it plays at `at`.
+    fn swap(&mut self, window: WindowId, picture: &Picture, clipped: bool, at: f64) {
         let node = Node::Tile(window);
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
@@ -1155,6 +1150,7 @@ impl Tree {
         };
         let playing =
             self.replica.track(node, Channel::Base).filter(|track| track.at(at).is_some());
+        clip_corners(&entry.picture, clipped);
         swap_onto(entry, picture, frame.size.respace(), playing);
     }
 
@@ -1191,14 +1187,15 @@ fn tile_z(within: usize, companion: bool) -> f64 {
     -(within as f64) + if companion { 0.25 } else { 0.0 }
 }
 
-/// Dresses a tile for `tile`: its picture, fitted to how it starts and ends, its focus, its radius
-/// and whether it is a companion. Tile layers are pooled, so every per-window property is written.
+/// Dresses a tile for `tile`: its picture, fitted to how it starts and ends and clipped or whole,
+/// its focus, its radius and whether it is a companion. Tile layers are pooled, so every per-window
+/// property is written.
 fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
     entry.companion = tile.companion.is_some();
     entry.decorations.radius = tile.radius;
     entry.picture.setContentsScale(scale);
     entry.decorations.set_scale(scale);
-    clip_corners(&entry.picture, None);
+    clip_corners(&entry.picture, tile.clipped);
     let covered = tile.snapshot.coverage.covered;
     let mode = content_mode(covered, tile.from.size, tile.to.size);
     set_tile_content(entry, &tile.snapshot, mode, tile.from.size.respace(), scale);
@@ -1298,15 +1295,16 @@ impl Tile {
     }
 }
 
-/// Clips `picture`, with the crop pieces under it, to a rounded rect of `radius`, or not at all.
-/// The clip follows the bounds through a resize.
-fn clip_corners(picture: &CALayer, radius: Option<f64>) {
-    picture.setCornerRadius(radius.unwrap_or(0.0));
-    picture.setMasksToBounds(radius.is_some());
+/// Clips `picture`, with the crop pieces under it, to its corner, or not at all. The corner is the
+/// hairline's, laid at every placement (`place_tile`); unclipped it draws nothing, the picture
+/// having no background or border.
+fn clip_corners(picture: &CALayer, clipped: bool) {
+    picture.setMasksToBounds(clipped);
 }
 
-/// Puts a tile's layers at `frame`, stacked at `z`, its decorations shaped for its size. The crop
-/// grid is laid again only when the size changes.
+/// Puts a tile's layers at `frame`, stacked at `z`, its decorations shaped for its size and its
+/// picture's corner rounded with its hairline's. The crop grid is laid again only when the size
+/// changes.
 fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
     let size: TileSize = frame.size.respace();
     let resized = tile.picture.bounds().size != size.to_cg();
@@ -1315,6 +1313,7 @@ fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
     }
     tile.stack(z);
     tile.decorations.place(size, resized);
+    tile.picture.setCornerRadius(tile.decorations.corner_at(size));
     if resized {
         layout_crop_grid(tile, size);
     }
@@ -1353,9 +1352,6 @@ fn set_tile_content(
             set_layer_contents(&entry.picture, snapshot);
         }
     }
-    // Written on every install because tile layers are pooled: a layer that last held a stand-in must
-    // not stretch the next window's picture nine-slice.
-    entry.picture.setContentsCenter(stretch_region(snapshot).to_cg());
 }
 
 /// Points a crop-drawn tile at `snapshot`: the size its pieces cut, and the part of the contents
@@ -2325,20 +2321,18 @@ mod tests {
         }
     }
 
-    /// A baked picture's corners are clipped to the window's radius, and only the picture is: the
-    /// shadow caster behind it is never clipped. Without a radius the picture draws whole.
+    /// A clipped picture's corners are cut at its corner, and only the picture is: the shadow
+    /// caster behind it is never clipped. Unclipped, the picture draws whole.
     #[test]
     fn a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not() {
         let container = CALayer::layer();
         let tile = new_tile(&container);
         assert!(!tile.picture.masksToBounds(), "whole by default");
-        clip_corners(&tile.picture, Some(12.0));
-        assert_eq!(tile.picture.cornerRadius(), 12.0);
+        clip_corners(&tile.picture, true);
         assert!(tile.picture.masksToBounds());
         assert!(!tile.decorations.shadow.masksToBounds());
         assert_eq!(tile.decorations.shadow.cornerRadius(), 0.0);
-        clip_corners(&tile.picture, None);
-        assert_eq!(tile.picture.cornerRadius(), 0.0);
+        clip_corners(&tile.picture, false);
         assert!(!tile.picture.masksToBounds());
     }
 
@@ -2348,7 +2342,7 @@ mod tests {
     fn a_corner_clip_leaves_the_hairline_whole() {
         let container = CALayer::layer();
         let tile = new_tile(&container);
-        clip_corners(&tile.picture, Some(12.0));
+        clip_corners(&tile.picture, true);
         let parent = |layer: &CALayer| layer.superlayer().map(|parent| Retained::as_ptr(&parent));
         assert_eq!(parent(&tile.decorations.hairline), Some(&*container as *const CALayer));
     }
@@ -2513,6 +2507,7 @@ mod tests {
                 companion: None,
                 focused: false,
                 radius: None,
+                clipped: false,
             }
         }
 
@@ -2810,7 +2805,7 @@ mod tests {
 
             let repainted = test_picture(ScreenSize::new(1199.0, 1081.0));
             tiles[0].snapshot = repainted.clone();
-            tree.swap(window, &repainted, 100.15);
+            tree.swap(window, &repainted, false, 100.15);
             let real = on(typed(4.0, 32.0, 1199.0, 1081.0));
             let snapped = tile::snap(&tree.replica, window, real, 100.15);
             assert!(snapped.iter().any(|edit| matches!(edit, Edit::Add(_))), "on its leg");
@@ -2828,6 +2823,37 @@ mod tests {
             );
             play(&mut tree, &[Edit::Add(shrink)], &tiles);
             assert!(!stretched(&tree), "a new leg crops the picture it has");
+        }
+
+        /// A tile riding into a flight is dressed as it rides: clipped, its picture is cut at the
+        /// corner its hairline rounds to at every placement, clamped to the tile, and a picture swapped
+        /// onto it whole is drawn whole.
+        #[test]
+        fn a_tile_ridden_in_clipped_wears_its_corners() {
+            let window = wid(1);
+            let drawn = typed(4.0, 32.0, 859.0, 1081.0);
+            let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
+            let mut tile = overlay_tile(window, drawn, drawn, false);
+            tile.radius = Some(16.0);
+            tile.clipped = true;
+            let tiles = [tile];
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.play(
+                &[
+                    Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                    Edit::Ride(window, GroupKey::STILL),
+                    Edit::Place(Node::Tile(window), Value::Rect(at)),
+                ],
+                &tiles,
+            );
+            let picture = &tree.tile_layers[&window].picture;
+            assert!(picture.masksToBounds());
+            assert_eq!(picture.cornerRadius(), 16.0);
+            assert_eq!(picture.cornerRadius(), tree.tile_layers[&window].decorations.hairline.cornerRadius());
+            tree.play(&[Edit::Place(Node::Tile(window), Value::Rect(typed(4.0, 32.0, 12.0, 400.0)))], &tiles);
+            assert_eq!(tree.tile_layers[&window].picture.cornerRadius(), 6.0, "half the shorter side");
+            tree.swap(window, &test_picture(ScreenSize::new(12.0, 400.0)), false, 0.0);
+            assert!(!tree.tile_layers[&window].picture.masksToBounds(), "whole");
         }
 
         /// A placed tile moves every layer of the tile at once: the picture, the caster and the hairline,

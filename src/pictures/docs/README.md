@@ -27,21 +27,20 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
-| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
+| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in, one pixel; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
 | **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency and corner, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
-| **Layers** | `platform/layer.rs` — handing a picture to a layer, a region through `contentsRect`, and the stand-in's nine-slice region |
+| **Layers** | `platform/layer.rs` — handing a picture to a layer, and a region through `contentsRect` |
 
 The stretch tolerance a fit is judged by is `rini_geometry::stretch`, shared with `animation`'s "is
 this a resize" so the two agree.
 
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
 frames, display bounds, a target's size, coverage, watches and deliveries in `Screen`, a region's rect
-and an image's size in `Pixel`, and what a layer's `contentsRect` and `contentsCenter` are given in
-`Contents`. CG stays in `platform/`: in its objc2 and SkyLight calls, its reads from `windows`, and
+and an image's size in `Pixel`, and what a layer's `contentsRect` is given in `Contents`. CG stays in `platform/`: in its objc2 and SkyLight calls, its reads from `windows`, and
 its private helpers and structs.
 
 ## The service

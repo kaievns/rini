@@ -41,6 +41,7 @@ thread_local! {
     static TEST_WINDOW_ORDERED_IN_OVERRIDE: RefCell<HashMap<u32, bool>> = RefCell::new(HashMap::default());
     static TEST_FRONT_TO_BACK_OVERRIDE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
     static TEST_WINDOWS_GONE_OVERRIDE: RefCell<HashSet<u32>> = RefCell::new(HashSet::default());
+    static TEST_WINDOW_FRAMES_OVERRIDE: RefCell<HashMap<u32, CGRect>> = RefCell::new(HashMap::default());
 }
 
 pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
@@ -469,18 +470,32 @@ pub fn get_visible_windows_raw<T: Type>() -> CFRetained<CFArray<T>> {
     )
 }
 
+/// Every window at the origin, 800x600, unless a test sets its frame with
+/// `set_window_frame_override`.
 #[cfg(test)]
 pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
+    let at_origin = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
     ids.iter()
         .map(|&id| WindowServerInfo {
             id,
             pid: 1234,
             layer: 0,
-            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0)),
+            frame: TEST_WINDOW_FRAMES_OVERRIDE
+                .with(|frames| frames.borrow().get(&id.as_u32()).copied())
+                .unwrap_or(at_origin),
             min_frame: CGSize::ZERO,
             max_frame: CGSize::ZERO,
         })
         .collect()
+}
+
+/// `id`'s frame for test builds; `None` puts it back at the origin.
+#[cfg(test)]
+pub fn set_window_frame_override(id: WindowServerId, frame: Option<CGRect>) {
+    TEST_WINDOW_FRAMES_OVERRIDE.with(|frames| match frame {
+        Some(frame) => frames.borrow_mut().insert(id.as_u32(), frame),
+        None => frames.borrow_mut().remove(&id.as_u32()),
+    });
 }
 
 #[cfg(not(test))]

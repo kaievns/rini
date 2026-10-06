@@ -104,9 +104,7 @@ permission, builds every actor and joins them.
    `layout` and `workspaces` sit above both; `input` and `animation` beside them,
    reaching only for ids and frames, and for `animation` the stacking group a window is in
    (`windows::domain::raise_order::StackGroup`) and what each tile wears (`decorations`).
-   `decorations` names no feature; `animation` and `transitions` depend on it, the
-   flight engine for the radius it clips a baked picture to. `pictures` depends on it for
-   the radius the stand-in's corners are drawn with until a window's own is measured.
+   `decorations` names no feature, and `animation` alone depends on it.
    `pictures` reads the window server through `windows` and is upstream of `animation`, `transitions`, `switcher` and `bar`:
    a tile asks it whether its picture still fits, the flight engine and the
    switcher hold its service's handle, and the renderer, the switcher and the bar

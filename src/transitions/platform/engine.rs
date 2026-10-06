@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
     FromCg, GroupRect, Overlay, OverlayPoint, OverlayRect, OverlayVector, Point, Respace,
-    ScreenRect, ScreenVector, Size, SurfacePoint, TileSize, ToCg,
+    ScreenRect, ScreenVector, Size, SurfacePoint, ToCg,
 };
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
@@ -38,7 +38,6 @@ use crate::animation::domain::motion::score::{Edit, MediaClock, Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
-use crate::decorations::domain::shape;
 use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
@@ -231,8 +230,8 @@ struct RunningAnimation {
 enum Took {
     /// A reserved entrance's tile, joining the flight.
     Entrance(OverlayTile),
-    /// The picture on the window's tile, which ends at this size.
-    Tile { size: TileSize },
+    /// The picture on the window's tile.
+    Tile,
     /// Nothing draws the window.
     Nothing,
 }
@@ -281,12 +280,13 @@ fn border_tile(
         companion: Some(anchor.window),
         focused: false,
         radius: None,
+        clipped: false,
     }
 }
 
-/// The tile for a reserved entrance whose picture has landed: frontmost and focused, since a
-/// window is raised on open and about to hold focus.
-fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture) -> OverlayTile {
+/// The tile for a reserved entrance whose picture has landed, `clipped` or whole: frontmost and
+/// focused, since a window is raised on open and about to hold focus.
+fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture, clipped: bool) -> OverlayTile {
     OverlayTile {
         window: entrance.window,
         from: entrance_from(entrance.to),
@@ -298,6 +298,7 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture) -> OverlayTile 
         companion: None,
         focused: true,
         radius: None,
+        clipped,
     }
 }
 
@@ -478,51 +479,56 @@ impl RunningAnimation {
         )
     }
 
-    /// Frame zero's pictures, each on its window's tile; how many were taken.
-    fn wear(&mut self, pictures: Vec<(WindowId, Picture)>) -> usize {
+    /// Frame zero's pictures, each on its window's tile, clipped or whole; how many were taken.
+    fn wear(&mut self, pictures: Vec<(WindowId, Picture, bool)>) -> usize {
         let mut worn = 0;
-        for (window, picture) in pictures {
+        for (window, picture, clipped) in pictures {
             if let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) {
                 tile.snapshot = picture;
+                tile.clipped = clipped;
                 worn += 1;
             }
         }
         worn
     }
 
-    /// The tile a reserved entrance becomes with its first picture, banded with the rest; `None`
-    /// for a window not waiting to enter.
-    fn admit(&mut self, window: WindowId, picture: &Picture) -> Option<OverlayTile> {
+    /// The tile a reserved entrance becomes with its first picture, `clipped` or whole, banded with
+    /// the rest; `None` for a window not waiting to enter.
+    fn admit(&mut self, window: WindowId, picture: &Picture, clipped: bool) -> Option<OverlayTile> {
         let at = self.entrances.iter().position(|e| e.window == window)?;
         let entrance = self.entrances.remove(at);
-        self.merge(entrance_tile(&entrance, picture));
+        self.merge(entrance_tile(&entrance, picture, clipped));
         restack(&mut self.tiles, self.focus);
         self.tiles.iter().find(|t| t.window == window).cloned()
     }
 
-    /// A picture swapped in for `window`: a reserved entrance joins with it, else its tile takes it in
-    /// place, a stand-in's included, moving on as it was and flying no focused look from now.
-    fn take_picture(&mut self, window: WindowId, picture: &Picture) -> Took {
-        if let Some(tile) = self.admit(window, picture) {
+    /// A picture swapped in for `window`, `clipped` or whole: a reserved entrance joins with it, else
+    /// its tile takes it in place, a stand-in's included, moving on as it was and flying no focused
+    /// look from now.
+    fn take_picture(&mut self, window: WindowId, picture: &Picture, clipped: bool) -> Took {
+        if let Some(tile) = self.admit(window, picture, clipped) {
             return Took::Entrance(tile);
         }
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) else {
             return Took::Nothing;
         };
         tile.snapshot = picture.clone();
+        tile.clipped = clipped;
         if self.focused_look == Some(window) {
             self.focused_look = None;
         }
-        Took::Tile { size: tile.to.size.respace() }
+        Took::Tile
     }
 
-    /// `target`'s tile flies `look`, drawn focused, if it fits where the tile starts. Whether it does.
-    fn fly_focused_look(&mut self, target: WindowId, look: Option<Picture>) -> bool {
+    /// `target`'s tile flies `look`, drawn focused and `clipped` or whole, if it fits where the tile
+    /// starts. Whether it does.
+    fn fly_focused_look(&mut self, target: WindowId, look: Option<Picture>, clipped: bool) -> bool {
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else { return false };
         let Some(look) = look.filter(|look| look.fits(tile.from.size)) else {
             return false;
         };
         tile.snapshot = look;
+        tile.clipped = clipped;
         tile.focused = true;
         self.focused_look = Some(target);
         true
@@ -679,11 +685,12 @@ fn sized_targets(windows: Vec<(WindowId, ScreenRect)>) -> Vec<PictureTarget> {
     windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
 }
 
-/// The radius a tile of `size` clips its picture to: a SkyLight picture of a window baked with the
-/// desktop behind it has the wallpaper in its corners. `None` draws it whole.
-fn corner_clip(knowledge: Knowledge, picture: &Picture, size: TileSize) -> Option<f64> {
-    (picture.source == Route::SkyLight && knowledge.after_alpha() == Call::Baked)
-        .then(|| shape::radius(knowledge.radius, size))
+/// Whether the overlay clips `picture` to its tile's corner: the stand-in, which has no corners of
+/// its own, and a SkyLight picture of a window baked with the desktop behind it, which has the
+/// wallpaper in its corners. Any other picture is drawn whole.
+fn clips(knowledge: Knowledge, picture: &Picture) -> bool {
+    picture.source == Route::StandIn
+        || (picture.source == Route::SkyLight && knowledge.after_alpha() == Call::Baked)
 }
 
 /// The end state's watches: one slot for each kind, kept from one generation to the next and
@@ -1175,7 +1182,15 @@ impl FlightEngine {
         } else if self.flights.coordinator().generation() == generation
             && self.flights.coordinator().is_flying()
             && let Some(running) = self.running.as_mut()
-            && running.wear(pictures.into_iter().map(|(window, picture, _)| (window, picture)).collect()) > 0
+            && running.wear(
+                pictures
+                    .into_iter()
+                    .map(|(window, picture, _)| {
+                        let clipped = clips(self.pictures.knowledge(WindowServerId::from(window)), &picture);
+                        (window, picture, clipped)
+                    })
+                    .collect(),
+            ) > 0
         {
             self.reinstall();
         }
@@ -1189,20 +1204,19 @@ impl FlightEngine {
             return;
         }
         let Some((_, _, picture)) = self.delivered.remove(&window) else { return };
+        let clipped = clips(self.pictures.knowledge(WindowServerId::from(window)), &picture);
         let Some(running) = self.running.as_mut() else { return };
-        let size = match running.take_picture(window, &picture) {
+        match running.take_picture(window, &picture, clipped) {
             Took::Entrance(tile) => return self.admit_entrance(tile, now),
-            Took::Tile { size } => size,
+            Took::Tile => {}
             Took::Nothing => return,
-        };
+        }
         debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, flown = running.flown, "picture swapped mid-flight");
         if !running.flown {
             self.reinstall();
             return;
         }
-        let clip = corner_clip(self.pictures.knowledge(WindowServerId::from(window)), &picture, size);
-        self.render(Render::Swap { window, picture });
-        self.render(Render::Corner { window, radius: clip });
+        self.render(Render::Swap { window, picture, clipped });
     }
 
     /// The coordinator's snap of `window`'s tile onto `frame`, its window's, as an edit of the score
@@ -1297,24 +1311,6 @@ impl FlightEngine {
         let score = running.score.pose(&stage, banding).clone();
         let tiles = running.tiles.clone();
         self.render(Render::Stage { score, tiles });
-        self.clip_corners();
-    }
-
-    /// Every tile whose picture is baked with the desktop behind it clipped to its corners; every
-    /// install draws a picture whole.
-    fn clip_corners(&mut self) {
-        let Some(running) = self.running.as_ref() else { return };
-        let clips: Vec<(WindowId, f64)> = running
-            .tiles
-            .iter()
-            .filter_map(|tile| {
-                let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
-                Some((tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size.respace())?))
-            })
-            .collect();
-        for (window, radius) in clips {
-            self.render(Render::Corner { window, radius: Some(radius) });
-        }
     }
 
     /// Tiles for the border windows tracing the animated windows; each anchor is the window's real
@@ -1562,11 +1558,13 @@ impl FlightEngine {
                         .map(|info| ScreenRect::from_cg(info.frame))
                 },
                 display_frame,
-                || self.pictures.stand_in(request.to.size, scale),
+                || self.pictures.stand_in(request.to.size),
             );
             match snapshot {
                 Some(snapshot) => {
                     waits(request.window, EndPicture::of_picture(snapshot.coverage.covered, request.to.size));
+                    let knowledge = self.pictures.knowledge(request.server_id);
+                    let clipped = clips(knowledge, &snapshot);
                     tiles.push(OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
@@ -1577,7 +1575,8 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: drawn_focused(request.window, drawing_focus, losing),
-                        radius: self.pictures.knowledge(request.server_id).radius,
+                        radius: knowledge.radius,
+                        clipped,
                     });
                     starts.push((request.window, start));
                     resolved.push((request.window, start, end, request.floating));
@@ -1619,6 +1618,8 @@ impl FlightEngine {
                                 "entrance from spawn"
                             );
                             self.pictures.insert(request.window, snapshot.clone());
+                            let knowledge = self.pictures.knowledge(request.server_id);
+                            let clipped = clips(knowledge, &snapshot);
                             let from_o = to_overlay_space(from, display_frame);
                             let to_o = to_overlay_space(to, display_frame);
                             // Already at its slot (a cold cache, not an open): a still tile.
@@ -1638,7 +1639,8 @@ impl FlightEngine {
                                 companion: None,
                                 focused: !standing
                                     || drawn_focused(request.window, drawing_focus, losing),
-                                radius: self.pictures.knowledge(request.server_id).radius,
+                                radius: knowledge.radius,
+                                clipped,
                             });
                             if standing {
                                 starts.push((request.window, from));
@@ -1782,7 +1784,9 @@ impl FlightEngine {
     /// fits: frame zero cannot picture it, and it arrives focused. Whether it does.
     fn fly_focused_look(&mut self, target: WindowId) -> bool {
         let look = self.pictures.focused(target);
-        self.running.as_mut().is_some_and(|running| running.fly_focused_look(target, look))
+        let knowledge = self.pictures.knowledge(WindowServerId::from(target));
+        let clipped = look.as_ref().is_some_and(|look| clips(knowledge, look));
+        self.running.as_mut().is_some_and(|running| running.fly_focused_look(target, look, clipped))
     }
 
     /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
@@ -1794,10 +1798,7 @@ impl FlightEngine {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
             let window = tile.window;
             if look == Some(window) {
-                let knowledge = self.pictures.knowledge(WindowServerId::from(window));
-                let radius = corner_clip(knowledge, &tile.snapshot, tile.to.size.respace());
-                drawn.push(Render::Swap { window, picture: tile.snapshot.clone() });
-                drawn.push(Render::Corner { window, radius });
+                drawn.push(Render::Swap { window, picture: tile.snapshot.clone(), clipped: tile.clipped });
                 drawn.push(Render::Focus { window, focused: true });
             } else if was.is_some_and(|was| was != tile.focused) {
                 drawn.push(Render::Focus { window, focused: tile.focused });
@@ -1997,7 +1998,6 @@ impl FlightEngine {
         let mut stand_ins = 0usize;
         let mut needs_capture: Vec<PictureTarget> = Vec::new();
         let mut starts: Vec<(WindowId, ScreenRect)> = Vec::new();
-        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for window in &windows {
             let (from, to) = window.travel(from_offset, to_offset);
             let cached = self.pictures.usable(window.window);
@@ -2007,7 +2007,7 @@ impl FlightEngine {
                 cached,
                 || real_frames.get(&window.server_id).copied(),
                 display,
-                || self.pictures.stand_in(window.frame.size.respace(), scale),
+                || self.pictures.stand_in(window.frame.size.respace()),
             );
             match snapshot {
                 Some(snapshot) => {
@@ -2021,6 +2021,8 @@ impl FlightEngine {
                     if let Some(frame) = real_frames.get(&window.server_id) {
                         starts.push((window.window, *frame));
                     }
+                    let knowledge = self.pictures.knowledge(window.server_id);
+                    let clipped = clips(knowledge, &snapshot);
                     tiles.push(OverlayTile {
                         window: window.window,
                         from,
@@ -2031,7 +2033,8 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: drawn_focused(window.window, drawing_focus, losing),
-                        radius: self.pictures.knowledge(window.server_id).radius,
+                        radius: knowledge.radius,
+                        clipped,
                     });
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
@@ -2463,6 +2466,7 @@ mod tests {
             companion: None,
             focused: false,
             radius: None,
+            clipped: false,
         }
     }
 
@@ -2651,7 +2655,6 @@ mod tests {
     /// What the flight composed, as the coordinator's commands change it.
     mod composed {
         use super::*;
-        use crate::decorations::domain::shape::CORNER_RADIUS;
 
         #[test]
         fn frame_zeros_pictures_are_worn_by_their_tiles_and_never_by_a_border() {
@@ -2662,10 +2665,12 @@ mod tests {
             border.companion = Some(wid(1));
             running.tiles.push(border);
             let fresh = test_picture(ScreenSize::new(859.0, 1000.0));
-            let worn = running.wear(vec![(wid(1), fresh.clone()), (wid(8), fresh.clone()), (wid(5), fresh.clone())]);
+            let worn = running.wear(vec![(wid(1), fresh.clone(), true), (wid(8), fresh.clone(), true), (wid(5), fresh.clone(), true)]);
             assert_eq!(worn, 1, "a window with no tile is the cache's alone");
             assert_eq!(running.tiles[0].snapshot.coverage, fresh.coverage);
+            assert!(running.tiles[0].clipped, "as it was handed");
             assert_ne!(running.tiles[1].snapshot.coverage, fresh.coverage);
+            assert!(!running.tiles[1].clipped);
         }
 
         #[test]
@@ -2676,15 +2681,16 @@ mod tests {
             running.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
             running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
             running.focus = Some(wid(2));
-            let tile = running.admit(wid(2), &test_picture(slot.size)).expect("admitted");
+            let tile = running.admit(wid(2), &test_picture(slot.size), true).expect("admitted");
             assert_eq!((tile.from, tile.to), (entrance_from(slot), slot), "zero width at its left edge");
             assert!(tile.focused);
+            assert!(tile.clipped, "as it was handed");
             assert_eq!(tile.depth, 0, "the entrance leads: raised on open");
             assert!(running.entrances.is_empty());
             let other = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
             assert_eq!(other.depth, 2, "its neighbour keeps the server's order, within the band");
-            assert!(running.admit(wid(2), &test_picture(slot.size)).is_none(), "taken once");
-            assert!(running.admit(wid(1), &test_picture(slot.size)).is_none(), "not an entrance");
+            assert!(running.admit(wid(2), &test_picture(slot.size), false).is_none(), "taken once");
+            assert!(running.admit(wid(1), &test_picture(slot.size), false).is_none(), "not an entrance");
             assert_eq!(running.tiles.len(), 2, "no second tile");
         }
 
@@ -2695,19 +2701,20 @@ mod tests {
             use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
             let park = rect(1727.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            let (image, _) = stand_in_image(2.0).expect("drawn");
-            let stand_in = stand_in_picture(slot.size.respace(), image);
+            let stand_in = stand_in_picture(slot.size.respace(), stand_in_image().expect("drawn"));
             assert_eq!(EndPicture::of_picture(stand_in.coverage.covered, slot.size.respace()), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;
+            tile.clipped = true;
             running.tiles.push(tile);
             let real = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(1), &real), Took::Tile { size } if size == slot.size.respace()));
+            assert!(matches!(running.take_picture(wid(1), &real, false), Took::Tile));
             assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
             let tile = &running.tiles[0];
             assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
             assert_ne!(tile.snapshot.source, Route::StandIn);
+            assert!(!tile.clipped, "drawn whole");
             assert!(running.entrances.is_empty());
         }
 
@@ -2721,10 +2728,10 @@ mod tests {
             running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
             running.focused_look = Some(wid(1));
             let picture = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(2), &picture), Took::Entrance(tile) if tile.from == entrance_from(slot)));
-            assert!(matches!(running.take_picture(wid(1), &picture), Took::Tile { .. }));
+            assert!(matches!(running.take_picture(wid(2), &picture, false), Took::Entrance(tile) if tile.from == entrance_from(slot)));
+            assert!(matches!(running.take_picture(wid(1), &picture, false), Took::Tile));
             assert_eq!(running.focused_look, None);
-            assert!(matches!(running.take_picture(wid(3), &picture), Took::Nothing));
+            assert!(matches!(running.take_picture(wid(3), &picture, false), Took::Nothing));
             assert_eq!(running.tiles.len(), 2);
         }
 
@@ -2836,19 +2843,22 @@ mod tests {
         }
 
         #[test]
-        fn a_skylight_picture_baked_with_the_desktop_is_clipped_to_its_corners_and_no_other_is() {
-            let size = TileSize::new(859.0, 1081.0);
+        fn the_stand_in_and_a_baked_skylight_picture_are_clipped_and_no_other_is() {
+            use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
+            let size = ScreenSize::new(859.0, 1081.0);
             let mut skylight = test_picture(size);
             skylight.source = Route::SkyLight;
             let baked = Knowledge { translucent: Some(false), material: Some(true), radius: Some(12.0) };
-            assert_eq!(corner_clip(baked, &skylight, size), Some(12.0));
+            assert!(clips(baked, &skylight));
             let unmeasured = Knowledge { translucent: Some(false), material: None, radius: None };
-            assert_eq!(corner_clip(unmeasured, &skylight, size), Some(CORNER_RADIUS), "baked, its radius not measured");
+            assert!(clips(unmeasured, &skylight), "baked, its radius not measured");
             let translucent = Knowledge { translucent: Some(true), ..baked };
-            assert_eq!(corner_clip(translucent, &skylight, size), None, "captured alone, its corners clear");
+            assert!(!clips(translucent, &skylight), "captured alone, its corners clear");
             let plain = Knowledge { material: Some(false), ..baked };
-            assert_eq!(corner_clip(plain, &skylight, size), None);
-            assert_eq!(corner_clip(baked, &test_picture(size), size), None, "ScreenCaptureKit leaves the corners clear");
+            assert!(!clips(plain, &skylight));
+            assert!(!clips(baked, &test_picture(size)), "ScreenCaptureKit leaves the corners clear");
+            let stand_in = stand_in_picture(size, stand_in_image().expect("drawn"));
+            assert!(clips(Knowledge::default(), &stand_in), "no corners of its own");
         }
 
         #[test]
@@ -2856,14 +2866,15 @@ mod tests {
             let park = rect(-860.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(2), park, rect(4.0, 32.0, 859.0, 1081.0), Some(0), false));
-            assert!(!running.fly_focused_look(wid(2), Some(test_picture(ScreenSize::new(600.0, 1081.0)))), "drawn squashed");
-            assert!(!running.fly_focused_look(wid(2), None));
-            assert!(!running.fly_focused_look(wid(3), Some(test_picture(park.size))), "no tile");
+            assert!(!running.fly_focused_look(wid(2), Some(test_picture(ScreenSize::new(600.0, 1081.0))), false), "drawn squashed");
+            assert!(!running.fly_focused_look(wid(2), None, false));
+            assert!(!running.fly_focused_look(wid(3), Some(test_picture(park.size)), false), "no tile");
             assert_eq!((running.focused_look, running.tiles[0].focused), (None, false));
             let mut look = test_picture(park.size);
             look.coverage.covered.height -= 1.0;
-            assert!(running.fly_focused_look(wid(2), Some(look.clone())));
+            assert!(running.fly_focused_look(wid(2), Some(look.clone()), true));
             assert_eq!(running.tiles[0].snapshot.coverage, look.coverage);
+            assert!(running.tiles[0].clipped, "as it was handed");
             assert!(running.tiles[0].focused);
             assert_eq!(running.focused_look, Some(wid(2)));
         }
@@ -2882,7 +2893,7 @@ mod tests {
             running.tiles[0].focused = true;
             let mut look = test_picture(park.size);
             look.coverage.covered.height -= 1.0;
-            assert!(running.fly_focused_look(wid(2), Some(look.clone())));
+            assert!(running.fly_focused_look(wid(2), Some(look.clone()), false));
             let next = rect(867.0, 32.0, 859.0, 1081.0);
             let outcomes = running.merge_pass(vec![stacked(wid(2), park, next, Some(0), false)], None);
             assert_eq!(outcomes, vec![(wid(2), Admitted::Retargeted)]);
@@ -2911,7 +2922,7 @@ mod tests {
             running.tiles[0].focused = true;
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            assert!(running.fly_focused_look(wid(2), Some(test_picture(park.size))));
+            assert!(running.fly_focused_look(wid(2), Some(test_picture(park.size)), false));
             running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
             let focused = |running: &RunningAnimation| {
                 running.tiles.iter().map(|t| (t.window, t.focused)).collect::<Vec<(WindowId, bool)>>()
@@ -4213,7 +4224,6 @@ mod tests {
                 Render::Stage { .. } => "stage",
                 Render::Play { .. } => "play",
                 Render::Swap { .. } => "swap",
-                Render::Corner { .. } => "corner",
                 Render::Focus { .. } => "focus",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
@@ -4393,6 +4403,126 @@ mod tests {
             assert!(batches(&sent).iter().any(|batch| batch.commands.iter().any(
                 |command| matches!(command, Render::Swap { window, .. } if *window == wid(2))
             )));
+        }
+
+        /// A strip pan of `wid(id)` for each of `ids`, side by side from where `pan` starts `wid(1)`.
+        fn strip_of(h: &Harness, ids: &[u32], from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
+            let windows: Vec<SurfaceWindow> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, &id)| SurfaceWindow {
+                    window: wid(id),
+                    server_id: WindowServerId::new(id),
+                    frame: rect(867.0 * (i as f64 + 1.0), 0.0, 859.0, 1081.0),
+                    pinned: false,
+                    floating: false,
+                    from: None,
+                })
+                .collect();
+            let final_frames =
+                windows.iter().map(|w| (w.window, screen(w.travel(from_offset, to_offset).1))).collect();
+            Event::AnimateSurface {
+                windows,
+                from_offset,
+                to_offset,
+                final_frames,
+                focus: None,
+                focused_before: None,
+                key: None,
+                duration: Duration::from_millis(300),
+                look: Look::default(),
+                cue: Cue::Plain,
+                accent: None,
+                cause: h.cause(),
+            }
+        }
+
+        /// `wid(id)` parked off the display, where a window with no picture flies as the stand-in.
+        fn park(id: u32) {
+            let parked: ScreenRect = rect(1727.0, 1085.0, 859.0, 1081.0);
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(id), Some(parked.to_cg()));
+        }
+
+        /// The tiles every stage and play among `sent` handed the overlay, by window.
+        fn handed(sent: &[Sent], window: WindowId) -> Vec<OverlayTile> {
+            batches(sent)
+                .into_iter()
+                .flat_map(|batch| &batch.commands)
+                .filter_map(|command| match command {
+                    Render::Stage { tiles, .. } | Render::Play { tiles, .. } => Some(tiles),
+                    _ => None,
+                })
+                .flatten()
+                .filter(|tile| tile.window == window)
+                .cloned()
+                .collect()
+        }
+
+        /// The `clipped` of every swap among `sent` onto `window`'s tile.
+        fn swapped(sent: &[Sent], window: WindowId) -> Vec<bool> {
+            batches(sent)
+                .into_iter()
+                .flat_map(|batch| &batch.commands)
+                .filter_map(|command| match command {
+                    Render::Swap { window: onto, clipped, .. } if *onto == window => Some(*clipped),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// The stand-in has no corners of its own, so the overlay clips it to its window's from frame
+        /// zero; its window's own picture, captured alone, swaps onto the same tile drawn whole.
+        #[test]
+        fn a_stand_in_tile_is_clipped_when_staged_and_drawn_whole_once_its_picture_swaps_in() {
+            let mut h = Harness::new();
+            park(2);
+            let (from_offset, to_offset) = (SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
+            let press = strip_of(&h, &[1, 2], from_offset, to_offset);
+            let staged = handed(&h.step(press), wid(2));
+            assert!(!staged.is_empty(), "staged");
+            assert!(staged.iter().all(|tile| tile.snapshot.source == Route::StandIn && tile.clipped), "the stand-in, clipped");
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            assert!(h.engine.running.as_ref().is_some_and(|running| running.flown), "moving");
+            h.advance(Duration::from_millis(50));
+            let lands = rect(867.0, 0.0, 859.0, 1081.0);
+            let own = Event::Pictures(crate::pictures::event::Event::Delivered {
+                tag: Tag { client: CLIENT, generation: h.generation() },
+                why: Why::Background,
+                sent: h.at(),
+                pictures: vec![(wid(2), test_picture(lands.size), lands)],
+            });
+            assert_eq!(swapped(&h.step(own), wid(2)), [false], "whole");
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+        }
+
+        /// A tile that joins a moving flight is dressed as it rides in, clipped as any other: a parked
+        /// window's stand-in and a picture baked with the desktop behind it; a picture captured alone
+        /// is drawn whole.
+        #[test]
+        fn a_stand_in_joined_by_a_moving_merge_is_clipped() {
+            let mut h = Harness::new();
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            park(2);
+            let mut baked = test_picture(end().size);
+            baked.source = Route::SkyLight;
+            h.engine.pictures.insert(wid(3), baked);
+            h.engine.pictures.learn(WindowServerId::new(3), false, true);
+            let merge = strip_of(&h, &[1, 2, 3], SurfacePoint::new(867.0, 0.0), SurfacePoint::new(967.0, 0.0));
+            let sent = h.step(merge);
+            let joined = |window| {
+                let tiles = handed(&sent, window);
+                assert!(!tiles.is_empty(), "{window:?} rides in");
+                tiles
+            };
+            assert!(joined(wid(2)).iter().all(|tile| tile.snapshot.source == Route::StandIn && tile.clipped), "the stand-in");
+            assert!(joined(wid(3)).iter().all(|tile| tile.clipped), "baked");
+            assert!(joined(wid(1)).iter().all(|tile| !tile.clipped), "captured alone");
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
         }
 
         #[test]

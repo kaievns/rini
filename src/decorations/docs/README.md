@@ -3,8 +3,8 @@
 macOS composites a hairline around every window and casts its shadow, and no capture carries either.
 The overlay draws both over every tile, so a flying window wears what it wears on the desktop. This
 feature is their shape, their paint by focus, how deep each sits against the picture, and the
-layers each tile wears them on. It names no other feature: `animation` draws its decorations on each tile, `transitions` clips a baked
-picture to its corner radius, and `pictures` draws the stand-in's corners at its fallback radius.
+layers each tile wears them on. It names no other feature, and `animation`, which draws its
+decorations on each tile, is the one feature that names it.
 
 ## What it owns
 
@@ -43,7 +43,8 @@ window (`shape::outline`), so the stroke covers the half point just past its edg
 at a half-point origin landed one pixel too far out ("The handover, measured" in
 `src/animation/docs/capture-overlay-research.md`). Both round to the window's radius as `pictures`
 measured it (`OverlayTile::radius`, which the flight engine fills from `Pictures::knowledge`), else
-10pt, never past half the shorter side (`shape::radius`). The hairline is a layer beside the
+10pt, never past half the shorter side (`DecorationLayers::corner_at`, over `shape::radius`), the
+corner the overlay cuts a clipped picture at too. The hairline is a layer beside the
 picture and the caster, an eighth step in front of the picture and under a companion's quarter
 step (`HAIRLINE_Z`), with the outline as its child: inside the picture, a corner clip would cut the
 outline away (`a_corner_clip_leaves_the_hairline_whole` in the overlay). It rides every move with

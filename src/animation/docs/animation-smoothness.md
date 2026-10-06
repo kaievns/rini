@@ -235,16 +235,19 @@ measured on a window shorter than the display. Which windows get holes, and
 when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
 it watches end wholly on screen, from the show to the lift.
 
-**Corners of a baked picture.** A tile cut from a composite of the desktop
-carries the wallpaper in the window's rounded corners, where the window itself
-is transparent. `TileOverlay::set_tile_corner_clip` clips the tile's picture
-layer, crop pieces included, to a rounded rect of the window's radius
-(`cornerRadius` with `masksToBounds`, which follows a resize); the shadow
-caster and the hairline are never clipped, and every install puts the picture back to whole
-(`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
-is in `docs/pictures-motion-transitions.md`. The pictures service bakes them
-(`capture_on_screen`), and the flight engine clips every tile whose picture is
-a SkyLight one of a window the service bakes (`corner_clip`), at every install and swap.
+**Corners of a baked picture and of the stand-in.** A tile cut from a composite
+of the desktop carries the wallpaper in the window's rounded corners, where the
+window itself is transparent, and the stand-in, one flat pixel, has no corners
+at all. The overlay clips such a tile's picture layer, crop pieces included, to
+the corner its hairline rounds to (`cornerRadius`, laid at every placement, with
+`masksToBounds`, which follows a resize); the shadow caster and the hairline are
+never clipped (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`).
+The decision is in `docs/pictures-motion-transitions.md`. The pictures service
+bakes them (`capture_on_screen`). The flight engine marks each tile
+`OverlayTile::clipped` as it builds it and as a picture comes onto it (`clips`):
+the stand-in, or a SkyLight picture of a window the service bakes. The overlay
+applies it at every dressing and swap, so a tile riding into a moving flight is
+clipped too (`a_tile_ridden_in_clipped_wears_its_corners`).
 
 **Tiles snap to the real frame.** A strip pans by a fractional vector and the
 window server rounds each window on its own, so a tile of a rigid group can end
