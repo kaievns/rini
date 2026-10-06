@@ -1,0 +1,22 @@
+  dark wallpaper          interior  over     edge_in  edge_out
+    server outline as rini's (0.9) aligned pre-R2 circ r+1   0.005  0.0001    0.516    0.142
+    server outline as rini's (0.9) aligned R2 circ r   0.001  0.0000    0.723    0.183
+    server outline as rini's (0.9) 0.25pt right pre-R2 circ r+1  10.149  0.0921   24.009    1.528
+    server outline as rini's (0.9) 0.25pt right R2 circ r  10.146  0.0921   24.267    1.569
+    server outline as rini's (0.9) 0.25pt down pre-R2 circ r+1   6.391  0.0693   19.089    1.225
+    server outline as rini's (0.9) 0.25pt down R2 circ r   6.388  0.0692   19.351    1.267
+    server outline as rini's (0.9) 0.25pt right+down pre-R2 circ r+1  12.459  0.1030   42.494    2.611
+    server outline as rini's (0.9) 0.25pt right+down R2 circ r  12.456  0.1030   42.797    2.652
+    server outline as rini's (0.9) 0.5pt right pre-R2 circ r+1  19.932  0.1321   46.849    2.936
+    server outline as rini's (0.9) 0.5pt right R2 circ r  19.930  0.1321   47.081    2.960
+  mid wallpaper          interior  over     edge_in  edge_out
+    server outline as rini's (0.9) aligned pre-R2 circ r+1   0.006  0.0001    0.788    0.399
+    server outline as rini's (0.9) aligned R2 circ r   0.001  0.0000    1.191    0.514
+    server outline as rini's (0.9) 0.25pt right pre-R2 circ r+1  10.150  0.0921   15.057    1.244
+    server outline as rini's (0.9) 0.25pt right R2 circ r  10.145  0.0921   15.490    1.360
+    server outline as rini's (0.9) 0.25pt down pre-R2 circ r+1   6.392  0.0693   12.070    1.057
+    server outline as rini's (0.9) 0.25pt down R2 circ r   6.387  0.0692   12.503    1.172
+    server outline as rini's (0.9) 0.25pt right+down pre-R2 circ r+1  12.459  0.1030   26.286    1.902
+    server outline as rini's (0.9) 0.25pt right+down R2 circ r  12.455  0.1030   26.744    2.018
+    server outline as rini's (0.9) 0.5pt right pre-R2 circ r+1  19.932  0.1321   28.939    2.064
+    server outline as rini's (0.9) 0.5pt right R2 circ r  19.928  0.1321   29.371    2.183

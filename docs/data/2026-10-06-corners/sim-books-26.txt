@@ -1,0 +1,19 @@
+win_5489.png 860x1079, window radius 26 (continuous)
+  dark wallpaper
+    dress                                       interior  over     edge_in  edge_out | in: corner-zone share  straight-only in/out
+    baked, circular r+1 (pre-R2, measured)    0.005 0.00007    0.516    0.142 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    baked, circular 10 (pre-R2, unmeasured)    0.001 0.00004    1.266    0.480 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    baked, circular r (R2)    0.001 0.00002    0.723    0.183 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    alpha, circular r (R2)    0.000 0.00002    0.723    0.183 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    baked, continuous r, path (proposed)    0.002 0.00005    0.089    0.000 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    alpha, continuous r, path (proposed)    0.002 0.00005    0.000    0.000 |   0.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    baked, continuous r, border model    0.000 0.00000    0.089    0.000 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000
+  mid wallpaper
+    dress                                       interior  over     edge_in  edge_out | in: corner-zone share  straight-only in/out
+    baked, circular r+1 (pre-R2, measured)    0.006 0.00007    0.788    0.399 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.001
+    baked, circular 10 (pre-R2, unmeasured)    0.003 0.00004    1.528    1.352 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.001
+    baked, circular r (R2)    0.001 0.00003    1.191    0.514 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.001
+    alpha, circular r (R2)    0.001 0.00003    1.191    0.514 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.001
+    baked, continuous r, path (proposed)    0.003 0.00005    0.054    0.000 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    alpha, continuous r, path (proposed)    0.003 0.00005    0.000    0.000 |   0.0% of edge_in, 188/3752 samples   0.000 /  0.000
+    baked, continuous r, border model    0.000 0.00000    0.054    0.000 | 100.0% of edge_in, 188/3752 samples   0.000 /  0.000

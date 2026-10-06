@@ -36,7 +36,7 @@ use crate::animation::domain::motion::score::{
 use crate::animation::domain::motion::tile::{ContentMode, content_mode, crop_pieces};
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::decorations::domain::style::Style;
-use crate::decorations::platform::layers::{DecorationLayers, Resize, add_under, remove_under};
+use crate::decorations::platform::layers::{AsLayerCurve, DecorationLayers, Resize, add_under, remove_under};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
@@ -1325,6 +1325,7 @@ fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
     tile.stack(z);
     tile.decorations.place(size);
     tile.picture.setCornerRadius(tile.decorations.corner_at(size));
+    tile.picture.setCornerCurve(tile.decorations.curve_at(size).as_layer());
     if resized {
         layout_crop_grid(tile, size);
     }
@@ -2910,8 +2911,16 @@ mod tests {
             assert!(picture.masksToBounds());
             assert_eq!(picture.cornerRadius(), 16.0);
             assert_eq!(picture.cornerRadius(), tree.tile_layers[&window].decorations.hairline.cornerRadius());
+            let hairline = &tree.tile_layers[&window].decorations.hairline;
+            assert_eq!(&*picture.cornerCurve(), unsafe { objc2_quartz_core::kCACornerCurveContinuous });
+            assert_eq!(picture.cornerCurve(), hairline.cornerCurve());
             tree.play(&[Edit::Place(Node::Tile(window), Value::Rect(typed(4.0, 32.0, 12.0, 400.0)))], &tiles);
             assert_eq!(tree.tile_layers[&window].picture.cornerRadius(), 6.0, "half the shorter side");
+            assert_eq!(
+                &*tree.tile_layers[&window].picture.cornerCurve(),
+                unsafe { objc2_quartz_core::kCACornerCurveCircular },
+                "a continuous 6pt corner reaches past half of 12pt"
+            );
             tree.swap(window, &test_picture(ScreenSize::new(12.0, 400.0)), false, 0.0);
             assert!(!tree.tile_layers[&window].picture.masksToBounds(), "whole");
         }

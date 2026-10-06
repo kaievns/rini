@@ -10,11 +10,12 @@ use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColor, CGMutablePath, CGPath};
 use objc2_foundation::NSString;
 use objc2_quartz_core::{
-    CAAnimation, CALayer, CAPropertyAnimation, CAShapeLayer, kCAFillRuleEvenOdd,
+    CAAnimation, CALayer, CAPropertyAnimation, CAShapeLayer, kCACornerCurveCircular,
+    kCACornerCurveContinuous, kCAFillRuleEvenOdd,
 };
-use rini_geometry::space::{TileSize, ToCg, Vector};
+use rini_geometry::space::{TileRect, TileSize, ToCg, Vector};
 
-use crate::decorations::domain::shape::{self, SHADOW_REACH};
+use crate::decorations::domain::shape::{self, Curve, SHADOW_REACH, Segment};
 use crate::decorations::domain::stack::{HAIRLINE_Z, SHADOW_Z};
 use crate::decorations::domain::style::{LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
 
@@ -157,6 +158,7 @@ impl DecorationLayers {
             self.built.set(Some((size, corner)));
         }
         self.hairline.setCornerRadius(corner);
+        self.hairline.setCornerCurve(self.curve_at(size).as_layer());
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
     }
@@ -166,6 +168,9 @@ impl DecorationLayers {
     pub fn corner_at(&self, size: TileSize) -> f64 {
         shape::radius(self.radius, size)
     }
+
+    /// The curve a tile of `size` rounds its corner on, every piece of it.
+    pub fn curve_at(&self, size: TileSize) -> Curve { shape::curve(size, self.corner_at(size)) }
 
     /// Paints the hairline's white and the shadow's depth as `style` has them.
     pub fn show(&self, style: Style) {
@@ -225,41 +230,80 @@ impl DecorationLayers {
     }
 }
 
-/// The outline's path around a window of `size` with corners of `corner`. Its radius is never zero,
-/// so it is always a rounded rect and two outline paths interpolate.
-fn outline_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
-    let (rect, radius) = shape::outline(size, corner);
-    // SAFETY: a null transform means the path is taken as given.
-    unsafe { CGPath::with_rounded_rect(rect.to_cg(), radius, radius, std::ptr::null()) }
+/// The layer's own corner curve for `curve`.
+pub trait AsLayerCurve {
+    fn as_layer(self) -> &'static objc2_quartz_core::CALayerCornerCurve;
 }
 
-/// The window's rounded-rect silhouette with corners of `corner`, the shadow's shape, floored as
+impl AsLayerCurve for Curve {
+    fn as_layer(self) -> &'static objc2_quartz_core::CALayerCornerCurve {
+        // SAFETY: Core Animation's constant strings, alive for the process.
+        unsafe {
+            match self {
+                Curve::Circular => kCACornerCurveCircular,
+                Curve::Continuous => kCACornerCurveContinuous,
+            }
+        }
+    }
+}
+
+/// Adds `rect` rounded at `corner` on `curve` to `path`.
+fn add_rounded(path: &CGMutablePath, rect: TileRect, corner: f64, curve: Curve) {
+    let null = std::ptr::null();
+    // SAFETY: a null transform means each point is added as given, to a path the caller owns.
+    unsafe {
+        for segment in shape::rounded_rect(rect, corner, curve) {
+            match segment {
+                Segment::Move(to) => CGMutablePath::move_to_point(Some(path), null, to.x, to.y),
+                Segment::Line(to) => CGMutablePath::add_line_to_point(Some(path), null, to.x, to.y),
+                Segment::Cubic(a, b, to) => CGMutablePath::add_curve_to_point(
+                    Some(path),
+                    null,
+                    a.x,
+                    a.y,
+                    b.x,
+                    b.y,
+                    to.x,
+                    to.y,
+                ),
+                Segment::Close => CGMutablePath::close_subpath(Some(path)),
+            }
+        }
+    }
+}
+
+fn rounded_path(rect: TileRect, corner: f64, curve: Curve) -> CFRetained<CGPath> {
+    let path = CGMutablePath::new();
+    add_rounded(&path, rect, corner, curve);
+    CFRetained::from(&*path)
+}
+
+/// The outline's path around a window of `size` with corners of `corner`, on the tile's curve.
+fn outline_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
+    let (rect, radius) = shape::outline(size, corner);
+    rounded_path(rect, radius, shape::curve(size, corner))
+}
+
+/// The window's silhouette with corners of `corner`, the shadow's shape, floored as
 /// `shape::silhouette` says.
 pub fn silhouette_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
     let (rect, radius) = shape::silhouette(size, corner);
-    // SAFETY: a null transform means the path is taken as given.
-    unsafe { CGPath::with_rounded_rect(rect.to_cg(), radius, radius, std::ptr::null()) }
+    rounded_path(rect, radius, shape::curve(size, corner))
 }
 
 /// The shadow mask's path, the whole mask minus the window's shape with corners of `corner`, wound
-/// even-odd so the inside is the hole. Always one rect plus one rounded rect, so two mask paths
-/// interpolate.
+/// even-odd so the inside is the hole. Always one rect plus one rounded rect of the same segments,
+/// so two mask paths interpolate.
 pub fn shadow_mask_path(size: TileSize, corner: f64) -> CFRetained<CGMutablePath> {
     let (whole, hole, radius) = shape::shadow_mask(size, corner);
     // The mask layer's own points start at the mask's corner, one reach out from the tile's.
     let into_mask = Vector::new(SHADOW_REACH, SHADOW_REACH);
     let path = CGMutablePath::new();
-    // SAFETY: a null transform means each rect is added as given, to a path we just created.
+    // SAFETY: a null transform means the rect is added as given, to a path we just created.
     unsafe {
         CGMutablePath::add_rect(Some(&path), std::ptr::null(), whole.translate(into_mask).to_cg());
-        CGMutablePath::add_rounded_rect(
-            Some(&path),
-            std::ptr::null(),
-            hole.translate(into_mask).to_cg(),
-            radius,
-            radius,
-        );
     }
+    add_rounded(&path, hole.translate(into_mask), radius, shape::curve(size, corner));
     path
 }
 
@@ -597,5 +641,71 @@ mod tests {
         layers.stack(-2.0);
         assert_eq!(layers.shadow.zPosition(), -2.0 + SHADOW_Z);
         assert_eq!(layers.hairline.zPosition(), -2.0 + HAIRLINE_Z);
+    }
+
+    /// Alpha of `layer` rendered at 2x into a bitmap of `size`, top row first.
+    fn rendered(layer: &CALayer, size: TileSize) -> Vec<u8> {
+        use objc2_core_graphics::{
+            CGBitmapContextCreate, CGBitmapContextGetData, CGColorSpace, CGContext, CGImageAlphaInfo,
+        };
+        let (w, h) = ((size.width * 2.0) as usize, (size.height * 2.0) as usize);
+        let space = CGColorSpace::new_device_rgb().unwrap();
+        // SAFETY: a fresh context that owns its bytes.
+        let ctx = unsafe {
+            CGBitmapContextCreate(
+                std::ptr::null_mut(),
+                w,
+                h,
+                8,
+                w * 4,
+                Some(&space),
+                CGImageAlphaInfo::PremultipliedLast.0,
+            )
+        }
+        .unwrap();
+        CGContext::translate_ctm(Some(&ctx), 0.0, h as f64);
+        CGContext::scale_ctm(Some(&ctx), 2.0, -2.0);
+        layer.setGeometryFlipped(true);
+        layer.renderInContext(&ctx);
+        let data = CGBitmapContextGetData(Some(&ctx)) as *const u8;
+        // SAFETY: the context owns `w * h * 4` bytes and outlives this copy.
+        unsafe { std::slice::from_raw_parts(data, w * h * 4) }.chunks(4).map(|p| p[3]).collect()
+    }
+
+    /// How many pixels of the silhouette's path sit more than half an alpha step from Core
+    /// Animation's own corner on the curve the tile rounds on, the one the hairline and a clipped
+    /// picture are drawn with.
+    fn off_core_animation(size: TileSize, corner: f64) -> usize {
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg());
+        let theirs = CALayer::layer();
+        theirs.setFrame(frame);
+        theirs.setBackgroundColor(Some(&CGColor::new_generic_gray(1.0, 1.0)));
+        theirs.setCornerRadius(corner);
+        theirs.setCornerCurve(shape::curve(size, corner).as_layer());
+        theirs.setMasksToBounds(true);
+        let ours = CAShapeLayer::layer();
+        ours.setFrame(frame);
+        ours.setFillColor(Some(&CGColor::new_generic_gray(1.0, 1.0)));
+        ours.setPath(Some(&silhouette_path(size, corner)));
+        let (a, b) = (rendered(&theirs, size), rendered(&ours, size));
+        a.iter().zip(&b).filter(|(x, y)| x.abs_diff(**y) > 127).count()
+    }
+
+    #[test]
+    fn every_path_follows_core_animation_s_corner_on_the_tile_s_curve() {
+        for (w, h, corner) in [(860.0, 1079.0, 26.0), (1148.0, 1079.0, 16.0), (80.0, 400.0, 26.0), (60.0, 400.0, 26.0), (12.0, 400.0, 6.0)] {
+            let size = TileSize::new(w, h);
+            assert_eq!(off_core_animation(size, corner), 0, "{w}x{h} at {corner}");
+        }
+    }
+
+    #[test]
+    fn a_placed_tile_s_hairline_rounds_on_its_curve() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(26.0);
+        layers.place(TileSize::new(860.0, 1079.0));
+        assert_eq!(&*layers.hairline.cornerCurve(), unsafe { kCACornerCurveContinuous });
+        layers.place(TileSize::new(60.0, 400.0));
+        assert_eq!(&*layers.hairline.cornerCurve(), unsafe { kCACornerCurveCircular });
     }
 }
