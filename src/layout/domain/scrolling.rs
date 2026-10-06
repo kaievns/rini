@@ -10,9 +10,9 @@ use crate::layout::domain::constraints::{
     solve_axis_lengths,
 };
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
-use crate::layout::domain::edge_drag::{Side, dragged_side};
+use crate::layout::domain::edge_drag::{Side, dragged_side, dragged_width};
 use crate::layout::domain::strip::{
-    Reveal, anchor_x, column_starts, offset_keeping_right_edge, reveal_offset,
+    Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, reveal_offset,
 };
 use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
@@ -1575,6 +1575,7 @@ impl ScrollingLayoutSystem {
         let min_ratio = self.settings.min_column_width_ratio;
         let max_ratio = self.settings.max_column_width_ratio;
         let reveals_only = self.settings.reveals_only();
+        let center = self.settings.center_focused_column;
 
         let Some(state) = self.layout_state_mut(layout) else {
             return;
@@ -1586,9 +1587,6 @@ impl ScrollingLayoutSystem {
         if tiling.size.width <= 0.0 {
             return;
         }
-        let ratio = new_frame.size.width / tiling.size.width;
-        let clamped = ratio.clamp(min_ratio, max_ratio).max(0.05);
-
         let base_ratio = state.column_width_ratio;
         let Some((col_idx, row_idx)) = state.locate(wid) else {
             return;
@@ -1598,6 +1596,15 @@ impl ScrollingLayoutSystem {
         if state.is_full_width_column(&state.columns[col_idx]) {
             return;
         }
+        let width = dragged_from.map_or(new_frame.size.width, |start| {
+            // The scroll request below keeps a centre override only under `always`, and only on
+            // the window it names.
+            let keeps_override = !reveals_only && state.center_override_window == Some(wid);
+            let centred = centres(col_idx, state.columns.len(), center, keeps_override);
+            dragged_width(start.size.width, new_frame.size.width, centred)
+        });
+        let ratio = width / tiling.size.width;
+        let clamped = ratio.clamp(min_ratio, max_ratio).max(0.05);
         state.columns[col_idx].width_offset = clamped - base_ratio;
         state.columns[col_idx].width_overridden = true;
 
@@ -2010,7 +2017,9 @@ mod tests {
     use super::{Column, ScrollingLayoutSystem, rebased_offset};
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
-    use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
+    use crate::layout::settings::{
+        CenterFocusedColumn, Gaps, ScrollingLayoutSettings, WindowInsertionPoint,
+    };
     use crate::layout::{Direction, LayoutId, ResizeOrientation};
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
@@ -4226,11 +4235,14 @@ mod tests {
         system.on_window_resized(layout, wid, Some(from), to, KAI_SCREEN, &kai_s_gaps());
     }
 
-    /// Kai's bounds (a third to two thirds, a half by default) and three columns: column 0 at
-    /// [3, w 594], and column 1 selected at [600, w 882] with the strip at offset 0.
-    fn kai_s_strip() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+    /// Kai's bounds (a third to two thirds, a half by default) and three columns: column 0 594pt
+    /// wide and column 1, selected, 882pt.
+    fn kai_s_columns(
+        center: CenterFocusedColumn,
+    ) -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
         let mut settings = preset_settings();
         settings.column_width_ratio = 0.5;
+        settings.center_focused_column = center;
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
@@ -4239,9 +4251,25 @@ mod tests {
         }
         app_sizes(&mut system, layout, w[0], 596.0);
         app_sizes(&mut system, layout, w[1], 883.5);
+        assert_eq!(laid_out_xw(&system, layout, w[0]).1, 594.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 882.0);
+        (system, layout, w)
+    }
+
+    /// Kai's columns under `never`: column 0 at [3, w 594], and column 1 at [600, w 882] with the
+    /// strip at offset 0.
+    fn kai_s_strip() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let (system, layout, w) = kai_s_columns(CenterFocusedColumn::Never);
         assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 594.0));
         assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 882.0));
         assert_eq!(scroll_offset(&system, layout), 0.0);
+        (system, layout, w)
+    }
+
+    /// Kai's columns under `always`, column 1 centred at [423, w 882].
+    fn kai_s_centred_strip() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let (system, layout, w) = kai_s_columns(CenterFocusedColumn::Always);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (423.0, 882.0));
         (system, layout, w)
     }
 
@@ -4376,5 +4404,42 @@ mod tests {
 
         assert_eq!(laid_out_xw(&system, layout, w[2]), (579.0, 1147.0));
         assert_near(scroll_offset(&system, layout), 21.5, "offset");
+    }
+
+    /// 684pt asked, 682 laid out after the gap share, 520pt from either edge of the tiling area.
+    /// Undoubled it would end at [548, w 632].
+    #[test]
+    fn in_centred_mode_a_middle_column_dragged_out_50_from_its_left_edge_grows_100_and_stays_centred() {
+        let (mut system, layout, w) = kai_s_centred_strip();
+        app_sizes(&mut system, layout, w[1], 586.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (572.0, 584.0));
+
+        drag(&mut system, layout, w[1], xw(572.0, 584.0), xw(522.0, 634.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (523.0, 682.0));
+    }
+
+    /// The first column, flush left, takes a right-edge drag as dragged; the last, flush right, a
+    /// left-edge one. Doubled, they would end 752.5 and 756.5pt wide.
+    #[test]
+    fn in_centred_mode_the_end_columns_grow_away_from_their_flush_edge() {
+        let (mut system, layout, w) = kai_s_centred_strip();
+        assert!(system.select_window(layout, w[0]));
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 594.0));
+        drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(3.0, 674.0));
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 672.0), "first");
+
+        app_sizes(&mut system, layout, w[2], 600.0);
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (1127.0, 598.0));
+        drag(&mut system, layout, w[2], xw(1127.0, 598.0), xw(1047.0, 678.0));
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (1049.0, 676.0), "last");
+    }
+
+    /// Out 150 asks for 1182pt; the bound gives 1148.006, centred at x 289.997.
+    #[test]
+    fn in_centred_mode_a_doubled_drag_still_stops_at_max_column_width() {
+        let (mut system, layout, w) = kai_s_centred_strip();
+        drag(&mut system, layout, w[1], xw(423.0, 882.0), xw(273.0, 1032.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (290.0, 1148.0));
     }
 }

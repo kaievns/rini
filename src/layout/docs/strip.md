@@ -269,6 +269,14 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   selection without any request, and a focus change before the release must not drag the next
   column to the old right edge. Under `center-focused-column "always"` no pin is set, because the
   centring places the column.
+- **A centred column takes twice the travel.** Centring moves both edges by half of any change, so
+  the column takes the start width plus twice the dragged edge's travel (`edge_drag::dragged_width`)
+  and the dragged edge ends under the cursor. niri doubles the delta the same way while it centres
+  (`niri:src/layout/scrolling.rs:3621-3632`), but it centres every column under `"always"`
+  (`is_centering_focused_column`, `niri:src/layout/scrolling.rs:575-578`). rini's first and last sit
+  flush, so `strip::centres`, the rule `anchor_x` places by, leaves them the dragged width. It is
+  asked with the centre override the report's own scroll request keeps: under `"never"` that request
+  clears it, so a centred window there is dragged as any other.
 - **The first column ends grown to the right.** Its left edge cannot stay off the viewport, so the
   neutral reveal pulls it back. niri ends there too: it does not reveal during a resize
   (`niri:src/layout/scrolling.rs:1417-1419`), and at the end `interactive_resize_end`
@@ -282,7 +290,7 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   and a strip scrolled by less than the shrink keeps the right edge only until the offset reaches 0.
 - **The width bounds still apply.** A drag past `max-column-width` or under `min-column-width`
   lands on the bound with the right edge kept, so the dragged edge snaps back to where the bound puts
-  it.
+  it. A centred column's width is doubled first and bounded after.
 - **1-2pt short.** The column's ratio is the reported width over the tiling width, and
   `column_width` then subtracts the gap share, so a drag lands that much narrower than dragged.
 

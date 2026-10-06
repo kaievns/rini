@@ -9,13 +9,8 @@ use objc2_core_foundation::CGRect;
 use crate::layout::settings::CenterFocusedColumn;
 
 /// Where the strip is pinned, in display coordinates: the x the selected column is drawn at before
-/// the scroll offset is subtracted.
-///
-/// `never` pins the strip to the left edge and lets the selection move within it, so a focus change
-/// never shifts an unrelated column. `always` moves the strip instead to centre the selection, and
-/// then the first and last columns are special: there is nothing beyond them to scroll to, so they
-/// sit flush. A centre override suspends all of that, since something has explicitly asked for one
-/// window to be centred.
+/// the scroll offset is subtracted. A column `centres` puts in the middle; otherwise the strip is
+/// pinned to the left edge, or under `always` the last column sits flush with the right.
 pub fn anchor_x(
     tiling: CGRect,
     selected_width: f64,
@@ -24,22 +19,37 @@ pub fn anchor_x(
     center: CenterFocusedColumn,
     has_center_override: bool,
 ) -> f64 {
-    let left = tiling.origin.x;
-    let right = tiling.origin.x + tiling.size.width - selected_width;
-    let centre = tiling.origin.x + (tiling.size.width - selected_width) / 2.0;
-    let always = center == CenterFocusedColumn::Always;
-
-    if !always && !has_center_override {
-        return left;
-    }
-    let anchored_strip = always && !has_center_override && column_count > 1;
-    let first = selected_col_idx == 0;
-    let last = selected_col_idx == column_count.saturating_sub(1);
+    let last = selected_col_idx + 1 == column_count;
     match () {
-        _ if anchored_strip && first => left,
-        _ if anchored_strip && last => right,
-        _ => centre,
+        _ if centres(selected_col_idx, column_count, center, has_center_override) => {
+            tiling.origin.x + (tiling.size.width - selected_width) / 2.0
+        }
+        _ if center == CenterFocusedColumn::Always && last => {
+            tiling.origin.x + tiling.size.width - selected_width
+        }
+        _ => tiling.origin.x,
     }
+}
+
+/// Whether the selected column sits in the middle of the viewport.
+///
+/// `never` pins the strip to the left edge and lets the selection move within it, so a focus change
+/// never shifts an unrelated column. `always` moves the strip instead to centre the selection, and
+/// then the first and last columns are special: there is nothing beyond them to scroll to, so they
+/// sit flush. A centre override suspends all of that, since something has explicitly asked for one
+/// window to be centred.
+pub fn centres(
+    selected_col_idx: usize,
+    column_count: usize,
+    center: CenterFocusedColumn,
+    has_center_override: bool,
+) -> bool {
+    if has_center_override {
+        return true;
+    }
+    let first = selected_col_idx == 0;
+    let last = selected_col_idx + 1 == column_count;
+    center == CenterFocusedColumn::Always && (column_count <= 1 || !(first || last))
 }
 
 /// Where each column begins along the strip, and the offset that puts the last column at the anchor.
@@ -163,6 +173,23 @@ mod tests {
     #[test]
     fn a_lone_column_is_centred_under_always() {
         assert_eq!(anchor(0, 1, Always, false), 300.0);
+    }
+
+    #[test]
+    fn centres_is_what_anchor_x_centres_on() {
+        for count in 1..=3 {
+            for idx in 0..count {
+                for center in [Never, Always] {
+                    for override_ in [false, true] {
+                        assert_eq!(
+                            centres(idx, count, center, override_),
+                            anchor(idx, count, center, override_) == 300.0,
+                            "col {idx} of {count}, {center:?}, override {override_}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

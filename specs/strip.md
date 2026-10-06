@@ -109,8 +109,13 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A shrink from the left with the strip at its start MUST keep the left edge and shrink from the
   right. Keeping the right edge would need space before the first column, which the strip never
   shows. A strip scrolled by less than the shrink keeps the right edge until it reaches its start.
+- Under `center-focused-column "always"` the centring places the column, not the kept edge. A
+  centred column MUST take twice the dragged edge's travel, so it stays centred and the dragged edge
+  ends where the cursor let go. The first and last columns sit flush, so they MUST take the dragged
+  width and grow away from their flush edge.
 - At `min-column-width` or `max-column-width` the column MUST take the bound and keep its right
-  edge, so the dragged edge ends where the bound puts it.
+  edge, so the dragged edge ends where the bound puts it. A centred column's doubled width is
+  bounded the same way.
 - The kept edge belongs to the window dragged. When focus moves to another column, or the dragged
   window closes, before the strip is laid out again, the column focused next MUST be placed as any
   focus change places it.

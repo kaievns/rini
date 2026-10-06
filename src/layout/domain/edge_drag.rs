@@ -1,4 +1,4 @@
-//! Which edge of a window a mouse drag is moving.
+//! Which edge of a window a mouse drag is moving, and the width it asks of the column.
 //!
 //! macOS reports a drag as a frame and nothing else, so the edge is read off the two frames: the
 //! one the window started from and the one it has now. See "Mouse resize" in
@@ -25,6 +25,16 @@ pub fn dragged_side(start: CGRect, now: CGRect) -> Option<Side> {
         (true, false) => Some(Side::Left),
         (false, true) => Some(Side::Right),
         _ => None,
+    }
+}
+
+/// The width a drag from `start_width` to `now_width` asks of its column. A centred column grows on
+/// both sides, so it takes twice the dragged edge's travel and that edge ends under the cursor.
+pub fn dragged_width(start_width: f64, now_width: f64, centred: bool) -> f64 {
+    if centred {
+        start_width + 2.0 * (now_width - start_width)
+    } else {
+        now_width
     }
 }
 
@@ -57,5 +67,12 @@ mod tests {
         ] {
             assert_eq!(dragged_side(start, now), side, "{case}");
         }
+    }
+
+    #[test]
+    fn a_centred_drag_asks_for_twice_the_travel() {
+        assert_eq!(dragged_width(882.0, 932.0, true), 982.0, "out 50");
+        assert_eq!(dragged_width(882.0, 832.0, true), 782.0, "in 50");
+        assert_eq!(dragged_width(882.0, 932.0, false), 932.0, "not centred");
     }
 }
