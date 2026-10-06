@@ -4535,8 +4535,8 @@ mod tests {
             assert!(delivered < show, "frame zero's wait for its show takes its time");
         }
 
-        /// The lift lets go of the desktop behind the tiles, so a flight is dressed only after the lift
-        /// before it, a lift held for the overlay's picture too, and with the desktop the service holds.
+        /// The lift before a flight, a lift held for the overlay's picture too, let go of the desktop
+        /// behind the tiles: the flight is dressed after it, with the desktop the service holds.
         #[test]
         fn a_flight_after_a_lift_is_dressed_again() {
             for mut h in [Harness::new(), Harness::measuring()] {
