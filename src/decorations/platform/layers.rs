@@ -270,8 +270,8 @@ fn outline_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
     rounded_path(rect, radius)
 }
 
-/// The window's silhouette with corners of `corner`, the shadow's shape, floored as
-/// `shape::silhouette` says.
+/// The window's silhouette with corners of `corner`, the shadow's shape, as `shape::silhouette`
+/// has it.
 pub fn silhouette_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
     let (rect, radius) = shape::silhouette(size, corner);
     rounded_path(rect, radius)
