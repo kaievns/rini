@@ -129,7 +129,18 @@ impl Shared {
     }
 }
 
+/// Every picture of `window` and all that is known of it, gone.
+fn forget_window(
+    shared: &mut Shared,
+    looks_checked: &mut HashMap<WindowId, (Instant, Instant)>,
+    window: WindowId,
+) {
+    forget_pictures(shared, looks_checked, window);
+    shared.learned.forget(WindowServerId::from(window));
+}
+
 /// Every picture of `window`, held, owed or delivered, and its focused look's last check, gone.
+/// What is known of it stays: a window pictured twice shares its server id with the managed one.
 fn forget_pictures(
     shared: &mut Shared,
     looks_checked: &mut HashMap<WindowId, (Instant, Instant)>,
@@ -705,10 +716,7 @@ impl Service {
                     self.at_rest();
                 }
             }
-            Command::Forget(window) => {
-                forget_pictures(&mut shared, &mut self.looks_checked, window);
-                shared.learned.forget(WindowServerId::from(window));
-            }
+            Command::Forget(window) => forget_window(&mut shared, &mut self.looks_checked, window),
             Command::SetDisplay { display, picture_bar } => {
                 let Shared { schedule, display: held, .. } = &mut *shared;
                 if set_display(schedule, held, display, picture_bar, now) {
@@ -756,8 +764,7 @@ impl Service {
         debug!(gone = unwanted.gone.len(), twice = unwanted.twice.len(), "letting go of synthetic pictures");
         let mut shared = self.shared.lock().unwrap();
         for window in unwanted.gone {
-            forget_pictures(&mut shared, &mut self.looks_checked, window);
-            shared.learned.forget(WindowServerId::from(window));
+            forget_window(&mut shared, &mut self.looks_checked, window);
         }
         for window in unwanted.twice {
             forget_pictures(&mut shared, &mut self.looks_checked, window);
@@ -1624,6 +1631,28 @@ mod tests {
         assert!(shared.cache.get(wid(102682)).is_some());
         assert!(shared.cache.get(border).is_some());
         assert_ne!(shared.learned.get(WindowServerId::from(wid(102682))), Knowledge::default());
+    }
+
+    /// A release lets go of a synthetic picture whose window the window server no longer has, and of
+    /// all that is known of it.
+    #[test]
+    fn a_release_lets_go_of_a_synthetic_picture_of_a_window_gone_and_what_is_known_of_it() {
+        use crate::pictures::domain::target::synthetic_window_id;
+        use crate::windows::platform::window_server::set_window_gone_override;
+        let (mut service, shared) = detached_service();
+        let server_id = WindowServerId::new(9002);
+        let gone = synthetic_window_id(server_id);
+        {
+            let mut shared = shared.lock().unwrap();
+            shared.cache.insert(gone, sized(400.0, 30.0));
+            shared.learned.saw_alpha(server_id, true, Some(10.0));
+        }
+        set_window_gone_override(server_id, true);
+        service.apply(Command::Hold(Hold::Released));
+        set_window_gone_override(server_id, false);
+        let shared = shared.lock().unwrap();
+        assert!(shared.cache.get(gone).is_none());
+        assert_eq!(shared.learned.get(server_id), Knowledge::default());
     }
 
     /// A focused look that is a region is kept as a copy at a release too.

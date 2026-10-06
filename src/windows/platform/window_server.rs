@@ -22,7 +22,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::CGRectExt;
 use rini_skylight_sys::*;
 #[cfg(test)]
-use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
@@ -40,6 +40,7 @@ thread_local! {
     static TEST_WINDOW_SPACES_OVERRIDE: RefCell<HashMap<u32, Vec<u64>>> = RefCell::new(HashMap::default());
     static TEST_WINDOW_ORDERED_IN_OVERRIDE: RefCell<HashMap<u32, bool>> = RefCell::new(HashMap::default());
     static TEST_FRONT_TO_BACK_OVERRIDE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+    static TEST_WINDOWS_GONE_OVERRIDE: RefCell<HashSet<u32>> = RefCell::new(HashSet::default());
 }
 
 pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
@@ -509,10 +510,23 @@ pub fn existing_windows(ids: &[WindowServerId]) -> Option<std::collections::Hash
     Some(existing)
 }
 
-/// Every id a test asks about exists, as for `get_windows`.
+/// Every id a test asks about exists, as for `get_windows`, unless `set_window_gone_override` says not.
 #[cfg(test)]
 pub fn existing_windows(ids: &[WindowServerId]) -> Option<std::collections::HashSet<u32>> {
-    Some(ids.iter().map(|id| id.as_u32()).collect())
+    let gone = TEST_WINDOWS_GONE_OVERRIDE.with(|gone| gone.borrow().clone());
+    Some(ids.iter().map(|id| id.as_u32()).filter(|id| !gone.contains(id)).collect())
+}
+
+#[cfg(test)]
+pub fn set_window_gone_override(id: WindowServerId, gone: bool) {
+    TEST_WINDOWS_GONE_OVERRIDE.with(|override_gone| {
+        let mut override_gone = override_gone.borrow_mut();
+        if gone {
+            override_gone.insert(id.as_u32());
+        } else {
+            override_gone.remove(&id.as_u32());
+        }
+    });
 }
 
 #[cfg(test)]
