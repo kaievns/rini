@@ -63,7 +63,6 @@ Where each conversion between spaces lives:
 | `Screen` to `Pixel`: a frame in a composite, at its scale | `pictures::domain::region::pixel_rect` |
 | `Pixel` to `Contents`: a pixel rect over its image's size | `pictures::domain::region::unit_rect` |
 | `Contents` within `Contents`: a piece of a region | `pictures::domain::region::within` |
-| `Pixel` to `Contents`: the stand-in's middle over its image's width | `pictures::platform::layer::stretch_region` |
 
 ## euclid against the CG operations
 

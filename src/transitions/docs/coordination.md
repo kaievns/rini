@@ -658,8 +658,8 @@ with a cold cache took a 1s off-screen capture and flew in from the park.
 It used to take the reservation instead, which drew nothing in its slot
 until a picture landed — a hole in the strip after every restart. It now
 flies with a stand-in (`stands_in`, `picture::stand_in_picture`): a
-dark `--n3` tile, drawn nine-slice from a 42px image so its corners keep the
-window's radius, moving exactly as its picture would. The stand-in claims
+dark `--n3` tile, one pixel stretched over the tile and clipped by the overlay
+to its window's radius, as a baked picture is, moving exactly as its picture would. The stand-in claims
 to cover nothing, so the flight holds for it like a grow, and its picture once it
 has repainted where it ends is swapped onto the same tile. It is never cached. Strip movements draw
 the same stand-in (`picture_or_stand_in`; see "The move flight, staged"), without

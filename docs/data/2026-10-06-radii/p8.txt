@@ -1,0 +1,21 @@
+renderInContext distinguishes curves: diff (0.0015931372549019597, 0.5450980392156862)
+win_56.png srv=16 corner=0 | circular best r=16.25 mean=0.0424 max=0.667 at srv mean=0.0434 max=0.690 | continuous best r=16.25 mean=0.0379 max=0.255 at srv mean=0.0389 max=0.275
+win_56.png srv=16 corner=1 | circular best r=16.25 mean=0.0536 max=0.667 at srv mean=0.0546 max=0.690 | continuous best r=16.25 mean=0.0491 max=0.255 at srv mean=0.0501 max=0.275
+win_56.png srv=16 corner=2 | circular best r=16.25 mean=0.0537 max=0.667 at srv mean=0.0547 max=0.690 | continuous best r=16.25 mean=0.0492 max=0.255 at srv mean=0.0502 max=0.275
+win_56.png srv=16 corner=3 | circular best r=16.25 mean=0.0537 max=0.667 at srv mean=0.0547 max=0.690 | continuous best r=16.25 mean=0.0492 max=0.255 at srv mean=0.0502 max=0.275
+win_2412.png srv=26 corner=0 | circular best r=26.25 mean=0.0073 max=0.898 at srv mean=0.0079 max=0.906 | continuous best r=26.25 mean=0.0024 max=0.329 at srv mean=0.0033 max=0.357
+win_2412.png srv=26 corner=1 | circular best r=26.25 mean=0.0073 max=0.898 at srv mean=0.0079 max=0.906 | continuous best r=26.25 mean=0.0024 max=0.329 at srv mean=0.0033 max=0.357
+win_2412.png srv=26 corner=2 | circular best r=26.25 mean=0.0073 max=0.898 at srv mean=0.0079 max=0.906 | continuous best r=26.25 mean=0.0024 max=0.329 at srv mean=0.0033 max=0.357
+win_2412.png srv=26 corner=3 | circular best r=26.25 mean=0.0073 max=0.898 at srv mean=0.0079 max=0.906 | continuous best r=26.25 mean=0.0024 max=0.329 at srv mean=0.0033 max=0.357
+win_97.png srv=20 corner=0 | circular best r=20.25 mean=0.0073 max=0.776 at srv mean=0.0079 max=0.804 | continuous best r=20.25 mean=0.0027 max=0.271 at srv mean=0.0034 max=0.294
+win_97.png srv=20 corner=1 | circular best r=20.25 mean=0.0073 max=0.776 at srv mean=0.0079 max=0.804 | continuous best r=20.25 mean=0.0027 max=0.271 at srv mean=0.0034 max=0.294
+win_97.png srv=20 corner=2 | circular best r=20.25 mean=0.0073 max=0.776 at srv mean=0.0079 max=0.804 | continuous best r=20.25 mean=0.0027 max=0.271 at srv mean=0.0034 max=0.294
+win_97.png srv=20 corner=3 | circular best r=20.25 mean=0.0073 max=0.776 at srv mean=0.0079 max=0.804 | continuous best r=20.25 mean=0.0027 max=0.271 at srv mean=0.0034 max=0.294
+win_60.png srv=12 corner=0 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212
+win_60.png srv=12 corner=1 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212
+win_60.png srv=12 corner=2 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212
+win_60.png srv=12 corner=3 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212
+win_3851.png srv=12 corner=0 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212
+win_3851.png srv=12 corner=1 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212
+win_3851.png srv=12 corner=2 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212
+win_3851.png srv=12 corner=3 | circular best r=12.25 mean=0.0076 max=0.522 at srv mean=0.0087 max=0.565 | continuous best r=12.25 mean=0.0032 max=0.169 at srv mean=0.0039 max=0.212

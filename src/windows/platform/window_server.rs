@@ -24,7 +24,7 @@ use rini_skylight_sys::*;
 #[cfg(test)]
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::domain::info::{WindowServerInfo, reported_radius};
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 use crate::windows::platform::cg_ok;
 #[cfg(not(test))]
@@ -42,6 +42,8 @@ thread_local! {
     static TEST_FRONT_TO_BACK_OVERRIDE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
     static TEST_WINDOWS_GONE_OVERRIDE: RefCell<HashSet<u32>> = RefCell::new(HashSet::default());
     static TEST_WINDOW_UNDER_CURSOR_OVERRIDE: Cell<Option<u32>> = const { Cell::new(None) };
+    static TEST_WINDOW_FRAMES_OVERRIDE: RefCell<HashMap<u32, CGRect>> = RefCell::new(HashMap::default());
+    static TEST_CORNER_RADII_OVERRIDE: RefCell<HashMap<u32, Vec<f64>>> = RefCell::new(HashMap::default());
 }
 
 pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
@@ -220,6 +222,15 @@ impl WindowIterator {
 
         (min, max)
     }
+
+    /// The current window's corner radii in points, as the window server reports them: empty when
+    /// it answers none or has no such call.
+    pub fn corner_radii(&self) -> Vec<f64> {
+        let Some(read) = *GET_CORNER_RADII else { return Vec::new() };
+        let Some(radii) = NonNull::new(unsafe { read(self.iter) }) else { return Vec::new() };
+        let radii = unsafe { CFRetained::from_raw(radii) };
+        radii.iter().filter_map(|corner| corner.as_f64()).collect()
+    }
 }
 
 impl Drop for WindowIterator {
@@ -261,6 +272,13 @@ fn resolve_window_query_key(name: &CStr) -> Option<usize> {
     let key = unsafe { *(slot.cast::<*mut CFString>()) };
     (!key.is_null()).then_some(key as usize)
 }
+
+static GET_CORNER_RADII: Lazy<Option<SLSWindowIteratorGetCornerRadiiFn>> = Lazy::new(|| {
+    let symbol = unsafe { dlsym(RTLD_DEFAULT, c"SLSWindowIteratorGetCornerRadii".as_ptr()) };
+    (!symbol.is_null()).then(|| unsafe {
+        std::mem::transmute::<*mut std::ffi::c_void, SLSWindowIteratorGetCornerRadiiFn>(symbol)
+    })
+});
 
 static WINDOW_QUERY_KEYS: Lazy<Option<WindowQueryKeys>> = Lazy::new(|| {
     Some(WindowQueryKeys {
@@ -470,18 +488,32 @@ pub fn get_visible_windows_raw<T: Type>() -> CFRetained<CFArray<T>> {
     )
 }
 
+/// Every window at the origin, 800x600, unless a test sets its frame with
+/// `set_window_frame_override`.
 #[cfg(test)]
 pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
+    let at_origin = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
     ids.iter()
         .map(|&id| WindowServerInfo {
             id,
             pid: 1234,
             layer: 0,
-            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0)),
+            frame: TEST_WINDOW_FRAMES_OVERRIDE
+                .with(|frames| frames.borrow().get(&id.as_u32()).copied())
+                .unwrap_or(at_origin),
             min_frame: CGSize::ZERO,
             max_frame: CGSize::ZERO,
         })
         .collect()
+}
+
+/// `id`'s frame for test builds; `None` puts it back at the origin.
+#[cfg(test)]
+pub fn set_window_frame_override(id: WindowServerId, frame: Option<CGRect>) {
+    TEST_WINDOW_FRAMES_OVERRIDE.with(|frames| match frame {
+        Some(frame) => frames.borrow_mut().insert(id.as_u32(), frame),
+        None => frames.borrow_mut().remove(&id.as_u32()),
+    });
 }
 
 #[cfg(not(test))]
@@ -618,6 +650,44 @@ pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
 #[cfg(test)]
 pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
     TEST_FRONT_TO_BACK_OVERRIDE.with(|current| *current.borrow_mut() = order.unwrap_or_default());
+}
+
+/// The corner radius the window server reports for each of `ids` that it reports one for, in one
+/// query, parked and off-screen windows included. Measured in "The corner, measured" in
+/// `src/decorations/docs/README.md`.
+#[cfg(not(test))]
+pub fn corner_radii(ids: &[WindowServerId]) -> std::collections::HashMap<WindowServerId, f64> {
+    let Some(query) = WindowIterator::new(ids) else {
+        return std::collections::HashMap::new();
+    };
+    let mut radii = std::collections::HashMap::new();
+    while query.advance().is_some() {
+        if let Some(radius) = reported_radius(&query.corner_radii()) {
+            radii.insert(WindowServerId::new(query.window_id()), radius);
+        }
+    }
+    radii
+}
+
+/// See "A unit test must not read the live window server" in `docs/testing.md`. The corners
+/// `set_corner_radii_override` holds, decoded as the live read decodes them; none by default.
+#[cfg(test)]
+pub fn corner_radii(ids: &[WindowServerId]) -> std::collections::HashMap<WindowServerId, f64> {
+    TEST_CORNER_RADII_OVERRIDE.with(|radii| {
+        let radii = radii.borrow();
+        ids.iter()
+            .filter_map(|&id| Some((id, reported_radius(radii.get(&id.as_u32())?)?)))
+            .collect()
+    })
+}
+
+/// The corners the window server reports for `id` in test builds; `None` reports none.
+#[cfg(test)]
+pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) {
+    TEST_CORNER_RADII_OVERRIDE.with(|radii| match corners {
+        Some(corners) => radii.borrow_mut().insert(id.as_u32(), corners),
+        None => radii.borrow_mut().remove(&id.as_u32()),
+    });
 }
 
 /// Layer-0 windows on screen and intersecting `display`, with their frames. Other layers hold the

@@ -1,0 +1,166 @@
+5584	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+5583	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+5580	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+5489	L0	on=1	Books	860x1079	radii=26,26,26,26 d
+5400	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+5399	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+5249	L0	on=0	nsattributedstringagent	0x0	radii=0,0,0,0 d
+5238	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+5066	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+5044	L0	on=1	System Settings	723x884	radii=26,26,26,26 d
+5041	L0	on=0	System Settings	1728x33	radii=0,0,0,0 d
+5040	L0	on=0	System Settings	1728x33	radii=0,0,0,0 d
+5039	L0	on=0	System Settings	1728x33	radii=0,0,0,0 d
+3842	L0	on=0	Zoom	880x600	radii=12,12,12,12 d
+3922	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+4312	L0	on=1	Code	1722x1079	radii=16,16,16,16 d
+5501	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+4310	L0	on=1	Ghostty	860x1079	radii=16,16,16,16 d
+4305	L0	on=0	Window Server	1728x33	radii=0,0,0,0 d
+131	L0	on=0	Finder	64x64	radii=12,12,12,12 d
+3961	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+3960	L0	on=0	AutoFill	312x237	radii=0,0,0,0 d
+375	L0	on=0	Obsidian	1728x33	radii=0,0,0,0 d
+3948	L0	on=0	Kiro Crew	1728x33	radii=0,0,0,0 d
+3946	L0	on=0	Kiro Crew	1728x33	radii=0,0,0,0 d
+3945	L0	on=0	Kiro Crew	1728x33	radii=0,0,0,0 d
+3933	L0	on=0	Microsoft Outlook	64x64	radii=12,12,12,12 d
+3846	L0	on=0	Zoom	1728x33	radii=0,0,0,0 d
+5043	L0	on=0	Privacy & Security	723x884	radii=0,0,0,0 d
+3852	L0	on=0	Zoom	64x64	radii=12,12,12,12 d
+3845	L0	on=0	Zoom	1728x33	radii=0,0,0,0 d
+5042	L0	on=0	System Settings	1728x33	radii=0,0,0,0 d
+3851	L0	on=1	Zoom	1280x960	radii=12,12,12,12 d
+117	L0	on=0	Kiro CLI	500x500	radii=12,12,12,12 d
+3085	L0	on=1	Ghostty	597x1079	radii=16,16,16,16 d
+2728	L0	on=1	Books	860x1079	radii=26,26,26,26 d
+198	L0	on=0	Obsidian	500x500	radii=12,12,12,12 d
+2580	L0	on=1	Books	860x1079	radii=26,26,26,26 d
+2534	L0	on=1	Ghostty	594x1079	radii=16,16,16,16 d
+622	L0	on=0	AutoFill	312x237	radii=0,0,0,0 d
+619	L0	on=0	Zen	64x64	radii=12,12,12,12 d
+2412	L0	on=1	Finder	860x1079	radii=26,26,26,26 d
+245	L0	on=1	Code	1722x1079	radii=16,16,16,16 d
+214	L0	on=0	Preview	1728x33	radii=0,0,0,0 d
+213	L0	on=0	Preview	1728x33	radii=0,0,0,0 d
+212	L0	on=0	Preview	1728x33	radii=0,0,0,0 d
+211	L0	on=0	Preview	1728x33	radii=0,0,0,0 d
+210	L0	on=0	Books	1728x33	radii=0,0,0,0 d
+209	L0	on=0	Books	1728x33	radii=0,0,0,0 d
+208	L0	on=0	Books	1728x33	radii=0,0,0,0 d
+200	L0	on=0	AutoFill	312x237	radii=0,0,0,0 d
+3931	L0	on=0	AutoFill	312x237	radii=0,0,0,0 d
+3929	L0	on=0	Kiro Crew	500x500	radii=12,12,12,12 d
+186	L0	on=0	Google Chrome	1728x33	radii=0,0,0,0 d
+3924	L0	on=1	Kiro Crew	1722x1079	radii=16,16,16,16 d
+181	L0	on=0	Google Chrome	1728x33	radii=0,0,0,0 d
+377	L0	on=0	Obsidian	1728x33	radii=0,0,0,0 d
+376	L0	on=0	Obsidian	1728x33	radii=0,0,0,0 d
+178	L0	on=0	Google Chrome	1728x33	radii=0,0,0,0 d
+3947	L0	on=0	Kiro Crew	1728x33	radii=0,0,0,0 d
+374	L0	on=0	Obsidian	1728x33	radii=0,0,0,0 d
+174	L0	on=0	Google Chrome	1728x33	radii=0,0,0,0 d
+160	L0	on=0	Microsoft Outlook	1728x33	radii=0,0,0,0 d
+159	L0	on=0	Microsoft Outlook	1728x33	radii=0,0,0,0 d
+157	L0	on=0	Microsoft Outlook	1728x33	radii=0,0,0,0 d
+4293	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+156	L0	on=0	Microsoft Outlook	1728x33	radii=0,0,0,0 d
+148	L0	on=0	Ghostty	1728x33	radii=0,0,0,0 d
+147	L0	on=0	Ghostty	1728x33	radii=0,0,0,0 d
+146	L0	on=0	Ghostty	1728x33	radii=0,0,0,0 d
+145	L0	on=0	Ghostty	1728x33	radii=0,0,0,0 d
+4082	L0	on=0	AutoFill	312x237	radii=0,0,0,0 d
+142	L0	on=0	Messages	54x54	radii=12,12,12,12 d
+141	L0	on=0	Messages	1728x33	radii=0,0,0,0 d
+140	L0	on=0	Messages	1728x33	radii=0,0,0,0 d
+139	L0	on=0	Messages	1728x33	radii=0,0,0,0 d
+126	L0	on=0	Finder	1728x33	radii=0,0,0,0 d
+2292	L0	on=1	Code	1722x1079	radii=16,16,16,16 d
+125	L0	on=0	Finder	1728x33	radii=0,0,0,0 d
+5285	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+124	L0	on=0	Finder	1728x33	radii=0,0,0,0 d
+123	L0	on=0	Finder	1728x33	radii=0,0,0,0 d
+2284	L0	on=0	AutoFill	312x237	radii=0,0,0,0 d
+2282	L0	on=0	Google Chrome	64x64	radii=12,12,12,12 d
+114	L0	on=0	Kiro CLI	960x752	radii=16,16,16,16 d
+3847	L0	on=0	Zoom	1728x33	radii=0,0,0,0 d
+70	L0	on=1	Google Chrome	1722x1079	radii=20,20,20,20 d
+4040	L0	on=0	Slack	1728x33	radii=0,0,0,0 d
+100	L0	on=0	Google Chrome	1x1	radii=0,0,0,0 d
+4038	L0	on=0	Slack	1728x33	radii=0,0,0,0 d
+5259	L0	on=0	Zoom	1708x1065	radii=12,12,12,12 d
+98	L0	on=0	Google Chrome	1398x139	radii=0,0,0,0 d
+97	L0	on=1	Google Chrome	1722x1079	radii=20,20,20,20 d
+95	L0	on=0	Google Chrome	1x1	radii=0,0,0,0 d
+94	L0	on=0	Google Chrome	1x1	radii=0,0,0,0 d
+90	L0	on=0	Google Chrome	1398x258	radii=0,0,0,0 d
+87	L0	on=0	Google Chrome	1398x139	radii=0,0,0,0 d
+83	L0	on=0	Spotlight	500x500	radii=12,12,12,12 d
+78	L0	on=1	Zen	1722x1079	radii=16,16,16,16 d
+75	L0	on=1	Slack	1722x1079	radii=16,16,16,16 d
+73	L0	on=1	Messages	860x1079	radii=26,26,26,26 d
+72	L0	on=0	Zen	0x0	radii=0,0,0,0 d
+4041	L0	on=0	Slack	1728x33	radii=0,0,0,0 d
+67	L0	on=1	Microsoft Outlook	1722x1079	radii=26,26,26,26 d
+66	L0	on=1	Obsidian	860x1079	radii=12,12,12,12 d
+65	L0	on=1	Books	1001x1079	radii=26,26,26,26 d
+60	L0	on=1	Obsidian	1722x1079	radii=12,12,12,12 d
+58	L0	on=0	Universal Control	0x0	radii=0,0,0,0 d
+4588	L0	on=0	Zen	1728x33	radii=0,0,0,0 d
+4587	L0	on=0	Zen	1728x33	radii=0,0,0,0 d
+56	L0	on=1	Ghostty	1148x1079	radii=16,16,16,16 d
+4586	L0	on=0	Zen	1728x33	radii=0,0,0,0 d
+3207	L0	on=0	CursorUIViewService	64x64	radii=0,0,0,0 d
+252	L0	on=0	Code	64x64	radii=12,12,12,12 d
+55	L0	on=1	Ghostty	860x1079	radii=16,16,16,16 d
+4585	L0	on=0	Zen	1728x33	radii=0,0,0,0 d
+251	L0	on=0	Code	1728x33	radii=0,0,0,0 d
+54	L0	on=0	Ghostty	860x1079	radii=16,16,16,16 d
+250	L0	on=0	Code	1728x33	radii=0,0,0,0 d
+53	L0	on=1	Ghostty	628x1079	radii=16,16,16,16 d
+2416	L0	on=0	Books	64x64	radii=12,12,12,12 d
+249	L0	on=0	Code	1728x33	radii=0,0,0,0 d
+52	L0	on=0	Ghostty	860x1079	radii=16,16,16,16 d
+44	L0	on=0	loginwindow	500x500	radii=12,12,12,12 d
+5299	L0	on=1	Books	860x1079	radii=26,26,26,26 d
+138	L0	on=0	Messages	1728x33	radii=0,0,0,0 d
+136	L0	on=0	Ghostty	64x64	radii=12,12,12,12 d
+3978	L0	on=0	Slack	500x500	radii=12,12,12,12 d
+3844	L0	on=0	Zoom	1728x33	radii=0,0,0,0 d
+207	L0	on=0	Books	1728x33	radii=0,0,0,0 d
+248	L0	on=0	Code	1728x33	radii=0,0,0,0 d
+51	L0	on=0	Ghostty	1148x1079	radii=16,16,16,16 d
+101	L0	on=0	Google Chrome	1x1	radii=0,0,0,0 d
+2414	L0	on=0	Finder	636x328	radii=0,0,0,0 d
+4039	L0	on=0	Slack	1728x33	radii=0,0,0,0 d
+99	L0	on=0	Google Chrome	1398x258	radii=0,0,0,0 d
+windows=181 unequal=0 null=0
+  L-2147483601 0,0,0,0: 3
+  L-2147483602 0,0,0,0: 1
+  L-2147483603 0,0,0,0: 1
+  L-2147483624 0,0,0,0: 1
+  L-2147483626 0,0,0,0: 2
+  L0 0,0,0,0: 89
+  L0 12,12,12,12: 20
+  L0 16,16,16,16: 16
+  L0 20,20,20,20: 2
+  L0 26,26,26,26: 9
+  L101 0,0,0,0: 1
+  L101 16,16,16,16: 1
+  L103 0,0,0,0: 3
+  L18 0,0,0,0: 1
+  L20 0,0,0,0: 3
+  L2005 0,0,0,0: 1
+  L21 0,0,0,0: 1
+  L2147483630 0,0,0,0: 3
+  L23 0,0,0,0: 2
+  L24 0,0,0,0: 1
+  L25 0,0,0,0: 11
+  L26 0,0,0,0: 1
+  L29 0,0,0,0: 1
+  L3 0,0,0,0: 2
+  L3 12,12,12,12: 1
+  L3 16,16,16,16: 1
+  L3000 0,0,0,0: 2
+  L5 0,0,0,0: 1
+query+radii for 12 windows, n=300: p50 0.049ms p90 0.059ms max 7.822ms

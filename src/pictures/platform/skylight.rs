@@ -138,8 +138,7 @@ pub fn capture_on_screen(
         for window in alpha {
             let Some((rect, crop)) = cut(&composite, origin, scale, window.frame) else { continue };
             if learned.get(window.server_id).translucent.is_none() {
-                let (translucent, radius) = first_sight(&crop, scale);
-                learned.saw_alpha(window.server_id, translucent, radius);
+                learned.saw_alpha(window.server_id, first_sight(&crop));
             }
             match learned.get(window.server_id).after_alpha() {
                 Call::Alpha => pictures.push(region(&window, &composite, rect, taken, false)),

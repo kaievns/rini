@@ -507,6 +507,12 @@ unsafe extern "C" {
     pub fn SLSOrderWindow(cid: cid_t, wid: u32, order: c_int, relative_to: u32) -> CGError;
 }
 
+/// `SLSWindowIteratorGetCornerRadii`: the current window's four corner radii in points, a CFArray of
+/// CFNumbers the caller releases, or null. Not linked: a macOS without it must still launch, so its
+/// caller resolves it at run time.
+pub type SLSWindowIteratorGetCornerRadiiFn =
+    unsafe extern "C" fn(iterator: *mut CFType) -> *mut CFArray<CFNumber>;
+
 /// A CGSSpaceID: the window server's identity for a native space.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]

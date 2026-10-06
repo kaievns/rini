@@ -13,7 +13,6 @@ use rini_geometry::space::{
     ContentsRect, PixelRect, PixelSize, PointSpace, ScreenSize, Size, ToCg,
 };
 
-use crate::decorations::domain::shape::CORNER_RADIUS;
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
 use crate::pictures::domain::region::{WHOLE, unit_rect};
@@ -141,28 +140,16 @@ pub fn stand_in_picture(window: ScreenSize, image: CFRetained<CGImage>) -> Pictu
     }
 }
 
-/// The stand-in's pixels: a small rounded square in `STAND_IN_RGB`, drawn nine-slice by the
-/// overlay so its corners keep the window's radius at any size. `(image, corner)`, the corner in pixels.
-///
-/// A small image rather than one at the window's size: a full-size bitmap of one flat colour would be
-/// 30MB for a maximised window at 2x.
-pub fn stand_in_image(scale: f64) -> Option<(CFRetained<CGImage>, f64)> {
+/// The stand-in's pixels: one pixel of `STAND_IN_RGB`, which the overlay stretches over the tile and
+/// clips to its window's corner. One pixel rather than the window's size: a full-size bitmap of one
+/// flat colour would be 30MB for a maximised window at 2x.
+pub fn stand_in_image() -> Option<CFRetained<CGImage>> {
     use objc2_core_graphics::CGContext;
-    let corner = (CORNER_RADIUS * scale).ceil();
-    let side = (corner * 2.0 + 2.0) as usize;
-    let ctx = rgba_bitmap_context(side, side)?;
-    let rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(side as f64, side as f64));
-    let path = unsafe {
-        objc2_core_graphics::CGPath::with_rounded_rect(rect, corner, corner, std::ptr::null())
-    };
-    CGContext::add_path(Some(&ctx), Some(&path));
+    let ctx = rgba_bitmap_context(1, 1)?;
     let (r, g, b) = STAND_IN_RGB;
     CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, 1.0);
-    CGContext::fill_path(Some(&ctx));
-    Some((
-        objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx))?,
-        corner,
-    ))
+    CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
+    objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx))
 }
 
 impl HasCoverage for Picture {
@@ -278,14 +265,27 @@ mod tests {
         assert!(cache.get(window).is_none());
     }
 
-    /// The stand-in's pixels are a small square: two corners at the window's radius and a middle to
-    /// stretch, so its size does not grow with the window's.
+    /// The stand-in's pixels are one pixel of its colour, opaque, so its size never grows with the
+    /// window's.
     #[test]
-    fn the_stand_in_image_is_two_corners_and_a_middle() {
-        let (image, corner) = stand_in_image(2.0).expect("drawn");
-        assert_eq!(corner, 20.0, "10pt at 2x");
-        assert_eq!(CGImage::width(Some(&image)), 42);
-        assert_eq!(CGImage::height(Some(&image)), 42);
+    fn the_stand_in_is_one_pixel_of_its_colour() {
+        use objc2_core_graphics::CGContext;
+        let image = stand_in_image().expect("drawn");
+        assert_eq!(CGImage::width(Some(&image)), 1);
+        assert_eq!(CGImage::height(Some(&image)), 1);
+        let ctx = rgba_bitmap_context(1, 1).expect("a context");
+        CGContext::draw_image(
+            Some(&ctx),
+            CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)),
+            Some(&image),
+        );
+        let data = objc2_core_graphics::CGBitmapContextGetData(Some(&ctx)) as *const u8;
+        // SAFETY: the context's own buffer, one RGBA pixel.
+        let pixel = unsafe { std::slice::from_raw_parts(data, 4) };
+        let (r, g, b) = STAND_IN_RGB;
+        for (got, want) in pixel.iter().zip([r, g, b, 1.0]) {
+            assert!((*got as f64 - want * 255.0).abs() <= 1.0, "{pixel:?}");
+        }
     }
 
     /// A region is kept as a copy of its own pixels, stamped as it was; any other kind is kept as it is.

@@ -37,7 +37,7 @@ pub struct Metrics {
     /// behind shows through the rounded top corner of the card in front.
     pub stack_inset: f64,
     /// A card's corner radius, and a departure from the design system: `--radius-control` is 5px, a
-    /// button's radius. A card is a picture of a window, and macOS rounds windows at about 10px, so a
+    /// button's radius. A card is a picture of a window, and macOS rounds every window, so a
     /// square-cornered card reads as a screenshot of a window rather than as a window.
     pub tile_corner: f64,
     /// Between rows.

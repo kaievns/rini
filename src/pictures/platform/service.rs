@@ -118,7 +118,8 @@ struct Shared {
     display: DisplayPictures,
     learned: Learned,
     delivered: Delivered<Picture>,
-    stand_in: Option<StandIn>,
+    /// The stand-in's pixel, drawn once.
+    stand_in: Option<CFRetained<CGImage>>,
 }
 
 impl Shared {
@@ -397,12 +398,6 @@ fn bar_read_kept(asked_before: u64, applied: u64, asked_after: u64) -> bool {
 /// A picture of a handover check, the overlay's own or the screen's, undrawn until it is compared.
 struct Whole(CFRetained<CGImage>);
 
-/// The stand-in's pixels, drawn once per scale.
-struct StandIn {
-    scale: f64,
-    image: CFRetained<CGImage>,
-}
-
 impl Pictures {
     /// Starts the service on its own thread. Every sink hears of every picture the cache takes.
     pub fn start(sinks: Vec<Sink>) -> Self {
@@ -514,21 +509,19 @@ impl Pictures {
     /// different content.
     pub fn focused(&self, window: WindowId) -> Option<Picture> { self.lock().cache.focused(window).cloned() }
 
-    /// What is known of the window: its translucency, material and corner radius.
+    /// What is known of the window: its translucency and material.
     pub fn knowledge(&self, window: WindowServerId) -> Knowledge { self.lock().learned.get(window) }
 
     /// Every window with a picture held or one on its way.
     pub fn windows(&self) -> Vec<WindowId> { self.lock().windows() }
 
-    /// A stand-in for a window of `size` at `scale`, never cached. `None` only if its pixels cannot be
-    /// drawn.
-    pub fn stand_in(&self, size: ScreenSize, scale: f64) -> Option<Picture> {
+    /// A stand-in for a window of `size`, never cached. `None` only if its pixel cannot be drawn.
+    pub fn stand_in(&self, size: ScreenSize) -> Option<Picture> {
         let mut shared = self.lock();
-        if shared.stand_in.as_ref().is_none_or(|drawn| drawn.scale != scale) {
-            let (image, _) = stand_in_image(scale)?;
-            shared.stand_in = Some(StandIn { scale, image });
+        if shared.stand_in.is_none() {
+            shared.stand_in = stand_in_image();
         }
-        Some(stand_in_picture(size, shared.stand_in.as_ref()?.image.clone()))
+        Some(stand_in_picture(size, shared.stand_in.clone()?))
     }
 
     /// `display` held as the overlay's, with `desktop` as its desktop, as a render landed for it.
@@ -539,6 +532,18 @@ impl Pictures {
         set_display(schedule, held, display, false, Instant::now());
         held.desktop = Some(desktop);
     }
+
+    /// `window` known as a first alpha capture and a material check would have found it.
+    #[cfg(test)]
+    pub fn learn(&self, window: WindowServerId, translucent: bool, material: bool) {
+        let mut shared = self.lock();
+        shared.learned.saw_alpha(window, translucent);
+        shared.learned.saw_material(window, material);
+    }
+
+    /// `look` held as `window`'s focused look, as a delivery kept focused would hold it.
+    #[cfg(test)]
+    pub fn hold_focused(&self, window: WindowId, look: Picture) { self.lock().cache.keep_focused(window, look) }
 
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.
     pub fn insert(&self, window: WindowId, picture: Picture) -> bool {
@@ -1600,7 +1605,7 @@ mod tests {
             shared.cache.insert(wid(1), sized(859.0, 1081.0));
             shared.cache.keep_focused(wid(1), sized(859.0, 1081.0));
             shared.delivered.record(tag(1), wid(1), sized(859.0, 1081.0));
-            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true, Some(10.0));
+            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true);
         }
         service.apply(Command::Forget(wid(1)));
         let shared = shared.lock().unwrap();
@@ -1624,7 +1629,7 @@ mod tests {
             for window in [wid(102682), twice, border] {
                 shared.cache.insert(window, sized(859.0, 1081.0));
             }
-            shared.learned.saw_alpha(WindowServerId::from(wid(102682)), true, Some(10.0));
+            shared.learned.saw_alpha(WindowServerId::from(wid(102682)), true);
         }
         service.apply(Command::Hold(Hold::Released));
         let shared = shared.lock().unwrap();
@@ -1646,7 +1651,7 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             shared.cache.insert(gone, sized(400.0, 30.0));
-            shared.learned.saw_alpha(server_id, true, Some(10.0));
+            shared.learned.saw_alpha(server_id, true);
         }
         set_window_gone_override(server_id, true);
         service.apply(Command::Hold(Hold::Released));
@@ -1685,7 +1690,7 @@ mod tests {
         let (mut service, shared) = detached_service();
         let window = WindowServerId::new(1);
         let mut learned = Learned::default();
-        learned.saw_alpha(window, true, Some(10.0));
+        learned.saw_alpha(window, true);
         let listed = || {
             Some(DesktopBackdrop {
                 windows: vec![WindowServerId::new(7)],
@@ -1890,7 +1895,7 @@ mod tests {
         {
             let mut shared = pictures.lock();
             shared.cache.keep_focused(wid(1), flat(0.5, now));
-            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true, Some(10.0));
+            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true);
         }
         assert_eq!(pictures.focused(wid(1)).map(|look| look.taken), Some(now));
         assert!(pictures.focused(wid(2)).is_none());

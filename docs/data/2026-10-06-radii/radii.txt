@@ -1,0 +1,26 @@
+SLSWindowIteratorGetCornerRadii present
+2292	Code	1722x1079	radii=16,16,16,16
+4312	Code	1722x1079	radii=16,16,16,16
+75	Slack	1722x1079	radii=16,16,16,16
+97	Google Chrome	1722x1079	radii=20,20,20,20
+56	Ghostty	1148x1079	radii=16,16,16,16
+55	Ghostty	860x1079	radii=16,16,16,16
+245	Code	1722x1079	radii=16,16,16,16
+73	Messages	860x1079	radii=26,26,26,26
+67	Microsoft Outlook	1722x1079	radii=26,26,26,26
+3851	Zoom	1280x960	radii=12,12,12,12
+2728	Books	860x1079	radii=26,26,26,26
+2534	Ghostty	1148x1079	radii=16,16,16,16
+3085	Ghostty	1148x1079	radii=16,16,16,16
+53	Ghostty	860x1079	radii=16,16,16,16
+2412	Finder	860x1079	radii=26,26,26,26
+4310	Ghostty	860x1079	radii=16,16,16,16
+78	Zen	1722x1079	radii=16,16,16,16
+70	Google Chrome	1722x1079	radii=20,20,20,20
+3924	Kiro Crew	1722x1079	radii=16,16,16,16
+2760	Books	860x1079	radii=26,26,26,26
+2568	Books	860x1079	radii=26,26,26,26
+2580	Books	860x1079	radii=26,26,26,26
+65	Books	1001x1079	radii=26,26,26,26
+60	Obsidian	1722x1079	radii=12,12,12,12
+66	Obsidian	860x1079	radii=12,12,12,12

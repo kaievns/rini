@@ -31,10 +31,9 @@ pub enum Render {
     /// The score's edits: the motion, merges, accents, snaps and banks; a tile first ridden is
     /// dressed from `tiles`.
     Play { edits: Vec<Edit>, tiles: Vec<OverlayTile> },
-    /// A fresh picture onto `window`'s tile, its movement left alone.
-    Swap { window: WindowId, picture: Picture },
-    /// `window`'s picture clipped to its corners at `radius`, or drawn whole.
-    Corner { window: WindowId, radius: Option<f64> },
+    /// A fresh picture onto `window`'s tile, `clipped` to its corner or whole, its movement left
+    /// alone.
+    Swap { window: WindowId, picture: Picture, clipped: bool },
     /// `window`'s tile drawn focused or not.
     Focus { window: WindowId, focused: bool },
     /// The overlay holed over each window ending at one of these, the holes before replaced.
@@ -191,8 +190,7 @@ impl Renderer {
             }
             Render::Stage { score, tiles } => overlay.pose(&score, &tiles),
             Render::Play { edits, tiles } => overlay.play(&edits, &tiles),
-            Render::Swap { window, picture } => overlay.swap(window, &picture),
-            Render::Corner { window, radius } => overlay.set_tile_corner_clip(window, radius),
+            Render::Swap { window, picture, clipped } => overlay.swap(window, &picture, clipped),
             Render::Focus { window, focused } => overlay.set_tile_focused(window, focused),
             Render::Holes(ends) => overlay.set_holes(&ends),
             // Its alpha goes up after the flush.
@@ -276,8 +274,7 @@ mod tests {
             ("dress", Render::Dress { desktop: None, bar: None, strip: None }),
             ("stage", Render::Stage { score: Score::default(), tiles: Vec::new() }),
             ("play", Render::Play { edits: Vec::new(), tiles: Vec::new() }),
-            ("swap", Render::Swap { window, picture: test_picture(display.size) }),
-            ("corner", Render::Corner { window, radius: None }),
+            ("swap", Render::Swap { window, picture: test_picture(display.size), clipped: false }),
             ("focus", Render::Focus { window, focused: true }),
             ("holes", holes(1.0)),
             ("show", Render::Show),

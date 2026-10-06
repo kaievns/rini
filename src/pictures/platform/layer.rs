@@ -3,10 +3,9 @@
 
 use objc2_core_foundation::CFType;
 use objc2_quartz_core::CALayer;
-use rini_geometry::space::{ContentsRect, Point, Size, ToCg};
+use rini_geometry::space::ToCg;
 
-use crate::pictures::domain::region::WHOLE;
-use crate::pictures::platform::picture::{Picture, Pixels, Route};
+use crate::pictures::platform::picture::{Picture, Pixels};
 
 /// Hands a captured picture to a layer, whichever kind of pixels it holds: a region as its whole
 /// composite with `contentsRect` on its part, anything else whole. Written for every kind, because
@@ -36,36 +35,16 @@ pub fn clear_contents(layer: &CALayer) {
     unsafe { layer.setContents(None) }
 }
 
-/// The part of a layer's contents that stretches, for `contentsCenter`. All of it for a picture; for
-/// the stand-in only its middle, so the rounded corners keep the window's radius at any size.
-pub fn stretch_region(picture: &Picture) -> ContentsRect {
-    let Pixels::Bitmap(image) = &picture.image else {
-        return WHOLE;
-    };
-    if picture.source != Route::StandIn {
-        return WHOLE;
-    }
-    let side = objc2_core_graphics::CGImage::width(Some(image)) as f64;
-    if side < 3.0 {
-        return WHOLE;
-    }
-    // The stand-in is a square of two corners and a two-pixel middle; see `stand_in_image`.
-    let corner = (side - 2.0) / 2.0;
-    ContentsRect::new(
-        Point::new(corner / side, corner / side),
-        Size::new(2.0 / side, 2.0 / side),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use objc2::rc::Retained;
     use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
-    use rini_geometry::space::{FromCg, PixelRect, ScreenSize};
+    use rini_geometry::space::{FromCg, PixelRect, Point, ScreenSize, Size};
 
     use super::*;
+    use crate::pictures::domain::region::WHOLE;
     use crate::pictures::platform::bitmap::rgba_bitmap_context;
-    use crate::pictures::platform::picture::{stand_in_picture, stand_in_image, test_picture};
+    use crate::pictures::platform::picture::test_picture;
 
     fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
@@ -254,20 +233,5 @@ mod tests {
         );
         set_layer_contents(&layer, &test_picture(ScreenSize::new(1.0, 1.0)));
         assert_eq!(layer.contentsRect(), WHOLE.to_cg());
-    }
-
-    /// A stand-in stretches only its two-pixel middle, so its corners keep the window's radius; a real
-    /// picture stretches whole. Written every install, since tile layers are pooled.
-    #[test]
-    fn only_a_stand_in_stretches_nine_slice() {
-        let (image, _) = stand_in_image(2.0).expect("drawn");
-        let stand_in = stand_in_picture(ScreenSize::new(859.0, 1081.0), image);
-
-        let region = stretch_region(&stand_in);
-        assert!((region.origin.x - 20.0 / 42.0).abs() < 1e-9);
-        assert!((region.size.width - 2.0 / 42.0).abs() < 1e-9);
-
-        let whole = stretch_region(&test_picture(ScreenSize::new(859.0, 1081.0)));
-        assert_eq!(whole, WHOLE);
     }
 }

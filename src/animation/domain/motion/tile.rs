@@ -56,8 +56,9 @@ pub fn stand_in_mode<U: PointSpace>(covered: ScreenSize, to: Size<U>) -> Content
 
 /// The trailing band preserved intact when a tile draws cropped, in points.
 ///
-/// Comfortably past the ~10pt corner radius so the crop seam never cuts a corner square, and small
-/// against any real column so almost all of the window is drawn 1:1.
+/// Past the roundest corner macOS draws here, 26pt, whose curve runs 37pt along each edge, so the
+/// crop seam never cuts a corner square, and small against any real column so almost all of the
+/// window is drawn 1:1.
 const EDGE_BAND: f64 = 40.0;
 
 /// The band that fits the frame being drawn into: shrinks with the frame, so a window growing in
