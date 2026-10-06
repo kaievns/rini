@@ -53,7 +53,8 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
   and a burst of events that changes nothing on it MUST cost it nothing.
 - At rest the bar MUST do no work but the minute tick and picturing the menu extras.
 - With no input for a minute, the bar MUST picture the menu extras at most every 30 seconds, and
-  MUST picture them again within a second of any input.
+  MUST picture them again within a second of any input. A wake, a change of the clock or time zone,
+  a display change and the end of a flight MUST still be pictured within a second.
 
 > **Reported 2026-10-06.** "any optimisations worth doing on the menu bar at this point?" The
 > extras were pictured every second whatever, and each capture cost replayd and tccd about 20ms of

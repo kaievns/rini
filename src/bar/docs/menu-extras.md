@@ -83,10 +83,11 @@ of the bar's own. That gives each extra's columns, and so its ink, and a hash of
 extra with no ink is left out.
 
 With no keyboard, mouse or trackpad input for a minute (`CGEventSourceSecondsSinceLastEventType`
-on the HID system state, which costs under a microsecond), a pass is taken only every 30s
+on the HID system state, a few microseconds once a second), a pass is taken only every 30s
 (`AWAY_AFTER`, `AWAY_TICK` in `domain/extras.rs`). The thread still wakes every second to look, so
-the first tick after any input pictures the extras. A refresh pictures them at once however long
-the input has been idle. The display staying on all night under `caffeinate -di` had the bar capture
+the first tick after any input pictures the extras. A wake, a change of the clock or time zone, a
+display change, the end of a flight and a pass that pictured nothing picture them at the next tick
+however long the input has been idle. The display staying on all night under `caffeinate -di` had the bar capture
 every second for up to 15 hours, about 22 minutes of CPU across those processes. While idle, a change
 macOS makes with no input, a charger plugged in, the battery level or a Wi-Fi drop, shows up to 30s
 late.

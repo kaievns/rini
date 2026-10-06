@@ -296,7 +296,12 @@ impl Schedule {
 
     pub fn on(&mut self, command: Command, now: Instant) {
         match command {
-            Command::Pause(paused) => self.paused = paused,
+            Command::Pause(paused) => {
+                self.paused = paused;
+                if !paused {
+                    self.taken = None;
+                }
+            }
             Command::Refresh => {
                 self.due = now;
                 self.taken = None;
@@ -317,6 +322,11 @@ impl Schedule {
         }
         self.taken = Some(now);
         true
+    }
+
+    /// A pass taken that pictured nothing does not count: the next tick tries again.
+    pub fn missed(&mut self) {
+        self.taken = None;
     }
 
     /// Whether a pass taken may go on to capture, given the pause as it stands now rather than as the
@@ -753,5 +763,26 @@ mod tests {
         assert!(!schedule.may_capture(true, start));
         schedule.on(Command::Pause(false), start + TICK);
         assert!(schedule.take(start + TICK, AWAY_AFTER));
+    }
+
+    /// A pass that fell due during a flight is taken as it settles, however long the input has been idle.
+    #[test]
+    fn the_end_of_a_pause_pictures_at_once_while_away() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start, AWAY_AFTER));
+        schedule.on(Command::Pause(true), start + TICK);
+        schedule.on(Command::Pause(false), start + TICK * 2);
+        assert!(schedule.take(start + TICK * 2, AWAY_AFTER));
+    }
+
+    #[test]
+    fn a_pass_that_pictured_nothing_is_tried_again_at_the_next_tick_while_away() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start, AWAY_AFTER));
+        schedule.missed();
+        assert!(schedule.take(start + TICK, AWAY_AFTER));
+        assert!(!schedule.take(start + TICK * 2, AWAY_AFTER));
     }
 }
