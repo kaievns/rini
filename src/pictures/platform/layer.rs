@@ -29,6 +29,13 @@ pub fn set_contents(layer: &CALayer, picture: &CFType) {
     unsafe { layer.setContents(Some(picture.as_ref())) }
 }
 
+/// Lets go of `layer`'s picture. A hidden layer keeps its contents, and the picture with them, until
+/// they are replaced.
+pub fn clear_contents(layer: &CALayer) {
+    // SAFETY: no contents is a layer's own default.
+    unsafe { layer.setContents(None) }
+}
+
 /// The part of a layer's contents that stretches, for `contentsCenter`. All of it for a picture; for
 /// the stand-in only its middle, so the rounded corners keep the window's radius at any size.
 pub fn stretch_region(picture: &Picture) -> ContentsRect {
@@ -104,6 +111,22 @@ mod tests {
         };
         set_layer_contents(&layer, &on_surface);
         assert_eq!(contents_address(&layer), Some(&*surface as *const _ as usize));
+    }
+
+    /// A layer cleared holds no picture, and the picture it held is retained one time fewer.
+    #[test]
+    fn a_layer_cleared_lets_go_of_its_picture() {
+        let layer = CALayer::layer();
+        let picture = test_picture(ScreenSize::new(1.0, 1.0));
+        let Pixels::Bitmap(image) = &picture.image else {
+            unreachable!("a test picture is a bitmap")
+        };
+        let held_elsewhere = image.retain_count();
+        set_layer_contents(&layer, &picture);
+        assert_eq!(image.retain_count(), held_elsewhere + 1, "the layer retains it");
+        clear_contents(&layer);
+        assert_eq!(contents_address(&layer), None);
+        assert_eq!(image.retain_count(), held_elsewhere, "the layer let go of it");
     }
 
     /// A composite of four flat quadrants, 16x8 pixels: red, green across the top, blue, white below.

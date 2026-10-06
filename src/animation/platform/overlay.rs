@@ -41,7 +41,7 @@ use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
-use crate::pictures::platform::layer::{set_layer_contents, stretch_region};
+use crate::pictures::platform::layer::{clear_contents, set_layer_contents, stretch_region};
 use crate::pictures::platform::picture::Picture;
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
@@ -747,7 +747,7 @@ impl TileOverlay {
     }
 
     /// Sets the still image drawn behind the moving tiles, at its own covered size so it stays in
-    /// register with the real desktop. A failed capture keeps the previous picture.
+    /// register with the real desktop. With none, the backdrop stays as the lift left it: empty.
     pub fn set_backdrop(&mut self, snapshot: Option<&Picture>) {
         let Some(snapshot) = snapshot else { return };
         self.backdrop.setFrame(CGRect::new(
@@ -916,9 +916,12 @@ impl TileOverlay {
         self.clear = holed;
     }
 
-    /// Frees the tile contents without destroying the overlay, and the replica with them.
-    pub fn release_tiles(&mut self) {
+    /// Frees the tile contents and the desktop behind them without destroying the overlay, and the
+    /// replica with them. The pictures service keeps the desktop the next flight is dressed with.
+    pub fn release(&mut self) {
         self.tree.release();
+        clear_contents(&self.backdrop);
+        self.backdrop.setHidden(true);
         let _ = self.mtm;
     }
 }

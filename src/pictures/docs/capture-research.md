@@ -458,8 +458,8 @@ and `platform/desktop.rs`:
   flag was always false. Both keys are now checked.
 
 Together those meant the composite route could not produce a wallpaper here at all,
-and `is_backdrop_worth_drawing` only accepts a wallpaperless composite when nothing
-better exists. So every backdrop was the ScreenCaptureKit display render, and the
+and a wallpaperless composite was then accepted only when no desktop was drawn
+yet. So every backdrop was the ScreenCaptureKit display render, and the
 composite route was dead code in practice.
 
 That held until a display change started clearing the held pictures, which reset
@@ -472,6 +472,12 @@ recognised by window NAME as well as owner name. Verified: the composite now pic
 7 windows including `Dock / Wallpaper-`, and its mean brightness is 31.16 against
 29.85 for the same region captured as a display. The remaining 1.3 is the widgets'
 vibrancy, which no capture reproduces.
+
+A composite without its wallpaper is no longer refused at all. The overlay lets go of
+the desktop at every lift, so a flight is never dressed over one it could keep, and
+a refused composite would leave the bare black window. Where the wallpaper is not a
+window, as with two displays above, a flight before its display's first render lands
+draws the icons on black.
 
 ### Which route serves, and why the render wins
 
@@ -1087,9 +1093,10 @@ of:
   to clear only the bar, and the overlay drew an external display's 3008x1692
   desktop behind a built-in display's strips on a 1728x1117 overlay. A transition is
   dressed with the render the service holds; without one it composites the desktop
-  on the `transitions` thread, 13ms to 36ms, a frame or two of lag, and keeps the backdrop it
-  already shows only when that composite is refused. Re-applying a held render costs
-  nothing.
+  on the `transitions` thread, 13ms to 36ms, a frame or two of lag, and draws it with
+  or without its wallpaper, since the lift lets go of the backdrop and leaves nothing
+  to prefer; a composite that does not span the display leaves the backdrop empty.
+  Re-applying a held render costs nothing.
 - The composite was size-checked, but the cached ScreenCaptureKit render was handed
   over unchecked.
 

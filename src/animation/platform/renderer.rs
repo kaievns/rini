@@ -41,7 +41,7 @@ pub enum Render {
     Holes(Vec<OverlayRect>),
     /// The overlay up.
     Show,
-    /// The overlay down, its holes filled and its tiles let go.
+    /// The overlay down, its holes filled, and its tiles and the desktop behind them let go.
     Lift,
     /// Where each container is presented, logged; sent only while `TRACE_TARGET` is on at trace level.
     Trace,
@@ -199,7 +199,7 @@ impl Renderer {
             Render::Show => {}
             Render::Lift => {
                 overlay.clear_holes();
-                overlay.release_tiles();
+                overlay.release();
             }
             Render::Trace => overlay.trace(),
         }

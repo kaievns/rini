@@ -25,7 +25,7 @@ use rini_runloop::channel::{self, Receiver, Sender};
 use tracing::{debug, warn};
 
 use crate::pictures::domain::cache::{Delivered, PictureCache};
-use crate::pictures::domain::coverage::{is_backdrop_worth_drawing, spans_display};
+use crate::pictures::domain::coverage::spans_display;
 use crate::pictures::domain::handover::{HandoverCheck, HandoverDiff, compare};
 use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
@@ -537,10 +537,8 @@ impl Pictures {
     /// display, and, until its first render lands, a desktop composited now on the caller's thread,
     /// which without one draws the display left behind, or black. The bar is read for presence on
     /// every transition, so a bar that has gone is not drawn, and composited once per display.
-    /// `backdrop_drawn` says whether a desktop of `display` is already drawn, which a desktop without
-    /// its wallpaper must not replace. Whether there is a bar to picture is the service's, as the
-    /// display it was last told says.
-    pub fn dressing(&self, display: Display, backdrop_drawn: bool) -> Dressing {
+    /// Whether there is a bar to picture is the service's, as the display it was last told says.
+    pub fn dressing(&self, display: Display) -> Dressing {
         let picture_bar = self.lock().schedule.picture_bar();
         let strip = picture_bar.then(|| bar_strip(display.frame));
         let bar_on_screen = strip.as_ref().is_some_and(|strip| strip.bounds.is_some());
@@ -548,7 +546,7 @@ impl Pictures {
             let shared = self.lock();
             shared.display.for_display(shared.schedule.display(), display, bar_on_screen)
         };
-        let desktop = desktop.or_else(|| composite_desktop(display, backdrop_drawn));
+        let desktop = desktop.or_else(|| composite_desktop(display));
         let Some(strip) = strip else {
             return Dressing {
                 desktop,
@@ -596,20 +594,19 @@ fn held(cache: &PictureCache<Picture>, window: WindowId) -> Option<Held> {
 }
 
 /// The desktop of `display` composited from its windows, for a transition before any render of it has
-/// landed. See "Which route serves, and why the render wins" in
-/// `src/pictures/docs/capture-research.md`.
-fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
+/// landed, with or without its wallpaper: the overlay keeps no desktop between flights to prefer. See
+/// "Which route serves, and why the render wins" in `src/pictures/docs/capture-research.md`.
+fn composite_desktop(display: Display) -> Option<Picture> {
     let size = display.frame.size;
     let desktop = desktop_backdrop_windows(display.frame);
-    let usable = capture_list_via_skylight(&desktop.windows, size, display.scale).filter(|picture| {
-        is_backdrop_worth_drawing(drawn, desktop.has_wallpaper(), picture.coverage.covered, size)
-    });
+    let usable = capture_list_via_skylight(&desktop.windows, size, display.scale)
+        .filter(|picture| spans_display(picture.coverage.covered, size));
     if usable.is_none() {
         debug!(
             windows = desktop.windows.len(),
             has_wallpaper = desktop.has_wallpaper(),
             wanted = format!("{:.0}x{:.0}", size.width, size.height),
-            "no drawable desktop yet; keeping whatever the backdrop already holds"
+            "no drawable desktop yet; the backdrop stays empty"
         );
     }
     usable

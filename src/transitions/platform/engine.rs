@@ -780,9 +780,6 @@ pub struct FlightEngine {
     shown: u64,
     /// The batch the latest `Render::Lift` went in, which `Settle` waits for.
     lifted: u64,
-    /// Whether the overlay is dressed with a desktop of the display it is laid out for: until then a
-    /// desktop captured without its wallpaper beats black.
-    dressed: bool,
     /// The overlay's window as the window server numbers it, once the renderer has made it.
     overlay: Option<WindowServerId>,
     /// Every picture the flight draws, and the background captures that fill it.
@@ -835,7 +832,6 @@ impl FlightEngine {
             drawn: Drawn::default(),
             shown: 0,
             lifted: 0,
-            dressed: false,
             overlay: None,
             pictures,
             client,
@@ -1105,7 +1101,6 @@ impl FlightEngine {
                 }
             }
             crate::animation::event::Event::Unavailable { seq } => {
-                self.dressed = false;
                 let flying = self.flights.coordinator().is_flying();
                 for owed in self.drawn.undrawn(seq, flying) {
                     self.carry(owed);
@@ -1264,7 +1259,6 @@ impl FlightEngine {
         let held = self.display.map(|(held, held_scale)| (held, self.top_band, held_scale));
         if held.is_some_and(|held| !same_layout(held, (frame, top_band, scale))) {
             self.lift_heard(Heard::Moved);
-            self.dressed = false;
         }
         self.display = Some((frame, scale));
         self.display_id = Some(id);
@@ -1739,14 +1733,11 @@ impl FlightEngine {
             self.abandon();
             return;
         }
-        let dressing = self
-            .picture_display()
-            .map(|display| self.pictures.dressing(display, self.dressed));
+        let dressing = self.picture_display().map(|display| self.pictures.dressing(display));
         let display = self.display.map(|(frame, _)| frame);
         if let (Some(dressing), Some(display)) = (dressing, display) {
             let strip = dressing.strip.map(|strip| to_overlay_space(strip, display));
             log_dressing(pass.label, &dressing, strip);
-            self.dressed |= dressing.desktop.is_some();
             self.render(Render::Dress { desktop: dressing.desktop, bar: dressing.bar, strip });
         }
         let (focus, losing) = self.drawing_focus(pass.focus);
@@ -4463,26 +4454,23 @@ mod tests {
             assert!(delivered < show, "frame zero's wait for its show takes its time");
         }
 
+        /// The lift lets go of the desktop behind the tiles, so a flight is dressed only after the lift
+        /// before it, a lift held for the overlay's picture too, and with the desktop the service holds.
         #[test]
-        fn the_desktop_dressed_counts_until_the_layout_changes_or_nothing_was_drawn() {
-            let mut h = Harness::new();
-            let display = Display { id: 1, frame: DISPLAY, scale: 2.0 };
-            h.engine.pictures.hold_desktop(display, test_picture(DISPLAY.size));
-            let pan = h.pan();
-            let sent = h.step(pan);
-            let dressed = only_batch(&sent).commands.iter().any(|command| matches!(command, Render::Dress { desktop: Some(_), .. }));
-            assert!(dressed && h.engine.dressed, "dressed with the display's desktop");
-            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
-            assert!(h.engine.dressed, "laid out as it was");
-            h.step(Event::Rendered(Unavailable { seq: only_batch(&sent).seq }));
-            assert!(!h.engine.dressed, "nothing was drawn");
-
-            h.engine.dressed = true;
-            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0 });
-            assert!(!h.engine.dressed, "the band changed");
-            h.engine.dressed = true;
-            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 1.0, top_band: 0.0 });
-            assert!(!h.engine.dressed, "the scale changed");
+        fn a_flight_after_a_lift_is_dressed_again() {
+            for mut h in [Harness::new(), Harness::measuring()] {
+                let display = Display { id: 1, frame: DISPLAY, scale: 2.0 };
+                h.engine.pictures.hold_desktop(display, test_picture(DISPLAY.size));
+                let mut sent = h.lifted();
+                h.advance(Duration::from_millis(10));
+                let pan = h.pan();
+                sent.extend(h.step(pan));
+                let commands: Vec<&Render> = batches(&sent).into_iter().flat_map(|batch| &batch.commands).collect();
+                let lift = commands.iter().rposition(|command| matches!(command, Render::Lift)).expect("lifted");
+                let dress = commands.iter().rposition(|command| matches!(command, Render::Dress { .. })).expect("dressed");
+                assert!(lift < dress, "dressed after the lift");
+                assert!(matches!(commands[dress], Render::Dress { desktop: Some(_), .. }), "with the desktop held");
+            }
         }
 
         #[test]

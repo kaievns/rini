@@ -263,6 +263,10 @@ destination for a window already moving.
 - A picture delivered to a flight MUST be held for it only while one of its tiles can still take it,
   and MUST NOT be held for it once the overlay has lifted. The pictures kept for the next flight are
   the cache's.
+- A lifted overlay MUST NOT hold a picture of the desktop. The desktop the next flight is dressed
+  with is the one the pictures service holds, so a second, older one behind the lifted overlay is
+  memory nothing draws. A flight dressed before its display's desktop has been rendered MAY draw one
+  composited without its wallpaper, since there is no earlier desktop left to prefer.
 
 > **Reported 2026-10-06.** "fix that runaway thread and stale cache cleaning" and "stale copies
 > definitely need deleting, no point in keeping them around". Fixed.
@@ -274,7 +278,9 @@ destination for a window already moving.
 > picture of a window rini does not manage, so those of closed windows stayed until rini restarted.
 > How many the running build held was not counted. From the journal, 2026-10-06: 237 of 580
 > lifts left a picture delivered after the lift held by the flight's engine until the next lift.
-> Read from the code, each can pin a display-sized capture.
+> Read from the code, each can pin a display-sized capture. Read from the code and measured with
+> vmmap, 2026-10-06: the overlay kept the last flight's desktop after the lift, 29.5MB at 3456x2234,
+> beside the newer one rendered at the release after it.
 
 ## Windows with blurred materials
 
@@ -547,7 +553,7 @@ depth bands, the edge bounce and the nudge, and the hairline every tile wears. T
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
 plays the score on Core Animation on the main thread, on the overlay in
-`src/animation/platform/overlay.rs`. When each step happens is `src/transitions/`:
+`src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift. When each step happens is `src/transitions/`:
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
