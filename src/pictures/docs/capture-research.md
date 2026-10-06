@@ -1212,12 +1212,12 @@ A fourth attempt drew it as a constant (a 1pt white stroke at 0.25 alpha focused
 fitted from single screenshots): pixel-exact on opaque windows, wrong by 2x on translucent ones.
 So the real composited pixels were cut out of a framed capture instead, the one capture that
 composites the framing, as a band one point either side of the window's edge that the tile wore.
-It only had a ring for a window composited when it ran, so a tile had no outline until a capture
+It only had a hairline for a window composited when it ran, so a tile had no outline until a capture
 after a flight had run: the 53-level tail at the handover ("The handover, measured" in
 `src/animation/docs/capture-overlay-research.md`). Refitted as a blend over each window's own edge
 pixel instead, a constant does match: white at 20% focused and 18% unfocused, within 0.3 levels rms
 over 27 edges in 11 apps, the translucent terminal included ("The hairline is composited outside
-every capture" above; dark mode only). The renderer draws that ring and the outline outside it on
+every capture" above; dark mode only). The renderer draws that white line and the outline outside it on
 every tile ("The hairline and the shadow, as drawn" in `src/decorations/docs/README.md`).
 
 ## Snapshot staleness

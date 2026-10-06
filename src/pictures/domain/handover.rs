@@ -221,11 +221,11 @@ mod tests {
         assert!(diff.edge_in > 10.0 && diff.edge_out > 10.0, "{diff:?}");
     }
 
-    /// The tile's ring of white drawn in, missing from the screen: inside the outline only.
+    /// The tile's white line drawn in, missing from the screen: inside the outline only.
     #[test]
-    fn a_ring_missing_shows_just_inside_the_edge() {
+    fn a_white_line_missing_shows_just_inside_the_edge() {
         let w = window();
-        let ring = |pixel: &mut [u8], column: usize, row: usize| {
+        let white_line = |pixel: &mut [u8], column: usize, row: usize| {
             let (x, y) = (column as f64 / SCALE, row as f64 / SCALE);
             let inside = x >= w.origin.x && x < w.max_x() && y >= w.origin.y && y < w.max_y();
             let near = x < w.origin.x + 1.0 || x >= w.max_x() - 1.0 || y < w.origin.y + 1.0 || y >= w.max_y() - 1.0;
@@ -233,10 +233,10 @@ mod tests {
                 pixel[..3].copy_from_slice(&[200, 200, 200]);
             }
         };
-        let diff = compared(&picture(w, untouched), &picture(w, ring)).unwrap();
+        let diff = compared(&picture(w, untouched), &picture(w, white_line)).unwrap();
         assert!(diff.edge_in > 40.0, "{diff:?}");
         assert_eq!(diff.edge_out, 0.0);
-        assert_eq!(diff.interior, 0.0, "the ring is inside the inset");
+        assert_eq!(diff.interior, 0.0, "the white line is inside the inset");
     }
 
     /// The app repainted under the overlay: the screen shows a body the tile did not.

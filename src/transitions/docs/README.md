@@ -119,8 +119,8 @@ the window server's report while the application in front owns it. A panel of an
 that takes the keys is seen only if the report names it, and the report names the key-focus process's
 frontmost document window, or if its application comes to the front: neither is measured for
 Spotlight or Raycast. Unseen, the window under it is still taken as key and its frame-zero picture
-kept as its focused look. Seen, its tile is still drawn focused until its own turn or the target's, ring
-and shadow over an unfocused picture.
+kept as its focused look. Seen, its tile is still drawn focused until its own turn or the target's,
+hairline and shadow over an unfocused picture.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
 `start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's

@@ -307,18 +307,18 @@ destination for a window already moving.
 ## The window's hairline
 
 - Every tile MUST wear the hairline macOS composites around each window, which no capture carries: a
-  1pt ring of white on the window's outermost point, at 20% on the focused window and 18% on any
+  1pt line of white on the window's outermost point, at 20% on the focused window and 18% on any
   other, and a 0.5pt stroke of black at 90% in the half point just outside it.
 - Both MUST round to the window's own corner radius once `pictures` has measured it, and to 10pt
   until then, never past half the tile's shorter side.
 - Both MUST follow the tile through a resize, on the tile's own timing, and onto its window's real
   frame when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
   its corners.
-- When focus moves during a flight, each window's ring and shadow MUST turn with its own picture: the
+- When focus moves during a flight, each window's hairline and shadow MUST turn with its own picture: the
   window losing focus dimmer as its picture turns unfocused, the window gaining focus brighter as its
   picture turns focused, each at its own time.
 
-The ring's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
+The hairline's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
 applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
 measured. Before it, a tile wore a hairline cut out of a capture of its window, and none until that
 capture had run: the 53-level p99 at the focused window's edge in "The handover, measured"
@@ -327,7 +327,7 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > **Reported 2026-10-05.** "regarding the ring and shadow. i'd like them to be orchestrated
 > independently whenever blur or focus are done switching." Both tiles turned in one cut when the
 > picture of the window gaining focus turned, whenever the other window's picture had. Each tile's
-> ring and shadow now turn with its own picture.
+> hairline and shadow now turn with its own picture.
 
 ## Focus changing during a flight
 
@@ -338,7 +338,7 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or grew it: one a pass
   opened or grew is pictured once it has repainted instead. A look a window already had when it landed
-  counts as changed. Each MUST be drawn with its turned picture as it comes in, its ring and its shadow
+  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its shadow
   turning with it: the window losing focus unfocused, the window gaining focus focused.
 - The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
   focus MUST wait for the other's at most 15ms, one capture interval, and not at all once the other's
@@ -350,18 +350,18 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
   the same, old then new, while the flight still moves. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
-  keeps its picture to the lift, only its ring and its shadow turning unfocused, and its look turns at
+  keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its look turns at
   rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on
   screen (below). SkyLight returns only its visible part, and the one ScreenCaptureKit capture below is
   the window gaining focus's.
 - A press moving focus back to a window already drawn unfocused, before the window it went to has
-  turned, MUST leave it drawn unfocused, ring and shadow with it, until its focused picture comes in,
+  turned, MUST leave it drawn unfocused, hairline and shadow with it, until its focused picture comes in,
   and MUST then turn it focused as any window gaining focus. A press moving focus on before then MUST
   NOT turn it again. One starting off the display flies its focused look instead (below), drawn
   focused again, and a press moving focus on MUST turn it unfocused again: no tile is left drawn
   focused beside the window gaining focus. A turned picture waiting for the old window's MUST be dropped when a press moves
   focus on, and one that no longer fits its tile MUST turn nothing: drawn focused over the picture
-  from before, a ring disagrees with its window.
+  from before, a hairline disagrees with its window.
 - A focus report that arrives before the flight watches for it MUST still count, and so MUST one that
   arrives before the request it causes, as a click's or an app activation's does: the window focused
   before it is the one the flight begins drawn focused.

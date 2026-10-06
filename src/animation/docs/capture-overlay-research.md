@@ -1158,7 +1158,7 @@ measured").
 
 What each part of the prototype fixed:
 
-- **A constant hairline and outline replace the harvest.** A 1pt ring of white at 20% (18%
+- **A constant hairline and outline replace the harvest.** A 1pt line of white at 20% (18%
   unfocused) inside the edge, and a 0.5pt stroke of black at 90% half a point outside it, drawn
   as layers over every tile. The harvest left a tile with no outline whenever it had not run,
   which is the 53-level tail. A border layer at a half-point origin landed one pixel too far out,
