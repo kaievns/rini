@@ -41,7 +41,7 @@ use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
-use crate::pictures::platform::layer::{set_layer_contents, stretch_region};
+use crate::pictures::platform::layer::{clear_contents, set_layer_contents, stretch_region};
 use crate::pictures::platform::picture::Picture;
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
@@ -520,8 +520,8 @@ struct CropGrid {
     pieces: [Retained<CALayer>; 4],
 }
 
-/// What a flight is drawn with: the containers, the floating container's twin and the tiles under
-/// `root`, and the replica, the score of everything installed and placed on them. Apart from the
+/// What a flight is drawn with: the desktop behind it, the containers, the floating container's twin
+/// and the tiles under `root`, and the replica, the score of everything installed and placed on them. Apart from the
 /// window, so it hangs off any root layer and a test builds one without a window. Every method that
 /// changes a layer leaves the transaction to its caller.
 struct Tree {
@@ -529,6 +529,8 @@ struct Tree {
     /// The display's size: every container covers it.
     size: CGSize,
     scale: f64,
+    /// The real desktop, drawn behind everything and held still.
+    backdrop: Retained<CALayer>,
     /// One layer per rigid piece of a flight; a container's `position` is the only animated
     /// translation its members get.
     containers: HashMap<GroupKey, Retained<CALayer>>,
@@ -551,8 +553,6 @@ struct Tree {
 pub struct TileOverlay {
     window: Retained<NSWindow>,
     tree: Tree,
-    /// The real desktop, drawn behind everything and held still.
-    backdrop: Retained<CALayer>,
     /// The bar, redrawn on top with its own alpha since the overlay covers the real one. See "The
     /// bar has to be captured on its own" in `src/pictures/docs/capture-research.md`.
     bar: Retained<CALayer>,
@@ -696,13 +696,7 @@ impl TileOverlay {
         root.setContentsScale(scale);
         clip.addSublayer(&root);
 
-        // Not geometryFlipped: that flips a layer's contents too, drawing the desktop upside down.
-        let backdrop = CALayer::layer();
-        backdrop.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
-        backdrop.setContentsScale(scale);
-        backdrop.setZPosition(BACKDROP_Z);
-        root.addSublayer(&backdrop);
+        let tree = Tree::new(root.clone(), frame.size, scale);
 
         let bar = CALayer::layer();
         bar.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -715,8 +709,7 @@ impl TileOverlay {
 
         Some(Self {
             window,
-            tree: Tree::new(root, frame.size, scale),
-            backdrop,
+            tree,
             bar,
             bar_drawn: false,
             frame,
@@ -747,16 +740,11 @@ impl TileOverlay {
     }
 
     /// Sets the still image drawn behind the moving tiles, at its own covered size so it stays in
-    /// register with the real desktop. A failed capture keeps the previous picture.
+    /// register with the real desktop. With none, the backdrop stays as the lift left it: empty.
     pub fn set_backdrop(&mut self, snapshot: Option<&Picture>) {
-        let Some(snapshot) = snapshot else { return };
-        self.backdrop.setFrame(CGRect::new(
-            CGPoint::new(0.0, 0.0),
-            snapshot.coverage.covered.to_cg(),
-        ));
-        self.backdrop.setContentsScale(self.tree.scale);
-        set_layer_contents(&self.backdrop, snapshot);
-        self.backdrop.setHidden(false);
+        if let Some(snapshot) = snapshot {
+            self.tree.set_backdrop(snapshot);
+        }
     }
 
     /// Repoints the overlay at a different display, a resolution change, or a change of the band the
@@ -916,8 +904,9 @@ impl TileOverlay {
         self.clear = holed;
     }
 
-    /// Frees the tile contents without destroying the overlay, and the replica with them.
-    pub fn release_tiles(&mut self) {
+    /// Frees the tile contents and the desktop behind them without destroying the overlay, and the
+    /// replica with them. The pictures service keeps the desktop the next flight is dressed with.
+    pub fn release(&mut self) {
         self.tree.release();
         let _ = self.mtm;
     }
@@ -925,10 +914,18 @@ impl TileOverlay {
 
 impl Tree {
     fn new(root: Retained<CALayer>, size: CGSize, scale: f64) -> Tree {
+        // Not geometryFlipped: that flips a layer's contents too, drawing the desktop upside down.
+        let backdrop = CALayer::layer();
+        backdrop.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size));
+        backdrop.setContentsScale(scale);
+        backdrop.setZPosition(BACKDROP_Z);
+        root.addSublayer(&backdrop);
         Tree {
             root,
             size,
             scale,
+            backdrop,
             containers: HashMap::new(),
             lifted: None,
             tile_layers: HashMap::new(),
@@ -1209,7 +1206,19 @@ impl Tree {
         swap_onto(entry, picture, frame.size.respace(), playing);
     }
 
+    /// The desktop drawn behind the tiles, at its own covered size so it stays in register with the
+    /// real one.
+    fn set_backdrop(&mut self, snapshot: &Picture) {
+        self.backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), snapshot.coverage.covered.to_cg()));
+        self.backdrop.setContentsScale(self.scale);
+        set_layer_contents(&self.backdrop, snapshot);
+        self.backdrop.setHidden(false);
+    }
+
+    /// Every tile, container and the desktop let go of, and the replica with them.
     fn release(&mut self) {
+        clear_contents(&self.backdrop);
+        self.backdrop.setHidden(true);
         for (_, entry) in self.tile_layers.drain() {
             entry.remove();
         }
@@ -2690,6 +2699,25 @@ mod tests {
         use crate::pictures::platform::picture::test_picture;
 
         fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
+
+        /// A lifted overlay holds no desktop: the backdrop lets go of its picture at the release.
+        #[test]
+        fn a_released_tree_lets_go_of_the_desktop_behind_it() {
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            let desktop = test_picture(DISPLAY.size);
+            let crate::pictures::platform::picture::Pixels::Bitmap(image) = &desktop.image else {
+                unreachable!("a test picture is a bitmap")
+            };
+            let held_elsewhere = image.retain_count();
+            tree.set_backdrop(&desktop);
+            assert_eq!(image.retain_count(), held_elsewhere + 1, "drawn behind the tiles");
+            assert!(!tree.backdrop.isHidden());
+            tree.release();
+            // SAFETY: a read of the layer's own property.
+            assert!(unsafe { tree.backdrop.contents() }.is_none());
+            assert!(tree.backdrop.isHidden());
+            assert_eq!(image.retain_count(), held_elsewhere, "let go of");
+        }
 
         /// A frame on `DISPLAY`, which sits at the origin, on the overlay over it.
         fn on(frame: ScreenRect) -> OverlayRect { to_overlay_space(frame, DISPLAY) }

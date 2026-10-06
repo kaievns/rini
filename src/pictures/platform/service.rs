@@ -25,13 +25,14 @@ use rini_runloop::channel::{self, Receiver, Sender};
 use tracing::{debug, warn};
 
 use crate::pictures::domain::cache::{Delivered, PictureCache};
-use crate::pictures::domain::coverage::{is_backdrop_worth_drawing, spans_display};
+use crate::pictures::domain::coverage::spans_display;
 use crate::pictures::domain::handover::{HandoverCheck, HandoverDiff, compare};
 use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
 use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Priority, Schedule};
-use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
+use crate::pictures::domain::identity::{is_synthetic, managed_server_ids, unwanted, warm_targets};
+use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     Capture, Hint, Look, OnScreen, Prints, Seen, Set, Tag, Watch, WatchId, Why,
 };
@@ -59,7 +60,7 @@ pub enum Command {
     Hold(Hold),
     Forget(WindowId),
     SetDisplay { display: Display, picture_bar: bool },
-    /// Every window on screen on the display, pictured in the background: the debug command's warm.
+    /// The warm of the display the overlay flies on (`Pictures::warm_visible`): the debug command's.
     WarmVisible,
     CheckHandover(HandoverCheck),
 }
@@ -118,6 +119,38 @@ struct Shared {
     learned: Learned,
     delivered: Delivered<Picture>,
     stand_in: Option<StandIn>,
+}
+
+impl Shared {
+    /// Every window the cache holds a picture of or the schedule owes one.
+    fn windows(&self) -> Vec<WindowId> {
+        let mut windows: Vec<WindowId> = self.cache.iter().map(|(window, _)| *window).collect();
+        windows.extend(self.schedule.owed());
+        windows
+    }
+}
+
+/// Every picture of `window` and all that is known of it, gone.
+fn forget_window(
+    shared: &mut Shared,
+    looks_checked: &mut HashMap<WindowId, (Instant, Instant)>,
+    window: WindowId,
+) {
+    forget_pictures(shared, looks_checked, window);
+    shared.learned.forget(WindowServerId::from(window));
+}
+
+/// Every picture of `window`, held, owed or delivered, and its focused look's last check, gone.
+/// What is known of it stays: a window pictured twice shares its server id with the managed one.
+fn forget_pictures(
+    shared: &mut Shared,
+    looks_checked: &mut HashMap<WindowId, (Instant, Instant)>,
+    window: WindowId,
+) {
+    shared.cache.forget(window);
+    shared.schedule.forget(window);
+    shared.delivered.forget(window);
+    looks_checked.remove(&window);
 }
 
 /// The pictures of the display the overlay flies on. Which display that is, the schedule holds.
@@ -453,6 +486,10 @@ impl Pictures {
         self.commands.send(Command::SetDisplay { display, picture_bar })
     }
 
+    /// Every window on the display the overlay flies on that rini does not manage and that shows
+    /// enough of itself there, pictured in the background under its synthetic id
+    /// (`crate::pictures::domain::identity::warm_targets`). The service runs the same warm at each change
+    /// of display.
     pub fn warm_visible(&self) { self.commands.send(Command::WarmVisible) }
 
     /// Measures a lift: the overlay alone as the next SkyLight call, its client told `OverlayTaken`,
@@ -481,12 +518,7 @@ impl Pictures {
     pub fn knowledge(&self, window: WindowServerId) -> Knowledge { self.lock().learned.get(window) }
 
     /// Every window with a picture held or one on its way.
-    pub fn windows(&self) -> Vec<WindowId> {
-        let shared = self.lock();
-        let mut windows: Vec<WindowId> = shared.cache.iter().map(|(window, _)| *window).collect();
-        windows.extend(shared.schedule.owed());
-        windows
-    }
+    pub fn windows(&self) -> Vec<WindowId> { self.lock().windows() }
 
     /// A stand-in for a window of `size` at `scale`, never cached. `None` only if its pixels cannot be
     /// drawn.
@@ -515,12 +547,10 @@ impl Pictures {
 
     /// The desktop and the bar to dress a transition on `display` with: what the service holds of that
     /// display, and, until its first render lands, a desktop composited now on the caller's thread,
-    /// which without one draws the display left behind, or black. The bar is read for presence on
-    /// every transition, so a bar that has gone is not drawn, and composited once per display.
-    /// `backdrop_drawn` says whether a desktop of `display` is already drawn, which a desktop without
-    /// its wallpaper must not replace. Whether there is a bar to picture is the service's, as the
-    /// display it was last told says.
-    pub fn dressing(&self, display: Display, backdrop_drawn: bool) -> Dressing {
+    /// without which it draws black. The bar is read for presence on every transition, so a bar that
+    /// has gone is not drawn, and composited once per display.
+    /// Whether there is a bar to picture is the service's, as the display it was last told says.
+    pub fn dressing(&self, display: Display) -> Dressing {
         let picture_bar = self.lock().schedule.picture_bar();
         let strip = picture_bar.then(|| bar_strip(display.frame));
         let bar_on_screen = strip.as_ref().is_some_and(|strip| strip.bounds.is_some());
@@ -528,7 +558,7 @@ impl Pictures {
             let shared = self.lock();
             shared.display.for_display(shared.schedule.display(), display, bar_on_screen)
         };
-        let desktop = desktop.or_else(|| composite_desktop(display, backdrop_drawn));
+        let desktop = desktop.or_else(|| composite_desktop(display));
         let Some(strip) = strip else {
             return Dressing {
                 desktop,
@@ -576,20 +606,19 @@ fn held(cache: &PictureCache<Picture>, window: WindowId) -> Option<Held> {
 }
 
 /// The desktop of `display` composited from its windows, for a transition before any render of it has
-/// landed. See "Which route serves, and why the render wins" in
-/// `src/pictures/docs/capture-research.md`.
-fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
+/// landed, with or without its wallpaper: the overlay keeps no desktop between flights to prefer. See
+/// "Which route serves, and why the render wins" in `src/pictures/docs/capture-research.md`.
+fn composite_desktop(display: Display) -> Option<Picture> {
     let size = display.frame.size;
     let desktop = desktop_backdrop_windows(display.frame);
-    let usable = capture_list_via_skylight(&desktop.windows, size, display.scale).filter(|picture| {
-        is_backdrop_worth_drawing(drawn, desktop.has_wallpaper(), picture.coverage.covered, size)
-    });
+    let usable = capture_list_via_skylight(&desktop.windows, size, display.scale)
+        .filter(|picture| spans_display(picture.coverage.covered, size));
     if usable.is_none() {
         debug!(
             windows = desktop.windows.len(),
             has_wallpaper = desktop.has_wallpaper(),
             wanted = format!("{:.0}x{:.0}", size.width, size.height),
-            "no drawable desktop yet; keeping whatever the backdrop already holds"
+            "no drawable desktop yet; the backdrop stays empty"
         );
     }
     usable
@@ -688,13 +717,7 @@ impl Service {
                     self.at_rest();
                 }
             }
-            Command::Forget(window) => {
-                shared.cache.forget(window);
-                shared.schedule.forget(window);
-                shared.learned.forget(WindowServerId::from(window));
-                shared.delivered.forget(window);
-                self.looks_checked.remove(&window);
-            }
+            Command::Forget(window) => forget_window(&mut shared, &mut self.looks_checked, window),
             Command::SetDisplay { display, picture_bar } => {
                 let Shared { schedule, display: held, .. } = &mut *shared;
                 if set_display(schedule, held, display, picture_bar, now) {
@@ -714,11 +737,39 @@ impl Service {
         }
     }
 
-    /// What no transition holding the service allows: regions kept as copies, and focused looks
-    /// compared with what was captured since.
+    /// What no transition holding the service allows: the synthetic pictures no window needs let go
+    /// of, regions kept as copies, and focused looks compared with what was captured since.
     fn at_rest(&mut self) {
+        self.let_go_unwanted();
         self.keep_copies();
         self.check_focused();
+    }
+
+    /// Lets go of each synthetic picture whose window the window server no longer has, with all that
+    /// is known of it, and of each a managed window is pictured under its own id as well
+    /// (`crate::pictures::domain::identity::unwanted`). The window server is asked off the lock.
+    fn let_go_unwanted(&mut self) {
+        let held = self.shared.lock().unwrap().windows();
+        let synthetic: Vec<WindowServerId> =
+            held.iter().filter(|window| is_synthetic(**window)).map(|window| WindowServerId::from(*window)).collect();
+        if synthetic.is_empty() {
+            return;
+        }
+        let Some(alive) = crate::windows::platform::window_server::existing_windows(&synthetic) else {
+            return;
+        };
+        let unwanted = unwanted(&held, &alive);
+        if unwanted.gone.is_empty() && unwanted.twice.is_empty() {
+            return;
+        }
+        debug!(gone = unwanted.gone.len(), twice = unwanted.twice.len(), "letting go of synthetic pictures");
+        let mut shared = self.shared.lock().unwrap();
+        for window in unwanted.gone {
+            forget_window(&mut shared, &mut self.looks_checked, window);
+        }
+        for window in unwanted.twice {
+            forget_pictures(&mut shared, &mut self.looks_checked, window);
+        }
     }
 
     /// Every region the cache holds, as a picture or a focused look, replaced by a copy of its own: a
@@ -776,24 +827,22 @@ impl Service {
         }
     }
 
-    /// Every window on screen on `display`, pictured in the background under the ids a window rini
-    /// does not manage is pictured under.
+    /// The warm of `display`: see `Pictures::warm_visible`. A managed window is told by a picture held
+    /// or owed under its own id; one with neither yet, as at boot, is pictured and let go of at rest.
     fn warm_visible(&self, display: Display) {
-        let on = display.frame.to_cg();
-        let targets: Vec<PictureTarget> =
-            crate::windows::platform::window_server::visible_windows_on_display(on)
+        let listed: Vec<(WindowServerId, ScreenRect)> =
+            crate::windows::platform::window_server::visible_windows_on_display(display.frame.to_cg())
                 .into_iter()
-                .map(|(server_id, frame)| PictureTarget {
-                    window: synthetic_window_id(server_id),
-                    server_id,
-                    size: ScreenSize::from_cg(frame.size),
-                })
+                .map(|(server_id, frame)| (server_id, ScreenRect::from_cg(frame)))
                 .collect();
+        let mut shared = self.shared.lock().unwrap();
+        let managed = managed_server_ids(shared.windows().into_iter());
+        let targets = warm_targets(&listed, display.frame, &managed);
         if targets.is_empty() {
             return;
         }
         debug!(count = targets.len(), "warming the snapshot cache");
-        self.shared.lock().unwrap().schedule.ask(
+        shared.schedule.ask(
             Ask {
                 priority: Priority::Background,
                 targets,
@@ -1559,6 +1608,52 @@ mod tests {
         assert!(shared.cache.focused(wid(1)).is_none());
         assert!(shared.delivered.under(tag(1), wid(1)).is_none());
         assert_eq!(shared.learned.get(WindowServerId::from(wid(1))), Knowledge::default());
+    }
+
+    /// A managed window warmed before its own picture was held, as at boot, is pictured twice until the
+    /// release lets go of the synthetic one, and of nothing known of the window; a window rini does
+    /// not manage keeps its synthetic picture while the window server has it.
+    #[test]
+    fn a_release_lets_go_of_a_synthetic_picture_of_a_window_pictured_under_its_own_id() {
+        use crate::pictures::domain::identity::synthetic_window_id;
+        let (mut service, shared) = detached_service();
+        let twice = synthetic_window_id(WindowServerId::from(wid(102682)));
+        let border = synthetic_window_id(WindowServerId::new(9001));
+        {
+            let mut shared = shared.lock().unwrap();
+            for window in [wid(102682), twice, border] {
+                shared.cache.insert(window, sized(859.0, 1081.0));
+            }
+            shared.learned.saw_alpha(WindowServerId::from(wid(102682)), true, Some(10.0));
+        }
+        service.apply(Command::Hold(Hold::Released));
+        let shared = shared.lock().unwrap();
+        assert!(shared.cache.get(twice).is_none());
+        assert!(shared.cache.get(wid(102682)).is_some());
+        assert!(shared.cache.get(border).is_some());
+        assert_ne!(shared.learned.get(WindowServerId::from(wid(102682))), Knowledge::default());
+    }
+
+    /// A release lets go of a synthetic picture whose window the window server no longer has, and of
+    /// all that is known of it.
+    #[test]
+    fn a_release_lets_go_of_a_synthetic_picture_of_a_window_gone_and_what_is_known_of_it() {
+        use crate::pictures::domain::identity::synthetic_window_id;
+        use crate::windows::platform::window_server::set_window_gone_override;
+        let (mut service, shared) = detached_service();
+        let server_id = WindowServerId::new(9002);
+        let gone = synthetic_window_id(server_id);
+        {
+            let mut shared = shared.lock().unwrap();
+            shared.cache.insert(gone, sized(400.0, 30.0));
+            shared.learned.saw_alpha(server_id, true, Some(10.0));
+        }
+        set_window_gone_override(server_id, true);
+        service.apply(Command::Hold(Hold::Released));
+        set_window_gone_override(server_id, false);
+        let shared = shared.lock().unwrap();
+        assert!(shared.cache.get(gone).is_none());
+        assert_eq!(shared.learned.get(server_id), Knowledge::default());
     }
 
     /// A focused look that is a region is kept as a copy at a release too.

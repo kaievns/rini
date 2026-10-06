@@ -55,7 +55,7 @@ pub(crate) struct EventOutcome {
     pub(crate) wm_events: Vec<WmEvent>,
     pub(crate) app_requests: Vec<(pid_t, Request)>,
     pub(crate) topology_reassignments: Vec<TopologyReassignment>,
-    /// Windows a workflow removed whose overlay picture the animation cache should drop.
+    /// Windows a workflow removed, whose pictures the pictures service forgets.
     pub(crate) forgotten_windows: Vec<WindowId>,
     pub(crate) confirmed_window_spaces: Vec<(WindowServerId, SpaceId)>,
     pub(crate) fullscreen_restorations: Vec<(WindowServerId, SpaceId, WindowId)>,

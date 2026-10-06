@@ -43,7 +43,8 @@ use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
-use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
+use crate::pictures::domain::identity::{picture_id, synthetic_window_id};
+use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
     WatchId, Why,
@@ -780,9 +781,6 @@ pub struct FlightEngine {
     shown: u64,
     /// The batch the latest `Render::Lift` went in, which `Settle` waits for.
     lifted: u64,
-    /// Whether the overlay is dressed with a desktop of the display it is laid out for: until then a
-    /// desktop captured without its wallpaper beats black.
-    dressed: bool,
     /// The overlay's window as the window server numbers it, once the renderer has made it.
     overlay: Option<WindowServerId>,
     /// Every picture the flight draws, and the background captures that fill it.
@@ -803,10 +801,12 @@ pub struct FlightEngine {
     /// Writes each burst `flights` gives while the journal is written.
     writer: Option<Writer>,
     running: Option<RunningAnimation>,
-    /// The latest picture delivered of each window, under its generation, until it is swapped in: the
-    /// coordinator holds a landing back from over a focused look until focus hands over, and the
-    /// target's change until the window focus leaves has turned.
-    delivered: HashMap<WindowId, (Generation, Picture)>,
+    /// The picture delivered of each window, under its generation and at its frame, while the
+    /// coordinator holds it to swap in later (`Coordinator::holds`): a landing held back from over a
+    /// focused look until focus hands over, and the target's change until the window focus leaves has
+    /// turned. Every other delivery a tile takes as it comes or is left to the pictures service's
+    /// cache.
+    delivered: HashMap<WindowId, (Generation, ScreenRect, Picture)>,
     watches: EndWatches,
     /// The frame clock, from a transition's begin to its lift.
     frame_clock: Option<RepeatingTimer>,
@@ -834,7 +834,6 @@ impl FlightEngine {
             drawn: Drawn::default(),
             shown: 0,
             lifted: 0,
-            dressed: false,
             overlay: None,
             pictures,
             client,
@@ -937,6 +936,7 @@ impl FlightEngine {
             Event::Journal(settings) => self.set_journal(settings),
             Event::Rendered(answer) => self.rendered(answer),
         }
+        self.keep_held();
         self.send_batch();
         self.flights.answered();
     }
@@ -1104,7 +1104,6 @@ impl FlightEngine {
                 }
             }
             crate::animation::event::Event::Unavailable { seq } => {
-                self.dressed = false;
                 let flying = self.flights.coordinator().is_flying();
                 for owed in self.drawn.undrawn(seq, flying) {
                     self.carry(owed);
@@ -1151,12 +1150,20 @@ impl FlightEngine {
         }
     }
 
-    /// Each delivered picture to the coordinator, which says whether it is swapped in.
+    /// Each delivered picture to the coordinator, which says whether it is swapped in now, held to be
+    /// later, or never.
     fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
         for (window, picture, frame) in pictures {
-            self.delivered.insert(window, (generation, picture));
+            self.delivered.insert(window, (generation, frame, picture));
             self.drive(lifecycle::Event::Picture { generation, window, frame, why });
         }
+    }
+
+    /// Only the deliveries the coordinator still holds: once an event is carried out, one it does not
+    /// will never be swapped in.
+    fn keep_held(&mut self) {
+        let coordinator = self.flights.coordinator();
+        self.delivered.retain(|window, (generation, frame, _)| coordinator.holds(*window, *generation, *frame));
     }
 
     /// Frame zero's pictures, put on their tiles while the overlay is not up yet, then the overlay can
@@ -1178,10 +1185,10 @@ impl FlightEngine {
     /// The picture delivered of `window` under `generation`, onto its tile; a reserved entrance's
     /// first joins the flight with it.
     fn swap(&mut self, generation: Generation, window: WindowId, now: Instant) {
-        if self.delivered.get(&window).is_none_or(|(delivered, _)| *delivered != generation) {
+        if self.delivered.get(&window).is_none_or(|(delivered, _, _)| *delivered != generation) {
             return;
         }
-        let Some((_, picture)) = self.delivered.remove(&window) else { return };
+        let Some((_, _, picture)) = self.delivered.remove(&window) else { return };
         let Some(running) = self.running.as_mut() else { return };
         let size = match running.take_picture(window, &picture) {
             Took::Entrance(tile) => return self.admit_entrance(tile, now),
@@ -1261,7 +1268,6 @@ impl FlightEngine {
         let held = self.display.map(|(held, held_scale)| (held, self.top_band, held_scale));
         if held.is_some_and(|held| !same_layout(held, (frame, top_band, scale))) {
             self.lift_heard(Heard::Moved);
-            self.dressed = false;
         }
         self.display = Some((frame, scale));
         self.display_id = Some(id);
@@ -1405,7 +1411,6 @@ impl FlightEngine {
         self.running = None;
         self.frame_clock = None;
         self.ends.clear();
-        self.delivered.clear();
         self.drive(lifecycle::Event::Abandon);
     }
 
@@ -1736,14 +1741,11 @@ impl FlightEngine {
             self.abandon();
             return;
         }
-        let dressing = self
-            .picture_display()
-            .map(|display| self.pictures.dressing(display, self.dressed));
+        let dressing = self.picture_display().map(|display| self.pictures.dressing(display));
         let display = self.display.map(|(frame, _)| frame);
         if let (Some(dressing), Some(display)) = (dressing, display) {
             let strip = dressing.strip.map(|strip| to_overlay_space(strip, display));
             log_dressing(pass.label, &dressing, strip);
-            self.dressed |= dressing.desktop.is_some();
             self.render(Render::Dress { desktop: dressing.desktop, bar: dressing.bar, strip });
         }
         let (focus, losing) = self.drawing_focus(pass.focus);
@@ -2199,7 +2201,6 @@ impl FlightEngine {
         }
         self.running = None;
         self.frame_clock = None;
-        self.delivered.clear();
     }
 
     /// The quiet after `generation`'s lift, from now.
@@ -2342,12 +2343,13 @@ impl FlightEngine {
             warn!("no visible windows found for the debug slide");
             return;
         }
+        let pictured = self.pictures.windows();
         let requests: Vec<AnimationRequest> = windows
             .into_iter()
             .map(|(server_id, frame)| {
                 let frame = ScreenRect::from_cg(frame);
                 AnimationRequest {
-                    window: synthetic_window_id(server_id),
+                    window: picture_id(server_id, &pictured),
                     server_id,
                     // The debug slide knows nothing about the layout; everything is on the strip.
                     floating: false,
@@ -4290,6 +4292,109 @@ mod tests {
             assert_eq!(holds(&h.commit(lift)), [Hold::Settling]);
         }
 
+        /// A background capture of `wid(1)` where the pan ends it, under `generation`.
+        fn background(generation: u64, at: Instant) -> Event {
+            Event::Pictures(crate::pictures::event::Event::Delivered {
+                tag: Tag { client: CLIENT, generation },
+                why: Why::Background,
+                sent: at,
+                pictures: vec![(wid(1), test_picture(end().size), end())],
+            })
+        }
+
+        #[test]
+        fn a_background_picture_delivered_in_flight_is_swapped_onto_its_tile() {
+            let mut h = Harness::new();
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            let sent = h.step(background(h.generation(), h.at()));
+            assert!(batches(&sent).iter().any(|batch| kinds(batch).contains(&"swap")), "swapped in");
+            assert!(h.engine.delivered.is_empty(), "taken by its tile");
+        }
+
+        #[test]
+        fn a_background_picture_delivered_after_the_lift_is_not_kept() {
+            let mut h = Harness::new();
+            h.lifted();
+            let sent = h.step(background(h.generation(), h.at()));
+            assert!(batches(&sent).is_empty(), "nothing flies to take it");
+            assert!(h.engine.delivered.is_empty(), "left to the cache");
+        }
+
+        /// A picture taken for where a merge no longer ends its window: no tile takes it, then or later.
+        #[test]
+        fn a_picture_delivered_for_an_end_a_merge_moved_is_not_kept() {
+            let mut h = Harness::new();
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            let before = h.generation();
+            let pan_on = h.pan_on();
+            h.step(pan_on);
+            assert!(h.generation() > before, "the merge bumps the generation");
+            let sent = h.step(background(before, h.at()));
+            assert!(!batches(&sent).iter().any(|batch| kinds(batch).contains(&"swap")), "taken for the end before");
+            assert!(h.engine.delivered.is_empty(), "left to the cache");
+        }
+
+        /// The target's change waiting for the old window to turn is kept until it is swapped in.
+        #[test]
+        fn the_targets_change_waiting_for_the_old_window_is_kept_until_swapped_in() {
+            let mut h = Harness::new();
+            let old = rect(40.0, 0.0, 800.0, 1081.0);
+            let new = rect(868.0, 0.0, 800.0, 1081.0);
+            let window = |id, frame| SurfaceWindow {
+                window: wid(id),
+                server_id: WindowServerId::new(id),
+                frame,
+                pinned: false,
+                floating: false,
+                from: None,
+            };
+            let windows = vec![window(1, old), window(2, new)];
+            h.engine.pictures.insert(wid(2), test_picture(new.size));
+            let (from_offset, to_offset) = (SurfacePoint::origin(), SurfacePoint::new(20.0, 0.0));
+            let final_frames =
+                windows.iter().map(|w| (w.window, screen(w.travel(from_offset, to_offset).1))).collect::<Vec<_>>();
+            let ends: Vec<ScreenRect> = final_frames.iter().map(|(_, frame)| *frame).collect();
+            let press = Event::AnimateSurface {
+                windows,
+                from_offset,
+                to_offset,
+                final_frames,
+                focus: Some(wid(2)),
+                focused_before: Some(wid(1)),
+                key: Some(wid(1)),
+                duration: Duration::from_millis(300),
+                look: Look::default(),
+                cue: Cue::Plain,
+                accent: None,
+                cause: h.cause(),
+            };
+            h.step(press);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            let changed = |h: &Harness, id, frame: ScreenRect| {
+                Event::Pictures(crate::pictures::event::Event::Delivered {
+                    tag: Tag { client: CLIENT, generation: h.generation() },
+                    why: Why::FocusChanged,
+                    sent: h.at(),
+                    pictures: vec![(wid(id), test_picture(frame.size), frame)],
+                })
+            };
+            let target = changed(&h, 2, ends[1]);
+            h.step(target);
+            assert!(h.engine.delivered.contains_key(&wid(2)), "held for the old window's turn");
+            let losing = changed(&h, 1, ends[0]);
+            let sent = h.step(losing);
+            assert!(h.engine.delivered.is_empty(), "swapped in with it");
+            assert!(batches(&sent).iter().any(|batch| batch.commands.iter().any(
+                |command| matches!(command, Render::Swap { window, .. } if *window == wid(2))
+            )));
+        }
+
         #[test]
         fn the_quiet_counts_from_the_lift_being_drawn() {
             let mut h = Harness::new();
@@ -4430,26 +4535,23 @@ mod tests {
             assert!(delivered < show, "frame zero's wait for its show takes its time");
         }
 
+        /// The lift before a flight, a lift held for the overlay's picture too, let go of the desktop
+        /// behind the tiles: the flight is dressed after it, with the desktop the service holds.
         #[test]
-        fn the_desktop_dressed_counts_until_the_layout_changes_or_nothing_was_drawn() {
-            let mut h = Harness::new();
-            let display = Display { id: 1, frame: DISPLAY, scale: 2.0 };
-            h.engine.pictures.hold_desktop(display, test_picture(DISPLAY.size));
-            let pan = h.pan();
-            let sent = h.step(pan);
-            let dressed = only_batch(&sent).commands.iter().any(|command| matches!(command, Render::Dress { desktop: Some(_), .. }));
-            assert!(dressed && h.engine.dressed, "dressed with the display's desktop");
-            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
-            assert!(h.engine.dressed, "laid out as it was");
-            h.step(Event::Rendered(Unavailable { seq: only_batch(&sent).seq }));
-            assert!(!h.engine.dressed, "nothing was drawn");
-
-            h.engine.dressed = true;
-            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0 });
-            assert!(!h.engine.dressed, "the band changed");
-            h.engine.dressed = true;
-            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 1.0, top_band: 0.0 });
-            assert!(!h.engine.dressed, "the scale changed");
+        fn a_flight_after_a_lift_is_dressed_again() {
+            for mut h in [Harness::new(), Harness::measuring()] {
+                let display = Display { id: 1, frame: DISPLAY, scale: 2.0 };
+                h.engine.pictures.hold_desktop(display, test_picture(DISPLAY.size));
+                let mut sent = h.lifted();
+                h.advance(Duration::from_millis(10));
+                let pan = h.pan();
+                sent.extend(h.step(pan));
+                let commands: Vec<&Render> = batches(&sent).into_iter().flat_map(|batch| &batch.commands).collect();
+                let lift = commands.iter().rposition(|command| matches!(command, Render::Lift)).expect("lifted");
+                let dress = commands.iter().rposition(|command| matches!(command, Render::Dress { .. })).expect("dressed");
+                assert!(lift < dress, "dressed after the lift");
+                assert!(matches!(commands[dress], Render::Dress { desktop: Some(_), .. }), "with the desktop held");
+            }
         }
 
         #[test]

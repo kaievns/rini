@@ -119,6 +119,7 @@ pub fn handle_window_destroyed(
         drag.skip_layout_for_window = None;
     }
     Ok(EventOutcome::window_membership_changed(true, false)
+        .with_forgotten_window(wid)
         .with_layout_event(LayoutEvent::WindowRemoved(wid)))
 }
 

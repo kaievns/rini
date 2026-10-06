@@ -97,14 +97,14 @@ pub(in crate::transitions) fn worth_flying(moving_drawable: bool, running: bool)
 }
 
 /// The window server ids a border companion may never be: everything rini manages, the pass's windows
-/// and every window the pictures service holds or owes a picture of. Synthetic (companion) ids carry
-/// pid 0 and are left out, or a border seen once could never match again.
+/// and every window the pictures service holds or owes a picture of. Synthetic (companion) ids are
+/// left out, or a border seen once could never match again.
 pub(in crate::transitions) fn managed_server_ids(
     pass: &std::collections::HashSet<u32>,
     pictured: impl Iterator<Item = WindowId>,
 ) -> std::collections::HashSet<u32> {
     let mut ids = pass.clone();
-    ids.extend(pictured.filter(|w| w.pid != 0).map(|w| w.idx.get()));
+    ids.extend(crate::pictures::domain::identity::managed_server_ids(pictured));
     ids
 }
 

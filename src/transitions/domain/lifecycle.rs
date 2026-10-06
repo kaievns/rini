@@ -539,6 +539,17 @@ impl Coordinator {
         matches!(self.state, State::Flying(_))
     }
 
+    /// Whether the running flight holds the picture of `window` delivered under `generation` at `frame`
+    /// to swap in later: the focus target's change waiting for the window losing focus to turn, or its
+    /// landing held back over its focused look. A tile takes every other picture as it is delivered,
+    /// or never.
+    pub fn holds(&self, window: WindowId, generation: Generation, frame: ScreenRect) -> bool {
+        let State::Flying(f) = &self.state else { return false };
+        f.stage.focus == Some(window)
+            && (f.held_change.is_some_and(|(held, at, _)| held == generation && at == frame)
+                || f.held_back.is_some_and(|(held, at)| held == generation && at == frame))
+    }
+
     /// Whether the overlay is up.
     pub fn is_shown(&self) -> bool {
         matches!(&self.state, State::Flying(f) if !matches!(f.phase, Phase::Preparing { .. }))
@@ -1736,6 +1747,32 @@ mod tests {
                 Command::Focus { window: w(2), focused: true },
             ]
         );
+    }
+
+    /// Only the target's change waiting for the old window and its landing held back over its focused
+    /// look are held for a swap later; a picture swapped in as it came, or one no tile takes, is not.
+    #[test]
+    fn the_flight_holds_only_the_targets_change_and_landing_it_swaps_later() {
+        let now = Instant::now();
+        let end = pan().tiles[1].end;
+        let mut c = running(pan(), now);
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now);
+        assert!(c.holds(w(2), g, end), "waits for the old window");
+        let mut elsewhere = end;
+        elsewhere.origin.x += 400.0;
+        assert!(!c.holds(w(2), g, elsewhere), "another picture of it");
+        c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::Landed }, now);
+        assert!(!c.holds(w(1), g, pan().tiles[0].end), "swapped in as it came");
+        c.on(Event::Tick { settled: false, landed: false }, now + CHANGE_EVERY);
+        assert!(!c.holds(w(2), g, end), "swapped in at last");
+
+        let mut c = running(StageSummary { focused_look: Some(w(2)), ..pan() }, now);
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
+        assert!(c.holds(w(2), g, end), "over its focused look until focus hands over");
+        c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
+        assert!(!c.holds(w(2), g, end), "lifted");
     }
 
     /// The target's change held for the old window is of the target focus left: a press moving focus

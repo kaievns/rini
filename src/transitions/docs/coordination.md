@@ -160,7 +160,12 @@ started. A picture the service decided under the generation before is still draw
 its window's end: the service runs on its own thread, so a delivery is often on its way while a pass is
 composed, and it is never delivered again, since a retarget keeps a window landed where it still ends
 and a change already seen. A window the merge sends somewhere new starts its print afresh in the
-service, so its landing there is delivered whatever it looks like.
+service, so its landing there is delivered whatever it looks like. A tile takes a delivered
+picture as it comes, or the coordinator holds it to swap in later: the target's change waiting for
+the window losing focus to turn, or its landing held back over its focused look. The engine keeps a
+delivery only while the coordinator holds it (`Coordinator::holds`), so never one a tile turned down,
+one that comes after the lift or one under a flight before: no tile takes those later, and the
+service's cache already holds them.
 
 The lift waits for the clock, the tiles presented where they end and the real windows where they were
 written, or for `LIFT_GRACE` past the clock ("Real windows land before lift"). What follows it is
@@ -703,11 +708,16 @@ a per-tile discontinuity in a flight that is otherwise rigid, and a
 picture of a window that no longer exists. Under load it ran 25ms ahead
 of the survivors' clock; on the window-server close path it composed
 `exits=0` and left a gap (log 2026-09-16 2:05). What stays is the
-pictures service's forget, sent once per close on either path: the AX
-`WindowDestroyed` while the window still exists, or the window-server
-disappearance through `EventOutcome::forgotten_windows` ahead of the
-layout events. The gap between the window vanishing and the survivors
-moving is AX latency plus the coalesce window, and is accepted.
+pictures service's forget, sent once per window that leaves:
+`handle_window_destroyed`, which the AX `WindowDestroyed`, the
+window-server disappearance, a discovery's stale cleanup and an
+application's quit all go through, puts it on
+`EventOutcome::forgotten_windows` ahead of the layout events, and finds
+nothing to forget once the window is gone; a rekey forgets the old id.
+An AX `WindowDestroyed` during refresh quarantine forgets nothing: the
+element can be replaced while the window lives. The gap between the
+window vanishing and the survivors moving is AX latency plus the
+coalesce window, and is accepted.
 
 ## A grow holds, then reveals
 
@@ -778,7 +788,10 @@ running, carrying real border windows as tiles:
   flight" in `src/animation/docs/animation-smoothness.md`).
 - Captured and cached like any window, keyed by synthetic ids; no picture
   yet means skipped this flight and warmed for the next. Companions join the
-  post-flight warm set because borders recolor with focus.
+  post-flight warm set because borders recolor with focus. A companion's
+  picture goes at the first release after the window server no longer has its
+  window ("A window is pictured once, under the id it flies by" in
+  `src/pictures/docs/README.md`).
 - Nothing rini manages can be a companion (`managed_server_ids`: the pass's
   windows plus every window the cache holds or owes a picture to), and a
   parked window never traces or is traced (`companion_of`). Every parked

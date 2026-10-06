@@ -130,8 +130,9 @@ fn sync_window_server_id_mapping(
                 previous_wid,
                 wid,
             );
-            outcome =
-                outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(previous_wid));
+            outcome = outcome
+                .with_forgotten_window(previous_wid)
+                .with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(previous_wid));
             state.windows.remove_window(previous_wid);
         }
         if let (Some(record), Some(current_space)) = (

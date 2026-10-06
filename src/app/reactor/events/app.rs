@@ -1,12 +1,14 @@
 use tracing::debug;
 
 use crate::app::reactor::AppState;
-use crate::app::reactor::events::{EventOutcome, WindowDiscoveryRequest};
-use crate::app::reactor::managers::AppManager;
+use crate::app::reactor::events::{EventOutcome, WindowDiscoveryRequest, window};
+use crate::app::reactor::managers::{AppManager, DragManager};
+use crate::app::reactor::state::RiniState;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
+use crate::windows::domain::transaction::TransactionManager;
 use crate::workspaces::LayoutEvent;
 use rini_core::ids::WindowId;
 
@@ -46,13 +48,27 @@ pub fn handle_application_terminated(pid: i32) -> anyhow::Result<EventOutcome> {
         .with_app_request(pid, crate::windows::domain::request::Request::Terminate))
 }
 
+/// No Accessibility destruction follows once the thread has stopped, so each window still held goes
+/// here.
 pub fn handle_application_thread_terminated(
     apps: &mut AppManager,
+    state: &mut RiniState,
+    transactions: &TransactionManager,
+    drag: &mut DragManager,
     pid: i32,
 ) -> anyhow::Result<EventOutcome> {
     apps.apps.remove(&pid);
-    Ok(EventOutcome::window_membership_changed(false, true)
-        .with_layout_event(LayoutEvent::AppClosed(pid)))
+    let mut outcome = EventOutcome::window_membership_changed(false, true);
+    let windows: Vec<WindowId> = state.windows.window_ids_for_pid(pid).collect();
+    for window in windows {
+        outcome.absorb(window::handle_window_destroyed(
+            state,
+            transactions,
+            drag,
+            window::WindowDestroyedPayload { window },
+        )?);
+    }
+    Ok(outcome.with_arrange_passes(1).with_layout_event(LayoutEvent::AppClosed(pid)))
 }
 
 #[derive(Debug, Clone, Copy)]

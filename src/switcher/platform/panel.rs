@@ -38,7 +38,7 @@ use tracing::{debug, warn};
 use crate::bar::domain::palette;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
-use crate::pictures::platform::layer::{set_contents, set_layer_contents};
+use crate::pictures::platform::layer::{clear_contents, set_contents, set_layer_contents};
 use crate::pictures::platform::picture::Picture;
 use crate::pictures::platform::service::Pictures;
 use crate::switcher::domain::entries::{BEHIND, CardBehind, Entry, cards_behind};
@@ -636,17 +636,7 @@ impl SwitcherPanel {
             }
             let slots = cards_behind(&row.behind);
             for (card, slot) in self.behind.get(index).into_iter().flatten().zip(slots) {
-                match slot {
-                    CardBehind::Shows(window) => {
-                        card.setHidden(false);
-                        // Filled and cropped: only the card's top edge shows, and a fitted picture in
-                        // a narrower card would leave that edge a band of placeholder.
-                        draw_picture(card, pictures.get(&window), unsafe {
-                            objc2_quartz_core::kCAGravityResizeAspectFill
-                        });
-                    }
-                    CardBehind::Hidden => card.setHidden(true),
-                }
+                draw_card_behind(card, slot, &pictures);
             }
             if let Some(badge) = self.icons.get(index) {
                 match badges.get(index).and_then(|icon| icon.clone()) {
@@ -758,7 +748,29 @@ fn draw_picture(card: &CALayer, picture: Option<&Picture>, gravity: &CALayerCont
             set_layer_contents(card, picture);
         }
         // Left as the placeholder slab. A card with no picture still reads as a card.
-        None => unsafe { card.setContents(None) },
+        None => clear_contents(card),
+    }
+}
+
+/// A card behind a row's top card, filled and cropped: only its top edge shows, and a fitted picture
+/// in a narrower card would leave that edge a band of placeholder. One past the row's depth is hidden
+/// holding no picture, as nothing shows it.
+fn draw_card_behind(
+    card: &CALayer,
+    slot: CardBehind,
+    pictures: &HashMap<rini_core::ids::WindowId, Picture>,
+) {
+    match slot {
+        CardBehind::Shows(window) => {
+            card.setHidden(false);
+            draw_picture(card, pictures.get(&window), unsafe {
+                objc2_quartz_core::kCAGravityResizeAspectFill
+            });
+        }
+        CardBehind::Hidden => {
+            clear_contents(card);
+            card.setHidden(true);
+        }
     }
 }
 
@@ -788,6 +800,26 @@ mod tests {
             icon: None,
             behind: Vec::new(),
         }
+    }
+
+    /// A card behind shows its window's picture, and one past the row's depth is hidden letting go of
+    /// the picture an earlier switch left on it.
+    #[test]
+    fn a_hidden_card_behind_holds_no_picture() {
+        use rini_geometry::space::ScreenSize;
+
+        use crate::pictures::platform::picture::test_picture;
+
+        let window = WindowId::new(1, 2);
+        let pictures: HashMap<WindowId, Picture> =
+            [(window, test_picture(ScreenSize::new(800.0, 600.0)))].into_iter().collect();
+        let card = CALayer::layer();
+        draw_card_behind(&card, CardBehind::Shows(window), &pictures);
+        assert!(!card.isHidden());
+        assert!(unsafe { card.contents() }.is_some(), "its window's picture");
+        draw_card_behind(&card, CardBehind::Hidden, &pictures);
+        assert!(card.isHidden());
+        assert!(unsafe { card.contents() }.is_none(), "let go of");
     }
 
     /// A switch reads and warms the cards it draws: each row's top window, then those behind it.

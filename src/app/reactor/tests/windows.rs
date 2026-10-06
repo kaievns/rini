@@ -314,12 +314,7 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let wid = WindowId::new(1, 1);
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    let forgotten = pictures_asked(&mut pictures)
-        .iter()
-        .filter(|command| {
-            matches!(command, crate::pictures::platform::service::Command::Forget(window) if *window == wid)
-        })
-        .count();
+    let forgotten = forgotten(&mut pictures);
     while let Ok((_, event)) = animation_rx.try_recv() {
         if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
             assert!(
@@ -328,16 +323,15 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
             );
         }
     }
-    assert_eq!(forgotten, 1, "exactly one forget");
+    assert_eq!(forgotten, vec![wid], "exactly one forget");
     assert!(
         reactor.state.windows.window(wid).is_none(),
         "the window state is still removed"
     );
 }
 
-/// The window server reports a close ~15ms before AX does. That path removes the window inside a
-/// workflow with no reactor, so the forget rides on the outcome: still exactly one forget, and the
-/// late AX `WindowDestroyed` finds no window and adds nothing.
+/// The window server reports a close ~15ms before AX does: still exactly one forget, and the late
+/// AX `WindowDestroyed` finds no window and adds nothing.
 #[test]
 fn a_window_server_promoted_close_is_forgotten_once() {
     let (mut apps, mut reactor) = test_context();
@@ -366,12 +360,7 @@ fn a_window_server_promoted_close_is_forgotten_once() {
 
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    let forgotten = pictures_asked(&mut pictures)
-        .iter()
-        .filter(|command| {
-            matches!(command, crate::pictures::platform::service::Command::Forget(window) if *window == wid)
-        })
-        .count();
+    let forgotten = forgotten(&mut pictures);
     while let Ok((_, event)) = animation_rx.try_recv() {
         if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
             assert!(
@@ -381,9 +370,126 @@ fn a_window_server_promoted_close_is_forgotten_once() {
         }
     }
     assert_eq!(
-        forgotten, 1,
+        forgotten,
+        vec![wid],
         "one forget, from the promotion; the AX destruction adds none"
     );
+}
+
+/// Every window the pictures service was told to forget, in order.
+fn forgotten(pictures: &mut PicturesAsked) -> Vec<WindowId> {
+    pictures_asked(pictures)
+        .into_iter()
+        .filter_map(|command| match command {
+            crate::pictures::platform::service::Command::Forget(window) => Some(window),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An application that quits takes its windows with it, and no Accessibility destruction follows
+/// once its thread has stopped: each window is forgotten once there, and its record goes.
+#[test]
+fn an_application_that_quits_forgets_each_of_its_windows_once() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(2));
+    apps.make_app_and_settle(&mut reactor, 2, make_windows(1));
+    apps.requests();
+    let mut pictures = reactor.connect_test_pictures();
+
+    reactor.handle_event(Event::ApplicationThreadTerminated(1));
+    reactor.handle_event(Event::WindowDestroyed(WindowId::new(1, 1)));
+
+    let mut forgotten = forgotten(&mut pictures);
+    forgotten.sort();
+    assert_eq!(
+        forgotten,
+        vec![WindowId::new(1, 1), WindowId::new(1, 2)],
+        "each window of the application once, and none of another's"
+    );
+    assert_eq!(reactor.state.windows.window_ids_for_pid(1).count(), 0, "its records go");
+    assert!(reactor.state.windows.window(WindowId::new(2, 1)).is_some());
+}
+
+/// A window the application no longer lists and the window server has ordered out is retired by
+/// discovery, and forgotten once.
+#[test]
+fn a_window_stale_cleanup_retires_is_forgotten_once() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(2));
+    apps.requests();
+    let mut pictures = reactor.connect_test_pictures();
+    let (gone, kept) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    let wsid = reactor.test_window_server_id(gone);
+
+    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.discover_test_windows(1, Vec::new(), vec![kept]);
+    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
+    assert!(reactor.state.windows.window(gone).is_none(), "the cleanup retires it");
+    reactor.handle_event(Event::WindowDestroyed(gone));
+
+    assert_eq!(forgotten(&mut pictures), vec![gone]);
+}
+
+/// A minimised window is no longer managed, and the window server closing it still forgets it once.
+#[test]
+fn a_minimised_window_the_window_server_closes_is_forgotten_once() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(2));
+    let wid = WindowId::new(1, 1);
+    reactor.handle_event(Event::WindowMinimized(wid));
+    apps.requests();
+    let mut pictures = reactor.connect_test_pictures();
+    let wsid = reactor.test_window_server_id(wid);
+
+    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
+    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
+    assert!(reactor.state.windows.window(wid).is_none(), "the promotion removes the window");
+    reactor.handle_event(Event::WindowDestroyed(wid));
+
+    assert_eq!(forgotten(&mut pictures), vec![wid]);
+}
+
+/// A window found again under a new id for the same server window leaves its old id behind: the
+/// old id is forgotten once, and the new one is not.
+#[test]
+fn a_rekeyed_window_forgets_its_old_id_once() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(1));
+    apps.requests();
+    let mut pictures = reactor.connect_test_pictures();
+    let (old, new) = (WindowId::new(1, 1), WindowId::new(1, 99));
+
+    rekey_window(&mut reactor, old, new);
+    assert!(reactor.state.windows.window(old).is_none());
+    assert!(reactor.state.windows.window(new).is_some());
+    reactor.handle_event(Event::WindowDestroyed(old));
+
+    assert_eq!(forgotten(&mut pictures), vec![old]);
+}
+
+/// An Accessibility destruction during a refresh quarantine can be an element replaced while the
+/// window lives on, so the window keeps its pictures.
+#[test]
+fn a_window_destroyed_during_refresh_quarantine_is_not_forgotten() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(2));
+    apps.requests();
+    let mut pictures = reactor.connect_test_pictures();
+    let wid = WindowId::new(1, 1);
+
+    reactor.refresh_quarantine_manager.sleeping = true;
+    reactor.handle_event(Event::WindowDestroyed(wid));
+
+    assert!(reactor.state.windows.window(wid).is_some(), "the window stays");
+    assert_eq!(forgotten(&mut pictures), Vec::<WindowId>::new());
 }
 
 #[test]

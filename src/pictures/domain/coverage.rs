@@ -89,21 +89,6 @@ pub fn needs_capture<U: PointSpace>(cached: Option<Coverage>, size: Size<U>) -> 
     }
 }
 
-/// Whether a fresh desktop capture is worth drawing behind the moving strips.
-///
-/// Rejects a composite whose wallpaper window was missing, and one that does not span the display,
-/// since either draws as a black screen for the length of an animation. Rejecting means keeping
-/// whatever is already drawn, so a wallpaperless capture is still accepted when there is nothing to
-/// keep. See "The wallpaper is not reliably a window" in `src/pictures/docs/capture-research.md`.
-pub fn is_backdrop_worth_drawing(
-    have_one_already: bool,
-    has_wallpaper: bool,
-    covered: ScreenSize,
-    display: ScreenSize,
-) -> bool {
-    spans_display(covered, display) && (has_wallpaper || !have_one_already)
-}
-
 /// Whether a desktop picture is the size of the display it is about to be drawn on.
 ///
 /// The backdrop layer is sized from the picture rather than from the overlay, which keeps it in register
@@ -170,6 +155,14 @@ mod tests {
             !spans_display(size(1725.0, 1117.0), size(1728.0, 1117.0)),
             "3pt short is not the display"
         );
+    }
+
+    /// A composite short of the display draws from the top-left at its own size, the bar strip
+    /// partway up the screen; one of two displays' desktops cannot be drawn as one backdrop.
+    #[test]
+    fn a_desktop_short_of_the_display_or_past_it_does_not_span_it() {
+        assert!(!spans_display(size(1728.0, 1085.0), size(1728.0, 1117.0)));
+        assert!(!spans_display(size(3456.0, 1117.0), size(1728.0, 1117.0)));
     }
 
     /// Fresh pictures are left alone — re-capturing every animated window per keystroke is churn —
@@ -277,78 +270,6 @@ mod tests {
         let a = coverage((40.0, 1081.0), (859.0, 1081.0));
         let b = coverage((2.0, 1081.0), (859.0, 1081.0));
         assert!(should_replace(Some(a), b));
-    }
-
-    /// The measured failure: the composite came back with the icons and widgets but no wallpaper, and
-    /// drew as a black screen for the whole animation.
-    #[test]
-    fn a_desktop_capture_missing_its_wallpaper_is_rejected() {
-        assert!(!is_backdrop_worth_drawing(
-            true,
-            false,
-            size(1728.0, 1117.0),
-            size(1728.0, 1117.0)
-        ));
-    }
-
-    #[test]
-    fn a_desktop_capture_with_its_wallpaper_is_drawn() {
-        assert!(is_backdrop_worth_drawing(
-            true,
-            true,
-            size(1728.0, 1117.0),
-            size(1728.0, 1117.0)
-        ));
-    }
-
-    #[test]
-    fn a_wallpaperless_capture_is_still_drawn_when_there_is_nothing_to_keep() {
-        // Rejecting it would leave the bare black window, which is worse than a desktop with no photo.
-        assert!(is_backdrop_worth_drawing(
-            false,
-            false,
-            size(1728.0, 1117.0),
-            size(1728.0, 1117.0)
-        ));
-    }
-
-    #[test]
-    fn a_desktop_capture_shorter_than_the_display_is_rejected() {
-        // Drawn from the top-left at its own size, so the rest of the screen stays black and the
-        // captured bar strip lands partway up the display.
-        assert!(!is_backdrop_worth_drawing(
-            true,
-            true,
-            size(1728.0, 1085.0),
-            size(1728.0, 1117.0)
-        ));
-        assert!(!is_backdrop_worth_drawing(
-            false,
-            true,
-            size(1728.0, 1085.0),
-            size(1728.0, 1117.0)
-        ));
-    }
-
-    #[test]
-    fn a_desktop_capture_spanning_more_than_the_display_is_rejected() {
-        // What a composite of two displays' desktops measures, which cannot be drawn as one backdrop.
-        assert!(!is_backdrop_worth_drawing(
-            true,
-            true,
-            size(3456.0, 1117.0),
-            size(1728.0, 1117.0)
-        ));
-    }
-
-    #[test]
-    fn a_desktop_capture_a_rounding_error_short_is_still_drawn() {
-        assert!(is_backdrop_worth_drawing(
-            true,
-            true,
-            size(1727.5, 1116.5),
-            size(1728.0, 1117.0)
-        ));
     }
 
     /// The measured failure: a full-width capture drawn into a half-width frame, squashed to fill.

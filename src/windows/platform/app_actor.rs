@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
-use objc2_core_foundation::{CFRunLoop, CGRect};
+use objc2_core_foundation::CGRect;
 use tokio::sync::oneshot;
-use tokio::{join, select};
+use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Span, debug, info, instrument, trace, warn};
 
@@ -248,6 +248,8 @@ impl<W: AxWorld> State<W> {
         }
     }
 
+    /// Ends when the requests and notifications do, dropping any raise under way. Raises never end
+    /// on their own, since their sender lives in the state, and the thread lives as long as this task.
     async fn run(
         self,
         requests_rx: channels::Receiver<Request>,
@@ -255,10 +257,11 @@ impl<W: AxWorld> State<W> {
         raises_rx: channels::Receiver<RaiseRequest>,
     ) {
         let this = RefCell::new(self);
-        join!(
-            Self::handle_incoming(&this, requests_rx, notifications_rx),
-            Self::handle_raises(&this, raises_rx),
-        );
+        select! {
+            biased;
+            () = Self::handle_incoming(&this, requests_rx, notifications_rx) => {}
+            () = Self::handle_raises(&this, raises_rx) => {}
+        }
     }
 
     async fn handle_incoming(
@@ -437,7 +440,6 @@ impl<W: AxWorld> State<W> {
     fn handle_request(&mut self, request: Request) -> Result<bool, AxError> {
         match request {
             Request::Terminate => {
-                CFRunLoop::current().unwrap().stop();
                 self.send_event(Event::ApplicationThreadTerminated(self.pid));
                 return Ok(true);
             }
@@ -1865,6 +1867,87 @@ mod tests {
             .expect("registers");
 
         assert!(!info.is_standard, "no readable title element means not standard");
+    }
+
+    /// Runs the actor over `requests` with a raise of `raised` queued ahead of them, and answers
+    /// whether its task finished. Every sender stays open, so only a request can end it, and one poll
+    /// is all it takes when everything it needs is already queued: a task still pending after that is
+    /// waiting for more, which is a thread that never ends.
+    fn run_with_a_raise_queued(
+        mut state: State<FakeAx>,
+        raised: WindowId,
+        requests: Vec<Request>,
+    ) -> bool {
+        let (requests_tx, requests_rx) = channels::channel();
+        let (_notifications_tx, notifications_rx) = channels::channel();
+        let (raises_tx, raises_rx) = channels::channel();
+        raises_tx.send(RaiseRequest(vec![raised], CancellationToken::new(), 1, Quiet::No));
+        state.raises_tx = raises_tx;
+        for request in requests {
+            requests_tx.send(request);
+        }
+        let mut task = std::pin::pin!(state.run(requests_rx, notifications_rx, raises_rx));
+        let finished = task
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            .is_ready();
+        drop(requests_tx);
+        finished
+    }
+
+    /// A window the fake can raise without the window server: with no server id, a raise asks
+    /// nothing of SkyLight and goes straight to Accessibility.
+    fn raisable(window: u32) -> (State<FakeAx>, Sink, WindowId) {
+        let (mut state, sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
+        let wid = state
+            .register_window(window, peer(window, rect(0., 0., 100., 100.)))
+            .expect("registers")
+            .1;
+        state.ax.server_ids.remove(&window);
+        sink.0.borrow_mut().clear();
+        (state, sink, wid)
+    }
+
+    fn raised(sink: &Sink) -> bool {
+        sink.0.borrow().iter().any(|event| matches!(event, Event::RaiseCompleted { .. }))
+    }
+
+    fn told_the_thread_ended(sink: &Sink) -> bool {
+        sink.0
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, Event::ApplicationThreadTerminated(PID)))
+    }
+
+    /// The reactor's `Terminate` ends the thread's task, and a raise still queued goes with it rather
+    /// than keep the thread, its observer, its elements and its window map for the life of rini.
+    #[test]
+    fn terminating_ends_the_task_with_a_raise_still_queued() {
+        let (state, sink, wid) = raisable(7);
+
+        assert!(
+            run_with_a_raise_queued(state, wid, vec![Request::Terminate]),
+            "the task finished"
+        );
+        assert!(told_the_thread_ended(&sink), "and the reactor heard so");
+        assert!(!raised(&sink), "the queued raise was dropped, not carried out");
+    }
+
+    /// An application that quits without notice ends the thread's task at the first request that
+    /// fails for it, a raise still queued or not.
+    #[test]
+    fn a_request_failing_with_the_application_gone_ends_the_task_with_a_raise_still_queued() {
+        let (mut state, sink, wid) = raisable(7);
+        state.ax.busy = true;
+        state.ax.has_quit = true;
+
+        assert!(
+            run_with_a_raise_queued(state, wid, vec![Request::GetVisibleWindows]),
+            "the task finished"
+        );
+        assert!(told_the_thread_ended(&sink), "and the reactor heard so");
+        assert!(!raised(&sink), "the queued raise was dropped, not carried out");
     }
 
     fn launch(state: &mut State<FakeAx>, patience: Duration) -> bool {

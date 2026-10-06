@@ -381,6 +381,9 @@ impl AxWorld for FakeAx {
     }
 
     fn windows(&self, _app: &u32) -> Result<Vec<u32>, AxError> {
+        if self.busy {
+            return Self::busy();
+        }
         Ok(self.windows.clone())
     }
 
