@@ -2417,7 +2417,8 @@ mod tests {
 
     /// An entrance grows from no width, so its corner grows with it: at every key the silhouette,
     /// the mask's hole, the hairline and the picture round to the one corner, clamped to that key's
-    /// size.
+    /// size. A resize after it that keeps the corner takes the picture's corner away with the
+    /// hairline's, or it would go on growing from none.
     #[test]
     fn a_resize_carries_one_corner_on_every_piece() {
         let (from, to): (GroupRect, GroupRect) =
@@ -2439,6 +2440,11 @@ mod tests {
             installed(&tile.decorations.shadow_mask, "rini.tile.mask.path", path_of),
             expected(&track, |v| mask_path(size_of(v), corner(v)))
         );
+
+        let held = tile_track(typed(4.0, 32.0, 1200.0, 1081.0), to, 100.0, 0.35);
+        install_tile_track(&tile, &held);
+        assert_eq!(animation_keys(&tile.picture), [TILE_ANIMATION_KEY, TILE_SIZE_KEY], "the corner holds");
+        assert!(!animation_keys(&tile.decorations.hairline).contains(&"rini.tile.hairline.corner".to_owned()));
     }
 
     /// A resize animates the shadow's silhouette, its mask and the outline as paths. Handed over as
