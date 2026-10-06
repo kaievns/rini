@@ -268,34 +268,6 @@ track has played only its model moves. Shadow, mask, crop pieces and hairline fo
 The caller is the coordinator (`src/transitions/domain/lifecycle.rs`); the
 flight engine carries its snaps out.
 
-**The hairline.** No capture carries the hairline macOS composites around a
-window ("The hairline is composited outside every capture" in
-`src/pictures/docs/capture-research.md`), so the overlay draws it over every
-tile as a constant (`domain::motion::hairline`). The ring is a `CALayer` with a
-1pt border (`RING_PT`) of white at 0.20 on the focused window and 0.18 on the
-rest (`ring_alpha`), the fit measured there in dark mode; light mode is not
-measured. The outline is a `CAShapeLayer` stroking 0.5pt (`OUTLINE_PT`) of
-black at 0.9 along a rounded rect a quarter point outside the window
-(`outline`), so the stroke covers the half point just past its edge; a border
-layer at a half-point origin landed one pixel too far out ("The handover,
-measured" in `capture-overlay-research.md`). Both round to the window's radius
-as `pictures` measured it (`OverlayTile::radius`, which the flight engine fills
-from `Pictures::knowledge`), else 10pt, never past half the shorter side
-(`corner_radius`). The ring is a third layer beside the picture and the
-caster, an eighth step in front of the picture and under a companion's quarter
-step (`RING_Z`), with the outline as its child: inside the picture, a corner
-clip would cut the outline away (`a_corner_clip_leaves_the_hairline_whole`).
-It rides every move with the picture; a resize carries its bounds on the
-tile's own track and animates its corner and the outline's path between the two
-sizes (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it
-with the tile. Both are laid after the tile's frame, on every placement, or a
-pooled layer's autoresizing carries the old size, and a pooled tile's radius
-can have been measured since its last flight. Companions wear none.
-`TileOverlay::set_tile_focused` switches one tile's ring white and shadow
-depth in a hard cut, as that window's turned picture comes in mid-flight; the
-prototype set the ring only at install. When each tile turns is the
-coordinator's (`Command::Focus`).
-
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
@@ -493,7 +465,8 @@ changes is how the picture maps onto it (`content_mode` in
   seam sits just below the title bar; cutting at the bottom instead read as
   the window sliding into a slot. Content never stretches — the moving edges
   swallow or reveal it — and all four rounded corners ride through intact,
-  under a hairline drawn at every size ("The hairline"). A first cut used `contentsCenter` (nine-part
+  under a hairline drawn at every size ("The hairline and the shadow, as drawn" in
+  `src/decorations/docs/README.md`). A first cut used `contentsCenter` (nine-part
   stretching); it kept the corners but read as the window stretching, which
   it is. Wrong-shaped cached pictures use the same mapping instead of being
   dropped — rapid preset cycling used to drop the resized window's tile
@@ -510,7 +483,7 @@ changes is how the picture maps onto it (`content_mode` in
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
   IS the per-frame crop layout; one transaction installs frame, contentsRect,
-  shadow-path, ring-mask, hairline-corner and outline-path animations on the shared curve.
+  shadow-path, shadow-mask, hairline-corner and outline-path animations on the shared curve.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
   seam a few points mid-flight inside the window's own content. A loose
   tile's retarget continues from the position and size the flight's score
@@ -521,7 +494,7 @@ changes is how the picture maps onto it (`content_mode` in
 - **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, so it
   degrades continuously into a plain reveal as a frame approaches zero — no
   seam pops mid-flight, no band ever wider than its frame.
-- The caster's ring mask is created once per tile and reshaped in place; a
+- The caster's mask is created once per tile and reshaped in place; a
   resize animates its path and the shadow's silhouette between the two
   endpoint shapes, which interpolate because both are built by the same
   constructors.

@@ -33,12 +33,12 @@ use tracing::{debug, warn};
 
 use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
-use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::score::{Edit, MediaClock, Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
+use crate::decorations::domain::shape;
 use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
@@ -683,7 +683,7 @@ fn sized_targets(windows: Vec<(WindowId, ScreenRect)>) -> Vec<PictureTarget> {
 /// desktop behind it has the wallpaper in its corners. `None` draws it whole.
 fn corner_clip(knowledge: Knowledge, picture: &Picture, size: TileSize) -> Option<f64> {
     (picture.source == Route::SkyLight && knowledge.after_alpha() == Call::Baked)
-        .then(|| corner_radius(knowledge.radius, size))
+        .then(|| shape::radius(knowledge.radius, size))
 }
 
 /// The end state's watches: one slot for each kind, kept from one generation to the next and
@@ -2651,7 +2651,7 @@ mod tests {
     /// What the flight composed, as the coordinator's commands change it.
     mod composed {
         use super::*;
-        use crate::pictures::domain::knowledge::CORNER_RADIUS;
+        use crate::decorations::domain::shape::CORNER_RADIUS;
 
         #[test]
         fn frame_zeros_pictures_are_worn_by_their_tiles_and_never_by_a_border() {

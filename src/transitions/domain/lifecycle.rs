@@ -303,10 +303,11 @@ pub enum Command {
     Snap { window: WindowId, frame: OverlayRect },
     /// The picture just swapped in shows the window focused: keep it as its focused look.
     KeepFocusedLook { generation: Generation, window: WindowId },
-    /// Draw `window`'s tile focused or not, its ring and its shadow, as its turned picture comes in:
-    /// the window focus leaves unfocused, and the focus target focused, which is focus handing over.
-    /// Until then the tiles are drawn focused where frame zero pictured focus: on the window focus
-    /// leaves, and on the target only when it flies its focused look (`StageSummary::parked_focus`).
+    /// Draw `window`'s tile focused or not, its hairline and its shadow, as its turned picture comes
+    /// in: the window focus leaves unfocused, and the focus target focused, which is focus handing
+    /// over. Until then the tiles are drawn focused where frame zero pictured focus: on the window
+    /// focus leaves, and on the target only when it flies its focused look
+    /// (`StageSummary::parked_focus`).
     Focus { window: WindowId, focused: bool },
     /// Overlay down. The quiet that follows ends with `Event::Quiet(generation)`.
     Lift { generation: Generation },
@@ -455,7 +456,7 @@ impl Flight {
 
     /// The target's changed picture held for the window losing focus, swapped in and kept as its
     /// focused look, and focus handed over, if it still fits. One that no longer does is dropped: its
-    /// ring turns with the next picture of it that fits, or at the last capture's ask.
+    /// hairline turns with the next picture of it that fits, or at the last capture's ask.
     fn swap_held_change(&mut self, out: &mut Vec<Command>) {
         let (Some((generation, frame, _)), Some(to)) = (self.held_change.take(), self.stage.focus) else {
             return;
@@ -1526,7 +1527,7 @@ mod tests {
     /// macOS turns the window focus leaves before the one gaining it. The target's change waits for
     /// the old window's, at most 15ms, and each tile is drawn focused or not with its own picture.
     #[test]
-    fn the_target_turns_after_the_window_losing_focus_and_each_ring_with_its_own_picture() {
+    fn the_target_turns_after_the_window_losing_focus_and_each_hairline_with_its_own_picture() {
         let now = Instant::now();
         let (old, new) = (pan().tiles[0].end, pan().tiles[1].end);
         let mut c = running(pan(), now);
@@ -1793,7 +1794,7 @@ mod tests {
     }
 
     /// A held change no longer fitting its tile, a press resizing the target meanwhile, turns nothing:
-    /// its ring waits for a picture of it that fits.
+    /// its hairline waits for a picture of it that fits.
     #[test]
     fn a_held_change_that_no_longer_fits_hands_nothing_over() {
         let now = Instant::now();

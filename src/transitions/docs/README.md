@@ -92,7 +92,7 @@ then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalle
 
 ## Detail
 
-- `docs/pictures-motion-transitions.md` — the three features, who talks to whom, the lifecycle's
+- `docs/pictures-motion-transitions.md` — the four features, who talks to whom, the lifecycle's
   states, and the decisions taken while Kai was away
 - [`coordination.md`](coordination.md) — how a flight runs: the lifecycle, layout changes and strip
   movements, routing, passes arriving mid-flight and pictures landing in one, focus changing during
@@ -119,8 +119,8 @@ the window server's report while the application in front owns it. A panel of an
 that takes the keys is seen only if the report names it, and the report names the key-focus process's
 frontmost document window, or if its application comes to the front: neither is measured for
 Spotlight or Raycast. Unseen, the window under it is still taken as key and its frame-zero picture
-kept as its focused look. Seen, its tile is still drawn focused until its own turn or the target's, ring
-and shadow over an unfocused picture.
+kept as its focused look. Seen, its tile is still drawn focused until its own turn or the target's,
+hairline and shadow over an unfocused picture.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
 `start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's

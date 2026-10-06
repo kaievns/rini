@@ -950,7 +950,7 @@ the window's own colour over white would be 0.55
 
 So a tile is two layers now: the picture, and a caster behind it carrying nothing
 but the shadow, masked by a `CAShapeLayer` whose path is the mask's own rect plus
-the window's rounded rect, wound even-odd, so only the ring outside the window is
+the window's rounded rect, wound even-odd, so only what lies outside the window is
 drawn. `SHADOW_REACH` is 70pt: the focused style (radius 14, offset 12) spends
 its ramp by about 54pt (three radii plus the offset), so the 40pt reach that fit
 the unfocused style clipped it into a straight edge.
@@ -958,8 +958,8 @@ the unfocused style clipped it into a straight edge.
 `CGPath::with_rounded_rect` with a zero radius or a zero dimension emits a plain
 rect, whose element structure differs from a rounded rect's; a `shadowPath` or
 mask `path` animation between the two does not interpolate, it cuts. An entrance
-growing from zero width popped its shadow this way, so `silhouette_path` and
-`ring_path` floor the size to 0.5pt and the radius to 0.01. The caster's resize
+growing from zero width popped its shadow this way, so `shape::silhouette` and
+`shape::shadow_mask` floor the size to 0.5pt and the radius to 0.01. The caster's resize
 animations use the same key prefix (`rini.tile`) as the plain move: a move leg
 retargeted into a resize otherwise left its old position animation fighting the
 resize's, and the shadow tore away from its tile.
@@ -1158,7 +1158,7 @@ measured").
 
 What each part of the prototype fixed:
 
-- **A constant hairline and outline replace the harvest.** A 1pt ring of white at 20% (18%
+- **A constant hairline and outline replace the harvest.** A 1pt line of white at 20% (18%
   unfocused) inside the edge, and a 0.5pt stroke of black at 90% half a point outside it, drawn
   as layers over every tile. The harvest left a tile with no outline whenever it had not run,
   which is the 53-level tail. A border layer at a half-point origin landed one pixel too far out,

@@ -13,9 +13,9 @@ use rini_geometry::space::{
     ContentsRect, PixelRect, PixelSize, PointSpace, ScreenSize, Size, ToCg,
 };
 
+use crate::decorations::domain::shape::CORNER_RADIUS;
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
-use crate::pictures::domain::knowledge::CORNER_RADIUS;
 use crate::pictures::domain::region::{WHOLE, unit_rect};
 use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
 

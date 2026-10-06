@@ -7,12 +7,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FEATURES: [&str; 10] = [
+const FEATURES: [&str; 11] = [
     "windows",
     "displays",
     "layout",
     "workspaces",
     "input",
+    "decorations",
     "pictures",
     "animation",
     "transitions",
@@ -55,7 +56,7 @@ const SKYLIGHT_VALUE_TYPES: [&str; 5] = [
 
 /// The features whose interfaces and `domain/` speak rini-geometry's spaces (`space` in
 /// `crates/rini-geometry`). CG geometry is their boundary, not their arithmetic.
-const TYPED: [&str; 3] = ["pictures", "animation", "transitions"];
+const TYPED: [&str; 4] = ["decorations", "pictures", "animation", "transitions"];
 
 /// CG geometry, and the conversions into it and out of it, that a typed feature leaves to its
 /// `platform/`. Bare names, so a conversion called, passed as a path or imported as a trait all count.

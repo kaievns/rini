@@ -295,7 +295,7 @@ focused only with its focused picture. A switch on again before then does not tu
 One starting off the display flies its focused look instead, drawn focused again, so a switch on turns
 it unfocused again as focus leaves it.
 A target's changed picture held for the old window is dropped when focus moves on, and one that no
-longer fits its tile, a press having resized it, hands nothing over: its ring turns with the next
+longer fits its tile, a press having resized it, hands nothing over: its hairline turns with the next
 picture of it that fits, or as the final capture is asked. A new target parked off the display flies
 its focused look, as the first pass's does.
 
@@ -346,12 +346,12 @@ anyway; two in one round swap old, then new. The watch reports the old window `L
 with no change, out of tries, refused or found clipped, and the target's picture waits no longer. A
 merge's retarget that carries it on reports it again under the new tag: the coordinator drops a report
 under the generation before. The target's changed picture is kept as its focused look,
-and its tile is drawn focused: focus hands over. Each tile's ring and shadow turn with its own picture
+and its tile is drawn focused: focus hands over. Each tile's hairline and shadow turn with its own picture
 (`TileOverlay::set_tile_focused`); Kai, 2026-10-05: "i'd like them to be orchestrated independently
 whenever blur or focus are done switching." A window losing focus whose turn has not shown when the
 target's does, one clipped, parked, never watched or out of tries, is drawn unfocused just before the
 target is drawn focused. One ending clipped by the display's edge keeps its frame-zero picture to the
-lift, only its ring and shadow turning, and its look turns at rest, pictured again at the quiet,
+lift, only its hairline and shadow turning, and its look turns at rest, pictured again at the quiet,
 unless it has a material: then it keeps its blurred picture until a flight next pictures it on screen
 ("Known debt" in `src/pictures/docs/README.md`). SkyLight returns only its visible part, and the one
 ScreenCaptureKit capture a flight lets through is the target's ("Decisions taken while Kai was away" in
