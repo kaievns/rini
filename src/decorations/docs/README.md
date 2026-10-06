@@ -10,10 +10,10 @@ decorations on each tile, is the one feature that names it.
 
 | | |
 |---|---|
-| `domain/shape.rs` | The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); the curve a corner rounds on (`curve`, `CONTINUOUS_REACH`) and a rounded rect on it as path segments (`rounded_rect`); the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given and floored so two of them interpolate |
+| `domain/shape.rs` | The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given and floored so two of them interpolate |
 | `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; and `Style::of`, the white line's alpha and the shadow for a window focused or not |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
-| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline (`hairline`, `outline`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner and curve (`corner_at`, `curve_at`, `place`), paints them by focus (`show`), hides them for a companion (`set_hidden`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own |
+| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline (`hairline`, `outline`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), hides them for a companion (`set_hidden`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
 | `platform/layers.rs`: `Resize` | A tile's resize as Core Animation plays it: an animation of a key path through each value a closure maps from the sizes the tile passes through (`point`, `rect`, `number`, `path`), and whether a value changes on the way (`changes`). The overlay fills it from the tile's track, so `decorations` never names the score. A platform trait, not a port: it speaks Core Animation |
 
 Its `domain/` speaks rini-geometry's `Tile` space (`crates/rini-geometry/docs/README.md`): every rect
@@ -136,16 +136,20 @@ layer's `cornerCurve`, the outline, the silhouette and the mask's hole through
 continuous rounded rect, three cubics a corner, the one SwiftUI's continuous `RoundedRectangle`
 draws. Rendered at 2x, no pixel of the silhouette or the mask's hole sits farther from Core
 Animation's corner than Core Animation's own circular clip sits from Core Graphics' circular fill,
-64 alpha levels (`every_path_follows_core_animation_s_corner_on_the_tile_s_curve`). At 8x its edge
+64 alpha levels (`every_path_follows_core_animation_s_corner_at_every_size`). At 8x its edge
 sits within 0.25 of an 8x pixel of Core Animation's at 12-40pt, the same as the circular pair; with
 the middle cubic's control at 0.18603501, as first built, it sat 2.45 off at 26pt, 0.61 device
 pixels.
 Where the corner's reach, 1.528665 radii (`shape::CONTINUOUS_REACH`, Core Animation's
-`cornerCurveExpansionFactor`), passes half the tile's shorter side, Core Animation draws a
-continuous corner as a shape that path does not match, up to 1420 pixels off on a 52x400 tile at
-26pt, so there every piece rounds circular together (`shape::curve`). Only a tile narrower than
-80pt at 26pt, or 49pt at 16pt, does: an entrance growing from no width. The circular corner is drawn
-in the same segments, so a resize across the two still interpolates.
+`cornerCurveExpansionFactor`), passes half the tile's shorter side, Core Animation still draws the
+corner at its full reach, the sides running back over each other, and so does
+`shape::rounded_rect`: at 2x it is within the same 64 levels on tiles 1-80pt wide at 0.5-26pt
+(`narrow`, and the test above). So every piece rounds on the one curve at every
+size, and every path is the same 18 segments, so any two interpolate. Only a tile narrower than
+80pt at 26pt, or 49pt at 16pt, passes the reach: an entrance growing from no width. There the
+outline's stroke runs along the sides where they run back, flat over the corners' edge, which
+dips at most 0.25pt below the side at the tile's middle: 127 pixels at 2x on a 52x400 tile at 26pt,
+63 at 60pt wide, 3 at 70pt (`lid`).
 
 **A continuous corner leaves each side 1.528665 × r from the corner**, against r for a circular
 one, and reads as off the side from 1.38-1.42 × r in Core Animation's render at 2x, where a row's
@@ -166,7 +170,7 @@ the query's cost, whose `on=1` rows are the on-screen windows of the first two r
 `docs/data/2026-10-06-corners/`, each built with `squircle.swift`: `pathfit`, the two curves' gap
 and the path against Core Animation's; `middle`, the middle cubic's control against Core
 Animation's at 8x, standalone; `booksfit`, Books windows 5489 and 5299 on each curve;
-`narrow`, the path where the reach passes half the side; `handover-model` and `sim-*.txt`, the
+`narrow`, the path where the reach passes half the side; `lid`, the outline's stroke there; `handover-model` and `sim-*.txt`, the
 handover check over a capture at each curve, and `handover-offsets`, with the picture shifted.
 `booksfit`'s hand-path column and the `path` rows of `sim-*.txt` drew the middle cubic at
 0.18603501; the captures are gone, so they were not run again, and the `border model` rows, on Core

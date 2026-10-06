@@ -10,12 +10,12 @@ use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColor, CGMutablePath, CGPath};
 use objc2_foundation::NSString;
 use objc2_quartz_core::{
-    CAAnimation, CALayer, CAPropertyAnimation, CAShapeLayer, kCACornerCurveCircular,
-    kCACornerCurveContinuous, kCAFillRuleEvenOdd,
+    CAAnimation, CALayer, CAPropertyAnimation, CAShapeLayer, kCACornerCurveContinuous,
+    kCAFillRuleEvenOdd,
 };
 use rini_geometry::space::{TileRect, TileSize, ToCg, Vector};
 
-use crate::decorations::domain::shape::{self, Curve, SHADOW_REACH, Segment};
+use crate::decorations::domain::shape::{self, SHADOW_REACH, Segment};
 use crate::decorations::domain::stack::{HAIRLINE_Z, SHADOW_Z};
 use crate::decorations::domain::style::{LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
 
@@ -103,6 +103,7 @@ impl DecorationLayers {
         let hairline = CALayer::layer();
         hairline.setAnchorPoint(CGPoint::new(0.0, 0.0));
         hairline.setBorderWidth(LIGHT_PT);
+        round_continuous(&hairline);
         let outline = CAShapeLayer::layer();
         outline.setAnchorPoint(CGPoint::new(0.0, 0.0));
         outline.setFillColor(None);
@@ -158,7 +159,6 @@ impl DecorationLayers {
             self.built.set(Some((size, corner)));
         }
         self.hairline.setCornerRadius(corner);
-        self.hairline.setCornerCurve(self.curve_at(size).as_layer());
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
     }
@@ -168,9 +168,6 @@ impl DecorationLayers {
     pub fn corner_at(&self, size: TileSize) -> f64 {
         shape::radius(self.radius, size)
     }
-
-    /// The curve a tile of `size` rounds its corner on, every piece of it.
-    pub fn curve_at(&self, size: TileSize) -> Curve { shape::curve(size, self.corner_at(size)) }
 
     /// Paints the hairline's white and the shadow's depth as `style` has them.
     pub fn show(&self, style: Style) {
@@ -230,29 +227,18 @@ impl DecorationLayers {
     }
 }
 
-/// The layer's own corner curve for `curve`.
-pub trait AsLayerCurve {
-    fn as_layer(self) -> &'static objc2_quartz_core::CALayerCornerCurve;
+/// Rounds `layer`'s corner on the window's own curve, continuous, the one every path here follows.
+pub fn round_continuous(layer: &CALayer) {
+    // SAFETY: Core Animation's constant string, alive for the process.
+    layer.setCornerCurve(unsafe { kCACornerCurveContinuous });
 }
 
-impl AsLayerCurve for Curve {
-    fn as_layer(self) -> &'static objc2_quartz_core::CALayerCornerCurve {
-        // SAFETY: Core Animation's constant strings, alive for the process.
-        unsafe {
-            match self {
-                Curve::Circular => kCACornerCurveCircular,
-                Curve::Continuous => kCACornerCurveContinuous,
-            }
-        }
-    }
-}
-
-/// Adds `rect` rounded at `corner` on `curve` to `path`.
-fn add_rounded(path: &CGMutablePath, rect: TileRect, corner: f64, curve: Curve) {
+/// Adds `rect` rounded at `corner` to `path`.
+fn add_rounded(path: &CGMutablePath, rect: TileRect, corner: f64) {
     let null = std::ptr::null();
     // SAFETY: a null transform means each point is added as given, to a path the caller owns.
     unsafe {
-        for segment in shape::rounded_rect(rect, corner, curve) {
+        for segment in shape::rounded_rect(rect, corner) {
             match segment {
                 Segment::Move(to) => CGMutablePath::move_to_point(Some(path), null, to.x, to.y),
                 Segment::Line(to) => CGMutablePath::add_line_to_point(Some(path), null, to.x, to.y),
@@ -272,23 +258,23 @@ fn add_rounded(path: &CGMutablePath, rect: TileRect, corner: f64, curve: Curve) 
     }
 }
 
-fn rounded_path(rect: TileRect, corner: f64, curve: Curve) -> CFRetained<CGPath> {
+fn rounded_path(rect: TileRect, corner: f64) -> CFRetained<CGPath> {
     let path = CGMutablePath::new();
-    add_rounded(&path, rect, corner, curve);
+    add_rounded(&path, rect, corner);
     CFRetained::from(&*path)
 }
 
-/// The outline's path around a window of `size` with corners of `corner`, on the tile's curve.
+/// The outline's path around a window of `size` with corners of `corner`.
 fn outline_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
     let (rect, radius) = shape::outline(size, corner);
-    rounded_path(rect, radius, shape::curve(size, corner))
+    rounded_path(rect, radius)
 }
 
 /// The window's silhouette with corners of `corner`, the shadow's shape, floored as
 /// `shape::silhouette` says.
 pub fn silhouette_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
     let (rect, radius) = shape::silhouette(size, corner);
-    rounded_path(rect, radius, shape::curve(size, corner))
+    rounded_path(rect, radius)
 }
 
 /// The shadow mask's path, the whole mask minus the window's shape with corners of `corner`, wound
@@ -303,13 +289,13 @@ pub fn shadow_mask_path(size: TileSize, corner: f64) -> CFRetained<CGMutablePath
     unsafe {
         CGMutablePath::add_rect(Some(&path), std::ptr::null(), whole.translate(into_mask).to_cg());
     }
-    add_rounded(&path, hole.translate(into_mask), radius, shape::curve(size, corner));
+    add_rounded(&path, hole.translate(into_mask), radius);
     path
 }
 
 #[cfg(test)]
 mod tests {
-    use objc2_quartz_core::CABasicAnimation;
+    use objc2_quartz_core::{CABasicAnimation, kCACornerCurveCircular};
 
     use super::*;
 
@@ -705,10 +691,10 @@ mod tests {
 
     /// Core Animation's clip and Core Graphics' fill of one circular corner sit up to 64 alpha
     /// levels apart at an edge pixel; the silhouette and the mask's hole sit no farther than that
-    /// from Core Animation's corner on the tile's curve, the one the hairline and a clipped picture
-    /// are drawn with.
+    /// from Core Animation's continuous corner, the one the hairline and a clipped picture are drawn
+    /// with, down to a tile far narrower than the corner's reach.
     #[test]
-    fn every_path_follows_core_animation_s_corner_on_the_tile_s_curve() {
+    fn every_path_follows_core_animation_s_corner_at_every_size() {
         let at = CGPoint::new(0.0, 0.0);
         let wide = TileSize::new(860.0, 1079.0);
         // SAFETY: a null transform means the path is taken as given.
@@ -716,9 +702,19 @@ mod tests {
         // SAFETY: Core Animation's constant strings.
         let floor = farthest(&clipped(wide, 26.0, unsafe { kCACornerCurveCircular }), &filled(wide, &circle, at, None));
         let into_tile = CGPoint::new(-SHADOW_REACH, -SHADOW_REACH);
-        for (w, h, corner) in [(860.0, 1079.0, 26.0), (1148.0, 1079.0, 16.0), (80.0, 400.0, 26.0), (60.0, 400.0, 26.0), (12.0, 400.0, 6.0)] {
+        for (w, h, corner) in [
+            (860.0, 1079.0, 26.0),
+            (1148.0, 1079.0, 16.0),
+            (80.0, 400.0, 26.0),
+            (60.0, 400.0, 26.0),
+            (52.0, 400.0, 26.0),
+            (32.0, 400.0, 16.0),
+            (12.0, 400.0, 6.0),
+            (1.0, 400.0, 0.5),
+        ] {
             let size = TileSize::new(w, h);
-            let theirs = clipped(size, corner, shape::curve(size, corner).as_layer());
+            // SAFETY: Core Animation's constant string.
+            let theirs = clipped(size, corner, unsafe { kCACornerCurveContinuous });
             let silhouette = filled(size, &silhouette_path(size, corner), at, None);
             // SAFETY: Core Animation's own fill-rule constant.
             let mask = filled(size, &shadow_mask_path(size, corner), into_tile, Some(unsafe { kCAFillRuleEvenOdd }));
@@ -729,12 +725,13 @@ mod tests {
     }
 
     #[test]
-    fn a_placed_tile_s_hairline_rounds_on_its_curve() {
+    fn the_hairline_rounds_on_the_continuous_curve_at_every_size() {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.radius = Some(26.0);
-        layers.place(TileSize::new(860.0, 1079.0));
-        assert_eq!(&*layers.hairline.cornerCurve(), unsafe { kCACornerCurveContinuous });
-        layers.place(TileSize::new(60.0, 400.0));
-        assert_eq!(&*layers.hairline.cornerCurve(), unsafe { kCACornerCurveCircular });
+        for size in [TileSize::new(860.0, 1079.0), TileSize::new(52.0, 400.0), TileSize::new(0.5, 400.0)] {
+            layers.place(size);
+            // SAFETY: Core Animation's constant string.
+            assert_eq!(&*layers.hairline.cornerCurve(), unsafe { kCACornerCurveContinuous }, "{size:?}");
+        }
     }
 }

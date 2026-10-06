@@ -1,0 +1,10 @@
+ 860x1079 r=26.00  stroke vs ring:    4 px off by >64; edge below the side at the middle 0.000pt
+  80x 400 r=26.00  stroke vs ring:    4 px off by >64; edge below the side at the middle 0.000pt
+  70x 400 r=26.00  stroke vs ring:    3 px off by >64; edge below the side at the middle 0.006pt
+  65x 400 r=26.00  stroke vs ring:   30 px off by >64; edge below the side at the middle 0.026pt
+  60x 400 r=26.00  stroke vs ring:   63 px off by >64; edge below the side at the middle 0.072pt
+  52x 400 r=26.00  stroke vs ring:  127 px off by >64; edge below the side at the middle 0.250pt
+  40x 400 r=16.00  stroke vs ring:   12 px off by >64; edge below the side at the middle 0.016pt
+  32x 400 r=16.00  stroke vs ring:   79 px off by >64; edge below the side at the middle 0.154pt
+  12x 400 r= 6.00  stroke vs ring:   20 px off by >64; edge below the side at the middle 0.058pt
+   4x 400 r= 2.00  stroke vs ring:    8 px off by >64; edge below the side at the middle 0.019pt

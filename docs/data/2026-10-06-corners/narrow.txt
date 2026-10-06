@@ -1,18 +1,18 @@
-      vs CA circular same r: max 0.831 px>0.5 136; best uniformly-scaled hand path r*0.99 px>0.5 0
- 860x1079 r=26.0 (reach 39.7 vs half side 430.0): hand path vs CA continuous max 0.475 px>0.5 0
-      vs CA circular same r: max 0.831 px>0.5 136; best uniformly-scaled hand path r*0.99 px>0.5 0
-  80x 400 r=26.0 (reach 39.7 vs half side 40.0): hand path vs CA continuous max 0.475 px>0.5 0
-      vs CA circular same r: max 0.831 px>0.5 132; best uniformly-scaled hand path r*0.76 px>0.5 1080
-  60x 400 r=26.0 (reach 39.7 vs half side 30.0): hand path vs CA continuous max 1.000 px>0.5 1080
-      vs CA circular same r: max 0.831 px>0.5 108; best uniformly-scaled hand path r*0.66 px>0.5 1420
-  52x 400 r=26.0 (reach 39.7 vs half side 26.0): hand path vs CA continuous max 1.000 px>0.5 1420
-      vs CA circular same r: max 0.545 px>0.5 40; best uniformly-scaled hand path r*0.82 px>0.5 356
-  40x 400 r=16.0 (reach 24.5 vs half side 20.0): hand path vs CA continuous max 1.000 px>0.5 356
-      vs CA circular same r: max 0.545 px>0.5 24; best uniformly-scaled hand path r*0.65 px>0.5 572
-  32x 400 r=16.0 (reach 24.5 vs half side 16.0): hand path vs CA continuous max 1.000 px>0.5 572
-      vs CA circular same r: max 0.490 px>0.5 0; best uniformly-scaled hand path r*0.65 px>0.5 380
-  26x 400 r=13.0 (reach 19.9 vs half side 13.0): hand path vs CA continuous max 1.000 px>0.5 380
-      vs CA circular same r: max 0.263 px>0.5 0; best uniformly-scaled hand path r*0.58 px>0.5 96
-  12x 400 r= 6.0 (reach 9.2 vs half side 6.0): hand path vs CA continuous max 1.000 px>0.5 96
-      vs CA circular same r: max 0.090 px>0.5 0; best uniformly-scaled hand path r*0.38 px>0.5 16
-   4x 400 r= 2.0 (reach 3.1 vs half side 2.0): hand path vs CA continuous max 0.651 px>0.5 16
+      vs CA circular same r: max 0.831 px>0.5 136; best uniformly-scaled hand path r*0.99 px>0.5 8
+ 860x1079 r=26.0 (reach 39.7 vs half side 430.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.831 px>0.5 136; best uniformly-scaled hand path r*0.99 px>0.5 8
+  80x 400 r=26.0 (reach 39.7 vs half side 40.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.831 px>0.5 132; best uniformly-scaled hand path r*0.99 px>0.5 8
+  60x 400 r=26.0 (reach 39.7 vs half side 30.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.831 px>0.5 108; best uniformly-scaled hand path r*0.99 px>0.5 8
+  52x 400 r=26.0 (reach 39.7 vs half side 26.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.545 px>0.5 40; best uniformly-scaled hand path r*0.99 px>0.5 0
+  40x 400 r=16.0 (reach 24.5 vs half side 20.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.545 px>0.5 24; best uniformly-scaled hand path r*0.99 px>0.5 0
+  32x 400 r=16.0 (reach 24.5 vs half side 16.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.490 px>0.5 0; best uniformly-scaled hand path r*0.99 px>0.5 0
+  26x 400 r=13.0 (reach 19.9 vs half side 13.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.263 px>0.5 0; best uniformly-scaled hand path r*0.97 px>0.5 0
+  12x 400 r= 6.0 (reach 9.2 vs half side 6.0): hand path vs CA continuous max 0.251 px>0.5 0
+      vs CA circular same r: max 0.090 px>0.5 0; best uniformly-scaled hand path r*0.78 px>0.5 0
+   4x 400 r= 2.0 (reach 3.1 vs half side 2.0): hand path vs CA continuous max 0.224 px>0.5 0

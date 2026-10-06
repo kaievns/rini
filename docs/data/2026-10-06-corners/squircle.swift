@@ -7,8 +7,8 @@ let K: [CGFloat] = [1.52866483, 1.08849323, 0.86840689, 0.63149399, 0.07491100, 
 
 func continuousPath(_ rect: CGRect, _ radius: CGFloat) -> CGPath {
     let p = CGMutablePath()
-    // Core Animation limits a continuous corner's reach to half the side.
-    let r = min(radius, min(rect.width, rect.height) / 2 / K[0])
+    // Core Animation draws a corner whose reach passes half the side at its full reach.
+    let r = radius
     let (x0, y0, x1, y1) = (rect.minX, rect.minY, rect.maxX, rect.maxY)
     // Each corner in a frame: origin at the corner, u along the incoming side towards it, v along the outgoing.
     func corner(_ c: CGPoint, _ u: CGPoint, _ v: CGPoint) {
