@@ -35,8 +35,11 @@ is borrowed.
   before.
 - **One place applies the width bounds.** `constraints::column_ratio`, read by
   the layout pass, by the scroll-gesture arithmetic, by the default width, by the
-  resize keys and by a resize report, each with the column's `ColumnKind`: full
-  width, dragged, or bounded.
+  resize keys and by a resize report, each with a `ColumnKind`: full width,
+  dragged, or bounded. The layout pass and the gesture pass the column's own. The
+  default width and the keys always pass `Bounded`, which is how a key bounds a
+  dragged width again. A report passes `Dragged` for a side drag or a column
+  already dragged, and `Bounded` otherwise.
   The gesture used to compute its own and did not know about maximized columns,
   so it stepped the strip by two thirds of a screen for a column occupying all
   of it and one swipe left the next column part-way on.
