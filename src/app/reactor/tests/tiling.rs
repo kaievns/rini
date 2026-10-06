@@ -1512,9 +1512,26 @@ fn the_drag_session_keeps_the_frame_its_window_started_from() {
     assert_eq!(session.last_frame, last, "the latest report");
 }
 
-/// "Resizing with the mouse" in `specs/strip.md`.
-#[test]
-fn a_left_edge_drag_lands_at_release_with_its_right_edge_where_it_started() {
+/// The window the window server finds under the cursor, for as long as the guard lives.
+struct CursorOver;
+
+impl CursorOver {
+    fn window(reactor: &Reactor, window: WindowId) -> Self {
+        let id = reactor.state.windows.window(window).and_then(|w| w.info.sys_id).expect("sys id");
+        crate::windows::platform::window_server::set_window_under_cursor_override(Some(id.as_u32()));
+        CursorOver
+    }
+}
+
+impl Drop for CursorOver {
+    fn drop(&mut self) {
+        crate::windows::platform::window_server::set_window_under_cursor_override(None);
+    }
+}
+
+/// `other`, column 1, dragged left by its left edge over 3 reports and let go with `under_cursor`
+/// under the cursor, which the release focuses. Its right edge must end where it started.
+fn left_edge_drag_released_over(under_cursor: Option<fn(&Strip) -> WindowId>) -> Strip {
     let mut strip = Strip::new();
     // Narrow enough that column 1 stands clear of the screen's right edge, where the reveal alone
     // would put its right edge back.
@@ -1538,7 +1555,9 @@ fn a_left_edge_drag_lands_at_release_with_its_right_edge_where_it_started() {
             MouseState::Down,
         );
     }
+    let cursor = under_cursor.map(|window| CursorOver::window(&strip.reactor, window(&strip)));
     strip.reactor.handle_event(Event::MouseUp);
+    drop(cursor);
     strip.settle(strip.other);
 
     let end = strip.on_screen(strip.other);
@@ -1547,6 +1566,26 @@ fn a_left_edge_drag_lands_at_release_with_its_right_edge_where_it_started() {
     assert!(travel > 80., "{start:?} -> {end:?}");
     let window_travel = window_start.origin.x - strip.on_screen(strip.window).origin.x;
     assert!((window_travel - travel).abs() <= 1., "{window_travel} against {travel}");
+    strip
+}
+
+/// "Resizing with the mouse" in `specs/strip.md`.
+#[test]
+fn a_left_edge_drag_lands_at_release_with_its_right_edge_where_it_started() {
+    left_edge_drag_released_over(None);
+}
+
+#[test]
+fn a_left_edge_drag_let_go_over_its_own_window_keeps_its_right_edge() {
+    left_edge_drag_released_over(Some(|strip| strip.other));
+}
+
+/// The cursor lets go on the dragged edge, where the window server can answer with the column
+/// behind it.
+#[test]
+fn a_left_edge_drag_let_go_over_the_window_behind_its_edge_keeps_its_focus_and_right_edge() {
+    let strip = left_edge_drag_released_over(Some(|strip| strip.window));
+    assert_eq!(strip.reactor.layout_manager.layout_engine.focused_window(), Some(strip.other));
 }
 
 /// A double-click on a title bar has the app zoom its window, and rini has to follow it to its own

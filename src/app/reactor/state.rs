@@ -1,5 +1,6 @@
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGRect;
+use rini_geometry::SameAs;
 pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
 use crate::windows::domain::info::AppInfo;
@@ -34,6 +35,13 @@ pub struct DragSession {
     pub(crate) origin_space: Option<SpaceId>,
     pub(crate) settled_space: Option<SpaceId>,
     pub(crate) layout_dirty: bool,
+}
+
+impl DragSession {
+    /// Whether the drag changed its window's size rather than only moving it.
+    pub(crate) fn resized(&self) -> bool {
+        !self.start_frame.size.same_as(self.last_frame.size)
+    }
 }
 
 #[derive(Debug, Clone)]

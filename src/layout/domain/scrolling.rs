@@ -1639,8 +1639,12 @@ impl ScrollingLayoutSystem {
             return false;
         };
         if state.locate(wid).is_some() {
-            // refocusing the same centered window should keep the center override
-            if state.selected == Some(wid) && state.center_override_window == Some(wid) {
+            // Refocusing the selected window keeps what is pending for it: its centring, and the
+            // right edge a left-edge drag keeps, which the release refocuses before its pass.
+            if state.selected == Some(wid)
+                && (state.center_override_window == Some(wid)
+                    || state.pending_right_edge_of == Some(wid))
+            {
                 return true;
             }
             state.selected = Some(wid);
@@ -4615,6 +4619,17 @@ mod tests {
 
         assert_eq!(laid_out_xw(&system, layout, w[2]), (866.0, 860.0));
         assert_near(scroll_offset(&system, layout), 884.0, "offset");
+    }
+
+    /// The release refocuses the window it let go of before its pass, which must not cost the pin.
+    #[test]
+    fn refocusing_the_window_after_a_left_edge_report_keeps_its_right_edge() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        assert!(system.select_window(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (336.0, 1147.0));
+        assert_near(scroll_offset(&system, layout), 264.5, "offset");
     }
 
     /// The selection passes to column 2 without a scroll request, and the drag's reveal is still

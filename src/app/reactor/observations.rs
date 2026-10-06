@@ -601,7 +601,13 @@ impl Reactor {
                 .or_else(|| self.affinity().best_space_for_frame(&session.last_frame))
                 .or_else(|| self.affinity().best_space_for_window_id(session.window))
         });
-        let focused = self.window_id_under_cursor().and_then(|window| {
+        // A resize lets go on the window's edge, where the hit test can answer with the window
+        // behind it.
+        let focused = match &session {
+            Some(session) if session.resized() => Some(session.window),
+            _ => self.window_id_under_cursor(),
+        }
+        .and_then(|window| {
             self.affinity().best_space_for_window_id(window).map(|space| (space, window))
         });
         let mut outcome = interaction_workflow::handle_mouse_up(

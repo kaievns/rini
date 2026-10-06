@@ -126,6 +126,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - The kept edge belongs to the window dragged. When focus moves to another column, or the dragged
   window closes, before the strip is laid out again, the column focused next MUST be placed as any
   focus change places it.
+- Letting go of a resize MUST leave the resized window focused, whatever window the cursor is over:
+  the cursor lets go on the window's edge, where the window behind it can answer. Focusing the
+  window already focused MUST keep the edge its drag keeps.
 - A drag on a full-width column's left or right edge MUST end full width at the dragged width. A
   drag that moves neither, or the app settling its own size under it, MUST leave it full width.
 - A drag across the whole viewport MUST make a window alone in its column the full-width column, with
