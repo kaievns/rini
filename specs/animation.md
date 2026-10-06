@@ -261,9 +261,9 @@ destination for a window already moving.
   pictured by its own identity like every managed window.
 - A picture of a window rini does not manage, such as a border tracing a tile, MAY be kept while the
   window lives, and MUST go once the window server no longer has the window.
-- A picture delivered to a flight MUST be held for it only while one of its tiles can still take it,
-  and MUST NOT be held for it once the overlay has lifted. The pictures kept for the next flight are
-  the cache's.
+- A picture delivered to a flight MUST be held for it only while one of its tiles can still take it.
+  One a tile turned down or one delivered to a flight before MUST NOT be held, nor any once the
+  overlay has lifted. The pictures kept for the next flight are the cache's.
 - A lifted overlay MUST NOT hold a picture of the desktop. The desktop the next flight is dressed
   with is the one the pictures service holds, so a second, older one behind the lifted overlay is
   memory nothing draws. A flight dressed before its display's desktop has been rendered MAY draw one
