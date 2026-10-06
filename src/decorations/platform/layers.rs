@@ -348,6 +348,23 @@ mod tests {
     }
 
     #[test]
+    fn new_layers_hang_from_their_corner_and_stroke_the_outline_dark_and_unfilled() {
+        let layers = DecorationLayers::new(&CALayer::layer());
+        let corner = CGPoint::new(0.0, 0.0);
+        assert_eq!(layers.shadow.anchorPoint(), corner);
+        assert_eq!(layers.shadow_mask.anchorPoint(), corner);
+        assert_eq!(layers.hairline.anchorPoint(), corner);
+        assert_eq!(layers.outline.anchorPoint(), corner);
+        assert_eq!(layers.hairline.borderWidth(), LIGHT_PT);
+        assert!(layers.outline.fillColor().is_none());
+        assert!(CGColor::equal_to_color(
+            layers.outline.strokeColor().as_deref(),
+            Some(&CGColor::new_generic_gray(0.0, OUTLINE_ALPHA))
+        ));
+        assert_eq!(layers.outline.lineWidth(), OUTLINE_PT);
+    }
+
+    #[test]
     fn a_placed_hairline_rounds_to_its_windows_radius_and_clamps() {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.radius = Some(16.0);
@@ -366,17 +383,84 @@ mod tests {
         );
     }
 
+    /// The mask's path is in its own points, from the mask's corner one reach out from the tile's.
+    #[test]
+    fn a_resized_tile_reshapes_its_shadow_and_a_moved_one_keeps_it() {
+        let layers = DecorationLayers::new(&CALayer::layer());
+        let size = TileSize::new(859.0, 1081.0);
+        let shaped = |layers: &DecorationLayers| {
+            (
+                CGPath::bounding_box(layers.shadow.shadowPath().as_deref()),
+                layers.shadow_mask.frame(),
+                CGPath::bounding_box(layers.shadow_mask.path().as_deref()),
+            )
+        };
+        layers.place(size, true);
+        let mask = shape::shadow_mask_frame(size).to_cg();
+        let placed = (
+            rect(0.0, 0.0, 859.0, 1081.0),
+            mask,
+            CGRect::new(CGPoint::new(0.0, 0.0), mask.size),
+        );
+        assert_eq!(shaped(&layers), placed);
+        layers.place(TileSize::new(400.0, 1081.0), false);
+        assert_eq!(shaped(&layers), placed);
+    }
+
     #[test]
     fn the_hairlines_white_and_the_shadows_depth_follow_focus() {
         let layers = DecorationLayers::new(&CALayer::layer());
         let alpha =
             |layers: &DecorationLayers| CGColor::alpha(layers.hairline.borderColor().as_deref());
-        layers.show(Style::of(true));
-        assert_eq!(alpha(&layers), Style::of(true).light_alpha);
-        assert_eq!(layers.shadow.shadowOpacity(), Style::of(true).shadow.opacity);
-        layers.show(Style::of(false));
-        assert_eq!(alpha(&layers), Style::of(false).light_alpha);
-        assert_eq!(layers.shadow.shadowOpacity(), Style::of(false).shadow.opacity);
+        for focused in [true, false] {
+            let style = Style::of(focused);
+            layers.show(style);
+            assert_eq!(alpha(&layers), style.light_alpha);
+            assert_eq!(layers.shadow.shadowOpacity(), style.shadow.opacity);
+            assert_eq!(layers.shadow.shadowRadius(), style.shadow.radius);
+            assert_eq!(
+                layers.shadow.shadowOffset(),
+                CGSize::new(0.0, style.shadow.offset_y)
+            );
+        }
+    }
+
+    /// A companion's tile wears neither, and a pooled tile handed to a window wears both again.
+    #[test]
+    fn a_hidden_tile_hides_its_caster_and_its_hairline() {
+        let layers = DecorationLayers::new(&CALayer::layer());
+        layers.set_hidden(true);
+        assert!(layers.frame_layers().iter().all(|layer| layer.isHidden()));
+        layers.set_hidden(false);
+        assert!(layers.frame_layers().iter().all(|layer| !layer.isHidden()));
+    }
+
+    #[test]
+    fn the_outline_is_drawn_at_the_displays_scale() {
+        let layers = DecorationLayers::new(&CALayer::layer());
+        layers.set_scale(2.0);
+        assert_eq!(layers.outline.contentsScale(), 2.0);
+    }
+
+    #[test]
+    fn taking_every_animation_away_clears_every_decoration_layer() {
+        let layers = DecorationLayers::new(&CALayer::layer());
+        layers.install_resize(&Between(
+            TileSize::new(0.0, 1081.0),
+            TileSize::new(859.0, 1081.0),
+        ));
+        for layer in layers.frame_layers() {
+            add_under(layer, &bare("position"), "rini.tile.move");
+        }
+        layers.remove_animations();
+        for layer in [
+            &*layers.shadow,
+            &layers.shadow_mask,
+            &layers.hairline,
+            &layers.outline,
+        ] {
+            assert!(installed(layer).is_empty());
+        }
     }
 
     /// An entrance grows from no width, so its corner changes; a resize between two wide sizes keeps
