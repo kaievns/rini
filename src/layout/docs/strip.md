@@ -282,14 +282,18 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   change to that one row. The trade stops where that row reaches 1pt, so the column's total holds and
   no other row moves. It starts from the model's heights, not the start frame's: every report of a
   drag carries the same `dragged_from`, so a change measured from it would be taken again from a
-  neighbour the last report already shrank. The model's heights are the weights in points over the
-  column's height, or equal shares when `height_overridden` is unset, because the layout reads such
-  a column as equal shares whatever its weights. A drag that moves no vertical edge leaves the
-  heights and `height_overridden` alone; it used to mark the column as deliberately split, so a
-  window folded back into it kept the 1.0 weight its own column held and ended 1pt high. An app's
-  own height, with no drag, still comes out of the other rows in proportion.
-- **Not taken from niri: the whole column sharing a vertical drag.** niri refuses only the topmost
-  window's top edge (`niri:src/layout/scrolling.rs:3635-3650`). Every other vertical edge goes
+  neighbour the last report already shrank. A report back where the drag started moves neither edge
+  against `dragged_from`, so the layout keeps the edge the same drag moved last
+  (`LayoutState::last_dragged_end`, named by the window and the start frame) and trades back across
+  it; without that the column kept the heights of the report before. The model's heights are the
+  weights in points over the column's height, or equal shares when `height_overridden` is unset,
+  because the layout reads such a column as equal shares whatever its weights. A drag that never
+  moves the top or bottom edge leaves the heights and `height_overridden` alone. It used to mark the
+  column as deliberately split, so a window folded back into it kept the 1.0 weight its own column
+  held and ended 1pt high. An app's own height, with no drag, still comes out of the other rows in
+  proportion.
+- **Not taken from niri: the whole column sharing a stacked edge.** niri refuses only the topmost
+  window's top edge (`niri:src/layout/scrolling.rs:3635-3650`). Every other top or bottom edge goes
   through `set_window_height` (`niri:src/layout/scrolling.rs:5045-5124`), which fixes the dragged
   tile's height and turns every other tile automatic, so they share what is left. niri's own FIXME
   asks for smarter height distribution there (`niri:src/layout/scrolling.rs:3644-3645`). rini trades

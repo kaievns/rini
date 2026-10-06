@@ -127,9 +127,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - **A drag on a stacked window's top or bottom edge MUST trade height only with the window across
   that edge.** Every other window in the column keeps its height. An edge with no window across it,
   the top window's top or the bottom window's bottom, MUST change nothing.
-- A drag that moves neither the top nor the bottom edge MUST leave the column's heights as they
-  were. A column nobody resized vertically then still divides evenly when a window joins or leaves
-  it.
+- A drag that never moves the top or bottom edge MUST leave the column's heights as they were. A
+  column nobody resized vertically then still divides evenly when a window joins or leaves it.
+- A stacked edge dragged back to where it started MUST give the window across it its height back.
 - A window that resizes itself MUST keep its column where it was: the app's new width is taken and
   its origin is not. Its new height is taken from the other windows in its column, in their
   proportions.

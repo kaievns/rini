@@ -131,6 +131,10 @@ struct LayoutState {
     pending_right_edge: AtomicU64,
     #[serde(skip)]
     pending_right_edge_of: Option<WindowId>,
+    /// The stacked edge the drag from this frame last moved on this window, for a report of the
+    /// same drag that is back where it started and so moved neither.
+    #[serde(skip)]
+    last_dragged_end: Option<(WindowId, CGRect, End)>,
     center_override_window: Option<WindowId>,
     #[serde(skip, default = "default_atomic")]
     last_screen_width: AtomicU64,
@@ -168,6 +172,7 @@ impl LayoutState {
             pending_reveal_direction: AtomicI8::new(0),
             pending_right_edge: default_atomic_unset(),
             pending_right_edge_of: None,
+            last_dragged_end: None,
             center_override_window: None,
             last_screen_width: AtomicU64::new(0.0f64.to_bits()),
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
@@ -424,6 +429,18 @@ impl LayoutState {
         self.pending_right_edge_of = Some(wid);
     }
 
+    /// The top or bottom edge the drag from `start` moves on `wid`. A report back where the drag
+    /// started takes the edge the same drag moved last, so it gives back what that edge traded.
+    fn end_dragged(&mut self, wid: WindowId, start: CGRect, now: CGRect) -> Option<End> {
+        if let Some(end) = dragged_end(start, now) {
+            self.last_dragged_end = Some((wid, start, end));
+            return Some(end);
+        }
+        self.last_dragged_end
+            .filter(|&(dragged, from, _)| dragged == wid && from == start)
+            .map(|(_, _, end)| end)
+    }
+
     fn unpin_right_edge(&mut self) {
         self.pending_right_edge.store(f64::NAN.to_bits(), Ordering::Relaxed);
         self.pending_right_edge_of = None;
@@ -570,6 +587,7 @@ impl Clone for LayoutState {
             ),
             pending_right_edge: AtomicU64::new(self.pending_right_edge.load(Ordering::Relaxed)),
             pending_right_edge_of: self.pending_right_edge_of,
+            last_dragged_end: self.last_dragged_end,
             center_override_window: self.center_override_window,
             last_screen_width: AtomicU64::new(self.last_screen_width.load(Ordering::Relaxed)),
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
@@ -1657,6 +1675,7 @@ impl ScrollingLayoutSystem {
         state.columns[col_idx].width_offset = clamped - base_ratio;
         state.columns[col_idx].width_overridden = true;
 
+        let end = dragged_from.and_then(|start| state.end_dragged(wid, start, new_frame));
         let col = &mut state.columns[col_idx];
         if col.windows.len() > 1 && tiling.size.height > 0.0 {
             col.ensure_height_weights();
@@ -1664,13 +1683,12 @@ impl ScrollingLayoutSystem {
             let available_height = (tiling.size.height - total_gap).max(0.0);
             if available_height > 0.0 {
                 let height = new_frame.size.height;
-                match dragged_from {
-                    Some(start) => {
-                        if let Some(end) = dragged_end(start, new_frame) {
-                            col.trade_row_height(row_idx, end, height, available_height);
-                        }
+                match (dragged_from, end) {
+                    (Some(_), Some(end)) => {
+                        col.trade_row_height(row_idx, end, height, available_height);
                     }
-                    None => col.take_row_height(row_idx, height, available_height),
+                    (Some(_), None) => {}
+                    (None, _) => col.take_row_height(row_idx, height, available_height),
                 }
             }
         }
@@ -4513,6 +4531,21 @@ mod tests {
         assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 468.0), "top");
         assert_eq!(laid_out_yh(&system, layout, w[1]), (474.0, 269.0), "middle");
         assert_eq!(laid_out_yh(&system, layout, w[2]), (746.0, 368.0), "bottom");
+    }
+
+    /// Back at its start the report moved neither edge. The column ends as it began, within the
+    /// third of a point the start frame's rounding leaves, not at the 468pt the report before left.
+    #[test]
+    fn a_stacked_edge_dragged_back_to_where_it_started_gives_the_height_back() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = at_yh(&system, layout, w[1], 374.0, 368.0);
+        let out = at_yh(&system, layout, w[1], 274.0, 468.0);
+        drag(&mut system, layout, w[1], from, out);
+        drag(&mut system, layout, w[1], from, from);
+
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows, [(3.0, 369.0), (375.0, 368.0), (746.0, 368.0)]);
     }
 
     /// Marked as a deliberate split, the column would keep its two 552pt rows when the third window
