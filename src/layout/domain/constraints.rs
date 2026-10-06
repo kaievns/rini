@@ -41,21 +41,35 @@ pub fn column_limits(
     limits
 }
 
+/// What holds a column's ratio, besides the viewport and its windows' own limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnKind {
+    /// Maximised: the whole viewport, whatever its stored ratio.
+    FullWidth,
+    /// Last sized by a mouse drag, which `min-column-width` and `max-column-width` do not hold.
+    Dragged,
+    /// Held to `min-column-width` and `max-column-width`.
+    Bounded,
+}
+
 /// The ratio of the viewport a column asks for, before its windows get a say.
 ///
-/// Full width is a MODE rather than a wider ratio: an ordinary column is clamped to
-/// `max-column-width` — below 1.0, deliberately, so that the incremental resize keys cannot crawl
-/// to 100% — so a maximised column cannot be expressed as a
-/// ratio at all and has to be asked for separately.
+/// Full width is a MODE rather than a wider ratio: a bounded column is clamped to
+/// `max-column-width` — below 1.0, deliberately, so that the incremental resize keys and the
+/// default width cannot crawl to 100% — so a maximised column cannot be expressed as a
+/// ratio at all and has to be asked for separately. The bounds are for the keys, not a drag: a
+/// dragged column is held only to the viewport.
 ///
 /// Both the layout pass and the scroll-gesture arithmetic read this, because they used to disagree:
 /// the gesture computed a maximised column at `max-column-width` of the viewport, so it
 /// stepped the strip by two thirds of a screen for a column occupying all of it.
-pub fn column_ratio(full_width: bool, base_ratio: f64, offset: f64, min: f64, max: f64) -> f64 {
-    if full_width {
-        return 1.0;
+pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, max: f64) -> f64 {
+    let ratio = base_ratio + offset;
+    match kind {
+        ColumnKind::FullWidth => 1.0,
+        ColumnKind::Dragged => ratio.clamp(0.05, 1.0),
+        ColumnKind::Bounded => ratio.clamp(min, max).max(0.05),
     }
-    (base_ratio + offset).clamp(min, max).max(0.05)
 }
 
 /// How wide one column of the strip is.
@@ -251,7 +265,7 @@ pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AxisConstraints, column_ratio, solve_axis_lengths};
+    use super::{AxisConstraints, ColumnKind, column_ratio, solve_axis_lengths};
 
     /// The bounds the shipped config uses, where the maximum is deliberately well below 1.0.
     const MIN: f64 = 0.33333;
@@ -259,31 +273,40 @@ mod tests {
 
     #[test]
     fn a_maximised_column_takes_the_whole_viewport_whatever_the_bounds_say() {
-        assert_eq!(column_ratio(true, 0.5, 0.0, MIN, MAX), 1.0);
+        assert_eq!(column_ratio(ColumnKind::FullWidth, 0.5, 0.0, MIN, MAX), 1.0);
     }
 
     /// Its stored offset is untouched while it is maximised, which is what lets `ctrl-F` hand the
     /// column back its old width without having had to remember one.
     #[test]
     fn a_maximised_column_ignores_the_width_it_will_go_back_to() {
-        assert_eq!(column_ratio(true, 0.5, -0.16667, MIN, MAX), 1.0);
+        assert_eq!(column_ratio(ColumnKind::FullWidth, 0.5, -0.16667, MIN, MAX), 1.0);
     }
 
     #[test]
     fn an_ordinary_column_is_its_base_plus_its_offset() {
-        assert_eq!(column_ratio(false, 0.5, 0.16667, MIN, MAX), 0.66667);
+        assert_eq!(column_ratio(ColumnKind::Bounded, 0.5, 0.16667, MIN, MAX), 0.66667);
     }
 
     #[test]
     fn an_ordinary_column_is_held_inside_the_configured_bounds() {
-        assert_eq!(column_ratio(false, 0.5, 0.5, MIN, MAX), MAX);
-        assert_eq!(column_ratio(false, 0.5, -0.5, MIN, MAX), MIN);
+        assert_eq!(column_ratio(ColumnKind::Bounded, 0.5, 0.5, MIN, MAX), MAX);
+        assert_eq!(column_ratio(ColumnKind::Bounded, 0.5, -0.5, MIN, MAX), MIN);
+    }
+
+    /// A drag is not a key: neither bound holds it, and the viewport and the twentieth still do.
+    #[test]
+    fn a_dragged_ratio_ignores_min_and_max_column_width() {
+        assert_eq!(column_ratio(ColumnKind::Dragged, 0.5, 0.33797, MIN, MAX), 0.83797);
+        assert_eq!(column_ratio(ColumnKind::Dragged, 0.5, -0.21719, MIN, MAX), 0.28281);
+        assert_eq!(column_ratio(ColumnKind::Dragged, 0.5, 0.7, MIN, MAX), 1.0);
+        assert_eq!(column_ratio(ColumnKind::Dragged, 0.0, 0.0, MIN, MAX), 0.05);
     }
 
     /// A config with a zero or inverted minimum must not produce a column nothing can be seen in.
     #[test]
     fn a_column_is_never_narrower_than_a_twentieth_of_the_screen() {
-        assert_eq!(column_ratio(false, 0.0, 0.0, 0.0, MAX), 0.05);
+        assert_eq!(column_ratio(ColumnKind::Bounded, 0.0, 0.0, 0.0, MAX), 0.05);
     }
 
     #[test]

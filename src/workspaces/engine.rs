@@ -10,6 +10,7 @@ use super::{
 };
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::boundary::{strip_edge, workspace_stack_direction};
+use crate::layout::domain::edge_drag::Drag;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
@@ -80,9 +81,11 @@ pub enum LayoutEvent {
     WindowRemoved(WindowId),
     WindowRemovedPreserveFloating(WindowId),
     WindowFocused(SpaceId, WindowId),
+    /// The window's frame changed size. `drag` is the mouse drag on its edges that did it, and `None`
+    /// when the app resized the window itself.
     WindowResized {
         wid: WindowId,
-        old_frame: CGRect,
+        drag: Option<Drag>,
         new_frame: CGRect,
         screens: Vec<(SpaceId, CGRect, Option<String>)>,
     },
@@ -1133,8 +1136,8 @@ impl LayoutEngine {
             if tree.is_window_full_width(layout, window) {
                 return Some(Some(ColumnWidth::FullWidth));
             }
-            if let Some(offset) = tree.column_width_offset(layout, window) {
-                return Some(Some(ColumnWidth::Offset(offset)));
+            if let Some((offset, dragged)) = tree.column_width_offset(layout, window) {
+                return Some(Some(ColumnWidth::from_offset(offset, dragged)));
             }
             consulted |= tree.contains_window(layout, window);
         }
@@ -1336,8 +1339,9 @@ impl LayoutEngine {
             return;
         }
         match tree.column_width_offset(layout, window) {
-            Some(offset) => {
-                memory.affinity.set_window_width(&display, window, ColumnWidth::Offset(offset));
+            Some((offset, dragged)) => {
+                let width = ColumnWidth::from_offset(offset, dragged);
+                memory.affinity.set_window_width(&display, window, width);
             }
             // Toggled back to the default. Forget rather than pin, so the window follows
             // each display's configured ratio again.
@@ -1395,7 +1399,11 @@ impl LayoutEngine {
             }
             ColumnWidth::Offset(offset) => {
                 self.workspace_tree_mut(workspace_id)
-                    .set_column_width_offset(layout, window, offset);
+                    .set_column_width_offset(layout, window, offset, false);
+            }
+            ColumnWidth::Dragged(offset) => {
+                self.workspace_tree_mut(workspace_id)
+                    .set_column_width_offset(layout, window, offset, true);
             }
         }
     }
@@ -1528,7 +1536,6 @@ impl LayoutEngine {
     pub fn apply_app_rule_resize(
         &mut self,
         resize: AppRuleResize,
-        old_frame: CGRect,
         new_frame: CGRect,
         screen_frame: CGRect,
         display_uuid: Option<&str>,
@@ -1540,7 +1547,7 @@ impl LayoutEngine {
         let previous_selection = self.workspace_tree(resize.workspace_id).selected_window(layout);
         let tree = self.workspace_tree_mut(resize.workspace_id);
         let _ = tree.select_window(layout, resize.window);
-        tree.on_window_resized(layout, resize.window, old_frame, new_frame, screen_frame, &gaps);
+        tree.on_window_resized(layout, resize.window, None, new_frame, screen_frame, &gaps);
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
@@ -1859,7 +1866,7 @@ impl LayoutEngine {
             }
             LayoutEvent::WindowResized {
                 wid,
-                old_frame,
+                drag,
                 new_frame,
                 screens,
             } => {
@@ -1876,7 +1883,7 @@ impl LayoutEngine {
                     self.workspace_tree_mut(ws_id).on_window_resized(
                         layout,
                         wid,
-                        old_frame,
+                        drag,
                         new_frame,
                         screen_frame,
                         &gaps,
@@ -3703,7 +3710,7 @@ mod tests {
         assert_eq!(resizes[0].size.h, None);
         let old_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(500.0, 500.0));
         let new_frame = CGRect::new(old_frame.origin, CGSize::new(234.0, 500.0));
-        engine.apply_app_rule_resize(resizes[0], old_frame, new_frame, screen, None);
+        engine.apply_app_rule_resize(resizes[0], new_frame, screen, None);
 
         let frames = engine.calculate_layout(space, screen, &layout_settings.gaps.effective_for_display(None));
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
@@ -3715,7 +3722,7 @@ mod tests {
             &mut memory,
             LayoutEvent::WindowResized {
                 wid: window,
-                old_frame: new_frame,
+                drag: Some(Drag::report(new_frame, user_frame, None)),
                 new_frame: user_frame,
                 screens: vec![(space, screen, None)],
             },
@@ -4933,6 +4940,85 @@ mod tests {
                 Some(expected)
             );
         }
+    }
+
+    /// The default bounds stop a column at 0.9 of the tiling width; the drag took it to 0.95, and
+    /// the workspace it arrives on has to know that no bound holds it.
+    #[test]
+    fn a_window_moved_to_another_workspace_keeps_its_dragged_width() {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
+        let space = SpaceId::new(97);
+        let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
+        let gaps = LayoutSettings::default().gaps.effective_for_display(None);
+        let wid = WindowId::new(6003, 1);
+        memory.affinity.set_display_space("built-in", space);
+
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, screen.size),
+        );
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowsOnScreenUpdated(
+                space,
+                wid.pid,
+                vec![(
+                    wid,
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    CGSize::new(500.0, 500.0),
+                    None,
+                    None,
+                )],
+                None,
+            ),
+        );
+        let width_of = |engine: &mut LayoutEngine| {
+            let frames = engine.calculate_layout(space, screen, &gaps);
+            frames.iter().find(|(window, _)| *window == wid).expect("laid out").1.size.width
+        };
+        let start = engine.calculate_layout(space, screen, &gaps)[0].1;
+        let tiling = crate::layout::domain::area::compute_tiling_area(screen, &gaps);
+        let dragged = (tiling.size.width * 0.95).round();
+        let wider = CGRect::new(start.origin, CGSize::new(dragged, start.size.height));
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowResized {
+                wid,
+                drag: Some(Drag::report(start, wider, None)),
+                new_frame: wider,
+                screens: vec![(space, screen, None)],
+            },
+        );
+        assert_eq!(width_of(&mut engine), dragged);
+
+        let _ = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::CreateWorkspace,
+        );
+        let _ = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::MoveWindowToWorkspace {
+                workspace: WorkspaceSelector::Name("next".into()),
+                follow: true,
+                window_id: Some(wid.idx.get()),
+            },
+        );
+        let target = engine.virtual_workspace_manager_mut().list_workspaces(space)[1].0;
+        assert_eq!(engine.active_workspace(space), Some(target));
+        assert_eq!(width_of(&mut engine), dragged);
     }
 
     #[test]

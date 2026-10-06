@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::workspaces::domain::display_setup::{Setup, SetupId};
 
@@ -53,14 +53,14 @@ pub struct DisplayAffinity {
     #[serde(default, skip_serializing, rename = "display_strip")]
     legacy_display_strip: HashMap<String, Vec<WindowId>>,
     #[serde(default, skip_serializing, rename = "window_width")]
-    legacy_window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
+    legacy_window_width: StoredWidths,
 }
 
 /// The width a window occupied, as the layout means it rather than in points.
 ///
 /// Points would not survive a resolution change or a move between displays of different
-/// widths, which is exactly when this record is consulted.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// widths, which is exactly when this record is consulted. A file holds it as a `StoredWidth`.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColumnWidth {
     /// Full viewport width, as `ctrl-F` and the widest preset both produce. Kept distinct
     /// from `Offset` because it is a MODE, not a ratio: it must stay full width on a
@@ -68,6 +68,87 @@ pub enum ColumnWidth {
     FullWidth,
     /// A deliberate width, as an offset from the configured `column_width_ratio`.
     Offset(f64),
+    /// A width given by a mouse drag, an offset as `Offset` is, but unlike it held by no display's
+    /// `min-column-width` or `max-column-width`.
+    Dragged(f64),
+}
+
+impl ColumnWidth {
+    /// The record of a column's offset, by whether a drag gave it.
+    pub fn from_offset(offset: f64, dragged: bool) -> Self {
+        if dragged { Self::Dragged(offset) } else { Self::Offset(offset) }
+    }
+
+    /// The width as a file holds it, and whether a drag gave it.
+    pub fn stored(self) -> (StoredWidth, bool) {
+        match self {
+            Self::FullWidth => (StoredWidth::FullWidth, false),
+            Self::Offset(offset) => (StoredWidth::Offset(offset), false),
+            Self::Dragged(offset) => (StoredWidth::Offset(offset), true),
+        }
+    }
+
+    /// A width read from a file, given whether a drag gave it.
+    pub fn from_stored(width: StoredWidth, dragged: bool) -> Self {
+        match width {
+            StoredWidth::FullWidth => Self::FullWidth,
+            StoredWidth::Offset(offset) => Self::from_offset(offset, dragged),
+        }
+    }
+}
+
+/// A `ColumnWidth` as a file holds it: the two variants every rini reads. A dragged width is held
+/// as its offset, and the drag beside it in a field an older rini skips, so going back to one keeps
+/// every width rather than refusing the file and the machine's memory with it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum StoredWidth {
+    FullWidth,
+    Offset(f64),
+}
+
+/// Widths per display and window, as a file holds them.
+pub type StoredWidths = HashMap<String, HashMap<WindowId, StoredWidth>>;
+
+/// The windows on each display whose stored width a drag gave.
+pub type DraggedWidths = HashMap<String, HashSet<WindowId>>;
+
+/// `widths` as a file holds them.
+pub fn store_widths(
+    widths: &HashMap<String, HashMap<WindowId, ColumnWidth>>,
+) -> (StoredWidths, DraggedWidths) {
+    let mut stored = StoredWidths::default();
+    let mut dragged = DraggedWidths::default();
+    for (display, windows) in widths {
+        for (&window, &width) in windows {
+            let (width, by_drag) = width.stored();
+            stored.entry(display.clone()).or_default().insert(window, width);
+            if by_drag {
+                dragged.entry(display.clone()).or_default().insert(window);
+            }
+        }
+    }
+    (stored, dragged)
+}
+
+/// Widths read from a file.
+pub fn read_widths(
+    stored: StoredWidths,
+    dragged: &DraggedWidths,
+) -> HashMap<String, HashMap<WindowId, ColumnWidth>> {
+    stored
+        .into_iter()
+        .map(|(display, windows)| {
+            let by_drag = dragged.get(&display);
+            let windows = windows
+                .into_iter()
+                .map(|(window, width)| {
+                    let dragged = by_drag.is_some_and(|set| set.contains(&window));
+                    (window, ColumnWidth::from_stored(width, dragged))
+                })
+                .collect();
+            (display, windows)
+        })
+        .collect()
 }
 
 /// What naming an arrangement turned out to mean.
@@ -159,7 +240,10 @@ impl DisplayAffinity {
         let mut legacy = Setup {
             window_home: std::mem::take(&mut self.legacy_window_home),
             display_strip: std::mem::take(&mut self.legacy_display_strip),
-            window_width: std::mem::take(&mut self.legacy_window_width),
+            window_width: read_widths(
+                std::mem::take(&mut self.legacy_window_width),
+                &DraggedWidths::default(),
+            ),
             // A file written before arrangements existed recorded no distinction between a home the
             // user chose and one rini inferred. Treating them all as CHOSEN would make every display
             // pin inert until the window was closed, so they come across as inferred and a pin may
@@ -742,6 +826,27 @@ mod tests {
         // A display it has never been on has no opinion, so the window adopts that
         // display's configured default rather than inheriting another display's size.
         assert_eq!(affinity.window_width("third", win(1)), None);
+    }
+
+    /// A dragged width comes back dragged, so no display's bounds clamp it after a restart. Every
+    /// width is written as an `Offset` or `FullWidth`, as it was before a drag had a record, so an old
+    /// file reads unchanged.
+    #[test]
+    fn a_dragged_width_round_trips_and_an_old_record_reads_as_before() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width("built-in", win(1), ColumnWidth::from_offset(0.33797, true));
+        affinity.set_window_width("built-in", win(2), ColumnWidth::from_offset(0.25, false));
+
+        let written = ron::ser::to_string(&affinity).unwrap();
+        assert!(written.contains("Offset(0.25)"), "{written}");
+        assert!(written.contains("Offset(0.33797)"), "{written}");
+        assert!(!written.contains("Dragged("), "{written}");
+        let read: DisplayAffinity = ron::from_str(&written).unwrap();
+        assert_eq!(
+            read.window_width("built-in", win(1)),
+            Some(ColumnWidth::Dragged(0.33797))
+        );
+        assert_eq!(read.window_width("built-in", win(2)), Some(ColumnWidth::Offset(0.25)));
     }
 
     /// Clearing must forget, not freeze the last value: toggling a deliberate width off is an

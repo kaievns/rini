@@ -6,11 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
-    AxisConstraints, clamp_to_constraints, column_limits, column_ratio, column_width,
+    AxisConstraints, ColumnKind, clamp_to_constraints, column_limits, column_ratio, column_width,
     solve_axis_lengths,
 };
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
-use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, reveal_offset};
+use crate::layout::domain::edge_drag::{Drag, End, Side, dragged_side, dragged_width, trade_height};
+use crate::layout::domain::strip::{
+    Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, reveal_offset,
+};
 use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
 use rini_core::ids::{WindowId, pid_t};
@@ -34,6 +37,10 @@ struct Column {
     width_offset: f64,
     #[serde(default)]
     width_overridden: bool,
+    /// The width was last given by a mouse drag, which `min-column-width` and `max-column-width`
+    /// do not hold.
+    #[serde(default)]
+    width_dragged: bool,
     #[serde(default)]
     height_weights: Vec<f64>,
     /// Whether `height_weights` are DESIRED PIXEL HEIGHTS from a deliberate vertical resize, rather
@@ -44,6 +51,13 @@ struct Column {
 }
 
 impl Column {
+    /// A width of its own, as an offset from the default ratio, and whether a drag gave it.
+    fn give_width(&mut self, offset: f64, dragged: bool) {
+        self.width_offset = offset;
+        self.width_overridden = true;
+        self.width_dragged = dragged;
+    }
+
     fn ensure_height_weights(&mut self) {
         if self.height_weights.len() != self.windows.len() {
             self.height_weights.resize(self.windows.len(), 1.0);
@@ -56,6 +70,53 @@ impl Column {
         self.height_weights.clear();
         self.height_weights.resize(count, 1.0);
         self.height_overridden = false;
+    }
+
+    /// Each row's height in points out of `available`, before the windows' own limits. A column
+    /// nobody has resized divides evenly whatever its weights, as `calculate_layout` reads it.
+    fn row_heights(&self, available: f64) -> Vec<f64> {
+        let count = self.windows.len();
+        let sum: f64 = self.height_weights.iter().sum();
+        if !self.height_overridden || sum <= 0.0 {
+            return vec![available / count as f64; count];
+        }
+        self.height_weights.iter().map(|weight| available * weight / sum).collect()
+    }
+
+    /// A dragged edge: `row` takes `height` from the row across `end` alone.
+    fn trade_row_height(&mut self, row: usize, end: End, height: f64, available: f64) {
+        let mut heights = self.row_heights(available);
+        trade_height(&mut heights, row, end, height);
+        self.height_weights = heights;
+        self.height_overridden = true;
+    }
+
+    /// The app's own height: `row` takes it, and the other rows share what is left in their
+    /// proportions.
+    fn take_row_height(&mut self, row: usize, height: f64, available: f64) {
+        // Weights as desired pixel heights: `solve_axis_lengths` reserves each window's minimum
+        // first and shares the remainder by weight, so the split lands as asked, within the
+        // windows' own limits.
+        self.height_overridden = true;
+        let height = height.max(1.0);
+        let others_total = (available - height).max(1.0);
+        let others_weight: f64 = self
+            .height_weights
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != row)
+            .map(|(_, &w)| w)
+            .sum();
+        let others = (self.windows.len() - 1).max(1) as f64;
+        for (i, weight) in self.height_weights.iter_mut().enumerate() {
+            *weight = if i == row {
+                height
+            } else if others_weight > 0.0 {
+                others_total * (*weight / others_weight)
+            } else {
+                others_total / others
+            };
+        }
     }
 }
 
@@ -72,6 +133,13 @@ struct LayoutState {
     pending_center_align: AtomicBool,
     #[serde(skip, default = "default_atomic_i8")]
     pending_reveal_direction: AtomicI8,
+    /// Where the next layout puts the selected column's right edge, in display coordinates, or NaN
+    /// for nowhere: a drag on its left edge keeps the right one. Applied only while
+    /// `pending_right_edge_of` is still the selection.
+    #[serde(skip, default = "default_atomic_unset")]
+    pending_right_edge: AtomicU64,
+    #[serde(skip)]
+    pending_right_edge_of: Option<WindowId>,
     center_override_window: Option<WindowId>,
     #[serde(skip, default = "default_atomic")]
     last_screen_width: AtomicU64,
@@ -107,6 +175,8 @@ impl LayoutState {
             pending_align: AtomicBool::new(false),
             pending_center_align: AtomicBool::new(false),
             pending_reveal_direction: AtomicI8::new(0),
+            pending_right_edge: default_atomic_unset(),
+            pending_right_edge_of: None,
             center_override_window: None,
             last_screen_width: AtomicU64::new(0.0f64.to_bits()),
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
@@ -170,6 +240,7 @@ impl LayoutState {
                 windows: vec![wid],
                 width_offset: 0.0,
                 width_overridden: false,
+                width_dragged: false,
                 height_weights: vec![weight],
                 height_overridden: false,
             },
@@ -238,6 +309,16 @@ impl LayoutState {
         col.windows.iter().any(|wid| self.fullscreen_within_gaps.contains(wid))
     }
 
+    fn column_kind(&self, col: &Column) -> ColumnKind {
+        if self.is_full_width_column(col) {
+            ColumnKind::FullWidth
+        } else if col.width_dragged {
+            ColumnKind::Dragged
+        } else {
+            ColumnKind::Bounded
+        }
+    }
+
     /// Maximise `wid`, pulling it out of any stack it shares.
     ///
     /// A maximised window fills the tiling area, which would cover the siblings sharing its column
@@ -272,11 +353,11 @@ impl LayoutState {
         self.stack_origins.remove(&wid);
     }
 
-    /// Give `wid`'s column an explicit ratio, leaving full width if it was maximised.
-    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64) {
+    /// Give `wid`'s column an explicit ratio, by a drag or not, leaving full width if it was
+    /// maximised.
+    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64, dragged: bool) {
         self.leave_full_width_in_place(wid);
-        self.columns[col_idx].width_offset = ratio - self.column_width_ratio;
-        self.columns[col_idx].width_overridden = true;
+        self.columns[col_idx].give_width(ratio - self.column_width_ratio, dragged);
     }
 
     fn locate(&self, wid: WindowId) -> Option<(usize, usize)> {
@@ -299,6 +380,7 @@ impl LayoutState {
     }
 
     fn align_scroll_to_selected(&mut self) {
+        self.unpin_right_edge();
         // Keep centered alignment only while the same selection remains focused.
         if self.center_override_window.is_some() && self.center_override_window == self.selected {
             self.pending_center_align.store(true, Ordering::Relaxed);
@@ -317,6 +399,7 @@ impl LayoutState {
     }
 
     fn request_center_on_selected(&mut self) {
+        self.unpin_right_edge();
         if self.selected_location().is_none() {
             return;
         }
@@ -335,6 +418,7 @@ impl LayoutState {
     }
 
     fn reveal_selected_in_direction(&mut self, direction: Direction) {
+        self.unpin_right_edge();
         self.center_override_window = None;
         self.pending_center_align.store(false, Ordering::Relaxed);
         self.pending_align.store(false, Ordering::Relaxed);
@@ -347,11 +431,22 @@ impl LayoutState {
     }
 
     fn reveal_selected_without_direction(&mut self) {
+        self.unpin_right_edge();
         self.center_override_window = None;
         self.pending_center_align.store(false, Ordering::Relaxed);
         self.pending_align.store(false, Ordering::Relaxed);
         // 2 = neutral reveal: keep current offset unless selected would be clipped.
         self.pending_reveal_direction.store(2, Ordering::Relaxed);
+    }
+
+    fn pin_right_edge(&mut self, wid: WindowId, right_x: f64) {
+        self.pending_right_edge.store(right_x.to_bits(), Ordering::Relaxed);
+        self.pending_right_edge_of = Some(wid);
+    }
+
+    fn unpin_right_edge(&mut self) {
+        self.pending_right_edge.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        self.pending_right_edge_of = None;
     }
 
     fn clamp_scroll_offset(&mut self) {
@@ -411,6 +506,7 @@ impl LayoutState {
             windows: vec![wid],
             width_offset: 0.0,
             width_overridden: false,
+            width_dragged: false,
             height_weights: vec![1.0],
             height_overridden: false,
         };
@@ -425,6 +521,7 @@ impl LayoutState {
             windows: vec![wid],
             width_offset: 0.0,
             width_overridden: false,
+            width_dragged: false,
             height_weights: vec![1.0],
             height_overridden: false,
         });
@@ -454,6 +551,7 @@ impl LayoutState {
                     windows: vec![window],
                     width_offset: 0.0,
                     width_overridden: false,
+                    width_dragged: false,
                     height_weights: vec![1.0],
                     height_overridden: false,
                 });
@@ -493,6 +591,8 @@ impl Clone for LayoutState {
             pending_reveal_direction: AtomicI8::new(
                 self.pending_reveal_direction.load(Ordering::Relaxed),
             ),
+            pending_right_edge: AtomicU64::new(self.pending_right_edge.load(Ordering::Relaxed)),
+            pending_right_edge_of: self.pending_right_edge_of,
             center_override_window: self.center_override_window,
             last_screen_width: AtomicU64::new(self.last_screen_width.load(Ordering::Relaxed)),
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
@@ -616,7 +716,7 @@ impl ScrollingLayoutSystem {
     /// The same clamp a column gets, with no offset to add: `column_ratio` is the only place the
     /// bounds are applied, so the default and the columns derived from it cannot drift apart.
     fn clamp_base_ratio(ratio: f64, min_ratio: f64, max_ratio: f64) -> f64 {
-        column_ratio(false, ratio, 0.0, min_ratio, max_ratio)
+        column_ratio(ColumnKind::Bounded, ratio, 0.0, min_ratio, max_ratio)
     }
 
     fn column_widths_and_starts(
@@ -633,7 +733,7 @@ impl ScrollingLayoutSystem {
         for col in &state.columns {
             starts.push(cursor);
             let ratio = column_ratio(
-                state.is_full_width_column(col),
+                state.column_kind(col),
                 base_ratio,
                 col.width_offset,
                 min_ratio,
@@ -856,6 +956,7 @@ impl ScrollingLayoutSystem {
                     windows: vec![wid],
                     width_offset: 0.0,
                     width_overridden: false,
+                    width_dragged: false,
                     height_weights: vec![weight],
                     height_overridden: false,
                 },
@@ -1005,7 +1106,7 @@ impl ScrollingLayoutSystem {
             // A lone column keeps its width; expanding it tied a window's size to its neighbours.
             // See "Column width" in `src/layout/docs/strip.md`.
             let ratio = column_ratio(
-                state.is_full_width_column(col),
+                state.column_kind(col),
                 base_ratio,
                 col.width_offset,
                 self.settings.min_column_width_ratio,
@@ -1074,6 +1175,20 @@ impl ScrollingLayoutSystem {
                 .unwrap_or(0.0);
             state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
             state.pending_align.store(false, Ordering::Relaxed);
+        }
+        let right_edge =
+            f64::from_bits(state.pending_right_edge.swap(f64::NAN.to_bits(), Ordering::Relaxed));
+        if !right_edge.is_nan()
+            && state.selected == state.pending_right_edge_of
+            && let Some((col_idx, _)) = state.selected_location()
+        {
+            let offset = offset_keeping_right_edge(
+                anchor_x,
+                column_starts.get(col_idx).copied().unwrap_or(0.0),
+                column_widths.get(col_idx).copied().unwrap_or(0.0),
+                right_edge,
+            );
+            state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
         }
         let reveal_direction = state.pending_reveal_direction.swap(0, Ordering::Relaxed);
         if reveal_direction != 0 {
@@ -1348,22 +1463,29 @@ impl ScrollingLayoutSystem {
         }
     }
 
-    /// The width a window's column carries, if it has been sized away from the default.
+    /// The width a window's column carries, if it has been sized away from the default, and
+    /// whether a mouse drag gave it, which the bounds do not hold.
     ///
     /// Needed so moving a window between workspaces or displays keeps the width the user gave
     /// it; a fresh column otherwise starts at the default ratio and the window appeared to
     /// reset to 50%.
-    pub fn column_width_offset(&self, layout: LayoutId, wid: WindowId) -> Option<f64> {
+    pub fn column_width_offset(&self, layout: LayoutId, wid: WindowId) -> Option<(f64, bool)> {
         let state = self.layout_state(layout)?;
         let (col_idx, _) = state.locate(wid)?;
         let column = state.columns.get(col_idx)?;
         // Only a deliberately sized column is worth carrying. An untouched one should adopt
         // the destination's default, which may differ (a wider display, a different config).
-        column.width_overridden.then_some(column.width_offset)
+        column.width_overridden.then_some((column.width_offset, column.width_dragged))
     }
 
     /// Re-apply a width carried from another column.
-    pub fn set_column_width_offset(&mut self, layout: LayoutId, wid: WindowId, offset: f64) {
+    pub fn set_column_width_offset(
+        &mut self,
+        layout: LayoutId,
+        wid: WindowId,
+        offset: f64,
+        dragged: bool,
+    ) {
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -1371,8 +1493,7 @@ impl ScrollingLayoutSystem {
             return;
         };
         if let Some(column) = state.columns.get_mut(col_idx) {
-            column.width_offset = offset;
-            column.width_overridden = true;
+            column.give_width(offset, dragged);
         }
     }
 
@@ -1502,8 +1623,12 @@ impl ScrollingLayoutSystem {
             return false;
         };
         if state.locate(wid).is_some() {
-            // refocusing the same centered window should keep the center override
-            if state.selected == Some(wid) && state.center_override_window == Some(wid) {
+            // Refocusing the selected window keeps what is pending for it: its centring, and the
+            // right edge a left-edge drag keeps, which the release refocuses before its pass.
+            if state.selected == Some(wid)
+                && (state.center_override_window == Some(wid)
+                    || state.pending_right_edge_of == Some(wid))
+            {
                 return true;
             }
             state.selected = Some(wid);
@@ -1518,11 +1643,14 @@ impl ScrollingLayoutSystem {
         }
     }
 
+    /// The window's own frame, taken as its column's width and its row's height. `drag` is the mouse
+    /// drag that resized it, `None` for any other resize: the app's own, or a window rule's size. See
+    /// "Mouse resize" in `src/layout/docs/strip.md`.
     pub fn on_window_resized(
         &mut self,
         layout: LayoutId,
         wid: WindowId,
-        _old_frame: CGRect,
+        drag: Option<Drag>,
         new_frame: CGRect,
         screen: CGRect,
         gaps: &Gaps,
@@ -1530,6 +1658,7 @@ impl ScrollingLayoutSystem {
         let min_ratio = self.settings.min_column_width_ratio;
         let max_ratio = self.settings.max_column_width_ratio;
         let reveals_only = self.settings.reveals_only();
+        let center = self.settings.center_focused_column;
 
         let Some(state) = self.layout_state_mut(layout) else {
             return;
@@ -1541,78 +1670,70 @@ impl ScrollingLayoutSystem {
         if tiling.size.width <= 0.0 {
             return;
         }
-        let ratio = new_frame.size.width / tiling.size.width;
-        let clamped = ratio.clamp(min_ratio, max_ratio).max(0.05);
-
         let base_ratio = state.column_width_ratio;
         let Some((col_idx, row_idx)) = state.locate(wid) else {
             return;
         };
-        // A full-width column keeps the width it had before, for the toggle back; an app settling its
-        // own size under it is not a width given to it.
-        if state.is_full_width_column(&state.columns[col_idx]) {
+        let dragged_from = drag.map(|drag| drag.from);
+        let side_drag = dragged_from
+            .and_then(|start| dragged_side(start, new_frame).map(|side| (start, side)));
+        let full_width = state.is_full_width_column(&state.columns[col_idx]);
+        if full_width && side_drag.is_none() {
+            // A full-width column keeps the width it had before, for the toggle back: neither the
+            // app settling its own size nor a drag that moves neither side gives it a width.
             return;
         }
-        state.columns[col_idx].width_offset = clamped - base_ratio;
-        state.columns[col_idx].width_overridden = true;
+        if reveals_only {
+            state.reveal_selected_without_direction();
+        } else {
+            state.align_scroll_to_selected();
+        }
+        let width = dragged_from.map_or(new_frame.size.width, |start| {
+            let has_override = state.center_override_window.is_some();
+            let centred = centres(col_idx, state.columns.len(), center, has_override);
+            dragged_width(start.size.width, new_frame.size.width, centred)
+        });
+        let kind = if side_drag.is_some() || state.columns[col_idx].width_dragged {
+            ColumnKind::Dragged
+        } else {
+            ColumnKind::Bounded
+        };
+        let ratio = column_ratio(kind, width / tiling.size.width, 0.0, min_ratio, max_ratio);
+        if let Some((start, _)) = side_drag
+            && ratio >= 1.0
+            && state.columns[col_idx].windows.len() == 1
+        {
+            if !full_width {
+                // The width before the drag, for the toggle back.
+                let offset = start.size.width / tiling.size.width - base_ratio;
+                state.columns[col_idx].give_width(offset, true);
+                state.enter_full_width(wid);
+            }
+        } else {
+            state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Dragged);
+        }
 
-        // Handle vertical resizing within columns
         let col = &mut state.columns[col_idx];
         if col.windows.len() > 1 && tiling.size.height > 0.0 {
             col.ensure_height_weights();
             let total_gap = gaps.inner * (col.windows.len().saturating_sub(1) as f64);
             let available_height = (tiling.size.height - total_gap).max(0.0);
-
             if available_height > 0.0 {
-                col.height_overridden = true;
-                // Set weights directly to desired pixel heights. The constraint
-                // solver (`solve_axis_lengths`) first reserves each window's
-                // minimum height, then distributes the remainder proportionally
-                // by weight.  Using actual pixel heights as weights means the
-                // solver will naturally produce the user's intended split,
-                // subject only to the macOS-reported min/max constraints.
-                let new_resized_height = new_frame.size.height.max(1.0);
-                let new_other_total = (available_height - new_resized_height).max(1.0);
-
-                // Distribute the "other" portion among non-resized windows,
-                // preserving their relative proportions.
-                let other_weight_sum: f64 = col
-                    .height_weights
-                    .iter()
-                    .enumerate()
-                    .filter(|&(i, _)| i != row_idx)
-                    .map(|(_, &w)| w)
-                    .sum();
-
-                if other_weight_sum > 0.0 {
-                    for i in 0..col.windows.len() {
-                        if i == row_idx {
-                            col.height_weights[i] = new_resized_height;
-                        } else {
-                            // Scale each other window's weight so their sum equals new_other_total.
-                            col.height_weights[i] =
-                                new_other_total * (col.height_weights[i] / other_weight_sum);
-                        }
+                let height = new_frame.size.height;
+                match drag {
+                    Some(Drag { end: Some(end), .. }) => {
+                        col.trade_row_height(row_idx, end, height, available_height);
                     }
-                } else {
-                    // Fallback: no prior weights for other windows.
-                    let other_count = (col.windows.len() - 1).max(1) as f64;
-                    let share = new_other_total / other_count;
-                    for i in 0..col.windows.len() {
-                        if i == row_idx {
-                            col.height_weights[i] = new_resized_height;
-                        } else {
-                            col.height_weights[i] = share;
-                        }
-                    }
+                    Some(Drag { end: None, .. }) => {}
+                    None => col.take_row_height(row_idx, height, available_height),
                 }
             }
         }
 
-        if reveals_only && state.selected == Some(wid) {
-            state.reveal_selected_without_direction();
-        } else if state.selected == Some(wid) {
-            state.align_scroll_to_selected();
+        if let Some((start, Side::Left)) = side_drag
+            && reveals_only
+        {
+            state.pin_right_edge(wid, start.origin.x + start.size.width);
         }
     }
 
@@ -1785,7 +1906,7 @@ impl ScrollingLayoutSystem {
 
         match next_preset(state.ratio_of(selected, col_idx), &presets) {
             Some(PresetWidth::Full) => state.enter_full_width(selected),
-            Some(PresetWidth::Ratio(ratio)) => state.set_column_ratio(selected, col_idx, ratio),
+            Some(PresetWidth::Ratio(ratio)) => state.set_column_ratio(selected, col_idx, ratio, false),
             None => return Vec::new(),
         }
         state.selected = Some(selected);
@@ -1897,8 +2018,8 @@ impl ScrollingLayoutSystem {
             if orientation == ResizeOrientation::Vertical {
                 return;
             }
-            let ratio = base_ratio + amount;
-            state.column_width_ratio = ratio.clamp(min_ratio, max_ratio).max(0.05);
+            state.column_width_ratio =
+                column_ratio(ColumnKind::Bounded, base_ratio, amount, min_ratio, max_ratio);
             return;
         };
 
@@ -1934,14 +2055,13 @@ impl ScrollingLayoutSystem {
 
         let selected = state.columns[col_idx].windows[row_idx];
         let current = state.ratio_of(selected, col_idx);
-        // Nothing is wider than the viewport, so growing a maximised column is a no-op rather than a
-        // step that silently unmaximises it and lands on `max_column_width_ratio` — which is BELOW
-        // full width, so "grow" would visibly shrink the window.
-        if current >= 1.0 && amount > 0.0 {
+        // A width outside the bounds, maximised or dragged there, would be clamped back across
+        // them, so the key would move it against its own direction.
+        if (amount > 0.0 && current >= max_ratio) || (amount < 0.0 && current <= min_ratio) {
             return;
         }
-        let clamped = (current + amount).clamp(min_ratio, max_ratio).max(0.05);
-        state.set_column_ratio(selected, col_idx, clamped);
+        let clamped = column_ratio(ColumnKind::Bounded, current, amount, min_ratio, max_ratio);
+        state.set_column_ratio(selected, col_idx, clamped, false);
         if reveals_only {
             state.reveal_selected_without_direction();
         } else {
@@ -1959,7 +2079,10 @@ mod tests {
     use super::{Column, ScrollingLayoutSystem, rebased_offset};
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
-    use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
+    use crate::layout::domain::edge_drag::Drag;
+    use crate::layout::settings::{
+        CenterFocusedColumn, Gaps, ScrollingLayoutSettings, WindowInsertionPoint,
+    };
     use crate::layout::{Direction, LayoutId, ResizeOrientation};
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
@@ -2073,6 +2196,7 @@ mod tests {
             windows: vec![w1, w2],
             width_offset: 0.0,
             width_overridden: false,
+            width_dragged: false,
             height_weights: vec![1.0, 1.0],
             height_overridden: false,
         }];
@@ -2150,6 +2274,7 @@ mod tests {
             windows: vec![locked, capped],
             width_offset: 0.0,
             width_overridden: false,
+            width_dragged: false,
             height_weights: vec![1.0, 1.0],
             height_overridden: false,
         }];
@@ -2640,7 +2765,8 @@ mod tests {
         let mut new_f1 = f1_before;
         new_f1.size.height = f1_before.size.height + 100.0;
 
-        system.on_window_resized(layout, w1, f1_before, new_f1, screen, &gaps);
+        let drag = Drag::report(f1_before, new_f1, None);
+        system.on_window_resized(layout, w1, Some(drag), new_f1, screen, &gaps);
 
         // 3. Re-calculate layout and verify resized heights are preserved
         let frames_after = render(&system, layout, screen, &gaps);
@@ -2991,7 +3117,7 @@ mod tests {
         toggle_selection(&mut system, layout);
         let full = frame_for(&render(&system, layout, screen, &gaps), w1);
         let settled = CGRect::new(full.origin, CGSize::new(full.size.width - 6.0, full.size.height - 4.0));
-        system.on_window_resized(layout, w1, full, settled, screen, &gaps);
+        system.on_window_resized(layout, w1, None, settled, screen, &gaps);
         assert_eq!(
             frame_for(&render(&system, layout, screen, &gaps), w1).size.width,
             full.size.width,
@@ -4124,5 +4250,623 @@ mod tests {
             "no selection is not a licence to move w0"
         );
         let _ = w;
+    }
+
+    // ── a mouse drag on an edge ─────────────────────────────────────────────
+
+    /// Kai's display on 2026-10-06: 1728pt wide with `gaps 3`, so the tiling area is x=3, w 1722.
+    const KAI_SCREEN: CGRect = CGRect {
+        origin: CGPoint { x: 0.0, y: 0.0 },
+        size: CGSize { width: 1728.0, height: 1117.0 },
+    };
+
+    fn kai_s_gaps() -> Gaps {
+        let edge = 3.0;
+        Gaps {
+            outer: crate::layout::settings::Edges {
+                top: edge,
+                left: edge,
+                bottom: edge,
+                right: edge,
+            },
+            inner: edge,
+        }
+    }
+
+    /// A report's frame, `[x, w]` across the tiling area's full height.
+    fn xw(x: f64, width: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, 3.0), CGSize::new(width, 1111.0))
+    }
+
+    /// `[x, w]` as `calculate_layout` returns it.
+    fn laid_out_xw(system: &ScrollingLayoutSystem, layout: LayoutId, wid: WindowId) -> (f64, f64) {
+        let frame = frame_for(&render(system, layout, KAI_SCREEN, &kai_s_gaps()), wid);
+        (frame.origin.x, frame.size.width)
+    }
+
+    /// The app sizing `wid` itself, then a pass.
+    fn app_sizes(system: &mut ScrollingLayoutSystem, layout: LayoutId, wid: WindowId, width: f64) {
+        assert!(system.select_window(layout, wid));
+        system.on_window_resized(layout, wid, None, xw(0.0, width), KAI_SCREEN, &kai_s_gaps());
+        render(system, layout, KAI_SCREEN, &kai_s_gaps());
+    }
+
+    fn drag(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        wid: WindowId,
+        from: CGRect,
+        to: CGRect,
+    ) {
+        drag_through(system, layout, wid, from, &[to]);
+    }
+
+    /// One drag's reports, each carrying the end the ones before it moved, as the reactor's drag
+    /// session carries it.
+    fn drag_through(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        wid: WindowId,
+        from: CGRect,
+        reports: &[CGRect],
+    ) {
+        let mut end = None;
+        for &to in reports {
+            let drag = Drag::report(from, to, end);
+            end = drag.end;
+            system.on_window_resized(layout, wid, Some(drag), to, KAI_SCREEN, &kai_s_gaps());
+        }
+    }
+
+    /// Kai's bounds (a third to two thirds, a half by default) and three columns: column 0 594pt
+    /// wide and column 1, selected, 882pt.
+    fn kai_s_columns(
+        center: CenterFocusedColumn,
+    ) -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let mut settings = preset_settings();
+        settings.column_width_ratio = 0.5;
+        settings.center_focused_column = center;
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+        for window in w {
+            system.add_window_after_selection(layout, window);
+        }
+        app_sizes(&mut system, layout, w[0], 596.0);
+        app_sizes(&mut system, layout, w[1], 883.5);
+        assert_eq!(laid_out_xw(&system, layout, w[0]).1, 594.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 882.0);
+        (system, layout, w)
+    }
+
+    /// Kai's columns under `never`: column 0 at [3, w 594], and column 1 at [600, w 882] with the
+    /// strip at offset 0.
+    fn kai_s_strip() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let (system, layout, w) = kai_s_columns(CenterFocusedColumn::Never);
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 594.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 882.0));
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+        (system, layout, w)
+    }
+
+    /// Kai's columns under `always`, column 1 centred at [423, w 882].
+    fn kai_s_centred_strip() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let (system, layout, w) = kai_s_columns(CenterFocusedColumn::Always);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (423.0, 882.0));
+        (system, layout, w)
+    }
+
+    fn assert_near(got: f64, want: f64, what: &str) {
+        assert!((got - want).abs() < 1e-6, "{what}: {got}, not {want}");
+    }
+
+    /// Kai's press 14, which landed at [577, w 1148] with the right edge pushed to the screen's.
+    /// 1148/1722 is exactly 2/3, whose gap share is 1.5: before rounding, x 335.5 and w 1146.5.
+    #[test]
+    fn a_left_edge_drag_grows_the_column_left_and_the_columns_before_it_scroll_by_the_change() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (336.0, 1147.0));
+        assert_near(scroll_offset(&system, layout), 264.5, "offset");
+        assert_eq!(laid_out_xw(&system, layout, w[0]).0, -262.0);
+    }
+
+    /// Kai's press 16, which landed back at 1148pt, `max-column-width`. 1443/1722 takes no gap
+    /// share.
+    #[test]
+    fn kai_s_drag_to_1443_keeps_1443() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (39.0, 1443.0));
+        assert_eq!(laid_out_xw(&system, layout, w[0]).0, -558.0);
+    }
+
+    #[test]
+    fn a_left_edge_shrink_keeps_the_right_edge_while_the_strip_can_scroll() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+
+        drag(&mut system, layout, w[1], xw(334.0, 1148.0), xw(434.0, 1048.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (436.0, 1047.0));
+        assert_near(scroll_offset(&system, layout), 164.5, "offset");
+    }
+
+    /// Keeping the right edge would need offset -101.5: space before the first column, which the
+    /// strip never shows.
+    #[test]
+    fn a_left_edge_shrink_at_the_strip_start_keeps_the_left_edge() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(700.0, 782.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 781.0));
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+    }
+
+    /// Kai's press 8, which landed at 572pt, `min-column-width`. 484.75pt after a gap share of
+    /// 2.25, with the left edge kept at the strip's start.
+    #[test]
+    fn a_drag_below_min_column_width_keeps_its_width() {
+        let (mut system, layout, w) = kai_s_strip();
+        app_sizes(&mut system, layout, w[1], 597.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 595.0));
+
+        drag(&mut system, layout, w[1], xw(600.0, 595.0), xw(708.0, 487.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 485.0));
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+    }
+
+    /// A terminal settling to its cell grid after the release. Clamped, it would undo the drag.
+    #[test]
+    fn an_app_settling_under_a_dragged_width_keeps_it_unbounded() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+
+        system.on_window_resized(layout, w[1], None, xw(39.0, 1440.0), KAI_SCREEN, &kai_s_gaps());
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (39.0, 1440.0));
+    }
+
+    /// Only a drag that moves the left or right edge marks the width as dragged, so a stacked
+    /// edge's drag leaves the column held to the bounds, and the app's own width with it.
+    #[test]
+    fn a_drag_on_a_stacked_edge_leaves_the_bounds_on_the_column() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = at_yh(&system, layout, w[1], 374.0, 368.0);
+        let to = at_yh(&system, layout, w[1], 274.0, 468.0);
+        drag(&mut system, layout, w[1], from, to);
+
+        let report = CGRect::new(from.origin, CGSize::new(1443.0, from.size.height));
+        system.on_window_resized(layout, w[1], None, report, KAI_SCREEN, &kai_s_gaps());
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0);
+    }
+
+    /// `ctrl-F` gives back the width the drag started from, 860pt, less its gap share once more, as
+    /// every drag lands. A stacked window stays in its stack, a column the whole viewport wide.
+    #[test]
+    fn a_drag_to_the_full_viewport_makes_a_lone_window_full_width() {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let lone = wid(2, 1);
+        system.add_window_after_selection(layout, lone);
+        let start = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone);
+        let full = CGRect::new(start.origin, CGSize::new(1722.0, start.size.height));
+        drag(&mut system, layout, lone, start, full);
+
+        assert!(system.is_window_full_width(layout, lone));
+        assert_eq!(frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone), full);
+        toggle_selection(&mut system, layout);
+        let back = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone);
+        assert_eq!((start.size.width, back.size.width), (860.0, 859.0), "the toggle back");
+
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
+        let across = CGRect::new(from.origin, CGSize::new(1722.0, from.size.height));
+        drag(&mut system, layout, w[1], from, across);
+        assert!(!system.is_window_full_width(layout, w[1]));
+        assert_eq!(shape(&system, layout), vec![w.to_vec()]);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "stacked");
+    }
+
+    /// Bounded, the gesture would step it by 1148pt plus the gap while the layout drew it 1443.
+    #[test]
+    fn the_scroll_gesture_steps_a_dragged_column_by_its_dragged_width() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+        let before = scroll_offset(&system, layout);
+
+        system.scroll_by_delta(layout, 1.0);
+        assert_near(scroll_offset(&system, layout) - before, 1446.0, "step");
+    }
+
+    /// Clamped back to `max-column-width`, the grow would shrink it to 1148pt.
+    #[test]
+    fn a_grow_key_on_a_column_dragged_past_max_does_nothing() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+
+        system.resize_selection_by(layout, 0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (39.0, 1443.0));
+    }
+
+    /// Clamped up to `min-column-width`, the shrink would grow it to 572pt.
+    #[test]
+    fn a_shrink_key_on_a_column_dragged_below_min_does_nothing() {
+        let (mut system, layout, w) = kai_s_strip();
+        app_sizes(&mut system, layout, w[1], 597.0);
+        drag(&mut system, layout, w[1], xw(600.0, 595.0), xw(708.0, 487.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+
+        system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 485.0));
+    }
+
+    /// Dragged to 0.69977 of the tiling width, one step down is 0.64977, 1117pt after the gap
+    /// share; from the bound it would be 1060. From 1443pt the step lands past the bound, on it.
+    #[test]
+    fn a_shrink_key_on_it_starts_from_its_width() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(277.0, 1205.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+        system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1117.0, "inside the bounds");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+        system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0, "past max");
+    }
+
+    /// The preset is a width given by a key, so the bounds hold it again.
+    #[test]
+    fn ctrl_r_on_it_takes_the_first_preset_above() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
+        system.cycle_preset_column_width(layout);
+        assert!(system.is_window_full_width(layout, w[1]), "past two thirds");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(782.0, 700.0));
+        system.cycle_preset_column_width(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 860.0, "a half");
+        system.on_window_resized(layout, w[1], None, xw(39.0, 1443.0), KAI_SCREEN, &kai_s_gaps());
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0, "bounded again");
+    }
+
+    #[test]
+    fn the_first_column_grown_from_its_left_edge_ends_grown_to_the_right() {
+        let (mut system, layout, w) = kai_s_strip();
+        assert!(system.select_window(layout, w[0]));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+        drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(-77.0, 674.0));
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 672.0), "3 columns");
+        assert_eq!(laid_out_xw(&system, layout, w[1]).0, 678.0);
+
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let lone = wid(2, 1);
+        system.add_window_after_selection(layout, lone);
+        let (x, width) = laid_out_xw(&system, layout, lone);
+        drag(&mut system, layout, lone, xw(x, width), xw(x - 80.0, width + 80.0));
+        let (x_after, width_after) = laid_out_xw(&system, layout, lone);
+        assert_eq!(x_after, x, "1 column");
+        assert!(width_after > width + 75.0, "1 column: {width} -> {width_after}");
+    }
+
+    /// The left edge in by 200pt: 1522pt, past `max-column-width`, with the right edge kept.
+    #[test]
+    fn a_drag_on_a_full_width_column_ends_it_at_the_dragged_width() {
+        let (mut system, layout, w) = kai_s_strip();
+        toggle_selection(&mut system, layout);
+        let full = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
+
+        let shrunk = CGRect::new(
+            CGPoint::new(full.origin.x + 200.0, full.origin.y),
+            CGSize::new(full.size.width - 200.0, full.size.height),
+        );
+        drag(&mut system, layout, w[1], full, shrunk);
+        assert!(!system.is_window_full_width(layout, w[1]));
+        assert_eq!(frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]), shrunk);
+    }
+
+    /// No width was dragged, so the window stays the full-width column it was.
+    #[test]
+    fn a_top_edge_drag_on_a_full_width_column_leaves_it_full_width() {
+        let (mut system, layout, w) = kai_s_strip();
+        toggle_selection(&mut system, layout);
+        let full = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
+
+        let lower = CGRect::new(
+            CGPoint::new(full.origin.x, full.origin.y + 100.0),
+            CGSize::new(full.size.width, full.size.height - 100.0),
+        );
+        drag(&mut system, layout, w[1], full, lower);
+        assert!(system.is_window_full_width(layout, w[1]));
+        assert_eq!(frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]), full);
+    }
+
+    /// The layout file keeps the mark, so the bounds still pass it after a restart.
+    /// A `Column` as rini read it before a drag had a mark, to read a new file as a rollback would.
+    #[derive(serde::Deserialize)]
+    struct ColumnBeforeDragged {
+        windows: Vec<WindowId>,
+        width_offset: f64,
+        #[serde(default)]
+        width_overridden: bool,
+    }
+
+    #[test]
+    fn a_dragged_column_is_written_so_a_rini_from_before_it_reads_it() {
+        let column = Column {
+            windows: vec![wid(1, 1)],
+            width_offset: 0.33797,
+            width_overridden: true,
+            width_dragged: true,
+            ..Column::default()
+        };
+        let old: ColumnBeforeDragged =
+            ron::from_str(&ron::ser::to_string(&column).unwrap()).expect("an older rini reads it");
+        assert_eq!(old.windows, column.windows);
+        assert_eq!(old.width_offset, 0.33797);
+        assert!(old.width_overridden);
+    }
+
+    #[test]
+    fn a_dragged_width_survives_a_save_and_restore() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+
+        let mut restored: ScrollingLayoutSystem =
+            ron::from_str(&ron::ser::to_string(&system).unwrap()).unwrap();
+        restored.settings = system.settings.clone();
+        assert_eq!(laid_out_xw(&restored, layout, w[1]).1, 1443.0);
+    }
+
+    #[test]
+    fn a_window_resizing_itself_keeps_its_column_where_it_was() {
+        let (mut system, layout, w) = kai_s_strip();
+        system.on_window_resized(layout, w[1], None, xw(500.0, 982.0), KAI_SCREEN, &kai_s_gaps());
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 981.0));
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+    }
+
+    /// Pinned, column 2 would end with its right edge at 1482; revealed, it ends at the screen's
+    /// edge, x 865.5 and w 859.5 before rounding.
+    #[test]
+    fn a_focus_change_after_a_left_edge_report_leaves_the_new_column_unpinned() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        assert!(system.select_window(layout, w[2]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (866.0, 860.0));
+        assert_near(scroll_offset(&system, layout), 884.0, "offset");
+    }
+
+    /// A request for the dragged window made after its report and before the pass wins over the
+    /// pin, which would put its right edge back at 1482 and its x at 336: centring, the reveal a key
+    /// or `ctrl-F` asks for, and the alignment a focus move that finds no window asks for.
+    #[test]
+    fn a_scroll_request_after_a_left_edge_report_wins_over_the_kept_edge() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        system.center_selected_column(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (291.0, 1147.0), "centred");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        system.resize_selection_by(layout, 0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (577.0, 1148.0), "a key, revealed");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        assert!(system.toggle_full_width(layout, w[1]));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "ctrl-F, revealed");
+
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        assert_eq!(system.move_focus(layout, Direction::Down).0, None);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1147.0), "a focus move that finds none");
+    }
+
+    /// Any frame under a held button counts as the drag, rini's own write to a neighbour coming
+    /// back included.
+    #[test]
+    fn a_drag_report_for_a_window_other_than_the_focused_one_changes_no_width() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(3.0, 694.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 594.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 882.0));
+    }
+
+    /// The release refocuses the window it let go of before its pass, which must not cost the pin.
+    #[test]
+    fn refocusing_the_window_after_a_left_edge_report_keeps_its_right_edge() {
+        let (mut system, layout, w) = kai_s_strip();
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
+        assert!(system.select_window(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (336.0, 1147.0));
+        assert_near(scroll_offset(&system, layout), 264.5, "offset");
+    }
+
+    /// The selection passes to column 2 without a scroll request, and the drag's reveal is still
+    /// pending. Pinned, column 2 would end at offset 264.5; revealed, flush with the screen's edge at
+    /// x 578.5 and w 1146.5 before rounding.
+    #[test]
+    fn a_removed_window_s_pin_does_not_move_the_column_selected_after_it() {
+        let (mut system, layout, w) = kai_s_strip();
+        app_sizes(&mut system, layout, w[2], 1148.0);
+        app_sizes(&mut system, layout, w[0], 596.0);
+        assert!(system.select_window(layout, w[1]));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 882.0));
+
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(500.0, 982.0));
+        system.remove_window(w[1]);
+        assert_eq!(system.selected_window(layout), Some(w[2]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (579.0, 1147.0));
+        assert_near(scroll_offset(&system, layout), 21.5, "offset");
+    }
+
+    /// 684pt asked, 682 laid out after the gap share, 520pt from either edge of the tiling area.
+    /// Undoubled it would end at [548, w 632].
+    #[test]
+    fn in_centred_mode_a_middle_column_dragged_out_50_from_its_left_edge_grows_100_and_stays_centred() {
+        let (mut system, layout, w) = kai_s_centred_strip();
+        app_sizes(&mut system, layout, w[1], 586.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (572.0, 584.0));
+
+        drag(&mut system, layout, w[1], xw(572.0, 584.0), xw(522.0, 634.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (523.0, 682.0));
+    }
+
+    /// The first column, flush left, takes a right-edge drag as dragged; the last, flush right, a
+    /// left-edge one. Doubled, they would end 752.5 and 756.5pt wide.
+    #[test]
+    fn in_centred_mode_the_end_columns_grow_away_from_their_flush_edge() {
+        let (mut system, layout, w) = kai_s_centred_strip();
+        assert!(system.select_window(layout, w[0]));
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 594.0));
+        drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(3.0, 674.0));
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 672.0), "first");
+
+        app_sizes(&mut system, layout, w[2], 600.0);
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (1127.0, 598.0));
+        drag(&mut system, layout, w[2], xw(1127.0, 598.0), xw(1047.0, 678.0));
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (1049.0, 676.0), "last");
+    }
+
+    /// Out 150 asks for 1182pt, past `max-column-width`, and takes no gap share. Bounded, it would
+    /// end at [290, w 1148].
+    #[test]
+    fn in_centred_mode_a_doubled_drag_past_max_column_width_keeps_its_width() {
+        let (mut system, layout, w) = kai_s_centred_strip();
+        drag(&mut system, layout, w[1], xw(423.0, 882.0), xw(273.0, 1032.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (273.0, 1182.0));
+    }
+
+    /// Three windows stacked on Kai's display, each `[y, h]` 368.333pt high before rounding.
+    fn kai_s_stack() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let (system, layout, w) = stacked_three(preset_settings());
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows, [(3.0, 368.0), (374.0, 368.0), (746.0, 368.0)]);
+        (system, layout, w)
+    }
+
+    /// `[y, h]` as `calculate_layout` returns it.
+    fn laid_out_yh(system: &ScrollingLayoutSystem, layout: LayoutId, wid: WindowId) -> (f64, f64) {
+        let frame = frame_for(&render(system, layout, KAI_SCREEN, &kai_s_gaps()), wid);
+        (frame.origin.y, frame.size.height)
+    }
+
+    /// `wid`'s laid-out frame with its top at `y` and `height` high.
+    fn at_yh(
+        system: &ScrollingLayoutSystem,
+        layout: LayoutId,
+        wid: WindowId,
+        y: f64,
+        height: f64,
+    ) -> CGRect {
+        let frame = frame_for(&render(system, layout, KAI_SCREEN, &kai_s_gaps()), wid);
+        CGRect::new(CGPoint::new(frame.origin.x, y), CGSize::new(frame.size.width, height))
+    }
+
+    /// The middle window takes 99.667pt, its 468 less the 368.333 it had, from the top one alone.
+    /// Spread over the column as before, the bottom window would end 318.5pt high.
+    #[test]
+    fn a_middle_window_s_top_edge_in_a_3_stack_leaves_the_bottom_window_alone() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = at_yh(&system, layout, w[1], 374.0, 368.0);
+        let to = at_yh(&system, layout, w[1], 274.0, 468.0);
+        drag(&mut system, layout, w[1], from, to);
+
+        assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 269.0), "top");
+        assert_eq!(laid_out_yh(&system, layout, w[1]), (275.0, 468.0), "middle");
+        assert_eq!(laid_out_yh(&system, layout, w[2]), (746.0, 368.0), "bottom");
+    }
+
+    /// A window that sizes itself takes its height from the rest of its column in their
+    /// proportions. Unequal first, 268.667 and 368.333 around a 468.333 middle, so sharing differs
+    /// from trading with one neighbour.
+    #[test]
+    fn a_stacked_window_sizing_itself_takes_its_height_from_the_others_in_proportion() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = at_yh(&system, layout, w[1], 374.0, 368.0);
+        let out = at_yh(&system, layout, w[1], 274.0, 468.0);
+        drag(&mut system, layout, w[1], from, out);
+
+        let grown = at_yh(&system, layout, w[1], 275.0, 568.0);
+        system.on_window_resized(layout, w[1], None, grown, KAI_SCREEN, &kai_s_gaps());
+
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows[1].1, 568.0, "the window's own height");
+        let (top, bottom) = (rows[0].1, rows[2].1);
+        assert!((top / bottom - 268.667 / 368.333).abs() < 0.01, "{rows:?}");
+        assert!((top + 568.0 + bottom - 1105.0).abs() <= 1.0, "{rows:?}");
+    }
+
+    /// Every report carries the frame the drag started from; each trades only what changed since
+    /// the last, so the middle window ends 99.667pt shorter, not shorter by all three reports.
+    #[test]
+    fn three_reports_of_one_drag_move_the_neighbour_by_the_drag_once() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[0]));
+        let from = at_yh(&system, layout, w[0], 3.0, 368.0);
+        let reports = [398.0, 428.0, 468.0].map(|height| at_yh(&system, layout, w[0], 3.0, height));
+        drag_through(&mut system, layout, w[0], from, &reports);
+
+        assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 468.0), "top");
+        assert_eq!(laid_out_yh(&system, layout, w[1]), (474.0, 269.0), "middle");
+        assert_eq!(laid_out_yh(&system, layout, w[2]), (746.0, 368.0), "bottom");
+    }
+
+    /// Back at its start the report moved neither edge. The column ends as it began, within the
+    /// third of a point the start frame's rounding leaves, not at the 468pt the report before left.
+    #[test]
+    fn a_stacked_edge_dragged_back_to_where_it_started_gives_the_height_back() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = at_yh(&system, layout, w[1], 374.0, 368.0);
+        let out = at_yh(&system, layout, w[1], 274.0, 468.0);
+        drag_through(&mut system, layout, w[1], from, &[out, from]);
+
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows, [(3.0, 369.0), (375.0, 368.0), (746.0, 368.0)]);
+    }
+
+    /// Marked as a deliberate split, the column would keep its two 552pt rows when the third window
+    /// came back with the 1.0 its own column held, and that window would end 1pt high.
+    #[test]
+    fn a_width_drag_on_a_stack_leaves_its_heights_and_a_window_folded_back_shares_evenly() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[2]));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1]], vec![w[2]]]);
+
+        assert!(system.select_window(layout, w[0]));
+        let from = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[0]);
+        let wider = CGRect::new(from.origin, CGSize::new(from.size.width + 100.0, from.size.height));
+        drag(&mut system, layout, w[0], from, wider);
+        assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 554.0), "top");
+        assert_eq!(laid_out_yh(&system, layout, w[1]), (560.0, 554.0), "bottom");
+
+        assert!(system.select_window(layout, w[2]));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows, [(3.0, 368.0), (374.0, 368.0), (746.0, 368.0)]);
     }
 }

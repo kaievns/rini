@@ -16,8 +16,8 @@ is borrowed.
   `ctrl-R` looked dead on a maximized window: the cycle wrote a `width_offset`
   that `calculate_layout` then ignored, because a column holding a maximized
   window is 1.0 whatever its stored width says. It cannot be a ratio like the
-  others — `max-column-width` is below 1.0, 0.9 by default, so 1.0 asked for
-  as a ratio comes back clamped to it — so `preset_width::next_preset`
+  others — `max-column-width` is below 1.0, 0.9 by default, so a preset of 1.0
+  asked for as a ratio comes back clamped to it — so `preset_width::next_preset`
   answers `Full` or `Ratio` and the caller applies the matching transition.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
   keys both do it, and the window stays where it is rather than going back to
@@ -25,12 +25,21 @@ is borrowed.
   kept one turned the next `ctrl-F` pair into a teleport — maximizing an already
   lone window records no new origin, so the press that unmaximized it read the
   stale one and dropped the window into a stack untouched since.
-- **Growing a maximized column does nothing.** Nothing is wider than the
-  viewport. Stepping it would unmaximize onto `max-column-width`, which is
-  *narrower* than what it has, so "grow" would visibly shrink the window. A
-  shrink does unmaximize, starting from 1.0 rather than the width it had before.
+- **A key never moves a width against its direction.** A grow at or above
+  `max-column-width` and a shrink at or below `min-column-width` do nothing,
+  because the bound would pull the width back across itself. Growing a
+  maximized column used to unmaximize it onto `max-column-width`, *narrower*
+  than what it had, so "grow" visibly shrank the window; a column dragged past
+  the bound would have done the same. A shrink from above starts from the
+  width the column has, 1.0 for a maximized one rather than the width it had
+  before.
 - **One place applies the width bounds.** `constraints::column_ratio`, read by
-  the layout pass, by the scroll-gesture arithmetic and by the default width.
+  the layout pass, by the scroll-gesture arithmetic, by the default width, by the
+  resize keys and by a resize report, each with a `ColumnKind`: full width,
+  dragged, or bounded. The layout pass and the gesture pass the column's own. The
+  default width and the keys always pass `Bounded`, which is how a key bounds a
+  dragged width again. A report passes `Dragged` for a side drag or a column
+  already dragged, and `Bounded` otherwise.
   The gesture used to compute its own and did not know about maximized columns,
   so it stepped the strip by two thirds of a screen for a column occupying all
   of it and one swipe left the next column part-way on.
@@ -247,6 +256,109 @@ why left/right navigation appeared to. Learning a limit now asks for that pass
 itself: `on_windows_on_screen_updated` reports `changed` when a window's
 constraints differ from what was recorded, and `constrains_layout` keeps the
 common case of a window with no limits from costing a pass.
+
+## Mouse resize
+
+macOS reports a mouse resize as frames and nothing else. The reactor keeps the frame the window had
+before the drag's first report (`DragSession::start_frame`) and hands it to the layout with every
+report of the drag, as an `edge_drag::Drag`; an app resizing itself sends `None`.
+`edge_drag::dragged_side` reads the edge off the two frames: the left one when `minX` moved and
+`maxX` stayed within 0.5pt. `niri:` paths are at
+https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
+
+- **A left-edge drag keeps the right edge.** The layout used to read only the width and place the
+  column by its start, so the growth always landed on the right. `on_window_resized` now pins the
+  right edge at the start frame's `maxX`, and the next `calculate_layout` sets the scroll offset that
+  puts it there (`strip::offset_keeping_right_edge`), before the reveal and the offset clamp run as
+  they always do. The pin is applied there rather than when the report arrives because only the
+  layout pass has the column's real width, after the bounds, the gap share and the windows' own
+  limits.
+- **The pin is spent by one pass and belongs to one window.** Every scroll request clears it, and the
+  pass applies it only while the window it names is still selected: `remove_window` moves the
+  selection without any request, and a focus change before the release must not drag the next
+  column to the old right edge. Under `center-focused-column "always"` no pin is set, because the
+  centring places the column.
+- **The release focuses the resized window, and that keeps the pin.** The mouse-up sends a focus
+  event ahead of its passes. After a resize it names the session's window, not the hit test's: the
+  cursor lets go on the edge, where the column behind can answer. `select_window` on the window
+  already selected issues no scroll request while a pin names it, as it keeps a centre override;
+  the request would have cleared the pin before the only pass that reads it.
+- **A centred column takes twice the travel.** Centring moves both edges by half of any change, so
+  the column takes the start width plus twice the dragged edge's travel (`edge_drag::dragged_width`)
+  and the dragged edge ends under the cursor. niri doubles the delta the same way while it centres
+  (`niri:src/layout/scrolling.rs:3621-3632`), but it centres every column under `"always"`
+  (`is_centering_focused_column`, `niri:src/layout/scrolling.rs:575-578`). rini's first and last sit
+  flush, so `strip::centres`, the rule `anchor_x` places by, leaves them the dragged width. The
+  report makes its scroll request first and asks `centres` with the centre override that request
+  left, the one the pass then centres by: under `"never"` the request clears it, so a centred window
+  there is dragged as any other.
+- **A stacked edge trades with the window across it.** `edge_drag::dragged_end` reads the top or
+  bottom edge as `dragged_side` reads the left or right, and `edge_drag::trade_height` gives the
+  change to that one row. The trade stops where that row reaches 1pt, so the column's total holds and
+  no other row moves. It starts from the model's heights, not the start frame's: every report of a
+  drag carries the same start frame, so a change measured from it would be taken again from a
+  neighbour the last report already shrank. A report back where the drag started moves neither edge
+  against that frame, so the drag session keeps the edge its reports moved last
+  (`DragSession::dragged_end`, carried as `Drag::end`) and the layout trades back across it; without
+  that the column kept the heights of the report before. The session ends at the release, so the
+  next drag starts with no edge, even from the same frame. The model's heights are the
+  weights in points over the column's height, or equal shares when `height_overridden` is unset,
+  because the layout reads such a column as equal shares whatever its weights. A drag that never
+  moves the top or bottom edge leaves the heights and `height_overridden` alone. It used to mark the
+  column as deliberately split, so a window folded back into it kept the 1.0 weight its own column
+  held and ended 1pt high. An app's own height, with no drag, still comes out of the other rows in
+  proportion.
+- **Not taken from niri: the whole column sharing a stacked edge.** niri refuses only the topmost
+  window's top edge (`niri:src/layout/scrolling.rs:3635-3650`). Every other top or bottom edge goes
+  through `set_window_height` (`niri:src/layout/scrolling.rs:5045-5124`), which fixes the dragged
+  tile's height and turns every other tile automatic, so they share what is left. niri's own FIXME
+  asks for smarter height distribution there (`niri:src/layout/scrolling.rs:3644-3645`). rini trades
+  with the one window across the edge, and the bottom-most window's bottom changes nothing too.
+- **The first column ends grown to the right.** Its left edge cannot stay off the viewport, so the
+  neutral reveal pulls it back. niri ends there too: it does not reveal during a resize
+  (`niri:src/layout/scrolling.rs:1417-1419`), and at the end `interactive_resize_end`
+  (`niri:src/layout/scrolling.rs:3655-3671`) aligns a column that is not fully visible to the nearer
+  side (`compute_new_view_offset`, `niri:src/layout/scrolling.rs:5588-5620`). niri reads a left edge
+  the same way, flipping the sign of the horizontal delta (`interactive_resize_update`,
+  `niri:src/layout/scrolling.rs:3594-3653`).
+- **Not taken from niri: space before the first column.** niri keeps the right edge on a left-edge
+  shrink of a strip at its start, which leaves empty space before the first column until the view
+  next moves. rini's offset clamp never shows that space, so the shrink keeps the left edge instead,
+  and a strip scrolled by less than the shrink keeps the right edge only until the offset reaches 0.
+- **A drag passes the width bounds.** `min-column-width` and `max-column-width` keep the resize keys
+  from crawling to 100%, and they snapped a drag back: presses 15 and 16 reached 1413 and 1443pt and
+  landed at 1148. A drag that moves the left or right edge marks its column `width_dragged`, and
+  `column_ratio` holds a `ColumnKind::Dragged` column only to the viewport and a twentieth of it; the
+  windows' own limits still apply in `column_width`. niri has neither key: its interactive resize is
+  held only by the window and the working area. A centred column's width is doubled, then held the
+  same way. A stacked edge's drag leaves the mark as it was. The app's own resize keeps it, because
+  an app reports its own size after rini's write, as a terminal snapping to its cell grid does, and a
+  clamp there would undo the drag. The mark is saved with the column and carried with the width
+  (`ColumnWidth::Dragged`, which the file holds as an `Offset` with the drag beside it, as
+  `src/workspaces/docs/launch-memory.md` says); a key or a preset clears it.
+- **Full width and a drag.** A drag on a full-width column's left or right edge ends full width at
+  the dragged width, through `leave_full_width_in_place`; anything else under full width, the app
+  settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in
+  its column full width, with the drag's start width to go back to, so one width has one record. A
+  stacked window stays a column at 1.0, because the mode would pull it out of its stack.
+- **1-2pt short.** The column's ratio is the reported width over the tiling width, and
+  `column_width` then subtracts the gap share, so a drag lands that much narrower than dragged.
+
+Measured 2026-10-06, before this rule: 20 presses on Kai's display (tiling area x=3, w 1722, `gaps 3`)
+with Ghostty, polled every 1ms from the window server alongside rini's Accessibility reports.
+
+| presses | what | result |
+|---|---|---|
+| 1-7, 17 | right edge | the pressed window took the resize; no neighbour resized |
+| 9-13 | left edge, inside both bounds | x back at 600 at release, width kept within 2pt: 9, 10 and 13 grew to the right, 11 and 12 shrank from it |
+| 8 | left edge, [600, w 595] to [708, w 487] | landed at [600, w 572], `min-column-width` less the 2pt gap share |
+| 14 | left edge, [600, w 882] to [334, w 1148] | landed at [577, w 1148]: placed by its start at 600, then the reveal pulled it flush with the screen edge at 1725 |
+| 15, 16 | left edge from [577, w 1148], to w 1413 and 1443 | both back at [577, w 1148], `max-column-width` (0.66667 x 1722) |
+| 18-20 | title-bar moves | the swap traded the two windows' widths |
+
+In all 17 edge presses no neighbour resized across the 3pt gap, so macOS did not hand the press to
+the window beside it. On the left edge, Accessibility reported 56-98% of the frames the poll saw, p50
+8.9-13.5ms ahead of the window server.
 
 ## Parking
 

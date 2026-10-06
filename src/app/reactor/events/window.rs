@@ -4,6 +4,7 @@ use tracing::{debug, trace};
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::{DragState, Quiet};
+use crate::layout::domain::edge_drag::Drag;
 use crate::windows::domain::info::WindowInfo as Window;
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::state::WindowFilter;
@@ -358,22 +359,27 @@ pub fn handle_window_frame_changed(
             DragState::Active { .. } | DragState::PendingSwap { .. }
         );
     if dragging {
-        let needs_session = !matches!(
-            &drag.drag_state,
+        let (start_frame, dragged_end) = match &drag.drag_state {
             DragState::Active { session } | DragState::PendingSwap { session, .. }
-                if session.window == wid
-        );
-        if needs_session {
-            drag.drag_state = DragState::Active {
-                session: crate::app::reactor::DragSession {
-                    window: wid,
-                    last_frame: old_frame,
-                    origin_space: old_space,
-                    settled_space: old_space,
-                    layout_dirty: false,
-                },
-            };
-        }
+                if session.window == wid =>
+            {
+                (session.start_frame, session.dragged_end)
+            }
+            _ => {
+                drag.drag_state = DragState::Active {
+                    session: crate::app::reactor::DragSession {
+                        window: wid,
+                        start_frame: old_frame,
+                        dragged_end: None,
+                        last_frame: old_frame,
+                        origin_space: old_space,
+                        settled_space: old_space,
+                        layout_dirty: false,
+                    },
+                };
+                (old_frame, None)
+            }
+        };
         if let DragState::Active { session } = &mut drag.drag_state {
             session.last_frame = new_frame;
             session.layout_dirty = true;
@@ -383,10 +389,16 @@ pub fn handle_window_frame_changed(
         }
         drag.skip_layout_for_window = Some(wid);
         if !old_frame.size.same_as(new_frame.size) {
+            let report = Drag::report(start_frame, new_frame, dragged_end);
+            if let DragState::Active { session } | DragState::PendingSwap { session, .. } =
+                &mut drag.drag_state
+            {
+                session.dragged_end = report.end;
+            }
             if active_resize_space.is_some() {
                 outcome = outcome.with_layout_event(LayoutEvent::WindowResized {
                     wid,
-                    old_frame,
+                    drag: Some(report),
                     new_frame,
                     screens,
                 });
@@ -433,7 +445,7 @@ pub fn handle_window_frame_changed(
             outcome.arrange.is_resize = true;
             outcome = outcome.with_layout_event(LayoutEvent::WindowResized {
                 wid,
-                old_frame,
+                drag: None,
                 new_frame,
                 screens,
             });

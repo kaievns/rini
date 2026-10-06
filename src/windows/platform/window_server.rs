@@ -1,5 +1,5 @@
 #[cfg(test)]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_int};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,6 +41,7 @@ thread_local! {
     static TEST_WINDOW_ORDERED_IN_OVERRIDE: RefCell<HashMap<u32, bool>> = RefCell::new(HashMap::default());
     static TEST_FRONT_TO_BACK_OVERRIDE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
     static TEST_WINDOWS_GONE_OVERRIDE: RefCell<HashSet<u32>> = RefCell::new(HashSet::default());
+    static TEST_WINDOW_UNDER_CURSOR_OVERRIDE: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
 pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
@@ -741,9 +742,23 @@ pub fn current_cursor_location() -> Result<CGPoint, CGError> {
     Ok(point)
 }
 
+#[cfg(not(test))]
 pub fn window_under_cursor() -> Option<WindowServerId> {
     let point = current_cursor_location().ok()?;
     get_window_at_point(point)
+}
+
+/// See "A unit test must not read the live window server" in `docs/testing.md`. No window until a
+/// test sets one with `set_window_under_cursor_override`.
+#[cfg(test)]
+pub fn window_under_cursor() -> Option<WindowServerId> {
+    TEST_WINDOW_UNDER_CURSOR_OVERRIDE.with(Cell::get).map(WindowServerId::new)
+}
+
+/// The window under the cursor for test builds. `None` clears it.
+#[cfg(test)]
+pub fn set_window_under_cursor_override(window: Option<u32>) {
+    TEST_WINDOW_UNDER_CURSOR_OVERRIDE.with(|current| current.set(window));
 }
 
 #[cfg(test)]
