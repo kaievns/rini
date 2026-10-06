@@ -1,4 +1,5 @@
-//! Which edge of a window a mouse drag is moving, and the width it asks of the column.
+//! Which edge of a window a mouse drag is moving, the width it asks of the column, and the heights
+//! it trades with the window across a stacked edge.
 //!
 //! macOS reports a drag as a frame and nothing else, so the edge is read off the two frames: the
 //! one the window started from and the one it has now. See "Mouse resize" in
@@ -17,6 +18,13 @@ pub enum Side {
     Right,
 }
 
+/// A window's top or bottom edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum End {
+    Top,
+    Bottom,
+}
+
 /// The vertical edge a drag from `start` to `now` moved, or `None` when both moved or neither did.
 pub fn dragged_side(start: CGRect, now: CGRect) -> Option<Side> {
     let left_moved = (now.origin.x - start.origin.x).abs() > STILL;
@@ -26,6 +34,34 @@ pub fn dragged_side(start: CGRect, now: CGRect) -> Option<Side> {
         (false, true) => Some(Side::Right),
         _ => None,
     }
+}
+
+/// The horizontal edge a drag from `start` to `now` moved, or `None` when both moved or neither did.
+pub fn dragged_end(start: CGRect, now: CGRect) -> Option<End> {
+    let top_moved = (now.origin.y - start.origin.y).abs() > STILL;
+    let bottom_moved = (max_y(now) - max_y(start)).abs() > STILL;
+    match (top_moved, bottom_moved) {
+        (true, false) => Some(End::Top),
+        (false, true) => Some(End::Bottom),
+        _ => None,
+    }
+}
+
+/// Gives `heights_px[row]` its `new_height` by trading the change with the row across the dragged
+/// `end` alone, which stays at least 1pt high, so the column's total stays what it was. An edge with
+/// no row across it changes nothing.
+pub fn trade_height(heights_px: &mut [f64], row: usize, end: End, new_height: f64) {
+    let across = match end {
+        End::Top => row.checked_sub(1),
+        End::Bottom => Some(row + 1).filter(|&i| i < heights_px.len()),
+    };
+    let Some(across) = across else {
+        return;
+    };
+    let wanted = new_height.max(1.0) - heights_px[row];
+    let change = wanted.min((heights_px[across] - 1.0).max(0.0));
+    heights_px[row] += change;
+    heights_px[across] -= change;
 }
 
 /// The width a drag from `start_width` to `now_width` asks of its column. A centred column grows on
@@ -40,6 +76,10 @@ pub fn dragged_width(start_width: f64, now_width: f64, centred: bool) -> f64 {
 
 fn max_x(frame: CGRect) -> f64 {
     frame.origin.x + frame.size.width
+}
+
+fn max_y(frame: CGRect) -> f64 {
+    frame.origin.y + frame.size.height
 }
 
 #[cfg(test)]
@@ -67,6 +107,58 @@ mod tests {
         ] {
             assert_eq!(dragged_side(start, now), side, "{case}");
         }
+    }
+
+    fn frame_y(y: f64, height: f64) -> CGRect {
+        CGRect::new(CGPoint::new(600.0, y), CGSize::new(882.0, height))
+    }
+
+    #[test]
+    fn the_end_that_moved_is_the_one_that_left_its_start() {
+        let start = frame_y(374.0, 368.0);
+        for (now, end, case) in [
+            (frame_y(274.0, 468.0), Some(End::Top), "top edge up"),
+            (frame_y(424.0, 318.0), Some(End::Top), "top edge down"),
+            (frame_y(374.0, 468.0), Some(End::Bottom), "bottom edge down"),
+            (frame_y(274.0, 568.0), None, "both moved"),
+            (frame_y(274.0, 368.0), None, "a move, not a resize"),
+            (frame_y(374.0, 368.0), None, "neither"),
+            (frame_y(374.4, 367.7), None, "drift within half a point"),
+            (frame_y(274.0, 468.4), Some(End::Top), "the kept edge drifting"),
+        ] {
+            assert_eq!(dragged_end(start, now), end, "{case}");
+        }
+    }
+
+    #[test]
+    fn a_top_edge_takes_height_only_from_the_window_above() {
+        let mut heights = [300.0, 400.0, 405.0];
+        trade_height(&mut heights, 1, End::Top, 500.0);
+        assert_eq!(heights, [200.0, 500.0, 405.0], "grown");
+
+        trade_height(&mut heights, 1, End::Top, 350.0);
+        assert_eq!(heights, [350.0, 350.0, 405.0], "shrunk");
+
+        trade_height(&mut heights, 1, End::Top, 900.0);
+        assert_eq!(heights, [1.0, 699.0, 405.0], "the window above stops at 1pt");
+    }
+
+    #[test]
+    fn a_bottom_edge_only_from_the_window_below() {
+        let mut heights = [300.0, 400.0, 405.0];
+        trade_height(&mut heights, 1, End::Bottom, 450.0);
+        assert_eq!(heights, [300.0, 450.0, 355.0], "grown");
+
+        trade_height(&mut heights, 0, End::Bottom, 100.0);
+        assert_eq!(heights, [100.0, 650.0, 355.0], "shrunk");
+    }
+
+    #[test]
+    fn an_edge_with_nothing_across_it_changes_nothing() {
+        let mut heights = [300.0, 400.0, 405.0];
+        trade_height(&mut heights, 0, End::Top, 500.0);
+        trade_height(&mut heights, 2, End::Bottom, 500.0);
+        assert_eq!(heights, [300.0, 400.0, 405.0]);
     }
 
     #[test]

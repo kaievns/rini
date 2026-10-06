@@ -124,8 +124,15 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A drag MUST resize only the focused window. Any frame reported under a held button counts as the
   drag, including rini's own write to a neighbour coming back, and resizing that neighbour would
   fight the user.
+- **A drag on a stacked window's top or bottom edge MUST trade height only with the window across
+  that edge.** Every other window in the column keeps its height. An edge with no window across it,
+  the top window's top or the bottom window's bottom, MUST change nothing.
+- A drag that moves neither the top nor the bottom edge MUST leave the column's heights as they
+  were. A column nobody resized vertically then still divides evenly when a window joins or leaves
+  it.
 - A window that resizes itself MUST keep its column where it was: the app's new width is taken and
-  its origin is not.
+  its origin is not. Its new height is taken from the other windows in its column, in their
+  proportions.
 
 > **Reported 2026-10-06.** "the left edge is finicky. i can reduce the size ok. and i can extend it
 > but it extends to the right not to the left. and when the right edge reaches the screen edge it
@@ -181,7 +188,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 `src/layout/domain/scrolling.rs` is the layout, `src/layout/domain/constraints.rs` the widths,
 `src/layout/domain/strip.rs` the geometry, `src/workspaces/engine/commands/` the commands.
-Which edge a mouse drag moves is `src/layout/domain/edge_drag.rs`.
+Which edge a mouse drag moves, and what it asks of the column, is `src/layout/domain/edge_drag.rs`.
 A title-bar zoom is told from a resize by `src/windows/domain/zoom.rs`, and the full-width toggle both
 routes share is in `src/workspaces/engine/commands/floating.rs`.
 Measurements are in `src/layout/docs/strip.md`.

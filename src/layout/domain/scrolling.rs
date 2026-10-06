@@ -10,7 +10,9 @@ use crate::layout::domain::constraints::{
     solve_axis_lengths,
 };
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
-use crate::layout::domain::edge_drag::{Side, dragged_side, dragged_width};
+use crate::layout::domain::edge_drag::{
+    End, Side, dragged_end, dragged_side, dragged_width, trade_height,
+};
 use crate::layout::domain::strip::{
     Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, reveal_offset,
 };
@@ -59,6 +61,53 @@ impl Column {
         self.height_weights.clear();
         self.height_weights.resize(count, 1.0);
         self.height_overridden = false;
+    }
+
+    /// Each row's height in points out of `available`, before the windows' own limits. A column
+    /// nobody has resized divides evenly whatever its weights, as `calculate_layout` reads it.
+    fn row_heights(&self, available: f64) -> Vec<f64> {
+        let count = self.windows.len();
+        let sum: f64 = self.height_weights.iter().sum();
+        if !self.height_overridden || sum <= 0.0 {
+            return vec![available / count as f64; count];
+        }
+        self.height_weights.iter().map(|weight| available * weight / sum).collect()
+    }
+
+    /// A dragged edge: `row` takes `height` from the row across `end` alone.
+    fn trade_row_height(&mut self, row: usize, end: End, height: f64, available: f64) {
+        let mut heights = self.row_heights(available);
+        trade_height(&mut heights, row, end, height);
+        self.height_weights = heights;
+        self.height_overridden = true;
+    }
+
+    /// The app's own height: `row` takes it, and the other rows share what is left in their
+    /// proportions.
+    fn take_row_height(&mut self, row: usize, height: f64, available: f64) {
+        // Weights as desired pixel heights: `solve_axis_lengths` reserves each window's minimum
+        // first and shares the remainder by weight, so the split lands as asked, within the
+        // windows' own limits.
+        self.height_overridden = true;
+        let height = height.max(1.0);
+        let others_total = (available - height).max(1.0);
+        let others_weight: f64 = self
+            .height_weights
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != row)
+            .map(|(_, &w)| w)
+            .sum();
+        let others = (self.windows.len() - 1).max(1) as f64;
+        for (i, weight) in self.height_weights.iter_mut().enumerate() {
+            *weight = if i == row {
+                height
+            } else if others_weight > 0.0 {
+                others_total * (*weight / others_weight)
+            } else {
+                others_total / others
+            };
+        }
     }
 }
 
@@ -1608,55 +1657,20 @@ impl ScrollingLayoutSystem {
         state.columns[col_idx].width_offset = clamped - base_ratio;
         state.columns[col_idx].width_overridden = true;
 
-        // Handle vertical resizing within columns
         let col = &mut state.columns[col_idx];
         if col.windows.len() > 1 && tiling.size.height > 0.0 {
             col.ensure_height_weights();
             let total_gap = gaps.inner * (col.windows.len().saturating_sub(1) as f64);
             let available_height = (tiling.size.height - total_gap).max(0.0);
-
             if available_height > 0.0 {
-                col.height_overridden = true;
-                // Set weights directly to desired pixel heights. The constraint
-                // solver (`solve_axis_lengths`) first reserves each window's
-                // minimum height, then distributes the remainder proportionally
-                // by weight.  Using actual pixel heights as weights means the
-                // solver will naturally produce the user's intended split,
-                // subject only to the macOS-reported min/max constraints.
-                let new_resized_height = new_frame.size.height.max(1.0);
-                let new_other_total = (available_height - new_resized_height).max(1.0);
-
-                // Distribute the "other" portion among non-resized windows,
-                // preserving their relative proportions.
-                let other_weight_sum: f64 = col
-                    .height_weights
-                    .iter()
-                    .enumerate()
-                    .filter(|&(i, _)| i != row_idx)
-                    .map(|(_, &w)| w)
-                    .sum();
-
-                if other_weight_sum > 0.0 {
-                    for i in 0..col.windows.len() {
-                        if i == row_idx {
-                            col.height_weights[i] = new_resized_height;
-                        } else {
-                            // Scale each other window's weight so their sum equals new_other_total.
-                            col.height_weights[i] =
-                                new_other_total * (col.height_weights[i] / other_weight_sum);
+                let height = new_frame.size.height;
+                match dragged_from {
+                    Some(start) => {
+                        if let Some(end) = dragged_end(start, new_frame) {
+                            col.trade_row_height(row_idx, end, height, available_height);
                         }
                     }
-                } else {
-                    // Fallback: no prior weights for other windows.
-                    let other_count = (col.windows.len() - 1).max(1) as f64;
-                    let share = new_other_total / other_count;
-                    for i in 0..col.windows.len() {
-                        if i == row_idx {
-                            col.height_weights[i] = new_resized_height;
-                        } else {
-                            col.height_weights[i] = share;
-                        }
-                    }
+                    None => col.take_row_height(row_idx, height, available_height),
                 }
             }
         }
@@ -4441,5 +4455,86 @@ mod tests {
         drag(&mut system, layout, w[1], xw(423.0, 882.0), xw(273.0, 1032.0));
 
         assert_eq!(laid_out_xw(&system, layout, w[1]), (290.0, 1148.0));
+    }
+
+    /// Three windows stacked on Kai's display, each `[y, h]` 368.333pt high before rounding.
+    fn kai_s_stack() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let (system, layout, w) = stacked_three(preset_settings());
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows, [(3.0, 368.0), (374.0, 368.0), (746.0, 368.0)]);
+        (system, layout, w)
+    }
+
+    /// `[y, h]` as `calculate_layout` returns it.
+    fn laid_out_yh(system: &ScrollingLayoutSystem, layout: LayoutId, wid: WindowId) -> (f64, f64) {
+        let frame = frame_for(&render(system, layout, KAI_SCREEN, &kai_s_gaps()), wid);
+        (frame.origin.y, frame.size.height)
+    }
+
+    /// `wid`'s laid-out frame with its top at `y` and `height` high.
+    fn at_yh(
+        system: &ScrollingLayoutSystem,
+        layout: LayoutId,
+        wid: WindowId,
+        y: f64,
+        height: f64,
+    ) -> CGRect {
+        let frame = frame_for(&render(system, layout, KAI_SCREEN, &kai_s_gaps()), wid);
+        CGRect::new(CGPoint::new(frame.origin.x, y), CGSize::new(frame.size.width, height))
+    }
+
+    /// The middle window takes 99.667pt, its 468 less the 368.333 it had, from the top one alone.
+    /// Spread over the column as before, the bottom window would end 318.5pt high.
+    #[test]
+    fn a_middle_window_s_top_edge_in_a_3_stack_leaves_the_bottom_window_alone() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = at_yh(&system, layout, w[1], 374.0, 368.0);
+        let to = at_yh(&system, layout, w[1], 274.0, 468.0);
+        drag(&mut system, layout, w[1], from, to);
+
+        assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 269.0), "top");
+        assert_eq!(laid_out_yh(&system, layout, w[1]), (275.0, 468.0), "middle");
+        assert_eq!(laid_out_yh(&system, layout, w[2]), (746.0, 368.0), "bottom");
+    }
+
+    /// Every report carries the frame the drag started from; each trades only what changed since
+    /// the last, so the middle window ends 99.667pt shorter, not shorter by all three reports.
+    #[test]
+    fn three_reports_of_one_drag_move_the_neighbour_by_the_drag_once() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[0]));
+        let from = at_yh(&system, layout, w[0], 3.0, 368.0);
+        for height in [398.0, 428.0, 468.0] {
+            let to = at_yh(&system, layout, w[0], 3.0, height);
+            drag(&mut system, layout, w[0], from, to);
+        }
+
+        assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 468.0), "top");
+        assert_eq!(laid_out_yh(&system, layout, w[1]), (474.0, 269.0), "middle");
+        assert_eq!(laid_out_yh(&system, layout, w[2]), (746.0, 368.0), "bottom");
+    }
+
+    /// Marked as a deliberate split, the column would keep its two 552pt rows when the third window
+    /// came back with the 1.0 its own column held, and that window would end 1pt high.
+    #[test]
+    fn a_width_drag_on_a_stack_leaves_its_heights_and_a_window_folded_back_shares_evenly() {
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[2]));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1]], vec![w[2]]]);
+
+        assert!(system.select_window(layout, w[0]));
+        let from = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[0]);
+        let wider = CGRect::new(from.origin, CGSize::new(from.size.width + 100.0, from.size.height));
+        drag(&mut system, layout, w[0], from, wider);
+        assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 554.0), "top");
+        assert_eq!(laid_out_yh(&system, layout, w[1]), (560.0, 554.0), "bottom");
+
+        assert!(system.select_window(layout, w[2]));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
+        let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+        assert_eq!(rows, [(3.0, 368.0), (374.0, 368.0), (746.0, 368.0)]);
     }
 }

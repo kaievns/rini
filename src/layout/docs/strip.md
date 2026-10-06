@@ -277,6 +277,23 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   flush, so `strip::centres`, the rule `anchor_x` places by, leaves them the dragged width. It is
   asked with the centre override the report's own scroll request keeps: under `"never"` that request
   clears it, so a centred window there is dragged as any other.
+- **A stacked edge trades with the window across it.** `edge_drag::dragged_end` reads the top or
+  bottom edge as `dragged_side` reads the left or right, and `edge_drag::trade_height` gives the
+  change to that one row. The trade stops where that row reaches 1pt, so the column's total holds and
+  no other row moves. It starts from the model's heights, not the start frame's: every report of a
+  drag carries the same `dragged_from`, so a change measured from it would be taken again from a
+  neighbour the last report already shrank. The model's heights are the weights in points over the
+  column's height, or equal shares when `height_overridden` is unset, because the layout reads such
+  a column as equal shares whatever its weights. A drag that moves no vertical edge leaves the
+  heights and `height_overridden` alone; it used to mark the column as deliberately split, so a
+  window folded back into it kept the 1.0 weight its own column held and ended 1pt high. An app's
+  own height, with no drag, still comes out of the other rows in proportion.
+- **Not taken from niri: the whole column sharing a vertical drag.** niri refuses only the topmost
+  window's top edge (`niri:src/layout/scrolling.rs:3635-3650`). Every other vertical edge goes
+  through `set_window_height` (`niri:src/layout/scrolling.rs:5045-5124`), which fixes the dragged
+  tile's height and turns every other tile automatic, so they share what is left. niri's own FIXME
+  asks for smarter height distribution there (`niri:src/layout/scrolling.rs:3644-3645`). rini trades
+  with the one window across the edge, and the bottom-most window's bottom changes nothing too.
 - **The first column ends grown to the right.** Its left edge cannot stay off the viewport, so the
   neutral reveal pulls it back. niri ends there too: it does not reveal during a resize
   (`niri:src/layout/scrolling.rs:1417-1419`), and at the end `interactive_resize_end`
