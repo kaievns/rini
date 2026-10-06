@@ -358,22 +358,26 @@ pub fn handle_window_frame_changed(
             DragState::Active { .. } | DragState::PendingSwap { .. }
         );
     if dragging {
-        let needs_session = !matches!(
-            &drag.drag_state,
+        let start_frame = match &drag.drag_state {
             DragState::Active { session } | DragState::PendingSwap { session, .. }
-                if session.window == wid
-        );
-        if needs_session {
-            drag.drag_state = DragState::Active {
-                session: crate::app::reactor::DragSession {
-                    window: wid,
-                    last_frame: old_frame,
-                    origin_space: old_space,
-                    settled_space: old_space,
-                    layout_dirty: false,
-                },
-            };
-        }
+                if session.window == wid =>
+            {
+                session.start_frame
+            }
+            _ => {
+                drag.drag_state = DragState::Active {
+                    session: crate::app::reactor::DragSession {
+                        window: wid,
+                        start_frame: old_frame,
+                        last_frame: old_frame,
+                        origin_space: old_space,
+                        settled_space: old_space,
+                        layout_dirty: false,
+                    },
+                };
+                old_frame
+            }
+        };
         if let DragState::Active { session } = &mut drag.drag_state {
             session.last_frame = new_frame;
             session.layout_dirty = true;
@@ -386,7 +390,7 @@ pub fn handle_window_frame_changed(
             if active_resize_space.is_some() {
                 outcome = outcome.with_layout_event(LayoutEvent::WindowResized {
                     wid,
-                    old_frame,
+                    dragged_from: Some(start_frame),
                     new_frame,
                     screens,
                 });
@@ -433,7 +437,7 @@ pub fn handle_window_frame_changed(
             outcome.arrange.is_resize = true;
             outcome = outcome.with_layout_event(LayoutEvent::WindowResized {
                 wid,
-                old_frame,
+                dragged_from: None,
                 new_frame,
                 screens,
             });

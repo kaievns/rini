@@ -248,6 +248,60 @@ itself: `on_windows_on_screen_updated` reports `changed` when a window's
 constraints differ from what was recorded, and `constrains_layout` keeps the
 common case of a window with no limits from costing a pass.
 
+## Mouse resize
+
+macOS reports a mouse resize as frames and nothing else. The reactor keeps the frame the window had
+before the drag's first report (`DragSession::start_frame`) and hands it to the layout with every
+report of the drag as `dragged_from`; an app resizing itself sends `None`.
+`edge_drag::dragged_side` reads the edge off the two frames: the left one when `minX` moved and
+`maxX` stayed within 0.5pt. `niri:` paths are at
+https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
+
+- **A left-edge drag keeps the right edge.** The layout used to read only the width and place the
+  column by its start, so the growth always landed on the right. `on_window_resized` now pins the
+  right edge at the start frame's `maxX`, and the next `calculate_layout` sets the scroll offset that
+  puts it there (`strip::offset_keeping_right_edge`), before the reveal and the offset clamp run as
+  they always do. The pin is applied there rather than when the report arrives because only the
+  layout pass has the column's real width, after the bounds, the gap share and the windows' own
+  limits.
+- **The pin is spent by one pass and belongs to one window.** Every scroll request clears it, and the
+  pass applies it only while the window it names is still selected: `remove_window` moves the
+  selection without any request, and a focus change before the release must not drag the next
+  column to the old right edge. Under `center-focused-column "always"` no pin is set, because the
+  centring places the column.
+- **The first column ends grown to the right.** Its left edge cannot stay off the viewport, so the
+  neutral reveal pulls it back. niri ends there too: it does not reveal during a resize
+  (`niri:src/layout/scrolling.rs:1417-1419`), and at the end `interactive_resize_end`
+  (`niri:src/layout/scrolling.rs:3655-3671`) aligns a column that is not fully visible to the nearer
+  side (`compute_new_view_offset`, `niri:src/layout/scrolling.rs:5588-5620`). niri reads a left edge
+  the same way, flipping the sign of the horizontal delta (`interactive_resize_update`,
+  `niri:src/layout/scrolling.rs:3594-3653`).
+- **Not taken from niri: space before the first column.** niri keeps the right edge on a left-edge
+  shrink of a strip at its start, which leaves empty space before the first column until the view
+  next moves. rini's offset clamp never shows that space, so the shrink keeps the left edge instead,
+  and a strip scrolled by less than the shrink keeps the right edge only until the offset reaches 0.
+- **The width bounds still apply.** A drag past `max-column-width` or under `min-column-width`
+  lands on the bound with the right edge kept, so the dragged edge snaps back to where the bound puts
+  it.
+- **1-2pt short.** The column's ratio is the reported width over the tiling width, and
+  `column_width` then subtracts the gap share, so a drag lands that much narrower than dragged.
+
+Measured 2026-10-06, before this rule: 20 presses on Kai's display (tiling area x=3, w 1722, `gaps 3`)
+with Ghostty, polled every 1ms from the window server alongside rini's Accessibility reports.
+
+| presses | what | result |
+|---|---|---|
+| 1-7, 17 | right edge | the pressed window took the resize; no neighbour resized |
+| 9-13 | left edge, inside both bounds | x back at 600 at release, width kept within 2pt: 9, 10 and 13 grew to the right, 11 and 12 shrank from it |
+| 8 | left edge, [600, w 595] to [708, w 487] | landed at [600, w 572], `min-column-width` less the 2pt gap share |
+| 14 | left edge, [600, w 882] to [334, w 1148] | landed at [577, w 1148]: placed by its start at 600, then the reveal pulled it flush with the screen edge at 1725 |
+| 15, 16 | left edge from [577, w 1148], to w 1413 and 1443 | both back at [577, w 1148], `max-column-width` (0.66667 x 1722) |
+| 18-20 | title-bar moves | the swap traded the two windows' widths |
+
+In all 17 edge presses no neighbour resized across the 3pt gap, so macOS did not hand the press to
+the window beside it. On the left edge, Accessibility reported 56-98% of the frames the poll saw, p50
+8.9-13.5ms ahead of the window server.
+
 ## Parking
 
 Off-strip windows park at 1pt corners; live parks were measured at y=1085

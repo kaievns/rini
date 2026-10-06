@@ -70,6 +70,17 @@ pub fn gap_share(ratio: f64, gap_x: f64) -> f64 {
     gap_x * (columns_abreast - 1.0) / columns_abreast
 }
 
+/// The scroll offset that puts the selected column's right edge at `right_x`, in display
+/// coordinates: where a drag on its left edge leaves the edge it did not move.
+pub fn offset_keeping_right_edge(
+    anchor_x: f64,
+    selected_start: f64,
+    selected_width: f64,
+    right_x: f64,
+) -> f64 {
+    anchor_x + selected_start + selected_width - right_x
+}
+
 /// Which way the strip is being scrolled to bring the selected column into view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reveal {
@@ -193,6 +204,14 @@ mod tests {
         assert_eq!(gap_share(1.0, 12.0), 0.0);
         assert_eq!(gap_share(0.5, 0.0), 0.0, "no gaps, nothing to absorb");
         assert_eq!(gap_share(0.0, 12.0), 0.0, "a zero ratio is not a column count");
+    }
+
+    #[test]
+    fn offset_keeping_right_edge_puts_the_selected_right_edge_back_at_right_x() {
+        let (anchor, start, width) = (3.0, 597.0, 1146.5);
+        let offset = offset_keeping_right_edge(anchor, start, width, 1482.0);
+        assert_eq!(offset, 264.5);
+        assert_eq!(anchor + start - offset + width, 1482.0);
     }
 
     #[test]

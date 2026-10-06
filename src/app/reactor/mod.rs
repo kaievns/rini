@@ -2671,6 +2671,7 @@ impl Reactor {
             self.drag_manager.drag_state = DragState::Active {
                 session: DragSession {
                     window: wid,
+                    start_frame: *frame,
                     last_frame: *frame,
                     origin_space,
                     settled_space: origin_space,
@@ -4453,11 +4454,9 @@ impl Reactor {
                 );
                 continue;
             };
-            let old_frame = window.frame_monotonic;
-            let new_frame = resize.resized_frame(old_frame);
+            let new_frame = resize.resized_frame(window.frame_monotonic);
             self.layout_manager.layout_engine.apply_app_rule_resize(
                 resize,
-                old_frame,
                 new_frame,
                 screen.frame,
                 Some(screen.display_uuid.as_str()),

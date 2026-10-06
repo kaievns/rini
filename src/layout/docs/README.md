@@ -13,7 +13,8 @@ principle, and deliberately is not reused — see "Why this shape" in
 | | |
 |---|---|
 | `domain/scrolling.rs` | `ScrollingLayoutSystem`: the columns, the selection, the scroll offset, and `calculate_layout`. The one layout system there is |
-| `domain/strip.rs` | Where the strip sits and how wide its columns are: `anchor_x`, `column_starts`, `gap_share`, `reveal_offset` |
+| `domain/strip.rs` | Where the strip sits and how wide its columns are: `anchor_x`, `column_starts`, `gap_share`, `reveal_offset`, `offset_keeping_right_edge` |
+| `domain/edge_drag.rs` | Which edge of a window a mouse drag moves, read off the frame it started from and the one it has now |
 | `domain/constraints.rs` | `column_ratio` for how wide a column asks to be, `solve_axis_lengths` for row heights, and `clamp_to_constraints` for what a window will accept |
 | `domain/preset_width.rs` | Which width the next `ctrl-R` asks for, and whether that width is the maximise mode |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
@@ -49,4 +50,5 @@ asks how wide a column is has to ask `column_ratio` rather than adding up the of
 ## Detail
 
 - [`strip.md`](strip.md) — every rule the strip enforces and the failure each one
-  answers: column width, navigation, folding, maximizing, parking
+  answers: column width and maximizing, navigation, joining and folding, the windows'
+  own limits, mouse resize, parking

@@ -28,6 +28,8 @@ pub use rini_ipc::protocol::Command;
 #[derive(Debug, Clone)]
 pub struct DragSession {
     pub(crate) window: WindowId,
+    /// The window's frame before the first report of the drag: what tells which edge it moves.
+    pub(crate) start_frame: CGRect,
     pub(crate) last_frame: CGRect,
     pub(crate) origin_space: Option<SpaceId>,
     pub(crate) settled_space: Option<SpaceId>,

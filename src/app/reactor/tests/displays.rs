@@ -234,6 +234,7 @@ fn cross_display_drag_clears_source_floating_position() {
     reactor.drag_manager.drag_state = DragState::Active {
         session: DragSession {
             window: wid,
+            start_frame: initial_frame,
             last_frame: moved_frame,
             origin_space: None,
             settled_space: Some(space2),

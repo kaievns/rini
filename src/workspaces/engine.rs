@@ -80,9 +80,11 @@ pub enum LayoutEvent {
     WindowRemoved(WindowId),
     WindowRemovedPreserveFloating(WindowId),
     WindowFocused(SpaceId, WindowId),
+    /// The window's frame changed size. `dragged_from` is the frame a mouse drag on it started from,
+    /// and `None` when the app resized the window itself.
     WindowResized {
         wid: WindowId,
-        old_frame: CGRect,
+        dragged_from: Option<CGRect>,
         new_frame: CGRect,
         screens: Vec<(SpaceId, CGRect, Option<String>)>,
     },
@@ -1528,7 +1530,6 @@ impl LayoutEngine {
     pub fn apply_app_rule_resize(
         &mut self,
         resize: AppRuleResize,
-        old_frame: CGRect,
         new_frame: CGRect,
         screen_frame: CGRect,
         display_uuid: Option<&str>,
@@ -1540,7 +1541,7 @@ impl LayoutEngine {
         let previous_selection = self.workspace_tree(resize.workspace_id).selected_window(layout);
         let tree = self.workspace_tree_mut(resize.workspace_id);
         let _ = tree.select_window(layout, resize.window);
-        tree.on_window_resized(layout, resize.window, old_frame, new_frame, screen_frame, &gaps);
+        tree.on_window_resized(layout, resize.window, None, new_frame, screen_frame, &gaps);
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
@@ -1859,7 +1860,7 @@ impl LayoutEngine {
             }
             LayoutEvent::WindowResized {
                 wid,
-                old_frame,
+                dragged_from,
                 new_frame,
                 screens,
             } => {
@@ -1876,7 +1877,7 @@ impl LayoutEngine {
                     self.workspace_tree_mut(ws_id).on_window_resized(
                         layout,
                         wid,
-                        old_frame,
+                        dragged_from,
                         new_frame,
                         screen_frame,
                         &gaps,
@@ -3703,7 +3704,7 @@ mod tests {
         assert_eq!(resizes[0].size.h, None);
         let old_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(500.0, 500.0));
         let new_frame = CGRect::new(old_frame.origin, CGSize::new(234.0, 500.0));
-        engine.apply_app_rule_resize(resizes[0], old_frame, new_frame, screen, None);
+        engine.apply_app_rule_resize(resizes[0], new_frame, screen, None);
 
         let frames = engine.calculate_layout(space, screen, &layout_settings.gaps.effective_for_display(None));
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
@@ -3715,7 +3716,7 @@ mod tests {
             &mut memory,
             LayoutEvent::WindowResized {
                 wid: window,
-                old_frame: new_frame,
+                dragged_from: Some(new_frame),
                 new_frame: user_frame,
                 screens: vec![(space, screen, None)],
             },

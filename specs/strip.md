@@ -98,6 +98,39 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > of which left the strip. Deleted. `ToggleFullscreenWithinGaps` is the only maximise, and it keeps the
 > window on the strip.
 
+## Resizing with the mouse
+
+- **A drag on a window's left edge MUST move that edge and keep the right one.** The column takes the
+  dragged width, its right edge stays where it was, and the columns before it scroll by the change.
+  The window ends where the cursor let go, less the column's share of the gap.
+- A column grown past the viewport's left edge MUST end with its left edge at the viewport's left
+  edge and the rest of its growth on the right. The first column therefore ends grown to the right,
+  as niri ends a resize of its first column.
+- A shrink from the left with the strip at its start MUST keep the left edge and shrink from the
+  right. Keeping the right edge would need space before the first column, which the strip never
+  shows. A strip scrolled by less than the shrink keeps the right edge until it reaches its start.
+- At `min-column-width` or `max-column-width` the column MUST take the bound and keep its right
+  edge, so the dragged edge ends where the bound puts it.
+- The kept edge belongs to the window dragged. When focus moves to another column, or the dragged
+  window closes, before the strip is laid out again, the column focused next MUST be placed as any
+  focus change places it.
+- A full-width column MUST ignore a drag and stay full width. Ending full width at a width under
+  `max-column-width` would snap a window filling the screen to two thirds for any small shrink.
+- A drag MUST resize only the focused window. Any frame reported under a held button counts as the
+  drag, including rini's own write to a neighbour coming back, and resizing that neighbour would
+  fight the user.
+- A window that resizes itself MUST keep its column where it was: the app's new width is taken and
+  its origin is not.
+
+> **Reported 2026-10-06.** "the left edge is finicky. i can reduce the size ok. and i can extend it
+> but it extends to the right not to the left. and when the right edge reaches the screen edge it
+> will stop resizing". rini placed every column by its start along the strip and took the dragged
+> window's new width without its origin, so every left-edge drag kept the left edge and moved the
+> right one. A grow then stopped at `max-column-width`, two thirds, 1148pt on that display, and the
+> reveal had put that column flush with the screen's right edge: that is the stop Kai saw. macOS
+> played no part: in all 17 edge presses recorded, the pressed window took the resize and no
+> neighbour resized across the 3pt gap.
+
 ## Folding
 
 - `ctrl-,` folds and unfolds toward the column on the LEFT. `ctrl-.` does the same toward the column on
@@ -143,6 +176,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 `src/layout/domain/scrolling.rs` is the layout, `src/layout/domain/constraints.rs` the widths,
 `src/layout/domain/strip.rs` the geometry, `src/workspaces/engine/commands/` the commands.
+Which edge a mouse drag moves is `src/layout/domain/edge_drag.rs`.
 A title-bar zoom is told from a resize by `src/windows/domain/zoom.rs`, and the full-width toggle both
 routes share is in `src/workspaces/engine/commands/floating.rs`.
 Measurements are in `src/layout/docs/strip.md`.
