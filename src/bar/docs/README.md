@@ -43,7 +43,8 @@ air and icons with different margins space evenly. See `domain/layout.rs`.
 which no font here can. A thread pictures every extra in one batched capture and compares. It sends
 them on only when one changed, and only a changed one carries a new picture, so only its layers are
 redrawn. No capture starts once the bar hears of a flight; one already under way runs to its end.
-See `menu-extras.md`.
+Each capture costs replayd and tccd about 20ms of CPU, so with no input for a minute the extras are
+pictured every 30s instead of every second. See `menu-extras.md`.
 
 ## Measured
 

@@ -258,9 +258,13 @@ pub fn reused(last: &[Stamp], now: &[Stamp]) -> Vec<Option<usize>> {
     now.iter().map(|stamp| last.iter().position(|sent| sent == stamp)).collect()
 }
 
-/// How often the extras are pictured. sketchybar pictured each one once a second; one batched capture
-/// a second costs WindowServer about 0.8ms.
+/// How often the extras are pictured. sketchybar pictured each one once a second.
 pub const TICK: Duration = Duration::from_secs(1);
+
+/// With no input for this long the extras are pictured only every [`AWAY_TICK`]: each capture costs
+/// replayd and tccd about 20ms of CPU besides rini's 4ms (`src/bar/docs/menu-extras.md`).
+pub const AWAY_AFTER: Duration = Duration::from_secs(60);
+pub const AWAY_TICK: Duration = Duration::from_secs(30);
 
 /// What the bar tells the thread that pictures the extras.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -274,12 +278,15 @@ pub enum Command {
 pub struct Schedule {
     paused: bool,
     due: Instant,
+    /// When the last pass was taken. `None` makes the next due pass go ahead however long the input
+    /// has been idle.
+    taken: Option<Instant>,
 }
 
 impl Schedule {
     /// Running, with the first picture due at once.
     pub fn new(now: Instant) -> Schedule {
-        Schedule { paused: false, due: now }
+        Schedule { paused: false, due: now, taken: None }
     }
 
     /// How long to wait for a command before picturing. `None` while paused: wait for one.
@@ -289,18 +296,37 @@ impl Schedule {
 
     pub fn on(&mut self, command: Command, now: Instant) {
         match command {
-            Command::Pause(paused) => self.paused = paused,
-            Command::Refresh => self.due = now,
+            Command::Pause(paused) => {
+                self.paused = paused;
+                if !paused {
+                    self.taken = None;
+                }
+            }
+            Command::Refresh => {
+                self.due = now;
+                self.taken = None;
+            }
         }
     }
 
-    /// Whether to picture now. Taking one puts the next a tick away.
-    pub fn take(&mut self, now: Instant) -> bool {
+    /// Whether to picture now, `idle` being how long since the last input. Each tick is looked at, so
+    /// the first one after any input pictures; with the input idle [`AWAY_AFTER`], a tick pictures only
+    /// once [`AWAY_TICK`] has passed since the last pass.
+    pub fn take(&mut self, now: Instant, idle: Duration) -> bool {
         if self.paused || now < self.due {
             return false;
         }
         self.due = now + TICK;
+        if idle >= AWAY_AFTER && self.taken.is_some_and(|taken| now < taken + AWAY_TICK) {
+            return false;
+        }
+        self.taken = Some(now);
         true
+    }
+
+    /// A pass taken that pictured nothing does not count: the next tick tries again.
+    pub fn missed(&mut self) {
+        self.taken = None;
     }
 
     /// Whether a pass taken may go on to capture, given the pause as it stands now rather than as the
@@ -310,6 +336,7 @@ impl Schedule {
         if paused {
             self.paused = true;
             self.due = now;
+            self.taken = None;
         }
         !paused
     }
@@ -638,12 +665,12 @@ mod tests {
         let start = Instant::now();
         let mut schedule = Schedule::new(start);
         assert_eq!(schedule.wait(start), Some(Duration::ZERO));
-        assert!(schedule.take(start));
-        assert!(!schedule.take(start));
+        assert!(schedule.take(start, Duration::ZERO));
+        assert!(!schedule.take(start, Duration::ZERO));
         let half = start + TICK / 2;
         assert_eq!(schedule.wait(half), Some(TICK / 2));
-        assert!(!schedule.take(half));
-        assert!(schedule.take(start + TICK));
+        assert!(!schedule.take(half, Duration::ZERO));
+        assert!(schedule.take(start + TICK, Duration::ZERO));
     }
 
     /// While paused the thread waits for a command rather than a tick, and pictures nothing.
@@ -653,11 +680,11 @@ mod tests {
         let mut schedule = Schedule::new(start);
         schedule.on(Command::Pause(true), start);
         assert_eq!(schedule.wait(start), None);
-        assert!(!schedule.take(start + TICK * 5));
+        assert!(!schedule.take(start + TICK * 5, Duration::ZERO));
         schedule.on(Command::Refresh, start + TICK * 5);
-        assert!(!schedule.take(start + TICK * 5));
+        assert!(!schedule.take(start + TICK * 5, Duration::ZERO));
         schedule.on(Command::Pause(false), start + TICK * 6);
-        assert!(schedule.take(start + TICK * 6), "the picture that fell due while paused");
+        assert!(schedule.take(start + TICK * 6, Duration::ZERO), "the picture that fell due while paused");
     }
 
     /// A flight that starts between a pass's listing and its capture calls the capture off. The thread
@@ -666,36 +693,96 @@ mod tests {
     fn a_pause_that_lands_after_the_listing_stops_the_capture() {
         let start = Instant::now();
         let mut schedule = Schedule::new(start);
-        assert!(schedule.take(start));
+        assert!(schedule.take(start, Duration::ZERO));
         let listed = start + TICK / 100;
         assert!(!schedule.may_capture(true, listed));
         assert_eq!(schedule.wait(listed), None);
-        assert!(!schedule.take(start + TICK * 3));
+        assert!(!schedule.take(start + TICK * 3, Duration::ZERO));
         schedule.on(Command::Pause(true), listed);
         schedule.on(Command::Pause(false), start + TICK / 2);
-        assert!(schedule.take(start + TICK / 2), "the pass called off, at once");
+        assert!(schedule.take(start + TICK / 2, Duration::ZERO), "the pass called off, at once");
     }
 
     #[test]
     fn with_no_pause_the_capture_goes_ahead_and_keeps_its_tick() {
         let start = Instant::now();
         let mut schedule = Schedule::new(start);
-        assert!(schedule.take(start));
+        assert!(schedule.take(start, Duration::ZERO));
         assert!(schedule.may_capture(false, start));
-        assert!(!schedule.take(start + TICK / 2));
-        assert!(schedule.take(start + TICK));
+        assert!(!schedule.take(start + TICK / 2, Duration::ZERO));
+        assert!(schedule.take(start + TICK, Duration::ZERO));
     }
 
     #[test]
     fn a_refresh_pictures_now_and_restarts_the_tick() {
         let start = Instant::now();
         let mut schedule = Schedule::new(start);
-        assert!(schedule.take(start));
+        assert!(schedule.take(start, Duration::ZERO));
         let soon = start + TICK / 4;
         schedule.on(Command::Refresh, soon);
         assert_eq!(schedule.wait(soon), Some(Duration::ZERO));
-        assert!(schedule.take(soon));
-        assert!(!schedule.take(start + TICK));
-        assert!(schedule.take(soon + TICK));
+        assert!(schedule.take(soon, Duration::ZERO));
+        assert!(!schedule.take(start + TICK, Duration::ZERO));
+        assert!(schedule.take(soon + TICK, Duration::ZERO));
+    }
+
+    /// Away from the keyboard the extras are pictured once every away tick, and the first tick after
+    /// any input pictures them again.
+    #[test]
+    fn with_no_input_for_a_minute_the_extras_are_pictured_every_thirty_seconds() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start, AWAY_AFTER), "the first pass whatever the idle");
+        let ticks = (1..AWAY_TICK.as_secs() as u32).filter(|&n| schedule.take(start + TICK * n, AWAY_AFTER)).count();
+        assert_eq!(ticks, 0);
+        assert_eq!(schedule.wait(start + TICK * 29), Some(TICK), "every tick is still looked at");
+        assert!(schedule.take(start + AWAY_TICK, AWAY_AFTER));
+        let back = start + AWAY_TICK + TICK;
+        assert!(schedule.take(back, Duration::from_millis(300)), "input since the last pass");
+        assert!(schedule.take(back + TICK, AWAY_AFTER - TICK));
+    }
+
+    #[test]
+    fn a_refresh_pictures_at_once_however_long_the_input_has_been_idle() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start, AWAY_AFTER));
+        let soon = start + TICK * 3;
+        schedule.on(Command::Refresh, soon);
+        assert!(schedule.take(soon, AWAY_AFTER * 10));
+        assert!(!schedule.take(soon + TICK, AWAY_AFTER * 10));
+    }
+
+    /// A pass a flight called off took no picture, so the one taken when it settles does not wait out
+    /// an away tick.
+    #[test]
+    fn a_pass_called_off_by_a_pause_does_not_count_while_away() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start, AWAY_AFTER));
+        assert!(!schedule.may_capture(true, start));
+        schedule.on(Command::Pause(false), start + TICK);
+        assert!(schedule.take(start + TICK, AWAY_AFTER));
+    }
+
+    /// A pass that fell due during a flight is taken as it settles, however long the input has been idle.
+    #[test]
+    fn the_end_of_a_pause_pictures_at_once_while_away() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start, AWAY_AFTER));
+        schedule.on(Command::Pause(true), start + TICK);
+        schedule.on(Command::Pause(false), start + TICK * 2);
+        assert!(schedule.take(start + TICK * 2, AWAY_AFTER));
+    }
+
+    #[test]
+    fn a_pass_that_pictured_nothing_is_tried_again_at_the_next_tick_while_away() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start, AWAY_AFTER));
+        schedule.missed();
+        assert!(schedule.take(start + TICK, AWAY_AFTER));
+        assert!(!schedule.take(start + TICK * 2, AWAY_AFTER));
     }
 }

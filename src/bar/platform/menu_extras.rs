@@ -1,20 +1,21 @@
-//! The thread that pictures what the bar shows of macOS: every menu extra in one capture a tick, cut
-//! apart, compared with what was last sent, and sent on only when something changed; and the desktop
-//! behind each bar, for its ground, once a minute. See `src/bar/docs/menu-extras.md`.
+//! The thread that pictures what the bar shows of macOS: every menu extra in one capture a tick, or
+//! every 30s once the input has been idle a minute, cut apart, compared with what was last sent, and
+//! sent on only when something changed; and the desktop behind each bar, for its ground, once a minute. See `src/bar/docs/menu-extras.md`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use objc2_app_kit::NSStatusWindowLevel;
 use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGContext, CGDisplayBounds, CGError,
-    CGImage, CGMainDisplayID, CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
-    kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
+    CGEventSource, CGEventSourceStateID, CGEventType, CGImage, CGMainDisplayID, CGWindowListOption,
+    kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber,
+    kCGWindowOwnerName,
 };
 use rini_skylight_sys::{G_CONNECTION, SLSCaptureWindowsContentsToRectWithOptions};
 use tracing::debug;
@@ -31,6 +32,15 @@ use crate::windows::platform::window_server::{
 /// What sketchybar passes. `1 << 11` would crop each picture to its opaque bounds and lose where the
 /// icon sits.
 const CAPTURE_OPTIONS: u32 = 1 << 8;
+
+/// `kCGAnyInputEventType`, which the bindings do not name.
+const ANY_INPUT: CGEventType = CGEventType(u32::MAX);
+
+/// How long since the last keyboard, mouse or trackpad input to the session.
+fn idle() -> Duration {
+    let seconds = CGEventSource::seconds_since_last_event_type(CGEventSourceStateID::HIDSystemState, ANY_INPUT);
+    Duration::try_from_secs_f64(seconds).unwrap_or(Duration::ZERO)
+}
 
 /// One extra's picture.
 #[derive(Clone)]
@@ -125,12 +135,13 @@ fn run(inbox: &Receiver<Message>, paused: &AtomicBool, sinks: &Sinks) {
         for message in inbox.try_iter() {
             grounds.on(message, &mut schedule, Instant::now());
         }
-        if !schedule.take(Instant::now()) {
+        if !schedule.take(Instant::now(), idle()) {
             continue;
         }
         grounds.picture(paused, &*sinks.ground);
         let may_capture = || schedule.may_capture(paused.load(Ordering::Relaxed), Instant::now());
         let Some((mut extras, stamps)) = picture(may_capture) else {
+            schedule.missed();
             continue;
         };
         if !extras::changed(last.as_ref().map(|sent| sent.stamps.as_slice()), &stamps) {
@@ -167,6 +178,7 @@ impl Grounds {
             Message::Grounds(displays) => {
                 self.displays = displays;
                 self.timer.now(now);
+                schedule.on(Command::Refresh, now);
             }
         }
     }
@@ -303,4 +315,25 @@ fn cut(image: &CGImage, composite: Composite, chosen: &[(Placed, Kind)]) -> Opti
         items.push(Extra { window, kind, image: picture, scale: composite.scale, ink });
     }
     Some((Extras { items }, stamps))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bar::domain::extras::AWAY_AFTER;
+
+    /// A display that comes, goes or changes gets its ground, and its extras, at the next tick
+    /// however long the input has been idle.
+    #[test]
+    fn a_display_change_is_pictured_at_once_while_away() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        let mut grounds = Grounds { displays: Vec::new(), timer: Timer::new(start), hashes: HashMap::new() };
+        assert!(schedule.take(start, AWAY_AFTER));
+        assert!(grounds.timer.take(start));
+        let changed = start + Duration::from_secs(3);
+        grounds.on(Message::Grounds(Vec::new()), &mut schedule, changed);
+        assert!(schedule.take(changed, AWAY_AFTER));
+        assert!(grounds.timer.take(changed));
+    }
 }
