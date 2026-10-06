@@ -215,7 +215,13 @@ destination for a window already moving.
   finished layout and starts the view back by the scroll, which puts back only the windows the
   scroll carries: a window already standing where the scroll puts it, as the one a left-edge drag
   resized stands at its release, MUST start where it stands ("Resizing with the mouse" in
-  `specs/strip.md`).
+  `specs/strip.md`). A window scrolling in from where it was parked MUST come in along the strip,
+  never from its park corner, however much of it macOS left on screen.
+
+> **Reported 2026-10-07.** "stil diagonal moves animation. specifically when i switch between the
+> two chrome windows on ws 1". A window standing on screen away from where the scroll drew it
+> started from where it stood, and macOS leaves more of a parked Chrome window on screen than the
+> off-screen test allows, so it flew in from the bottom-right corner, in x and y at once.
 - A window MUST NOT be left at an animation's intermediate frame if a pass is interrupted.
 - The overlay MUST stop drawing a tile whose window is gone, and MUST drop a container once the last
   tile leaves it. An empty container is a layer the compositor keeps compositing.

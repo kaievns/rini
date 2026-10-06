@@ -217,8 +217,11 @@ The two entry points feed the same `begin_group`:
   any window on screen at the press more than 2pt from where the travel draws
   it (`start_where_standing`): the window a left-edge drag resized already
   stands where the release's scroll puts it, and drawn back by the scroll it
-  jumped out by the drag's travel and slid back. A window parked in a corner
-  at the press rides the strip in. Pinned (floating) windows stand in the floating
+  jumped out by the drag's travel and slid back. A window at another height
+  at the press is parked, since a scroll never moves a window up or down, and
+  rides the strip in: macOS leaves up to 52pt of some parked windows on
+  screen, more than `is_off_screen` allows, and those flew in diagonally from
+  the corner. Pinned (floating) windows stand in the floating
   container with `from == to`; a switch moves the floating container itself
   by the same travel (`floating_travel`). Visual destinations are
   deliberately distinct from `final_frames`: a leaving window animates

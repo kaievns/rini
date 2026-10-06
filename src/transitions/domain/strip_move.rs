@@ -74,11 +74,12 @@ pub fn swap_starts(
         .collect()
 }
 
-/// Starts each strip window that stands on screen away from where the travel from `from_offset`
-/// draws it at the start, from where it stands: a window a left-edge drag resized already sits
-/// where the release's scroll puts it. `standing` is where each window was at the press and
-/// `viewport` the display, both on the surface at rest; a window off screen then, parked, rides
-/// the strip in.
+/// Starts each strip window that stands on screen at its own height away from where the travel
+/// from `from_offset` draws it at the start, from where it stands: a window a left-edge drag
+/// resized already sits where the release's scroll puts it. `standing` is where each window was at
+/// the press and `viewport` the display, both on the surface at rest. A scroll never moves a
+/// window up or down, so one standing at another height is parked, however much of it macOS
+/// leaves on screen, and rides the strip in, as does one off screen.
 pub fn start_where_standing(
     windows: &mut [SurfaceWindow],
     standing: &[(WindowId, SurfaceRect)],
@@ -93,8 +94,8 @@ pub fn start_where_standing(
             continue;
         }
         let drawn = window.frame.origin - from_offset.to_vector();
-        if (drawn.x - at.origin.x).abs() <= STANDING_TOLERANCE
-            && (drawn.y - at.origin.y).abs() <= STANDING_TOLERANCE
+        if (drawn.y - at.origin.y).abs() > STANDING_TOLERANCE
+            || (drawn.x - at.origin.x).abs() <= STANDING_TOLERANCE
         {
             continue;
         }
@@ -224,6 +225,20 @@ pub(crate) mod tests {
         start_where_standing(&mut windows, &standing, from_offset, viewport);
         assert_eq!(windows[0].from, None, "within rounding");
         assert_eq!(windows[1].from, None, "parked");
+    }
+
+    /// macOS keeps more of some parked windows on screen than `is_off_screen` allows: a Chrome
+    /// window parked at the bottom-right corner showed 52pt of its height. It is still parked, and
+    /// rides the strip in rather than flying from the corner.
+    #[test]
+    fn a_window_parked_with_more_than_the_clamp_showing_rides_the_strip() {
+        let viewport = column(0.0, 1728.0);
+        let from_offset = SurfacePoint::new(864.0, 0.0);
+        let mut windows = [on_surface(wid(1), column(864.0, 861.0))];
+        let parked = SurfaceRect::new(Point::new(1727.0, 1065.0), Size::new(861.0, HEIGHT));
+        assert!(!rini_geometry::is_off_screen(viewport, parked), "the case is the one the clamp misses");
+        start_where_standing(&mut windows, &[(wid(1), parked)], from_offset, viewport);
+        assert_eq!(windows[0].from, None);
     }
 
     /// A floating window is pinned, not carried, and a window a move staged keeps its own start.
