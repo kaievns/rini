@@ -43,7 +43,8 @@ pub struct SurfaceWindow {
     /// Drawn in the other z-band; see `z_group`.
     pub floating: bool,
     /// Where on the surface the window starts, when not at `frame`: a column a move swapped starts
-    /// in the slot it held before the move.
+    /// in the slot it held before the move, and a window standing away from where the travel draws
+    /// it, where it stands.
     pub from: Option<SurfaceRect>,
 }
 

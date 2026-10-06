@@ -126,6 +126,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - The kept edge belongs to the window dragged. When focus moves to another column, or the dragged
   window closes, before the strip is laid out again, the column focused next MUST be placed as any
   focus change places it.
+- Letting go of a left-edge drag MUST NOT move the resized window on screen: it is drawn from where
+  the cursor let go, and only the columns the change scrolls move.
 - Letting go of a resize MUST leave the resized window focused, whatever window the cursor is over:
   the cursor lets go on the window's edge, where the window behind it can answer. Focusing the
   window already focused MUST keep the edge its drag keeps.
@@ -156,6 +158,14 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > no longer meets either bound. macOS
 > played no part: in all 17 edge presses recorded, the pressed window took the resize and no
 > neighbour resized across the 3pt gap.
+
+> **Reported 2026-10-06**, after the left edge first grew to the left: "it sort of works, but it
+> makes a weird back and fourth wobble on release". The release scrolls the strip by the left edge's
+> travel as one pan, which draws the finished layout and starts the view back by the scroll. The
+> resized window already stood where the scroll puts it, so its tile started the drag's travel to
+> the right of where it was let go and slid back: 189pt and 275pt in two of the 15 releases
+> journalled, read off the frames either side. Its picture at the press was refused, asked for
+> where its tile started, so the tile flew the cache's.
 
 ## Folding
 

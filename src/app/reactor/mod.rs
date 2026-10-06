@@ -76,7 +76,9 @@ use events::{
 };
 use managers::LayoutManager;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use rini_geometry::space::{FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, ToCg};
+use rini_geometry::space::{
+    FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, SurfaceRect, ToCg,
+};
 pub use replay::{Record, replay};
 use rini_ipc::protocol::SwitchScope;
 use serde::{Deserialize, Serialize};
@@ -3761,7 +3763,9 @@ impl Reactor {
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
     /// placed once the surface covers them. A window that did not move is not re-placed, as on the
-    /// per-window path.
+    /// per-window path. `standing` is where the pass found each window: one on screen away from
+    /// where the shifted viewport draws it starts where it stands
+    /// (`strip_move::start_where_standing`).
     fn start_strip_pan(
         &mut self,
         space: SpaceId,
@@ -3769,6 +3773,7 @@ impl Reactor {
         final_frames: Vec<(WindowId, CGRect)>,
         delta: CGPoint,
         moved: Option<(WindowId, Direction)>,
+        standing: &[crate::transitions::domain::request::AnimationRequest],
     ) -> bool {
         let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return false;
@@ -3823,6 +3828,21 @@ impl Reactor {
         use crate::animation::domain::choreography::{Area, Cue, Look};
         let look = Look::default();
         let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
+        // A move's pair starts where the look stages it.
+        if cue == Cue::Plain {
+            let origin = ScreenPoint::from_cg(display_bounds.origin);
+            let at_rest = |frame| {
+                crate::transitions::domain::strip_stack::strip_frame(frame, origin, 0, 0.0)
+            };
+            let standing: Vec<(WindowId, SurfaceRect)> =
+                standing.iter().map(|request| (request.window, at_rest(request.from))).collect();
+            crate::transitions::domain::strip_move::start_where_standing(
+                &mut windows,
+                &standing,
+                from_offset,
+                at_rest(ScreenRect::from_cg(screen.frame)),
+            );
+        }
         let area = Area {
             frame: rini_geometry::to_overlay_space(
                 ScreenRect::from_cg(screen.frame),

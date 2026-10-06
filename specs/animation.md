@@ -211,6 +211,11 @@ destination for a window already moving.
   parked off it. Each write is several round trips the app answers one after another, and a strip
   switch interleaves the leaving window's park with the arriving windows' places: written first, a
   park nobody sees delays a window everybody does, which lands late, after the lift.
+- Every tile MUST start where its window is on screen at the press. A strip scroll draws the
+  finished layout and starts the view back by the scroll, which puts back only the windows the
+  scroll carries: a window already standing where the scroll puts it, as the one a left-edge drag
+  resized stands at its release, MUST start where it stands ("Resizing with the mouse" in
+  `specs/strip.md`).
 - A window MUST NOT be left at an animation's intermediate frame if a pass is interrupted.
 - The overlay MUST stop drawing a tile whose window is gone, and MUST drop a container once the last
   tile leaves it. An empty container is a layer the compositor keeps compositing.

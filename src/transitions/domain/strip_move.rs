@@ -1,10 +1,11 @@
-//! A press on the strip, staged: where the two columns a move swaps start (`swap_starts`), and the
-//! look's staging of it put on the strip surface (`stage_move`). Which column is held and whether the
-//! strip steps are the look's (`crate::animation::domain::choreography::Look::stage`). See "The move
-//! flight, staged" in `src/transitions/docs/coordination.md`.
+//! A press on the strip, staged: where the two columns a move swaps start (`swap_starts`), the
+//! look's staging of it put on the strip surface (`stage_move`), and where a window standing away
+//! from where the travel draws it starts (`start_where_standing`). Which column is held and whether
+//! the strip steps are the look's (`crate::animation::domain::choreography::Look::stage`). See "The
+//! move flight, staged" in `src/transitions/docs/coordination.md`.
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{OverlayVector, Point, SurfaceRect};
+use rini_geometry::space::{OverlayVector, Point, SurfacePoint, SurfaceRect};
 use rini_ipc::protocol::Direction;
 
 use crate::animation::domain::choreography::{Area, Cue, Look, PairStart, Strip};
@@ -13,6 +14,10 @@ use crate::transitions::domain::request::SurfaceWindow;
 
 /// Frames this close in x are one column.
 const COLUMN_TOLERANCE: f64 = 0.5;
+
+/// How far from where the travel draws it at the start a window may stand and still ride the strip:
+/// the layout rounds to whole points, as `travel::travels_visibly` allows.
+const STANDING_TOLERANCE: f64 = 2.0;
 
 /// Where the moved window's column and the column it passed started on the strip.
 ///
@@ -69,6 +74,35 @@ pub fn swap_starts(
         .collect()
 }
 
+/// Starts each strip window that stands on screen away from where the travel from `from_offset`
+/// draws it at the start, from where it stands: a window a left-edge drag resized already sits
+/// where the release's scroll puts it. `standing` is where each window was at the press and
+/// `viewport` the display, both on the surface at rest; a window off screen then, parked, rides
+/// the strip in.
+pub fn start_where_standing(
+    windows: &mut [SurfaceWindow],
+    standing: &[(WindowId, SurfaceRect)],
+    from_offset: SurfacePoint,
+    viewport: SurfaceRect,
+) {
+    for window in windows.iter_mut().filter(|w| !w.floating && w.from.is_none()) {
+        let Some(&(_, at)) = standing.iter().find(|(w, _)| *w == window.window) else {
+            continue;
+        };
+        if rini_geometry::is_off_screen(viewport, at) {
+            continue;
+        }
+        let drawn = window.frame.origin - from_offset.to_vector();
+        if (drawn.x - at.origin.x).abs() <= STANDING_TOLERANCE
+            && (drawn.y - at.origin.y).abs() <= STANDING_TOLERANCE
+        {
+            continue;
+        }
+        let start = at.origin + from_offset.to_vector();
+        window.from = Some(SurfaceRect::new(start, window.frame.size));
+    }
+}
+
 /// Puts `cue`'s press on the strip surface, every window of which is at its new frame, as `look`
 /// stages it, and returns the accent the look asks to ride the movement. A window the look starts
 /// elsewhere crosses from there; one it holds is drawn at that frame on the strip, riding the strip,
@@ -113,7 +147,7 @@ pub(crate) mod tests {
     use rini_geometry::space::{OverlayRect, Size, SurfacePoint};
 
     use super::*;
-    use crate::animation::domain::motion::surface::pan_travel;
+    use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
     use crate::animation::domain::motion::easing::{CubicBezier, nudge_displacement};
     use crate::animation::domain::motion::nudge::{NUDGE_STRETCH, flight_curve};
 
@@ -147,6 +181,66 @@ pub(crate) mod tests {
             Some(Accent::Push { .. }) => panic!("a move pushes nothing"),
             None => None,
         }
+    }
+
+    fn on_surface(window: WindowId, frame: SurfaceRect) -> SurfaceWindow {
+        SurfaceWindow {
+            window,
+            server_id: rini_core::ids::WindowServerId::new(window.idx.get()),
+            frame,
+            pinned: false,
+            floating: false,
+            from: None,
+        }
+    }
+
+    /// A B, B's left edge dragged 90pt left and let go: the release scrolls the strip 90pt, so A
+    /// pans from where it stands, and B, already where the scroll puts it, starts there. Panned
+    /// from its end shifted back by the scroll, B jumped right by the drag's travel and slid back.
+    #[test]
+    fn a_window_standing_where_the_scroll_puts_it_starts_there() {
+        let viewport = column(0.0, 1728.0);
+        let from_offset = SurfacePoint::new(-90.0, 0.0);
+        let mut windows =
+            [on_surface(wid(1), column(-87.0, 600.0)), on_surface(wid(2), column(516.0, 951.0))];
+        let standing = [(wid(1), column(3.0, 600.0)), (wid(2), column(515.0, 952.0))];
+        start_where_standing(&mut windows, &standing, from_offset, viewport);
+        assert_eq!(windows[0].from, None, "A rides the strip");
+        assert_eq!(windows[1].from, Some(column(425.0, 951.0)), "where it stands, its end's size");
+        let (start, _) = windows[1].travel(from_offset, SurfacePoint::origin());
+        assert_eq!(start.origin.x, 515.0);
+    }
+
+    /// A column parked in a corner at the press rides the strip in, as on any pan, and a window
+    /// within the layout's rounding of where the travel draws it is left riding the strip.
+    #[test]
+    fn a_parked_or_rounded_window_rides_the_strip() {
+        let viewport = column(0.0, 1728.0);
+        let from_offset = SurfacePoint::new(864.0, 0.0);
+        let mut windows =
+            [on_surface(wid(1), column(864.0, 861.0)), on_surface(wid(2), column(1728.0, 861.0))];
+        let parked = SurfaceRect::new(Point::new(1727.0, 1112.0), Size::new(861.0, HEIGHT));
+        let standing = [(wid(1), column(1.5, 861.0)), (wid(2), parked)];
+        start_where_standing(&mut windows, &standing, from_offset, viewport);
+        assert_eq!(windows[0].from, None, "within rounding");
+        assert_eq!(windows[1].from, None, "parked");
+    }
+
+    /// A floating window is pinned, not carried, and a window a move staged keeps its own start.
+    #[test]
+    fn floating_and_staged_windows_are_left_alone() {
+        let viewport = column(0.0, 1728.0);
+        let from_offset = SurfacePoint::new(-90.0, 0.0);
+        let mut floating = on_surface(wid(1), column(400.0, 600.0));
+        floating.floating = true;
+        floating.pinned = true;
+        let mut staged = on_surface(wid(2), column(516.0, 951.0));
+        staged.from = Some(column(0.0, 951.0));
+        let mut windows = [floating, staged];
+        let standing = [(wid(1), column(400.0, 600.0)), (wid(2), column(515.0, 952.0))];
+        start_where_standing(&mut windows, &standing, from_offset, viewport);
+        assert_eq!(windows[0].from, None);
+        assert_eq!(windows[1].from, Some(column(0.0, 951.0)));
     }
 
     /// A B W, just after W moved right past B: W started where B is now, B where W's right edge

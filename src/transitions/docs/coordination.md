@@ -213,7 +213,12 @@ The two entry points feed the same `begin_group`:
   move's swapped columns, which start from their old slots
   (`SurfaceWindow::from`) and group by their own vectors, but for the column
   a stepping move passes, which is held at its old slot on the strip; see
-  "The move flight, staged". Pinned (floating) windows stand in the floating
+  "The move flight, staged". A plain pan also starts from where it stands
+  any window on screen at the press more than 2pt from where the travel draws
+  it (`start_where_standing`): the window a left-edge drag resized already
+  stands where the release's scroll puts it, and drawn back by the scroll it
+  jumped out by the drag's travel and slid back. A window parked in a corner
+  at the press rides the strip in. Pinned (floating) windows stand in the floating
   container with `from == to`; a switch moves the floating container itself
   by the same travel (`floating_travel`). Visual destinations are
   deliberately distinct from `final_frames`: a leaving window animates

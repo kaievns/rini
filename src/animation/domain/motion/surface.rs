@@ -19,7 +19,8 @@ pub trait SurfaceGeometry {
     /// Drawn in the other z-band; see `z_group`.
     fn floating(&self) -> bool;
     /// Where on the surface the window starts, when not at `frame`: a column a move swapped starts
-    /// in the slot it held before the move.
+    /// in the slot it held before the move, and a window standing away from where the travel draws
+    /// it, where it stands.
     fn from(&self) -> Option<SurfaceRect>;
 
     /// Where the window's tile starts and ends on screen: `surface_travel` of its frame, starting

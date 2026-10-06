@@ -211,7 +211,7 @@ impl AnimationManager {
             placements.iter().map(|&(_, window, frame, _)| (window, frame)).collect();
         if use_overlay
             && let Some(delta) = pan_delta
-            && reactor.start_strip_pan(space, active_ws, moves, delta, moved)
+            && reactor.start_strip_pan(space, active_ws, moves, delta, moved, &overlay_requests)
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {

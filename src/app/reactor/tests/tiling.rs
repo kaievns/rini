@@ -1648,6 +1648,68 @@ fn a_left_edge_drag_let_go_over_the_window_behind_its_edge_keeps_its_focus_and_r
     assert_eq!(strip.reactor.layout_manager.layout_engine.focused_window(), Some(strip.other));
 }
 
+/// Kai, 2026-10-06, after the left edge first grew to the left: "it makes a weird back and fourth
+/// wobble on release". The release scrolls the strip by the left edge's travel, and the window the
+/// drag resized already stands where that scroll puts it: its tile flies from where it was let go,
+/// not from its new frame shifted back by the scroll, and the column before it pans from where it
+/// stands. "Resizing with the mouse" in `specs/strip.md`.
+#[test]
+fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go() {
+    let mut strip = Strip::new();
+    strip.reactor.config.settings.layout.scrolling.column_width_ratio = 0.4;
+    strip
+        .reactor
+        .layout_manager
+        .layout_engine
+        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
+    strip.settle(strip.other);
+    let start = strip.on_screen(strip.other);
+    let before = strip.on_screen(strip.window);
+    strip.reactor.config.settings.animate = true;
+    let (animation_tx, mut rx) = crate::app::channels::channel();
+    strip.reactor.communication_manager.transitions_tx = Some(animation_tx);
+
+    strip.press(CGPoint::new(start.origin.x, start.mid().y), false);
+    let mut dropped = start;
+    for grown in [30., 60., 90.] {
+        dropped = rect(
+            start.origin.x - grown,
+            start.origin.y,
+            start.size.width + grown,
+            start.size.height,
+        );
+        strip.app_reports(strip.other, dropped, MouseState::Down);
+    }
+    strip.reactor.handle_event(Event::MouseUp);
+
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1, "the release scrolls the strip once");
+    let flight = &flights[0];
+    let offset = flight.from_offset;
+    assert!((offset.x + 90.).abs() <= 2., "by the edge's travel: {offset:?}");
+    let travel = |window| {
+        flight
+            .windows
+            .iter()
+            .find(|w| w.window == window)
+            .expect("on the surface")
+            .travel(flight.from_offset, SurfacePoint::origin())
+    };
+    let (from, to) = travel(strip.other);
+    assert!(
+        (from.origin.x - dropped.origin.x).abs() <= 2.,
+        "drawn from where it was let go, {dropped:?}, not {from:?}"
+    );
+    assert!((to.origin.x + to.size.width - dropped.max().x).abs() <= 2., "{to:?}");
+    let (from, to) = travel(strip.window);
+    assert!(
+        (from.origin.x - before.origin.x).abs() <= 1.,
+        "pans from where it stands, {before:?}, not {from:?}"
+    );
+    assert!((from.origin.x - to.origin.x - 90.).abs() <= 2., "{from:?} -> {to:?}");
+}
+
 /// A double-click on a title bar has the app zoom its window, and rini has to follow it to its own
 /// full width rather than take it for a resize. "Full width and height" in `specs/strip.md`.
 mod title_bar_zoom {
