@@ -89,7 +89,7 @@ takes the largest above 0. Read-only probes, macOS 26.7.1, 2026-10-06:
 | parked and other-workspace windows, off screen | answered: Ghostty 16, Zoom 1708x1065 12, Kiro CLI 16 |
 | all 181 windows, every level | 0 null answers, 0 windows with unequal corners |
 | 0pt answers | 89 of the level-0 windows: menu-bar strips (1728x33), popovers, AutoFill, cursor helpers, 0x0 helpers, and one off-screen "Privacy & Security" window, 723x884 |
-| one query of 12 windows and the radii of each, n=300 | p50 0.049ms, p90 0.059ms, max 7.8ms (one read); `front_to_back_depths`, read beside it, costs 2.7-3.3ms |
+| one query of 12 windows and the radii of each, n=300 | p50 0.049ms, p90 0.059ms, max 7.8ms (one read) |
 
 So the flight engine reads every tile's radius in one query as it composes the flight, and an
 entrance's as its first picture lands, since a window has drawn by then. A window that is not yet
@@ -138,11 +138,12 @@ unlike the same layer at radius 10: up to 255 levels apart in alpha, on either c
 half the tile's shorter side before any piece takes it, and a resize carries the picture's clamped
 corner on its track rather than leaving the clip to Core Animation.
 
-Data in `docs/data/2026-10-06-radii/`: `radii_all.m` and `radii_all.txt`, every window's radii
-and the query's cost; `radii.m` and `radii.txt`, the on-screen standard windows; `radius-compare.csv`,
-the alpha formula against the server; `p8.swift` and `p8.txt`, the fit, whose `win_` names are
-window ids (56 Ghostty, 2412 Finder, 97 Chrome, 60 Obsidian, 3851 Zoom); `reach.swift` and
-`reach.txt`; `clamp.swift` and `clamp.txt`. The captures are not kept.
+Data in `docs/data/2026-10-06-radii/`: `radii_all.m` and `radii_all.txt`, every window's radii and
+the query's cost, whose `on=1` rows are the on-screen windows of the first two rows; `radii.m` and
+`radii.txt`, an earlier on-screen read of 25 windows, each app at the same radius;
+`radius-compare.csv`, the alpha formula against the server; `p8.swift` and `p8.txt`, the fit, whose
+`win_` names are window ids (56 Ghostty, 2412 Finder, 97 Chrome, 60 Obsidian, 3851 Zoom);
+`reach.swift` and `reach.txt`; `clamp.swift` and `clamp.txt`. The captures are not kept.
 
 ## Reading order
 
