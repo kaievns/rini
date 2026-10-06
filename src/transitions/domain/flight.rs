@@ -104,7 +104,7 @@ pub(in crate::transitions) fn managed_server_ids(
     pictured: impl Iterator<Item = WindowId>,
 ) -> std::collections::HashSet<u32> {
     let mut ids = pass.clone();
-    ids.extend(crate::pictures::domain::target::managed_server_ids(pictured));
+    ids.extend(crate::pictures::domain::identity::managed_server_ids(pictured));
     ids
 }
 

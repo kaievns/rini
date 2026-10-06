@@ -20,7 +20,8 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Settled** | `domain/settle.rs` — when a capture of a window that has to repaint is its settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |
-| **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be; the id a window is pictured under, which windows rini does not manage a warm pictures, and which of their pictures go |
+| **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be |
+| **Identity** | `domain/identity.rs` — the id a window is pictured under, its own or a synthetic one, which windows rini does not manage a warm pictures, and which of their pictures go |
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, refreshes, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus and placement hints, and the band prints each client was last delivered, which decide what is news |
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |

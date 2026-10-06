@@ -31,7 +31,8 @@ use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
 use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Priority, Schedule};
-use crate::pictures::domain::target::{PictureTarget, is_synthetic, managed_server_ids, unwanted, warm_targets};
+use crate::pictures::domain::identity::{is_synthetic, managed_server_ids, unwanted, warm_targets};
+use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     Capture, Hint, Look, OnScreen, Prints, Seen, Set, Tag, Watch, WatchId, Why,
 };
@@ -487,7 +488,7 @@ impl Pictures {
 
     /// Every window on the display the overlay flies on that rini does not manage and that shows
     /// enough of itself there, pictured in the background under its synthetic id
-    /// (`crate::pictures::domain::target::warm_targets`). The service runs the same warm at each change
+    /// (`crate::pictures::domain::identity::warm_targets`). The service runs the same warm at each change
     /// of display.
     pub fn warm_visible(&self) { self.commands.send(Command::WarmVisible) }
 
@@ -746,7 +747,7 @@ impl Service {
 
     /// Lets go of each synthetic picture whose window the window server no longer has, with all that
     /// is known of it, and of each a managed window is pictured under its own id as well
-    /// (`crate::pictures::domain::target::unwanted`). The window server is asked off the lock.
+    /// (`crate::pictures::domain::identity::unwanted`). The window server is asked off the lock.
     fn let_go_unwanted(&mut self) {
         let held = self.shared.lock().unwrap().windows();
         let synthetic: Vec<WindowServerId> =
@@ -1614,7 +1615,7 @@ mod tests {
     /// not manage keeps its synthetic picture while the window server has it.
     #[test]
     fn a_release_lets_go_of_a_synthetic_picture_of_a_window_pictured_under_its_own_id() {
-        use crate::pictures::domain::target::synthetic_window_id;
+        use crate::pictures::domain::identity::synthetic_window_id;
         let (mut service, shared) = detached_service();
         let twice = synthetic_window_id(WindowServerId::from(wid(102682)));
         let border = synthetic_window_id(WindowServerId::new(9001));
@@ -1637,7 +1638,7 @@ mod tests {
     /// all that is known of it.
     #[test]
     fn a_release_lets_go_of_a_synthetic_picture_of_a_window_gone_and_what_is_known_of_it() {
-        use crate::pictures::domain::target::synthetic_window_id;
+        use crate::pictures::domain::identity::synthetic_window_id;
         use crate::windows::platform::window_server::set_window_gone_override;
         let (mut service, shared) = detached_service();
         let server_id = WindowServerId::new(9002);

@@ -43,7 +43,8 @@ use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
-use crate::pictures::domain::target::{PictureTarget, picture_id, synthetic_window_id};
+use crate::pictures::domain::identity::{picture_id, synthetic_window_id};
+use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
     WatchId, Why,

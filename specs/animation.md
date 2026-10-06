@@ -567,8 +567,8 @@ what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/jo
 A measured lift's handover is compared in `src/pictures/domain/handover.rs`.
 The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
 stand-in, the blur, and the schedule that holds background capture off while a flight runs in
-`src/pictures/domain/`, which windows rini does not manage are pictured and when those pictures go
-in `src/pictures/domain/target.rs`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
+`src/pictures/domain/`, which id a window is pictured under, which windows rini does not manage are
+pictured and when those pictures go in `src/pictures/domain/identity.rs`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
 for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
 captures), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
 Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),
