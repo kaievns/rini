@@ -203,6 +203,12 @@ switcher answers "every window I have, wherever it is".
   window, measured, and the popup has to appear at once. The panel draws what is already cached and
   nothing else.
 - A card with no picture MUST still read as a card. It keeps a placeholder rather than leaving a hole.
+- A card the popup does not draw, behind a row with fewer windows than it has cards for, MUST NOT
+  hold a picture. It is hidden, and a hidden card keeps a picture an earlier switch left on it across
+  any number of switches after.
+- A card the popup draws MUST NOT be cleared when the popup hides. The next show redraws it before the
+  popup appears, but whether that redraw always lands before the first frame has not been checked on
+  screen, and a card cleared too early opens grey.
 - A picture landing after the popup is already up MUST be drawn, on the card already there. The
   pictures the open warms land a moment after it, so the first open of a switch would otherwise stay
   blank until the next step.
@@ -332,6 +338,12 @@ switcher answers "every window I have, wherever it is".
 > it's not synchronised properly and looks buggy." Core Animation cross-fades a `contents` change over
 > about a quarter of a second by default, and the reused tiles were fading between the two windows'
 > pictures. The overlay disables implicit actions everywhere it touches a layer; the panel did not.
+
+> **Reported 2026-10-06.** "stale copies definitely need deleting, no point in keeping them around".
+> Fixed for the hidden cards. Read from the code: a card hidden past a row's depth kept the picture
+> of the window it last showed, often the only one left once the cache had taken a newer one. Window
+> captures measured 14.2MB to 29.5MB each with vmmap that day; how many hidden cards held one was not
+> counted. The cards the popup draws keep theirs, for the report of 2026-09-25 above.
 
 ## The trigger
 

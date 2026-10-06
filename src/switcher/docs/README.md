@@ -173,7 +173,10 @@ vertically and leaves that strip a band of placeholder. A portrait window behind
 shows a middle strip; that is the cost. Cards behind are not dimmed: the rise, the inset and the
 hairline are the depth cue. The panel reuses a row's card layers between switches, so a slot past the
 row's depth is hidden explicitly (`entries::cards_behind`), or a lone window would show the last
-switch's cards behind it. Whether they read clearly over a dark desktop has
+switch's cards behind it, and lets go of its picture (`draw_card_behind`): a hidden layer keeps its
+contents, so the card would pin a picture the cache has since replaced for as long as no row that deep
+comes back. The cards a switch draws keep theirs while the popup is hidden; see the pictures in
+`specs/switcher.md`. Whether they read clearly over a dark desktop has
 not been checked on screen; a `--n0` wash on the cards behind is the first thing to try if not.
 
 **Two layers for the selection, not one.** The `--ember-soft` wash sits UNDER the tiles, where it tints
