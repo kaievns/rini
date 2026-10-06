@@ -92,7 +92,7 @@ then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalle
 
 ## Detail
 
-- `docs/pictures-motion-transitions.md` — the three features, who talks to whom, the lifecycle's
+- `docs/pictures-motion-transitions.md` — the four features, who talks to whom, the lifecycle's
   states, and the decisions taken while Kai was away
 - [`coordination.md`](coordination.md) — how a flight runs: the lifecycle, layout changes and strip
   movements, routing, passes arriving mid-flight and pictures landing in one, focus changing during

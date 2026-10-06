@@ -958,8 +958,8 @@ the unfocused style clipped it into a straight edge.
 `CGPath::with_rounded_rect` with a zero radius or a zero dimension emits a plain
 rect, whose element structure differs from a rounded rect's; a `shadowPath` or
 mask `path` animation between the two does not interpolate, it cuts. An entrance
-growing from zero width popped its shadow this way, so `silhouette_path` and
-`ring_path` floor the size to 0.5pt and the radius to 0.01. The caster's resize
+growing from zero width popped its shadow this way, so `shape::silhouette` and
+`shape::shadow_mask` floor the size to 0.5pt and the radius to 0.01. The caster's resize
 animations use the same key prefix (`rini.tile`) as the plain move: a move leg
 retargeted into a resize otherwise left its old position animation fighting the
 resize's, and the shadow tore away from its tile.

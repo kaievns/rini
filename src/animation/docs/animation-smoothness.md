@@ -271,9 +271,9 @@ flight engine carries its snaps out.
 **The hairline.** No capture carries the hairline macOS composites around a
 window ("The hairline is composited outside every capture" in
 `src/pictures/docs/capture-research.md`), so the overlay draws it over every
-tile as a constant (`domain::motion::hairline`). The ring is a `CALayer` with a
-1pt border (`RING_PT`) of white at 0.20 on the focused window and 0.18 on the
-rest (`ring_alpha`), the fit measured there in dark mode; light mode is not
+tile as a constant (`decorations::domain`). The ring is a `CALayer` with a
+1pt border (`LIGHT_PT`) of white at 0.20 on the focused window and 0.18 on the
+rest (`Style::of`), the fit measured there in dark mode; light mode is not
 measured. The outline is a `CAShapeLayer` stroking 0.5pt (`OUTLINE_PT`) of
 black at 0.9 along a rounded rect a quarter point outside the window
 (`outline`), so the stroke covers the half point just past its edge; a border
@@ -281,9 +281,9 @@ layer at a half-point origin landed one pixel too far out ("The handover,
 measured" in `capture-overlay-research.md`). Both round to the window's radius
 as `pictures` measured it (`OverlayTile::radius`, which the flight engine fills
 from `Pictures::knowledge`), else 10pt, never past half the shorter side
-(`corner_radius`). The ring is a third layer beside the picture and the
+(`shape::radius`). The ring is a third layer beside the picture and the
 caster, an eighth step in front of the picture and under a companion's quarter
-step (`RING_Z`), with the outline as its child: inside the picture, a corner
+step (`HAIRLINE_Z`), with the outline as its child: inside the picture, a corner
 clip would cut the outline away (`a_corner_clip_leaves_the_hairline_whole`).
 It rides every move with the picture; a resize carries its bounds on the
 tile's own track and animates its corner and the outline's path between the two

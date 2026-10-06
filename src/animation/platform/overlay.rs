@@ -24,13 +24,10 @@ use objc2_quartz_core::{
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
     ContentsRect, FromCg, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenPoint, ScreenRect, TileSize,
-    ToCg,
+    ToCg, Vector,
 };
 
 use crate::animation::domain::motion::easing::CubicBezier;
-use crate::animation::domain::motion::hairline::{
-    OUTLINE_ALPHA, OUTLINE_PT, RING_PT, corner_radius, outline, ring_alpha,
-};
 use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{
@@ -38,6 +35,9 @@ use crate::animation::domain::motion::score::{
 };
 use crate::animation::domain::motion::tile::{ContentMode, content_mode, crop_pieces};
 use crate::animation::domain::motion::z_group::{Band, container_z};
+use crate::decorations::domain::shape::{self, SHADOW_REACH, shadow_mask_frame};
+use crate::decorations::domain::stack::{HAIRLINE_Z, SHADOW_Z};
+use crate::decorations::domain::style::{LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
@@ -106,42 +106,6 @@ impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
         self.companion
     }
 }
-
-/// How far in front of its picture a tile's ring is drawn: over the picture, under a companion.
-const RING_Z: f64 = 0.125;
-
-/// The shadow a real window casts, which no capture API includes. Fitted to measured falloffs;
-/// see "Shadows are never in the surface" in `src/animation/docs/capture-overlay-research.md`.
-#[derive(Clone, Copy, PartialEq, Debug)]
-struct ShadowStyle {
-    opacity: f32,
-    radius: f64,
-    /// Positive is downward: the tiles hang off a flipped view.
-    offset_y: f64,
-}
-
-const UNFOCUSED_SHADOW: ShadowStyle = ShadowStyle {
-    opacity: 0.4,
-    radius: 9.0,
-    offset_y: 5.0,
-};
-const FOCUSED_SHADOW: ShadowStyle = ShadowStyle {
-    opacity: 0.65,
-    radius: 14.0,
-    offset_y: 12.0,
-};
-
-fn tile_shadow_style(focused: bool) -> ShadowStyle {
-    if focused {
-        FOCUSED_SHADOW
-    } else {
-        UNFOCUSED_SHADOW
-    }
-}
-
-/// Room the mask leaves for the shadow: past where the focused blur (three radii plus the offset,
-/// about 54pt) is spent, so the ring never clips it.
-const SHADOW_REACH: f64 = 70.0;
 
 /// Above every tile; tiles sit at `-depth`, never above zero.
 const BAR_Z: f64 = 10_000.0;
@@ -413,10 +377,10 @@ fn install_tile_track(tile: &Tile, track: &Track) {
         add_under(layer, &bounds, TILE_SIZE_KEY);
     }
     let silhouette = animation(track, "shadowPath", |value| {
-        path_object(&silhouette_path(size(value), origin))
+        path_object(&silhouette_path(size(value)))
     });
     add_under(&tile.shadow, &silhouette, SILHOUETTE_KEY);
-    let mask = |value: Value| shadow_mask_frame(size(value));
+    let mask = |value: Value| shadow_mask_frame(size(value)).to_cg();
     let mask_position = animation(track, "position", |value| point_object(mask(value).origin));
     add_under(&tile.shadow_mask, &mask_position, MASK_MOVE_KEY);
     let mask_bounds = animation(track, "bounds", |value| {
@@ -476,7 +440,7 @@ fn install_crop_grid(tile: &Tile, track: &Track) {
 /// Carries a tile's ring and outline along `track`: the ring's bounds ride the tile's, its corner
 /// and the outline's path ride here.
 fn install_hairline(tile: &Tile, track: &Track) {
-    let corner = |value: Value| corner_radius(tile.radius, as_frame(value).size.respace());
+    let corner = |value: Value| shape::radius(tile.radius, as_frame(value).size.respace());
     if changes(track, corner) {
         let rounding = animation(track, "cornerRadius", |value| number_object(corner(value)));
         add_under(&tile.ring, &rounding, CORNER_KEY);
@@ -806,7 +770,7 @@ impl TileOverlay {
         let Some(entry) = self.tree.tile_layers.get(&window) else {
             return;
         };
-        show_focus(entry, focused);
+        show_focus(entry, Style::of(focused));
     }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
@@ -1233,8 +1197,8 @@ impl Tree {
 }
 
 /// The depth a tile is drawn at in its container, `within` its band: a companion's quarter step
-/// in front of its window stays clear of the half step the shadow casters sit behind and of the
-/// eighth its ring sits in front (`RING_Z`).
+/// in front of its window stays clear of the half step the shadow casters sit behind (`SHADOW_Z`)
+/// and of the eighth its hairline sits in front (`HAIRLINE_Z`).
 fn tile_z(within: usize, companion: bool) -> f64 {
     -(within as f64) + if companion { 0.25 } else { 0.0 }
 }
@@ -1250,7 +1214,7 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
     let covered = tile.snapshot.coverage.covered;
     let mode = content_mode(covered, tile.from.size, tile.to.size);
     set_tile_content(entry, &tile.snapshot, mode, tile.from.size.respace(), scale);
-    show_focus(entry, tile.focused);
+    show_focus(entry, Style::of(tile.focused));
     entry.picture.setHidden(false);
     entry.shadow.setHidden(tile.companion.is_some());
     entry.ring.setHidden(tile.companion.is_some());
@@ -1314,7 +1278,7 @@ fn new_tile(container: &CALayer) -> Tile {
 
     let ring = CALayer::layer();
     ring.setAnchorPoint(CGPoint::new(0.0, 0.0));
-    ring.setBorderWidth(RING_PT);
+    ring.setBorderWidth(LIGHT_PT);
     let outline = objc2_quartz_core::CAShapeLayer::layer();
     outline.setAnchorPoint(CGPoint::new(0.0, 0.0));
     outline.setFillColor(None);
@@ -1368,25 +1332,25 @@ impl Tile {
         }
     }
 
-    /// Draws the tile at depth `z`: the caster half a step behind the picture, the ring
-    /// `RING_Z` in front of it.
+    /// Draws the tile at depth `z`: the caster `SHADOW_Z` behind the picture, the hairline
+    /// `HAIRLINE_Z` in front of it.
     fn stack(&self, z: f64) {
         self.picture.setZPosition(z);
-        self.shadow.setZPosition(z - 0.5);
-        self.ring.setZPosition(z + RING_Z);
+        self.shadow.setZPosition(z + SHADOW_Z);
+        self.ring.setZPosition(z + HAIRLINE_Z);
     }
 }
 
 /// Draws a tile focused or not: the ring's white and the caster's shadow.
-fn show_focus(tile: &Tile, focused: bool) {
+fn show_focus(tile: &Tile, style: Style) {
     tile.ring.setBorderColor(Some(&objc2_core_graphics::CGColor::new_generic_gray(
         1.0,
-        ring_alpha(focused),
+        style.light_alpha,
     )));
-    let style = tile_shadow_style(focused);
-    tile.shadow.setShadowOpacity(style.opacity);
-    tile.shadow.setShadowRadius(style.radius);
-    tile.shadow.setShadowOffset(CGSize::new(0.0, style.offset_y));
+    let shadow = style.shadow;
+    tile.shadow.setShadowOpacity(shadow.opacity);
+    tile.shadow.setShadowRadius(shadow.radius);
+    tile.shadow.setShadowOffset(CGSize::new(0.0, shadow.offset_y));
 }
 
 /// Clips `picture`, with the crop pieces under it, to a rounded rect of `radius`, or not at all.
@@ -1415,7 +1379,7 @@ fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
 
 /// Rounds the ring and draws the outline for a tile of `size`.
 fn lay_hairline(tile: &Tile, size: TileSize) {
-    let corner = corner_radius(tile.radius, size);
+    let corner = shape::radius(tile.radius, size);
     tile.ring.setCornerRadius(corner);
     tile.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
     tile.outline.setPath(Some(&outline_path(size, corner)));
@@ -1424,7 +1388,7 @@ fn lay_hairline(tile: &Tile, size: TileSize) {
 /// The outline's path around a window of `size` with corners of `corner`. Its radius is never zero,
 /// so it is always a rounded rect and two outline paths interpolate.
 fn outline_path(size: TileSize, corner: f64) -> CFRetained<objc2_core_graphics::CGPath> {
-    let (rect, radius) = outline(size, corner);
+    let (rect, radius) = shape::outline(size, corner);
     // SAFETY: a null transform means the path is taken as given.
     unsafe {
         objc2_core_graphics::CGPath::with_rounded_rect(
@@ -1436,15 +1400,13 @@ fn outline_path(size: TileSize, corner: f64) -> CFRetained<objc2_core_graphics::
     }
 }
 
-/// The window's rounded-rect silhouette: the shadow's shape and the mask's hole. Size and radius
-/// are floored above zero, or Core Graphics emits a plain rect and path animations cut.
-fn silhouette_path(size: TileSize, at: CGPoint) -> CFRetained<objc2_core_graphics::CGPath> {
-    let size = TileSize::new(size.width.max(0.5), size.height.max(0.5));
-    let radius = corner_radius(None, size).max(0.01);
+/// The window's rounded-rect silhouette, the shadow's shape, floored as `shape::silhouette` says.
+fn silhouette_path(size: TileSize) -> CFRetained<objc2_core_graphics::CGPath> {
+    let (rect, radius) = shape::silhouette(size);
     // SAFETY: a null transform means the path is taken as given.
     unsafe {
         objc2_core_graphics::CGPath::with_rounded_rect(
-            CGRect::new(at, size.to_cg()),
+            rect.to_cg(),
             radius,
             radius,
             std::ptr::null(),
@@ -1455,21 +1417,20 @@ fn silhouette_path(size: TileSize, at: CGPoint) -> CFRetained<objc2_core_graphic
 /// The ring: the whole mask minus the window's shape, wound even-odd so the inside is the hole.
 /// Always one rect plus one rounded rect, so two ring paths interpolate.
 fn ring_path(size: TileSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
-    // Floored for the same reason as `silhouette_path`.
-    let size = TileSize::new(size.width.max(0.5), size.height.max(0.5));
-    let radius = corner_radius(None, size).max(0.01);
-    let mask_frame = shadow_mask_frame(size);
+    let (whole, hole, radius) = shape::shadow_mask(size);
+    // The mask layer's own points start at the mask's corner, one reach out from the tile's.
+    let into_mask = Vector::new(SHADOW_REACH, SHADOW_REACH);
     let ring = objc2_core_graphics::CGMutablePath::new();
     unsafe {
         objc2_core_graphics::CGMutablePath::add_rect(
             Some(&ring),
             std::ptr::null(),
-            CGRect::new(CGPoint::new(0.0, 0.0), mask_frame.size),
+            whole.translate(into_mask).to_cg(),
         );
         objc2_core_graphics::CGMutablePath::add_rounded_rect(
             Some(&ring),
             std::ptr::null(),
-            CGRect::new(CGPoint::new(SHADOW_REACH, SHADOW_REACH), size.to_cg()),
+            hole.translate(into_mask).to_cg(),
             radius,
             radius,
         );
@@ -1480,18 +1441,9 @@ fn ring_path(size: TileSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
 /// Gives the caster the shadow of a window of `size`, clipped to a ring outside it. See "A layer
 /// shadow covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
 fn set_tile_shadow(layer: &CALayer, mask: &objc2_quartz_core::CAShapeLayer, size: TileSize) {
-    layer.setShadowPath(Some(&silhouette_path(size, CGPoint::new(0.0, 0.0))));
-    mask.setFrame(shadow_mask_frame(size));
+    layer.setShadowPath(Some(&silhouette_path(size)));
+    mask.setFrame(shadow_mask_frame(size).to_cg());
     mask.setPath(Some(&ring_path(size)));
-}
-
-/// The shadow mask's rect in the caster's coordinates: the window inset by `SHADOW_REACH` on
-/// every side.
-fn shadow_mask_frame(size: TileSize) -> CGRect {
-    CGRect::new(
-        CGPoint::new(-SHADOW_REACH, -SHADOW_REACH),
-        CGSize::new(size.width + 2.0 * SHADOW_REACH, size.height + 2.0 * SHADOW_REACH),
-    )
 }
 
 /// Points a tile's contents at `mode`. Always set explicitly: pooled tile layers would otherwise
@@ -1726,8 +1678,8 @@ mod tests {
             -(shallowest as f64) < BAR_Z,
             "the shallowest tile stays under the bar"
         );
-        // The shadow caster sits half a step behind its picture.
-        assert!(-(deepest as f64) - 0.5 > BACKDROP_Z);
+        // The shadow caster sits behind its picture.
+        assert!(-(deepest as f64) + SHADOW_Z > BACKDROP_Z);
     }
 
     #[test]
@@ -1738,44 +1690,6 @@ mod tests {
             BACKDROP_Z < deepest_strip_tile,
             "the desktop is under every tile"
         );
-    }
-
-    #[test]
-    fn the_shadow_mask_surrounds_the_window_by_one_reach() {
-        let size = TileSize::new(859.0, 1081.0);
-        let frame = shadow_mask_frame(size);
-        assert_eq!(frame.origin.x, -SHADOW_REACH);
-        assert_eq!(frame.origin.y, -SHADOW_REACH);
-        assert_eq!(frame.size.width, 859.0 + 2.0 * SHADOW_REACH);
-        assert_eq!(frame.size.height, 1081.0 + 2.0 * SHADOW_REACH);
-    }
-
-    /// Three radii plus the offset is where a gaussian ramp is visually spent.
-    #[test]
-    fn the_mask_reaches_further_than_either_shadow_does() {
-        for style in [UNFOCUSED_SHADOW, FOCUSED_SHADOW] {
-            assert!(SHADOW_REACH > style.radius * 3.0 + style.offset_y);
-        }
-    }
-
-    #[test]
-    fn the_shadows_fall_downward() {
-        // Flipped view: positive y is down the screen.
-        assert!(UNFOCUSED_SHADOW.offset_y > 0.0);
-        assert!(FOCUSED_SHADOW.offset_y > 0.0);
-    }
-
-    #[test]
-    fn focus_deepens_the_shadow_in_every_dimension() {
-        assert!(FOCUSED_SHADOW.opacity > UNFOCUSED_SHADOW.opacity);
-        assert!(FOCUSED_SHADOW.radius > UNFOCUSED_SHADOW.radius);
-        assert!(FOCUSED_SHADOW.offset_y > UNFOCUSED_SHADOW.offset_y);
-    }
-
-    #[test]
-    fn focus_picks_the_deep_style() {
-        assert_eq!(tile_shadow_style(true), FOCUSED_SHADOW);
-        assert_eq!(tile_shadow_style(false), UNFOCUSED_SHADOW);
     }
 
     #[test]
@@ -2062,7 +1976,7 @@ mod tests {
             installed(&tile.shadow, "rini.tile.shadow.path", path_in),
             expected(&resizing, |v| CGRect::new(origin, size(v).to_cg()))
         );
-        let mask = |v: Value| shadow_mask_frame(size(v));
+        let mask = |v: Value| shadow_mask_frame(size(v)).to_cg();
         assert_eq!(
             installed(&tile.shadow_mask, "rini.tile.mask.move", point_in),
             expected(&resizing, |v| mask(v).origin)
@@ -2087,7 +2001,7 @@ mod tests {
                 expected(&resizing, |v| within(tile.region, piece(v).contents).to_cg())
             );
         }
-        let corner = |v: Value| corner_radius(tile.radius, size(v));
+        let corner = |v: Value| shape::radius(tile.radius, size(v));
         assert_eq!(
             installed(&tile.ring, "rini.tile.ring.corner", number_in),
             expected(&resizing, corner)
@@ -2098,7 +2012,7 @@ mod tests {
         );
         assert_eq!(
             installed(&tile.outline, "rini.tile.outline.path", path_in),
-            expected(&resizing, |v| outline(size(v), corner(v)).0.to_cg())
+            expected(&resizing, |v| shape::outline(size(v), corner(v)).0.to_cg())
         );
 
         install_tile_track(&tile, &moving);
@@ -2574,7 +2488,7 @@ mod tests {
         let frame = typed(4.0, 32.0, 859.0, 1081.0);
         place_tile(&tile, frame, -2.0);
         assert_eq!(tile.ring.frame(), frame.to_cg());
-        assert_eq!(tile.ring.borderWidth(), RING_PT);
+        assert_eq!(tile.ring.borderWidth(), LIGHT_PT);
         assert_eq!(tile.ring.cornerRadius(), 16.0);
         assert_eq!(outline_bounds(&tile), rect(-0.25, -0.25, 859.5, 1081.5));
         assert!(tile.ring.zPosition() > tile.picture.zPosition());
@@ -2617,12 +2531,12 @@ mod tests {
         let alpha = |tile: &Tile| {
             objc2_core_graphics::CGColor::alpha(tile.ring.borderColor().as_deref())
         };
-        show_focus(&tile, true);
-        assert_eq!(alpha(&tile), ring_alpha(true));
-        assert_eq!(tile.shadow.shadowOpacity(), FOCUSED_SHADOW.opacity);
-        show_focus(&tile, false);
-        assert_eq!(alpha(&tile), ring_alpha(false));
-        assert_eq!(tile.shadow.shadowOpacity(), UNFOCUSED_SHADOW.opacity);
+        show_focus(&tile, Style::of(true));
+        assert_eq!(alpha(&tile), Style::of(true).light_alpha);
+        assert_eq!(tile.shadow.shadowOpacity(), Style::of(true).shadow.opacity);
+        show_focus(&tile, Style::of(false));
+        assert_eq!(alpha(&tile), Style::of(false).light_alpha);
+        assert_eq!(tile.shadow.shadowOpacity(), Style::of(false).shadow.opacity);
     }
 
     /// A resize animates the shadow's silhouette and its mask's ring as paths. Handed over as
@@ -2630,7 +2544,6 @@ mod tests {
     #[test]
     fn a_resize_hands_its_paths_to_core_animation_as_objects() {
         let (from, to) = (TileSize::new(1200.0, 1081.0), TileSize::new(861.0, 1081.0));
-        let origin = CGPoint::new(0.0, 0.0);
         let track = tile_track(
             GroupRect::new(Point::origin(), from.respace()),
             GroupRect::new(Point::origin(), to.respace()),
@@ -2638,7 +2551,7 @@ mod tests {
             0.35,
         );
         let animation = animation(&track, "shadowPath", |v| {
-            path_object(&silhouette_path(as_frame(v).size.respace(), origin))
+            path_object(&silhouette_path(as_frame(v).size.respace()))
         })
         .downcast::<CABasicAnimation>()
         .expect("a basic animation");
@@ -2798,7 +2711,7 @@ mod tests {
                 let within = banding.within.get(&window).copied().unwrap_or(0);
                 let z = -(within as f64) + if entry.companion { 0.25 } else { 0.0 };
                 assert_eq!(entry.picture.zPosition(), z, "{window:?}");
-                assert_eq!(entry.shadow.zPosition(), z - 0.5, "{window:?}");
+                assert_eq!(entry.shadow.zPosition(), z + SHADOW_Z, "{window:?}");
             }
             for (key, layer) in &tree.containers {
                 let z = match key {
@@ -3084,7 +2997,7 @@ mod tests {
             assert_eq!(tile.shadow.frame(), snapped.to_cg());
             assert_eq!(tile.ring.frame(), snapped.to_cg());
             assert_eq!(outline_bounds(tile), rect(-0.25, -0.25, 860.5, 1081.5));
-            assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size.respace()));
+            assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size.respace()).to_cg());
             let silhouette = tile.shadow.shadowPath().expect("a silhouette");
             assert_eq!(
                 objc2_core_graphics::CGPath::bounding_box(Some(&silhouette)).size,

@@ -21,7 +21,6 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/holes.rs` | Where the overlay is holed over a window that ends on screen, so the window keeps painting |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/tile.rs` | How a tile fits its picture to its frame: stretch or crop, the crop pieces, the stand-in's mode; when it snaps onto its window's real frame (`snap_to`), and the snap as the score's edits (`snap`) |
-| `domain/motion/hairline.rs` | The hairline every tile wears: the ring's width and white by focus, the outline's rect and stroke, the corner radius |
 | `domain/choreography.rs` | The looks: `Look`, every look by name (`ALL`), its `Choreography` for a flight (the plan, frame zero posed, the motion composed, a press before it folded and one after it bent) and its staging of a press on the strip (`stage`, over a `Cue`, a `Strip` and its `PairStart`s, giving a `Staging`); what a look composes from (`Stage`), bends with (`Pass`) and gives back (`Retarget`); and the tests every look passes |
 | `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
 | `platform/overlay.rs` | `TileOverlay`, the window the renderer draws on: it poses frame zero and plays a score's edits, every animation installed from a track, and commits nothing itself; its `Tree` (the `CALayer` tree, the desktop behind it included, and the replica it reads only to install) hangs off any root layer, so it is tested without a window; `server_id()` is its window's number, which a handover check pictures alone; `window_origin` is where the window over a display starts on screen, which that picture is read from, and `same_layout` whether a display lays the window out again; at the lift it lets go of the tiles and of the desktop behind them (`release`), which the pictures service still holds for the next flight's dressing |
@@ -31,7 +30,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
 a layout pass's requests in `Screen`, tiles, container positions, travels and accents in `Overlay`,
 a strip movement's windows and viewport offsets in `Surface`, a frame in its container in `Group`,
-and a tile's own size, crop pieces and hairline in `Tile`. CG stays in `platform/`: in its objc2
+and a tile's own size and crop pieces in `Tile`. CG stays in `platform/`: in its objc2
 calls, its calls into `displays`, and its private helpers and structs.
 
 ## The shape that matters
