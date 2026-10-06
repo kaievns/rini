@@ -318,7 +318,8 @@ destination for a window already moving.
   stand-in's included, MUST round to one corner: the window's own radius as the window server
   reports it, read when the flight composes the tile and, for a window that opens, when its first
   picture lands, so a window never pictured and a parked one round right on their first flight;
-  16pt where it reports none; never past half the tile's shorter side. Each is drawn separately,
+  16pt where it reports none; never past half the tile's shorter side; on the window's own
+  continuous curve at every size the tile passes through. Each is drawn separately,
   and any two that differ show as a step at the corner. Why the server's radius and why 16pt: "The
   corner, measured" in `src/decorations/docs/README.md`.
 - The hairline's line and stroke MUST follow the tile through a resize, on the tile's own timing,

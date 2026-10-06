@@ -1,0 +1,10 @@
+win_5489.png r=25.50 | CA continuous mean 0.0059 max 0.655 px>0.5 80 | CA circular mean 0.0100 max 0.973 px>0.5 312 | hand path mean 0.0063 max 0.612 px>0.5 115
+win_5489.png r=26.00 | CA continuous mean 0.0031 max 0.357 px>0.5 0 | CA circular mean 0.0074 max 0.906 px>0.5 216 | hand path mean 0.0044 max 0.478 px>0.5 0
+win_5489.png r=26.25 | CA continuous mean 0.0022 max 0.329 px>0.5 0 | CA circular mean 0.0068 max 0.898 px>0.5 200 | hand path mean 0.0045 max 0.455 px>0.5 0
+win_5489.png r=26.50 | CA continuous mean 0.0029 max 0.318 px>0.5 0 | CA circular mean 0.0070 max 0.871 px>0.5 184 | hand path mean 0.0050 max 0.635 px>0.5 36
+win_5489.png r=27.00 | CA continuous mean 0.0052 max 0.792 px>0.5 76 | CA circular mean 0.0081 max 0.863 px>0.5 236 | hand path mean 0.0067 max 0.949 px>0.5 124
+win_5299.png r=25.50 | CA continuous mean 0.0059 max 0.655 px>0.5 80 | CA circular mean 0.0100 max 0.973 px>0.5 312 | hand path mean 0.0063 max 0.612 px>0.5 115
+win_5299.png r=26.00 | CA continuous mean 0.0031 max 0.357 px>0.5 0 | CA circular mean 0.0074 max 0.906 px>0.5 216 | hand path mean 0.0044 max 0.478 px>0.5 0
+win_5299.png r=26.25 | CA continuous mean 0.0022 max 0.329 px>0.5 0 | CA circular mean 0.0068 max 0.898 px>0.5 200 | hand path mean 0.0045 max 0.455 px>0.5 0
+win_5299.png r=26.50 | CA continuous mean 0.0029 max 0.318 px>0.5 0 | CA circular mean 0.0070 max 0.871 px>0.5 184 | hand path mean 0.0050 max 0.635 px>0.5 36
+win_5299.png r=27.00 | CA continuous mean 0.0052 max 0.792 px>0.5 76 | CA circular mean 0.0081 max 0.863 px>0.5 236 | hand path mean 0.0067 max 0.949 px>0.5 124

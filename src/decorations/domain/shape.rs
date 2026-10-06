@@ -1,7 +1,7 @@
 //! Where a window's decorations lie and how round they are, in its tile's own points: the corner
 //! radius, the hairline's outline, the shadow's silhouette and the mask it is cut to.
 
-use rini_geometry::space::{Point, Size, TileRect, TileSize};
+use rini_geometry::space::{Point, Size, Tile, TileRect, TileSize};
 
 use crate::decorations::domain::style::OUTLINE_PT;
 
@@ -14,7 +14,7 @@ pub const FALLBACK_RADIUS: f64 = 16.0;
 pub const SHADOW_REACH: f64 = 70.0;
 
 /// A tile's corner radius: its window's, as the window server reports it, else `FALLBACK_RADIUS`,
-/// clamped to half the shorter side because Core Graphics clamps silently.
+/// clamped to half the shorter side, since Core Animation draws a corner past it as given.
 pub fn radius(reported: Option<f64>, size: TileSize) -> f64 {
     let shorter = size.width.min(size.height);
     reported.unwrap_or(FALLBACK_RADIUS).min(shorter / 2.0).max(0.0)
@@ -44,19 +44,72 @@ pub fn shadow_mask_frame(size: TileSize) -> TileRect {
 }
 
 /// The window's rounded-rect silhouette with corners of `corner`, the shadow's shape, and its corner
-/// radius. Size and radius are floored above zero, or Core Graphics emits a plain rect and path
-/// animations cut.
+/// radius, never below zero.
 pub fn silhouette(size: TileSize, corner: f64) -> (TileRect, f64) {
-    let size = TileSize::new(size.width.max(0.5), size.height.max(0.5));
-    (TileRect::new(Point::origin(), size), corner.max(0.01))
+    let size = TileSize::new(size.width.max(0.0), size.height.max(0.0));
+    (TileRect::new(Point::origin(), size), corner.max(0.0))
 }
 
 /// The shadow mask's shape: its whole rect, and the silhouette with corners of `corner` as the hole
-/// wound even-odd inside it, with the hole's corner radius. Floored as the silhouette is, so it is
-/// always one rect plus one rounded rect and two masks interpolate.
+/// wound even-odd inside it, with the hole's corner radius.
 pub fn shadow_mask(size: TileSize, corner: f64) -> (TileRect, TileRect, f64) {
     let (hole, corner) = silhouette(size, corner);
     (shadow_mask_frame(hole.size), hole, corner)
+}
+
+/// How far along each side a continuous corner reaches, in radii: Core Animation's
+/// `cornerCurveExpansionFactor` for `kCACornerCurveContinuous`, 1.528665 on macOS 26.7.1.
+pub const CONTINUOUS_REACH: f64 = 1.528665;
+
+/// One step of a path in a tile's points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Segment {
+    Move(Point<Tile>),
+    Line(Point<Tile>),
+    Cubic(Point<Tile>, Point<Tile>, Point<Tile>),
+    Close,
+}
+
+/// A continuous corner in radii from its corner point, along the side coming in and the side going
+/// out: where it leaves the side, then three cubics as (control, control, end). UIKit's continuous
+/// rounded rect, the curve Core Animation draws for `kCACornerCurveContinuous`.
+const CONTINUOUS: [(f64, f64); 10] = [
+    (CONTINUOUS_REACH, 0.0),
+    (1.08849323, 0.0),
+    (0.86840689, 0.0),
+    (0.63149399, 0.07491100),
+    (0.37282392, 0.16905899),
+    (0.16905899, 0.37282392),
+    (0.07491100, 0.63149399),
+    (0.0, 0.86840689),
+    (0.0, 1.08849323),
+    (0.0, CONTINUOUS_REACH),
+];
+
+/// `rect` with continuous corners of `corner`, clockwise from its top side's start: per corner a
+/// line onto it and three cubics. A corner whose reach passes half a side keeps it, the sides running
+/// back over each other, as Core Animation draws it; so every rect has the same segments.
+pub fn rounded_rect(rect: TileRect, corner: f64) -> Vec<Segment> {
+    let r = corner.max(0.0);
+    let (x0, y0) = (rect.origin.x, rect.origin.y);
+    let (x1, y1) = (x0 + rect.size.width, y0 + rect.size.height);
+    // Each corner: its point, the way back along the side coming in, the way along the side going out.
+    let corners = [
+        ((x1, y0), (-1.0, 0.0), (0.0, 1.0)),
+        ((x1, y1), (0.0, -1.0), (-1.0, 0.0)),
+        ((x0, y1), (1.0, 0.0), (0.0, -1.0)),
+        ((x0, y0), (0.0, 1.0), (1.0, 0.0)),
+    ];
+    let mut path = vec![Segment::Move(Point::new(x0 + CONTINUOUS_REACH * r, y0))];
+    for ((cx, cy), (ux, uy), (vx, vy)) in corners {
+        let at = |(a, b): (f64, f64)| Point::new(cx + (a * ux + b * vx) * r, cy + (a * uy + b * vy) * r);
+        path.push(Segment::Line(at(CONTINUOUS[0])));
+        for i in [1, 4, 7] {
+            path.push(Segment::Cubic(at(CONTINUOUS[i]), at(CONTINUOUS[i + 1]), at(CONTINUOUS[i + 2])));
+        }
+    }
+    path.push(Segment::Close);
+    path
 }
 
 #[cfg(test)]
@@ -84,8 +137,8 @@ mod tests {
         assert_eq!(path.origin.x + path.size.width + half, 100.5);
     }
 
-    /// Core Graphics takes a rounded rect only when no corner is wider than half its side, and an
-    /// entrance grows from no width at all.
+    /// Core Animation does not clamp a corner past half a side, so neither path nor hairline may take
+    /// one, and an entrance grows from no width at all.
     #[test]
     fn the_outlines_corners_always_fit_its_rect() {
         for (w, h) in [
@@ -142,20 +195,15 @@ mod tests {
         );
     }
 
-    /// An entrance grows from no width, and Core Graphics draws a zero-sized or square-cornered
-    /// rounded rect as a plain one, which a path animation cannot interpolate into.
+    /// An entrance grows from no width; a tile drawn past it casts nothing rather than a shadow on
+    /// the other side.
     #[test]
-    fn the_silhouette_is_floored_so_two_of_them_interpolate() {
+    fn a_silhouette_never_turns_inside_out() {
         for width in [0.0, -3.0] {
             let size = TileSize::new(width, 1081.0);
-            let (floored, corner) = silhouette(size, radius(Some(16.0), size));
-            assert_eq!(floored, rect(0.0, 0.0, 0.5, 1081.0), "{width} wide");
-            assert_eq!(corner, 0.01, "{width} wide");
+            assert_eq!(silhouette(size, radius(Some(16.0), size)), (rect(0.0, 0.0, 0.0, 1081.0), 0.0), "{width} wide");
         }
-        assert_eq!(
-            silhouette(TileSize::new(859.0, 1081.0), 0.0),
-            (rect(0.0, 0.0, 859.0, 1081.0), 0.01)
-        );
+        assert_eq!(silhouette(TileSize::new(859.0, 1081.0), -1.0), (rect(0.0, 0.0, 859.0, 1081.0), 0.0));
     }
 
     #[test]
@@ -174,5 +222,86 @@ mod tests {
             assert_eq!(silhouette(size, corner).1, corner);
             assert_eq!(shadow_mask(size, corner).2, corner);
         }
+    }
+
+    fn ends(path: &[Segment]) -> Vec<Point<Tile>> {
+        path.iter()
+            .filter_map(|segment| match *segment {
+                Segment::Move(to) | Segment::Line(to) | Segment::Cubic(_, _, to) => Some(to),
+                Segment::Close => None,
+            })
+            .collect()
+    }
+
+    fn close(a: Point<Tile>, b: Point<Tile>) -> bool { (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6 }
+
+    /// The midpoint of the cubic through a corner's diagonal, from the corner's own point.
+    fn diagonal(path: &[Segment], from: Point<Tile>) -> Point<Tile> {
+        let (Segment::Cubic(_, _, p0), Segment::Cubic(c1, c2, p3)) = (path[2], path[3]) else {
+            panic!("{path:?}")
+        };
+        let mid = (p0.to_vector() + c1.to_vector() * 3.0 + c2.to_vector() * 3.0 + p3.to_vector()) / 8.0;
+        Point::new(from.x - mid.x, mid.y - from.y)
+    }
+
+    /// Core Animation's continuous corner leaves the side 1.528665 radii from the corner, where a
+    /// circular one leaves it at one, and crosses the diagonal 0.2915r in, against 0.2929r.
+    #[test]
+    fn a_continuous_corner_leaves_the_side_at_its_reach_and_crosses_the_diagonal_where_core_animation_does() {
+        let rect = TileRect::new(Point::origin(), Size::new(860.0, 1079.0));
+        let continuous = rounded_rect(rect, 26.0);
+        assert!(close(ends(&continuous)[1], Point::new(860.0 - 26.0 * CONTINUOUS_REACH, 0.0)));
+        let d = diagonal(&continuous, Point::new(860.0, 0.0));
+        assert!((d.x - 0.291_51 * 26.0).abs() < 1e-3 && (d.x - d.y).abs() < 1e-9, "{d:?}");
+    }
+
+    #[test]
+    fn every_rounded_rect_has_the_same_segments_so_any_two_interpolate() {
+        let kinds = |path: Vec<Segment>| -> Vec<u8> {
+            path.iter()
+                .map(|s| match s {
+                    Segment::Move(_) => 0,
+                    Segment::Line(_) => 1,
+                    Segment::Cubic(..) => 2,
+                    Segment::Close => 3,
+                })
+                .collect()
+        };
+        let wide = TileRect::new(Point::origin(), Size::new(860.0, 1079.0));
+        let narrow = TileRect::new(Point::origin(), Size::new(0.5, 1079.0));
+        let none = TileRect::new(Point::origin(), Size::new(0.0, 0.0));
+        let reference = kinds(rounded_rect(wide, 26.0));
+        assert_eq!(reference.len(), 18);
+        for (rect, corner) in [(narrow, 0.25), (wide, 0.0), (none, 0.0)] {
+            assert_eq!(kinds(rounded_rect(rect, corner)), reference, "{rect:?} {corner}");
+        }
+    }
+
+    /// Every corner is the first one turned: the path is the same shape at all four, and never
+    /// leaves its rect.
+    #[test]
+    fn the_four_corners_are_one_corner_turned_and_stay_inside_the_rect() {
+        let rect = TileRect::new(Point::new(-0.25, -0.25), Size::new(860.5, 1079.5));
+        let path = ends(&rounded_rect(rect, 26.25));
+        let corner = |i: usize| &path[1 + i * 4..5 + i * 4];
+        let (x1, y1) = (rect.origin.x + rect.size.width, rect.origin.y + rect.size.height);
+        let (x0, y0) = (rect.origin.x, rect.origin.y);
+        for (k, p) in corner(0).iter().enumerate() {
+            let (dx, dy) = (x1 - p.x, p.y - y0);
+            assert!(close(corner(1)[k], Point::new(x1 - dy, y1 - dx)), "{k}");
+            assert!(close(corner(2)[k], Point::new(x0 + dx, y1 - dy)), "{k}");
+            assert!(close(corner(3)[k], Point::new(x0 + dy, y0 + dx)), "{k}");
+        }
+        assert!(path.iter().all(|p| p.x >= x0 - 1e-9 && p.x <= x1 + 1e-9 && p.y >= y0 - 1e-9 && p.y <= y1 + 1e-9));
+    }
+
+    /// Core Animation draws a continuous corner whose reach passes half a side at its full reach,
+    /// so the path does not shrink it: the top side runs back from 15.29 to 4.71.
+    #[test]
+    fn a_corner_whose_reach_passes_half_the_side_keeps_it() {
+        let rect = TileRect::new(Point::origin(), Size::new(20.0, 400.0));
+        let path = ends(&rounded_rect(rect, 10.0));
+        let reach = 10.0 * CONTINUOUS_REACH;
+        assert!(close(path[0], Point::new(reach, 0.0)) && close(path[1], Point::new(20.0 - reach, 0.0)), "{path:?}");
     }
 }
