@@ -498,30 +498,31 @@ impl RunningAnimation {
     }
 
     /// The tile a reserved entrance becomes with its first picture, `clipped` or whole and rounded at
-    /// `radius`, banded with the rest; `None` for a window not waiting to enter.
+    /// the radius `radius` reads, read only for an entrance, banded with the rest; `None` for a window
+    /// not waiting to enter.
     fn admit(
         &mut self,
         window: WindowId,
         picture: &Picture,
         clipped: bool,
-        radius: Option<f64>,
+        radius: impl FnOnce() -> Option<f64>,
     ) -> Option<OverlayTile> {
         let at = self.entrances.iter().position(|e| e.window == window)?;
         let entrance = self.entrances.remove(at);
-        self.merge(entrance_tile(&entrance, picture, clipped, radius));
+        self.merge(entrance_tile(&entrance, picture, clipped, radius()));
         restack(&mut self.tiles, self.focus);
         self.tiles.iter().find(|t| t.window == window).cloned()
     }
 
     /// A picture swapped in for `window`, `clipped` or whole: a reserved entrance joins with it,
-    /// rounded at `radius`, else its tile takes it in place, a stand-in's included, moving on as it
-    /// was and flying no focused look from now.
+    /// rounded at the radius `radius` reads, else its tile takes it in place, a stand-in's included,
+    /// moving on as it was and flying no focused look from now.
     fn take_picture(
         &mut self,
         window: WindowId,
         picture: &Picture,
         clipped: bool,
-        radius: Option<f64>,
+        radius: impl FnOnce() -> Option<f64>,
     ) -> Took {
         if let Some(tile) = self.admit(window, picture, clipped, radius) {
             return Took::Entrance(tile);
@@ -1224,12 +1225,7 @@ impl FlightEngine {
         let server_id = WindowServerId::from(window);
         let clipped = clips(self.pictures.knowledge(server_id), &picture);
         let Some(running) = self.running.as_mut() else { return };
-        let radius = running
-            .entrances
-            .iter()
-            .any(|e| e.window == window)
-            .then(|| crate::windows::platform::window_server::corner_radii(&[server_id]))
-            .and_then(|radii| radii.get(&server_id).copied());
+        let radius = || crate::windows::platform::window_server::corner_radii(&[server_id]).get(&server_id).copied();
         match running.take_picture(window, &picture, clipped, radius) {
             Took::Entrance(tile) => return self.admit_entrance(tile, now),
             Took::Tile => {}
@@ -2705,7 +2701,7 @@ mod tests {
             running.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
             running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
             running.focus = Some(wid(2));
-            let tile = running.admit(wid(2), &test_picture(slot.size), true, Some(26.0)).expect("admitted");
+            let tile = running.admit(wid(2), &test_picture(slot.size), true, || Some(26.0)).expect("admitted");
             assert_eq!((tile.from, tile.to), (entrance_from(slot), slot), "zero width at its left edge");
             assert!(tile.focused);
             assert!(tile.clipped, "as it was handed");
@@ -2714,8 +2710,9 @@ mod tests {
             assert!(running.entrances.is_empty());
             let other = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
             assert_eq!(other.depth, 2, "its neighbour keeps the server's order, within the band");
-            assert!(running.admit(wid(2), &test_picture(slot.size), false, None).is_none(), "taken once");
-            assert!(running.admit(wid(1), &test_picture(slot.size), false, None).is_none(), "not an entrance");
+            let unread = || -> Option<f64> { panic!("a radius read for a window not entering") };
+            assert!(running.admit(wid(2), &test_picture(slot.size), false, unread).is_none(), "taken once");
+            assert!(running.admit(wid(1), &test_picture(slot.size), false, unread).is_none(), "not an entrance");
             assert_eq!(running.tiles.len(), 2, "no second tile");
         }
 
@@ -2734,7 +2731,7 @@ mod tests {
             tile.clipped = true;
             running.tiles.push(tile);
             let real = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(1), &real, false, None), Took::Tile));
+            assert!(matches!(running.take_picture(wid(1), &real, false, || panic!("a radius read for a tile")), Took::Tile));
             assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
             let tile = &running.tiles[0];
             assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
@@ -2744,7 +2741,8 @@ mod tests {
         }
 
         /// A reserved entrance joins with its picture; a window with a tile takes it in place, and
-        /// stops flying a focused look; a window nothing draws takes nothing.
+        /// stops flying a focused look; a window nothing draws takes nothing. Only the entrance reads
+        /// a radius.
         #[test]
         fn a_swapped_in_picture_admits_an_entrance_or_goes_onto_its_windows_tile() {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
@@ -2753,10 +2751,10 @@ mod tests {
             running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
             running.focused_look = Some(wid(1));
             let picture = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(2), &picture, false, None), Took::Entrance(tile) if tile.from == entrance_from(slot)));
-            assert!(matches!(running.take_picture(wid(1), &picture, false, None), Took::Tile));
+            assert!(matches!(running.take_picture(wid(2), &picture, false, || None), Took::Entrance(tile) if tile.from == entrance_from(slot)));
+            assert!(matches!(running.take_picture(wid(1), &picture, false, || panic!("a radius read for a tile")), Took::Tile));
             assert_eq!(running.focused_look, None);
-            assert!(matches!(running.take_picture(wid(3), &picture, false, None), Took::Nothing));
+            assert!(matches!(running.take_picture(wid(3), &picture, false, || panic!("a radius read for no tile")), Took::Nothing));
             assert_eq!(running.tiles.len(), 2);
         }
 
