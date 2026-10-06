@@ -541,6 +541,10 @@ impl Pictures {
         shared.learned.saw_material(window, material);
     }
 
+    /// `look` held as `window`'s focused look, as a delivery kept focused would hold it.
+    #[cfg(test)]
+    pub fn hold_focused(&self, window: WindowId, look: Picture) { self.lock().cache.keep_focused(window, look) }
+
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.
     pub fn insert(&self, window: WindowId, picture: Picture) -> bool {
         self.lock().cache.insert(window, picture)

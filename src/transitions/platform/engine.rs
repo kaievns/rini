@@ -4521,6 +4521,45 @@ mod tests {
             crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
         }
 
+        /// Frame zero's pictures are clipped or drawn whole by what each one is, not by what its tile
+        /// wore: a picture baked with the desktop behind it is clipped, and one captured alone in
+        /// place of a stand-in is drawn whole.
+        #[test]
+        fn frame_zeros_pictures_are_clipped_by_what_each_one_is() {
+            let mut h = Harness::new();
+            park(2);
+            h.engine.pictures.learn(WindowServerId::new(1), false, true);
+            let press = strip_of(&h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
+            let pressed = h.step(press);
+            assert!(handed(&pressed, wid(1)).iter().all(|tile| !tile.clipped), "its picture captured alone");
+            assert!(handed(&pressed, wid(2)).iter().all(|tile| tile.clipped), "the stand-in");
+            h.advance(Duration::from_millis(5));
+            let mut baked = test_picture(start().size);
+            baked.source = Route::SkyLight;
+            let frame_zero = Event::Pictures(crate::pictures::event::Event::Delivered {
+                tag: Tag { client: CLIENT, generation: h.generation() },
+                why: Why::FrameZero,
+                sent: h.at(),
+                pictures: vec![(wid(1), baked, start()), (wid(2), test_picture(start().size), start())],
+            });
+            let sent = h.step(frame_zero);
+            let staged = |window| -> Vec<OverlayTile> {
+                only_batch(&sent)
+                    .commands
+                    .iter()
+                    .filter_map(|command| if let Render::Stage { tiles, .. } = command { Some(tiles) } else { None })
+                    .flatten()
+                    .filter(|tile| tile.window == window)
+                    .cloned()
+                    .collect()
+            };
+            let (one, two) = (staged(wid(1)), staged(wid(2)));
+            assert!(!one.is_empty() && !two.is_empty(), "both staged again");
+            assert!(one.iter().all(|tile| tile.snapshot.source == Route::SkyLight && tile.clipped), "baked");
+            assert!(two.iter().all(|tile| tile.snapshot.source == Route::ScreenCaptureKit && !tile.clipped), "captured alone");
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+        }
+
         /// A tile that joins a moving flight is dressed as it rides in, clipped as any other: a parked
         /// window's stand-in and a picture baked with the desktop behind it; a picture captured alone
         /// is drawn whole.
@@ -4546,6 +4585,31 @@ mod tests {
             assert!(joined(wid(3)).iter().all(|tile| tile.clipped), "baked");
             assert!(joined(wid(1)).iter().all(|tile| !tile.clipped), "captured alone");
             crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+        }
+
+        /// A merge that moves focus onto a parked window flies its focused look, swapped onto its tile
+        /// clipped when the look was baked with the desktop behind it and drawn whole when it was not.
+        #[test]
+        fn a_parked_targets_focused_look_swaps_in_clipped_by_what_it_is() {
+            for (material, clipped) in [(true, true), (false, false)] {
+                let mut h = Harness::new();
+                let (_, shown) = h.shown();
+                h.commit(shown);
+                h.advance(Duration::from_millis(50));
+                park(2);
+                let mut look = test_picture(end().size);
+                look.source = Route::SkyLight;
+                h.engine.pictures.hold_focused(wid(2), look);
+                h.engine.pictures.learn(WindowServerId::new(2), !material, material);
+                let mut merge = strip_of(&h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
+                if let Event::AnimateSurface { focus, .. } = &mut merge {
+                    *focus = Some(wid(2));
+                }
+                let sent = h.step(merge);
+                assert_eq!(h.engine.running.as_ref().and_then(|running| running.focused_look), Some(wid(2)), "flown");
+                assert_eq!(swapped(&sent, wid(2)), [clipped], "baked: {material}");
+                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            }
         }
 
         /// A layout pass of `wid(1)` from `start` to `end` and of each of `others` from and to its
