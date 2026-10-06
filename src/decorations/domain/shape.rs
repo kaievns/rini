@@ -5,20 +5,19 @@ use rini_geometry::space::{Point, Size, TileRect, TileSize};
 
 use crate::decorations::domain::style::OUTLINE_PT;
 
-/// The corner radius a window is drawn with until its own is measured, in points: a macOS window's,
-/// measured. See "The hairline is composited outside every capture" in
-/// `src/pictures/docs/capture-research.md`.
-pub const CORNER_RADIUS: f64 = 10.0;
+/// The corner radius of a window the window server reports none for, in points: the commonest a
+/// standard window reports. See "The corner, measured" in `src/decorations/docs/README.md`.
+pub const FALLBACK_RADIUS: f64 = 16.0;
 
 /// Room the mask leaves for the shadow: past where the focused blur (three radii plus the offset,
 /// about 54pt) is spent, so the mask never clips it.
 pub const SHADOW_REACH: f64 = 70.0;
 
-/// A tile's corner radius: its window's, measured, else `CORNER_RADIUS`, clamped to half the
-/// shorter side because Core Graphics clamps silently.
-pub fn radius(measured: Option<f64>, size: TileSize) -> f64 {
+/// A tile's corner radius: its window's, as the window server reports it, else `FALLBACK_RADIUS`,
+/// clamped to half the shorter side because Core Graphics clamps silently.
+pub fn radius(reported: Option<f64>, size: TileSize) -> f64 {
     let shorter = size.width.min(size.height);
-    measured.unwrap_or(CORNER_RADIUS).min(shorter / 2.0).max(0.0)
+    reported.unwrap_or(FALLBACK_RADIUS).min(shorter / 2.0).max(0.0)
 }
 
 /// The outline's rounded rect around a window of `size` with corners of `corner`, and that rect's
@@ -97,24 +96,24 @@ mod tests {
             (-3.0, 10.0),
         ] {
             let size = TileSize::new(w, h);
-            for measured in [None, Some(16.0)] {
-                let (rect, corner) = outline(size, radius(measured, size));
-                assert!(2.0 * corner <= rect.size.width, "{w}x{h} {measured:?}");
-                assert!(2.0 * corner <= rect.size.height, "{w}x{h} {measured:?}");
+            for reported in [None, Some(26.0)] {
+                let (rect, corner) = outline(size, radius(reported, size));
+                assert!(2.0 * corner <= rect.size.width, "{w}x{h} {reported:?}");
+                assert!(2.0 * corner <= rect.size.height, "{w}x{h} {reported:?}");
             }
         }
     }
 
     #[test]
-    fn a_measured_radius_is_the_windows_own() {
-        assert_eq!(radius(Some(16.0), TileSize::new(859.0, 1081.0)), 16.0);
+    fn a_reported_radius_is_the_windows_own() {
+        assert_eq!(radius(Some(26.0), TileSize::new(859.0, 1081.0)), 26.0);
         assert_eq!(radius(Some(4.5), TileSize::new(859.0, 1081.0)), 4.5);
     }
 
     #[test]
-    fn a_window_not_yet_measured_gets_the_fallback_radius() {
-        assert_eq!(radius(None, TileSize::new(859.0, 1081.0)), CORNER_RADIUS);
-        assert_eq!(radius(None, TileSize::new(1720.0, 1081.0)), CORNER_RADIUS);
+    fn a_window_the_server_reports_no_radius_for_rounds_at_16pt() {
+        assert_eq!(radius(None, TileSize::new(859.0, 1081.0)), 16.0);
+        assert_eq!(radius(None, TileSize::new(1720.0, 1081.0)), 16.0);
     }
 
     #[test]

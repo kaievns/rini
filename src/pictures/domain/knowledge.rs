@@ -1,5 +1,5 @@
 //! What rini learns about each window the first time it sees it on screen: whether it is translucent,
-//! whether it has a material that blurs what is behind it, and its corner radius. What is learned
+//! and whether it has a material that blurs what is behind it. What is learned
 //! decides which SkyLight call a window goes in. Pure: the pixels arrive as plain bytes, drawn small
 //! by `crate::pictures::platform::measure`.
 //!
@@ -18,8 +18,6 @@ pub struct Knowledge {
     /// A material that samples what is behind the window, which only a capture with the desktop after
     /// it carries.
     pub material: Option<bool>,
-    /// The corner radius in points.
-    pub radius: Option<f64>,
 }
 
 impl Knowledge {
@@ -71,12 +69,8 @@ impl Learned {
     }
 
     /// What the first alpha capture showed.
-    pub fn saw_alpha(&mut self, window: WindowServerId, translucent: bool, radius: Option<f64>) {
-        let known = self.windows.entry(window).or_default();
-        known.translucent = Some(translucent);
-        if radius.is_some() {
-            known.radius = radius;
-        }
+    pub fn saw_alpha(&mut self, window: WindowServerId, translucent: bool) {
+        self.windows.entry(window).or_default().translucent = Some(translucent);
     }
 
     /// What comparing the window alone with it baked showed.
@@ -109,45 +103,6 @@ pub fn is_translucent(rgba: &[u8], stride: usize) -> bool {
         }
     }
     clear * 5 > samples
-}
-
-/// The side, in points, of the window's top-left corner its radius is measured from.
-pub const CORNER_SIDE_PT: f64 = 48.0;
-/// Rows of the corner measured, and how far into each the first opaque pixel is looked for, in pixels.
-const CORNER_ROWS: usize = 48;
-const CORNER_REACH: usize = 96;
-/// Above this alpha a pixel counts as the window.
-const OPAQUE_ABOVE: u8 = 128;
-const MIN_ESTIMATES: usize = 4;
-/// Radii outside this range, in points, are a measurement gone wrong rather than a window.
-const RADIUS_RANGE: std::ops::RangeInclusive<f64> = 4.0..=40.0;
-
-/// A window's corner radius in points, from its top-left corner (`width` x `height` pixels at
-/// `scale`, alpha at `alpha_at`): each row's first opaque pixel lies on the corner's circle, so at
-/// pixel centres `r = x + y + sqrt(2xy)`, the median over the rows. A row starting at the edge, or
-/// past the diagonal, is the window's straight side, not its corner.
-pub fn corner_radius(
-    width: usize,
-    height: usize,
-    scale: f64,
-    alpha_at: impl Fn(usize, usize) -> u8,
-) -> Option<f64> {
-    let mut estimates: Vec<f64> = (1..CORNER_ROWS.min(height))
-        .filter_map(|y| {
-            let x = (0..CORNER_REACH.min(width)).find(|&x| alpha_at(x, y) > OPAQUE_ABOVE)?;
-            if x == 0 || x <= y / 2 {
-                return None;
-            }
-            let (x, y) = (x as f64 + 0.5, y as f64 + 0.5);
-            Some(x + y + (2.0 * x * y).sqrt())
-        })
-        .collect();
-    if estimates.len() < MIN_ESTIMATES || scale <= 0.0 {
-        return None;
-    }
-    estimates.sort_by(f64::total_cmp);
-    let radius = estimates[estimates.len() / 2] / scale;
-    RADIUS_RANGE.contains(&radius).then_some(radius)
 }
 
 /// The side of the square both pictures of a window are drawn into to find its material, and the
@@ -186,7 +141,6 @@ mod tests {
         Knowledge {
             translucent,
             material,
-            radius: None,
         }
     }
 
@@ -234,19 +188,16 @@ mod tests {
     fn what_is_learned_is_kept_until_the_window_is_forgotten() {
         let mut learned = Learned::default();
         assert_eq!(learned.get(id(1)), Knowledge::default());
-        learned.saw_alpha(id(1), false, Some(10.0));
+        learned.saw_alpha(id(1), false);
         learned.saw_material(id(1), true);
-        learned.saw_alpha(id(1), false, None);
         assert_eq!(
             learned.get(id(1)),
             Knowledge {
                 translucent: Some(false),
                 material: Some(true),
-                radius: Some(10.0)
-            },
-            "a later look that found no radius keeps the one found"
+            }
         );
-        learned.saw_alpha(id(2), true, None);
+        learned.saw_alpha(id(2), true);
         learned.forget(id(1));
         assert_eq!(learned.get(id(1)), Knowledge::default());
         assert_eq!(learned.get(id(2)).translucent, Some(true), "only the one");
@@ -283,51 +234,6 @@ mod tests {
             almost[at] = 249;
         }
         assert!(is_translucent(&almost, stride), "249 is clear");
-    }
-
-    /// The top-left corner of a window with a corner of `radius` pixels: opaque outside the circle's
-    /// cut-out.
-    fn corner(radius: f64) -> impl Fn(usize, usize) -> u8 {
-        move |x, y| {
-            let (cx, cy) = (x as f64 + 0.5, y as f64 + 0.5);
-            let inside = cx >= radius
-                || cy >= radius
-                || (cx - radius).powi(2) + (cy - radius).powi(2) <= radius * radius;
-            if inside { 255 } else { 0 }
-        }
-    }
-
-    /// A window's radius comes back from its corner within a point, at either scale.
-    #[test]
-    fn the_corner_radius_is_measured_from_where_each_row_turns_opaque() {
-        for (radius_pt, scale) in [(10.0, 2.0), (16.0, 1.0), (16.0, 2.0), (26.0, 2.0)] {
-            let side = (CORNER_SIDE_PT * scale) as usize;
-            let measured =
-                corner_radius(side, side, scale, corner(radius_pt * scale)).expect("a radius");
-            assert!(
-                (measured - radius_pt).abs() < 1.0,
-                "{radius_pt}pt at {scale}x: {measured}"
-            );
-        }
-    }
-
-    /// Square corners, a window too small to measure, and a radius out of range give nothing. Nor
-    /// does macOS's 10pt corner at 1x, which turns opaque before the diagonal on three rows only.
-    #[test]
-    fn no_radius_without_enough_of_a_corner() {
-        assert_eq!(corner_radius(48, 48, 1.0, corner(10.0)), None, "10pt at 1x");
-        assert_eq!(
-            corner_radius(96, 96, 2.0, |_, _| 255),
-            None,
-            "square: every row starts at 0"
-        );
-        assert_eq!(corner_radius(96, 3, 2.0, corner(20.0)), None, "two rows");
-        assert_eq!(corner_radius(96, 96, 2.0, |_, _| 0), None, "nothing opaque");
-        assert_eq!(
-            corner_radius(96, 96, 1.0, corner(45.0)),
-            None,
-            "45pt: past the range"
-        );
     }
 
     fn flat(side: usize, rgb: [u8; 3]) -> Vec<u8> {

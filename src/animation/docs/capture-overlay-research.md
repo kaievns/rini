@@ -907,9 +907,8 @@ falloff, fitting `shadowOpacity = 0.65`, `shadowRadius = 14`,
 `shadowOffset = (0, 12)`. Positive y means down because the tiles hang off a
 flipped view. `shadowPath` is
 an explicit rounded rect at the tile's corner, the one its hairline rounds to:
-the window's radius as measured from where a capture's own alpha turns opaque,
-else 10pt, which a capture's top row first showed, transparent for its first
-18px to 20px at 2x. An explicit path rather than letting Core Animation derive
+the window's radius as the window server reports it, else 16pt ("The corner,
+measured" in `src/decorations/docs/README.md`). An explicit path rather than letting Core Animation derive
 one from the contents alpha, which is exact for an oddly shaped window but
 recomputed whenever the contents change.
 

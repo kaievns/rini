@@ -284,9 +284,14 @@ fn border_tile(
     }
 }
 
-/// The tile for a reserved entrance whose picture has landed, `clipped` or whole: frontmost and
-/// focused, since a window is raised on open and about to hold focus.
-fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture, clipped: bool) -> OverlayTile {
+/// The tile for a reserved entrance whose picture has landed, `clipped` or whole and rounded at
+/// `radius`: frontmost and focused, since a window is raised on open and about to hold focus.
+fn entrance_tile(
+    entrance: &PendingEntrance,
+    snapshot: &Picture,
+    clipped: bool,
+    radius: Option<f64>,
+) -> OverlayTile {
     OverlayTile {
         window: entrance.window,
         from: entrance_from(entrance.to),
@@ -297,7 +302,7 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture, clipped: bool) 
         depth: 0,
         companion: None,
         focused: true,
-        radius: None,
+        radius,
         clipped,
     }
 }
@@ -492,21 +497,33 @@ impl RunningAnimation {
         worn
     }
 
-    /// The tile a reserved entrance becomes with its first picture, `clipped` or whole, banded with
-    /// the rest; `None` for a window not waiting to enter.
-    fn admit(&mut self, window: WindowId, picture: &Picture, clipped: bool) -> Option<OverlayTile> {
+    /// The tile a reserved entrance becomes with its first picture, `clipped` or whole and rounded at
+    /// `radius`, banded with the rest; `None` for a window not waiting to enter.
+    fn admit(
+        &mut self,
+        window: WindowId,
+        picture: &Picture,
+        clipped: bool,
+        radius: Option<f64>,
+    ) -> Option<OverlayTile> {
         let at = self.entrances.iter().position(|e| e.window == window)?;
         let entrance = self.entrances.remove(at);
-        self.merge(entrance_tile(&entrance, picture, clipped));
+        self.merge(entrance_tile(&entrance, picture, clipped, radius));
         restack(&mut self.tiles, self.focus);
         self.tiles.iter().find(|t| t.window == window).cloned()
     }
 
-    /// A picture swapped in for `window`, `clipped` or whole: a reserved entrance joins with it, else
-    /// its tile takes it in place, a stand-in's included, moving on as it was and flying no focused
-    /// look from now.
-    fn take_picture(&mut self, window: WindowId, picture: &Picture, clipped: bool) -> Took {
-        if let Some(tile) = self.admit(window, picture, clipped) {
+    /// A picture swapped in for `window`, `clipped` or whole: a reserved entrance joins with it,
+    /// rounded at `radius`, else its tile takes it in place, a stand-in's included, moving on as it
+    /// was and flying no focused look from now.
+    fn take_picture(
+        &mut self,
+        window: WindowId,
+        picture: &Picture,
+        clipped: bool,
+        radius: Option<f64>,
+    ) -> Took {
+        if let Some(tile) = self.admit(window, picture, clipped, radius) {
             return Took::Entrance(tile);
         }
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) else {
@@ -1198,15 +1215,22 @@ impl FlightEngine {
     }
 
     /// The picture delivered of `window` under `generation`, onto its tile; a reserved entrance's
-    /// first joins the flight with it.
+    /// first joins the flight with it, at the radius the window server reports now that it has drawn.
     fn swap(&mut self, generation: Generation, window: WindowId, now: Instant) {
         if self.delivered.get(&window).is_none_or(|(delivered, _, _)| *delivered != generation) {
             return;
         }
         let Some((_, _, picture)) = self.delivered.remove(&window) else { return };
-        let clipped = clips(self.pictures.knowledge(WindowServerId::from(window)), &picture);
+        let server_id = WindowServerId::from(window);
+        let clipped = clips(self.pictures.knowledge(server_id), &picture);
         let Some(running) = self.running.as_mut() else { return };
-        match running.take_picture(window, &picture, clipped) {
+        let radius = running
+            .entrances
+            .iter()
+            .any(|e| e.window == window)
+            .then(|| crate::windows::platform::window_server::corner_radii(&[server_id]))
+            .and_then(|radii| radii.get(&server_id).copied());
+        match running.take_picture(window, &picture, clipped, radius) {
             Took::Entrance(tile) => return self.admit_entrance(tile, now),
             Took::Tile => {}
             Took::Nothing => return,
@@ -1477,6 +1501,9 @@ impl FlightEngine {
         let (drawing_focus, losing) = self.drawing_focus((focus, focused_before));
 
         let depths = crate::windows::platform::window_server::front_to_back_depths();
+        let radii = crate::windows::platform::window_server::corner_radii(
+            &windows.iter().map(|r| r.server_id).collect::<Vec<_>>(),
+        );
 
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
@@ -1563,8 +1590,7 @@ impl FlightEngine {
             match snapshot {
                 Some(snapshot) => {
                     waits(request.window, EndPicture::of_picture(snapshot.coverage.covered, request.to.size));
-                    let knowledge = self.pictures.knowledge(request.server_id);
-                    let clipped = clips(knowledge, &snapshot);
+                    let clipped = clips(self.pictures.knowledge(request.server_id), &snapshot);
                     tiles.push(OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
@@ -1575,7 +1601,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: drawn_focused(request.window, drawing_focus, losing),
-                        radius: knowledge.radius,
+                        radius: radii.get(&request.server_id).copied(),
                         clipped,
                     });
                     starts.push((request.window, start));
@@ -1618,8 +1644,7 @@ impl FlightEngine {
                                 "entrance from spawn"
                             );
                             self.pictures.insert(request.window, snapshot.clone());
-                            let knowledge = self.pictures.knowledge(request.server_id);
-                            let clipped = clips(knowledge, &snapshot);
+                            let clipped = clips(self.pictures.knowledge(request.server_id), &snapshot);
                             let from_o = to_overlay_space(from, display_frame);
                             let to_o = to_overlay_space(to, display_frame);
                             // Already at its slot (a cold cache, not an open): a still tile.
@@ -1639,7 +1664,7 @@ impl FlightEngine {
                                 companion: None,
                                 focused: !standing
                                     || drawn_focused(request.window, drawing_focus, losing),
-                                radius: knowledge.radius,
+                                radius: radii.get(&request.server_id).copied(),
                                 clipped,
                             });
                             if standing {
@@ -1985,10 +2010,10 @@ impl FlightEngine {
         let depths = crate::windows::platform::window_server::front_to_back_depths();
         // One query for every window, not one each: a round trip per window stalled this thread
         // for 100-200ms a press. See "Rapid presses" in `specs/focus.md`.
+        let ids: Vec<WindowServerId> = windows.iter().map(|w| w.server_id).collect();
+        let radii = crate::windows::platform::window_server::corner_radii(&ids);
         let real_frames: HashMap<WindowServerId, ScreenRect> =
-            crate::windows::platform::window_server::get_windows(
-                &windows.iter().map(|w| w.server_id).collect::<Vec<_>>(),
-            )
+            crate::windows::platform::window_server::get_windows(&ids)
             .into_iter()
             .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
@@ -2021,8 +2046,7 @@ impl FlightEngine {
                     if let Some(frame) = real_frames.get(&window.server_id) {
                         starts.push((window.window, *frame));
                     }
-                    let knowledge = self.pictures.knowledge(window.server_id);
-                    let clipped = clips(knowledge, &snapshot);
+                    let clipped = clips(self.pictures.knowledge(window.server_id), &snapshot);
                     tiles.push(OverlayTile {
                         window: window.window,
                         from,
@@ -2033,7 +2057,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: drawn_focused(window.window, drawing_focus, losing),
-                        radius: knowledge.radius,
+                        radius: radii.get(&window.server_id).copied(),
                         clipped,
                     });
                 }
@@ -2681,16 +2705,17 @@ mod tests {
             running.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
             running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
             running.focus = Some(wid(2));
-            let tile = running.admit(wid(2), &test_picture(slot.size), true).expect("admitted");
+            let tile = running.admit(wid(2), &test_picture(slot.size), true, Some(26.0)).expect("admitted");
             assert_eq!((tile.from, tile.to), (entrance_from(slot), slot), "zero width at its left edge");
             assert!(tile.focused);
             assert!(tile.clipped, "as it was handed");
+            assert_eq!(tile.radius, Some(26.0), "as it was handed");
             assert_eq!(tile.depth, 0, "the entrance leads: raised on open");
             assert!(running.entrances.is_empty());
             let other = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
             assert_eq!(other.depth, 2, "its neighbour keeps the server's order, within the band");
-            assert!(running.admit(wid(2), &test_picture(slot.size), false).is_none(), "taken once");
-            assert!(running.admit(wid(1), &test_picture(slot.size), false).is_none(), "not an entrance");
+            assert!(running.admit(wid(2), &test_picture(slot.size), false, None).is_none(), "taken once");
+            assert!(running.admit(wid(1), &test_picture(slot.size), false, None).is_none(), "not an entrance");
             assert_eq!(running.tiles.len(), 2, "no second tile");
         }
 
@@ -2709,7 +2734,7 @@ mod tests {
             tile.clipped = true;
             running.tiles.push(tile);
             let real = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(1), &real, false), Took::Tile));
+            assert!(matches!(running.take_picture(wid(1), &real, false, None), Took::Tile));
             assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
             let tile = &running.tiles[0];
             assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
@@ -2728,10 +2753,10 @@ mod tests {
             running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
             running.focused_look = Some(wid(1));
             let picture = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(2), &picture, false), Took::Entrance(tile) if tile.from == entrance_from(slot)));
-            assert!(matches!(running.take_picture(wid(1), &picture, false), Took::Tile));
+            assert!(matches!(running.take_picture(wid(2), &picture, false, None), Took::Entrance(tile) if tile.from == entrance_from(slot)));
+            assert!(matches!(running.take_picture(wid(1), &picture, false, None), Took::Tile));
             assert_eq!(running.focused_look, None);
-            assert!(matches!(running.take_picture(wid(3), &picture, false), Took::Nothing));
+            assert!(matches!(running.take_picture(wid(3), &picture, false, None), Took::Nothing));
             assert_eq!(running.tiles.len(), 2);
         }
 
@@ -2848,10 +2873,10 @@ mod tests {
             let size = ScreenSize::new(859.0, 1081.0);
             let mut skylight = test_picture(size);
             skylight.source = Route::SkyLight;
-            let baked = Knowledge { translucent: Some(false), material: Some(true), radius: Some(12.0) };
+            let baked = Knowledge { translucent: Some(false), material: Some(true) };
             assert!(clips(baked, &skylight));
-            let unmeasured = Knowledge { translucent: Some(false), material: None, radius: None };
-            assert!(clips(unmeasured, &skylight), "baked, its radius not measured");
+            let unknown = Knowledge { translucent: Some(false), material: None };
+            assert!(clips(unknown, &skylight), "baked to learn its material");
             let translucent = Knowledge { translucent: Some(true), ..baked };
             assert!(!clips(translucent, &skylight), "captured alone, its corners clear");
             let plain = Knowledge { material: Some(false), ..baked };
@@ -4523,6 +4548,98 @@ mod tests {
             assert!(joined(wid(3)).iter().all(|tile| tile.clipped), "baked");
             assert!(joined(wid(1)).iter().all(|tile| !tile.clipped), "captured alone");
             crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+        }
+
+        /// A layout pass of `wid(1)` from `start` to `end` and of each of `others` from and to its
+        /// own frame.
+        fn pass_of(h: &Harness, others: &[(u32, ScreenRect, ScreenRect)]) -> Event {
+            let request = |id: u32, from, to| AnimationRequest {
+                window: wid(id),
+                server_id: WindowServerId::new(id),
+                from,
+                to,
+                floating: false,
+            };
+            let mut windows = vec![request(1, start(), end())];
+            windows.extend(others.iter().map(|&(id, from, to)| request(id, from, to)));
+            Event::Animate {
+                windows,
+                focus: None,
+                focused_before: None,
+                key: None,
+                duration: Duration::from_millis(300),
+                look: Look::default(),
+                cause: h.cause(),
+            }
+        }
+
+        fn report_corners(id: u32, corners: Option<Vec<f64>>) {
+            crate::windows::platform::window_server::set_corner_radii_override(WindowServerId::new(id), corners);
+        }
+
+        /// Every tile rounds to the radius the window server reports for its window, read as the flight
+        /// composes, with nothing learned from a picture: a parked window's stand-in too. A window it
+        /// reports none for takes the fallback.
+        #[test]
+        fn a_layout_pass_and_a_strip_movement_round_every_tile_to_the_radius_the_server_reports() {
+            report_corners(1, Some(vec![26.0; 4]));
+            report_corners(2, Some(vec![0.0; 4]));
+            let parked = rect(1727.0, 1085.0, 859.0, 1081.0);
+            let slot = rect(867.0, 0.0, 859.0, 1081.0);
+            let composes: [(&str, fn(&Harness, ScreenRect, ScreenRect) -> Event); 2] = [
+                ("a layout pass", |h, parked, slot| pass_of(h, &[(2, parked, slot)])),
+                ("a strip movement", |h, _, _| {
+                    strip_of(h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0))
+                }),
+            ];
+            for (what, compose) in composes {
+                let mut h = Harness::new();
+                park(2);
+                let press = compose(&h, parked, slot);
+                let sent = h.step(press);
+                let radii = |window| {
+                    let tiles = handed(&sent, window);
+                    assert!(!tiles.is_empty(), "{what}: {window:?} flies");
+                    tiles.iter().map(|tile| tile.radius).collect::<Vec<_>>()
+                };
+                assert!(radii(wid(1)).iter().all(|radius| *radius == Some(26.0)), "{what}: its own");
+                assert!(radii(wid(2)).iter().all(Option::is_none), "{what}: none reported");
+                assert!(handed(&sent, wid(2)).iter().all(|tile| tile.snapshot.source == Route::StandIn), "{what}");
+                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            }
+            report_corners(1, None);
+            report_corners(2, None);
+        }
+
+        /// A window that opens has no radius to read until it has drawn: its entrance takes the one the
+        /// window server reports as its first picture lands, not the one it reported at the press.
+        #[test]
+        fn an_entrance_wears_the_radius_read_when_its_picture_lands() {
+            let mut h = Harness::new();
+            let slot = rect(867.0, 0.0, 859.0, 1081.0);
+            let unlaid: ScreenRect = rect(867.0, 0.0, 0.0, 0.0);
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), Some(unlaid.to_cg()));
+            report_corners(2, Some(vec![12.0; 4]));
+            let pass = pass_of(&h, &[(2, slot, slot)]);
+            h.step(pass);
+            assert!(h.engine.running.as_ref().is_some_and(|running| running.entrances.iter().any(|e| e.window == wid(2))), "reserved");
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            report_corners(2, Some(vec![26.0; 4]));
+            let landed = Event::Pictures(crate::pictures::event::Event::Delivered {
+                tag: Tag { client: CLIENT, generation: h.generation() },
+                why: Why::Background,
+                sent: h.at(),
+                pictures: vec![(wid(2), test_picture(slot.size), slot)],
+            });
+            let joined = handed(&h.step(landed), wid(2));
+            assert!(!joined.is_empty(), "joined");
+            assert!(joined.iter().all(|tile| tile.radius == Some(26.0)), "{:?}", joined.iter().map(|t| t.radius).collect::<Vec<_>>());
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            report_corners(2, None);
         }
 
         #[test]

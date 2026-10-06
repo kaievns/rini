@@ -14,7 +14,7 @@ use rini_geometry::space::ScreenPoint;
 
 use crate::pictures::domain::handover::Rgba;
 use crate::pictures::domain::knowledge::{
-    CORNER_SIDE_PT, MATERIAL_SIDE, TRANSLUCENCY_SIDE, corner_radius, has_material, is_translucent,
+    MATERIAL_SIDE, TRANSLUCENCY_SIDE, has_material, is_translucent,
 };
 use crate::pictures::domain::print::{
     BAND_PRINT, BAND_PT, BODY_ACROSS, BODY_DOWN, BODY_GRID, body_points,
@@ -98,27 +98,16 @@ fn surface_samples(surface: &IOSurfaceRef) -> Option<Vec<[u8; 3]>> {
     }
 }
 
-/// What a window's first picture, `crop` at `scale`, says of it: whether it is translucent, from the
-/// picture drawn small, and its corner radius, from its top-left corner alone.
-pub fn first_sight(crop: &CGImage, scale: f64) -> (bool, Option<f64>) {
-    let translucent = drawn(
+/// What a window's first picture, `crop`, says of it: whether it is translucent, from the picture
+/// drawn small.
+pub fn first_sight(crop: &CGImage) -> bool {
+    drawn(
         crop,
         TRANSLUCENCY_SIDE,
         TRANSLUCENCY_SIDE,
         CGInterpolationQuality::Default,
     )
-    .is_some_and(|(bytes, stride)| is_translucent(&bytes, stride));
-    let side = (CORNER_SIDE_PT * scale).round();
-    let corner = CGImage::with_image_in_rect(
-        Some(crop),
-        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(side, side)),
-    );
-    let radius = corner.and_then(|corner| {
-        let (width, height) = (CGImage::width(Some(&corner)), CGImage::height(Some(&corner)));
-        let (bytes, stride) = drawn(&corner, width, height, CGInterpolationQuality::None)?;
-        corner_radius(width, height, scale, |x, y| bytes[y * stride + x * 4 + 3])
-    });
-    (translucent, radius)
+    .is_some_and(|(bytes, stride)| is_translucent(&bytes, stride))
 }
 
 /// Whether a window has a material: its picture `alone` and `baked` over what is behind it, both drawn
@@ -325,7 +314,7 @@ mod tests {
 
     /// First sight of an opaque window with rounded corners, and of a translucent one.
     #[test]
-    fn first_sight_finds_translucency_and_the_corner_radius() {
+    fn first_sight_finds_translucency() {
         let (w, h) = (400usize, 300usize);
         let radius = 20.0;
         let rounded = image(w, h, |ctx| {
@@ -341,15 +330,12 @@ mod tests {
             CGContext::set_rgb_fill_color(Some(ctx), 0.3, 0.3, 0.3, 1.0);
             CGContext::fill_path(Some(ctx));
         });
-        let (translucent, measured) = first_sight(&rounded, 2.0);
-        assert!(!translucent);
-        let measured = measured.expect("a radius");
-        assert!((measured - 10.0).abs() < 1.0, "20px at 2x is 10pt: {measured}");
+        assert!(!first_sight(&rounded), "opaque");
 
         let glass = image(w, h, |ctx| {
             fill(ctx, rect(0.0, 0.0, w as f64, h as f64), (0.1, 0.1, 0.1, 0.6))
         });
-        assert!(first_sight(&glass, 2.0).0, "translucent");
+        assert!(first_sight(&glass), "translucent");
     }
 
     #[test]

@@ -84,7 +84,8 @@ pub struct OverlayTile {
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow and
     /// brightens its hairline.
     pub focused: bool,
-    /// The window's corner radius in points, as `pictures` measured it; `None` until it is.
+    /// The window's corner radius in points, as the window server reports it; `None` when it reports
+    /// none.
     pub radius: Option<f64>,
     /// Whether the overlay clips the tile's picture to its corner: a picture whose corners carry
     /// what was behind its window, or the stand-in, which has no corners of its own.
@@ -2405,7 +2406,7 @@ mod tests {
         };
         assert_eq!(
             (number(corner.fromValue()), number(corner.toValue()), corner.beginTime()),
-            (0.0, 10.0, 100.0)
+            (0.0, 16.0, 100.0)
         );
 
         let path = basic(&tile.decorations.outline, "rini.tile.outline.path");

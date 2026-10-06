@@ -75,7 +75,8 @@ pub struct DecorationLayers {
     pub hairline: Retained<CALayer>,
     /// The hairline's dark outline, a stroke just outside the white line, as the hairline's child.
     pub outline: Retained<CAShapeLayer>,
-    /// The window's measured corner radius, which every piece rounds to.
+    /// The window's corner radius as the window server reports it, which every piece rounds to;
+    /// `None` rounds at the fallback.
     pub radius: Option<f64>,
     /// The size and corner the caster's silhouette and its mask were last shaped for.
     built: Cell<Option<(TileSize, f64)>>,

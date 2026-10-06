@@ -509,7 +509,7 @@ impl Pictures {
     /// different content.
     pub fn focused(&self, window: WindowId) -> Option<Picture> { self.lock().cache.focused(window).cloned() }
 
-    /// What is known of the window: its translucency, material and corner radius.
+    /// What is known of the window: its translucency and material.
     pub fn knowledge(&self, window: WindowServerId) -> Knowledge { self.lock().learned.get(window) }
 
     /// Every window with a picture held or one on its way.
@@ -537,7 +537,7 @@ impl Pictures {
     #[cfg(test)]
     pub fn learn(&self, window: WindowServerId, translucent: bool, material: bool) {
         let mut shared = self.lock();
-        shared.learned.saw_alpha(window, translucent, None);
+        shared.learned.saw_alpha(window, translucent);
         shared.learned.saw_material(window, material);
     }
 
@@ -1601,7 +1601,7 @@ mod tests {
             shared.cache.insert(wid(1), sized(859.0, 1081.0));
             shared.cache.keep_focused(wid(1), sized(859.0, 1081.0));
             shared.delivered.record(tag(1), wid(1), sized(859.0, 1081.0));
-            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true, Some(10.0));
+            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true);
         }
         service.apply(Command::Forget(wid(1)));
         let shared = shared.lock().unwrap();
@@ -1625,7 +1625,7 @@ mod tests {
             for window in [wid(102682), twice, border] {
                 shared.cache.insert(window, sized(859.0, 1081.0));
             }
-            shared.learned.saw_alpha(WindowServerId::from(wid(102682)), true, Some(10.0));
+            shared.learned.saw_alpha(WindowServerId::from(wid(102682)), true);
         }
         service.apply(Command::Hold(Hold::Released));
         let shared = shared.lock().unwrap();
@@ -1647,7 +1647,7 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             shared.cache.insert(gone, sized(400.0, 30.0));
-            shared.learned.saw_alpha(server_id, true, Some(10.0));
+            shared.learned.saw_alpha(server_id, true);
         }
         set_window_gone_override(server_id, true);
         service.apply(Command::Hold(Hold::Released));
@@ -1686,7 +1686,7 @@ mod tests {
         let (mut service, shared) = detached_service();
         let window = WindowServerId::new(1);
         let mut learned = Learned::default();
-        learned.saw_alpha(window, true, Some(10.0));
+        learned.saw_alpha(window, true);
         let listed = || {
             Some(DesktopBackdrop {
                 windows: vec![WindowServerId::new(7)],
@@ -1891,7 +1891,7 @@ mod tests {
         {
             let mut shared = pictures.lock();
             shared.cache.keep_focused(wid(1), flat(0.5, now));
-            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true, Some(10.0));
+            shared.learned.saw_alpha(WindowServerId::from(wid(1)), true);
         }
         assert_eq!(pictures.focused(wid(1)).map(|look| look.taken), Some(now));
         assert!(pictures.focused(wid(2)).is_none());

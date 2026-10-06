@@ -58,3 +58,24 @@ pub struct WindowServerInfo {
     #[serde(with = "CGSizeDef")]
     pub max_frame: CGSize,
 }
+
+/// The one radius a window rounds at from the four corners the window server reports: the largest,
+/// since Core Animation takes one radius a layer. `None` when no corner is rounded, which is how the
+/// server answers for a window it has no radius for.
+pub fn reported_radius(corners: &[f64]) -> Option<f64> {
+    corners.iter().copied().filter(|corner| corner.is_finite() && *corner > 0.0).reduce(f64::max)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reported_radius_is_the_largest_corner_above_zero() {
+        assert_eq!(reported_radius(&[16.0; 4]), Some(16.0));
+        assert_eq!(reported_radius(&[8.0, 8.0, 0.0, 0.0]), Some(8.0));
+        assert_eq!(reported_radius(&[0.0; 4]), None);
+        assert_eq!(reported_radius(&[]), None);
+        assert_eq!(reported_radius(&[f64::NAN; 4]), None);
+    }
+}

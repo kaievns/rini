@@ -9,6 +9,12 @@ The `SLS*` and `CGS*` function declarations, and the plain value types that come
 them: `SpaceId` (a `CGSSpaceID`), `WindowServerId` (a `CGWindowID`),
 `DisplayReconfigFlags`, `CGSEventType`, `KnownCGSEvent`.
 
+One function is declared as a pointer type and not linked:
+`SLSWindowIteratorGetCornerRadiiFn`. A symbol linked here that some macOS lacks stops rini
+launching there, and which macOS first has this one is not known, so its caller resolves it by
+`dlsym` (`src/windows/platform/window_server.rs`, beside the query keys it resolves the same way)
+and reads no radius without it. The crate stays declarations only.
+
 ## The shape that matters
 
 **The value types are vocabulary, the functions are API.** `SpaceId` is a number the

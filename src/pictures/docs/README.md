@@ -13,7 +13,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Coverage and fit** | `domain/coverage.rs` — `Coverage`, whether a capture is usable, whether it fits a frame, whether a grow outgrows it, whether a warm must recapture, whether a desktop picture spans its display, when a picture is stale |
 | **The cache's rules** | `domain/cache.rs` — `PictureCache`: never downgrade a usable picture, keep a blurred one over a grey one of the same size, put a copy back only over the picture it was made of |
 | **Regions** | `domain/region.rs` — where a window lies in a batched composite: its pixel rect, whether the composite holds it, whether the composite is the shape of what it was asked for, its unit rect, and a crop piece's rect within a region |
-| **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, its corner radius; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
+| **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
 | **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window and either side of its outline, sampled as the research measured it |
@@ -29,7 +29,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in, one pixel; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
-| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency and corner, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
+| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
@@ -198,9 +198,7 @@ overlapping another, is captured in up to two calls (`capture_on_screen`):
 | baked | the opaque windows, then `behind`, then the display's desktop windows | opaque windows with a material, and an opaque window of unknown material after its alpha capture | a material carries the blur of what is composited after it: 0.5 levels from the screen, against 24.9 for the window alone |
 
 A window seen for the first time is measured from its alpha crop: translucent when more than a fifth
-of a 40x40 interior grid of a 48x48 draw is below alpha 250; its corner radius from where each row of
-its 48pt top-left corner turns opaque (`r = x + y + sqrt(2xy)` at pixel centres, the median of at
-least four rows, 4-40pt). An opaque one is baked too, and has a material when the two crops drawn
+of a 40x40 interior grid of a 48x48 draw is below alpha 250. An opaque one is baked too, and has a material when the two crops drawn
 64x64 differ by more than two levels away from their border. A baked picture of a window with a
 material carries its blur (`carries_blur`), so the cache keeps it over a grey capture of the window
 alone. Each composite is checked against the shape of what it listed, the desktop windows included

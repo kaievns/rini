@@ -310,9 +310,12 @@ destination for a window already moving.
   1pt line of white on the window's outermost point, at 20% on the focused window and 18% on any
   other, and a 0.5pt stroke of black at 90% in the half point just outside it.
 - The hairline, the shadow and the space it is cut around, and a picture clipped to its corners, the
-  stand-in's included, MUST round to one corner: the window's own corner radius once `pictures` has
-  measured it, and 10pt until then, never past half the tile's shorter side. Each is drawn
-  separately, and any two that differ show as a step at the corner.
+  stand-in's included, MUST round to one corner: the window's own radius as the window server
+  reports it, read when the flight composes the tile and, for a window that opens, when its first
+  picture lands, so a window never pictured and a parked one round right on their first flight;
+  16pt where it reports none; never past half the tile's shorter side. Each is drawn separately,
+  and any two that differ show as a step at the corner. Why the server's radius and why 16pt: "The
+  corner, measured" in `src/decorations/docs/README.md`.
 - The hairline's line and stroke MUST follow the tile through a resize, on the tile's own timing,
   every piece at the one corner of each size it passes through, and onto its window's real frame
   when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
@@ -564,7 +567,10 @@ into it and bend it at a press after, and stage a press on the strip. `src/anima
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
 `src/decorations/domain/` is what each tile wears: the hairline's and the shadow's shape, style and
-depth, which the overlay draws on the layers in `src/decorations/platform/layers.rs`. When each step happens is `src/transitions/`:
+depth, which the overlay draws on the layers in `src/decorations/platform/layers.rs`. A window's
+corner radius is read in `src/windows/platform/window_server.rs`, decoded in
+`src/windows/domain/info.rs` and resolved, with the fallback and the clamp, in
+`src/decorations/domain/shape.rs`. When each step happens is `src/transitions/`:
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
