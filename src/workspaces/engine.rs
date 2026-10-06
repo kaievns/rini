@@ -10,6 +10,7 @@ use super::{
 };
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::boundary::{strip_edge, workspace_stack_direction};
+use crate::layout::domain::edge_drag::Drag;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
@@ -80,11 +81,11 @@ pub enum LayoutEvent {
     WindowRemoved(WindowId),
     WindowRemovedPreserveFloating(WindowId),
     WindowFocused(SpaceId, WindowId),
-    /// The window's frame changed size. `dragged_from` is the frame a mouse drag on it started from,
-    /// and `None` when the app resized the window itself.
+    /// The window's frame changed size. `drag` is the mouse drag on its edges that did it, and `None`
+    /// when the app resized the window itself.
     WindowResized {
         wid: WindowId,
-        dragged_from: Option<CGRect>,
+        drag: Option<Drag>,
         new_frame: CGRect,
         screens: Vec<(SpaceId, CGRect, Option<String>)>,
     },
@@ -1865,7 +1866,7 @@ impl LayoutEngine {
             }
             LayoutEvent::WindowResized {
                 wid,
-                dragged_from,
+                drag,
                 new_frame,
                 screens,
             } => {
@@ -1882,7 +1883,7 @@ impl LayoutEngine {
                     self.workspace_tree_mut(ws_id).on_window_resized(
                         layout,
                         wid,
-                        dragged_from,
+                        drag,
                         new_frame,
                         screen_frame,
                         &gaps,
@@ -3721,7 +3722,7 @@ mod tests {
             &mut memory,
             LayoutEvent::WindowResized {
                 wid: window,
-                dragged_from: Some(new_frame),
+                drag: Some(Drag::report(new_frame, user_frame, None)),
                 new_frame: user_frame,
                 screens: vec![(space, screen, None)],
             },
@@ -4986,13 +4987,14 @@ mod tests {
         let start = engine.calculate_layout(space, screen, &gaps)[0].1;
         let tiling = crate::layout::domain::area::compute_tiling_area(screen, &gaps);
         let dragged = (tiling.size.width * 0.95).round();
+        let wider = CGRect::new(start.origin, CGSize::new(dragged, start.size.height));
         let _ = engine.handle_event(
             &mut window_store,
             &mut memory,
             LayoutEvent::WindowResized {
                 wid,
-                dragged_from: Some(start),
-                new_frame: CGRect::new(start.origin, CGSize::new(dragged, start.size.height)),
+                drag: Some(Drag::report(start, wider, None)),
+                new_frame: wider,
                 screens: vec![(space, screen, None)],
             },
         );

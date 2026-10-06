@@ -2672,6 +2672,7 @@ impl Reactor {
                 session: DragSession {
                     window: wid,
                     start_frame: *frame,
+                    dragged_end: None,
                     last_frame: *frame,
                     origin_space,
                     settled_space: origin_space,

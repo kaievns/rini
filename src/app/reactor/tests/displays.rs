@@ -235,6 +235,7 @@ fn cross_display_drag_clears_source_floating_position() {
         session: DragSession {
             window: wid,
             start_frame: initial_frame,
+            dragged_end: None,
             last_frame: moved_frame,
             origin_space: None,
             settled_space: Some(space2),

@@ -16,6 +16,7 @@ use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::input::event::LeftPress;
 use crate::layout::domain::area::compute_tiling_area;
+use crate::layout::domain::edge_drag::End;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
@@ -1505,11 +1506,36 @@ fn the_drag_session_keeps_the_frame_its_window_started_from() {
         last = rect(start.origin.x, start.origin.y, start.size.width + grown, start.size.height);
         strip.app_reports(strip.window, last, MouseState::Down);
     }
+    let session = active_session(&strip);
+    assert_eq!(session.start_frame, start, "the frame before the first report");
+    assert_eq!(session.last_frame, last, "the latest report");
+}
+
+fn active_session(strip: &Strip) -> &DragSession {
     let DragState::Active { session } = &strip.reactor.drag_manager.drag_state else {
         panic!("a drag under the held button: {:?}", strip.reactor.drag_manager.drag_state);
     };
-    assert_eq!(session.start_frame, start, "the frame before the first report");
-    assert_eq!(session.last_frame, last, "the latest report");
+    session
+}
+
+/// The end a drag moved last is the drag's, so it ends with the release and the next drag of the
+/// same window, from the same frame, starts without it.
+#[test]
+fn the_drag_session_keeps_the_end_its_reports_moved_last_until_the_release() {
+    let mut strip = Strip::new();
+    let start = strip.frame_of(strip.window);
+    let shorter = rect(start.origin.x, start.origin.y, start.size.width, start.size.height - 40.);
+    strip.app_reports(strip.window, shorter, MouseState::Down);
+    assert_eq!(active_session(&strip).dragged_end, Some(End::Bottom), "moved");
+    strip.app_reports(strip.window, start, MouseState::Down);
+    assert_eq!(active_session(&strip).dragged_end, Some(End::Bottom), "back at the start");
+
+    strip.reactor.handle_event(Event::MouseUp);
+    strip.settle(strip.window);
+    let start = strip.frame_of(strip.window);
+    let wider = rect(start.origin.x, start.origin.y, start.size.width + 40., start.size.height);
+    strip.app_reports(strip.window, wider, MouseState::Down);
+    assert_eq!(active_session(&strip).dragged_end, None, "the next drag");
 }
 
 /// The window the window server finds under the cursor, for as long as the guard lives.

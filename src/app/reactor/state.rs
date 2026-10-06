@@ -1,6 +1,8 @@
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGRect;
 use rini_geometry::SameAs;
+
+use crate::layout::domain::edge_drag::End;
 pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
 use crate::windows::domain::info::AppInfo;
@@ -31,6 +33,8 @@ pub struct DragSession {
     pub(crate) window: WindowId,
     /// The window's frame before the first report of the drag: what tells which edge it moves.
     pub(crate) start_frame: CGRect,
+    /// The top or bottom edge the drag's reports moved last.
+    pub(crate) dragged_end: Option<End>,
     pub(crate) last_frame: CGRect,
     pub(crate) origin_space: Option<SpaceId>,
     pub(crate) settled_space: Option<SpaceId>,

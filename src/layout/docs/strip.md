@@ -258,7 +258,7 @@ common case of a window with no limits from costing a pass.
 
 macOS reports a mouse resize as frames and nothing else. The reactor keeps the frame the window had
 before the drag's first report (`DragSession::start_frame`) and hands it to the layout with every
-report of the drag as `dragged_from`; an app resizing itself sends `None`.
+report of the drag, as an `edge_drag::Drag`; an app resizing itself sends `None`.
 `edge_drag::dragged_side` reads the edge off the two frames: the left one when `minX` moved and
 `maxX` stayed within 0.5pt. `niri:` paths are at
 https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
@@ -292,11 +292,12 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   bottom edge as `dragged_side` reads the left or right, and `edge_drag::trade_height` gives the
   change to that one row. The trade stops where that row reaches 1pt, so the column's total holds and
   no other row moves. It starts from the model's heights, not the start frame's: every report of a
-  drag carries the same `dragged_from`, so a change measured from it would be taken again from a
+  drag carries the same start frame, so a change measured from it would be taken again from a
   neighbour the last report already shrank. A report back where the drag started moves neither edge
-  against `dragged_from`, so the layout keeps the edge the same drag moved last
-  (`LayoutState::last_dragged_end`, named by the window and the start frame) and trades back across
-  it; without that the column kept the heights of the report before. The model's heights are the
+  against that frame, so the drag session keeps the edge its reports moved last
+  (`DragSession::dragged_end`, carried as `Drag::end`) and the layout trades back across it; without
+  that the column kept the heights of the report before. The session ends at the release, so the
+  next drag starts with no edge, even from the same frame. The model's heights are the
   weights in points over the column's height, or equal shares when `height_overridden` is unset,
   because the layout reads such a column as equal shares whatever its weights. A drag that never
   moves the top or bottom edge leaves the heights and `height_overridden` alone. It used to mark the

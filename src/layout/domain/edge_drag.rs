@@ -25,6 +25,26 @@ pub enum End {
     Bottom,
 }
 
+/// One report of a mouse drag on a window's edges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Drag {
+    /// The window's frame before the drag's first report.
+    pub from: CGRect,
+    /// The top or bottom edge the drag moves: the one this report moved, else the one it moved last,
+    /// so a report back where the drag started gives back what that edge traded.
+    pub end: Option<End>,
+}
+
+impl Drag {
+    /// The report at `now` of the drag from `from` whose reports so far last moved `last_end`.
+    pub fn report(from: CGRect, now: CGRect, last_end: Option<End>) -> Self {
+        Self {
+            from,
+            end: dragged_end(from, now).or(last_end),
+        }
+    }
+}
+
 /// The vertical edge a drag from `start` to `now` moved, or `None` when both moved or neither did.
 pub fn dragged_side(start: CGRect, now: CGRect) -> Option<Side> {
     let left_moved = (now.origin.x - start.origin.x).abs() > STILL;
@@ -128,6 +148,20 @@ mod tests {
         ] {
             assert_eq!(dragged_end(start, now), end, "{case}");
         }
+    }
+
+    #[test]
+    fn a_report_that_moves_neither_end_keeps_the_end_the_drag_moved_last() {
+        let start = frame_y(374.0, 368.0);
+        let out = Drag::report(start, frame_y(274.0, 468.0), None);
+        assert_eq!(out.end, Some(End::Top), "moved");
+        assert_eq!(Drag::report(start, start, out.end).end, Some(End::Top), "back at the start");
+        assert_eq!(
+            Drag::report(start, frame_y(374.0, 468.0), out.end).end,
+            Some(End::Bottom),
+            "the other end"
+        );
+        assert_eq!(Drag::report(start, start, None).end, None, "a new drag");
     }
 
     #[test]
