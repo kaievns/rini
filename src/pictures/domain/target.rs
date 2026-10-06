@@ -1,6 +1,6 @@
 //! What a capture is asked for: the port the reactor, the flight engine and the switcher name a window
-//! to picture through, the id a window rini does not manage is pictured under, which of those windows
-//! a warm pictures, and which of their pictures go.
+//! to picture through, the id a window is pictured under, which windows rini does not manage a warm
+//! pictures, and which of their pictures go.
 
 use std::collections::HashSet;
 
@@ -34,6 +34,16 @@ pub fn is_synthetic(window: WindowId) -> bool { window.pid == 0 }
 /// one names a managed window by its server id.
 pub fn managed_server_ids(pictured: impl Iterator<Item = WindowId>) -> HashSet<u32> {
     pictured.filter(|window| !is_synthetic(*window)).map(|window| window.idx.get()).collect()
+}
+
+/// The id the window with `server_id` is pictured under: that of the window rini manages with it
+/// among `pictured`, or its synthetic id when there is none.
+pub fn picture_id(server_id: WindowServerId, pictured: &[WindowId]) -> WindowId {
+    pictured
+        .iter()
+        .copied()
+        .find(|window| !is_synthetic(*window) && window.idx.get() == server_id.as_u32())
+        .unwrap_or_else(|| synthetic_window_id(server_id))
 }
 
 /// What a warm of `display` pictures of the windows `listed` on it: each that is not `managed` and
@@ -148,6 +158,15 @@ mod tests {
     fn the_managed_server_ids_are_those_pictured_under_their_own_ids() {
         let pictured = [WindowId::new(82799, 102682), synthetic_window_id(server(9001))];
         assert_eq!(managed_server_ids(pictured.into_iter()), [102682].into_iter().collect());
+    }
+
+    #[test]
+    fn a_window_rini_manages_is_pictured_under_its_own_id_and_any_other_under_its_synthetic_one() {
+        let managed = WindowId::new(82799, 102682);
+        let pictured = [synthetic_window_id(server(102682)), managed, synthetic_window_id(server(9001))];
+        assert_eq!(picture_id(server(102682), &pictured), managed);
+        assert_eq!(picture_id(server(9001), &pictured), synthetic_window_id(server(9001)));
+        assert_eq!(picture_id(server(9002), &pictured), synthetic_window_id(server(9002)));
     }
 
     #[test]

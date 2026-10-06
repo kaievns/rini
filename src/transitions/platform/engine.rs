@@ -43,7 +43,7 @@ use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
-use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
+use crate::pictures::domain::target::{PictureTarget, picture_id, synthetic_window_id};
 use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
     WatchId, Why,
@@ -2336,12 +2336,13 @@ impl FlightEngine {
             warn!("no visible windows found for the debug slide");
             return;
         }
+        let pictured = self.pictures.windows();
         let requests: Vec<AnimationRequest> = windows
             .into_iter()
             .map(|(server_id, frame)| {
                 let frame = ScreenRect::from_cg(frame);
                 AnimationRequest {
-                    window: synthetic_window_id(server_id),
+                    window: picture_id(server_id, &pictured),
                     server_id,
                     // The debug slide knows nothing about the layout; everything is on the strip.
                     floating: false,

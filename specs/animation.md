@@ -252,9 +252,10 @@ destination for a window already moving.
 
 ## The pictures held
 
-- A window rini manages MUST be held as one picture, under its own identity, and never also as a
-  window rini does not manage. A flight and the switcher draw it only by its own, so a second picture
-  is memory nothing reads.
+- A window rini manages MUST be pictured under its own identity, and every flight, the debug slide
+  included, and the switcher MUST draw it by that identity. A picture of it taken as a window rini
+  does not manage, before rini held or asked for one under its own, MUST go at the next release: once
+  its own is held, the second is memory nothing reads.
 - A window parked off the display MUST NOT be pictured through the sliver it shows at the corner. It
   keeps its full size there, so the picture costs as much as one of a window on screen, and it is
   pictured by its own identity like every managed window.

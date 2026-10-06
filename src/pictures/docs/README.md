@@ -20,7 +20,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Settled** | `domain/settle.rs` — when a capture of a window that has to repaint is its settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |
-| **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be; the id a window rini does not manage is pictured under, which of those windows a warm pictures, and which of their pictures go |
+| **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be; the id a window is pictured under, which windows rini does not manage a warm pictures, and which of their pictures go |
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, refreshes, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus and placement hints, and the band prints each client was last delivered, which decide what is news |
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
@@ -224,15 +224,16 @@ only where the cache still holds the picture it was made of; what each client wa
 names only while its flight is up (`keep_focused`), is dropped there and then rather than copied.
 
 **A window is pictured once, under the id it flies by.** A window rini manages is pictured under its
-own id; one it does not, a border tracing a tile or a window the debug slide flies, under a synthetic
-id, pid 0 (`synthetic_window_id`). A warm, at each change of display and on the debug command,
-pictures only windows rini does not manage, told by what the cache holds or owes under a real id,
-and only those showing at least `WARM_MIN_SHOWN` (100pt) of themselves on the display each way: a
-window parked at the corner keeps its full size and shows a sliver, which the window server counts as
-on screen. At boot the cache may hold nothing of a managed window yet, so the warm can picture it
-under a synthetic id too; at each release the service lets go of every synthetic picture a managed
-window also has under its own id, and of every one whose window the window server no longer has,
-asked by id wherever the window is (`unwanted`). Why: "The pictures held" in `specs/animation.md`.
+own id, and the debug slide flies it by that id; one it does not, such as a border tracing a tile,
+under a synthetic id, pid 0 (`synthetic_window_id`), and the slide flies it by that (`picture_id`).
+A warm, at each change of display and on the debug command, pictures only windows rini does not
+manage, told by what the cache holds or owes under a real id, and only those showing at least
+`WARM_MIN_SHOWN` (100pt) of themselves on the display each way: a window parked at the corner keeps
+its full size and shows a sliver, which the window server counts as on screen. At boot the cache may
+hold nothing of a managed window yet, so the warm, or a debug slide, can picture it under a
+synthetic id too; at each release the service lets go of every synthetic picture a managed window
+also has under its own id, and of every one whose window the window server no longer has, asked by
+id wherever the window is (`unwanted`). Why: "The pictures held" in `specs/animation.md`.
 
 ## Reading order
 

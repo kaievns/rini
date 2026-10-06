@@ -148,8 +148,9 @@ enum ExecuteCommands {
     DebugWarmSnapshots,
     /// Slide every visible window in from an offset, using the capture-based overlay
     ///
-    /// For judging animation quality by eye. Draws pictures of the windows and never moves a real
-    /// one, so it is safe to run at any time and leaves nothing behind.
+    /// For judging animation quality by eye. Draws the pictures rini holds of the windows, capturing
+    /// any it has none of, and never moves a real one, so it is safe to run at any time and leaves
+    /// nothing behind.
     DebugOverlaySlide {
         /// Horizontal offset in points to slide in from. Negative comes from the left.
         #[arg(long, default_value_t = -400)]
