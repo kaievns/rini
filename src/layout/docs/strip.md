@@ -285,9 +285,10 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   and the dragged edge ends under the cursor. niri doubles the delta the same way while it centres
   (`niri:src/layout/scrolling.rs:3621-3632`), but it centres every column under `"always"`
   (`is_centering_focused_column`, `niri:src/layout/scrolling.rs:575-578`). rini's first and last sit
-  flush, so `strip::centres`, the rule `anchor_x` places by, leaves them the dragged width. It is
-  asked with the centre override the report's own scroll request keeps: under `"never"` that request
-  clears it, so a centred window there is dragged as any other.
+  flush, so `strip::centres`, the rule `anchor_x` places by, leaves them the dragged width. The
+  report makes its scroll request first and asks `centres` with the centre override that request
+  left, the one the pass then centres by: under `"never"` the request clears it, so a centred window
+  there is dragged as any other.
 - **A stacked edge trades with the window across it.** `edge_drag::dragged_end` reads the top or
   bottom edge as `dragged_side` reads the left or right, and `edge_drag::trade_height` gives the
   change to that one row. The trade stops where that row reaches 1pt, so the column's total holds and

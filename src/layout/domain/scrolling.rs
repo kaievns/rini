@@ -51,6 +51,13 @@ struct Column {
 }
 
 impl Column {
+    /// A width of its own, as an offset from the default ratio, and whether a drag gave it.
+    fn give_width(&mut self, offset: f64, dragged: bool) {
+        self.width_offset = offset;
+        self.width_overridden = true;
+        self.width_dragged = dragged;
+    }
+
     fn ensure_height_weights(&mut self) {
         if self.height_weights.len() != self.windows.len() {
             self.height_weights.resize(self.windows.len(), 1.0);
@@ -346,12 +353,11 @@ impl LayoutState {
         self.stack_origins.remove(&wid);
     }
 
-    /// Give `wid`'s column an explicit ratio, leaving full width if it was maximised.
-    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64) {
+    /// Give `wid`'s column an explicit ratio, by a drag or not, leaving full width if it was
+    /// maximised.
+    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64, dragged: bool) {
         self.leave_full_width_in_place(wid);
-        self.columns[col_idx].width_offset = ratio - self.column_width_ratio;
-        self.columns[col_idx].width_overridden = true;
-        self.columns[col_idx].width_dragged = false;
+        self.columns[col_idx].give_width(ratio - self.column_width_ratio, dragged);
     }
 
     fn locate(&self, wid: WindowId) -> Option<(usize, usize)> {
@@ -1487,9 +1493,7 @@ impl ScrollingLayoutSystem {
             return;
         };
         if let Some(column) = state.columns.get_mut(col_idx) {
-            column.width_offset = offset;
-            column.width_overridden = true;
-            column.width_dragged = dragged;
+            column.give_width(offset, dragged);
         }
     }
 
@@ -1673,11 +1677,20 @@ impl ScrollingLayoutSystem {
         let dragged_from = drag.map(|drag| drag.from);
         let side_drag = dragged_from
             .and_then(|start| dragged_side(start, new_frame).map(|side| (start, side)));
+        let full_width = state.is_full_width_column(&state.columns[col_idx]);
+        if full_width && side_drag.is_none() {
+            // A full-width column keeps the width it had before, for the toggle back: neither the
+            // app settling its own size nor a drag that moves neither side gives it a width.
+            return;
+        }
+        if reveals_only {
+            state.reveal_selected_without_direction();
+        } else {
+            state.align_scroll_to_selected();
+        }
         let width = dragged_from.map_or(new_frame.size.width, |start| {
-            // The scroll request below keeps a centre override only under `always`, and only on
-            // the window it names.
-            let keeps_override = !reveals_only && state.center_override_window == Some(wid);
-            let centred = centres(col_idx, state.columns.len(), center, keeps_override);
+            let has_override = state.center_override_window.is_some();
+            let centred = centres(col_idx, state.columns.len(), center, has_override);
             dragged_width(start.size.width, new_frame.size.width, centred)
         });
         let kind = if side_drag.is_some() || state.columns[col_idx].width_dragged {
@@ -1686,32 +1699,18 @@ impl ScrollingLayoutSystem {
             ColumnKind::Bounded
         };
         let ratio = column_ratio(kind, width / tiling.size.width, 0.0, min_ratio, max_ratio);
-        let full_width = state.is_full_width_column(&state.columns[col_idx]);
-        let lone = state.columns[col_idx].windows.len() == 1;
         if let Some((start, _)) = side_drag
             && ratio >= 1.0
-            && lone
+            && state.columns[col_idx].windows.len() == 1
         {
             if !full_width {
                 // The width before the drag, for the toggle back.
-                let column = &mut state.columns[col_idx];
-                column.width_offset = start.size.width / tiling.size.width - base_ratio;
-                column.width_overridden = true;
-                column.width_dragged = true;
+                let offset = start.size.width / tiling.size.width - base_ratio;
+                state.columns[col_idx].give_width(offset, true);
                 state.enter_full_width(wid);
             }
-        } else if full_width && side_drag.is_none() {
-            // A full-width column keeps the width it had before, for the toggle back; an app settling
-            // its own size under it is not a width given to it.
-            return;
         } else {
-            if full_width {
-                state.leave_full_width_in_place(wid);
-            }
-            let column = &mut state.columns[col_idx];
-            column.width_offset = ratio - base_ratio;
-            column.width_overridden = true;
-            column.width_dragged = kind == ColumnKind::Dragged;
+            state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Dragged);
         }
 
         let col = &mut state.columns[col_idx];
@@ -1731,11 +1730,6 @@ impl ScrollingLayoutSystem {
             }
         }
 
-        if reveals_only && state.selected == Some(wid) {
-            state.reveal_selected_without_direction();
-        } else if state.selected == Some(wid) {
-            state.align_scroll_to_selected();
-        }
         if let Some((start, Side::Left)) = side_drag
             && reveals_only
         {
@@ -1912,7 +1906,7 @@ impl ScrollingLayoutSystem {
 
         match next_preset(state.ratio_of(selected, col_idx), &presets) {
             Some(PresetWidth::Full) => state.enter_full_width(selected),
-            Some(PresetWidth::Ratio(ratio)) => state.set_column_ratio(selected, col_idx, ratio),
+            Some(PresetWidth::Ratio(ratio)) => state.set_column_ratio(selected, col_idx, ratio, false),
             None => return Vec::new(),
         }
         state.selected = Some(selected);
@@ -2067,7 +2061,7 @@ impl ScrollingLayoutSystem {
             return;
         }
         let clamped = column_ratio(ColumnKind::Bounded, current, amount, min_ratio, max_ratio);
-        state.set_column_ratio(selected, col_idx, clamped);
+        state.set_column_ratio(selected, col_idx, clamped, false);
         if reveals_only {
             state.reveal_selected_without_direction();
         } else {
