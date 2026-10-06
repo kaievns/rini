@@ -6,8 +6,9 @@
 //! bends a flight's score. `platform` is the renderer: it draws pictures of windows, which
 //! `crate::pictures` takes, as Core Animation tiles and plays the score while the real windows move
 //! underneath, and `event` is what it answers each drain it plays with. When each step happens is
-//! `crate::transitions`'. Knows windows, frames and the strip as one surface that moves, and a press
-//! on it as its cue; never names `crate::layout` or `crate::workspaces`.
+//! `crate::transitions`'. Knows windows, frames and the strip as one surface that moves, a press on
+//! it as its cue, and what each tile wears (`crate::decorations`); never names `crate::layout` or
+//! `crate::workspaces`.
 //!
 //! See `docs/architecture.md` and `src/animation/docs/animation-smoothness.md`.
 
