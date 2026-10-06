@@ -160,7 +160,10 @@ started. A picture the service decided under the generation before is still draw
 its window's end: the service runs on its own thread, so a delivery is often on its way while a pass is
 composed, and it is never delivered again, since a retarget keeps a window landed where it still ends
 and a change already seen. A window the merge sends somewhere new starts its print afresh in the
-service, so its landing there is delivered whatever it looks like.
+service, so its landing there is delivered whatever it looks like. The engine keeps a delivered
+picture only until its tile takes it or the flight lifts, and never one that comes after the lift or
+under a flight before (`Coordinator::can_swap`): no tile can take those, and the service's cache
+already holds them.
 
 The lift waits for the clock, the tiles presented where they end and the real windows where they were
 written, or for `LIFT_GRACE` past the clock ("Real windows land before lift"). What follows it is

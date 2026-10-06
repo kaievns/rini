@@ -260,6 +260,9 @@ destination for a window already moving.
   pictured by its own identity like every managed window.
 - A picture of a window rini does not manage, such as a border tracing a tile, MAY be kept while the
   window lives, and MUST go once the window server no longer has the window.
+- A picture delivered to a flight MUST be held for it only while one of its tiles can still take it,
+  and MUST NOT be held for it once the overlay has lifted. The pictures kept for the next flight are
+  the cache's.
 
 > **Reported 2026-10-06.** "fix that runaway thread and stale cache cleaning" and "stale copies
 > definitely need deleting, no point in keeping them around". Fixed.
@@ -269,7 +272,9 @@ destination for a window already moving.
 > sliver passed as on screen. One of the 26 was on screen. Each was a second picture of a managed
 > window or one of a window rini does not manage. Read from the code: nothing ever let go of a
 > picture of a window rini does not manage, so those of closed windows stayed until rini restarted.
-> How many the running build held was not counted.
+> How many the running build held was not counted. From the journal, 2026-10-06: 237 of 580
+> lifts left a picture delivered after the lift held by the flight's engine until the next lift.
+> Read from the code, each can pin a display-sized capture.
 
 ## Windows with blurred materials
 

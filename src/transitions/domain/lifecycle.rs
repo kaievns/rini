@@ -539,6 +539,12 @@ impl Coordinator {
         matches!(self.state, State::Flying(_))
     }
 
+    /// Whether a picture delivered under `generation` can still be swapped onto a tile: one of the
+    /// running flight's own generations, which a merge's bump leaves taking pictures.
+    pub fn can_swap(&self, generation: Generation) -> bool {
+        matches!(&self.state, State::Flying(f) if generation >= f.began)
+    }
+
     /// Whether the overlay is up.
     pub fn is_shown(&self) -> bool {
         matches!(&self.state, State::Flying(f) if !matches!(f.phase, Phase::Preparing { .. }))
@@ -2204,6 +2210,26 @@ mod tests {
         assert!(!has(&out, |c| *c == Command::Release), "the rest waits for the quiet");
         let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
         assert!(matches!(out.as_slice(), [Command::Release, Command::Warm(_), Command::ReportSettled]), "{out:?}");
+    }
+
+    #[test]
+    fn only_the_running_flights_own_generations_can_swap_a_picture_in() {
+        let now = Instant::now();
+        let mut c = Coordinator::default();
+        assert!(!c.can_swap(c.generation()), "nothing flies");
+        c.on(Event::Begin(pan()), now);
+        let first = c.generation();
+        assert!(c.can_swap(first), "before the show, for frame zero after it");
+        c.on(Event::FrameZero(first), now);
+        c.on(Event::Merge { stage: pan(), moved: false }, now);
+        assert!(c.can_swap(first) && c.can_swap(c.generation()), "the generation before a merge still lands");
+        let merged = c.generation();
+        c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
+        assert!(!c.can_swap(merged), "lifted");
+        let pressed = now + PLAYS + Duration::from_millis(100);
+        c.on(Event::Begin(pan()), pressed);
+        assert!(!c.can_swap(merged), "the flight before's");
+        assert!(c.can_swap(c.generation()));
     }
 
     /// A press inside the quiet holds the service again before anything is composed; the quiet of

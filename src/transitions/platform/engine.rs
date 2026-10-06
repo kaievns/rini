@@ -803,9 +803,10 @@ pub struct FlightEngine {
     /// Writes each burst `flights` gives while the journal is written.
     writer: Option<Writer>,
     running: Option<RunningAnimation>,
-    /// The latest picture delivered of each window, under its generation, until it is swapped in: the
-    /// coordinator holds a landing back from over a focused look until focus hands over, and the
-    /// target's change until the window focus leaves has turned.
+    /// The latest picture delivered of each window, under its generation, until it is swapped in or
+    /// the flight lifts: the coordinator holds a landing back from over a focused look until focus
+    /// hands over, and the target's change until the window focus leaves has turned. A delivery no
+    /// tile can take any more (`Coordinator::can_swap`) is left to the pictures service's cache.
     delivered: HashMap<WindowId, (Generation, Picture)>,
     watches: EndWatches,
     /// The frame clock, from a transition's begin to its lift.
@@ -1154,7 +1155,9 @@ impl FlightEngine {
     /// Each delivered picture to the coordinator, which says whether it is swapped in.
     fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
         for (window, picture, frame) in pictures {
-            self.delivered.insert(window, (generation, picture));
+            if self.flights.coordinator().can_swap(generation) {
+                self.delivered.insert(window, (generation, picture));
+            }
             self.drive(lifecycle::Event::Picture { generation, window, frame, why });
         }
     }
@@ -4288,6 +4291,36 @@ mod tests {
             let lift = lift_batch(&sent).expect("lifted").seq;
             assert!(!holds(&sent).contains(&Hold::Settling), "the overlay may still be on screen");
             assert_eq!(holds(&h.commit(lift)), [Hold::Settling]);
+        }
+
+        /// A background capture of `wid(1)` where the pan ends it, under `generation`.
+        fn background(generation: u64, at: Instant) -> Event {
+            Event::Pictures(crate::pictures::event::Event::Delivered {
+                tag: Tag { client: CLIENT, generation },
+                why: Why::Background,
+                sent: at,
+                pictures: vec![(wid(1), test_picture(end().size), end())],
+            })
+        }
+
+        #[test]
+        fn a_background_picture_delivered_in_flight_is_swapped_onto_its_tile() {
+            let mut h = Harness::new();
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            let sent = h.step(background(h.generation(), h.at()));
+            assert!(batches(&sent).iter().any(|batch| kinds(batch).contains(&"swap")), "swapped in");
+            assert!(h.engine.delivered.is_empty(), "taken by its tile");
+        }
+
+        #[test]
+        fn a_background_picture_delivered_after_the_lift_is_not_kept() {
+            let mut h = Harness::new();
+            h.lifted();
+            let sent = h.step(background(h.generation(), h.at()));
+            assert!(batches(&sent).is_empty(), "nothing flies to take it");
+            assert!(h.engine.delivered.is_empty(), "left to the cache");
         }
 
         #[test]
