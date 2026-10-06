@@ -497,6 +497,24 @@ pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
     out
 }
 
+/// Which of `ids` the window server still has a window for, wherever it is, or `None` when it could
+/// not be asked.
+#[cfg(not(test))]
+pub fn existing_windows(ids: &[WindowServerId]) -> Option<std::collections::HashSet<u32>> {
+    let query = WindowIterator::new(ids)?;
+    let mut existing = std::collections::HashSet::new();
+    while query.advance().is_some() {
+        existing.insert(query.window_id());
+    }
+    Some(existing)
+}
+
+/// Every id a test asks about exists, as for `get_windows`.
+#[cfg(test)]
+pub fn existing_windows(ids: &[WindowServerId]) -> Option<std::collections::HashSet<u32>> {
+    Some(ids.iter().map(|id| id.as_u32()).collect())
+}
+
 #[cfg(test)]
 pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
     get_windows(&[id]).into_iter().next()
@@ -588,9 +606,10 @@ pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
 }
 
 /// Layer-0 windows on screen and intersecting `display`, with their frames. Other layers hold the
-/// bar, Dock and notifications. Parked slivers are filtered: on screen to CoreGraphics, no pixels.
+/// bar, Dock and notifications. A window parked at the corner is listed: it keeps its full size, and
+/// the sliver it shows is on screen to CoreGraphics.
 pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRect)> {
-    /// Below this in either axis a window is a parked strip rather than something worth drawing.
+    /// Below this in either axis a window is too small to be worth drawing.
     const MIN_SIDE: f64 = 100.0;
 
     get_visible_windows_raw::<CFDictionary<CFString, CFType>>()

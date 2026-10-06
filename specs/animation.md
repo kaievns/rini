@@ -250,6 +250,27 @@ destination for a window already moving.
 > better." A parked window with no picture took the reservation meant for a newly opened window, which
 > draws nothing in its slot until a picture lands.
 
+## The pictures held
+
+- A window rini manages MUST be held as one picture, under its own identity, and never also as a
+  window rini does not manage. A flight and the switcher draw it only by its own, so a second picture
+  is memory nothing reads.
+- A window parked off the display MUST NOT be pictured through the sliver it shows at the corner. It
+  keeps its full size there, so the picture costs as much as one of a window on screen, and it is
+  pictured by its own identity like every managed window.
+- A picture of a window rini does not manage, such as a border tracing a tile, MAY be kept while the
+  window lives, and MUST go once the window server no longer has the window.
+
+> **Reported 2026-10-06.** "fix that runaway thread and stale cache cleaning" and "stale copies
+> definitely need deleting, no point in keeping them around". Fixed.
+>
+> Measured with a read-only listing under the same checks, 2026-10-06: the pictures taken whenever
+> the display the overlay flies on changed counted 26 windows, 552MB at 2x, because a parked window's
+> sliver passed as on screen. One of the 26 was on screen. Each was a second picture of a managed
+> window or one of a window rini does not manage. Read from the code: nothing ever let go of a
+> picture of a window rini does not manage, so those of closed windows stayed until rini restarted.
+> How many the running build held was not counted.
+
 ## Windows with blurred materials
 
 - A window whose sidebar, toolbar or background is a blurred material MUST fly with its blur, not the
@@ -534,7 +555,8 @@ what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/jo
 A measured lift's handover is compared in `src/pictures/domain/handover.rs`.
 The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
 stand-in, the blur, and the schedule that holds background capture off while a flight runs in
-`src/pictures/domain/`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
+`src/pictures/domain/`, which windows rini does not manage are pictured and when those pictures go
+in `src/pictures/domain/target.rs`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
 for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
 captures), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
 Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),

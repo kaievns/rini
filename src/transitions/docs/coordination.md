@@ -783,7 +783,10 @@ running, carrying real border windows as tiles:
   flight" in `src/animation/docs/animation-smoothness.md`).
 - Captured and cached like any window, keyed by synthetic ids; no picture
   yet means skipped this flight and warmed for the next. Companions join the
-  post-flight warm set because borders recolor with focus.
+  post-flight warm set because borders recolor with focus. A companion's
+  picture goes at the first release after the window server no longer has its
+  window ("A window is pictured once, under the id it flies by" in
+  `src/pictures/docs/README.md`).
 - Nothing rini manages can be a companion (`managed_server_ids`: the pass's
   windows plus every window the cache holds or owes a picture to), and a
   parked window never traces or is traced (`companion_of`). Every parked

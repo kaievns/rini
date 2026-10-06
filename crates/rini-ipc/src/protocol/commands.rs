@@ -77,7 +77,7 @@ pub enum ReactorCommand {
         dy: i32,
         duration_ms: u64,
     },
-    /// Capture every window the framebuffer route cannot serve, filling the animation snapshot cache.
+    /// Picture every window on screen that rini does not manage, such as a border tracing a window.
     ///
     /// Background work only. Nothing is drawn and no window is touched.
     DebugWarmSnapshots,

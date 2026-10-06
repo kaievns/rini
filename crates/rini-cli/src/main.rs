@@ -141,10 +141,10 @@ enum ExecuteCommands {
     },
     /// Print layout tree debugging output in the running rini instance
     Debug,
-    /// Fill the animation snapshot cache for windows the framebuffer route cannot capture
+    /// Picture every window on screen that rini does not manage, such as a border tracing a window
     ///
-    /// Background work only. Nothing is drawn and no window is moved. Run this, then run
-    /// debug-overlay-slide, to see the animation with every window drawn.
+    /// Background work only. Nothing is drawn and no window is moved. A window rini manages is
+    /// pictured under its own id already, and a parked one is never pictured through its sliver.
     DebugWarmSnapshots,
     /// Slide every visible window in from an offset, using the capture-based overlay
     ///
