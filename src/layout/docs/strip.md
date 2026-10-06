@@ -331,7 +331,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   same way. A stacked edge's drag leaves the mark as it was. The app's own resize keeps it, because
   an app reports its own size after rini's write, as a terminal snapping to its cell grid does, and a
   clamp there would undo the drag. The mark is saved with the column and carried with the width
-  (`ColumnWidth::Dragged`); a key or a preset clears it.
+  (`ColumnWidth::Dragged`, which the file holds as an `Offset` with the drag beside it, as
+  `src/workspaces/docs/launch-memory.md` says); a key or a preset clears it.
 - **Full width and a drag.** A drag on a full-width column's left or right edge ends full width at
   the dragged width, through `leave_full_width_in_place`; anything else under full width, the app
   settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in

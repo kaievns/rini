@@ -525,6 +525,77 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
     );
 }
 
+/// "Resizing with the mouse" in `specs/strip.md`: a dragged width stays unbounded across a restart,
+/// which for a relaunched application is its launch slot. Remembered as an `Offset`, Kai's 1443pt
+/// column would come back clamped to `max-column-width`, 1148pt.
+#[test]
+fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save() {
+    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::workspaces::domain::launch_memory::topology_key;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(52);
+    let window = WindowId::new(901, 2);
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    window_store.insert_window(
+        window,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "~/projects/rini".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(9012)),
+                bundle_id: Some("com.mitchellh.ghostty".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+                is_modal: false,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        },
+    );
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowAdded(space, window),
+    );
+    let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
+    let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
+    engine.workspace_tree_mut(ws_id).set_column_width_offset(layout, window, 0.33797, true);
+
+    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+
+    let topology = topology_key(&[DISPLAY.to_owned()]);
+    let dragged = Some(ColumnWidth::Dragged(0.33797));
+    assert_eq!(memory.launch.slots("com.mitchellh.ghostty", &topology)[0].width, dragged);
+
+    let path =
+        std::env::temp_dir().join(format!("rini-dragged-slot-test-{}.ron", std::process::id()));
+    engine.save(&mut memory, path.clone()).unwrap();
+    let loaded = LayoutEngine::load_file(&path).unwrap().memory;
+    let _ = std::fs::remove_file(path);
+    assert_eq!(loaded.launch.slots("com.mitchellh.ghostty", &topology)[0].width, dragged);
+}
+
 /// The bug that came back three times. ctrl-F, quit rini, start it again: the window relaunched at the
 /// default half width, and the next autosave then overwrote `FullWidth` with nothing, so the record was
 /// gone for good and ctrl-F had to be pressed again.

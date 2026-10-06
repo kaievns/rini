@@ -4581,6 +4581,31 @@ mod tests {
     }
 
     /// The layout file keeps the mark, so the bounds still pass it after a restart.
+    /// A `Column` as rini read it before a drag had a mark, to read a new file as a rollback would.
+    #[derive(serde::Deserialize)]
+    struct ColumnBeforeDragged {
+        windows: Vec<WindowId>,
+        width_offset: f64,
+        #[serde(default)]
+        width_overridden: bool,
+    }
+
+    #[test]
+    fn a_dragged_column_is_written_so_a_rini_from_before_it_reads_it() {
+        let column = Column {
+            windows: vec![wid(1, 1)],
+            width_offset: 0.33797,
+            width_overridden: true,
+            width_dragged: true,
+            ..Column::default()
+        };
+        let old: ColumnBeforeDragged =
+            ron::from_str(&ron::ser::to_string(&column).unwrap()).expect("an older rini reads it");
+        assert_eq!(old.windows, column.windows);
+        assert_eq!(old.width_offset, 0.33797);
+        assert!(old.width_overridden);
+    }
+
     #[test]
     fn a_dragged_width_survives_a_save_and_restore() {
         let (mut system, layout, w) = kai_s_strip();

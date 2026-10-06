@@ -22,7 +22,9 @@ use serde::{Deserialize, Serialize};
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::workspaces::domain::display_affinity::ColumnWidth;
+use crate::workspaces::domain::display_affinity::{
+    ColumnWidth, DraggedWidths, StoredWidths, read_widths, store_widths,
+};
 
 /// The set of displays attached at one moment, as a durable name.
 ///
@@ -61,26 +63,62 @@ impl fmt::Display for SetupId {
     }
 }
 
-/// What one arrangement remembers.
+/// What one arrangement remembers. A file holds it as a `SetupRecord`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(from = "SetupRecord", into = "SetupRecord")]
 pub struct Setup {
     /// Display each window belongs to, by display UUID.
-    #[serde(default)]
     pub window_home: HashMap<WindowId, String>,
     /// Last observed strip order per display, so a replug rebuilds adjacency rather than
     /// repatriating in arbitrary id order.
-    #[serde(default)]
     pub display_strip: HashMap<String, Vec<WindowId>>,
     /// Column width each window last had on each display.
-    #[serde(default)]
     pub window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
     /// Windows whose home the USER chose, rather than one rini inferred from where the window was.
     ///
     /// The difference matters to a display pin. A pin overrides a home that was merely observed —
     /// otherwise an app that opens on the wrong screen keeps it — and never overrides one the user
     /// asked for, which is what "unless I explicitly move it there" means.
-    #[serde(default)]
     pub home_by_intent: HashSet<WindowId>,
+}
+
+/// A `Setup` as a file holds it, its widths as `StoredWidth`s with the dragged ones beside them.
+#[derive(Serialize, Deserialize)]
+struct SetupRecord {
+    #[serde(default)]
+    window_home: HashMap<WindowId, String>,
+    #[serde(default)]
+    display_strip: HashMap<String, Vec<WindowId>>,
+    #[serde(default)]
+    window_width: StoredWidths,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    dragged_width: DraggedWidths,
+    #[serde(default)]
+    home_by_intent: HashSet<WindowId>,
+}
+
+impl From<SetupRecord> for Setup {
+    fn from(record: SetupRecord) -> Self {
+        Self {
+            window_home: record.window_home,
+            display_strip: record.display_strip,
+            window_width: read_widths(record.window_width, &record.dragged_width),
+            home_by_intent: record.home_by_intent,
+        }
+    }
+}
+
+impl From<Setup> for SetupRecord {
+    fn from(setup: Setup) -> Self {
+        let (window_width, dragged_width) = store_widths(&setup.window_width);
+        Self {
+            window_home: setup.window_home,
+            display_strip: setup.display_strip,
+            window_width,
+            dragged_width,
+            home_by_intent: setup.home_by_intent,
+        }
+    }
 }
 
 impl Setup {
@@ -237,6 +275,53 @@ mod tests {
 
         // The remembered pair first, in that order; the one with no recorded place follows.
         assert_eq!(setup.windows_homed_to("studio"), vec![win(3), win(1), win(2)]);
+    }
+
+    /// A `Setup` as rini wrote and read it before a drag's width had a record, so a test can read
+    /// a new file as a rollback to that rini would.
+    mod before_dragged_widths {
+        use serde::Deserialize;
+
+        use rini_core::ids::WindowId;
+        use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        pub enum ColumnWidth {
+            FullWidth,
+            Offset(f64),
+        }
+
+        #[derive(Deserialize)]
+        pub struct Setup {
+            #[serde(default)]
+            pub window_home: HashMap<WindowId, String>,
+            #[serde(default)]
+            pub display_strip: HashMap<String, Vec<WindowId>>,
+            #[serde(default)]
+            pub window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
+            #[serde(default)]
+            pub home_by_intent: HashSet<WindowId>,
+        }
+    }
+
+    /// An older rini that met a width it had no variant for refused the whole file, and started
+    /// with no homes, widths or launch slots, which its next save wrote over the file.
+    #[test]
+    fn a_dragged_width_is_written_so_a_rini_from_before_it_reads_the_file() {
+        let mut setup = Setup::default();
+        let widths = setup.window_width.entry("built-in".to_owned()).or_default();
+        widths.insert(win(1), ColumnWidth::Dragged(0.33797));
+        widths.insert(win(2), ColumnWidth::Offset(0.25));
+        let written = ron::ser::to_string(&setup).unwrap();
+
+        let old: before_dragged_widths::Setup = ron::from_str(&written).expect("an older rini reads it");
+        let old_widths = &old.window_width["built-in"];
+        assert_eq!(old_widths[&win(1)], before_dragged_widths::ColumnWidth::Offset(0.33797));
+        assert_eq!(old_widths[&win(2)], before_dragged_widths::ColumnWidth::Offset(0.25));
+
+        let read: Setup = ron::from_str(&written).unwrap();
+        assert_eq!(read.window_width["built-in"][&win(1)], ColumnWidth::Dragged(0.33797));
+        assert_eq!(read.window_width["built-in"][&win(2)], ColumnWidth::Offset(0.25));
     }
 
     #[test]

@@ -13,7 +13,10 @@ application.
   on an explicit move, never by the forced reassignment that follows an unplug.
 - `window_width`: the `ColumnWidth` it last had **on each display**, stored as a ratio,
   a dragged ratio (`Dragged`, which no width bound holds) or the `FullWidth` mode rather
-  than in points, so it survives a resolution change.
+  than in points, so it survives a resolution change. The file holds a dragged ratio as an
+  `Offset`, with the window listed beside it in `dragged_width` (a launch slot's
+  `width_dragged`), fields a rini from before them skips: an unknown variant would have
+  failed the whole file, and the start that follows forgets every home, width and slot.
 
 `WorkspaceAssignments` (`src/workspaces/domain/assignment.rs`) records which workspace
 each window is assigned to. All three are written to `~/.rini/layout.ron` on save.

@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::workspaces::domain::display_affinity::ColumnWidth;
+use crate::workspaces::domain::display_affinity::{ColumnWidth, StoredWidth};
 use rustc_hash::FxHashMap as HashMap;
 
 /// The set of displays connected, as a name that can key a map.
@@ -23,19 +23,56 @@ pub fn topology_key(display_uuids: &[String]) -> String {
     sorted.join("+")
 }
 
-/// Where one window of an application was, the last time this topology was connected.
+/// Where one window of an application was, the last time this topology was connected. A file holds
+/// it as a `SlotRecord`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "SlotRecord", into = "SlotRecord")]
 pub struct Slot {
     /// Title when it was recorded, for matching a relaunched window back to its own slot. Absent when
     /// the window had no title.
-    #[serde(default)]
     pub title: Option<String>,
     pub display_uuid: String,
     pub workspace_index: usize,
     /// Absent when the window never had a deliberate width, in which case the configured default is
     /// still the right answer and nothing needs remembering.
-    #[serde(default)]
     pub width: Option<ColumnWidth>,
+}
+
+/// A `Slot` as a file holds it, its width a `StoredWidth` with the drag beside it.
+#[derive(Serialize, Deserialize)]
+struct SlotRecord {
+    #[serde(default)]
+    title: Option<String>,
+    display_uuid: String,
+    workspace_index: usize,
+    #[serde(default)]
+    width: Option<StoredWidth>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    width_dragged: bool,
+}
+
+impl From<SlotRecord> for Slot {
+    fn from(record: SlotRecord) -> Self {
+        Self {
+            title: record.title,
+            display_uuid: record.display_uuid,
+            workspace_index: record.workspace_index,
+            width: record.width.map(|width| ColumnWidth::from_stored(width, record.width_dragged)),
+        }
+    }
+}
+
+impl From<Slot> for SlotRecord {
+    fn from(slot: Slot) -> Self {
+        let stored = slot.width.map(ColumnWidth::stored);
+        Self {
+            title: slot.title,
+            display_uuid: slot.display_uuid,
+            workspace_index: slot.workspace_index,
+            width: stored.map(|(width, _)| width),
+            width_dragged: stored.is_some_and(|(_, dragged)| dragged),
+        }
+    }
 }
 
 /// What a projection could work out about one window's width.
@@ -197,6 +234,50 @@ mod tests {
 
     const BUILT_IN: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     const EXTERNAL: &str = "B9F7-8F30A301B230-37D8832A-2D66";
+
+    /// A `Slot` as rini wrote and read it before a drag's width had a record.
+    mod before_dragged_widths {
+        use serde::Deserialize;
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        pub enum ColumnWidth {
+            FullWidth,
+            Offset(f64),
+        }
+
+        #[derive(Deserialize)]
+        pub struct Slot {
+            #[serde(default)]
+            pub title: Option<String>,
+            pub display_uuid: String,
+            pub workspace_index: usize,
+            #[serde(default)]
+            pub width: Option<ColumnWidth>,
+        }
+    }
+
+    /// An older rini that met a width it had no variant for refused the whole file and forgot
+    /// every application's slots with it.
+    #[test]
+    fn a_dragged_slot_width_is_written_so_a_rini_from_before_it_reads_the_file() {
+        let dragged = Slot {
+            width: Some(ColumnWidth::Dragged(0.33797)),
+            ..slot("~/projects/rini", BUILT_IN, 1)
+        };
+        let written = ron::ser::to_string(&dragged).unwrap();
+
+        let old: before_dragged_widths::Slot = ron::from_str(&written).expect("an older rini reads it");
+        assert_eq!(old.width, Some(before_dragged_widths::ColumnWidth::Offset(0.33797)));
+        assert_eq!(ron::from_str::<Slot>(&written).unwrap(), dragged);
+
+        let offset = Slot {
+            width: Some(ColumnWidth::Offset(0.25)),
+            ..slot("~/projects/rini", BUILT_IN, 1)
+        };
+        let written = ron::ser::to_string(&offset).unwrap();
+        assert!(!written.contains("dragged"), "{written}");
+        assert_eq!(ron::from_str::<Slot>(&written).unwrap(), offset);
+    }
 
     #[test]
     fn the_same_displays_in_any_order_are_one_topology() {

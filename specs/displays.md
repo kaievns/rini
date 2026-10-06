@@ -55,6 +55,9 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - Width MUST be remembered as the layout means it — a mode, a ratio, or a dragged ratio, which no
   display's width bounds hold — never in points, because the record is consulted exactly when the
   display size differs.
+- A remembered width MUST be written so a rini from before its kind existed still reads the file. A
+  rini that cannot read the file starts with no homes, widths or launch slots, and its next save
+  writes that over the file, so going back a version would forget the machine.
 - A window's display MUST be written only by intent: an explicit move, a drag, a first sighting, or a
   restore. The forced reassignment that follows an unplug MUST NOT write it, because that record is the
   only thing that brings the window back.
