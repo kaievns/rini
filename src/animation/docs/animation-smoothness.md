@@ -240,7 +240,9 @@ of the desktop carries the wallpaper in the window's rounded corners, where the
 window itself is transparent, and the stand-in, one flat pixel, has no corners
 at all. The overlay clips such a tile's picture layer, crop pieces included, to
 the corner its hairline rounds to (`cornerRadius`, laid at every placement, with
-`masksToBounds`, which follows a resize); the shadow caster and the hairline are
+`masksToBounds`), whose corner a resize's track carries with the hairline's, so
+the clip stays clamped to the tile as it is ("The corner, measured" in
+`src/decorations/docs/README.md`); the shadow caster and the hairline are
 never clipped (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`).
 The decision is in `docs/pictures-motion-transitions.md`. The pictures service
 bakes them (`capture_on_screen`). The flight engine marks each tile
@@ -486,7 +488,8 @@ changes is how the picture maps onto it (`content_mode` in
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
   IS the per-frame crop layout; one transaction installs frame, contentsRect,
-  shadow-path, shadow-mask, hairline-corner and outline-path animations on the shared curve.
+  shadow-path, shadow-mask, hairline-corner, picture-corner and outline-path
+  animations on the shared curve, each path and corner at the tile's one corner.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
   seam a few points mid-flight inside the window's own content. A loose
   tile's retarget continues from the position and size the flight's score

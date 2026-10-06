@@ -3,6 +3,8 @@
 //! value they are set to or animated through comes from `domain`. See "The hairline and the shadow,
 //! as drawn" in `src/decorations/docs/README.md`.
 
+use std::cell::Cell;
+
 use objc2::rc::Retained;
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColor, CGMutablePath, CGPath};
@@ -73,8 +75,10 @@ pub struct DecorationLayers {
     pub hairline: Retained<CALayer>,
     /// The hairline's dark outline, a stroke just outside the white line, as the hairline's child.
     pub outline: Retained<CAShapeLayer>,
-    /// The window's measured corner radius, which the hairline rounds to.
+    /// The window's measured corner radius, which every piece rounds to.
     pub radius: Option<f64>,
+    /// The size and corner the caster's silhouette and its mask were last shaped for.
+    built: Cell<Option<(TileSize, f64)>>,
 }
 
 impl DecorationLayers {
@@ -111,6 +115,7 @@ impl DecorationLayers {
             hairline,
             outline,
             radius: None,
+            built: Cell::new(None),
         }
     }
 
@@ -138,22 +143,25 @@ impl DecorationLayers {
         self.hairline.setZPosition(z + HAIRLINE_Z);
     }
 
-    /// Shapes the decorations for a tile of `size`, laid at its frame: the shadow only when
-    /// `resized`, the hairline every time, since a pooled tile's radius can have been measured
-    /// since.
-    pub fn place(&self, size: TileSize, resized: bool) {
-        if resized {
-            self.shadow.setShadowPath(Some(&silhouette_path(size)));
-            self.shadow_mask.setFrame(shape::shadow_mask_frame(size).to_cg());
-            self.shadow_mask.setPath(Some(&shadow_mask_path(size)));
-        }
+    /// Shapes the decorations for a tile of `size`, laid at its frame, all at one corner: the
+    /// shadow and its mask only when the size or the corner differs from the ones they were shaped
+    /// for, since a pooled tile can be dressed for a window of another radius at the same size; the
+    /// hairline every time.
+    pub fn place(&self, size: TileSize) {
         let corner = self.corner_at(size);
+        if self.built.get() != Some((size, corner)) {
+            self.shadow.setShadowPath(Some(&silhouette_path(size, corner)));
+            self.shadow_mask.setFrame(shape::shadow_mask_frame(size).to_cg());
+            self.shadow_mask.setPath(Some(&shadow_mask_path(size, corner)));
+            self.built.set(Some((size, corner)));
+        }
         self.hairline.setCornerRadius(corner);
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
     }
 
-    /// The corner a tile of `size` rounds to: its window's radius, clamped to the tile.
+    /// The corner a tile of `size` rounds to, every piece of it: its window's radius, clamped to the
+    /// tile.
     pub fn corner_at(&self, size: TileSize) -> f64 {
         shape::radius(self.radius, size)
     }
@@ -177,21 +185,23 @@ impl DecorationLayers {
         self.hairline.setHidden(hidden);
     }
 
-    /// Carries the decorations through `resize`: the caster's silhouette, its mask's frame and
-    /// path, the hairline's corner while it changes, and the outline's path. The frame layers'
-    /// bounds ride the tile's own resize.
+    /// Carries the decorations through `resize`, each piece at the corner of every size it passes
+    /// through: the caster's silhouette, its mask's frame and path, the hairline's corner while it
+    /// changes, and the outline's path. The frame layers' bounds ride the tile's own resize.
     pub fn install_resize(&self, resize: &impl Resize) {
         let origin = CGPoint::new(0.0, 0.0);
-        let silhouette = resize.path("shadowPath", silhouette_path);
+        let corner = |size: TileSize| self.corner_at(size);
+        let silhouette = resize.path("shadowPath", |size| silhouette_path(size, corner(size)));
         add_under(&self.shadow, &silhouette, SILHOUETTE_KEY);
         let mask = |size: TileSize| shape::shadow_mask_frame(size).to_cg();
         let mask_position = resize.point("position", |size| mask(size).origin);
         add_under(&self.shadow_mask, &mask_position, MASK_MOVE_KEY);
         let mask_bounds = resize.rect("bounds", |size| CGRect::new(origin, mask(size).size));
         add_under(&self.shadow_mask, &mask_bounds, MASK_SIZE_KEY);
-        let mask_path = resize.path("path", |size| CFRetained::from(&*shadow_mask_path(size)));
+        let mask_path = resize.path("path", |size| {
+            CFRetained::from(&*shadow_mask_path(size, corner(size)))
+        });
         add_under(&self.shadow_mask, &mask_path, MASK_PATH_KEY);
-        let corner = |size: TileSize| self.corner_at(size);
         if resize.changes(corner) {
             add_under(
                 &self.hairline,
@@ -222,17 +232,19 @@ fn outline_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
     unsafe { CGPath::with_rounded_rect(rect.to_cg(), radius, radius, std::ptr::null()) }
 }
 
-/// The window's rounded-rect silhouette, the shadow's shape, floored as `shape::silhouette` says.
-fn silhouette_path(size: TileSize) -> CFRetained<CGPath> {
-    let (rect, radius) = shape::silhouette(size);
+/// The window's rounded-rect silhouette with corners of `corner`, the shadow's shape, floored as
+/// `shape::silhouette` says.
+pub fn silhouette_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
+    let (rect, radius) = shape::silhouette(size, corner);
     // SAFETY: a null transform means the path is taken as given.
     unsafe { CGPath::with_rounded_rect(rect.to_cg(), radius, radius, std::ptr::null()) }
 }
 
-/// The shadow mask's path, the whole mask minus the window's shape, wound even-odd so the inside is
-/// the hole. Always one rect plus one rounded rect, so two mask paths interpolate.
-fn shadow_mask_path(size: TileSize) -> CFRetained<CGMutablePath> {
-    let (whole, hole, radius) = shape::shadow_mask(size);
+/// The shadow mask's path, the whole mask minus the window's shape with corners of `corner`, wound
+/// even-odd so the inside is the hole. Always one rect plus one rounded rect, so two mask paths
+/// interpolate.
+pub fn shadow_mask_path(size: TileSize, corner: f64) -> CFRetained<CGMutablePath> {
+    let (whole, hole, radius) = shape::shadow_mask(size, corner);
     // The mask layer's own points start at the mask's corner, one reach out from the tile's.
     let into_mask = Vector::new(SHADOW_REACH, SHADOW_REACH);
     let path = CGMutablePath::new();
@@ -373,14 +385,14 @@ mod tests {
     fn a_placed_hairline_rounds_to_its_windows_radius_and_clamps() {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.radius = Some(16.0);
-        layers.place(TileSize::new(859.0, 1081.0), true);
+        layers.place(TileSize::new(859.0, 1081.0));
         assert_eq!(layers.hairline.borderWidth(), LIGHT_PT);
         assert_eq!(layers.hairline.cornerRadius(), 16.0);
         assert_eq!(
             CGPath::bounding_box(layers.outline.path().as_deref()),
             rect(-0.25, -0.25, 859.5, 1081.5)
         );
-        layers.place(TileSize::new(12.0, 400.0), false);
+        layers.place(TileSize::new(12.0, 400.0));
         assert_eq!(
             layers.hairline.cornerRadius(),
             6.0,
@@ -392,7 +404,6 @@ mod tests {
     #[test]
     fn a_resized_tile_reshapes_its_shadow_and_a_moved_one_keeps_it() {
         let layers = DecorationLayers::new(&CALayer::layer());
-        let size = TileSize::new(859.0, 1081.0);
         let shaped = |layers: &DecorationLayers| {
             (
                 CGPath::bounding_box(layers.shadow.shadowPath().as_deref()),
@@ -400,16 +411,67 @@ mod tests {
                 CGPath::bounding_box(layers.shadow_mask.path().as_deref()),
             )
         };
-        layers.place(size, true);
-        let mask = shape::shadow_mask_frame(size).to_cg();
-        let placed = (
-            rect(0.0, 0.0, 859.0, 1081.0),
-            mask,
-            CGRect::new(CGPoint::new(0.0, 0.0), mask.size),
-        );
-        assert_eq!(shaped(&layers), placed);
-        layers.place(TileSize::new(400.0, 1081.0), false);
-        assert_eq!(shaped(&layers), placed);
+        let placed = |size: TileSize| {
+            let mask = shape::shadow_mask_frame(size).to_cg();
+            (
+                CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()),
+                mask,
+                CGRect::new(CGPoint::new(0.0, 0.0), mask.size),
+            )
+        };
+        layers.place(TileSize::new(859.0, 1081.0));
+        assert_eq!(shaped(&layers), placed(TileSize::new(859.0, 1081.0)));
+        let resized = TileSize::new(400.0, 1081.0);
+        layers.place(resized);
+        assert_eq!(shaped(&layers), placed(resized));
+        let silhouette = layers.shadow.shadowPath().expect("a silhouette");
+        let mask = layers.shadow_mask.path().expect("a mask path");
+        layers.place(resized);
+        assert!(same(layers.shadow.shadowPath(), &silhouette), "moved, not reshaped");
+        assert!(same(layers.shadow_mask.path(), &mask), "moved, not reshaped");
+    }
+
+    /// Whether `path` is the very path object `was`, not merely an equal one.
+    fn same(path: Option<Retained<CGPath>>, was: &CGPath) -> bool {
+        path.is_some_and(|path| std::ptr::eq(&*path, was))
+    }
+
+    /// Whether the caster's silhouette and its mask's path are the ones of `size` at `corner`,
+    /// compared whole, since their bounds cannot see a radius.
+    fn shaped_at(layers: &DecorationLayers, size: TileSize, corner: f64) -> bool {
+        CGPath::equal_to_path(
+            layers.shadow.shadowPath().as_deref(),
+            Some(&silhouette_path(size, corner)),
+        ) && CGPath::equal_to_path(
+            layers.shadow_mask.path().as_deref(),
+            Some(&shadow_mask_path(size, corner)),
+        )
+    }
+
+    #[test]
+    fn the_shadow_and_its_mask_round_to_the_tiles_corner_as_the_hairline_does() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(26.0);
+        let size = TileSize::new(859.0, 1081.0);
+        layers.place(size);
+        assert!(shaped_at(&layers, size, 26.0));
+        assert!(!shaped_at(&layers, size, 16.0), "another corner differs at the same bounds");
+        assert_eq!(layers.hairline.cornerRadius(), 26.0);
+    }
+
+    #[test]
+    fn a_pooled_tile_dressed_for_a_window_of_another_radius_rebuilds_its_shadow_at_the_same_size() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        let size = TileSize::new(859.0, 1081.0);
+        layers.radius = Some(16.0);
+        layers.place(size);
+        assert!(shaped_at(&layers, size, 16.0));
+        layers.radius = Some(26.0);
+        layers.place(size);
+        assert!(shaped_at(&layers, size, 26.0));
+        let silhouette = layers.shadow.shadowPath().expect("a silhouette");
+        layers.place(size);
+        assert!(same(layers.shadow.shadowPath(), &silhouette), "not rebuilt");
     }
 
     #[test]

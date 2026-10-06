@@ -309,10 +309,13 @@ destination for a window already moving.
 - Every tile MUST wear the hairline macOS composites around each window, which no capture carries: a
   1pt line of white on the window's outermost point, at 20% on the focused window and 18% on any
   other, and a 0.5pt stroke of black at 90% in the half point just outside it.
-- Both MUST round to the window's own corner radius once `pictures` has measured it, and to 10pt
-  until then, never past half the tile's shorter side.
-- Both MUST follow the tile through a resize, on the tile's own timing, and onto its window's real
-  frame when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
+- The hairline, the shadow and the space it is cut around, and a picture clipped to its corners, the
+  stand-in's included, MUST round to one corner: the window's own corner radius once `pictures` has
+  measured it, and 10pt until then, never past half the tile's shorter side. Each is drawn
+  separately, and any two that differ show as a step at the corner.
+- The hairline's line and stroke MUST follow the tile through a resize, on the tile's own timing,
+  every piece at the one corner of each size it passes through, and onto its window's real frame
+  when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to
   its corners.
 - When focus moves during a flight, each window's hairline and shadow MUST turn with its own picture: the
   window losing focus dimmer as its picture turns unfocused, the window gaining focus brighter as its
@@ -323,6 +326,11 @@ applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. 
 measured. Before it, a tile wore a hairline cut out of a capture of its window, and none until that
 capture had run: the 53-level p99 at the focused window's edge in "The handover, measured"
 (`src/animation/docs/capture-overlay-research.md`).
+
+> **Reported 2026-10-06.** "refactor the two into a single module to avoid duplicate
+> implementations". The hairline rounded to the window's measured radius while the shadow, the space
+> it was cut around and the stand-in rounded at 10pt, two corners on one tile. Every decoration a
+> window wears now has one home, and every piece one corner.
 
 > **Reported 2026-10-05.** "regarding the ring and shadow. i'd like them to be orchestrated
 > independently whenever blur or focus are done switching." Both tiles turned in one cut when the

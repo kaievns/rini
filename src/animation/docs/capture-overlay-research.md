@@ -906,11 +906,12 @@ unfocused bias. Unfocused fits `shadowOpacity = 0.4`, `shadowRadius = 9`,
 falloff, fitting `shadowOpacity = 0.65`, `shadowRadius = 14`,
 `shadowOffset = (0, 12)`. Positive y means down because the tiles hang off a
 flipped view. `shadowPath` is
-an explicit rounded rect at a 10pt corner radius, measured from where a capture's
-own alpha starts along its top row: transparent for the first 18px to 20px at 2x.
-An explicit path rather than letting Core Animation derive one from the contents
-alpha, which is exact for an oddly shaped window but recomputed whenever the
-contents change.
+an explicit rounded rect at the tile's corner, the one its hairline rounds to:
+the window's radius as measured from where a capture's own alpha turns opaque,
+else 10pt, which a capture's top row first showed, transparent for its first
+18px to 20px at 2x. An explicit path rather than letting Core Animation derive
+one from the contents alpha, which is exact for an oddly shaped window but
+recomputed whenever the contents change.
 
 `masksToBounds` had to come off the tile layers to allow this: it clips the layer's
 own shadow away. Nothing was lost, because Core Animation resizes contents to the
@@ -964,8 +965,9 @@ animations use the same key prefix (`rini.tile`) as the plain move: a move leg
 retargeted into a resize otherwise left its old position animation fighting the
 resize's, and the shadow tore away from its tile.
 
-The shape is rebuilt only when a tile's size changes, which is once per animation:
-a movement changes where a tile is, not how big it is.
+The shape is rebuilt only when a tile's size or corner changes, which is once per
+animation: a movement changes where a tile is, not how big it is, and the corner
+changes only when a pooled tile is dressed for a window of another radius.
 
 Verified against the screen, signed difference in the 4pt gap at a window's left
 edge, positive meaning the overlay is darker:

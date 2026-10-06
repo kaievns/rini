@@ -44,21 +44,19 @@ pub fn shadow_mask_frame(size: TileSize) -> TileRect {
     )
 }
 
-/// The window's rounded-rect silhouette, the shadow's shape, and its corner radius. Size and radius
-/// are floored above zero, or Core Graphics emits a plain rect and path animations cut.
-pub fn silhouette(size: TileSize) -> (TileRect, f64) {
+/// The window's rounded-rect silhouette with corners of `corner`, the shadow's shape, and its corner
+/// radius. Size and radius are floored above zero, or Core Graphics emits a plain rect and path
+/// animations cut.
+pub fn silhouette(size: TileSize, corner: f64) -> (TileRect, f64) {
     let size = TileSize::new(size.width.max(0.5), size.height.max(0.5));
-    (
-        TileRect::new(Point::origin(), size),
-        radius(None, size).max(0.01),
-    )
+    (TileRect::new(Point::origin(), size), corner.max(0.01))
 }
 
-/// The shadow mask's shape: its whole rect, and the silhouette as the hole wound even-odd inside it,
-/// with the hole's corner radius. Floored as the silhouette is, so it is always one rect plus one
-/// rounded rect and two masks interpolate.
-pub fn shadow_mask(size: TileSize) -> (TileRect, TileRect, f64) {
-    let (hole, corner) = silhouette(size);
+/// The shadow mask's shape: its whole rect, and the silhouette with corners of `corner` as the hole
+/// wound even-odd inside it, with the hole's corner radius. Floored as the silhouette is, so it is
+/// always one rect plus one rounded rect and two masks interpolate.
+pub fn shadow_mask(size: TileSize, corner: f64) -> (TileRect, TileRect, f64) {
+    let (hole, corner) = silhouette(size, corner);
     (shadow_mask_frame(hole.size), hole, corner)
 }
 
@@ -150,22 +148,32 @@ mod tests {
     #[test]
     fn the_silhouette_is_floored_so_two_of_them_interpolate() {
         for width in [0.0, -3.0] {
-            let (floored, corner) = silhouette(TileSize::new(width, 1081.0));
+            let size = TileSize::new(width, 1081.0);
+            let (floored, corner) = silhouette(size, radius(Some(16.0), size));
             assert_eq!(floored, rect(0.0, 0.0, 0.5, 1081.0), "{width} wide");
-            assert!(corner >= 0.01, "{width} wide");
+            assert_eq!(corner, 0.01, "{width} wide");
         }
         assert_eq!(
-            silhouette(TileSize::new(859.0, 1081.0)),
-            (rect(0.0, 0.0, 859.0, 1081.0), CORNER_RADIUS)
+            silhouette(TileSize::new(859.0, 1081.0), 0.0),
+            (rect(0.0, 0.0, 859.0, 1081.0), 0.01)
         );
     }
 
     #[test]
     fn the_shadow_masks_hole_is_the_silhouette_one_reach_inside_its_whole() {
         let size = TileSize::new(859.0, 1081.0);
-        let (whole, hole, corner) = shadow_mask(size);
+        let (whole, hole, corner) = shadow_mask(size, 16.0);
         assert_eq!(whole, rect(-70.0, -70.0, 999.0, 1221.0));
-        assert_eq!((hole, corner), silhouette(size));
+        assert_eq!((hole, corner), silhouette(size, 16.0));
         assert_eq!(hole.origin, Point::origin());
+    }
+
+    #[test]
+    fn the_silhouette_and_the_masks_hole_round_to_the_corner_given() {
+        let size = TileSize::new(859.0, 1081.0);
+        for corner in [10.0, 16.0, 26.0] {
+            assert_eq!(silhouette(size, corner).1, corner);
+            assert_eq!(shadow_mask(size, corner).2, corner);
+        }
     }
 }

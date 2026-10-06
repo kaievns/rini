@@ -324,6 +324,7 @@ fn install_container_track(layer: &CALayer, track: &Track, riding: &[Track]) {
 // What a resize installs on a tile beside its position and its decorations' shapes, by the layer it
 // rides.
 const TILE_SIZE_KEY: &str = "rini.tile.size";
+const PICTURE_CORNER_KEY: &str = "rini.tile.picture.corner";
 const PIECE_MOVE_KEY: &str = "rini.piece.move";
 const PIECE_SIZE_KEY: &str = "rini.piece.size";
 const PIECE_CONTENTS_KEY: &str = "rini.piece.contents";
@@ -375,10 +376,12 @@ impl Resize for TileResize<'_> {
 
 /// Installs a tile's track on every layer that draws the tile, each value mapped from the frame
 /// the key holds: the picture and the frame layers of its decorations ride its position; a resize
-/// from one key to the next carries their bounds, the crop pieces' frames and contents, and the
-/// decorations' shapes too (`DecorationLayers::install_resize`). A track of no length takes away
-/// everything installed, and one that does not resize what only a resize installs, so nothing of
-/// an earlier track is left drawing. See "Resizes through the overlay" in
+/// from one key to the next carries their bounds, the crop pieces' frames and contents, the
+/// decorations' shapes (`DecorationLayers::install_resize`) and, while the corner changes, the
+/// picture's corner with the hairline's, so a clipped picture is cut at the corner every piece
+/// rounds to at each size (Core Animation's own rounding past half a side is not the clamp's). A
+/// track of no length takes away everything installed, and one that does not resize what only a
+/// resize installs, so nothing of an earlier track is left drawing. See "Resizes through the overlay" in
 /// `src/animation/docs/animation-smoothness.md`.
 fn install_tile_track(tile: &Tile, track: &Track) {
     if track.seconds() <= 0.0 {
@@ -407,7 +410,14 @@ fn install_tile_track(tile: &Tile, track: &Track) {
     for layer in tile.layers() {
         add_under(layer, &bounds, TILE_SIZE_KEY);
     }
-    tile.decorations.install_resize(&TileResize(track));
+    let resize = TileResize(track);
+    tile.decorations.install_resize(&resize);
+    let corner = |size: TileSize| tile.decorations.corner_at(size);
+    if resize.changes(corner) {
+        add_under(&tile.picture, &resize.number("cornerRadius", corner), PICTURE_CORNER_KEY);
+    } else {
+        remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
+    }
     install_crop_grid(tile, track);
 }
 
@@ -416,6 +426,7 @@ fn remove_resize(tile: &Tile) {
     for layer in tile.layers() {
         remove_under(layer, &[TILE_SIZE_KEY]);
     }
+    remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
     tile.decorations.remove_resize();
     if let Some(grid) = &tile.crop_grid {
         for piece in &grid.pieces {
@@ -1303,8 +1314,7 @@ fn clip_corners(picture: &CALayer, clipped: bool) {
 }
 
 /// Puts a tile's layers at `frame`, stacked at `z`, its decorations shaped for its size and its
-/// picture's corner rounded with its hairline's. The crop grid is laid again only when the size
-/// changes.
+/// picture's corner rounded with them. The crop grid is laid again only when the size changes.
 fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
     let size: TileSize = frame.size.respace();
     let resized = tile.picture.bounds().size != size.to_cg();
@@ -1312,7 +1322,7 @@ fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
         layer.setFrame(frame.to_cg());
     }
     tile.stack(z);
-    tile.decorations.place(size, resized);
+    tile.decorations.place(size);
     tile.picture.setCornerRadius(tile.decorations.corner_at(size));
     if resized {
         layout_crop_grid(tile, size);
@@ -1423,6 +1433,7 @@ mod tests {
     use crate::animation::domain::motion::score::SAMPLE_STEP;
     use crate::decorations::domain::shape::{self, shadow_mask_frame};
     use crate::decorations::domain::stack::SHADOW_Z;
+    use crate::decorations::platform::layers::{shadow_mask_path, silhouette_path};
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the
@@ -1708,10 +1719,21 @@ mod tests {
 
     /// The bounding box of a path handed over as an object.
     fn path_in(value: &AnyObject) -> CGRect {
+        objc2_core_graphics::CGPath::bounding_box(Some(&path_of(value)))
+    }
+
+    /// The path an animation value holds, compared whole, corners included, where its bounding
+    /// box cannot see a radius.
+    fn path_of(value: &AnyObject) -> CFRetained<objc2_core_graphics::CGPath> {
         // SAFETY: the value was made from a CGPath, which is what it is read back as.
         let path: &objc2_core_graphics::CGPath =
             unsafe { &*(value as *const AnyObject as *const objc2_core_graphics::CGPath) };
-        objc2_core_graphics::CGPath::bounding_box(Some(path))
+        CFRetained::from(path)
+    }
+
+    /// The shadow mask's path at `size` and `corner`, as a plain path, the type a layer hands back.
+    fn mask_path(size: TileSize, corner: f64) -> CFRetained<objc2_core_graphics::CGPath> {
+        CFRetained::from(&*shadow_mask_path(size, corner) as &objc2_core_graphics::CGPath)
     }
 
     fn container() -> Node {
@@ -1799,8 +1821,9 @@ mod tests {
     /// A tile's track rides every layer that draws the tile, on the track's begin, length and
     /// curve, each value mapped from the frame its key holds: a move only the picture, the caster
     /// and the hairline, and a resize their bounds, the silhouette, the mask, the crop pieces, the
-    /// hairline's corner and the outline's path as well. A move after a resize takes the resize's keys
-    /// away, or they would go on drawing the old sizes.
+    /// hairline's and the picture's corner and the outline's path as well, each piece at the tile's
+    /// corner. A move after a resize takes the resize's keys away, or they would go on drawing the
+    /// old sizes.
     #[test]
     fn a_tile_track_is_installed_on_every_layer_of_the_tile() {
         let origin = CGPoint::new(0.0, 0.0);
@@ -1834,6 +1857,7 @@ mod tests {
         );
         install_tile_track(&tile, &resizing);
         let size = |v: Value| -> TileSize { as_frame(v).size.respace() };
+        let corner = |v: Value| shape::radius(tile.decorations.radius, size(v));
         for layer in tile.layers() {
             assert_eq!(
                 installed(layer, TILE_ANIMATION_KEY, point_in),
@@ -1845,8 +1869,8 @@ mod tests {
             );
         }
         assert_eq!(
-            installed(&tile.decorations.shadow, "rini.tile.shadow.path", path_in),
-            expected(&resizing, |v| CGRect::new(origin, size(v).to_cg()))
+            installed(&tile.decorations.shadow, "rini.tile.shadow.path", path_of),
+            expected(&resizing, |v| silhouette_path(size(v), corner(v)))
         );
         let mask = |v: Value| shadow_mask_frame(size(v)).to_cg();
         assert_eq!(
@@ -1858,8 +1882,8 @@ mod tests {
             expected(&resizing, |v| CGRect::new(origin, mask(v).size))
         );
         assert_eq!(
-            installed(&tile.decorations.shadow_mask, "rini.tile.mask.path", path_in),
-            expected(&resizing, |v| CGRect::new(origin, mask(v).size))
+            installed(&tile.decorations.shadow_mask, "rini.tile.mask.path", path_of),
+            expected(&resizing, |v| mask_path(size(v), corner(v)))
         );
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for (index, layer) in grid.pieces.iter().enumerate() {
@@ -1873,9 +1897,12 @@ mod tests {
                 expected(&resizing, |v| within(tile.region, piece(v).contents).to_cg())
             );
         }
-        let corner = |v: Value| shape::radius(tile.decorations.radius, size(v));
         assert_eq!(
             installed(&tile.decorations.hairline, "rini.tile.hairline.corner", number_in),
+            expected(&resizing, corner)
+        );
+        assert_eq!(
+            installed(&tile.picture, "rini.tile.picture.corner", number_in),
             expected(&resizing, corner)
         );
         assert_eq!(
@@ -2385,6 +2412,32 @@ mod tests {
         assert_eq!(path_bounds(path.fromValue()), rect(-0.25, -0.25, 0.5, 1081.5));
         assert_eq!(path_bounds(path.toValue()), rect(-0.25, -0.25, 859.5, 1081.5));
         assert_eq!(path.beginTime(), 100.0);
+    }
+
+    /// An entrance grows from no width, so its corner grows with it: at every key the silhouette,
+    /// the mask's hole, the hairline and the picture round to the one corner, clamped to that key's
+    /// size.
+    #[test]
+    fn a_resize_carries_one_corner_on_every_piece() {
+        let (from, to): (GroupRect, GroupRect) =
+            (typed(4.0, 32.0, 0.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
+        let mut tile = strip_tile(to);
+        tile.decorations.radius = Some(16.0);
+        let track = tile_track(from, to, 100.0, 0.35);
+        install_tile_track(&tile, &track);
+        let corner = |v: Value| shape::radius(Some(16.0), size_of(v));
+        let hairline = installed(&tile.decorations.hairline, "rini.tile.hairline.corner", number_in);
+        assert_eq!(hairline, expected(&track, corner));
+        assert_eq!(hairline.keys.iter().map(|key| key.1).collect::<Vec<_>>(), [0.0, 16.0]);
+        assert_eq!(installed(&tile.picture, "rini.tile.picture.corner", number_in), hairline);
+        assert_eq!(
+            installed(&tile.decorations.shadow, "rini.tile.shadow.path", path_of),
+            expected(&track, |v| silhouette_path(size_of(v), corner(v)))
+        );
+        assert_eq!(
+            installed(&tile.decorations.shadow_mask, "rini.tile.mask.path", path_of),
+            expected(&track, |v| mask_path(size_of(v), corner(v)))
+        );
     }
 
     /// A resize animates the shadow's silhouette, its mask and the outline as paths. Handed over as

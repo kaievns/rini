@@ -1,0 +1,8 @@
+circular r 12.0 row 0 reaches full alpha at 12.0 pt = 1.00 r
+continuous r 12.0 row 0 reaches full alpha at 16.5 pt = 1.38 r
+circular r 16.0 row 0 reaches full alpha at 16.0 pt = 1.00 r
+continuous r 16.0 row 0 reaches full alpha at 22.0 pt = 1.38 r
+circular r 20.0 row 0 reaches full alpha at 20.0 pt = 1.00 r
+continuous r 20.0 row 0 reaches full alpha at 28.0 pt = 1.40 r
+circular r 26.0 row 0 reaches full alpha at 26.0 pt = 1.00 r
+continuous r 26.0 row 0 reaches full alpha at 37.0 pt = 1.42 r
