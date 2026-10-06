@@ -133,8 +133,13 @@ check over the Books and Finder captures.
 So every piece rounds on the continuous curve: the hairline and a clipped picture through the
 layer's `cornerCurve`, the outline, the silhouette and the mask's hole through
 `shape::rounded_rect`, which Core Graphics has no continuous form of. Its curve is UIKit's
-continuous rounded rect, three cubics a corner; rendered at 2x it is within half an alpha step of
-Core Animation's at every pixel (`every_path_follows_core_animation_s_corner_on_the_tile_s_curve`).
+continuous rounded rect, three cubics a corner, the one SwiftUI's continuous `RoundedRectangle`
+draws. Rendered at 2x, no pixel of the silhouette or the mask's hole sits farther from Core
+Animation's corner than Core Animation's own circular clip sits from Core Graphics' circular fill,
+64 alpha levels (`every_path_follows_core_animation_s_corner_on_the_tile_s_curve`). At 8x its edge
+sits within 0.25 of an 8x pixel of Core Animation's at 12-40pt, the same as the circular pair; with
+the middle cubic's control at 0.18603501, as first built, it sat 2.45 off at 26pt, 0.61 device
+pixels.
 Where the corner's reach, 1.528665 radii (`shape::CONTINUOUS_REACH`, Core Animation's
 `cornerCurveExpansionFactor`), passes half the tile's shorter side, Core Animation draws a
 continuous corner as a shape that path does not match, up to 1420 pixels off on a 52x400 tile at
@@ -159,9 +164,13 @@ the query's cost, whose `on=1` rows are the on-screen windows of the first two r
 `win_` names are window ids (56 Ghostty, 2412 Finder, 97 Chrome, 60 Obsidian, 3851 Zoom);
 `reach.swift` and `reach.txt`; `clamp.swift` and `clamp.txt`. The captures are not kept. In
 `docs/data/2026-10-06-corners/`, each built with `squircle.swift`: `pathfit`, the two curves' gap
-and the path against Core Animation's; `booksfit`, Books windows 5489 and 5299 on each curve;
+and the path against Core Animation's; `middle`, the middle cubic's control against Core
+Animation's at 8x, standalone; `booksfit`, Books windows 5489 and 5299 on each curve;
 `narrow`, the path where the reach passes half the side; `handover-model` and `sim-*.txt`, the
 handover check over a capture at each curve, and `handover-offsets`, with the picture shifted.
+`booksfit`'s hand-path column and the `path` rows of `sim-*.txt` drew the middle cubic at
+0.18603501; the captures are gone, so they were not run again, and the `border model` rows, on Core
+Animation's own curve, read the same `edge_in` and `edge_out` as the `path` rows.
 
 ## Reading order
 

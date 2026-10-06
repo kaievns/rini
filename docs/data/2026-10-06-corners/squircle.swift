@@ -3,7 +3,7 @@ import CoreGraphics
 /// A rounded rect with continuous corners: per corner a cubic off the straight side, a cubic through
 /// the diagonal, and a cubic back onto the next side, starting 1.52866483 × r from the corner.
 /// Coefficients: UIKit's continuous rounded rect, as reverse-engineered for iOS 7.
-let K: [CGFloat] = [1.52866483, 1.08849323, 0.86840689, 0.63149399, 0.07491100, 0.37282392, 0.18603501]
+let K: [CGFloat] = [1.52866483, 1.08849323, 0.86840689, 0.63149399, 0.07491100, 0.37282392, 0.16905899]
 
 func continuousPath(_ rect: CGRect, _ radius: CGFloat) -> CGPath {
     let p = CGMutablePath()

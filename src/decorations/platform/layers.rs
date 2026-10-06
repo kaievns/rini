@@ -672,30 +672,59 @@ mod tests {
         unsafe { std::slice::from_raw_parts(data, w * h * 4) }.chunks(4).map(|p| p[3]).collect()
     }
 
-    /// How many pixels of the silhouette's path sit more than half an alpha step from Core
-    /// Animation's own corner on the curve the tile rounds on, the one the hairline and a clipped
-    /// picture are drawn with.
-    fn off_core_animation(size: TileSize, corner: f64) -> usize {
-        let frame = CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg());
-        let theirs = CALayer::layer();
-        theirs.setFrame(frame);
-        theirs.setBackgroundColor(Some(&CGColor::new_generic_gray(1.0, 1.0)));
-        theirs.setCornerRadius(corner);
-        theirs.setCornerCurve(shape::curve(size, corner).as_layer());
-        theirs.setMasksToBounds(true);
-        let ours = CAShapeLayer::layer();
-        ours.setFrame(frame);
-        ours.setFillColor(Some(&CGColor::new_generic_gray(1.0, 1.0)));
-        ours.setPath(Some(&silhouette_path(size, corner)));
-        let (a, b) = (rendered(&theirs, size), rendered(&ours, size));
-        a.iter().zip(&b).filter(|(x, y)| x.abs_diff(**y) > 127).count()
+    /// Core Animation's own corner on a tile of `size`: a white layer clipped at `corner` on `curve`.
+    fn clipped(size: TileSize, corner: f64, curve: &objc2_quartz_core::CALayerCornerCurve) -> Vec<u8> {
+        let layer = CALayer::layer();
+        layer.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
+        layer.setBackgroundColor(Some(&CGColor::new_generic_gray(1.0, 1.0)));
+        layer.setCornerRadius(corner);
+        layer.setCornerCurve(curve);
+        layer.setMasksToBounds(true);
+        rendered(&layer, size)
     }
 
+    /// `path` filled white over a tile of `size`, from `origin` in the tile's points, by `rule`.
+    fn filled(size: TileSize, path: &CGPath, origin: CGPoint, rule: Option<&NSString>) -> Vec<u8> {
+        let tile = CALayer::layer();
+        tile.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
+        let shape = CAShapeLayer::layer();
+        shape.setFrame(CGRect::new(origin, size.to_cg()));
+        shape.setFillColor(Some(&CGColor::new_generic_gray(1.0, 1.0)));
+        if let Some(rule) = rule {
+            shape.setFillRule(rule);
+        }
+        shape.setPath(Some(path));
+        tile.addSublayer(&shape);
+        rendered(&tile, size)
+    }
+
+    /// The most any pixel of `a` sits from `b`, in alpha levels.
+    fn farthest(a: &[u8], b: &[u8]) -> u8 {
+        a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0)
+    }
+
+    /// Core Animation's clip and Core Graphics' fill of one circular corner sit up to 64 alpha
+    /// levels apart at an edge pixel; the silhouette and the mask's hole sit no farther than that
+    /// from Core Animation's corner on the tile's curve, the one the hairline and a clipped picture
+    /// are drawn with.
     #[test]
     fn every_path_follows_core_animation_s_corner_on_the_tile_s_curve() {
+        let at = CGPoint::new(0.0, 0.0);
+        let wide = TileSize::new(860.0, 1079.0);
+        // SAFETY: a null transform means the path is taken as given.
+        let circle = unsafe { CGPath::with_rounded_rect(CGRect::new(at, wide.to_cg()), 26.0, 26.0, std::ptr::null()) };
+        // SAFETY: Core Animation's constant strings.
+        let floor = farthest(&clipped(wide, 26.0, unsafe { kCACornerCurveCircular }), &filled(wide, &circle, at, None));
+        let into_tile = CGPoint::new(-SHADOW_REACH, -SHADOW_REACH);
         for (w, h, corner) in [(860.0, 1079.0, 26.0), (1148.0, 1079.0, 16.0), (80.0, 400.0, 26.0), (60.0, 400.0, 26.0), (12.0, 400.0, 6.0)] {
             let size = TileSize::new(w, h);
-            assert_eq!(off_core_animation(size, corner), 0, "{w}x{h} at {corner}");
+            let theirs = clipped(size, corner, shape::curve(size, corner).as_layer());
+            let silhouette = filled(size, &silhouette_path(size, corner), at, None);
+            // SAFETY: Core Animation's own fill-rule constant.
+            let mask = filled(size, &shadow_mask_path(size, corner), into_tile, Some(unsafe { kCAFillRuleEvenOdd }));
+            let hole: Vec<u8> = mask.iter().map(|alpha| 255 - alpha).collect();
+            assert!(farthest(&theirs, &silhouette) <= floor, "silhouette {w}x{h} at {corner}: {} past {floor}", farthest(&theirs, &silhouette));
+            assert!(farthest(&theirs, &hole) <= floor, "hole {w}x{h} at {corner}: {} past {floor}", farthest(&theirs, &hole));
         }
     }
 

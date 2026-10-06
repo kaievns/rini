@@ -94,14 +94,14 @@ pub enum Segment {
 
 /// A continuous corner in radii from its corner point, along the side coming in and the side going
 /// out: where it leaves the side, then three cubics as (control, control, end). UIKit's continuous
-/// rounded rect; within half an alpha step of Core Animation's at 2x.
+/// rounded rect, the curve Core Animation draws for `kCACornerCurveContinuous`.
 const CONTINUOUS: [(f64, f64); 10] = [
     (CONTINUOUS_REACH, 0.0),
     (1.08849323, 0.0),
     (0.86840689, 0.0),
     (0.63149399, 0.07491100),
-    (0.37282392, 0.18603501),
-    (0.18603501, 0.37282392),
+    (0.37282392, 0.16905899),
+    (0.16905899, 0.37282392),
     (0.07491100, 0.63149399),
     (0.0, 0.86840689),
     (0.0, 1.08849323),
@@ -302,7 +302,7 @@ mod tests {
     }
 
     /// Core Animation's continuous corner leaves the side 1.528665 radii from the corner, a circular
-    /// one at one radius; at the diagonal the continuous one sits 0.2979r in, the circular 0.2929r.
+    /// one at one radius; at the diagonal the continuous one sits 0.2915r in, the circular 0.2929r.
     #[test]
     fn a_continuous_corner_leaves_the_side_at_its_reach_and_crosses_the_diagonal_where_core_animation_does() {
         let rect = TileRect::new(Point::origin(), Size::new(860.0, 1079.0));
@@ -312,7 +312,7 @@ mod tests {
         assert!(close(ends(&circular)[1], Point::new(860.0 - 26.0, 0.0)));
         let corner = Point::new(860.0, 0.0);
         let d = diagonal(&continuous, corner);
-        assert!((d.x - 0.297_87 * 26.0).abs() < 1e-3 && (d.x - d.y).abs() < 1e-9, "{d:?}");
+        assert!((d.x - 0.291_51 * 26.0).abs() < 1e-3 && (d.x - d.y).abs() < 1e-9, "{d:?}");
         let d = diagonal(&circular, corner);
         assert!((d.x - (1.0 - std::f64::consts::FRAC_1_SQRT_2) * 26.0).abs() < 0.01, "{d:?}");
     }
