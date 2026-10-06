@@ -1390,6 +1390,9 @@ impl Reactor {
                 self.clear_menu_state_for_pid(pid);
                 return application_workflow::handle_application_thread_terminated(
                     &mut self.app_manager,
+                    &mut self.state,
+                    &self.transaction_manager,
+                    &mut self.drag_manager,
                     pid,
                 );
             }
@@ -1664,7 +1667,7 @@ impl Reactor {
         self.regroup_raised.clear();
         // Read before the drains below start moving fields out of `outcome`.
         let focus_landed = outcome.focus_landed();
-        // Ahead of the layout events, as on the AX path: the closed window's picture goes first.
+        // Ahead of the layout events: a removed window's pictures go first.
         for window in outcome.forgotten_windows {
             if let Some(pictures) = &self.communication_manager.pictures {
                 pictures.forget(window);

@@ -703,11 +703,16 @@ a per-tile discontinuity in a flight that is otherwise rigid, and a
 picture of a window that no longer exists. Under load it ran 25ms ahead
 of the survivors' clock; on the window-server close path it composed
 `exits=0` and left a gap (log 2026-09-16 2:05). What stays is the
-pictures service's forget, sent once per close on either path: the AX
-`WindowDestroyed` while the window still exists, or the window-server
-disappearance through `EventOutcome::forgotten_windows` ahead of the
-layout events. The gap between the window vanishing and the survivors
-moving is AX latency plus the coalesce window, and is accepted.
+pictures service's forget, sent once per window that leaves:
+`handle_window_destroyed`, which the AX `WindowDestroyed`, the
+window-server disappearance, a discovery's stale cleanup and an
+application's quit all go through, puts it on
+`EventOutcome::forgotten_windows` ahead of the layout events, and finds
+nothing to forget once the window is gone; a rekey forgets the old id.
+An AX `WindowDestroyed` during refresh quarantine forgets nothing: the
+element can be replaced while the window lives. The gap between the
+window vanishing and the survivors moving is AX latency plus the
+coalesce window, and is accepted.
 
 ## A grow holds, then reveals
 

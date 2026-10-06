@@ -82,9 +82,25 @@ as visible rather than absent. The reverse — an id the server does not report 
   cannot say whether a window still exists globally.
 - A record of a window MUST NOT be forgotten while it still holds anything — a pending frame write, an
   observed space, a rule decision.
+- A window that leaves MUST take its pictures with it, once, whichever way it leaves: closed, closed
+  while minimised or unmanaged, found gone when its application's windows are looked at again, left
+  behind by its application quitting, or found again under a new identity for the same window-server
+  window. An application that quits MUST take its windows' records too. A window whose Accessibility
+  destruction is reported during a refresh quarantine MUST keep its pictures: its element can be
+  replaced while the window lives.
 
 > **Found 2026-09-23, not reported.** The prune check tested four of a record's nine fields. A record
 > holding only a pending frame write was pruned and the write forgotten.
+
+> **Reported 2026-10-06.** "fix that runaway thread and stale cache cleaning". Fixed.
+>
+> Read from the code: only two ways a window left forgot its pictures, an Accessibility destruction of
+> a window still held and the window server's report of a close, and the second skipped a minimised or
+> unmanaged window. An application quitting, a window found gone when its application's windows were
+> looked at again, and a new identity for the same window dropped the window and kept its pictures
+> until rini restarted; a quitting application also kept its windows' records. The log of the running
+> build showed "Application terminated without notification" 3 times across its runs. How often the
+> other ways ran is not logged.
 
 ## Writing a frame
 
@@ -117,7 +133,9 @@ as visible rather than absent. The reverse — an id the server does not report 
 admission, `src/windows/domain/catalogue.rs` the records, `src/windows/domain/ax_events.rs` the
 liveness rules, `src/windows/domain/frame_write.rs` which writes a frame takes,
 `src/windows/platform/app_actor.rs` the per-app thread, and `src/app/hotkeys/mod.rs` the controller
-that starts it.
+that starts it. A window leaving rini's records goes through `src/app/reactor/events/window.rs`, which
+forgets its pictures, except at a new identity, whose old one `src/app/reactor/events/window_discovery.rs`
+forgets.
 
 ## Floating windows and the park corner
 

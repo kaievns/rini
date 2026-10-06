@@ -540,14 +540,6 @@ impl Reactor {
         if self.refreshes_blocked() {
             return Ok(EventOutcome::default());
         }
-        // A closed window disappears; only its cached picture has to go. Once: the window-server path
-        // may have removed the window, and forgotten it, already. See "A closed window disappears" in
-        // `src/transitions/docs/coordination.md`.
-        if self.state.windows.window(window).is_some()
-            && let Some(pictures) = &self.communication_manager.pictures
-        {
-            pictures.forget(window);
-        }
         let mut outcome = window_workflow::handle_window_destroyed(
             &mut self.state,
             &self.transaction_manager,
