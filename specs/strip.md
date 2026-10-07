@@ -127,7 +127,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   window closes, before the strip is laid out again, the column focused next MUST be placed as any
   focus change places it.
 - Letting go of a left-edge drag MUST NOT move the resized window on screen: it is drawn from where
-  the cursor let go, and only the columns the change scrolls move.
+  the cursor let go, and only the columns the change scrolls move. A column after it MUST NOT be
+  seen at all when it was off screen beyond the right edge, since the kept right edge keeps its
+  place.
 - Letting go of a resize MUST leave the resized window focused, whatever window the cursor is over:
   the cursor lets go on the window's edge, where the window behind it can answer. Focusing the
   window already focused MUST keep the edge its drag keeps.
@@ -166,6 +168,16 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > the right of where it was let go and slid back: 189pt and 275pt in two of the 15 releases
 > journalled, read off the frames either side. Its picture at the press was refused, asked for
 > where its tile started, so the tile flew the cache's.
+
+> **Reported 2026-10-07.** "if the window's right edge is at the screens right edge and i _shrink_
+> the window by the left edge, on release during the strip animation the off-screen window on the
+> right jumps under the resized window by what looks like ~100px and then animates away. in this
+> case i shouldn't see it at all since it's off the screen beyond the right screen edge to begin
+> with." The release's pan starts every window it does not find on screen at its new place shifted
+> back by the scroll, which is where the scroll carried it from only when the strip changed nothing
+> else. The shrink pulled the columns after the dragged one left on the strip as the scroll moved
+> them right, so on screen they kept their place, and the one parked beyond the right edge was drawn
+> the shrink onto the screen and slid off. It now starts where the strip had it at the last pass.
 
 ## Folding
 

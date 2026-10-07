@@ -515,6 +515,11 @@ pub struct Reactor {
     /// the first pass after a workspace switch compared the new workspace's offset against the old one's
     /// and animated the difference as a horizontal pan that no window had made.
     last_strip_origin: HashMap<(SpaceId, crate::workspaces::VirtualWorkspaceId), f64>,
+    /// Where each WORKSPACE's strip had its windows the last time a layout pass looked, parked ones
+    /// at their strip frames: where a pan starts a parked window whose place on the strip the pass
+    /// changed (`strip_move::start_where_standing`). Taken and claimed with `last_strip_origin`.
+    last_strip_layout:
+        HashMap<(SpaceId, crate::workspaces::VirtualWorkspaceId), Vec<(WindowId, CGRect)>>,
     /// The window the current command moved along its strip, and which way, for the passes that
     /// command asked for: they draw the two columns crossing. See `animate_layout`.
     moved_along_strip: Option<(WindowId, Direction)>,
@@ -646,6 +651,7 @@ impl Reactor {
             },
             space_state: ForwardedSpaceState::default(),
             last_strip_origin: HashMap::default(),
+            last_strip_layout: HashMap::default(),
             moved_along_strip: None,
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
@@ -3763,9 +3769,9 @@ impl Reactor {
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
     /// placed once the surface covers them. A window that did not move is not re-placed, as on the
-    /// per-window path. `standing` is where the pass found each window: one on screen away from
-    /// where the shifted viewport draws it starts where it stands
-    /// (`strip_move::start_where_standing`).
+    /// per-window path. `standing` is where the pass found each window and `laid_out` where the
+    /// strip had it at the last pass: one away from where the shifted viewport draws it starts where
+    /// it stands if on screen, else where the strip had it (`strip_move::start_where_standing`).
     fn start_strip_pan(
         &mut self,
         space: SpaceId,
@@ -3774,27 +3780,14 @@ impl Reactor {
         delta: CGPoint,
         moved: Option<(WindowId, Direction)>,
         standing: &[crate::transitions::domain::request::AnimationRequest],
+        laid_out: &[(WindowId, CGRect)],
     ) -> bool {
         let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return false;
         };
-        let Some(screen) = self
-            .space_state
-            .screens
-            .iter()
-            .find(|s| s.space == Some(space))
-            .or_else(|| self.space_state.screens.first())
-            .cloned()
-        else {
+        let Some((screen, gaps)) = self.strip_screen(space) else {
             return false;
         };
-
-        let gaps = self
-            .config
-            .settings
-            .layout
-            .gaps
-            .effective_for_display(screen.display_uuid_opt());
         let full = self.layout_manager.layout_engine.calculate_layout_for_workspace(
             &self.state.windows,
             space,
@@ -3836,9 +3829,14 @@ impl Reactor {
             };
             let standing: Vec<(WindowId, SurfaceRect)> =
                 standing.iter().map(|request| (request.window, at_rest(request.from))).collect();
+            let laid_out: Vec<(WindowId, SurfaceRect)> = laid_out
+                .iter()
+                .map(|&(window, frame)| (window, at_rest(ScreenRect::from_cg(frame))))
+                .collect();
             crate::transitions::domain::strip_move::start_where_standing(
                 &mut windows,
                 &standing,
+                &laid_out,
                 from_offset,
                 at_rest(ScreenRect::from_cg(screen.frame)),
             );
@@ -4007,14 +4005,7 @@ impl Reactor {
         let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return false;
         };
-        let Some(screen) = self
-            .space_state
-            .screens
-            .iter()
-            .find(|s| s.space == Some(space))
-            .or_else(|| self.space_state.screens.first())
-            .cloned()
-        else {
+        let Some((screen, gaps)) = self.strip_screen(space) else {
             return false;
         };
 
@@ -4026,13 +4017,6 @@ impl Reactor {
         if workspaces.is_empty() {
             return false;
         }
-
-        let gaps = self
-            .config
-            .settings
-            .layout
-            .gaps
-            .effective_for_display(screen.display_uuid_opt());
 
         let low = from_index.min(to_index);
         let high = from_index.max(to_index);
@@ -4049,6 +4033,7 @@ impl Reactor {
         let height = row_pitch;
 
         let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
+        let mut destination_layout = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else {
                 continue;
@@ -4060,6 +4045,9 @@ impl Reactor {
                 screen.frame,
                 &gaps,
             );
+            if index == to_index {
+                destination_layout.clone_from(&layout);
+            }
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
             let row =
@@ -4121,11 +4109,12 @@ impl Reactor {
         // The switch owns the destination's horizontal position. Its row is drawn at that scroll already, so
         // the strip arrives with the target window in view and the only movement the eye sees is vertical.
         // Without claiming it, the next pass reads the destination's origin as a fresh movement and pans
-        // sideways after the slide has landed.
+        // sideways after the slide has landed. Its layout with it, as the strip the next pan starts from.
         if let Some(destination) = self.layout_manager.layout_engine.active_workspace(space)
             && let Some(origin) = self.layout_manager.layout_engine.strip_origin(space)
         {
             self.last_strip_origin.insert((space, destination), origin);
+            self.last_strip_layout.insert((space, destination), destination_layout);
         }
 
         // That claim suppresses the pan that would otherwise reveal the target, so if the destination row
@@ -4188,6 +4177,43 @@ impl Reactor {
             "strip movement"
         );
         Some(CGPoint::new(now - before.unwrap_or(now), 0.0))
+    }
+
+    /// Where the ACTIVE workspace's strip had each window the last time a pass looked, and remember
+    /// where it has them now: every window at its strip frame, a parked one where the strip has it
+    /// rather than at its park. `None` on the first look at a workspace.
+    pub(crate) fn take_strip_layout(&mut self, space: SpaceId) -> Option<Vec<(WindowId, CGRect)>> {
+        let workspace = self.layout_manager.layout_engine.active_workspace(space)?;
+        let (screen, gaps) = self.strip_screen(space)?;
+        let now = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+            &self.state.windows,
+            space,
+            workspace,
+            screen.frame,
+            &gaps,
+        );
+        self.last_strip_layout.insert((space, workspace), now)
+    }
+
+    /// The screen `space` is laid out on, the first one when it is on none, and its gaps.
+    fn strip_screen(
+        &self,
+        space: SpaceId,
+    ) -> Option<(ScreenInfo, crate::layout::settings::Gaps)> {
+        let screen = self
+            .space_state
+            .screens
+            .iter()
+            .find(|s| s.space == Some(space))
+            .or_else(|| self.space_state.screens.first())
+            .cloned()?;
+        let gaps = self
+            .config
+            .settings
+            .layout
+            .gaps
+            .effective_for_display(screen.display_uuid_opt());
+        Some((screen, gaps))
     }
 
     /// The window the current command moved along the strip, if this pass lays it out; taken, so

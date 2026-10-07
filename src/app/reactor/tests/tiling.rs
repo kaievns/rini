@@ -1710,6 +1710,72 @@ fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go()
     assert!((from.origin.x - to.origin.x - 90.).abs() <= 2., "{from:?} -> {to:?}");
 }
 
+/// Kai, 2026-10-07: "if the window's right edge is at the screens right edge and i _shrink_ the
+/// window by the left edge, on release during the strip animation the off-screen window on the
+/// right jumps under the resized window by what looks like ~100px and then animates away". The
+/// shrink keeps the right edge, so the column after it keeps its place beyond the screen's right
+/// edge while the columns before it scroll right. "Resizing with the mouse" in `specs/strip.md`.
+#[test]
+fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_it_was() {
+    let mut strip = Strip::with_columns(3);
+    let settings = &mut strip.reactor.config.settings.layout;
+    settings.scrolling.column_width_ratio = 0.6;
+    // The live display's gaps: the column after the flush one starts on the screen's edge and is
+    // parked in the corner.
+    settings.gaps.gaps = 3.;
+    settings.gaps.struts = Edges { top: 0., left: 0., bottom: 0., right: 0. };
+    strip
+        .reactor
+        .layout_manager
+        .layout_engine
+        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.window));
+    strip.settle(strip.window);
+    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
+    strip.settle(strip.other);
+    let beyond = WindowId::new(1, 3);
+    let start = strip.on_screen(strip.other);
+    assert!((start.max().x - strip.tiling().max().x).abs() <= 1., "flush right: {start:?}");
+    let parked = strip.on_screen(beyond);
+    assert!(parked.origin.y > start.max().y, "parked in the corner: {parked:?}");
+    let window_before = strip.on_screen(strip.window);
+    strip.reactor.config.settings.animate = true;
+    let (animation_tx, mut rx) = crate::app::channels::channel();
+    strip.reactor.communication_manager.transitions_tx = Some(animation_tx);
+
+    strip.press(CGPoint::new(start.origin.x, start.mid().y), false);
+    for shrunk in [30., 60., 90.] {
+        strip.app_reports(
+            strip.other,
+            rect(start.origin.x + shrunk, start.origin.y, start.size.width - shrunk, start.size.height),
+            MouseState::Down,
+        );
+    }
+    strip.reactor.handle_event(Event::MouseUp);
+
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1, "the release scrolls the strip once");
+    let flight = &flights[0];
+    assert!((flight.from_offset.x - 90.).abs() <= 2., "by the shrink: {:?}", flight.from_offset);
+    let travel = |window| {
+        flight
+            .windows
+            .iter()
+            .find(|w| w.window == window)
+            .expect("on the surface")
+            .travel(flight.from_offset, SurfacePoint::origin())
+    };
+    let (from, to) = travel(beyond);
+    assert!(from.origin.x >= DISPLAY.max().x, "off screen throughout, not from {from:?}");
+    assert!((from.origin.x - to.origin.x).abs() <= 1., "where it was: {from:?} -> {to:?}");
+    let (from, to) = travel(strip.window);
+    assert!(
+        (from.origin.x - window_before.origin.x).abs() <= 1.,
+        "the column before pans from where it stands, {window_before:?}, not {from:?}"
+    );
+    assert!((to.origin.x - from.origin.x - 90.).abs() <= 2., "by the shrink: {from:?} -> {to:?}");
+}
+
 /// A double-click on a title bar has the app zoom its window, and rini has to follow it to its own
 /// full width rather than take it for a resize. "Full width and height" in `specs/strip.md`.
 mod title_bar_zoom {

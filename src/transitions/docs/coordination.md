@@ -218,10 +218,15 @@ The two entry points feed the same `begin_group`:
   it (`start_where_standing`): the window a left-edge drag resized already
   stands where the release's scroll puts it, and drawn back by the scroll it
   jumped out by the drag's travel and slid back. A window at another height
-  at the press is parked, since a scroll never moves a window up or down, and
-  rides the strip in: macOS leaves up to 52pt of some parked windows on
-  screen, more than `is_off_screen` allows, and those flew in diagonally from
-  the corner. Pinned (floating) windows stand in the floating
+  at the press is parked, since a scroll never moves a window up or down:
+  macOS leaves up to 52pt of some parked windows on screen, more than
+  `is_off_screen` allows, and those flew in diagonally from the corner. A
+  parked window starts where the strip had it at the last pass
+  (`Reactor::take_strip_layout`), which is where the scroll carries it from
+  unless the pass also changed its place on the strip: the columns after a
+  left-edge shrink keep their place on screen, and drawn back by the scroll
+  the one parked beyond the right edge came the shrink onto the screen and
+  slid off. Pinned (floating) windows stand in the floating
   container with `from == to`; a switch moves the floating container itself
   by the same travel (`floating_travel`). Visual destinations are
   deliberately distinct from `final_frames`: a leaving window animates
@@ -243,20 +248,20 @@ centre to the left edge with the offset unchanged: every window moved 576pt on
 a 1728pt display, the pass reported no movement, and the move was drawn as the
 finished layout at frame zero; pinned by
 `a_move_that_drops_the_centring_starts_every_window_where_it_was`. Both are
-taken at the top of every pass, before anything can return early: a pass that
-placed nothing used to leave the movement unconsumed for whichever pass came
-next. A strip movement places only the pass's windows whose frames changed,
+taken at the top of every pass, with the strip's layout (`take_strip_layout`),
+before anything can return early: a pass that placed nothing used to leave
+the movement unconsumed for whichever pass came next. A strip movement places only the pass's windows whose frames changed,
 as the per-window path does; a move that scrolled nothing re-placed every
 window on the workspace at frame zero. Still open: both routes land in the same
 machinery, and `take_strip_movement` also feeds the switch's claim on the
-destination's origin, which needs care. The window-voting classifier
+destination's origin and layout, which needs care. The window-voting classifier
 (`strip_pan_delta`) is gone: it only ran when the space had no strip, which is
 when there is nothing to pan.
 
 A pass containing a resize never becomes a strip pan or a move, even when
 the strip moved: the strip surface draws final sizes, which would snap the
-resize. The strip movement and the move are still taken, so the origin
-bookkeeping stays current and the move reaches no later pass.
+resize. The strip movement, the strip's layout and the move are still taken,
+so the bookkeeping stays current and the move reaches no later pass.
 
 ## Mid-flight passes
 
