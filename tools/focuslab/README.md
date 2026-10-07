@@ -52,7 +52,8 @@ given:
   caused on the one clock, grouped by its label.
 - `journal.py handover`: with `animations { journal { measure-handover; } }`, each lift's overlay
   against the screen after it, by kind, focused window and other, the rows of "The handover, measured"
-  in `src/animation/docs/capture-overlay-research.md`.
+  in `src/animation/docs/capture-overlay-research.md`, and the band outside the outline where a
+  window wore one at rest.
 
 What each row measures is defined once, in `src/transitions/docs/journal.md` ("Reading it"). The
 tests read `testdata/journal-sample.jsonl`, which rini's own test pins to what the journal writes, and

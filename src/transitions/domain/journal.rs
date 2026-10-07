@@ -193,6 +193,9 @@ pub enum Mark {
         interior_over: f32,
         edge_in: f32,
         edge_out: f32,
+        /// Over the band rini draws outside the window at rest; absent with none.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        band: Option<f32>,
     },
     ReportUp,
     ReportSettled,
@@ -473,8 +476,8 @@ impl Journal {
 
     /// One window of the handover of `of`'s lift, stamped `now`, when the engine heard it.
     fn handover(&mut self, now: Instant, generation: Generation, of: Generation, window: WindowId, diff: HandoverDiff) {
-        let HandoverDiff { interior, interior_over, edge_in, edge_out } = diff;
-        self.push(now, generation, Mark::Handover { of, window, interior, interior_over, edge_in, edge_out });
+        let HandoverDiff { interior, interior_over, edge_in, edge_out, band } = diff;
+        self.push(now, generation, Mark::Handover { of, window, interior, interior_over, edge_in, edge_out, band });
     }
 
     fn push(&mut self, at: Instant, generation: Generation, mark: Mark) {
@@ -1078,14 +1081,26 @@ mod tests {
             interior_over: 0.0012,
             edge_in: 0.37,
             edge_out: 1.56,
+            band: None,
         };
         assert_eq!(
             line(&anchor, &stamped(handover)),
             concat!(
                 r#"{"t":81234567895123,"g":42,"mark":"handover","of":41,"window":[1,3104],"interior":0.26,"#,
                 r#""interior_over":0.0012,"edge_in":0.37,"edge_out":1.56}"#
-            )
+            ),
+            "no band, no column"
         );
+        let banded = Mark::Handover {
+            of: Generation(41),
+            window: w(3104),
+            interior: 0.26,
+            interior_over: 0.0012,
+            edge_in: 0.37,
+            edge_out: 1.56,
+            band: Some(0.5),
+        };
+        assert!(line(&anchor, &stamped(banded)).ends_with(r#""edge_out":1.56,"band":0.5}"#));
         let burst = Burst { marks: Vec::new(), lost: 3 };
         assert_eq!(
             header(&anchor, 1_791_043_200_123, &burst),
@@ -1272,7 +1287,7 @@ mod tests {
         (g, lifted)
     }
 
-    fn diff(interior: f32) -> HandoverDiff { HandoverDiff { interior, interior_over: 0.0, edge_in: 0.4, edge_out: 1.5 } }
+    fn diff(interior: f32) -> HandoverDiff { HandoverDiff { interior, interior_over: 0.0, edge_in: 0.4, edge_out: 1.5, band: None } }
 
     fn found(marks: &[Stamped], name: &str) -> Vec<Mark> {
         marks.iter().filter(|stamped| self::name(&stamped.mark) == name).map(|stamped| stamped.mark).collect()
@@ -1293,7 +1308,7 @@ mod tests {
         let (_, burst) = flights.drive(Event::Quiet(g), lifted + SETTLE_BEFORE_CAPTURES);
         let marks = burst.expect("given at the settle").marks;
         assert_eq!(found(&marks, "hide"), [Mark::Hide { measured: true, waited_us: 31_000 }]);
-        let handover = |window, interior| Mark::Handover { of: g, window, interior, interior_over: 0.0, edge_in: 0.4, edge_out: 1.5 };
+        let handover = |window, interior| Mark::Handover { of: g, window, interior, interior_over: 0.0, edge_in: 0.4, edge_out: 1.5, band: None };
         assert_eq!(found(&marks, "handover"), [handover(w(2), 0.3), handover(w(1), 0.8)]);
         let at = |name: &str| names(&marks).iter().position(|found| found == name).unwrap();
         assert!(at("lift") < at("hide") && at("hide") < at("handover"), "{:?}", names(&marks));
@@ -1456,8 +1471,8 @@ mod tests {
         script.lifted(383_700, g);
         script.heard(415_100, Heard::OverlayTaken { generation: g, taken: true });
         script.drawn(416_000, 9, Some(false), (415_200, 415_400, 415_700));
-        let diff = |interior, interior_over, edge_in, edge_out| HandoverDiff { interior, interior_over, edge_in, edge_out };
-        let measured = [(w(2), diff(0.26, 0.0012, 0.37, 1.56)), (w(1), diff(0.79, 0.004, 1.08, 2.26))];
+        let diff = |interior, interior_over, edge_in, edge_out, band| HandoverDiff { interior, interior_over, edge_in, edge_out, band };
+        let measured = [(w(2), diff(0.26, 0.0012, 0.37, 1.56, None)), (w(1), diff(0.79, 0.004, 1.08, 2.26, Some(0.42)))];
         script.handover(480_300, g, &measured);
         script.drive(783_700, Event::Quiet(g));
 

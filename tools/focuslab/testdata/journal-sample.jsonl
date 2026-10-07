@@ -45,7 +45,7 @@
 {"t":81234975100000,"g":1,"mark":"hide","measured":true,"waited_us":31400}
 {"t":81234976000000,"g":1,"mark":"drawn","seq":9,"shown":false,"queued_us":200,"applied_us":300,"flushed_before_us":300}
 {"t":81235040300000,"g":1,"mark":"handover","of":1,"window":[1,2],"interior":0.26,"interior_over":0.0012,"edge_in":0.37,"edge_out":1.56}
-{"t":81235040300000,"g":1,"mark":"handover","of":1,"window":[1,1],"interior":0.79,"interior_over":0.004,"edge_in":1.08,"edge_out":2.26}
+{"t":81235040300000,"g":1,"mark":"handover","of":1,"window":[1,1],"interior":0.79,"interior_over":0.004,"edge_in":1.08,"edge_out":2.26,"band":0.42}
 {"t":81235343700000,"g":1,"mark":"quiet","of":1}
 {"t":81235343700000,"g":1,"mark":"release"}
 {"t":81235343700000,"g":1,"mark":"warm","windows":3}

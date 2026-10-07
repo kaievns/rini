@@ -549,8 +549,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
   window ending wholly on screen, the mean RGB difference between the overlay's own picture just
   before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,
-  and over the 1pt either side of its outline, so a lift can be read against the handover measured on
-  2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
+  over the 1pt either side of its outline, and over the band a decoration draws outside the outline
+  where the window wears one at rest (`decorations.md`), so a lift can be read against the handover
+  measured on 2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
   picture and the quiet after the lift MUST then count from the hide, so the bar is never pictured
   with the overlay over it. That bar is one another application draws ("What rini is" in
   `specs/README.md`, not yet met). It MUST NOT start a capture once a press has asked for a

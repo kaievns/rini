@@ -76,6 +76,7 @@ HANDOVER = [
     ("interior", "interior"),
     ("edge_in", "edge in"),
     ("edge_out", "edge out"),
+    ("band", "band outside the outline"),
 ]
 HEADLINE_KIND = "pan"
 RESEARCH = 'against "The handover, measured" in src/animation/docs/capture-overlay-research.md'
@@ -437,6 +438,7 @@ def handovers(bursts):
                 "interior": mark["interior"],
                 "edge_in": mark["edge_in"],
                 "edge_out": mark["edge_out"],
+                "band": mark.get("band"),
             })
     return rows
 

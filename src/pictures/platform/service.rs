@@ -1108,7 +1108,7 @@ fn compared(check: &HandoverCheck, overlay: &Whole, screen: &Whole) -> Vec<(Wind
     check
         .windows
         .iter()
-        .filter_map(|&(window, frame)| Some((window, compare(&overlay, &screen, frame)?)))
+        .filter_map(|&(window, frame, band)| Some((window, compare(&overlay, &screen, frame, band)?)))
         .collect()
 }
 
@@ -1909,7 +1909,7 @@ mod tests {
             overlay_origin: ScreenPoint::new(0.0, 32.0),
             display: built_in().frame,
             scale: 2.0,
-            windows: vec![(wid(1), frame())],
+            windows: vec![(wid(1), frame(), 0.0)],
         }
     }
 

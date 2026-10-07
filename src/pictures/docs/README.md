@@ -16,7 +16,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
-| **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window and either side of its outline, sampled as the research measured it |
+| **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window, either side of its outline and over a band drawn outside it, sampled as the research measured it |
 | **Settled** | `domain/settle.rs` — when a capture of a window that has to repaint is its settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |

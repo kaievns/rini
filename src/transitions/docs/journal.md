@@ -56,7 +56,7 @@ until it has a mark.
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
 | the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `queued_us`, `applied_us`, `flushed_before_us` |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
-| a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out` (levels, and a share for `interior_over`) |
+| a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out`, and `band` for a window wearing a band at rest (levels, and a share for `interior_over`) |
 
 How to read them:
 
@@ -221,7 +221,11 @@ It is off unless asked for, and `journal false` turns it off with the writing.
   its hop on to the main thread, so the screen comes that much less after it. A thread of the check's
   own, `handover`, draws the two whole
   and compares them over each window
-  (`src/pictures/domain/handover.rs`: the research's sampling and thresholds), and the service tells
+  (`src/pictures/domain/handover.rs`: the research's sampling and thresholds), and, for a window the
+  engine says wears a band at rest, over that band too: every half point from 0.75pt past the edge,
+  beyond the outline, to the band's width, along each side 16pt clear of the corners, as `band`. The
+  engine gives each window its ring's width where it wears the ring where the flight ends, so
+  `pictures` names no decoration. Then the service tells
   the engine `Handover`, which the engine marks as it comes, usually before the quiet and so in the
   lift's own burst. The schedule holds the overlay's picture with the check, and a transition
   beginning drops both: the screen would show the next overlay. Neither picture is taken once a

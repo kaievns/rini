@@ -602,16 +602,17 @@ impl RunningAnimation {
     /// The windows the flight draws a tile of.
     fn drawn(&self) -> Vec<WindowId> { self.tiles.iter().map(|tile| tile.window).collect() }
 
-    /// Each end the overlay is holed over, with the outset of the band its window wears at rest on a
-    /// display of `scale`: its ring's, if it wears the ring where the flight ends.
+    /// How wide a band `window` wears at rest on a display of `scale`, 0 with none: its ring's, if it
+    /// wears the ring where the flight ends.
+    fn band(&self, window: WindowId, scale: f64) -> f64 {
+        let worn = self.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.worn);
+        let ring = worn.filter(|worn| worn.wears_ring).and_then(|worn| worn.decoration.ring);
+        ring.map_or(0.0, |band| crate::decorations::domain::shape::device_width(band.width, scale))
+    }
+
+    /// Each end the overlay is holed over, with the outset of the band its window wears at rest.
     fn holes(&self, ends: Vec<(WindowId, OverlayRect)>, scale: f64) -> Vec<(OverlayRect, f64)> {
-        ends.into_iter()
-            .map(|(window, end)| {
-                let worn = self.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.worn);
-                let ring = worn.filter(|worn| worn.wears_ring).and_then(|worn| worn.decoration.ring);
-                (end, ring.map_or(0.0, |band| crate::decorations::domain::shape::device_width(band.width, scale)))
-            })
-            .collect()
+        ends.into_iter().map(|(window, end)| (end, self.band(window, scale))).collect()
     }
 
     /// Adds or retargets one window without disturbing anything already moving.
@@ -2140,6 +2141,8 @@ impl FlightEngine {
             return None;
         }
         let (display, scale) = self.display?;
+        let band = |window| self.running.as_ref().map_or(0.0, |running| running.band(window, scale));
+        let windows = windows.into_iter().map(|(window, end)| (window, end, band(window))).collect();
         Some(HandoverCheck {
             tag: self.tag(generation),
             overlay: self.overlay?,
@@ -4492,7 +4495,7 @@ mod tests {
                 let check = check.expect("measured");
                 assert_eq!(check.overlay, OVERLAY, "the window the renderer reported");
                 assert_eq!(check.overlay_origin, window_origin(DISPLAY, BAND), "the display last sent");
-                assert_eq!(check.windows, [(wid(1), end())]);
+                assert_eq!(check.windows, [(wid(1), end(), 0.0)], "wearing no ring, no band");
                 assert!(lift_batch(&sent).is_none(), "held");
                 assert!(!holds(&sent).contains(&Hold::Settling), "held with the lift");
 
