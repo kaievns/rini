@@ -19,6 +19,13 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   between them add up to exactly the viewport.
 - Changing the gap between windows MUST leave the focused column where it was on screen, with the
   columns around it re-spaced by the new gap.
+- **A border takes its width out of the window, not out of the strip.** With `layout › border` on,
+  every width, gap and limit above is a window's place in the strip, the window and its border: the
+  window is laid out inside it by the border's width on every side, and held there to its own limits,
+  which its place counts the border in. So the strip is laid out the same with borders on or off, and
+  a border covers nothing beside its window (`decorations.md`). Every frame macOS reports back, a
+  drag's or an app's own, MUST be read as the window's place, the border around it, so the column
+  keeps the width it reserves.
 
 > **Found 2026-09-30, while acting on a report.** "can you check the gap between windos is 50/50
 > configurations? i think it's smaller than other gaps". It was: 2pt between windows against 4pt at
@@ -57,7 +64,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   the width it had before being maximised.
 - **A window the user zooms from its title bar MUST become the full-width column**, the same one
   `ctrl-F` makes, whatever size the app zooms it to: the screen, or its content as Safari and Finder
-  do. It MUST end exactly at rini's full-width frame and stay there when it is clicked again. Zooming
+  do. It MUST end exactly at rini's full-width frame, inside the viewport by the border's width with
+  a border on, and stay there when it is clicked again. Zooming
   it again from its title bar MUST restore the width and the stack it had, whatever size the app
   reports on the way back. The two are one toggle, so `ctrl-F` MUST undo a zoom and a zoom MUST undo
   `ctrl-F`.
@@ -105,7 +113,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 - **A drag on a window's left edge MUST move that edge and keep the right one.** The column takes the
   dragged width, its right edge stays where it was, and the columns before it scroll by the change.
-  The window ends where the cursor let go, to the point.
+  The window ends where the cursor let go, to the point, with a border on as without: the drag is
+  read as the window's place, and the place keeps its dragged width whole.
 - A column grown past the viewport's left edge MUST end with its left edge at the viewport's left
   edge and the rest of its growth on the right. The first column therefore ends grown to the right,
   as niri ends a resize of its first column.

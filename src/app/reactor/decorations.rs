@@ -13,7 +13,7 @@ use rini_geometry::is_off_screen;
 use rini_geometry::space::{FromCg, ScreenRect};
 
 use crate::decorations::domain::rest::{Held, RestDisplay, RestModel, RestWindow};
-use crate::decorations::domain::style::{Rings, Worn};
+use crate::decorations::domain::style::{Decoration, Rings, Worn};
 use crate::decorations::platform::rest::{Event as RestEvent, Sender};
 use crate::workspaces::VirtualWorkspaceId;
 
@@ -29,9 +29,10 @@ pub(super) struct RestFeed {
 
 impl Reactor {
     /// The rings with `focus` holding focus: each workspace's active window on every display rini
-    /// manages, `focus` on its own workspace. None while focus rings are off, so nothing is read.
+    /// manages, `focus` on its own workspace, which a border's paint reads too. None while rini
+    /// draws neither, so nothing is read.
     pub(super) fn rings_with(&self, focus: Option<WindowId>) -> Rings {
-        if self.config.settings.decorations.decoration().ring.is_none() {
+        if self.config.settings.decorations.decoration() == Decoration::default() {
             return Rings::default();
         }
         let engine = &self.layout_manager.layout_engine;
@@ -83,7 +84,7 @@ impl Reactor {
     }
 
     /// Every managed window on a space rini manages, what it wears with the key window holding
-    /// focus, and what holds its band: none of them while focus rings are off.
+    /// focus, and what holds its bands: none of them while rini draws neither ring nor border.
     pub(super) fn rest_model(&self) -> RestModel {
         let screens = &self.space_state.screens;
         let displays = screens
@@ -91,7 +92,7 @@ impl Reactor {
             .map(|screen| RestDisplay { bounds: ScreenRect::from_cg(screen.bounds), scale: screen.scale })
             .collect();
         let decoration = self.config.settings.decorations.decoration();
-        if decoration.ring.is_none() {
+        if decoration == Decoration::default() {
             return RestModel { displays, windows: Vec::new() };
         }
         let managed = |window: &WindowId| {

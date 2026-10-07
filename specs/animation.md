@@ -337,7 +337,8 @@ destination for a window already moving.
   its corners.
 - When focus moves during a flight, each window's hairline and shadow MUST turn with its own picture: the
   window losing focus dimmer as its picture turns unfocused, the window gaining focus brighter as its
-  picture turns focused, each at its own time. Its focus ring turns with them (`decorations.md`).
+  picture turns focused, each at its own time. Its focus ring and its border turn with them
+  (`decorations.md`).
 
 The hairline's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
 applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
@@ -364,9 +365,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or grew it: one a pass
   opened or grew is pictured once it has repainted instead. A look a window already had when it landed
-  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline, its shadow
-  and its focus ring turning with it: the window losing focus unfocused, the window gaining focus
-  focused.
+  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline, its shadow,
+  its focus ring and its border turning with it: the window losing focus unfocused, the window gaining
+  focus focused.
 - The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
   focus MUST wait for the other's at most 15ms, one capture interval, and not at all once the other's
   turn can no longer be pictured; two that come in together MUST turn old, then new. Waiting for the

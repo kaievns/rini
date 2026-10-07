@@ -69,6 +69,9 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         if let Some(ring) = layout.focus_ring.take() {
             apply_band(ring, &mut settings.decorations.focus_ring, &mut problems);
         }
+        if let Some(border) = layout.border.take() {
+            apply_border(border, &mut settings.decorations.border, &mut problems);
+        }
         apply_layout(layout, &mut settings.layout, &mut problems);
     }
 
@@ -257,6 +260,16 @@ fn apply_band(part: BandPart, setting: &mut BandSetting, problems: &mut Vec<Prob
     }
     if let Some(ColourValue(colour)) = part.inactive_color {
         setting.band.inactive = colour;
+    }
+}
+
+/// niri's `border`, whose block turns the border on unless it writes `off`
+/// (`niri:niri-config/src/lib.rs:253-280`, Kai's decision D2 in `specs/config.md`).
+fn apply_border(part: BandPart, setting: &mut BandSetting, problems: &mut Vec<Problem>) {
+    let switched = part.on.is_some() || part.off.is_some();
+    apply_band(part, setting, problems);
+    if !switched {
+        setting.on = true;
     }
 }
 

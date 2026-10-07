@@ -81,6 +81,18 @@ layout {
         inactive-color "#505050"
     }
 
+    // niri's border, drawn around every window, in `active-color` on the window holding focus and
+    // `inactive-color` on the others, with the focus ring outside it. A tiled window gives up `width`
+    // on each side to it, so the border fills the window's place in the strip and covers nothing; a
+    // floating window keeps its size and wears it outside. Writing `border` turns it on unless the
+    // block says `off`, as in niri.
+    border {
+        off
+        width 4
+        active-color "#ffc87f"
+        inactive-color "#505050"
+    }
+
     // A new column's width, as a fraction of the display's tiling width.
     default-column-width { proportion 0.7; }
 

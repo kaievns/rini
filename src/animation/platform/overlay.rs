@@ -745,8 +745,8 @@ impl TileOverlay {
     }
 
     /// Draws a tile focused or not and wearing the ring or not, a hard cut: its hairline's white,
-    /// its shadow's depth and its ring. For focus handing over mid-flight; every dressing draws what
-    /// its tile says.
+    /// its shadow's depth, its ring and its border. For focus handing over mid-flight; every dressing
+    /// draws what its tile says.
     pub fn set_tile_focused(&mut self, window: WindowId, focused: bool, ringed: bool) {
         self.tree.turn(window, focused, ringed);
     }
@@ -2925,7 +2925,7 @@ mod tests {
             let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
             let band = Band { width: 4.0, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) };
             let mut tile = overlay_tile(window, drawn, drawn, false);
-            tile.worn = Worn { decoration: Decoration { ring: Some(band) }, wore_ring: true, wears_ring: true };
+            tile.worn = Worn { decoration: Decoration { ring: Some(band), border: None }, wore_ring: true, wears_ring: true };
             tile.ringed = true;
             tile.radius = Some(16.0);
             let tiles = [tile];
@@ -2938,7 +2938,7 @@ mod tests {
                 ],
                 &tiles,
             );
-            let ring = &tree.tile_layers[&window].decorations.ring.layer;
+            let ring = &tree.tile_layers[&window].decorations.bands.ring.layer;
             let colour = |c: Colour| objc2_core_graphics::CGColor::new_srgb(c.r.into(), c.g.into(), c.b.into(), c.a.into());
             let painted = |c: Colour| objc2_core_graphics::CGColor::equal_to_color(ring.borderColor().as_deref(), Some(&colour(c)));
             assert!(!ring.isHidden() && painted(band.inactive), "worn unfocused");

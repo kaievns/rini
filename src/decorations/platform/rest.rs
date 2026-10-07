@@ -1,9 +1,9 @@
 //! The decorations at rest: a borderless, click-through, non-activating panel of rini's own directly
-//! above each window whose band shows, drawing the band a tile draws (`layers::Band`). A main-thread
-//! actor: the reactor tells it what each window wears, the window server where each window is and
-//! when it was reordered, hidden or unhidden, and the renderer when its overlay lifts. The rules are
-//! `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is "At rest" in
-//! `src/decorations/docs/README.md`.
+//! above each window whose bands show, drawing the bands a tile draws (`layers::Bands`). A
+//! main-thread actor: the reactor tells it what each window wears, the window server where each
+//! window is and when it was reordered, hidden or unhidden, and the renderer when its overlay lifts.
+//! The rules are `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is "At
+//! rest" in `src/decorations/docs/README.md`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,7 +28,7 @@ use crate::decorations::domain::rest::{
     self, Parking, RestDisplay, RestModel, RestWindow, display_of, ordered_out, shown,
 };
 use crate::decorations::domain::shape;
-use crate::decorations::platform::layers::Band;
+use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::frames;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::event::{ServerFrame, ServerOrder};
@@ -84,7 +84,7 @@ struct Panel {
     root: Retained<CALayer>,
     /// At the decorated window's frame, in the panel's points.
     holder: Retained<CALayer>,
-    band: Band,
+    bands: Bands,
     target: Option<WindowServerId>,
     /// Its frame on screen as last set, and whether it was shown.
     placed: Option<(ScreenRect, bool)>,
@@ -126,10 +126,10 @@ impl Panel {
         let holder = CALayer::layer();
         holder.setAnchorPoint(CGPoint::new(0.0, 0.0));
         root.addSublayer(&holder);
-        let band = Band::new(&holder);
+        let bands = Bands::new(&holder);
         // Ordered in once, and only shown or hidden by alpha from here: ordering costs a frame.
         window.orderFrontRegardless();
-        Some(Panel { window, root, holder, band, target: None, placed: None, radius: None })
+        Some(Panel { window, root, holder, bands, target: None, placed: None, radius: None })
     }
 
     fn own_id(&self) -> Option<WindowServerId> {
@@ -143,10 +143,10 @@ impl Panel {
         self.window.orderWindow_relativeTo(NSWindowOrderingMode::Above, target.as_u32() as isize);
     }
 
-    /// Draws `window`'s band around its window at `frame` on `display`, or none.
+    /// Draws `window`'s bands around its window at `frame` on `display`, or none.
     fn place(&mut self, window: &RestWindow, frame: ScreenRect, display: RestDisplay, showing: bool) {
-        let width = window.width(display.scale);
-        let Some(outer) = shape::rest_frame(frame, width, display.bounds).filter(|_| showing) else {
+        let outset = window.outset(display.scale);
+        let Some(outer) = shape::rest_frame(frame, outset, display.bounds).filter(|_| showing) else {
             self.hide();
             return;
         };
@@ -160,9 +160,9 @@ impl Panel {
         self.holder.setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), frame.size.to_cg()));
         self.root.setContentsScale(display.scale);
         let size = frame.size.respace();
-        self.band.set_width(width);
-        self.band.place(size, shape::radius(self.radius, size));
-        self.band.paint(window.paint());
+        self.bands.wear(&window.decoration, display.scale);
+        self.bands.place(size, shape::radius(self.radius, size));
+        self.bands.paint(&window.style());
         if self.placed.is_none_or(|(_, shown)| !shown) {
             self.window.setAlphaValue(1.0);
         }

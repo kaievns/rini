@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 use rini_core::ids::WindowServerId;
 use rini_geometry::space::ScreenRect;
 
-use crate::decorations::domain::paint::Colour;
 use crate::decorations::domain::shape;
 use crate::decorations::domain::style::{Decoration, Style};
 use crate::displays::event::{OrderChange, ServerOrder};
@@ -41,13 +40,17 @@ pub struct RestWindow {
 }
 
 impl RestWindow {
-    /// The colour its band is drawn in, if it wears one.
-    pub fn paint(&self) -> Option<Colour> { Style::of(self.focused, self.ringed, &self.decoration).ring }
+    /// How its bands are painted: those it wears in their colours, the others none.
+    pub fn style(&self) -> Style { Style::of(self.focused, self.ringed, &self.decoration) }
 
-    /// Its band's width in points on a display of `scale`.
-    pub fn width(&self, scale: f64) -> f64 {
-        self.decoration.ring.map_or(0.0, |band| shape::device_width(band.width, scale))
+    /// Whether it wears a band now: the ring, or a border.
+    pub fn wears_a_band(&self) -> bool {
+        let style = self.style();
+        style.ring.is_some() || style.border.is_some()
     }
+
+    /// How far its bands reach outside it, in points of a display of `scale`.
+    pub fn outset(&self, scale: f64) -> f64 { shape::outset(&self.decoration, self.ringed, scale) }
 }
 
 /// A display a band at rest is drawn on: its whole bounds and its scale.
@@ -70,7 +73,7 @@ pub fn display_of(frame: ScreenRect, displays: &[RestDisplay]) -> Option<RestDis
     displays.iter().filter(|display| area(display) > 0.0).max_by(|a, b| area(a).total_cmp(&area(b))).copied()
 }
 
-/// Whether `window`'s band shows with its window at `frame`: it wears one, nothing holds it
+/// Whether `window`'s bands show with its window at `frame`: it wears one, nothing holds it
 /// (`parked` as it has taken effect), the window server has it ordered in, and some of the band is on
 /// a display. Shown or not, a rest window stays ordered in: showing is its alpha alone.
 pub fn shown(
@@ -82,7 +85,7 @@ pub fn shown(
 ) -> bool {
     let Held { parked: _, mission_control, fullscreen, space_hidden } = window.held;
     let on_a_display = frame.and_then(|frame| display_of(frame, displays)).is_some();
-    window.paint().is_some() && !(parked || mission_control || fullscreen || space_hidden || ordered_out) && on_a_display
+    window.wears_a_band() && !(parked || mission_control || fullscreen || space_hidden || ordered_out) && on_a_display
 }
 
 /// Whether a window is ordered out after `orders`, ordered out before them if `was`: its last hide
@@ -185,9 +188,11 @@ mod tests {
     use rini_geometry::space::{Point, Size};
 
     use super::*;
+    use crate::decorations::domain::paint::Colour;
     use crate::decorations::domain::style::Band;
 
     const BAND: Band = Band { width: 4.0, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) };
+    const BORDER: Band = Band { width: 4.0, active: Colour::rgb(0xffc87f), inactive: Colour::rgb(0x505050) };
 
     fn ws(id: u32) -> WindowServerId { WindowServerId::new(id) }
 
@@ -196,7 +201,13 @@ mod tests {
     fn display() -> Vec<RestDisplay> { vec![RestDisplay { bounds: rect(0.0, 0.0, 1728.0, 1117.0), scale: 2.0 }] }
 
     fn ringed(held: Held) -> RestWindow {
-        RestWindow { window: ws(56), decoration: Decoration { ring: Some(BAND) }, focused: true, ringed: true, held }
+        RestWindow {
+            window: ws(56),
+            decoration: Decoration { ring: Some(BAND), border: None },
+            focused: true,
+            ringed: true,
+            held,
+        }
     }
 
     const SLOT: ScreenRect = ScreenRect::new(Point::new(3.0, 35.0), Size::new(859.0, 1079.0));
@@ -208,6 +219,23 @@ mod tests {
         assert!(!shown(&unringed, false, false, Some(SLOT), &display()), "it wears nothing");
         assert!(!shown(&ringed(Held::default()), false, false, None, &display()), "no frame yet");
     }
+
+    #[test]
+    fn a_bordered_window_shows_its_band_whether_it_wears_the_ring_or_not() {
+        let bordered = |ringed| RestWindow {
+            decoration: Decoration { border: Some(BORDER), ..ringed_window().decoration },
+            ringed,
+            focused: false,
+            ..ringed_window()
+        };
+        for ringed in [true, false] {
+            assert!(shown(&bordered(ringed), false, false, Some(SLOT), &display()), "ringed {ringed}");
+        }
+        assert_eq!(bordered(false).style().border, Some(BORDER.inactive));
+        assert_eq!((bordered(true).outset(2.0), bordered(false).outset(2.0)), (8.0, 4.0), "the ring outside the border");
+    }
+
+    fn ringed_window() -> RestWindow { ringed(Held::default()) }
 
     /// macOS clamps a parked Chrome or Finder window so 52pt of it shows, past the 40pt
     /// `is_off_screen` allows: only rini's word says it is parked.

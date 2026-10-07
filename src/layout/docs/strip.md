@@ -257,11 +257,41 @@ itself: `on_windows_on_screen_updated` reports `changed` when a window's
 constraints differ from what was recorded, and `constrains_layout` keeps the
 common case of a window with no limits from costing a pass.
 
+## A border takes its width out of the window
+
+niri's border is drawn inside a tiled window's place in the strip, its slot, the way niri draws it
+inside the tile: every column width, gap, limit and scroll offset is a slot's, and the window is
+the slot inset by the border on every side (`tile::window_in`). The application hands the layout
+one width for every tiled window (`LayoutEngine::set_border_width`, from
+`DecorationSettings::border_width`), so `layout` names no decoration.
+
+- **Frames leave once, as windows.** `calculate_layout` lays every slot out as before, then insets
+  each and holds the window to its own limits inside it (`clamp_to_constraints`), so a window held
+  to its maximum sits at its slot's top-left, inside the border. Every caller gets window frames,
+  and none converts.
+- **Limits are the slot's.** `column_limits` and each stacked row count the border on both sides of
+  each limit a window reports (`tile::slot_limits`); counted without it, a window's minimum would
+  leave the slot 2·border short, and the window would be clamped below its own minimum.
+- **Reports come back once, as slots.** `on_window_resized` reads the report and the drag's start
+  as slots on entry (`tile::slot_of`), so the dragged side, the dragged width, the ratio, the heights
+  a stacked edge trades and the right edge a left-edge drag keeps are all a slot's, and a dragged
+  column keeps its slot width whole: the window lands where it was let go. The reactor's
+  `DragSession::start_frame` stays the window's frame.
+- **What compares windows with windows needs nothing**: an echo of rini's own write
+  (`same_as(target)` in the reactor), the title-bar zoom, which ends at the inset full-width frame
+  rini writes, `take_strip_layout` and `strip_move::start_where_standing`, the persisted
+  fingerprints, and drag-swap overlap.
+- A floating window keeps its frame, and the border is drawn outside it.
+
+The width is the config's, as written, where the band is drawn in whole device pixels
+("The focus ring and the border, as drawn" in `src/decorations/docs/README.md`).
+
 ## Mouse resize
 
 macOS reports a mouse resize as frames and nothing else. The reactor keeps the frame the window had
 before the drag's first report (`DragSession::start_frame`) and hands it to the layout with every
-report of the drag, as an `edge_drag::Drag`; an app resizing itself sends `None`.
+report of the drag, as an `edge_drag::Drag`; an app resizing itself sends `None`. The layout reads
+both as the window's slot, the border around it ("A border takes its width out of the window").
 `edge_drag::dragged_side` reads the edge off the two frames: the left one when `minX` moved and
 `maxX` stayed within 0.5pt. `niri:` paths are at
 https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.

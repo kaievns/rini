@@ -26,10 +26,12 @@ pub struct LayoutPart {
     pub window_insertion_point: Option<WindowInsertionPoint>,
     #[knus(child)]
     pub focus_ring: Option<BandPart>,
+    #[knus(child)]
+    pub border: Option<BandPart>,
 }
 
-/// niri's `focus-ring`: `on` or `off`, its width, and its colour on the display holding focus and on
-/// the others.
+/// niri's `focus-ring` and `border`: `on` or `off`, its width, and its colour on the display holding
+/// focus and on the others.
 #[derive(knus::Decode, Debug, Default)]
 #[knus(span_type = Span)]
 pub struct BandPart {

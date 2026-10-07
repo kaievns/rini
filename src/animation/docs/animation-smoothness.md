@@ -230,13 +230,14 @@ Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
 coordinates, flipped as the canvas is; where a hole lands on screen was not
 measured on a window shorter than the display. Which windows get holes, and
 when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
-it watches end wholly on screen, from the show to the lift. A window wearing its
-focus ring where the flight ends gets a second hole, over the ring rini draws
-around it at rest: a point square, or the ring's width where that is narrower,
-halfway across the ring's left edge and halfway down (`band_hole_in`, pinned by
-`the_band_hole_is_outside_the_window_and_inside_its_band`), where its tile and
-the rest window draw the same pixels. The engine gives each end its ring's
-width in device pixels (`a_decorated_window_is_holed_in_its_band_as_well`).
+it watches end wholly on screen, from the show to the lift. A window wearing a
+border, or its focus ring where the flight ends, gets a second hole, over the
+bands rini draws around it at rest: a point square, or their width where that is
+narrower, halfway across their left edge and halfway down (`band_hole_in`, pinned
+by `the_band_hole_is_outside_the_window_and_inside_its_band`), where its tile and
+the rest window draw the same pixels. The engine gives each end how far its bands
+reach, in device pixels (`shape::outset`,
+`a_decorated_window_is_holed_in_its_band_as_well`).
 That a rest window wholly under the overlay is held back as a window is, and so
 needs the hole, is inferred, not measured.
 

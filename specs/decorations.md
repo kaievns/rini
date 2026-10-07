@@ -1,11 +1,12 @@
 # Borders and the focus ring
 
-What rini draws around a window that macOS does not: niri's focus ring, on the overlay's tiles
-through a flight and in windows of its own at rest. macOS draws each window's own hairline and
+What rini draws around a window that macOS does not: niri's focus ring and border, on the overlay's
+tiles through a flight and in windows of its own at rest. macOS draws each window's own hairline and
 shadow; rini draws those only on the overlay's tiles, as `animation.md` requires.
 
-> **Reported 2026-10-06.** "full niri border implementation active/inactive". macOS draws no focus
-> ring, and rini refused niri's `focus-ring` with "rini draws no focus ring".
+> **Reported 2026-10-06.** "full niri border implementation active/inactive". macOS draws neither,
+> and rini refused niri's `focus-ring` with "rini draws no focus ring" and its `border` with "rini
+> draws no borders; macOS draws the windows".
 
 ## Who wears the ring
 
@@ -32,19 +33,46 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   that corner grown by the ring's width; a square window wears a square ring. Its width MUST be
   whole device pixels, never below one, as niri rounds it.
 
+## The border
+
+- While `layout › border` is on, every window rini manages, tiled or floating, MUST wear the border,
+  in `active-color` while it holds focus and in `inactive-color` otherwise, as niri paints it. A
+  window rini does not manage wears none.
+- The border MUST be off unless `layout › border` turns it on, and a `border` block that writes
+  neither `on` nor `off` turns it on, as in niri (`config.md`). It is niri's: 4pt wide, `#ffc87f`
+  active and `#505050` inactive.
+- A tiled window MUST give the border its width out of its own place in the strip: the strip is laid
+  out the same with borders on or off, and the window is laid out inside its place by the border's
+  width on every side, so the border fills that place and covers nothing beside it. Its limits count
+  the border too: a window that needs 400pt gets a place 408pt wide under a 4pt border. Outside the
+  window, a border would cover its neighbour less the gap, as the ring does, and every window wears
+  one. niri draws its border inside the tile the same way.
+- A floating window MUST keep its frame and wear the border outside it. Its frame is the user's or
+  the app's, which a border must not resize; niri grows the floating tile instead.
+- The border's inner edge MUST be the window's own corner, on its continuous curve, and its outer
+  edge that corner grown by its width, as the ring's; its width MUST be whole device pixels, never
+  below one.
+- With both on, the ring MUST lie outside the border and the border be drawn in front of it, as
+  niri stacks them; the ring is drawn under the border in to the window's edge, so the two meet at
+  no seam.
+
 ## Through a flight
 
-- Each tile MUST wear the ring its window wears, drawn in front of the tile's picture, its hairline
-  and its outline. The tile's outline stays drawn under it, as macOS's own outline lies under a ring
-  at rest.
+- Each tile MUST wear the ring and the border its window wears, drawn in front of the tile's
+  picture, its hairline and its outline. The tile's outline stays drawn under them, as macOS's own
+  outline lies under a ring at rest.
 - When focus moves during a flight, each tile's ring MUST turn with its hairline, at the time
   "Focus changing during a flight" in `animation.md` gives it. The window gaining focus on its own
   display wears no ring until its turn and then the active one; the window losing it wears the active
   ring until its turn and then none. When focus moves to another display, each keeps its display's
   ring, and only the paint turns at each one's time: the window losing focus to the inactive, the one
-  gaining it to the active.
+  gaining it to the active. Each tile's border turns its paint at the same time as its hairline,
+  by its own focus alone.
 
 ## At rest
+
+What this section requires of the ring it requires of the border, and of both together: a window
+wearing either is drawn by one rest window holding both.
 
 - Between flights the ring MUST be drawn around its window by rini itself, in a window of rini's own
   that sits directly above the window it decorates, with nothing of another application's in
@@ -79,11 +107,15 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 
 ## Where it lives
 
-The ring's settings are `src/decorations/settings.rs`, decoded from `layout › focus-ring` in
-`src/app/config/kdl/layout.rs` and `src/app/config/kdl/apply.rs`. Who wears it, its paint by focus
-and its colours are `src/decorations/domain/style.rs` and `src/decorations/domain/paint.rs`; its
-band, width and corner, and its rest window's frame, `src/decorations/domain/shape.rs`; the layer it
-is drawn on, `src/decorations/platform/layers.rs`. The reactor decides each window's ring and what
+The ring's and the border's settings are `src/decorations/settings.rs`, decoded from
+`layout › focus-ring` and `layout › border` in `src/app/config/kdl/layout.rs` and
+`src/app/config/kdl/apply.rs`. Who wears the ring, the paint of each by focus and their colours are
+`src/decorations/domain/style.rs` and `src/decorations/domain/paint.rs`; each band, its width and
+corner, how far the two reach, and their rest window's frame, `src/decorations/domain/shape.rs`; the
+layers they are drawn on, `src/decorations/platform/layers.rs`. A tiled window inside its place in
+the strip, the border's width in, is `src/layout/domain/tile.rs`, read by
+`src/layout/domain/scrolling.rs` with the width the reactor hands `src/workspaces/engine.rs` at
+launch and at each reload. The reactor decides each window's ring and what
 holds its band at rest in `src/app/reactor/decorations.rs`, from each workspace's active window
 (`src/workspaces/engine.rs`). When a tile's ring turns is `src/transitions/domain/lifecycle.rs`,
 carried out by `src/transitions/platform/engine.rs` on the overlay

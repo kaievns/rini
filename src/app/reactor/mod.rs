@@ -628,7 +628,7 @@ impl Reactor {
 
     pub fn new(
         config: Config,
-        layout_engine: LayoutEngine,
+        mut layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
         mut record: Record,
         broadcast_tx: BroadcastSender,
@@ -639,6 +639,7 @@ impl Reactor {
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
         record.start(&layout_engine, &display_memory);
+        layout_engine.set_border_width(config.settings.decorations.border_width());
         let (raise_manager_tx, _rx) = channels::channel();
         let (window_notify_tx, window_tx_store) = match window_notify {
             Some((tx, store)) => (Some(tx), store),

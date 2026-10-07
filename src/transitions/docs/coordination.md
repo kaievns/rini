@@ -128,11 +128,11 @@ installed hidden, and the coordinator told what was composed (`Event::Merge`). T
 once those pictures arrive, each put on its tile, or 80ms pass (`FRAME_ZERO_PATIENCE`); the real frames
 are written then and never before, for every kind; a 1pt hole is cut over every window that ends wholly
 on screen, so the window server counts it visible and its app keeps painting, and another over the
-focus ring rini draws around it at rest when it wears one where it ends; and the end state is
-watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the windows it grows
-or opens to repaint (up to `HOLD_CAP`, and no longer for one whose picture the pictures service reports
-will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a strip movement
-moves at once.
+border and focus ring rini draws around it at rest when it wears either where it ends; and the end
+state is watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the
+windows it grows or opens to repaint (up to `HOLD_CAP`, and no longer for one whose picture the
+pictures service reports will not come, `Lost`, or one a merged pass sends where no watch can see it
+repaint); a strip movement moves at once.
 
 The coordinator hears every tile and frame in the window server's points (`Screen`), and says its
 holes and snaps in the overlay's (`Overlay`), converted over `StageSummary.display`: the bounds of the
@@ -365,8 +365,8 @@ anyway; two in one round swap old, then new. The watch reports the old window `L
 with no change, out of tries, refused or found clipped, and the target's picture waits no longer. A
 merge's retarget that carries it on reports it again under the new tag: the coordinator drops a report
 under the generation before. The target's changed picture is kept as its focused look,
-and its tile is drawn focused: focus hands over. Each tile's hairline, shadow and focus ring turn
-with its own picture (`TileOverlay::set_tile_focused`, the ring as `lifecycle::drawn_ringed` has
+and its tile is drawn focused: focus hands over. Each tile's hairline, shadow, focus ring and
+border turn with its own picture (`TileOverlay::set_tile_focused`, the ring as `lifecycle::drawn_ringed` has
 it); Kai, 2026-10-05: "i'd like them to be orchestrated independently
 whenever blur or focus are done switching." A window losing focus whose turn has not shown when the
 target's does, one clipped, parked, never watched or out of tries, is drawn unfocused just before the

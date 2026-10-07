@@ -1,5 +1,5 @@
-//! What the rest windows are sent after a batch of events: each managed window's ring, with the key
-//! window holding focus, and what holds its band.
+//! What the rest windows are sent after a batch of events: each managed window's ring and border,
+//! with the key window holding focus, and what holds its bands.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
 use test_log::test;
@@ -147,3 +147,20 @@ fn a_column_the_strip_parks_is_sent_to_the_rest_actor_as_parked() {
     assert!(model.windows.iter().any(|window| !window.held.parked));
 }
 
+
+/// With the ring off, focus still decides the border's paint, and every managed window wears it.
+#[test]
+fn with_only_borders_on_every_managed_window_is_sent_its_border_and_whether_it_holds_focus() {
+    let mut desk = desk();
+    let decorations = &mut desk.reactor.config.settings.decorations;
+    decorations.focus_ring.on = false;
+    decorations.border.on = true;
+    let left = desk.left;
+    let model = focus(&mut desk, left_ghostty(), left);
+    for wsid in [901, 902, 903, 904] {
+        let window = sent(&model, wsid);
+        assert_eq!(window.decoration.border, Some(desk.reactor.config.settings.decorations.border.band), "{wsid}");
+        assert_eq!(window.decoration.ring, None, "{wsid}");
+        assert_eq!(window.focused, wsid == 901, "{wsid}");
+    }
+}

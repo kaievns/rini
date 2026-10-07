@@ -1,6 +1,6 @@
-//! How a window's decorations are painted: the hairline's white line and outline, and the shadow,
-//! each by whether the window holds focus; the focus ring, by whether the window wears it; and who
-//! wears it.
+//! How a window's decorations are painted: the hairline's white line and outline, the shadow and
+//! the border, each by whether the window holds focus; the focus ring, by whether the window wears
+//! it; and who wears it.
 
 use rini_core::ids::WindowId;
 use serde::Serialize;
@@ -35,8 +35,8 @@ const FOCUSED_SHADOW: ShadowStyle = ShadowStyle {
     offset_y: 12.0,
 };
 
-/// A band rini draws outside a window, as niri's focus ring is: its width in points, and its paint
-/// on the window holding focus and on the others that wear it.
+/// A band rini draws outside a window, as niri's focus ring and border are: its width in points, and
+/// its paint on the window holding focus and on the others that wear it.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
 pub struct Band {
     pub width: f64,
@@ -44,10 +44,12 @@ pub struct Band {
     pub inactive: Colour,
 }
 
-/// What a window wears that rini draws rather than macOS: its focus ring, while rings are on.
+/// What a window wears that rini draws rather than macOS: its focus ring, while rings are on, and
+/// its border, while borders are.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Decoration {
     pub ring: Option<Band>,
+    pub border: Option<Band>,
 }
 
 /// What a window wears through a pass: its decoration, and whether it wears the ring before the pass
@@ -60,26 +62,26 @@ pub struct Worn {
 }
 
 /// How a window's decorations are painted: the alpha of the white line, the shadow, and the ring's
-/// colour, if it wears one.
+/// and the border's colours, for each it wears.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Style {
     pub light_alpha: f64,
     pub shadow: ShadowStyle,
     pub ring: Option<Colour>,
+    pub border: Option<Colour>,
 }
 
 impl Style {
     /// A focused window's: the brighter white line and the deeper shadow. A window that wears the
     /// ring (`ringed`) wears its decoration's, in the active paint while it is focused and the
-    /// inactive one otherwise; any other wears none.
+    /// inactive one otherwise; any other wears none. The border is worn by every window its
+    /// decoration has one for, painted by focus alone, as niri paints it.
     pub fn of(focused: bool, ringed: bool, decoration: &Decoration) -> Style {
-        let ring = decoration
-            .ring
-            .filter(|_| ringed)
-            .map(|band| if focused { band.active } else { band.inactive });
+        let paint = |band: Band| if focused { band.active } else { band.inactive };
+        let ring = decoration.ring.filter(|_| ringed).map(paint);
         let (light_alpha, shadow) =
             if focused { (0.20, FOCUSED_SHADOW) } else { (0.18, UNFOCUSED_SHADOW) };
-        Style { light_alpha, shadow, ring }
+        Style { light_alpha, shadow, ring, border: decoration.border.map(paint) }
     }
 }
 
@@ -126,7 +128,13 @@ mod tests {
         inactive: Colour::rgb(0x505050),
     };
 
-    fn ringed() -> Decoration { Decoration { ring: Some(RING) } }
+    const BORDER: Band = Band {
+        width: 4.0,
+        active: Colour::rgb(0xffc87f),
+        inactive: Colour::rgb(0x505050),
+    };
+
+    fn ringed() -> Decoration { Decoration { ring: Some(RING), ..Decoration::default() } }
 
     fn w(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
@@ -174,6 +182,16 @@ mod tests {
         assert_eq!(Style::of(true, true, &ringed()).ring, Some(RING.active));
         assert_eq!(Style::of(true, false, &ringed()).ring, None, "focused but not its workspace's active window");
         assert_eq!(Style::of(true, true, &Decoration::default()).ring, None, "rings off");
+    }
+
+    #[test]
+    fn the_border_wears_the_active_paint_only_while_focused() {
+        let bordered = Decoration { border: Some(BORDER), ..ringed() };
+        for ringed in [true, false] {
+            assert_eq!(Style::of(true, ringed, &bordered).border, Some(BORDER.active), "ringed {ringed}");
+            assert_eq!(Style::of(false, ringed, &bordered).border, Some(BORDER.inactive), "ringed {ringed}");
+        }
+        assert_eq!(Style::of(true, true, &ringed()).border, None, "borders off");
     }
 
     /// Three radii plus the offset is where a gaussian ramp is visually spent.

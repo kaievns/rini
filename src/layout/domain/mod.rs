@@ -7,3 +7,4 @@ pub mod edge_drag;
 pub mod preset_width;
 pub mod scrolling;
 pub mod strip;
+pub mod tile;

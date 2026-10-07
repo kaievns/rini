@@ -432,6 +432,42 @@ fn urgent_and_gradients_are_refused_as_not_yet_supported() {
     assert!(refused("window-rule {\n    focus-ring {\n        off\n    }\n}\n").contains("not supported yet"));
 }
 
+/// niri's own default config led its users to write `border {}` to turn the border on, so a block
+/// with neither `on` nor `off` means on there, and here.
+#[test]
+fn a_border_with_neither_on_nor_off_turns_it_on() {
+    assert!(!parse("").settings.decorations.border.on, "off unless written, as niri");
+    let empty = parse("layout {\n    border {\n    }\n}\n").settings.decorations.border;
+    assert!(empty.on);
+    let widened = parse(
+        "layout {\n    border {\n        width 2\n        active-color \"#ff8000\"\n        inactive-color \"#202020\"\n    }\n}\n",
+    );
+    let border = widened.settings.decorations.border;
+    assert!(border.on);
+    assert_eq!(border.band.width, 2.0);
+    assert_eq!((border.band.active, border.band.inactive), (Colour::rgb(0xff8000), Colour::rgb(0x202020)));
+    assert_eq!(empty.band, parse("").settings.decorations.border.band, "niri's width and colours");
+}
+
+#[test]
+fn border_off_stays_off() {
+    assert!(!parse("layout {\n    border {\n        off\n        width 2\n    }\n}\n").settings.decorations.border.on);
+    assert!(parse("layout {\n    border {\n        on\n    }\n}\n").settings.decorations.border.on);
+    assert!(
+        refused("layout {\n    border {\n        on\n        off\n    }\n}\n").contains("`on` and `off` are both written")
+    );
+}
+
+#[test]
+fn a_border_in_an_output_is_refused_with_its_reason() {
+    let report = refused("output \"D\" {\n    layout {\n        border {\n            width 2\n        }\n    }\n}\n");
+    assert!(report.contains("the border is the whole file's, in `layout`"), "{report}");
+    for name in ["urgent-color \"#9b0000\"", "active-gradient from=\"#ffbb66\" to=\"#ffc880\""] {
+        let report = refused(&format!("layout {{\n    border {{\n        {name}\n    }}\n}}\n"));
+        assert!(report.contains("not supported yet"), "{name}: {report}");
+    }
+}
+
 #[test]
 fn recent_windows_icons_are_keyed_by_bundle_id() {
     let config = parse(

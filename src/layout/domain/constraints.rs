@@ -19,16 +19,18 @@ fn sanitize(v: f64) -> f64 {
 /// largest minimum, the largest lock, and the smallest maximum. A column holding a window that cannot
 /// go below 400pt and one that cannot go above 600pt is between 400 and 600, and a column whose
 /// windows lock to different widths takes the larger, because the smaller one can be clipped but the
-/// larger one cannot be conjured.
+/// larger one cannot be conjured. Each limit is its window's slot's, the window's own with a
+/// `border` on both sides (`tile::slot_limits`).
 pub fn column_limits(
     windows: impl IntoIterator<Item = WindowLayoutConstraints>,
+    border: f64,
 ) -> AxisConstraints {
     let mut limits = AxisConstraints {
         min: 1.0,
         ..AxisConstraints::default()
     };
     for window in windows {
-        let window = window.normalized();
+        let window = crate::layout::domain::tile::slot_limits(window, border);
         limits.min = limits.min.max(window.min_for_axis(true));
         if let Some(locked) = window.fixed_for_axis(true) {
             limits.fixed = Some(limits.fixed.map_or(locked, |current: f64| current.max(locked)));
@@ -527,7 +529,7 @@ mod column_tests {
 
     #[test]
     fn a_column_with_no_constrained_windows_has_only_the_one_pixel_floor() {
-        let limits = column_limits(std::iter::empty());
+        let limits = column_limits(std::iter::empty(), 0.0);
         assert_eq!(limits.min, 1.0);
         assert_eq!(limits.fixed, None);
         assert_eq!(limits.max, None);
@@ -537,7 +539,7 @@ mod column_tests {
     /// smallest maximum. Taking either the other way round hands a window a size it refuses.
     #[test]
     fn a_column_takes_the_largest_minimum_and_the_smallest_maximum() {
-        let limits = column_limits([window(400., 900., 0.), window(250., 600., 0.)]);
+        let limits = column_limits([window(400., 900., 0.), window(250., 600., 0.)], 0.0);
         assert_eq!(limits.min, 400.0);
         assert_eq!(limits.max, Some(600.0));
     }
@@ -546,7 +548,7 @@ mod column_tests {
     /// clipped, which the user can see and scroll; one given more than it can fill leaves a hole.
     #[test]
     fn two_locks_in_one_column_take_the_larger() {
-        let limits = column_limits([window(0., 0., 500.), window(0., 0., 700.)]);
+        let limits = column_limits([window(0., 0., 500.), window(0., 0., 700.)], 0.0);
         assert_eq!(limits.fixed, Some(700.0));
     }
 
@@ -554,9 +556,18 @@ mod column_tests {
     /// and reading it literally would collapse every column holding one.
     #[test]
     fn a_zero_maximum_means_no_maximum() {
-        let limits = column_limits([window(100., 0., 0.)]);
+        let limits = column_limits([window(100., 0., 0.)], 0.0);
         assert_eq!(limits.max, None);
         assert_eq!(limits.min, 100.0);
+    }
+
+    /// A window that needs 400pt needs a 408pt column under a 4pt border, or the border's width
+    /// comes out of the window it is held to.
+    #[test]
+    fn a_windows_minimum_counts_its_border_in_the_column() {
+        let limits = column_limits([window(400., 900., 0.), window(0., 0., 500.)], 4.0);
+        assert_eq!((limits.min, limits.fixed, limits.max), (408.0, Some(508.0), Some(908.0)));
+        assert_eq!(column_limits(std::iter::empty(), 4.0).min, 1.0, "no window, no limit of its own");
     }
 
     // --- column_width -------------------------------------------------------------------------

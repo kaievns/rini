@@ -194,6 +194,7 @@ pub fn handle_config_updated(
 ) -> anyhow::Result<EventOutcome> {
     *config = new_config;
     layout.layout_engine.set_layout_settings(&config.settings.layout);
+    layout.layout_engine.set_border_width(config.settings.decorations.border_width());
 
     layout
         .layout_engine

@@ -17,6 +17,7 @@ use crate::app::reactor::*;
 use crate::input::event::LeftPress;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::edge_drag::End;
+use crate::layout::domain::tile::window_in;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
@@ -1546,6 +1547,71 @@ impl Strip {
     fn on_screen(&self, window: WindowId) -> CGRect {
         self.apps.windows[&window].frame
     }
+
+    /// The config reloaded with niri's border on at `width`, and what that writes carried out.
+    fn with_border(mut self, width: f64) -> Self {
+        reload_with_border(&mut self.reactor, width);
+        self.apps.simulate_until_quiet(&mut self.reactor);
+        self
+    }
+}
+
+fn reload_with_border(reactor: &mut Reactor, width: f64) {
+    let mut config = reactor.config.clone();
+    config.settings.decorations.border.on = true;
+    config.settings.decorations.border.band.width = width;
+    reactor.handle_event(Event::ConfigUpdated(config));
+}
+
+/// A border takes its width out of each tiled window's slot, and a reload changing it lays the
+/// strip out again at once.
+#[test]
+fn a_reload_changing_the_border_width_lays_the_strip_out_again() {
+    let mut strip = Strip::new();
+    let before = strip.laid_out(strip.window);
+    assert_eq!(strip.on_screen(strip.window), before);
+    reload_with_border(&mut strip.reactor, 4.);
+    let inset = window_in(before, 4.);
+    assert_eq!(strip.laid_out(strip.window), inset);
+    assert_eq!(strip.settle(strip.window).last(), Some(&inset), "written by the reload");
+    assert_eq!(strip.on_screen(strip.window), inset);
+}
+
+/// rini's own write coming back is no resize, with the border on as without; an app's own size is
+/// the window's, its slot the border wider.
+#[test]
+fn a_window_at_its_written_frame_is_not_taken_for_a_user_resize_with_a_border_on() {
+    let mut strip = Strip::new().with_border(4.);
+    let written = strip.laid_out(strip.window);
+    strip.app_reports(strip.window, written, MouseState::Up);
+    assert_eq!(strip.laid_out(strip.window), written);
+    assert_eq!(strip.settle(strip.window), Vec::<CGRect>::new(), "nothing to write back");
+
+    let narrower = CGRect::new(written.origin, CGSize::new(written.size.width - 100., written.size.height));
+    strip.app_reports(strip.window, narrower, MouseState::Up);
+    assert_eq!(strip.laid_out(strip.window).size, narrower.size, "the window at the app's width, not 8pt less");
+}
+
+#[test]
+fn a_floating_window_keeps_its_frame_under_a_border() {
+    let (mut apps, mut reactor) = test_context();
+    let space = SpaceId::new(1);
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    make_active_app_with_count(&mut apps, &mut reactor, 1, 2, Some(WindowId::new(1, 1)));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    let floating = WindowId::new(1, 1);
+    assert!(reactor.layout_manager.layout_engine.is_window_floating(floating));
+    let before = test_layout(&mut reactor, space, screen);
+
+    reload_with_border(&mut reactor, 4.);
+    apps.simulate_until_quiet(&mut reactor);
+    let after = test_layout(&mut reactor, space, screen);
+    let frame = |frames: &[(WindowId, CGRect)], window| frames.iter().find(|(w, _)| *w == window).map(|(_, f)| *f);
+    assert_eq!(frame(&after, floating), frame(&before, floating), "it wears the band outside");
+    let tiled = WindowId::new(1, 2);
+    assert_eq!(frame(&after, tiled), frame(&before, tiled).map(|slot| window_in(slot, 4.)));
 }
 
 #[test]
@@ -2081,6 +2147,21 @@ mod title_bar_zoom {
             strip.click_back();
             assert_eq!(strip.laid_out(strip.window), before, "{unzoomed_to}: and it stays there");
         }
+    }
+
+    /// rini's full width is the tiling area's, and the window ends inside it by the border.
+    #[test]
+    fn a_title_bar_zoom_with_a_border_on_ends_at_the_inset_full_width_frame() {
+        let mut strip = Strip::new().with_border(4.);
+        strip.zoom(VISIBLE);
+        assert_eq!(strip.full_width(), Some(true));
+        let full = strip.laid_out(strip.window);
+        assert_eq!(full, window_in(strip.tiling(), 4.));
+        assert_eq!(strip.settle(strip.window).last(), Some(&full), "written at once");
+        assert_eq!(strip.on_screen(strip.window), full);
+        strip.click_back();
+        assert_eq!(strip.settle(strip.window), Vec::<CGRect>::new(), "the next click writes nothing back");
+        assert_eq!(strip.full_width(), Some(true));
     }
 
     #[test]

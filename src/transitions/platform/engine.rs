@@ -602,12 +602,13 @@ impl RunningAnimation {
     /// The windows the flight draws a tile of.
     fn drawn(&self) -> Vec<WindowId> { self.tiles.iter().map(|tile| tile.window).collect() }
 
-    /// How wide a band `window` wears at rest on a display of `scale`, 0 with none: its ring's, if it
-    /// wears the ring where the flight ends.
+    /// How far the bands `window` wears at rest reach outside it on a display of `scale`, 0 with
+    /// none: its border's, and its ring's if it wears the ring where the flight ends.
     fn band(&self, window: WindowId, scale: f64) -> f64 {
         let worn = self.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.worn);
-        let ring = worn.filter(|worn| worn.wears_ring).and_then(|worn| worn.decoration.ring);
-        ring.map_or(0.0, |band| crate::decorations::domain::shape::device_width(band.width, scale))
+        worn.map_or(0.0, |worn| {
+            crate::decorations::domain::shape::outset(&worn.decoration, worn.wears_ring, scale)
+        })
     }
 
     /// Each end the overlay is holed over, with the outset of the band its window wears at rest.
@@ -2769,11 +2770,16 @@ mod tests {
                 active: crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
                 inactive: crate::decorations::domain::paint::Colour::rgb(0x505050),
             };
-            let decoration = crate::decorations::domain::style::Decoration { ring: Some(band) };
+            let decoration = crate::decorations::domain::style::Decoration { ring: Some(band), border: None };
             running.tiles[0].worn = Worn { decoration, wore_ring: false, wears_ring: true };
             running.tiles[1].worn = Worn { decoration, wore_ring: true, wears_ring: false };
             let holes = running.holes(vec![(wid(1), slot), (wid(2), slot), (wid(3), slot)], 2.0);
             assert_eq!(holes, vec![(slot, 1.5), (slot, 0.0), (slot, 0.0)]);
+            let bordered = crate::decorations::domain::style::Decoration { border: Some(band), ..decoration };
+            running.tiles[0].worn.decoration = bordered;
+            running.tiles[1].worn.decoration = bordered;
+            let holes = running.holes(vec![(wid(1), slot), (wid(2), slot)], 2.0);
+            assert_eq!(holes, vec![(slot, 3.0), (slot, 1.5)], "past the ring outside the border, and past the border");
         }
 
         #[test]
@@ -4395,7 +4401,7 @@ mod tests {
                 active: crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
                 inactive: crate::decorations::domain::paint::Colour::rgb(0x505050),
             };
-            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring) };
+            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), border: None };
             let worn = |wore_ring, wears_ring| Worn { decoration, wore_ring, wears_ring };
             let request = |id: u32, from, to, worn| AnimationRequest {
                 window: wid(id),

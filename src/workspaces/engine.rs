@@ -138,6 +138,8 @@ pub struct LayoutEngine {
     app_rules: AppRuleEngine,
     focused_window: Option<WindowId>,
     window_layout_constraints: HashMap<WindowId, WindowLayoutConstraints>,
+    /// The border every tiled window wears, in points, which the strip takes out of its slot.
+    border_width: f64,
     virtual_workspace_manager: WorkspaceStore,
     layout_settings: LayoutSettings,
     /// Events the engine wants announced, for the application to send.
@@ -255,6 +257,10 @@ impl LayoutEngine {
 }
 
 impl LayoutEngine {
+    /// The border every tiled window wears from the next layout pass: each window is laid out inside
+    /// its slot by `width` on every side.
+    pub fn set_border_width(&mut self, width: f64) { self.border_width = width; }
+
     pub fn set_layout_settings(&mut self, settings: &LayoutSettings) {
         self.layout_settings = settings.clone();
 
@@ -1494,6 +1500,7 @@ impl LayoutEngine {
             app_rules: AppRuleEngine::new(&virtual_workspace_config.app_rules),
             focused_window: None,
             window_layout_constraints: HashMap::default(),
+            border_width: 0.0,
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
             outbox: Default::default(),
@@ -1556,9 +1563,10 @@ impl LayoutEngine {
         };
         let gaps = self.layout_settings.gaps.effective_for_display(display_uuid);
         let previous_selection = self.workspace_tree(resize.workspace_id).selected_window(layout);
+        let border = self.border_width;
         let tree = self.workspace_tree_mut(resize.workspace_id);
         let _ = tree.select_window(layout, resize.window);
-        tree.on_window_resized(layout, resize.window, None, new_frame, screen_frame, &gaps);
+        tree.on_window_resized(layout, resize.window, None, new_frame, border, screen_frame, &gaps);
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
@@ -1891,11 +1899,13 @@ impl LayoutEngine {
                     };
                     let gaps =
                         self.layout_settings.gaps.effective_for_display(display_uuid.as_deref());
+                    let border = self.border_width;
                     self.workspace_tree_mut(ws_id).on_window_resized(
                         layout,
                         wid,
                         drag,
                         new_frame,
+                        border,
                         screen_frame,
                         &gaps,
                     );
@@ -2175,6 +2185,7 @@ impl LayoutEngine {
             layout,
             screen,
             &self.window_layout_constraints,
+            self.border_width,
             gaps,
         )
     }
@@ -2248,6 +2259,7 @@ impl LayoutEngine {
                     layout,
                     screen,
                     &self.window_layout_constraints,
+                    self.border_width,
                     gaps,
                 );
 
@@ -2401,6 +2413,7 @@ impl LayoutEngine {
                 layout,
                 screen,
                 &self.window_layout_constraints,
+                self.border_width,
                 gaps,
             );
             for (wid, rect) in tiled_positions {
