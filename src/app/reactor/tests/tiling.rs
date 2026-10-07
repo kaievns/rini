@@ -1710,6 +1710,68 @@ fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go()
     assert!((from.origin.x - to.origin.x - 90.).abs() <= 2., "{from:?} -> {to:?}");
 }
 
+/// Kai, 2026-10-07: "wher i resize a ghosty window by the left size it still does a small 1-2px
+/// wobble during the animation when i release". With gaps, a dragged column gave up its share of
+/// the gap, so the window landed 1-3pt from where it was let go and its tile slid there. Kai's gaps
+/// of 3, and a drag to a width two of which fit abreast, whose share is 1.5pt.
+#[test]
+fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_go() {
+    let mut strip = Strip::with_columns(3);
+    let last = WindowId::new(1, 3);
+    strip.reactor.config.settings.layout.gaps.gaps = 3.;
+    strip.reactor.config.settings.layout.scrolling.column_width_ratio = 0.5;
+    strip.reactor.config.settings.layout.scrolling.center_focused_column =
+        crate::layout::settings::CenterFocusedColumn::Never;
+    strip
+        .reactor
+        .layout_manager
+        .layout_engine
+        .set_layout_settings(&strip.reactor.config.settings.layout);
+    for _ in 0..2 {
+        strip.reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        strip.settle(last);
+    }
+    let start = strip.on_screen(last);
+    assert!((start.max().x - strip.tiling().max().x).abs() <= 1., "flush with the right edge: {start:?}");
+    strip.reactor.config.settings.animate = true;
+    let (animation_tx, mut rx) = crate::app::channels::channel();
+    strip.reactor.communication_manager.transitions_tx = Some(animation_tx);
+
+    strip.press(CGPoint::new(start.origin.x, start.mid().y), false);
+    let mut dropped = start;
+    for grown in [30., 60., 90.] {
+        dropped = rect(
+            start.origin.x - grown,
+            start.origin.y,
+            start.size.width + grown,
+            start.size.height,
+        );
+        strip.app_reports(last, dropped, MouseState::Down);
+    }
+    let ratio = dropped.size.width / strip.tiling().size.width;
+    assert_eq!((1. / ratio).round(), 2., "two abreast: {ratio}");
+    strip.reactor.handle_event(Event::MouseUp);
+
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1, "the release scrolls the strip once");
+    let flight = &flights[0];
+    let (from, to) = flight
+        .windows
+        .iter()
+        .find(|w| w.window == last)
+        .expect("on the surface")
+        .travel(flight.from_offset, SurfacePoint::origin());
+    for (end, drawn) in [("from", from), ("to", to)] {
+        assert_eq!(
+            (drawn.origin.x, drawn.size.width),
+            (dropped.origin.x, dropped.size.width),
+            "{end}: let go at {dropped:?}"
+        );
+    }
+    assert_eq!(strip.settle(last), Vec::<CGRect>::new(), "nothing to write");
+    assert_eq!(strip.on_screen(last), dropped);
+}
+
 /// A double-click on a title bar has the app zoom its window, and rini has to follow it to its own
 /// full width rather than take it for a resize. "Full width and height" in `specs/strip.md`.
 mod title_bar_zoom {

@@ -1105,8 +1105,9 @@ impl ScrollingLayoutSystem {
             //
             // A lone column keeps its width; expanding it tied a window's size to its neighbours.
             // See "Column width" in `src/layout/docs/strip.md`.
+            let kind = state.column_kind(col);
             let ratio = column_ratio(
-                state.column_kind(col),
+                kind,
                 base_ratio,
                 col.width_offset,
                 self.settings.min_column_width_ratio,
@@ -1114,7 +1115,7 @@ impl ScrollingLayoutSystem {
             );
             let limits =
                 column_limits(col.windows.iter().filter_map(|wid| constraints.get(wid).copied()));
-            let width = column_width(ratio, tiling.size.width, gap_x, limits);
+            let width = column_width(kind, ratio, tiling.size.width, gap_x, limits);
             column_widths.push(width);
             column_ratios.push(if tiling.size.width > 0.0 {
                 (width / tiling.size.width).max(0.0)
@@ -1178,6 +1179,7 @@ impl ScrollingLayoutSystem {
         }
         let right_edge =
             f64::from_bits(state.pending_right_edge.swap(f64::NAN.to_bits(), Ordering::Relaxed));
+        let mut keeps_right_edge = false;
         if !right_edge.is_nan()
             && state.selected == state.pending_right_edge_of
             && let Some((col_idx, _)) = state.selected_location()
@@ -1189,6 +1191,7 @@ impl ScrollingLayoutSystem {
                 right_edge,
             );
             state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
+            keeps_right_edge = true;
         }
         let reveal_direction = state.pending_reveal_direction.swap(0, Ordering::Relaxed);
         if reveal_direction != 0 {
@@ -1201,6 +1204,7 @@ impl ScrollingLayoutSystem {
                 let selected_start = column_starts.get(selected_col_idx).copied().unwrap_or(0.0);
 
                 let reveal = match reveal_direction {
+                    _ if keeps_right_edge => Some(Reveal::KeepingRightEdge),
                     -1 => Some(Reveal::FromRight),
                     1 => Some(Reveal::FromLeft),
                     2 => Some(Reveal::Either),
@@ -4361,15 +4365,15 @@ mod tests {
     }
 
     /// Kai's press 14, which landed at [577, w 1148] with the right edge pushed to the screen's.
-    /// 1148/1722 is exactly 2/3, whose gap share is 1.5: before rounding, x 335.5 and w 1146.5.
+    /// The dragged column takes the dragged width whole, so it ends where it was let go.
     #[test]
     fn a_left_edge_drag_grows_the_column_left_and_the_columns_before_it_scroll_by_the_change() {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
 
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (336.0, 1147.0));
-        assert_near(scroll_offset(&system, layout), 264.5, "offset");
-        assert_eq!(laid_out_xw(&system, layout, w[0]).0, -262.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (334.0, 1148.0));
+        assert_near(scroll_offset(&system, layout), 266.0, "offset");
+        assert_eq!(laid_out_xw(&system, layout, w[0]).0, -263.0);
     }
 
     /// Kai's press 16, which landed back at 1148pt, `max-column-width`. 1443/1722 takes no gap
@@ -4390,23 +4394,23 @@ mod tests {
         render(&system, layout, KAI_SCREEN, &kai_s_gaps());
 
         drag(&mut system, layout, w[1], xw(334.0, 1148.0), xw(434.0, 1048.0));
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (436.0, 1047.0));
-        assert_near(scroll_offset(&system, layout), 164.5, "offset");
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (434.0, 1048.0));
+        assert_near(scroll_offset(&system, layout), 166.0, "offset");
     }
 
-    /// Keeping the right edge would need offset -101.5: space before the first column, which the
+    /// Keeping the right edge would need offset -100: space before the first column, which the
     /// strip never shows.
     #[test]
     fn a_left_edge_shrink_at_the_strip_start_keeps_the_left_edge() {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(700.0, 782.0));
 
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 781.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 782.0));
         assert_eq!(scroll_offset(&system, layout), 0.0);
     }
 
-    /// Kai's press 8, which landed at 572pt, `min-column-width`. 484.75pt after a gap share of
-    /// 2.25, with the left edge kept at the strip's start.
+    /// Kai's press 8, which landed at 572pt, `min-column-width`. The dragged 487pt, with the left
+    /// edge kept at the strip's start.
     #[test]
     fn a_drag_below_min_column_width_keeps_its_width() {
         let (mut system, layout, w) = kai_s_strip();
@@ -4414,7 +4418,7 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 595.0));
 
         drag(&mut system, layout, w[1], xw(600.0, 595.0), xw(708.0, 487.0));
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 485.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 487.0));
         assert_eq!(scroll_offset(&system, layout), 0.0);
     }
 
@@ -4444,8 +4448,8 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0);
     }
 
-    /// `ctrl-F` gives back the width the drag started from, 860pt, less its gap share once more, as
-    /// every drag lands. A stacked window stays in its stack, a column the whole viewport wide.
+    /// `ctrl-F` gives back the width the drag started from, 860pt, whole, as a dragged width lands.
+    /// A stacked window stays in its stack, a column the whole viewport wide.
     #[test]
     fn a_drag_to_the_full_viewport_makes_a_lone_window_full_width() {
         let mut system = ScrollingLayoutSystem::new(&preset_settings());
@@ -4460,7 +4464,7 @@ mod tests {
         assert_eq!(frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone), full);
         toggle_selection(&mut system, layout);
         let back = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone);
-        assert_eq!((start.size.width, back.size.width), (860.0, 859.0), "the toggle back");
+        assert_eq!((start.size.width, back.size.width), (860.0, 860.0), "the toggle back");
 
         let (mut system, layout, w) = kai_s_stack();
         assert!(system.select_window(layout, w[1]));
@@ -4504,7 +4508,7 @@ mod tests {
         render(&system, layout, KAI_SCREEN, &kai_s_gaps());
 
         system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 485.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 487.0));
     }
 
     /// Dragged to 0.69977 of the tiling width, one step down is 0.64977, 1117pt after the gap
@@ -4546,8 +4550,8 @@ mod tests {
         assert!(system.select_window(layout, w[0]));
         render(&system, layout, KAI_SCREEN, &kai_s_gaps());
         drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(-77.0, 674.0));
-        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 672.0), "3 columns");
-        assert_eq!(laid_out_xw(&system, layout, w[1]).0, 678.0);
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 674.0), "3 columns");
+        assert_eq!(laid_out_xw(&system, layout, w[1]).0, 680.0);
 
         let mut system = ScrollingLayoutSystem::new(&preset_settings());
         let layout = system.create_layout();
@@ -4648,7 +4652,7 @@ mod tests {
         assert!(system.select_window(layout, w[2]));
 
         assert_eq!(laid_out_xw(&system, layout, w[2]), (866.0, 860.0));
-        assert_near(scroll_offset(&system, layout), 884.0, "offset");
+        assert_near(scroll_offset(&system, layout), 885.5, "offset");
     }
 
     /// A request for the dragged window made after its report and before the pass wins over the
@@ -4659,7 +4663,7 @@ mod tests {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
         system.center_selected_column(layout);
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (291.0, 1147.0), "centred");
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (290.0, 1148.0), "centred");
 
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
@@ -4674,7 +4678,7 @@ mod tests {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
         assert_eq!(system.move_focus(layout, Direction::Down).0, None);
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1147.0), "a focus move that finds none");
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1148.0), "a focus move that finds none");
     }
 
     /// Any frame under a held button counts as the drag, rini's own write to a neighbour coming
@@ -4695,8 +4699,8 @@ mod tests {
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
         assert!(system.select_window(layout, w[1]));
 
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (336.0, 1147.0));
-        assert_near(scroll_offset(&system, layout), 264.5, "offset");
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (334.0, 1148.0));
+        assert_near(scroll_offset(&system, layout), 266.0, "offset");
     }
 
     /// The selection passes to column 2 without a scroll request, and the drag's reveal is still
@@ -4718,8 +4722,8 @@ mod tests {
         assert_near(scroll_offset(&system, layout), 21.5, "offset");
     }
 
-    /// 684pt asked, 682 laid out after the gap share, 520pt from either edge of the tiling area.
-    /// Undoubled it would end at [548, w 632].
+    /// 684pt asked and laid out, 519pt from either edge of the tiling area. Undoubled it would end
+    /// at [547, w 634].
     #[test]
     fn in_centred_mode_a_middle_column_dragged_out_50_from_its_left_edge_grows_100_and_stays_centred() {
         let (mut system, layout, w) = kai_s_centred_strip();
@@ -4727,7 +4731,7 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (572.0, 584.0));
 
         drag(&mut system, layout, w[1], xw(572.0, 584.0), xw(522.0, 634.0));
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (523.0, 682.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (522.0, 684.0));
     }
 
     /// The first column, flush left, takes a right-edge drag as dragged; the last, flush right, a
@@ -4738,15 +4742,15 @@ mod tests {
         assert!(system.select_window(layout, w[0]));
         assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 594.0));
         drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(3.0, 674.0));
-        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 672.0), "first");
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 674.0), "first");
 
         app_sizes(&mut system, layout, w[2], 600.0);
         assert_eq!(laid_out_xw(&system, layout, w[2]), (1127.0, 598.0));
         drag(&mut system, layout, w[2], xw(1127.0, 598.0), xw(1047.0, 678.0));
-        assert_eq!(laid_out_xw(&system, layout, w[2]), (1049.0, 676.0), "last");
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (1047.0, 678.0), "last");
     }
 
-    /// Out 150 asks for 1182pt, past `max-column-width`, and takes no gap share. Bounded, it would
+    /// Out 150 asks for 1182pt, past `max-column-width`, and takes it whole. Bounded, it would
     /// end at [290, w 1148].
     #[test]
     fn in_centred_mode_a_doubled_drag_past_max_column_width_keeps_its_width() {

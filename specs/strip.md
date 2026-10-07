@@ -105,7 +105,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 - **A drag on a window's left edge MUST move that edge and keep the right one.** The column takes the
   dragged width, its right edge stays where it was, and the columns before it scroll by the change.
-  The window ends where the cursor let go, less the column's share of the gap.
+  The window ends where the cursor let go, to the point.
 - A column grown past the viewport's left edge MUST end with its left edge at the viewport's left
   edge and the rest of its growth on the right. The first column therefore ends grown to the right,
   as niri ends a resize of its first column.
@@ -166,6 +166,14 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > the right of where it was let go and slid back: 189pt and 275pt in two of the 15 releases
 > journalled, read off the frames either side. Its picture at the press was refused, asked for
 > where its tile started, so the tile flew the cache's.
+
+> **Reported 2026-10-07**, on a Ghostty window: "wher i resize a ghosty window by the left size it
+> still does a small 1-2px wobble during the animation when i release". A dragged column gave up its
+> share of the gap, 1.5pt at a width two of which fit abreast, so the window landed 1-3pt from where
+> it was let go and its tile slid there. Of the 38 Ghostty releases journalled, 18 of the 19 drags to
+> a width with a share that were pictured twice moved 1-3pt, and 4 of the 5 without one did not. A
+> column flush with the right edge also stood a rounded point past it, and the release's reveal
+> pulled that point back.
 
 ## Folding
 
