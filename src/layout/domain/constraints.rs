@@ -84,8 +84,15 @@ pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, ma
 ///
 /// The gap comes out of the column rather than out of the space between columns, which is what keeps
 /// two columns at ratio 0.5 adding up to the viewport instead of overflowing it by one gap. It is
-/// skipped when it would take the column below a pixel.
-pub fn column_width(ratio: f64, viewport_width: f64, gap: f64, limits: AxisConstraints) -> f64 {
+/// skipped when it would take the column below a pixel, and for a dragged column, whose width is
+/// the one the window was let go at.
+pub fn column_width(
+    kind: ColumnKind,
+    ratio: f64,
+    viewport_width: f64,
+    gap: f64,
+    limits: AxisConstraints,
+) -> f64 {
     let required = limits.fixed.unwrap_or(limits.min).max(limits.min);
     let mut width = (viewport_width * ratio).max(1.0).max(required);
     if let Some(max) = limits.max {
@@ -94,6 +101,9 @@ pub fn column_width(ratio: f64, viewport_width: f64, gap: f64, limits: AxisConst
 
     width = width.min(viewport_width.max(1.0));
 
+    if kind == ColumnKind::Dragged {
+        return width;
+    }
     let shrunk = width - crate::layout::domain::strip::gap_share(ratio, gap);
     if shrunk >= 1.0 { shrunk } else { width }
 }
@@ -498,7 +508,7 @@ mod clamp_tests {
 
 #[cfg(test)]
 mod column_tests {
-    use super::{AxisConstraints, column_limits, column_width};
+    use super::{AxisConstraints, ColumnKind, column_limits, column_width};
     use crate::layout::WindowLayoutConstraints;
 
     fn window(min: f64, max: f64, locked: f64) -> WindowLayoutConstraints {
@@ -561,14 +571,24 @@ mod column_tests {
     #[test]
     fn a_column_is_its_ratio_of_the_viewport_less_its_share_of_the_gap() {
         // Half of 1000 is 500; half the 20pt gap comes out of the column.
-        assert_eq!(column_width(0.5, 1000., 20., free()), 490.0);
+        assert_eq!(column_width(ColumnKind::Bounded, 0.5, 1000., 20., free()), 490.0);
+    }
+
+    /// A dragged column is as wide as the window was let go, gap and all: its share of the gap
+    /// landed it 1-3pt from where the cursor let go (Kai, "Resizing with the mouse" in
+    /// `specs/strip.md`).
+    #[test]
+    fn a_dragged_column_keeps_its_dragged_width_whole() {
+        let ratio = 809. / 1722.;
+        assert_eq!(column_width(ColumnKind::Dragged, ratio, 1722., 3., free()), 809.0);
+        assert_eq!(column_width(ColumnKind::Bounded, ratio, 1722., 3., free()), 807.5);
     }
 
     /// The gap comes out of the columns, which is what makes two half-width columns add up to the
     /// viewport instead of overflowing it by one gap.
     #[test]
     fn two_half_columns_and_the_gap_between_them_fit_the_viewport() {
-        let each = column_width(0.5, 1000., 20., free());
+        let each = column_width(ColumnKind::Bounded, 0.5, 1000., 20., free());
         assert_eq!(each * 2.0 + 20.0, 1000.0);
     }
 
@@ -578,7 +598,7 @@ mod column_tests {
             min: 800.,
             ..AxisConstraints::default()
         };
-        assert!(column_width(0.3, 1000., 0., limits) >= 800.0);
+        assert!(column_width(ColumnKind::Bounded, 0.3, 1000., 0., limits) >= 800.0);
     }
 
     #[test]
@@ -588,7 +608,7 @@ mod column_tests {
             max: Some(200.),
             ..AxisConstraints::default()
         };
-        assert!(column_width(0.9, 1000., 0., limits) <= 200.0);
+        assert!(column_width(ColumnKind::Bounded, 0.9, 1000., 0., limits) <= 200.0);
     }
 
     /// A window demanding more than it allows gets the MINIMUM. Clipped at the edge is recoverable;
@@ -600,7 +620,7 @@ mod column_tests {
             max: Some(300.),
             ..AxisConstraints::default()
         };
-        assert_eq!(column_width(0.5, 1000., 0., limits), 700.0);
+        assert_eq!(column_width(ColumnKind::Bounded, 0.5, 1000., 0., limits), 700.0);
     }
 
     /// A lock raises the column's FLOOR and does not cap it.
@@ -618,12 +638,12 @@ mod column_tests {
             ..AxisConstraints::default()
         };
         assert_eq!(
-            column_width(0.1, 1000., 0., locked),
+            column_width(ColumnKind::Bounded, 0.1, 1000., 0., locked),
             650.0,
             "widened to the lock"
         );
         assert_eq!(
-            column_width(0.9, 1000., 0., locked),
+            column_width(ColumnKind::Bounded, 0.9, 1000., 0., locked),
             900.0,
             "but not narrowed to it"
         );
@@ -638,7 +658,7 @@ mod column_tests {
             max: Some(650.),
             ..AxisConstraints::default()
         };
-        assert_eq!(column_width(0.9, 1000., 0., pinned), 650.0);
+        assert_eq!(column_width(ColumnKind::Bounded, 0.9, 1000., 0., pinned), 650.0);
     }
 
     /// The strip scrolls BETWEEN column starts and never pans within one column, so a column wider
@@ -649,8 +669,8 @@ mod column_tests {
             min: 5000.,
             ..AxisConstraints::default()
         };
-        assert!(column_width(1.0, 1000., 0., huge) <= 1000.0);
-        assert!(column_width(4.0, 1000., 0., free()) <= 1000.0);
+        assert!(column_width(ColumnKind::Bounded, 1.0, 1000., 0., huge) <= 1000.0);
+        assert!(column_width(ColumnKind::Bounded, 4.0, 1000., 0., free()) <= 1000.0);
     }
 
     /// A full-width column is ratio 1.0 and takes the whole viewport, gap and all: the gap share of a
@@ -658,7 +678,7 @@ mod column_tests {
     /// the side of a maximized window.
     #[test]
     fn a_full_width_column_fills_the_viewport() {
-        let width = column_width(1.0, 1000., 20., free());
+        let width = column_width(ColumnKind::Bounded, 1.0, 1000., 20., free());
         assert!(
             width > 900.0,
             "a maximized window does not leave a band of background: {width}"
@@ -675,7 +695,7 @@ mod column_tests {
             (0.5, 0., 0.),
             (1.0, 1., 500.),
         ] {
-            let width = column_width(ratio, viewport, gap, free());
+            let width = column_width(ColumnKind::Bounded, ratio, viewport, gap, free());
             assert!(
                 width >= 1.0,
                 "ratio {ratio} viewport {viewport} gap {gap} gave {width}"
@@ -686,7 +706,7 @@ mod column_tests {
     /// The gap is skipped rather than applied when taking it would push the column under a pixel.
     #[test]
     fn a_gap_larger_than_the_column_is_not_taken() {
-        let width = column_width(0.5, 10., 1000., free());
+        let width = column_width(ColumnKind::Bounded, 0.5, 10., 1000., free());
         assert!(width >= 1.0);
     }
 }

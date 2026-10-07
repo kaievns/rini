@@ -142,7 +142,7 @@ is borrowed.
   | 0.33333 | 3 | 570.66 | 3 + 2 gaps = 1719.98 |
   | 0.25    | 4 | 427.00 | 4 + 3 gaps = 1720 |
 
-  Gapless configs, single columns and degenerate widths are left alone.
+  Gapless configs, single columns, dragged widths and degenerate widths are left alone.
 - **A full-width column keeps its strip x.** Assigning the whole tiling rect,
   origin included, lifted the window out of the strip's coordinate space: it
   stopped scrolling, stayed pinned at the viewport's left edge, and other
@@ -269,10 +269,15 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
 - **A left-edge drag keeps the right edge.** The layout used to read only the width and place the
   column by its start, so the growth always landed on the right. `on_window_resized` now pins the
   right edge at the start frame's `maxX`, and the next `calculate_layout` sets the scroll offset that
-  puts it there (`strip::offset_keeping_right_edge`), before the reveal and the offset clamp run as
-  they always do. The pin is applied there rather than when the report arrives because only the
-  layout pass has the column's real width, after the bounds, the gap share and the windows' own
-  limits.
+  puts it there (`strip::offset_keeping_right_edge`), before the reveal and the offset clamp run.
+  The pin is applied there rather than when the report arrives because only the layout pass has the
+  column's real width, after the bounds and the windows' own limits.
+- **The reveal after a kept right edge checks only the left edge** (`Reveal::KeepingRightEdge`).
+  A bounded column's x and width are rounded each on its own, so a column flush with the viewport's
+  right edge can stand a point past it, and the pin keeps that point. Checked as any reveal, the
+  right edge was pulled back by it and the released window slid 1pt left. The point stands until the
+  next neutral reveal of that column, an app's own resize of it for one, which pulls the strip 1pt
+  left then.
 - **The pin is spent by one pass and belongs to one window.** Every scroll request clears it, and the
   pass applies it only while the window it names is still selected: `remove_window` moves the
   selection without any request, and a focus change before the release must not drag the next
@@ -315,8 +320,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   asks for smarter height distribution there (`niri:src/layout/scrolling.rs:3644-3645`). rini trades
   with the one window across the edge, and the bottom-most window's bottom changes nothing too.
 - **The first column ends grown to the right.** Its left edge cannot stay off the viewport, so the
-  neutral reveal pulls it back. niri ends there too: it does not reveal during a resize
-  (`niri:src/layout/scrolling.rs:1417-1419`), and at the end `interactive_resize_end`
+  reveal after the kept right edge pulls it back. niri ends there too: it does not reveal during a
+  resize (`niri:src/layout/scrolling.rs:1417-1419`), and at the end `interactive_resize_end`
   (`niri:src/layout/scrolling.rs:3655-3671`) aligns a column that is not fully visible to the nearer
   side (`compute_new_view_offset`, `niri:src/layout/scrolling.rs:5588-5620`). niri reads a left edge
   the same way, flipping the sign of the horizontal delta (`interactive_resize_update`,
@@ -341,8 +346,11 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in
   its column full width, with the drag's start width to go back to, so one width has one record. A
   stacked window stays a column at 1.0, because the mode would pull it out of its stack.
-- **1-2pt short.** The column's ratio is the reported width over the tiling width, and
-  `column_width` then subtracts the gap share, so a drag lands that much narrower than dragged.
+- **A dragged width is whole.** `column_width` takes no gap share from a `ColumnKind::Dragged`
+  column. It took one, so a drag to a width two of which fit abreast landed 1.5pt narrower, rounded
+  to 1-2pt, and with the right edge kept the left edge moved by that much at the release. In Kai's
+  38 Ghostty releases journalled on 2026-10-07, 18 of the 19 drags to a width with a share that
+  were pictured twice ended 1-3pt from where they were let go, and 4 of the 5 without one did not.
 
 Measured 2026-10-06, before this rule: 20 presses on Kai's display (tiling area x=3, w 1722, `gaps 3`)
 with Ghostty, polled every 1ms from the window server alongside rini's Accessibility reports.

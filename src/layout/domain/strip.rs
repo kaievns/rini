@@ -100,6 +100,9 @@ pub enum Reveal {
     FromLeft,
     /// No direction; correct whichever edge is wrong, left first.
     Either,
+    /// The right edge kept where the window stands, as a left-edge drag keeps it: correct only a
+    /// left edge dragged off the viewport. The kept edge can stand a rounded point past it.
+    KeepingRightEdge,
 }
 
 /// The scroll offset that brings the selected column fully into the viewport.
@@ -129,6 +132,7 @@ pub fn reveal_offset(
         Reveal::FromRight | Reveal::Either if off_right => Some(to_right_edge),
         Reveal::FromLeft if off_right => Some(to_right_edge),
         Reveal::FromLeft if off_left => Some(to_left_edge),
+        Reveal::KeepingRightEdge if off_left => Some(to_left_edge),
         _ => None,
     }
 }
@@ -264,6 +268,17 @@ mod tests {
         // start 800, offset 0: drawn at 800..1200, and the viewport ends at 1000.
         let got = reveal_offset(Reveal::Either, tiling(), 0.0, 800.0, 400.0, 0.0);
         assert_eq!(got, Some(200.0));
+    }
+
+    /// A left-edge drag's kept right edge stays a point past the viewport, where rounding the
+    /// column's position and width each put it; a left edge dragged off it still comes back.
+    #[test]
+    fn keeping_the_right_edge_corrects_only_the_left() {
+        let kept = reveal_offset(Reveal::KeepingRightEdge, tiling(), 0.0, 601.0, 400.0, 0.0);
+        assert_eq!(kept, None);
+        assert_eq!(reveal_offset(Reveal::Either, tiling(), 0.0, 601.0, 400.0, 0.0), Some(1.0));
+        let off_left = reveal_offset(Reveal::KeepingRightEdge, tiling(), 0.0, 0.0, 400.0, 200.0);
+        assert_eq!(off_left, Some(0.0));
     }
 
     // A column wider than the viewport is off BOTH edges, and only the direction decides which edge
