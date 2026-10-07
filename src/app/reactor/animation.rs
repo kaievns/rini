@@ -125,8 +125,10 @@ impl AnimationManager {
         // workspace, the horizontal twin of the vertical workspace switch. The strip's own scroll
         // offset says how far, once per press; reading it off the windows answered differently on
         // each of the several passes one keystroke produces. Taken on every pass, placing or not, so
-        // the offset bookkeeping stays current; the move with it, so it reaches one pass only.
+        // the offset and the strip's layout stay current; the move with it, so it reaches one pass
+        // only.
         let strip_movement = reactor.take_strip_movement(space);
+        let strip_before = reactor.take_strip_layout(space).unwrap_or_default();
         let moved = reactor.take_move_in(layout);
 
         // Visible moves wait for the flight decision; hidden ones go straight to the app.
@@ -211,7 +213,15 @@ impl AnimationManager {
             placements.iter().map(|&(_, window, frame, _)| (window, frame)).collect();
         if use_overlay
             && let Some(delta) = pan_delta
-            && reactor.start_strip_pan(space, active_ws, moves, delta, moved, &overlay_requests)
+            && reactor.start_strip_pan(
+                space,
+                active_ws,
+                moves,
+                delta,
+                moved,
+                &overlay_requests,
+                &strip_before,
+            )
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {

@@ -1916,6 +1916,26 @@ fn the_first_switch_after_start_slides() {
     );
 }
 
+/// A switch claims the destination strip's layout with its origin, so the next pan starts a parked
+/// window where the switch drew it, not where an older pass on that workspace last had it.
+#[test]
+fn a_switch_claims_the_destination_strip_s_layout() {
+    let (mut apps, mut reactor, _rx) = started(test_reactor_with_workspace_count(4));
+    let space = SpaceId::new(1);
+    reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+        workspace: rini_ipc::protocol::WorkspaceSelector::Index(1),
+        follow: false,
+        window_id: Some(2),
+    });
+    apps.simulate_until_quiet(&mut reactor);
+
+    reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
+
+    let claimed = reactor.take_strip_layout(space).expect("the switch drew the destination");
+    assert!(claimed.iter().any(|(window, _)| *window == WindowId::new(1, 2)), "{claimed:?}");
+    assert_eq!(Some(claimed), reactor.take_strip_layout(space), "as the strip has it now");
+}
+
 /// A restored layout shows the workspace it was saved on, and the first switch slides from that one.
 #[test]
 fn a_restored_layout_s_first_switch_slides_from_the_workspace_it_opened_on() {

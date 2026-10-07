@@ -1,5 +1,5 @@
 //! A press on the strip, staged: where the two columns a move swaps start (`swap_starts`), the
-//! look's staging of it put on the strip surface (`stage_move`), and where a window standing away
+//! look's staging of it put on the strip surface (`stage_move`), and where a window that was away
 //! from where the travel draws it starts (`start_where_standing`). Which column is held and whether
 //! the strip steps are the look's (`crate::animation::domain::choreography::Look::stage`). See "The
 //! move flight, staged" in `src/transitions/docs/coordination.md`.
@@ -74,28 +74,35 @@ pub fn swap_starts(
         .collect()
 }
 
-/// Starts each strip window that stands on screen at its own height away from where the travel
-/// from `from_offset` draws it at the start, from where it stands: a window a left-edge drag
-/// resized already sits where the release's scroll puts it. `standing` is where each window was at
-/// the press and `viewport` the display, both on the surface at rest. A scroll never moves a
-/// window up or down, so one standing at another height is parked, however much of it macOS
-/// leaves on screen, and rides the strip in, as does one off screen.
+/// Starts each strip window that was away from where the travel from `from_offset` draws it at the
+/// start, from where it was. A window on screen at its own height starts where it stands: the one a
+/// left-edge drag resized already sits where the release's scroll puts it. Any other is parked,
+/// since a scroll never moves a window up or down, however much of it macOS leaves on screen, and
+/// starts where the strip had it at the last pass: the columns after a left-edge shrink keep their
+/// place on screen as the ones before it scroll. `standing` is where each window was at the press,
+/// `laid_out` where the strip had it, and `viewport` the display, all on the surface at rest. A
+/// parked window the strip did not have rides the strip.
 pub fn start_where_standing(
     windows: &mut [SurfaceWindow],
     standing: &[(WindowId, SurfaceRect)],
+    laid_out: &[(WindowId, SurfaceRect)],
     from_offset: SurfacePoint,
     viewport: SurfaceRect,
 ) {
+    let find = |frames: &[(WindowId, SurfaceRect)], window| {
+        frames.iter().find(|(w, _)| *w == window).map(|&(_, at)| at)
+    };
     for window in windows.iter_mut().filter(|w| !w.floating && w.from.is_none()) {
-        let Some(&(_, at)) = standing.iter().find(|(w, _)| *w == window.window) else {
+        let drawn = window.frame.origin - from_offset.to_vector();
+        let on_screen = find(standing, window.window).filter(|at| {
+            !rini_geometry::is_off_screen(viewport, *at)
+                && (drawn.y - at.origin.y).abs() <= STANDING_TOLERANCE
+        });
+        let Some(at) = on_screen.or_else(|| find(laid_out, window.window)) else {
             continue;
         };
-        if rini_geometry::is_off_screen(viewport, at) {
-            continue;
-        }
-        let drawn = window.frame.origin - from_offset.to_vector();
-        if (drawn.y - at.origin.y).abs() > STANDING_TOLERANCE
-            || (drawn.x - at.origin.x).abs() <= STANDING_TOLERANCE
+        if (drawn.x - at.origin.x).abs() <= STANDING_TOLERANCE
+            && (drawn.y - at.origin.y).abs() <= STANDING_TOLERANCE
         {
             continue;
         }
@@ -205,26 +212,62 @@ pub(crate) mod tests {
         let mut windows =
             [on_surface(wid(1), column(-87.0, 600.0)), on_surface(wid(2), column(516.0, 951.0))];
         let standing = [(wid(1), column(3.0, 600.0)), (wid(2), column(515.0, 952.0))];
-        start_where_standing(&mut windows, &standing, from_offset, viewport);
+        let laid_out = [(wid(1), column(3.0, 600.0)), (wid(2), column(606.0, 861.0))];
+        start_where_standing(&mut windows, &standing, &laid_out, from_offset, viewport);
         assert_eq!(windows[0].from, None, "A rides the strip");
         assert_eq!(windows[1].from, Some(column(425.0, 951.0)), "where it stands, its end's size");
         let (start, _) = windows[1].travel(from_offset, SurfacePoint::origin());
         assert_eq!(start.origin.x, 515.0);
     }
 
-    /// A column parked in a corner at the press rides the strip in, as on any pan, and a window
+    /// A column parked in a corner at the press, where the strip had it as far back as the scroll,
+    /// rides the strip in, as on any pan, as does one parked that the strip did not have; a window
     /// within the layout's rounding of where the travel draws it is left riding the strip.
     #[test]
     fn a_parked_or_rounded_window_rides_the_strip() {
         let viewport = column(0.0, 1728.0);
         let from_offset = SurfacePoint::new(864.0, 0.0);
-        let mut windows =
-            [on_surface(wid(1), column(864.0, 861.0)), on_surface(wid(2), column(1728.0, 861.0))];
+        let mut windows = [
+            on_surface(wid(1), column(864.0, 861.0)),
+            on_surface(wid(2), column(1728.0, 861.0)),
+            on_surface(wid(3), column(2592.0, 861.0)),
+        ];
         let parked = SurfaceRect::new(Point::new(1727.0, 1112.0), Size::new(861.0, HEIGHT));
-        let standing = [(wid(1), column(1.5, 861.0)), (wid(2), parked)];
-        start_where_standing(&mut windows, &standing, from_offset, viewport);
+        let standing = [(wid(1), column(1.5, 861.0)), (wid(2), parked), (wid(3), parked)];
+        let laid_out = [(wid(1), column(0.0, 861.0)), (wid(2), column(864.0, 861.0))];
+        start_where_standing(&mut windows, &standing, &laid_out, from_offset, viewport);
         assert_eq!(windows[0].from, None, "within rounding");
-        assert_eq!(windows[1].from, None, "parked");
+        assert_eq!(windows[1].from, None, "parked, where the scroll carries it from");
+        assert_eq!(windows[2].from, None, "parked, and not on the strip before");
+    }
+
+    /// A B C, B flush with the right edge and shrunk 90pt by its left edge: the release scrolls the
+    /// strip 90pt right, carrying A, while B stays where it was let go and C, parked beyond the
+    /// right edge, keeps its place on the strip. Riding the strip, C started 90pt on screen, under
+    /// B, and slid off.
+    #[test]
+    fn a_parked_column_the_scroll_does_not_carry_starts_where_the_strip_had_it() {
+        let viewport = column(0.0, 1728.0);
+        let from_offset = SurfacePoint::new(90.0, 0.0);
+        let mut windows = [
+            on_surface(wid(1), column(-410.0, 600.0)),
+            on_surface(wid(2), column(690.0, 1035.0)),
+            on_surface(wid(3), column(1728.0, 861.0)),
+        ];
+        let parked = SurfaceRect::new(Point::new(1727.0, 1112.0), Size::new(861.0, HEIGHT));
+        let standing =
+            [(wid(1), column(-500.0, 600.0)), (wid(2), column(690.0, 1035.0)), (wid(3), parked)];
+        let laid_out = [
+            (wid(1), column(-500.0, 600.0)),
+            (wid(2), column(600.0, 1125.0)),
+            (wid(3), column(1728.0, 861.0)),
+        ];
+        start_where_standing(&mut windows, &standing, &laid_out, from_offset, viewport);
+        assert_eq!(windows[0].from, None, "A rides the strip");
+        let start = |window: &SurfaceWindow| window.travel(from_offset, SurfacePoint::origin()).0;
+        assert_eq!(start(&windows[1]).origin.x, 690.0, "B where it was let go");
+        assert_eq!(windows[2].from, Some(column(1818.0, 861.0)));
+        assert_eq!(start(&windows[2]).origin.x, 1728.0, "C off screen, where it ends");
     }
 
     /// macOS keeps more of some parked windows on screen than `is_off_screen` allows: a Chrome
@@ -237,7 +280,8 @@ pub(crate) mod tests {
         let mut windows = [on_surface(wid(1), column(864.0, 861.0))];
         let parked = SurfaceRect::new(Point::new(1727.0, 1065.0), Size::new(861.0, HEIGHT));
         assert!(!rini_geometry::is_off_screen(viewport, parked), "the case is the one the clamp misses");
-        start_where_standing(&mut windows, &[(wid(1), parked)], from_offset, viewport);
+        let laid_out = [(wid(1), column(0.0, 861.0))];
+        start_where_standing(&mut windows, &[(wid(1), parked)], &laid_out, from_offset, viewport);
         assert_eq!(windows[0].from, None);
     }
 
@@ -253,7 +297,7 @@ pub(crate) mod tests {
         staged.from = Some(column(0.0, 951.0));
         let mut windows = [floating, staged];
         let standing = [(wid(1), column(400.0, 600.0)), (wid(2), column(515.0, 952.0))];
-        start_where_standing(&mut windows, &standing, from_offset, viewport);
+        start_where_standing(&mut windows, &standing, &standing, from_offset, viewport);
         assert_eq!(windows[0].from, None);
         assert_eq!(windows[1].from, Some(column(0.0, 951.0)));
     }

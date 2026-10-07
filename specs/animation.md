@@ -215,8 +215,10 @@ destination for a window already moving.
   finished layout and starts the view back by the scroll, which puts back only the windows the
   scroll carries: a window already standing where the scroll puts it, as the one a left-edge drag
   resized stands at its release, MUST start where it stands ("Resizing with the mouse" in
-  `specs/strip.md`). A window scrolling in from where it was parked MUST come in along the strip,
-  never from its park corner, however much of it macOS left on screen.
+  `specs/strip.md`). A window parked at the press MUST start where the strip had it, never from its
+  park corner, however much of it macOS left on screen: one the scroll carries comes in along the
+  strip, and one whose place on the strip the change kept, as the columns after a left-edge shrink
+  keep theirs, MUST stay where it was, off screen.
 
 > **Reported 2026-10-07.** "stil diagonal moves animation. specifically when i switch between the
 > two chrome windows on ws 1". A window standing on screen away from where the scroll drew it
