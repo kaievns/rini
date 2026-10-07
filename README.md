@@ -110,7 +110,7 @@ whenever the file is missing or cannot be used.
 The format is niri's: KDL v1 with niri's section names, node names, nesting and values
 wherever rini and niri share a concept, so niri's [configuration wiki](https://niri-wm.github.io/niri/Configuration:-Introduction)
 explains the shared sections (`layout`, `binds`, `window-rule`, `workspace`). A niri snippet
-does not always paste in whole: what it names that rini lacks, such as `focus-ring`, a niri
+does not always paste in whole: what it names that rini lacks, such as `shadow`, a niri
 action rini has no counterpart for, or `cooldown-ms` on a bind, is refused with the reason.
 Where rini differs, and why, is `docs/config.md`.
 

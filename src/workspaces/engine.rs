@@ -328,6 +328,17 @@ impl LayoutEngine {
         })
     }
 
+    /// A workspace's active window, as niri has one: the window focus lands on when the workspace
+    /// takes it, which is the one it was on last.
+    pub fn active_window(
+        &self,
+        window_store: &WindowStore,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+    ) -> Option<WindowId> {
+        self.preferred_focus_for_workspace(window_store, space, workspace_id, None)
+    }
+
     pub fn commit_workspace_focus(
         &mut self,
         window_store: &mut WindowStore,

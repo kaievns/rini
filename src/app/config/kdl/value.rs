@@ -9,6 +9,7 @@ use knus::errors::DecodeError;
 use knus::span::Spanned;
 use knus::traits::ErrorSpan;
 
+use crate::decorations::domain::paint::Colour;
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Decimal;
 use crate::input::platform::haptics::HapticPattern;
@@ -72,6 +73,27 @@ impl<S: ErrorSpan, B: Bounds> knus::DecodeScalar<S> for Number<B> {
             return Err(expected());
         }
         Ok(Number(number, PhantomData))
+    }
+}
+
+/// A colour as niri writes one, a string any CSS colour form `csscolorparser` reads: a name,
+/// `#rgb[a]`, `#rrggbb[aa]`, `rgb()`, `rgba()`, `hsl()`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColourValue(pub Colour);
+
+impl<S: ErrorSpan> knus::DecodeScalar<S> for ColourValue {
+    fn type_check(type_name: &Option<Spanned<TypeName, S>>, ctx: &mut Context<S>) {
+        Decimal::type_check(type_name, ctx);
+    }
+
+    fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
+        let Literal::String(text) = &**value else {
+            return Err(DecodeError::conversion(value, "expected a colour, such as \"#7fc8ff\""));
+        };
+        let colour = csscolorparser::parse(text)
+            .map_err(|error| DecodeError::conversion(value, format!("expected a colour: {error}")))?;
+        let [r, g, b, a] = colour.to_array();
+        Ok(ColourValue(Colour { r, g, b, a }))
     }
 }
 

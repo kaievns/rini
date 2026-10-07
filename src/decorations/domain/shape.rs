@@ -1,5 +1,6 @@
 //! Where a window's decorations lie and how round they are, in its tile's own points: the corner
-//! radius, the hairline's outline, the shadow's silhouette and the mask it is cut to.
+//! radius, the hairline's outline, the shadow's silhouette and the mask it is cut to, and a band
+//! drawn outside the window.
 
 use rini_geometry::space::{Point, Size, Tile, TileRect, TileSize};
 
@@ -55,6 +56,28 @@ pub fn silhouette(size: TileSize, corner: f64) -> (TileRect, f64) {
 pub fn shadow_mask(size: TileSize, corner: f64) -> (TileRect, TileRect, f64) {
     let (hole, corner) = silhouette(size, corner);
     (shadow_mask_frame(hole.size), hole, corner)
+}
+
+/// A band's width in points as it is drawn on a display of `scale`, as niri rounds one
+/// (`niri:src/utils/mod.rs:185-191`): whole device pixels, never below one, and no band at all left
+/// at none.
+pub fn device_width(width: f64, scale: f64) -> f64 {
+    if width <= 0.0 {
+        return 0.0;
+    }
+    (width * scale).max(1.0).round() / scale
+}
+
+/// The band `width` wide outside a window of `size` with corners of `corner`: its outer rect, and
+/// that rect's corner. The inner contour is the window's own corner, a border's inner edge being its
+/// outer one `width` in, so the outer corner is `corner + width`; a square window keeps a square
+/// band, as niri's `expanded_by` keeps 0 at 0; and the corner is clamped to half the band's shorter
+/// side, since Core Animation draws one past it as given.
+pub fn band(size: TileSize, corner: f64, width: f64) -> (TileRect, f64) {
+    let size = TileSize::new(size.width.max(0.0) + 2.0 * width, size.height.max(0.0) + 2.0 * width);
+    let rect = TileRect::new(Point::new(-width, -width), size);
+    let outer = if corner > 0.0 { corner + width } else { 0.0 };
+    (rect, outer.min(size.width.min(size.height) / 2.0))
 }
 
 /// How far along each side a continuous corner reaches, in radii: Core Animation's
@@ -118,6 +141,27 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> TileRect {
         TileRect::new(Point::new(x, y), Size::new(w, h))
+    }
+
+    #[test]
+    fn a_width_rounds_to_whole_device_pixels_and_never_below_one_unless_zero() {
+        assert_eq!(device_width(4.0, 2.0), 4.0);
+        assert_eq!(device_width(1.3, 2.0), 1.5);
+        assert_eq!(device_width(0.2, 2.0), 0.5, "one device pixel at least");
+        assert_eq!(device_width(0.2, 1.0), 1.0);
+        assert_eq!(device_width(0.0, 2.0), 0.0, "none stays none");
+    }
+
+    #[test]
+    fn the_ring_band_rounds_r_plus_its_width_and_square_stays_square() {
+        assert_eq!(band(TileSize::new(859.0, 1081.0), 16.0, 4.0), (rect(-4.0, -4.0, 867.0, 1089.0), 20.0));
+        assert_eq!(band(TileSize::new(859.0, 1081.0), 0.0, 4.0).1, 0.0);
+    }
+
+    #[test]
+    fn the_ring_bands_radius_is_clamped_to_half_its_shorter_side() {
+        assert_eq!(band(TileSize::new(12.0, 400.0), 6.0, 4.0), (rect(-4.0, -4.0, 20.0, 408.0), 10.0));
+        assert_eq!(band(TileSize::new(2.0, 400.0), 1.0, 4.0).1, 5.0);
     }
 
     #[test]

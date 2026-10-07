@@ -49,6 +49,7 @@ Rules for keeping this honest:
 | [`input.md`](input.md) | Bindings, modifiers, and the gestures |
 | [`persistence.md`](persistence.md) | What survives a restart, and what a bad file costs |
 | [`animation.md`](animation.md) | What moves, and what must never be seen to move |
+| [`decorations.md`](decorations.md) | Borders and the focus ring: what rini draws around a window |
 | [`service.md`](service.md) | Running as a launchd agent, and which build it runs |
 | [`bar.md`](bar.md) | The menu bar across the top of every display |
 | [`config.md`](config.md) | The config file: niri's format, what a bad one costs, and changing it live |

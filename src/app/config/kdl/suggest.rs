@@ -50,8 +50,10 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "preset-column-widths",
         "center-focused-column",
         "window-insertion-point",
+        "focus-ring",
     ]),
     ("layout/struts", &SIDES),
+    ("layout/focus-ring", &["on", "off", "width", "active-color", "inactive-color"]),
     ("layout/default-column-width", &["proportion"]),
     ("layout/min-column-width", &["proportion"]),
     ("layout/max-column-width", &["proportion"]),
@@ -109,6 +111,7 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
 const SIDES: [&str; 4] = ["left", "right", "top", "bottom"];
 
 const NOT_IN_RINI: &str = "niri has this and rini does not";
+const NOT_YET: &str = "not supported yet";
 const MACOS_DISPLAYS: &str = "macOS owns the display's mode, scale and arrangement; an `output` \
                               here only overrides `layout`'s gaps and struts";
 const MACOS_DEVICES: &str = "macOS owns the keyboard and pointing devices; see System Settings";
@@ -185,15 +188,14 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ("layout", "preset-window-heights", NOT_IN_RINI),
     (
         "layout",
-        "focus-ring",
-        "rini draws no focus ring; macOS draws the windows",
-    ),
-    (
-        "layout",
         "border",
         "rini draws no borders; macOS draws the windows",
     ),
     ("layout", "shadow", "macOS draws window shadows"),
+    ("layout/focus-ring", "urgent-color", NOT_YET),
+    ("layout/focus-ring", "active-gradient", NOT_YET),
+    ("layout/focus-ring", "inactive-gradient", NOT_YET),
+    ("layout/focus-ring", "urgent-gradient", NOT_YET),
     ("layout", "tab-indicator", "rini has no tabbed columns"),
     ("layout", "insert-hint", NOT_IN_RINI),
     (
@@ -256,6 +258,12 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ("output", "max-bpc", MACOS_DISPLAYS),
     ("output", "hot-corners", NOT_IN_RINI),
     (
+        "output/layout",
+        "focus-ring",
+        "the focus ring is the whole file's, in `layout`; an `output`'s `layout` overrides its gaps \
+         and struts only",
+    ),
+    (
         "workspace",
         "open-on-output",
         "rini's workspaces span every display",
@@ -300,7 +308,7 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ),
     ("window-rule", "scroll-factor", NOT_IN_RINI),
     ("window-rule", "pinch-sensitivity", NOT_IN_RINI),
-    ("window-rule", "focus-ring", "rini draws no focus ring"),
+    ("window-rule", "focus-ring", NOT_YET),
     ("window-rule", "border", "rini draws no borders"),
     ("window-rule", "shadow", "macOS draws window shadows"),
     ("window-rule", "tab-indicator", "rini has no tabbed columns"),

@@ -7,6 +7,7 @@
 mod animation;
 mod bar;
 mod commands;
+mod decorations;
 mod diagnostics;
 mod events;
 mod managers;
@@ -499,6 +500,9 @@ pub struct Reactor {
     /// tests — the switch works without it, which is what keeps the popup cosmetic.
     switcher_tx: Option<crate::switcher::platform::actor::Sender>,
     bar: bar::BarFeed,
+    /// The rings as rini's layout had them when the last batch of events ended: what each window wore
+    /// before a pass this batch makes.
+    rings_drawn: crate::decorations::domain::style::Rings,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
@@ -641,6 +645,7 @@ impl Reactor {
             live_switch: None,
             switcher_tx: None,
             bar: bar::BarFeed::default(),
+            rings_drawn: Default::default(),
             config: config.clone(),
             one_space,
             app_manager: managers::AppManager::new(),
@@ -1135,13 +1140,14 @@ impl Reactor {
         }
     }
 
-    /// One batch of the loop's events, then what the batch changed on the bar.
+    /// One batch of the loop's events, then what the batch changed on the bar, and the rings it left.
     fn handle_batch(&mut self, batch: impl IntoIterator<Item = (tracing::Span, Event)>) {
         for (span, event) in batch {
             let _guard = span.enter();
             self.handle_loop_event(event);
         }
         self.publish_bar();
+        self.rings_drawn = self.layout_rings();
     }
 
     fn handle_loop_event(&mut self, event: Event) {
@@ -3892,6 +3898,7 @@ impl Reactor {
         pin_floating: bool,
     ) -> Vec<crate::transitions::domain::request::SurfaceWindow> {
         let mut windows = Vec::with_capacity(layout.len());
+        let rings = self.layout_rings();
         for (wid, frame) in layout {
             let Some(window) = self.state.windows.window(*wid) else {
                 continue;
@@ -3910,6 +3917,7 @@ impl Reactor {
                 pinned: pin_floating && floating,
                 floating,
                 from: None,
+                worn: self.worn(*wid, &rings),
             });
         }
         windows
@@ -4034,6 +4042,7 @@ impl Reactor {
 
         let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
         let mut destination_layout = Vec::new();
+        let rings = self.layout_rings();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else {
                 continue;
@@ -4071,6 +4080,7 @@ impl Reactor {
                     pinned: false,
                     floating: self.layout_manager.layout_engine.is_window_floating(wid),
                     from: None,
+                    worn: self.worn(wid, &rings),
                 });
             }
         }

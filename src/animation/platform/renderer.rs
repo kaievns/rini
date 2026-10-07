@@ -34,8 +34,8 @@ pub enum Render {
     /// A fresh picture onto `window`'s tile, `clipped` to its corner or whole, its movement left
     /// alone.
     Swap { window: WindowId, picture: Picture, clipped: bool },
-    /// `window`'s tile drawn focused or not.
-    Focus { window: WindowId, focused: bool },
+    /// `window`'s tile drawn focused or not, and wearing its ring or not.
+    Focus { window: WindowId, focused: bool, ringed: bool },
     /// The overlay holed over each window ending at one of these, the holes before replaced.
     Holes(Vec<OverlayRect>),
     /// The overlay up.
@@ -191,7 +191,9 @@ impl Renderer {
             Render::Stage { score, tiles } => overlay.pose(&score, &tiles),
             Render::Play { edits, tiles } => overlay.play(&edits, &tiles),
             Render::Swap { window, picture, clipped } => overlay.swap(window, &picture, clipped),
-            Render::Focus { window, focused } => overlay.set_tile_focused(window, focused),
+            Render::Focus { window, focused, ringed } => {
+                overlay.set_tile_focused(window, focused, ringed)
+            }
             Render::Holes(ends) => overlay.set_holes(&ends),
             // Its alpha goes up after the flush.
             Render::Show => {}
@@ -275,7 +277,7 @@ mod tests {
             ("stage", Render::Stage { score: Score::default(), tiles: Vec::new() }),
             ("play", Render::Play { edits: Vec::new(), tiles: Vec::new() }),
             ("swap", Render::Swap { window, picture: test_picture(display.size), clipped: false }),
-            ("focus", Render::Focus { window, focused: true }),
+            ("focus", Render::Focus { window, focused: true, ringed: true }),
             ("holes", holes(1.0)),
             ("show", Render::Show),
             ("lift", Render::Lift),

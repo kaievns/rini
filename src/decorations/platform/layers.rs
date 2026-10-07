@@ -1,7 +1,8 @@
 //! The layers a tile's decorations are drawn with: the caster behind the picture with its mask, and
-//! the hairline in front with its outline. They ride the tile's frame beside its picture, and every
-//! value they are set to or animated through comes from `domain`. See "The hairline and the shadow,
-//! as drawn" in `src/decorations/docs/README.md`.
+//! the hairline in front with its outline and the focus ring. They ride the tile's frame beside its
+//! picture, and every value they are set to or animated through comes from `domain`. See "The
+//! hairline and the shadow, as drawn" and "The focus ring, as drawn" in
+//! `src/decorations/docs/README.md`.
 
 use std::cell::Cell;
 
@@ -15,9 +16,10 @@ use objc2_quartz_core::{
 };
 use rini_geometry::space::{TileRect, TileSize, ToCg, Vector};
 
+use crate::decorations::domain::paint::Colour;
 use crate::decorations::domain::shape::{self, SHADOW_REACH, Segment};
 use crate::decorations::domain::stack::{HAIRLINE_Z, SHADOW_Z};
-use crate::decorations::domain::style::{LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
+use crate::decorations::domain::style::{Decoration, LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
 
 // What a resize installs on the decorations, by the layer it rides.
 const SILHOUETTE_KEY: &str = "rini.tile.shadow.path";
@@ -26,6 +28,8 @@ const MASK_SIZE_KEY: &str = "rini.tile.mask.size";
 const MASK_PATH_KEY: &str = "rini.tile.mask.path";
 const CORNER_KEY: &str = "rini.tile.hairline.corner";
 const OUTLINE_KEY: &str = "rini.tile.outline.path";
+const BAND_SIZE_KEY: &str = "rini.tile.band.size";
+const BAND_CORNER_KEY: &str = "rini.tile.band.corner";
 
 pub fn add_under(layer: &CALayer, animation: &CAAnimation, key: &str) {
     layer.addAnimation_forKey(animation, Some(&NSString::from_str(key)));
@@ -76,6 +80,9 @@ pub struct DecorationLayers {
     pub hairline: Retained<CALayer>,
     /// The hairline's dark outline, a stroke just outside the white line, as the hairline's child.
     pub outline: Retained<CAShapeLayer>,
+    /// The focus ring, a band outside the window, as the hairline's child after the outline, so it
+    /// is drawn in front of the picture, the hairline and the outline.
+    pub ring: Band,
     /// The window's corner radius as the window server reports it, which every piece rounds to;
     /// `None` rounds at the fallback.
     pub radius: Option<f64>,
@@ -110,6 +117,7 @@ impl DecorationLayers {
         outline.setStrokeColor(Some(&CGColor::new_generic_gray(0.0, OUTLINE_ALPHA)));
         outline.setLineWidth(OUTLINE_PT);
         hairline.addSublayer(&outline);
+        let ring = Band::new(&hairline);
         container.addSublayer(&hairline);
 
         DecorationLayers {
@@ -117,6 +125,7 @@ impl DecorationLayers {
             shadow_mask,
             hairline,
             outline,
+            ring,
             radius: None,
             built: Cell::new(None),
         }
@@ -134,6 +143,7 @@ impl DecorationLayers {
             &self.shadow_mask,
             &self.hairline,
             &self.outline,
+            &self.ring.layer,
         ] {
             layer.removeAllAnimations();
         }
@@ -161,6 +171,7 @@ impl DecorationLayers {
         self.hairline.setCornerRadius(corner);
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
+        self.ring.place(size, corner);
     }
 
     /// The corner a tile of `size` rounds to, every piece of it: its window's radius, clamped to the
@@ -169,7 +180,7 @@ impl DecorationLayers {
         shape::radius(self.radius, size)
     }
 
-    /// Paints the hairline's white and the shadow's depth as `style` has them.
+    /// Paints the hairline's white, the shadow's depth and the ring as `style` has them.
     pub fn show(&self, style: Style) {
         self.hairline
             .setBorderColor(Some(&CGColor::new_generic_gray(1.0, style.light_alpha)));
@@ -177,10 +188,14 @@ impl DecorationLayers {
         self.shadow.setShadowOpacity(shadow.opacity);
         self.shadow.setShadowRadius(shadow.radius);
         self.shadow.setShadowOffset(CGSize::new(0.0, shadow.offset_y));
+        self.ring.paint(style.ring);
     }
 
-    pub fn set_scale(&self, scale: f64) {
+    /// Draws the outline at the display's `scale`, and the ring of `decoration` in whole device
+    /// pixels of it; laid at the next `place`.
+    pub fn wear(&mut self, decoration: &Decoration, scale: f64) {
         self.outline.setContentsScale(scale);
+        self.ring.set_width(decoration.ring.map_or(0.0, |band| shape::device_width(band.width, scale)));
     }
 
     /// Carries the decorations through `resize`, each piece at the corner of every size it passes
@@ -211,6 +226,7 @@ impl DecorationLayers {
         }
         let outline = resize.path("path", |size| outline_path(size, corner(size)));
         add_under(&self.outline, &outline, OUTLINE_KEY);
+        self.ring.install_resize(resize, corner);
     }
 
     /// Takes away every animation `install_resize` put on the decorations.
@@ -219,7 +235,67 @@ impl DecorationLayers {
         remove_under(&self.shadow_mask, &[MASK_MOVE_KEY, MASK_SIZE_KEY, MASK_PATH_KEY]);
         remove_under(&self.hairline, &[CORNER_KEY]);
         remove_under(&self.outline, &[OUTLINE_KEY]);
+        self.ring.remove_resize();
     }
+}
+
+/// A band drawn outside a window, as the focus ring is: a `CALayer` border on the continuous curve,
+/// its inner contour the window's own corner (`shape::band`), hanging from the window's top-left in
+/// its parent's points. On a tile and at rest alike, so the two draw the same pixels.
+pub struct Band {
+    pub layer: Retained<CALayer>,
+    /// In points, whole device pixels of the display it is drawn on; 0 draws nothing.
+    width: Cell<f64>,
+}
+
+impl Band {
+    /// A band under `parent`, drawn nowhere until it is given a width and a colour.
+    pub fn new(parent: &CALayer) -> Band {
+        let layer = CALayer::layer();
+        layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        round_continuous(&layer);
+        layer.setHidden(true);
+        parent.addSublayer(&layer);
+        Band { layer, width: Cell::new(0.0) }
+    }
+
+    pub fn set_width(&self, width: f64) {
+        self.width.set(width);
+        self.layer.setBorderWidth(width);
+    }
+
+    /// Lays the band around a window of `size` at `corner`, the window at its parent's origin.
+    pub fn place(&self, size: TileSize, corner: f64) {
+        let (rect, outer) = shape::band(size, corner, self.width.get());
+        self.layer.setFrame(rect.to_cg());
+        self.layer.setCornerRadius(outer);
+    }
+
+    /// Shows the band in `colour`, or hides it with none.
+    pub fn paint(&self, colour: Option<Colour>) {
+        let shown = colour.filter(|_| self.width.get() > 0.0);
+        if let Some(Colour { r, g, b, a }) = shown {
+            self.layer.setBorderColor(Some(&CGColor::new_srgb(r.into(), g.into(), b.into(), a.into())));
+        }
+        self.layer.setHidden(shown.is_none());
+    }
+
+    /// Carries the band through `resize`: its bounds at every size, and its corner while it changes.
+    /// Its position, the window's corner less its width, holds.
+    fn install_resize(&self, resize: &impl Resize, corner: impl Fn(TileSize) -> f64) {
+        let width = self.width.get();
+        let band = |size: TileSize| shape::band(size, corner(size), width);
+        let bounds = resize.rect("bounds", |size| CGRect::new(CGPoint::new(0.0, 0.0), band(size).0.size.to_cg()));
+        add_under(&self.layer, &bounds, BAND_SIZE_KEY);
+        let outer = |size: TileSize| band(size).1;
+        if resize.changes(outer) {
+            add_under(&self.layer, &resize.number("cornerRadius", outer), BAND_CORNER_KEY);
+        } else {
+            remove_under(&self.layer, &[BAND_CORNER_KEY]);
+        }
+    }
+
+    fn remove_resize(&self) { remove_under(&self.layer, &[BAND_SIZE_KEY, BAND_CORNER_KEY]); }
 }
 
 /// Rounds `layer`'s corner on the window's own curve, continuous, the one every path here follows.
@@ -506,7 +582,7 @@ mod tests {
         let alpha =
             |layers: &DecorationLayers| CGColor::alpha(layers.hairline.borderColor().as_deref());
         for focused in [true, false] {
-            let style = Style::of(focused);
+            let style = Style::of(focused, false, &Decoration::default());
             layers.show(style);
             assert_eq!(alpha(&layers), style.light_alpha);
             assert_eq!(layers.shadow.shadowOpacity(), style.shadow.opacity);
@@ -520,9 +596,63 @@ mod tests {
 
     #[test]
     fn the_outline_is_drawn_at_the_displays_scale() {
-        let layers = DecorationLayers::new(&CALayer::layer());
-        layers.set_scale(2.0);
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.wear(&Decoration::default(), 2.0);
         assert_eq!(layers.outline.contentsScale(), 2.0);
+    }
+
+    const RING: crate::decorations::domain::style::Band = crate::decorations::domain::style::Band {
+        width: 4.0,
+        active: Colour { r: 0.5, g: 0.78, b: 1.0, a: 1.0 },
+        inactive: Colour { r: 0.31, g: 0.31, b: 0.31, a: 1.0 },
+    };
+
+    fn ringed() -> Decoration { Decoration { ring: Some(RING) } }
+
+    #[test]
+    fn the_focus_ring_is_in_front_of_the_hairline_and_the_outline() {
+        let layers = DecorationLayers::new(&CALayer::layer());
+        assert_eq!(parent(&layers.ring.layer), Some(&*layers.hairline as *const CALayer));
+        // SAFETY: a read of the layer's own sublayers, which nothing else mutates.
+        let sublayers = unsafe { layers.hairline.sublayers() }.expect("the outline and the ring");
+        let order: Vec<*const CALayer> = sublayers.iter().map(|layer| Retained::as_ptr(&layer)).collect();
+        let outline: &CALayer = &layers.outline;
+        assert_eq!(order, vec![outline as *const CALayer, &*layers.ring.layer as *const CALayer], "drawn after the outline");
+        layers.stack(0.0);
+        assert!(layers.hairline.zPosition() > 0.0, "and with the hairline, in front of the picture");
+    }
+
+    #[test]
+    fn the_ring_is_shown_only_in_the_paint_its_style_has() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.wear(&ringed(), 2.0);
+        layers.show(Style::of(true, true, &ringed()));
+        assert!(!layers.ring.layer.isHidden());
+        let srgb = |c: Colour| CGColor::new_srgb(c.r.into(), c.g.into(), c.b.into(), c.a.into());
+        assert!(CGColor::equal_to_color(layers.ring.layer.borderColor().as_deref(), Some(&srgb(RING.active))));
+        layers.show(Style::of(false, true, &ringed()));
+        assert!(CGColor::equal_to_color(layers.ring.layer.borderColor().as_deref(), Some(&srgb(RING.inactive))));
+        layers.show(Style::of(true, false, &ringed()));
+        assert!(layers.ring.layer.isHidden(), "not its workspace's active window");
+        layers.wear(&Decoration::default(), 2.0);
+        layers.show(Style::of(true, true, &Decoration::default()));
+        assert!(layers.ring.layer.isHidden(), "rings off");
+    }
+
+    #[test]
+    fn every_band_rounds_on_the_continuous_curve_at_its_outset() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(16.0);
+        layers.wear(&Decoration { ring: Some(crate::decorations::domain::style::Band { width: 1.3, ..RING }) }, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        let ring = &layers.ring.layer;
+        assert_eq!(ring.borderWidth(), 1.5, "whole device pixels");
+        assert_eq!(ring.frame(), rect(-1.5, -1.5, 862.0, 1084.0));
+        assert_eq!(ring.cornerRadius(), 17.5);
+        // SAFETY: Core Animation's constant string.
+        assert_eq!(&*ring.cornerCurve(), unsafe { kCACornerCurveContinuous });
+        layers.place(TileSize::new(12.0, 400.0));
+        assert_eq!(ring.cornerRadius(), 7.5, "the window's clamped corner, out by the width");
     }
 
     #[test]
@@ -541,6 +671,7 @@ mod tests {
             &layers.shadow_mask,
             &layers.hairline,
             &layers.outline,
+            &layers.ring.layer,
         ] {
             assert!(installed(layer).is_empty());
         }
@@ -575,6 +706,10 @@ mod tests {
             installed(&layers.outline),
             pairs([("rini.tile.outline.path", "path")])
         );
+        assert_eq!(
+            installed(&layers.ring.layer),
+            pairs([("rini.tile.band.corner", "cornerRadius"), ("rini.tile.band.size", "bounds")])
+        );
 
         layers.install_resize(&Between(
             TileSize::new(1200.0, 1081.0),
@@ -585,6 +720,7 @@ mod tests {
             installed(&layers.outline),
             pairs([("rini.tile.outline.path", "path")])
         );
+        assert_eq!(installed(&layers.ring.layer), pairs([("rini.tile.band.size", "bounds")]));
     }
 
     /// Only the resize's own keys go: what the overlay installs on the frame layers stays.
@@ -604,6 +740,7 @@ mod tests {
         }
         assert!(installed(&layers.shadow_mask).is_empty());
         assert!(installed(&layers.outline).is_empty());
+        assert!(installed(&layers.ring.layer).is_empty());
     }
 
     #[test]

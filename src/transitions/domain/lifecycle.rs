@@ -14,6 +14,7 @@ use rini_geometry::{is_off_screen, to_overlay_space};
 use serde::Serialize;
 
 use crate::animation::domain::motion::tile::snap_to;
+use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
 
 use super::request::SurfaceWindow;
@@ -147,6 +148,16 @@ pub struct StageSummary {
 /// focus target flying its focused look (`StageSummary::parked_focus`) is drawn focused with it.
 pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Option<WindowId>) -> bool {
     losing_focus == Some(window) || focus == Some(window) && losing_focus.is_none()
+}
+
+/// Whether `window`'s tile wears its ring now, drawn `focused` or not, given whether it wore the ring
+/// before the pass and wears it where the pass ends: drawn focused it does; the focus target waiting
+/// for its turn wears what it wore; every other tile what it wears at the end. So the ring turns with
+/// the hairline: the window gaining focus on its own display shows none until its turn and then the
+/// active one, and the one losing it the active ring until its turn and then none, or the inactive
+/// one when focus left its display.
+pub fn drawn_ringed(window: WindowId, focus: Option<WindowId>, focused: bool, worn: &Worn) -> bool {
+    focused || if focus == Some(window) { worn.wore_ring } else { worn.wears_ring }
 }
 
 /// The window whose frame-zero picture is its focused look: the one focus leaves, if it was the key
@@ -2037,10 +2048,33 @@ mod tests {
         assert!(!drawn_focused(w(3), None, None));
     }
 
+    /// Focus moves from window 1 to window 2: each tile's ring before the handover, after the window
+    /// losing focus has turned, and after the target has.
+    #[test]
+    fn the_ring_turns_with_the_hairline_at_the_handover() {
+        let worn = |wore_ring, wears_ring| Worn { wore_ring, wears_ring, ..Worn::default() };
+        let (from, to) = (Some(w(1)), Some(w(2)));
+        let turns = |window, worn: Worn| {
+            let before = drawn_ringed(window, to, drawn_focused(window, to, from), &worn);
+            let losing_turned = drawn_ringed(window, to, false, &worn);
+            let target_turned = drawn_ringed(window, to, window == w(2), &worn);
+            (before, losing_turned, target_turned)
+        };
+        // One display: the ring leaves window 1 and comes to window 2, each at its own turn.
+        assert_eq!(turns(w(1), worn(true, false)), (true, false, false), "losing: active, then none");
+        assert_eq!(turns(w(2), worn(false, true)), (false, false, true), "gaining: none, then active");
+        // Across displays each keeps its display's ring, and only its paint turns.
+        assert_eq!(turns(w(1), worn(true, true)), (true, true, true), "losing: active, then inactive");
+        assert_eq!(turns(w(2), worn(true, true)), (true, true, true), "gaining: inactive, then active");
+        assert!(drawn_focused(w(1), to, from) && !drawn_focused(w(2), to, from), "the paint is focus's");
+        assert!(!drawn_ringed(w(3), to, false, &worn(false, false)));
+    }
+
     #[test]
     fn a_strip_movement_is_a_move_when_a_column_crosses_it_and_a_switch_when_it_travels_between_rows() {
         let frame = SurfaceRect::new(Point::new(4.0, 32.0), Size::new(859.0, 1081.0));
         let window = |from| SurfaceWindow {
+            worn: Default::default(),
             window: w(1),
             server_id: rini_core::ids::WindowServerId::new(1),
             frame,

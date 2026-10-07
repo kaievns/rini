@@ -336,7 +336,7 @@ destination for a window already moving.
   its corners.
 - When focus moves during a flight, each window's hairline and shadow MUST turn with its own picture: the
   window losing focus dimmer as its picture turns unfocused, the window gaining focus brighter as its
-  picture turns focused, each at its own time.
+  picture turns focused, each at its own time. Its focus ring turns with them (`decorations.md`).
 
 The hairline's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
 applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
@@ -363,8 +363,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or grew it: one a pass
   opened or grew is pictured once it has repainted instead. A look a window already had when it landed
-  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its shadow
-  turning with it: the window losing focus unfocused, the window gaining focus focused.
+  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline, its shadow
+  and its focus ring turning with it: the window losing focus unfocused, the window gaining focus
+  focused.
 - The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
   focus MUST wait for the other's at most 15ms, one capture interval, and not at all once the other's
   turn can no longer be pictured; two that come in together MUST turn old, then new. Waiting for the
@@ -581,8 +582,8 @@ depth bands, the edge bounce and the nudge. The looks
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
-`src/decorations/domain/` is what each tile wears: the hairline's and the shadow's shape, style and
-depth, which the overlay draws on the layers in `src/decorations/platform/layers.rs`. A window's
+`src/decorations/domain/` is what each tile wears: the hairline's, the shadow's and the focus ring's
+shape, style and depth, which the overlay draws on the layers in `src/decorations/platform/layers.rs`. A window's
 corner radius is read in `src/windows/platform/window_server.rs`, decoded in
 `src/windows/domain/info.rs` and resolved, with the fallback and the clamp, in
 `src/decorations/domain/shape.rs`. When each step happens is `src/transitions/`:

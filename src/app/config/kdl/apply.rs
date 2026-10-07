@@ -15,10 +15,11 @@ use rustc_hash::FxHashSet as HashSet;
 use super::ConfigPart;
 use super::binds::{BindPart, BindsPart};
 use super::error::Problem;
-use super::layout::{LayoutPart, ProportionPart};
-use super::value::{Flag, Number};
+use super::layout::{BandPart, LayoutPart, ProportionPart};
+use super::value::{ColourValue, Flag, Number};
 use super::window_rule::{FixedPart, MatchPart, WindowRulePart};
 use crate::app::config::{BASE_ANIMATION_SECONDS, Config, MAX_WORKSPACES};
+use crate::decorations::settings::BandSetting;
 use crate::input::domain::binding::{Action, Bind};
 use crate::input::domain::key::{
     Hotkey, KeyCode, ModKey, Modifiers, normalize_spec, substitute_mod,
@@ -64,7 +65,10 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         settings.mouse_hides_on_focus = on;
     }
 
-    if let Some(layout) = part.layout {
+    if let Some(mut layout) = part.layout {
+        if let Some(ring) = layout.focus_ring.take() {
+            apply_band(ring, &mut settings.decorations.focus_ring, &mut problems);
+        }
         apply_layout(layout, &mut settings.layout, &mut problems);
     }
 
@@ -237,6 +241,22 @@ fn on_off(
         (Some(Flag(on)), None) => Some(on),
         (None, Some(Flag(off))) => Some(!off),
         (None, None) => None,
+    }
+}
+
+/// A band's block laid over its setting, field by field.
+fn apply_band(part: BandPart, setting: &mut BandSetting, problems: &mut Vec<Problem>) {
+    if let Some(on) = on_off(part.on, part.off, &part.span, problems) {
+        setting.on = on;
+    }
+    if let Some(width) = part.width {
+        setting.band.width = width.get();
+    }
+    if let Some(ColourValue(colour)) = part.active_color {
+        setting.band.active = colour;
+    }
+    if let Some(ColourValue(colour)) = part.inactive_color {
+        setting.band.inactive = colour;
     }
 }
 

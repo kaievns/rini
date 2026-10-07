@@ -364,8 +364,9 @@ anyway; two in one round swap old, then new. The watch reports the old window `L
 with no change, out of tries, refused or found clipped, and the target's picture waits no longer. A
 merge's retarget that carries it on reports it again under the new tag: the coordinator drops a report
 under the generation before. The target's changed picture is kept as its focused look,
-and its tile is drawn focused: focus hands over. Each tile's hairline and shadow turn with its own picture
-(`TileOverlay::set_tile_focused`); Kai, 2026-10-05: "i'd like them to be orchestrated independently
+and its tile is drawn focused: focus hands over. Each tile's hairline, shadow and focus ring turn
+with its own picture (`TileOverlay::set_tile_focused`, the ring as `lifecycle::drawn_ringed` has
+it); Kai, 2026-10-05: "i'd like them to be orchestrated independently
 whenever blur or focus are done switching." A window losing focus whose turn has not shown when the
 target's does, one clipped, parked, never watched or out of tries, is drawn unfocused just before the
 target is drawn focused. One ending clipped by the display's edge keeps its frame-zero picture to the

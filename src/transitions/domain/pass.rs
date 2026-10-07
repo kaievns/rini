@@ -5,6 +5,7 @@ use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::ScreenRect;
 use rini_geometry::{Round, SameAs};
 
+use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::target::PictureTarget;
 use crate::transitions::domain::request::AnimationRequest;
 
@@ -23,6 +24,7 @@ pub struct PassWindow {
     pub floating: bool,
     /// Whether the owning app can still be told. A dead app's window still counts as changed.
     pub app_alive: bool,
+    pub worn: Worn,
 }
 
 /// One window this pass moves.
@@ -34,6 +36,7 @@ pub struct Move {
     pub to: ScreenRect,
     pub in_active_workspace: bool,
     pub floating: bool,
+    pub worn: Worn,
 }
 
 impl Move {
@@ -70,6 +73,7 @@ impl PassPlan {
                     from: m.from,
                     to: m.to,
                     floating: m.floating,
+                    worn: m.worn,
                 })
             })
             .collect()
@@ -93,6 +97,7 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
                     from: w.current,
                     to: w.current,
                     floating: w.floating,
+                    worn: w.worn,
                 });
             }
             continue;
@@ -115,6 +120,7 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
             to,
             in_active_workspace: w.in_active_workspace,
             floating: w.floating,
+            worn: w.worn,
         });
     }
     out
@@ -132,6 +138,7 @@ mod tests {
 
     fn window(idx: u32, current: ScreenRect, target: ScreenRect) -> PassWindow {
         PassWindow {
+            worn: Default::default(),
             window: WindowId::new(1, idx),
             server_id: Some(WindowServerId::new(idx)),
             current,

@@ -1221,6 +1221,51 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     );
 }
 
+/// Focus moved from the first window to the second since the last batch: the first wore the ring
+/// and the second wears it, each request saying so with the decoration every managed window wears.
+#[test]
+fn a_request_carries_whether_its_window_wore_and_wears_the_ring() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
+    apps.requests();
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
+    reactor.handle_test_batch(Vec::new());
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
+
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let layout: Vec<(WindowId, CGRect)> = [first, second, third]
+        .into_iter()
+        .map(|wid| {
+            let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+            let shift = if wid == first { 120. } else { -120. };
+            (wid, CGRect::new(CGPoint::new(frame.origin.x + shift, frame.origin.y), frame.size))
+        })
+        .collect();
+    crate::app::reactor::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
+
+    let mut animated = Vec::new();
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
+            animated = windows;
+        }
+    }
+    let worn = |wid| animated.iter().find(|request| request.window == wid).expect("requested").worn;
+    let decoration = reactor.config.settings.decorations.decoration();
+    assert!(decoration.ring.is_some(), "on by default");
+    for (wid, wore, wears) in [(first, true, false), (second, false, true), (third, false, false)] {
+        let worn = worn(wid);
+        assert_eq!((worn.wore_ring, worn.wears_ring), (wore, wears), "{wid:?}");
+        assert_eq!(worn.decoration, decoration);
+    }
+}
+
 /// A floating window oscillated between x = 502 and x = 503 on every space-state refresh. Animating that
 /// covers the display for 350ms and buys nothing, so a pass with no visible travel is placed instead.
 #[test]

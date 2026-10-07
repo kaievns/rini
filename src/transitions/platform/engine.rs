@@ -48,6 +48,7 @@ use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
     WatchId, Why,
 };
+use crate::decorations::domain::style::Worn;
 use crate::pictures::platform::picture::{Picture, Route};
 use crate::pictures::platform::service::Pictures;
 use crate::pictures::platform::skylight::capture_via_framed;
@@ -58,7 +59,7 @@ use crate::transitions::domain::flight_score::FlightScore;
 use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, measures};
 use crate::transitions::domain::lifecycle::{
     self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
-    extend_latest, losing_focus,
+    drawn_ringed, extend_latest, losing_focus,
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::timing::*;
@@ -272,6 +273,8 @@ fn entrance_tile(
         server_order: Some(0),
         depth: 0,
         focused: true,
+        worn: entrance.worn,
+        ringed: true,
         radius,
         clipped,
     }
@@ -508,18 +511,22 @@ impl RunningAnimation {
         tile.snapshot = look;
         tile.clipped = clipped;
         tile.focused = true;
+        tile.ringed = true;
         self.focused_look = Some(target);
         true
     }
 
-    /// `window`'s tile drawn focused or not from now; drawn focused, focus has handed over to it.
-    fn draw_focused(&mut self, window: WindowId, focused: bool) {
+    /// `window`'s tile drawn focused or not from now, and wearing the ring as that leaves it (`None`
+    /// with no tile); drawn focused, focus has handed over to it.
+    fn draw_focused(&mut self, window: WindowId, focused: bool) -> Option<bool> {
         if focused {
             self.shown_focus = Some(window);
         }
-        for tile in self.tiles.iter_mut().filter(|t| t.window == window) {
-            tile.focused = focused;
-        }
+        let focus = self.focus;
+        let tile = self.tiles.iter_mut().find(|t| t.window == window)?;
+        tile.focused = focused;
+        tile.ringed = drawn_ringed(window, focus, focused, &tile.worn);
+        Some(tile.ringed)
     }
 
     /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`. A
@@ -547,6 +554,7 @@ impl RunningAnimation {
             let shown = self.shown_focus;
             for tile in self.tiles.iter_mut().filter(|t| Some(t.window) != shown) {
                 tile.focused = drawn_focused(tile.window, self.focus, losing);
+                tile.ringed = drawn_ringed(tile.window, self.focus, tile.focused, &tile.worn);
             }
             self.focused_look = None;
         }
@@ -615,6 +623,7 @@ impl RunningAnimation {
                 existing.floating = tile.floating;
                 existing.server_order = tile.server_order;
                 existing.depth = tile.depth;
+                existing.worn = Worn { wore_ring: existing.worn.wore_ring, ..tile.worn };
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -995,10 +1004,8 @@ impl FlightEngine {
                 self.pictures.keep_focused(self.tag(generation), window)
             }
             Command::Focus { window, focused } => {
-                if let Some(running) = self.running.as_mut() {
-                    running.draw_focused(window, focused);
-                }
-                self.render(Render::Focus { window, focused });
+                let ringed = self.running.as_mut().and_then(|running| running.draw_focused(window, focused));
+                self.render(Render::Focus { window, focused, ringed: ringed.unwrap_or(focused) });
             }
             Command::Lift { generation } => self.lift(generation, now),
             Command::Warm(windows) => {
@@ -1493,6 +1500,7 @@ impl FlightEngine {
                 Some(snapshot) => {
                     waits(request.window, EndPicture::of_picture(snapshot.coverage.covered, request.to.size));
                     let clipped = clips(self.pictures.knowledge(request.server_id), &snapshot);
+                    let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
@@ -1501,7 +1509,9 @@ impl FlightEngine {
                         floating: request.floating,
                         server_order: depths.get(&request.server_id.as_u32()).copied(),
                         depth: 0,
-                        focused: drawn_focused(request.window, drawing_focus, losing),
+                        focused,
+                        worn: request.worn,
+                        ringed: drawn_ringed(request.window, drawing_focus, focused, &request.worn),
                         radius: radii.get(&request.server_id).copied(),
                         clipped,
                     });
@@ -1549,6 +1559,8 @@ impl FlightEngine {
                             let to_o = to_overlay_space(to, display_frame);
                             // Already at its slot (a cold cache, not an open): a still tile.
                             let standing = from.same_as(to);
+                            let focused =
+                                !standing || drawn_focused(request.window, drawing_focus, losing);
                             tiles.push(OverlayTile {
                                 window: request.window,
                                 from: from_o,
@@ -1561,8 +1573,9 @@ impl FlightEngine {
                                     Some(0)
                                 },
                                 depth: 0,
-                                focused: !standing
-                                    || drawn_focused(request.window, drawing_focus, losing),
+                                focused,
+                                worn: request.worn,
+                                ringed: drawn_ringed(request.window, drawing_focus, focused, &request.worn),
                                 radius: radii.get(&request.server_id).copied(),
                                 clipped,
                             });
@@ -1585,6 +1598,7 @@ impl FlightEngine {
                                 window: request.window,
                                 to: to_overlay_space(request.to, display_frame),
                                 floating: request.floating,
+                                worn: request.worn,
                             });
                         }
                     }
@@ -1697,17 +1711,17 @@ impl FlightEngine {
 
     /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
     /// a new parked target flies cut onto its tile: a retarget draws neither.
-    fn redraw_focus(&mut self, before: &[(WindowId, bool)], look: Option<WindowId>) {
+    fn redraw_focus(&mut self, before: &[(WindowId, (bool, bool))], look: Option<WindowId>) {
         let Some(running) = self.running.as_ref() else { return };
         let mut drawn = Vec::new();
         for tile in running.tiles.iter() {
-            let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
-            let window = tile.window;
+            let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, drawn)| *drawn);
+            let (window, focused, ringed) = (tile.window, tile.focused, tile.ringed);
             if look == Some(window) {
                 drawn.push(Render::Swap { window, picture: tile.snapshot.clone(), clipped: tile.clipped });
-                drawn.push(Render::Focus { window, focused: true });
-            } else if was.is_some_and(|was| was != tile.focused) {
-                drawn.push(Render::Focus { window, focused: tile.focused });
+                drawn.push(Render::Focus { window, focused: true, ringed: true });
+            } else if was.is_some_and(|was| was != (focused, ringed)) {
+                drawn.push(Render::Focus { window, focused, ringed });
             }
         }
         for command in drawn {
@@ -1735,8 +1749,8 @@ impl FlightEngine {
         }
         extend_latest(&mut running.final_frames, pass.final_frames.into_iter());
         let focus_before = running.focus;
-        let drawn_focused_before: Vec<(WindowId, bool)> =
-            running.tiles.iter().map(|t| (t.window, t.focused)).collect();
+        let drawn_focused_before: Vec<(WindowId, (bool, bool))> =
+            running.tiles.iter().map(|t| (t.window, (t.focused, t.ringed))).collect();
         let (pass_focus, _) = pass.focus;
         running.merge_pass(pass.tiles, pass_focus);
         let mut shape = pass.shape;
@@ -1922,6 +1936,7 @@ impl FlightEngine {
                         misshapen += 1;
                     }
                     let clipped = clips(self.pictures.knowledge(window.server_id), &snapshot);
+                    let focused = drawn_focused(window.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
                         window: window.window,
                         from,
@@ -1930,7 +1945,9 @@ impl FlightEngine {
                         floating: window.floating,
                         server_order: depths.get(&window.server_id.as_u32()).copied(),
                         depth: 0,
-                        focused: drawn_focused(window.window, drawing_focus, losing),
+                        focused,
+                        worn: window.worn,
+                        ringed: drawn_ringed(window.window, drawing_focus, focused, &window.worn),
                         radius: radii.get(&window.server_id).copied(),
                         clipped,
                     });
@@ -2239,6 +2256,7 @@ impl FlightEngine {
                     floating: false,
                     from: frame.translate(ScreenVector::new(dx, dy)),
                     to: frame,
+                    worn: Worn::default(),
                 }
             })
             .collect();
@@ -2345,6 +2363,8 @@ mod tests {
             server_order,
             depth: 0,
             focused: false,
+            worn: Worn::default(),
+            ringed: false,
             radius: None,
             clipped: false,
         }
@@ -2493,7 +2513,7 @@ mod tests {
             let next = rect(867.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), next, slot, Some(0), false));
-            running.entrances.push(PendingEntrance { window: wid(2), to: next, floating: true });
+            running.entrances.push(PendingEntrance { window: wid(2), to: next, floating: true, worn: Default::default() });
             running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
@@ -2549,7 +2569,7 @@ mod tests {
             let neighbour = rect(4.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
-            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
+            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false, worn: Default::default() });
             running.focus = Some(wid(2));
             let tile = running.admit(wid(2), &test_picture(slot.size), true, || Some(26.0)).expect("admitted");
             assert_eq!((tile.from, tile.to), (entrance_from(slot), slot), "zero width at its left edge");
@@ -2598,7 +2618,7 @@ mod tests {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
-            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
+            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false, worn: Default::default() });
             running.focused_look = Some(wid(1));
             let picture = test_picture(slot.size);
             assert!(matches!(running.take_picture(wid(2), &picture, false, || None), Took::Entrance(tile) if tile.from == entrance_from(slot)));
@@ -2704,15 +2724,18 @@ mod tests {
                 stacked(wid(3), slot, slot, Some(2), false),
             ];
             running.tiles[0].focused = true;
+            running.tiles[0].worn = Worn { wore_ring: true, ..Worn::default() };
+            running.tiles[1].worn = Worn { wears_ring: true, ..Worn::default() };
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
             let focused = |running: &RunningAnimation| running.tiles.iter().map(|t| t.focused).collect::<Vec<_>>();
-            running.draw_focused(wid(1), false);
+            assert_eq!(running.draw_focused(wid(1), false), Some(false), "its ring goes with its turn");
             assert_eq!(focused(&running), vec![false, false, false]);
             assert_eq!(losing_focus(running.focus, running.shown_focus), Some(wid(1)), "still leaving it");
-            running.draw_focused(wid(2), true);
+            assert_eq!(running.draw_focused(wid(2), true), Some(true), "and comes to the target with its own");
             assert_eq!(focused(&running), vec![false, true, false]);
             assert_eq!(losing_focus(running.focus, running.shown_focus), None, "a later merge moves none");
+            assert_eq!(running.draw_focused(wid(4), true), None, "no tile");
         }
 
         #[test]
@@ -2862,6 +2885,7 @@ mod tests {
 
         fn on_surface(window: WindowId, frame: SurfaceRect, floating: bool) -> SurfaceWindow {
             SurfaceWindow {
+                worn: Default::default(),
                 window,
                 server_id: WindowServerId::new(window.idx.get()),
                 frame,
@@ -3793,6 +3817,7 @@ mod tests {
             fn strip_pan(&self, from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
                 let frame = rect(867.0, 0.0, 859.0, 1081.0);
                 let window = SurfaceWindow {
+                    worn: Default::default(),
                     window: wid(1),
                     server_id: WindowServerId::new(1),
                     frame,
@@ -4021,6 +4046,7 @@ mod tests {
             let old = rect(40.0, 0.0, 800.0, 1081.0);
             let new = rect(868.0, 0.0, 800.0, 1081.0);
             let window = |id, frame| SurfaceWindow {
+                worn: Default::default(),
                 window: wid(id),
                 server_id: WindowServerId::new(id),
                 frame,
@@ -4078,6 +4104,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, &id)| SurfaceWindow {
+                    worn: Default::default(),
                     window: wid(id),
                     server_id: WindowServerId::new(id),
                     frame: rect(867.0 * (i as f64 + 1.0), 0.0, 859.0, 1081.0),
@@ -4260,6 +4287,7 @@ mod tests {
         /// own frame.
         fn pass_of(h: &Harness, others: &[(u32, ScreenRect, ScreenRect)]) -> Event {
             let request = |id: u32, from, to| AnimationRequest {
+                worn: Default::default(),
                 window: wid(id),
                 server_id: WindowServerId::new(id),
                 from,
@@ -4315,6 +4343,52 @@ mod tests {
             }
             report_corners(1, None);
             report_corners(2, None);
+        }
+
+        /// Each tile carries what its window wears as its request has it, unread, and starts wearing
+        /// the ring its focus turn gives it: the window focus leaves, drawn focused, its own; the target,
+        /// drawn unfocused until its turn, the one it wore.
+        #[test]
+        fn each_tile_is_staged_with_the_decoration_and_ring_its_request_carries() {
+            let mut h = Harness::new();
+            park(2);
+            let ring = crate::decorations::domain::style::Band {
+                width: 4.0,
+                active: crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
+                inactive: crate::decorations::domain::paint::Colour::rgb(0x505050),
+            };
+            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring) };
+            let worn = |wore_ring, wears_ring| Worn { decoration, wore_ring, wears_ring };
+            let request = |id: u32, from, to, worn| AnimationRequest {
+                window: wid(id),
+                server_id: WindowServerId::new(id),
+                from,
+                to,
+                floating: false,
+                worn,
+            };
+            let parked = rect(1727.0, 1085.0, 859.0, 1081.0);
+            let press = Event::Animate {
+                windows: vec![
+                    request(1, start(), end(), worn(true, false)),
+                    request(2, parked, rect(867.0, 0.0, 859.0, 1081.0), worn(false, true)),
+                ],
+                focus: Some(wid(2)),
+                focused_before: Some(wid(1)),
+                key: Some(wid(1)),
+                duration: Duration::from_millis(300),
+                look: Look::default(),
+                cause: h.cause(),
+            };
+            let sent = h.step(press);
+            let staged = |window| {
+                let tiles = handed(&sent, window);
+                assert!(!tiles.is_empty(), "{window:?} flies");
+                tiles.iter().map(|tile| (tile.worn, tile.focused, tile.ringed)).collect::<Vec<_>>()
+            };
+            assert!(staged(wid(1)).iter().all(|drawn| *drawn == (worn(true, false), true, true)), "losing focus");
+            assert!(staged(wid(2)).iter().all(|drawn| *drawn == (worn(false, true), false, false)), "the target");
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
         }
 
         /// A window that opens has no radius to read until it has drawn: its entrance takes the one the

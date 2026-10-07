@@ -2,7 +2,7 @@
 
 use knus::span::Span;
 
-use super::value::{Number, Pixels, Proportion};
+use super::value::{ColourValue, Flag, Number, Pixels, Proportion};
 use crate::layout::settings::{CenterFocusedColumn, Edges, WindowInsertionPoint};
 
 #[derive(knus::Decode, Debug, Default)]
@@ -24,6 +24,27 @@ pub struct LayoutPart {
     pub center_focused_column: Option<CenterFocusedColumn>,
     #[knus(child, unwrap(argument))]
     pub window_insertion_point: Option<WindowInsertionPoint>,
+    #[knus(child)]
+    pub focus_ring: Option<BandPart>,
+}
+
+/// niri's `focus-ring`: `on` or `off`, its width, and its colour on the display holding focus and on
+/// the others.
+#[derive(knus::Decode, Debug, Default)]
+#[knus(span_type = Span)]
+pub struct BandPart {
+    #[knus(span)]
+    pub span: Span,
+    #[knus(child)]
+    pub on: Option<Flag>,
+    #[knus(child)]
+    pub off: Option<Flag>,
+    #[knus(child, unwrap(argument))]
+    pub width: Option<Number<Pixels>>,
+    #[knus(child, unwrap(argument))]
+    pub active_color: Option<ColourValue>,
+    #[knus(child, unwrap(argument))]
+    pub inactive_color: Option<ColourValue>,
 }
 
 /// niri's `struts`: replaced as a whole, so a side left out is 0.

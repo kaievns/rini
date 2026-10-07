@@ -5,6 +5,7 @@ use strum::VariantNames;
 
 use super::*;
 use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
+use crate::decorations::domain::paint::Colour;
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
 use crate::layout::settings::{CenterFocusedColumn, Gaps, WindowInsertionPoint};
@@ -378,6 +379,57 @@ fn on_and_off_together_is_an_error() {
         refused("gestures {\n    swipe-view-scroll {\n        on\n        off\n    }\n}\n")
             .contains("`on` and `off` are both written")
     );
+}
+
+#[test]
+fn the_focus_ring_decodes_as_niri_writes_it() {
+    let config = parse(
+        "layout {\n    focus-ring {\n        width 2.5\n        active-color \"#ff8000\"\n        inactive-color \"rgba(80, 80, 80, 0.5)\"\n    }\n}\n",
+    );
+    let ring = config.settings.decorations.focus_ring;
+    assert!(ring.on, "written without `off`, it stays on");
+    assert_eq!(ring.band.width, 2.5);
+    assert_eq!(ring.band.active, Colour::rgb(0xff8000));
+    assert_eq!(ring.band.inactive, Colour { a: 0.5, ..Colour::rgb(0x505050) });
+    let named = parse("layout {\n    focus-ring {\n        active-color \"teal\"\n    }\n}\n");
+    assert_eq!(named.settings.decorations.focus_ring.band.active, Colour::rgb(0x008080));
+    let off = parse("layout {\n    focus-ring {\n        off\n    }\n}\n");
+    assert!(!off.settings.decorations.focus_ring.on);
+    assert!(refused("layout {\n    focus-ring {\n        active-color \"#zz\"\n    }\n}\n").contains("expected a colour"));
+}
+
+#[test]
+fn the_focus_ring_is_on_by_default_as_niri() {
+    let ring = parse("").settings.decorations.focus_ring;
+    assert!(ring.on);
+    assert_eq!(ring.band.width, 4.0);
+    assert_eq!(ring.band.active, Colour::rgb(0x7fc8ff));
+    assert_eq!(ring.band.inactive, Colour::rgb(0x505050));
+    assert_eq!(parse("layout {\n    focus-ring {\n    }\n}\n"), parse(""), "an empty block is an absent one");
+}
+
+/// niri takes `on` when both are written; rini refuses the pair, as it does in every other block.
+#[test]
+fn on_and_off_both_written_are_refused() {
+    assert!(
+        refused("layout {\n    focus-ring {\n        on\n        off\n    }\n}\n")
+            .contains("`on` and `off` are both written")
+    );
+}
+
+#[test]
+fn a_focus_ring_in_an_output_is_refused_with_its_reason() {
+    let report = refused("output \"D\" {\n    layout {\n        focus-ring {\n            off\n        }\n    }\n}\n");
+    assert!(report.contains("the focus ring is the whole file's, in `layout`"), "{report}");
+}
+
+#[test]
+fn urgent_and_gradients_are_refused_as_not_yet_supported() {
+    for name in ["urgent-color \"#9b0000\"", "active-gradient from=\"#80c8ff\" to=\"#bbddff\"", "inactive-gradient from=\"#505050\" to=\"#808080\"", "urgent-gradient from=\"#800\" to=\"#a33\""] {
+        let report = refused(&format!("layout {{\n    focus-ring {{\n        {name}\n    }}\n}}\n"));
+        assert!(report.contains("not supported yet"), "{name}: {report}");
+    }
+    assert!(refused("window-rule {\n    focus-ring {\n        off\n    }\n}\n").contains("not supported yet"));
 }
 
 #[test]

@@ -1,19 +1,23 @@
 # `decorations` — what a window wears
 
 macOS composites a hairline around every window and casts its shadow, and no capture carries either.
-The overlay draws both over every tile, so a flying window wears what it wears on the desktop. This
-feature is their shape, their paint by focus, how deep each sits against the picture, and the
-layers each tile wears them on. It names no other feature, and `animation`, which draws its
-decorations on each tile, is the one feature that names it.
+The overlay draws both over every tile, so a flying window wears what it wears on the desktop. rini
+also draws niri's focus ring, which macOS has no form of. This feature is their shape, their paint by
+focus, who wears the ring, how deep each sits against the picture, and the layers each tile wears
+them on. It names no other feature. `animation` draws its decorations on each tile, `transitions`
+carries what each window wears to its tile unread, and the application decides it and fills the
+ring's settings from the config.
 
 ## What it owns
 
 | | |
 |---|---|
-| `domain/shape.rs` | The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given |
-| `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; and `Style::of`, the white line's alpha and the shadow for a window focused or not |
+| `domain/shape.rs` | A band outside the window, the ring's: its outer rect and corner (`band`) and its width in device pixels (`device_width`). The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given |
+| `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its two colours (`Band`); what a window wears that rini draws (`Decoration`), and through a pass, with whether it wore and wears the ring (`Worn`); and `Style::of`, the white line's alpha, the shadow and the ring's colour for a window focused or not, wearing the ring or not. Who wears the ring: each workspace's active window, the focused window on its own (`Rings`) |
+| `domain/paint.rs` | `Colour`, sRGB with its alpha, as the config writes a colour |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
-| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline (`hairline`, `outline`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
+| `settings.rs` | `DecorationSettings`: `layout › focus-ring`, on or off and its `Band`, niri's by default; `decoration`, what every managed window wears under them |
+| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the ring (`hairline`, `outline`, `ring`). `Band`, the ring's layer: a border on the continuous curve, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize. It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's ring (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
 | `platform/layers.rs`: `Resize` | A tile's resize as Core Animation plays it: an animation of a key path through each value a closure maps from the sizes the tile passes through (`point`, `rect`, `number`, `path`), and whether a value changes on the way (`changes`). The overlay fills it from the tile's track, so `decorations` never names the score. A platform trait, not a port: it speaks Core Animation |
 
 Its `domain/` speaks rini-geometry's `Tile` space (`crates/rini-geometry/docs/README.md`): every rect
@@ -55,8 +59,8 @@ track and animates its corner and the outline's path between the two sizes
 (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it with the tile. Both are laid
 after the tile's frame, on every placement (`DecorationLayers::place`), or a pooled layer's
 autoresizing carries the old size.
-`TileOverlay::set_tile_focused` switches one tile's white line and shadow depth in a hard cut, as
-that window's turned picture comes in mid-flight; the prototype set the white line only at
+`TileOverlay::set_tile_focused` switches one tile's white line, shadow depth and ring in a hard cut,
+as that window's turned picture comes in mid-flight; the prototype set the white line only at
 install. When each tile turns is the coordinator's (`Command::Focus`).
 
 **The shadow.** A caster behind the picture (`shadow`, `SHADOW_Z`) holds no contents, only the
@@ -69,6 +73,22 @@ dressed for a window of another radius casts that window's corner at the same si
 (`a_pooled_tile_dressed_for_a_window_of_another_radius_rebuilds_its_shadow_at_the_same_size`). Why the shadow is drawn at all, why on a masked caster rather than
 the picture, and how far the mask reaches: "Shadows are never in the surface" and "A layer shadow
 covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
+
+## The focus ring, as drawn
+
+niri's ring is a band outside the window, worn by each workspace's active window (`Rings`, in
+`domain::style`): in `active` paint on the window holding focus, `inactive` on the others. On a tile
+it is the `ring` layer, a `Band`, the hairline's child after the outline, so it is drawn in front of
+the picture, the hairline and the outline, and rides the hairline through every move. It is a
+`CALayer` border, `width` wide, round on the continuous curve at the window's corner plus its width
+(`shape::band`), so its inner edge is the window's own corner, on the curve every other piece takes;
+a border's inner edge is its outer one `width` in. The corner is clamped to half the band's shorter
+side, and a square window keeps a square band, as niri's `expanded_by` keeps 0 at 0. Its width is
+whole device pixels of the display, never below one (`shape::device_width`, niri's rounding), laid as
+the tile is dressed (`DecorationLayers::wear`). A resize carries its bounds on the tile's own track,
+and its corner while it changes; its position, the window's corner less its width, holds. Its paint
+turns with the hairline (`Style::of`, `TileOverlay::set_tile_focused`), at the turn
+`transitions::domain::lifecycle::drawn_ringed` gives it.
 
 ## The corner, measured
 
@@ -177,4 +197,5 @@ Animation's own curve, read the same `edge_in` and `edge_out` as the `path` rows
 
 ## Reading order
 
-`domain/shape.rs` → `domain/style.rs` → `domain/stack.rs` → `platform/layers.rs`.
+`domain/shape.rs` → `domain/paint.rs` → `domain/style.rs` → `domain/stack.rs` → `settings.rs` →
+`platform/layers.rs`.

@@ -193,6 +193,7 @@ pub(crate) mod tests {
 
     fn on_surface(window: WindowId, frame: SurfaceRect) -> SurfaceWindow {
         SurfaceWindow {
+            worn: Default::default(),
             window,
             server_id: rini_core::ids::WindowServerId::new(window.idx.get()),
             frame,
@@ -421,6 +422,7 @@ pub(crate) mod tests {
 
     fn surface_window(window: WindowId, frame: SurfaceRect, floating: bool) -> SurfaceWindow {
         SurfaceWindow {
+            worn: Default::default(),
             window,
             server_id: WindowServerId::new(window.idx.get()),
             frame,
@@ -855,6 +857,7 @@ pub(crate) mod tests {
             let mut windows: Vec<SurfaceWindow> = frames
                 .iter()
                 .map(|&(window, frame)| SurfaceWindow {
+                    worn: Default::default(),
                     window,
                     server_id: WindowServerId::new(window.idx.get()),
                     frame,
