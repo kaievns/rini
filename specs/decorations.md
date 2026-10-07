@@ -17,16 +17,17 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   the others. A display holds focus while a managed window on it is focused; with none focused, every
   ring MUST be the inactive one. A window rini does not manage, a sheet or another application's
   panel, wears no ring, and while one is focused no display holds focus.
-- The ring MUST be on unless `layout › focus-ring { off; }` turns it off: 4pt wide, `#7fc8ff`
-  active and `#505050` inactive, niri's ring.
+- The ring MUST be on unless `layout › focus-ring { off; }` turns it off: 2pt wide, `#7fc8ff`
+  active and `#505050` inactive, niri's ring but for its width, which is 4pt in niri.
 
-> **Reported 2026-10-06.** Kai's decision D1: the focus ring on by default, as niri's, width 4,
-> active `#7fc8ff`, inactive `#505050`, taken knowing it covers part of a neighbour (below).
+> **Reported 2026-10-06.** Kai's decision D1: the focus ring on by default, as niri's, active
+> `#7fc8ff`, inactive `#505050`, taken knowing it can cover part of a neighbour (below). Amended by
+> Kai 2026-10-08: "make the default ring size 2 not 3", so 2pt rather than niri's 4.
 
 - The ring MUST lie outside the window and take no space from it: the layout is the same with the
-  ring on or off. So it covers what is beside the window: with `gaps 3`, a 4pt ring covers 1pt of
-  the neighbouring window and runs 1pt past the gap at the display's edge, and with rini's default
-  `gaps 0` it covers 4pt. A ring at the display's edge MUST NOT be drawn on the next display.
+  ring on or off. So it covers what is beside the window less the gap: with `gaps 3`, a 2pt ring
+  stays in the gap, and with rini's default `gaps 0` it covers 2pt of the neighbouring window. A
+  ring at the display's edge MUST NOT be drawn on the next display.
 - The ring's inner edge MUST be the window's own corner, on its continuous curve, and its outer edge
   that corner grown by the ring's width; a square window wears a square ring. Its width MUST be
   whole device pixels, never below one, as niri rounds it.

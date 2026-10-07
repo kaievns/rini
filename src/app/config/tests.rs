@@ -399,10 +399,10 @@ fn the_focus_ring_decodes_as_niri_writes_it() {
 }
 
 #[test]
-fn the_focus_ring_is_on_by_default_as_niri() {
+fn the_focus_ring_is_on_by_default_in_niris_colours_at_2pt() {
     let ring = parse("").settings.decorations.focus_ring;
     assert!(ring.on);
-    assert_eq!(ring.band.width, 4.0);
+    assert_eq!(ring.band.width, 2.0, "Kai's width, not niri's 4");
     assert_eq!(ring.band.active, Colour::rgb(0x7fc8ff));
     assert_eq!(ring.band.inactive, Colour::rgb(0x505050));
     assert_eq!(parse("layout {\n    focus-ring {\n    }\n}\n"), parse(""), "an empty block is an absent one");

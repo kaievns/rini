@@ -18,12 +18,13 @@ pub struct DecorationSettings {
 }
 
 impl Default for DecorationSettings {
-    /// niri's focus ring, on (Kai's decision D1, `specs/decorations.md`).
+    /// niri's focus ring, on, but 2pt wide where niri's is 4 (Kai's decision D1,
+    /// `specs/decorations.md`).
     fn default() -> Self {
         Self {
             focus_ring: BandSetting {
                 on: true,
-                band: Band { width: 4.0, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) },
+                band: Band { width: 2.0, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) },
             },
         }
     }
