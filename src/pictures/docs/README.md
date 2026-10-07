@@ -222,8 +222,8 @@ only where the cache still holds the picture it was made of; what each client wa
 names only while its flight is up (`keep_focused`), is dropped there and then rather than copied.
 
 **A window is pictured once, under the id it flies by.** A window rini manages is pictured under its
-own id, and the debug slide flies it by that id; one it does not, such as a border tracing a tile,
-under a synthetic id, pid 0 (`synthetic_window_id`), and the slide flies it by that (`picture_id`).
+own id, and the debug slide flies it by that id; one it does not under a synthetic id, pid 0
+(`synthetic_window_id`), and the slide flies it by that (`picture_id`).
 A warm, at each change of display and on the debug command, pictures only windows rini does not
 manage, told by what the cache holds or owes under a real id, and only those showing at least
 `WARM_MIN_SHOWN` (100pt) of themselves on the display each way: a window parked at the corner keeps
@@ -265,10 +265,6 @@ too. The window losing focus that ends a flight clipped or parked is one.
 windows, with nothing in `behind`: the service knows nothing of what lies below a window at rest, so a
 floating window below a window with a material is missing from that picture's blur until a flight next
 pictures it on screen.
-
-**The cache is a registry too.** A border companion may never be a window rini manages, and the engine
-learns which those are from `Pictures::windows`, the windows with a picture held or owed. The managed
-set belongs to the reactor's world; it comes from there once the coordinator composes flights.
 
 **A transition on a display before its first render lands composites on the `transitions` thread.**
 `dressing` takes the desktop, and the first time the bar, synchronously while the service holds none

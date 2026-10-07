@@ -80,9 +80,6 @@ pub struct OverlayTile {
     pub server_order: Option<usize>,
     /// Front-to-back position in the overlay, 0 frontmost; derived once per flight by the engine.
     pub depth: usize,
-    /// For a border window riding the window it traces, that window: a quarter step in front of it,
-    /// no shadow.
-    pub companion: Option<WindowId>,
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow and
     /// brightens its hairline.
     pub focused: bool,
@@ -92,24 +89,6 @@ pub struct OverlayTile {
     /// Whether the overlay clips the tile's picture to its corner: a picture whose corners carry
     /// what was behind its window, or the stand-in, which has no corners of its own.
     pub clipped: bool,
-}
-
-impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
-    fn window(&self) -> WindowId {
-        self.window
-    }
-    fn from(&self) -> OverlayRect {
-        self.from
-    }
-    fn to(&self) -> OverlayRect {
-        self.to
-    }
-    fn floating(&self) -> bool {
-        self.floating
-    }
-    fn companion(&self) -> Option<WindowId> {
-        self.companion
-    }
 }
 
 /// Above every tile; tiles sit at `-depth`, never above zero.
@@ -481,7 +460,6 @@ struct Tile {
     /// The part of the contents image that is the tile's picture, which the crop pieces' contents
     /// are composed with: all of it unless the picture is a region of a composite.
     region: ContentsRect,
-    companion: bool,
 }
 
 /// The four layers a crop-drawn tile is composed of, children of the tile's picture layer.
@@ -1032,7 +1010,7 @@ impl Tree {
             return;
         };
         let within = self.replica.banding().within.get(&window).copied().unwrap_or(0);
-        place_tile(entry, frame, tile_z(within, entry.companion));
+        place_tile(entry, frame, -(within as f64));
     }
 
     /// Whether `track` is the replica's track on its node with only its end moved, as a snap makes it.
@@ -1148,7 +1126,7 @@ impl Tree {
             let Some(&within) = banding.within.get(window) else {
                 continue;
             };
-            tile.stack(tile_z(within, tile.companion));
+            tile.stack(-(within as f64));
         }
     }
 
@@ -1194,18 +1172,9 @@ impl Tree {
     }
 }
 
-/// The depth a tile is drawn at in its container, `within` its band: a companion's quarter step
-/// in front of its window stays clear of the half step the shadow casters sit behind (`SHADOW_Z`)
-/// and of the eighth its hairline sits in front (`HAIRLINE_Z`).
-fn tile_z(within: usize, companion: bool) -> f64 {
-    -(within as f64) + if companion { 0.25 } else { 0.0 }
-}
-
 /// Dresses a tile for `tile`: its picture, fitted to how it starts and ends and clipped or whole,
-/// its focus, its radius and whether it is a companion. Tile layers are pooled, so every per-window
-/// property is written.
+/// its focus and its radius. Tile layers are pooled, so every per-window property is written.
 fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
-    entry.companion = tile.companion.is_some();
     entry.decorations.radius = tile.radius;
     entry.picture.setContentsScale(scale);
     entry.decorations.set_scale(scale);
@@ -1215,11 +1184,10 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
     set_tile_content(entry, &tile.snapshot, mode, tile.from.size.respace(), scale);
     entry.decorations.show(Style::of(tile.focused));
     entry.picture.setHidden(false);
-    entry.decorations.set_hidden(tile.companion.is_some());
 }
 
 /// Puts `snapshot` on a tile, leaving its movement alone: a hard cut, on purpose, since a crossfade
-/// pulses a translucent window's net opacity (see "Border companions" in
+/// pulses a translucent window's net opacity (see "Mid-flight passes" in
 /// `src/transitions/docs/coordination.md`). A crop-drawn tile's grid is laid again for `size`, its
 /// model, and re-keyed along `playing`, its own track while it plays, so the frame keeps its curve
 /// and only the pixels cut. Callers hold the transaction.
@@ -1268,7 +1236,6 @@ fn new_tile(container: &CALayer) -> Tile {
         crop_grid: None,
         crop_of: None,
         region: WHOLE,
-        companion: false,
     }
 }
 
@@ -2388,7 +2355,6 @@ mod tests {
         let hairline = &tile.decorations.hairline;
         assert_eq!(hairline.frame(), frame.to_cg());
         assert!(hairline.zPosition() > tile.picture.zPosition());
-        assert!(hairline.zPosition() < tile.picture.zPosition() + 0.25, "under a companion");
     }
 
     /// An entrance grows from no width: the hairline's bounds ride the tile's track, and its corner
@@ -2567,7 +2533,6 @@ mod tests {
                 floating,
                 server_order: Some(0),
                 depth: 0,
-                companion: None,
                 focused: false,
                 radius: None,
                 clipped: false,
@@ -2628,7 +2593,7 @@ mod tests {
                     "{window:?} under {key:?}, lifted {lifted}"
                 );
                 let within = banding.within.get(&window).copied().unwrap_or(0);
-                let z = -(within as f64) + if entry.companion { 0.25 } else { 0.0 };
+                let z = -(within as f64);
                 assert_eq!(entry.picture.zPosition(), z, "{window:?}");
                 assert_eq!(entry.decorations.shadow.zPosition(), z + SHADOW_Z, "{window:?}");
             }

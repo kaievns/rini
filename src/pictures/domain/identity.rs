@@ -12,8 +12,8 @@ use crate::pictures::domain::target::PictureTarget;
 /// parked at the corner keeps its full size and shows a sliver there.
 pub const WARM_MIN_SHOWN: f64 = 100.0;
 
-/// A stable [`WindowId`] for a window rini does not manage, derived from its window server id: a border
-/// window, or any other a warm or the debug slide pictures. Pid 0 keeps it clear of real ids.
+/// A stable [`WindowId`] for a window rini does not manage, derived from its window server id: one a
+/// warm or the debug slide pictures. Pid 0 keeps it clear of real ids.
 pub fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
     WindowId {
         pid: 0,

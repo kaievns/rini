@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
-    FromCg, GroupRect, Overlay, OverlayPoint, OverlayRect, OverlayVector, Point, Respace,
+    FromCg, GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, Respace,
     ScreenRect, ScreenVector, Size, SurfacePoint, ToCg,
 };
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
@@ -42,7 +42,7 @@ use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
-use crate::pictures::domain::identity::{picture_id, synthetic_window_id};
+use crate::pictures::domain::identity::picture_id;
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
@@ -255,35 +255,6 @@ fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
     }
 }
 
-/// The tile of a border window at `border`'s frame tracing `anchor`, whose real frame is `real`: it
-/// follows the anchor's tile at the same offset, at its depth and in its band, a floating window's
-/// border in the floating container with it. See "Border companions" in
-/// `src/transitions/docs/coordination.md`.
-fn border_tile(
-    anchor: &OverlayTile,
-    real: ScreenRect,
-    border: (WindowId, ScreenRect),
-    snapshot: Picture,
-) -> OverlayTile {
-    let (window, frame) = border;
-    let offset = (frame.origin - real.origin).respace::<Overlay>();
-    let follow = |rect: OverlayRect| OverlayRect::new(rect.origin + offset, frame.size.respace());
-    OverlayTile {
-        window,
-        from: follow(anchor.from),
-        to: follow(anchor.to),
-        snapshot,
-        floating: anchor.floating,
-        server_order: None,
-        // Its window's banded depth; `restack` leaves companions alone.
-        depth: anchor.depth,
-        companion: Some(anchor.window),
-        focused: false,
-        radius: None,
-        clipped: false,
-    }
-}
-
 /// The tile for a reserved entrance whose picture has landed, `clipped` or whole and rounded at
 /// `radius`: frontmost and focused, since a window is raised on open and about to hold focus.
 fn entrance_tile(
@@ -300,20 +271,18 @@ fn entrance_tile(
         floating: entrance.floating,
         server_order: Some(0),
         depth: 0,
-        companion: None,
         focused: true,
         radius,
         clipped,
     }
 }
 
-/// The z rule's view of every tile that is not a companion, in tile order.
+/// The z rule's view of every tile, in tile order.
 fn stacked_windows(
     tiles: &[OverlayTile],
 ) -> Vec<crate::animation::domain::motion::z_group::Stacked> {
     tiles
         .iter()
-        .filter(|t| t.companion.is_none())
         .map(|t| crate::animation::domain::motion::z_group::Stacked {
             window: t.window,
             group: crate::windows::domain::raise_order::StackGroup::of(t.floating),
@@ -322,12 +291,12 @@ fn stacked_windows(
         .collect()
 }
 
-/// Depth for every tile, banded by `z_group::stack`; companions keep their window's depth.
+/// Depth for every tile, banded by `z_group::stack`.
 /// The reactor's regroup matches it. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
     let placements =
         crate::animation::domain::motion::z_group::stack(&stacked_windows(tiles), focus);
-    for (tile, placement) in tiles.iter_mut().filter(|t| t.companion.is_none()).zip(placements) {
+    for (tile, placement) in tiles.iter_mut().zip(placements) {
         tile.depth = placement.depth;
     }
 }
@@ -340,7 +309,7 @@ fn band_plan(
     focus: Option<WindowId>,
 ) -> plan::Banding {
     use crate::animation::domain::motion::z_group::{
-        Band, GROUP_STRIDE, focus_is_off_strip, stack,
+        Band, focus_is_off_strip, stack,
     };
     let stacked = stacked_windows(tiles);
     let placements = stack(&stacked, focus);
@@ -350,13 +319,6 @@ fn band_plan(
         within.insert(window.window, placement.within);
         if placement.band == Band::Lifted {
             lifted.push(window.window);
-        }
-    }
-    for tile in tiles.iter().filter(|t| t.companion.is_some()) {
-        // Its window's banded depth, less the band, and its window's band.
-        within.insert(tile.window, tile.depth % GROUP_STRIDE);
-        if tile.companion.is_some_and(|anchor| lifted.contains(&anchor)) {
-            lifted.push(tile.window);
         }
     }
     let mut strip: Vec<(plan::GroupKey, bool, usize)> = Vec::new();
@@ -457,14 +419,12 @@ impl RunningAnimation {
             start: from_overlay_space(t.from, display),
             end: from_overlay_space(t.to, display),
             floating: t.floating,
-            companion: t.companion.is_some(),
         });
         let entrances = self.entrances.iter().map(|e| TileSummary {
             window: e.window,
             start: from_overlay_space(entrance_from(e.to), display),
             end: from_overlay_space(e.to, display),
             floating: e.floating,
-            companion: false,
         });
         tiles.chain(entrances).collect()
     }
@@ -488,7 +448,7 @@ impl RunningAnimation {
     fn wear(&mut self, pictures: Vec<(WindowId, Picture, bool)>) -> usize {
         let mut worn = 0;
         for (window, picture, clipped) in pictures {
-            if let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) {
+            if let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window) {
                 tile.snapshot = picture;
                 tile.clipped = clipped;
                 worn += 1;
@@ -527,7 +487,7 @@ impl RunningAnimation {
         if let Some(tile) = self.admit(window, picture, clipped, radius) {
             return Took::Entrance(tile);
         }
-        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) else {
+        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window) else {
             return Took::Nothing;
         };
         tile.snapshot = picture.clone();
@@ -585,7 +545,7 @@ impl RunningAnimation {
         if focus_moved {
             let losing = losing_focus(self.focus, self.shown_focus);
             let shown = self.shown_focus;
-            for tile in self.tiles.iter_mut().filter(|t| t.companion.is_none() && Some(t.window) != shown) {
+            for tile in self.tiles.iter_mut().filter(|t| Some(t.window) != shown) {
                 tile.focused = drawn_focused(tile.window, self.focus, losing);
             }
             self.focused_look = None;
@@ -655,7 +615,6 @@ impl RunningAnimation {
                 existing.floating = tile.floating;
                 existing.server_order = tile.server_order;
                 existing.depth = tile.depth;
-                existing.companion = tile.companion;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -1333,57 +1292,6 @@ impl FlightEngine {
         self.render(Render::Stage { score, tiles });
     }
 
-    /// Tiles for the border windows tracing the animated windows; each anchor is the window's real
-    /// frame and its tile. See "Border companions" in `src/transitions/docs/coordination.md`.
-    fn companion_tiles(
-        &mut self,
-        display: ScreenRect,
-        anchors: &[(ScreenRect, &OverlayTile)],
-        exclude: &std::collections::HashSet<u32>,
-        needs_capture: &mut Vec<PictureTarget>,
-    ) -> Vec<OverlayTile> {
-        if anchors.is_empty() {
-            return Vec::new();
-        }
-        // Every window rini manages is excluded, not only the pass's: parked windows share a frame.
-        let managed = managed_server_ids(exclude, self.pictures.windows().into_iter());
-        let candidates: Vec<(WindowServerId, ScreenRect)> =
-            crate::windows::platform::window_server::visible_windows_on_display(display.to_cg())
-                .into_iter()
-                .filter(|(id, _)| !managed.contains(&id.as_u32()))
-                .map(|(id, frame)| (id, ScreenRect::from_cg(frame)))
-                .collect();
-        let mut claimed: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        let mut tiles = Vec::new();
-        for &(real, anchor) in anchors {
-            let Some((server_id, frame)) = companion_of(real, &candidates, display) else {
-                continue;
-            };
-            // One border traces one window; stacked twins share a frame.
-            if !claimed.insert(server_id.as_u32()) {
-                continue;
-            }
-            let window = synthetic_window_id(server_id);
-            debug!(
-                wsid = server_id.as_u32(),
-                anchor = format!(
-                    "{:.0},{:.0} {:.0}x{:.0}",
-                    real.origin.x, real.origin.y, real.size.width, real.size.height
-                ),
-                "border companion matched"
-            );
-            match self.pictures.usable(window) {
-                Some(snapshot) => tiles.push(border_tile(anchor, real, (window, frame), snapshot)),
-                None => needs_capture.push(PictureTarget {
-                    window,
-                    server_id,
-                    size: frame.size,
-                }),
-            }
-        }
-        tiles
-    }
-
     /// Opens a transition from what a request alone says, before anything is composed, so its
     /// frame-zero pictures are asked for first. False when it could not run, and was abandoned.
     fn begin(
@@ -1487,7 +1395,6 @@ impl FlightEngine {
                     start: request.from,
                     end: request.to,
                     floating: request.floating,
-                    companion: false,
                 })
                 .collect();
             if !self.begin(requested, final_frames.clone(), (focus, focused_before), key, shape.clone()) {
@@ -1517,7 +1424,6 @@ impl FlightEngine {
         let mut spawn_entrances: Vec<(WindowId, GroupRect, GroupRect)> = Vec::new();
         let mut sync_captures = 0usize;
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-        let mut starts: Vec<(WindowId, ScreenRect)> = Vec::new();
         let mut resolved: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = Vec::new();
         // For `neighbour_travel`: a window leaving for or returning from a park rides its
         // nearest strip neighbour's vector.
@@ -1595,12 +1501,10 @@ impl FlightEngine {
                         floating: request.floating,
                         server_order: depths.get(&request.server_id.as_u32()).copied(),
                         depth: 0,
-                        companion: None,
                         focused: drawn_focused(request.window, drawing_focus, losing),
                         radius: radii.get(&request.server_id).copied(),
                         clipped,
                     });
-                    starts.push((request.window, start));
                     resolved.push((request.window, start, end, request.floating));
                 }
                 // No picture: almost always a window that just opened. See "A window that opens"
@@ -1657,14 +1561,12 @@ impl FlightEngine {
                                     Some(0)
                                 },
                                 depth: 0,
-                                companion: None,
                                 focused: !standing
                                     || drawn_focused(request.window, drawing_focus, losing),
                                 radius: radii.get(&request.server_id).copied(),
                                 clipped,
                             });
                             if standing {
-                                starts.push((request.window, from));
                                 resolved.push((request.window, from, to, request.floating));
                             } else {
                                 let entrance = (plan::installed(from_o), plan::installed(to_o));
@@ -1689,19 +1591,7 @@ impl FlightEngine {
                 }
             }
         }
-        // Stacked here so the companions can anchor to their windows' depths.
         restack(&mut tiles, drawing_focus);
-        let anchors: Vec<(ScreenRect, &OverlayTile)> = starts
-            .iter()
-            .filter_map(|(window, start)| {
-                Some((*start, tiles.iter().find(|tile| tile.window == *window)?))
-            })
-            .collect();
-        let exclude: std::collections::HashSet<u32> =
-            windows.iter().map(|request| request.server_id.as_u32()).collect();
-        let companions =
-            self.companion_tiles(display_frame, &anchors, &exclude, &mut needs_capture);
-        tiles.extend(companions);
         self.ask_missing(needs_capture);
         debug!(
             requested = windows.len(),
@@ -1726,11 +1616,6 @@ impl FlightEngine {
 
         let mut plan = plan::reflow_plan(&resolved, display_frame);
         plan.entrances.extend(spawn_entrances);
-        for tile in &tiles {
-            if plan.member(tile.window).is_none() {
-                plan.adopt(tile);
-            }
-        }
 
         self.begin_group(Composed {
             tiles,
@@ -1815,7 +1700,7 @@ impl FlightEngine {
     fn redraw_focus(&mut self, before: &[(WindowId, bool)], look: Option<WindowId>) {
         let Some(running) = self.running.as_ref() else { return };
         let mut drawn = Vec::new();
-        for tile in running.tiles.iter().filter(|t| t.companion.is_none()) {
+        for tile in running.tiles.iter() {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
             let window = tile.window;
             if look == Some(window) {
@@ -1993,7 +1878,6 @@ impl FlightEngine {
                         start: from_overlay_space(from, display),
                         end: from_overlay_space(to, display),
                         floating: w.floating,
-                        companion: false,
                     }
                 })
                 .collect();
@@ -2017,8 +1901,6 @@ impl FlightEngine {
         let mut missing = 0usize;
         let mut misshapen = 0usize;
         let mut stand_ins = 0usize;
-        let mut needs_capture: Vec<PictureTarget> = Vec::new();
-        let mut starts: Vec<(WindowId, ScreenRect)> = Vec::new();
         for window in &windows {
             let (from, to) = window.travel(from_offset, to_offset);
             let cached = self.pictures.usable(window.window);
@@ -2039,9 +1921,6 @@ impl FlightEngine {
                     } else if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
-                    if let Some(frame) = real_frames.get(&window.server_id) {
-                        starts.push((window.window, *frame));
-                    }
                     let clipped = clips(self.pictures.knowledge(window.server_id), &snapshot);
                     tiles.push(OverlayTile {
                         window: window.window,
@@ -2051,7 +1930,6 @@ impl FlightEngine {
                         floating: window.floating,
                         server_order: depths.get(&window.server_id.as_u32()).copied(),
                         depth: 0,
-                        companion: None,
                         focused: drawn_focused(window.window, drawing_focus, losing),
                         radius: radii.get(&window.server_id).copied(),
                         clipped,
@@ -2062,17 +1940,6 @@ impl FlightEngine {
             }
         }
         restack(&mut tiles, drawing_focus);
-        let anchors: Vec<(ScreenRect, &OverlayTile)> = starts
-            .iter()
-            .filter_map(|(window, real)| {
-                Some((*real, tiles.iter().find(|tile| tile.window == *window)?))
-            })
-            .collect();
-        let exclude: std::collections::HashSet<u32> =
-            windows.iter().map(|window| window.server_id.as_u32()).collect();
-        let companions = self.companion_tiles(display, &anchors, &exclude, &mut needs_capture);
-        tiles.extend(companions);
-        self.ask_missing(needs_capture);
         debug!(
             requested = windows.len(),
             tiles = tiles.len(),
@@ -2086,19 +1953,13 @@ impl FlightEngine {
             "surface group animation"
         );
 
-        // One rigid piece for the strip and one for each column a move swapped that crosses it;
-        // companions are adopted by their own vectors.
+        // One rigid piece for the strip and one for each column a move swapped that crosses it.
         let drawn: Vec<SurfaceWindow> = windows
             .iter()
-            .filter(|w| tiles.iter().any(|t| t.window == w.window && t.companion.is_none()))
+            .filter(|w| tiles.iter().any(|t| t.window == w.window))
             .cloned()
             .collect();
-        let mut plan = plan::surface_plan(&drawn, from_offset, to_offset);
-        for tile in &tiles {
-            if plan.member(tile.window).is_none() {
-                plan.adopt(tile);
-            }
-        }
+        let plan = plan::surface_plan(&drawn, from_offset, to_offset);
 
         // A strip movement never resizes, never carries a brand-new window and never holds: a stand-in
         // whose window comes on screen is pictured once it lands there.
@@ -2430,7 +2291,7 @@ fn log_dressing(
 
 #[cfg(test)]
 mod tests {
-    use rini_geometry::space::{Rect, Respace, ScreenSize, SurfaceRect};
+    use rini_geometry::space::{Respace, ScreenSize, SurfaceRect};
 
     use super::*;
     use crate::animation::domain::motion::surface::viewport;
@@ -2483,7 +2344,6 @@ mod tests {
             floating,
             server_order,
             depth: 0,
-            companion: None,
             focused: false,
             radius: None,
             clipped: false,
@@ -2633,9 +2493,6 @@ mod tests {
             let next = rect(867.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), next, slot, Some(0), false));
-            let mut border = stacked(wid(8), slot, slot, None, false);
-            border.companion = Some(wid(1));
-            running.tiles.push(border);
             running.entrances.push(PendingEntrance { window: wid(2), to: next, floating: true });
             running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
             running.focus = Some(wid(2));
@@ -2648,18 +2505,15 @@ mod tests {
                     start: rect(2595.0, 32.0, 859.0, 1081.0),
                     end: rect(1732.0, 32.0, 859.0, 1081.0),
                     floating: false,
-                    companion: false,
                 }
             );
-            assert!(stage.tiles[1].companion);
             assert_eq!(
-                stage.tiles[2],
+                stage.tiles[1],
                 TileSummary {
                     window: wid(2),
                     start: from_overlay_space(entrance_from(next), display),
                     end: rect(2595.0, 32.0, 859.0, 1081.0),
                     floating: true,
-                    companion: false,
                 },
                 "a reserved entrance, drawn once its picture is swapped in"
             );
@@ -2677,20 +2531,16 @@ mod tests {
         use super::*;
 
         #[test]
-        fn frame_zeros_pictures_are_worn_by_their_tiles_and_never_by_a_border() {
+        fn frame_zeros_pictures_are_worn_by_their_tiles_and_a_window_with_none_is_the_caches() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
-            let mut border = stacked(wid(8), slot, slot, None, false);
-            border.companion = Some(wid(1));
-            running.tiles.push(border);
             let fresh = test_picture(ScreenSize::new(859.0, 1000.0));
-            let worn = running.wear(vec![(wid(1), fresh.clone(), true), (wid(8), fresh.clone(), true), (wid(5), fresh.clone(), true)]);
+            let worn = running.wear(vec![(wid(1), fresh.clone(), true), (wid(5), fresh.clone(), true)]);
             assert_eq!(worn, 1, "a window with no tile is the cache's alone");
             assert_eq!(running.tiles[0].snapshot.coverage, fresh.coverage);
             assert!(running.tiles[0].clipped, "as it was handed");
-            assert_ne!(running.tiles[1].snapshot.coverage, fresh.coverage);
-            assert!(!running.tiles[1].clipped);
+            assert_eq!(running.tiles.len(), 1);
         }
 
         #[test]
@@ -3182,13 +3032,17 @@ mod tests {
             rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
         }
 
-        /// The plan of `tiles` alone, each adopted as a pass adopts a tile it did not derive.
+        /// The plan of `tiles` alone, as a pass plans its requests.
         fn plan_of(tiles: &[OverlayTile]) -> FlightPlan {
-            let mut pieces = ReflowPlan::empty();
-            for tile in tiles {
-                pieces.adopt(tile);
-            }
-            FlightPlan::from(pieces)
+            use crate::animation::domain::motion::testing::DISPLAY;
+            let requests: Vec<_> = tiles
+                .iter()
+                .map(|t| {
+                    let screen = |r| from_overlay_space(r, DISPLAY);
+                    (t.window, screen(t.from), screen(t.to), t.floating)
+                })
+                .collect();
+            FlightPlan::from(reflow_plan(&requests, DISPLAY))
         }
 
         fn shifted(frame: OverlayRect, dx: f64, dy: f64) -> OverlayRect {
@@ -3448,19 +3302,6 @@ mod tests {
             assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 4);
         }
 
-        /// Companions ride their window's depth and are not restacked on their own.
-        #[test]
-        fn a_companion_keeps_the_depth_it_was_given() {
-            let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            let mut companion = stacked(wid(8), slot, slot, None, false);
-            companion.companion = Some(wid(1));
-            companion.depth = 3;
-            let mut tiles = vec![stacked(wid(1), slot, slot, Some(2), false), companion];
-            restack(&mut tiles, None);
-            assert_eq!(tiles[0].depth, 3);
-            assert_eq!(tiles[1].depth, 3, "not sent to the back for its `None` order");
-        }
-
         #[test]
         fn the_unfocused_group_is_never_in_front_of_the_focused_group() {
             let mut rng = Gen(33);
@@ -3519,7 +3360,6 @@ mod tests {
         /// The 50/50 pair with Settings over them (`z_group::stack`).
         #[test]
         fn band_plan_puts_the_floating_container_behind_the_strip_unless_it_holds_focus() {
-            use crate::animation::domain::motion::z_group::GROUP_STRIDE;
             let (left, right) = (rect(4.0, 32.0, 860.0, 1081.0), rect(868.0, 32.0, 856.0, 1081.0));
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let far = column(2.0);
@@ -3531,9 +3371,6 @@ mod tests {
                 stacked(wid(89), right, right, Some(2), false),
                 stacked(wid(91), far, shifted(far, v.x, v.y), Some(3), false),
             ];
-            let mut companion = stacked(wid(900), left, left, None, false);
-            companion.companion = Some(wid(90));
-            tiles.push(companion);
             restack(&mut tiles, Some(wid(90)));
             let plan = plan_of(&tiles);
             let still = plan.groups[0].key;
@@ -3554,12 +3391,6 @@ mod tests {
             );
             assert_eq!(banding.within[&wid(89)], 3, "one past its server order");
             assert_eq!(banding.within[&wid(5830)], 2);
-            let anchor = tiles.iter().find(|t| t.window == wid(90)).unwrap().depth;
-            assert_eq!(
-                banding.within[&wid(900)],
-                anchor % GROUP_STRIDE,
-                "a companion takes its window's depth"
-            );
 
             restack(&mut tiles, Some(wid(5830)));
             let banding = band_plan(&plan, &tiles, Some(wid(5830)));
@@ -3786,193 +3617,6 @@ mod tests {
             };
             assert_eq!(order(w), 0, "the moved window leads");
             assert!(order(w) < order(b), "B slides beneath it");
-        }
-    }
-
-    /// Border windows ride the window they trace: its container, its band, its step.
-    mod borders {
-        use rini_ipc::protocol::Direction;
-
-        use super::*;
-        use super::wid;
-        use crate::animation::domain::motion::plan::*;
-        use crate::animation::domain::motion::surface::SurfaceGeometry;
-        use crate::transitions::domain::strip_move::tests::staging::*;
-
-        /// A border four points proud of `frame` all round.
-        fn hug<U>(frame: Rect<U>) -> Rect<U> {
-            rect(
-                frame.origin.x - 4.0,
-                frame.origin.y - 4.0,
-                frame.size.width + 8.0,
-                frame.size.height + 8.0,
-            )
-        }
-
-        /// A window on the strip surface where the window server has it, the viewport at rest.
-        fn real(frame: SurfaceRect) -> ScreenRect { screen(seen(frame)) }
-
-        fn floating_at(window: WindowId, frame: SurfaceRect, pinned: bool) -> SurfaceWindow {
-            SurfaceWindow {
-                window,
-                server_id: WindowServerId::new(window.idx.get()),
-                frame,
-                pinned,
-                floating: true,
-                from: None,
-            }
-        }
-
-        /// A full-width move steps the whole strip away from where W went: W's still piece, the
-        /// strip's piece the column it passed is held in, and every strip window's border with
-        /// them. A pinned floating window's border has no travel either, but it stands with its
-        /// window in the floating container and is drawn in its band, and the step never carries
-        /// that container.
-        #[test]
-        fn a_floating_windows_border_stays_with_it_and_off_the_nudge() {
-            let (a, w, f) = (wid(1), wid(2), wid(7));
-            let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
-            let (mut windows, step) = staged(
-                &[
-                    (a, at(4.0 - STEP, WIDTH)),
-                    (w, at(4.0, WIDTH)),
-                    (wid(3), at(4.0 + STEP, WIDTH)),
-                ],
-                w,
-                Direction::Right,
-            );
-            let step = step.expect("a full-width move steps");
-            assert_eq!(step, OverlayVector::new(-576.0, 0.0), "away from where W went");
-            windows.push(floating_at(f, settings, true));
-            let mut plan = surface_plan(&windows, OFFSET, REST);
-            let w_key = plan.group_of(w).unwrap().key;
-            assert_eq!(w_key, GroupKey::STILL, "the camera followed it");
-            let strip = plan.group_of(wid(3)).unwrap().key;
-            assert_eq!(plan.group_of(a).unwrap().key, strip, "A is held on the strip");
-            let mut tiles: Vec<OverlayTile> = windows
-                .iter()
-                .enumerate()
-                .map(|(order, s)| {
-                    let (from, to) = s.travel(OFFSET, REST);
-                    stacked(s.window, from, to, Some(order), s.floating)
-                })
-                .collect();
-            restack(&mut tiles, Some(f));
-            let tile = |window| tiles.iter().find(|t| t.window == window).unwrap().clone();
-            let border = |anchor: WindowId, at: SurfaceRect, window| {
-                let real = real(at);
-                border_tile(
-                    &tile(anchor),
-                    real,
-                    (window, hug(real)),
-                    test_picture(hug(real).size),
-                )
-            };
-            let f_border = border(f, settings, wid(70));
-            let w_border = border(w, at(4.0, WIDTH), wid(20));
-            let a_border = border(a, at(4.0 - STEP, WIDTH), wid(21));
-            assert!(f_border.floating, "a floating window's border is floating");
-            assert_eq!(f_border.companion, Some(f));
-            assert_eq!(f_border.depth, tile(f).depth);
-            assert!(!w_border.floating);
-            plan.adopt(&f_border);
-            plan.adopt(&w_border);
-            plan.adopt(&a_border);
-            let flight = FlightPlan::from(plan);
-            assert_eq!(
-                flight.member(wid(70)),
-                Some(Member::Floating {
-                    from: installed(seen(hug(settings))),
-                    to: installed(seen(hug(settings)))
-                }),
-                "it stands with F"
-            );
-            assert_eq!(key_of(&flight, wid(20)), Some(w_key), "W's border rides with W");
-            assert_eq!(key_of(&flight, wid(21)), Some(strip), "A's border rides with A");
-            for group in flight.groups.iter().filter(|g| !g.members.is_empty()) {
-                assert!(carries_out_and_back(group.key, step), "{:?} steps", group.key);
-            }
-            assert!(!carries_out_and_back(GroupKey::Floating, step), "F stays put");
-            tiles.extend([f_border, w_border]);
-            let banding = band_plan(&flight, &tiles, Some(f));
-            assert!(banding.lifted.contains(&f));
-            assert!(banding.lifted.contains(&wid(70)), "drawn in front with F");
-        }
-
-        /// On a switch the floating container carries its windows. A floating window's border rides
-        /// it the same way, not a second time on a movement of its own.
-        #[test]
-        fn a_floating_windows_border_rides_the_floating_container_on_a_switch() {
-            let f = wid(7);
-            let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
-            let windows = [floating_at(f, settings, false)];
-            let from_offset = SurfacePoint::new(0.0, -1117.0);
-            let mut plan = surface_plan(&windows, from_offset, REST);
-            assert!(plan.floating_travel.y != 0.0, "the container travels");
-            let (from, to) = windows[0].travel(from_offset, REST);
-            let border = border_tile(
-                &stacked(f, from, to, Some(0), true),
-                real(settings),
-                (wid(70), hug(real(settings))),
-                test_picture(hug(settings).size),
-            );
-            plan.adopt(&border);
-            let flight = FlightPlan::from(plan);
-            let still = |window| match flight.member(window) {
-                Some(Member::Floating { from, to }) => from.same_as(to),
-                other => panic!("{other:?}"),
-            };
-            assert!(still(f));
-            assert!(still(wid(70)), "it rides the container and nothing else");
-        }
-
-        /// A border whose picture lands between two presses joins the second mid-step. It rides
-        /// the moved window's container, placed against where that container's leg has it: where
-        /// it is drawn carries the step, which would have split the border from its window by the
-        /// step.
-        #[test]
-        fn a_border_arriving_mid_nudge_rides_with_the_moved_window() {
-            let w = wid(3);
-            let (current, second, mut incoming, offset) = two_presses(WIDTH);
-            let windows = surface(&second, w, Direction::Right);
-            let moved = windows.iter().find(|s| s.window == w).unwrap();
-            let (from, to) = moved.travel(offset, REST);
-            let mut anchor = stacked(w, from, to, Some(0), false);
-            anchor.depth = 0;
-            let real = real(at(4.0, WIDTH));
-            let frame = rect(0.0, 28.0, WIDTH + 8.0, 1089.0);
-            let border = border_tile(&anchor, real, (wid(20), frame), test_picture(frame.size));
-            incoming.adopt(&border);
-
-            let along = halfway(&current);
-            let key = key_of(&current, w).unwrap();
-            let on_screen: HashMap<GroupKey, OverlayPoint> =
-                along.iter().map(|(key, p)| (*key, OverlayPoint::new(p.x - 576.0, p.y))).collect();
-            let presented = Presented {
-                drawn: on_screen.clone(),
-                along,
-            };
-            let (merged, delta) = merge_plans(
-                &current,
-                &incoming,
-                Some(pan_travel(offset, REST)),
-                &presented,
-                Some(w),
-                VIEWPORT,
-            );
-
-            assert_eq!(key_of(&merged, wid(20)), Some(key), "it rides with W");
-            assert!(delta.joined_tiles.contains(&(wid(20), key)));
-            let (w_at, border_at) = (
-                drawn(&merged, &on_screen, w),
-                drawn(&merged, &on_screen, wid(20)),
-            );
-            assert_eq!(
-                border_at.origin.x - w_at.origin.x,
-                -4.0,
-                "where W is drawn, step and all"
-            );
-            assert!(dest(&merged, wid(20)).unwrap().same_as(border.to));
         }
     }
 

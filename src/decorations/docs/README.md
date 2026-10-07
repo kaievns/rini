@@ -13,7 +13,7 @@ decorations on each tile, is the one feature that names it.
 | `domain/shape.rs` | The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given |
 | `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; and `Style::of`, the white line's alpha and the shadow for a window focused or not |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
-| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline (`hairline`, `outline`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), hides them for a companion (`set_hidden`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
+| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline (`hairline`, `outline`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
 | `platform/layers.rs`: `Resize` | A tile's resize as Core Animation plays it: an animation of a key path through each value a closure maps from the sizes the tile passes through (`point`, `rect`, `number`, `path`), and whether a value changes on the way (`changes`). The overlay fills it from the tile's track, so `decorations` never names the score. A platform trait, not a port: it speaks Core Animation |
 
 Its `domain/` speaks rini-geometry's `Tile` space (`crates/rini-geometry/docs/README.md`): every rect
@@ -47,15 +47,14 @@ at a half-point origin landed one pixel too far out ("The handover, measured" in
 `src/animation/docs/capture-overlay-research.md`). Both round to the window's radius as the window
 server reports it (`OverlayTile::radius`, which the flight engine reads as it composes the flight),
 else 16pt, never past half the shorter side (`DecorationLayers::corner_at`, over `shape::radius`), the
-corner the overlay cuts a clipped picture at too. The hairline is a layer beside the
-picture and the caster, an eighth step in front of the picture and under a companion's quarter
-step (`HAIRLINE_Z`), with the outline as its child: inside the picture, a corner clip would cut the
-outline away (`a_corner_clip_leaves_the_hairline_whole` in the overlay). It rides every move with
-the picture; a resize carries its bounds on the tile's own track and animates its corner and the
-outline's path between the two sizes (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap
-moves it with the tile. Both are laid after the tile's frame, on every placement
-(`DecorationLayers::place`), or a pooled layer's autoresizing carries the old size. Companions wear
-none.
+corner the overlay cuts a clipped picture at too. The hairline is a layer beside the picture and the
+caster, an eighth step in front of the picture (`HAIRLINE_Z`), with the outline as its child: inside
+the picture, a corner clip would cut the outline away (`a_corner_clip_leaves_the_hairline_whole` in
+the overlay). It rides every move with the picture; a resize carries its bounds on the tile's own
+track and animates its corner and the outline's path between the two sizes
+(`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it with the tile. Both are laid
+after the tile's frame, on every placement (`DecorationLayers::place`), or a pooled layer's
+autoresizing carries the old size.
 `TileOverlay::set_tile_focused` switches one tile's white line and shadow depth in a hard cut, as
 that window's turned picture comes in mid-flight; the prototype set the white line only at
 install. When each tile turns is the coordinator's (`Command::Focus`).

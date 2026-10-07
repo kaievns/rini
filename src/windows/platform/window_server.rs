@@ -454,8 +454,8 @@ pub fn window_is_ordered_in(id: WindowServerId) -> bool {
     window_ordered_in(id).unwrap_or(false)
 }
 
-/// A test lists no windows: every listing the desktop, the bar, the menu extras and a flight's border
-/// companions are read from answers none. See "A unit test must not read the live window server" in
+/// A test lists no windows: every listing the desktop, the bar, the menu extras, the warm and the
+/// debug slide are read from answers none. See "A unit test must not read the live window server" in
 /// `docs/testing.md`.
 #[cfg(test)]
 pub fn get_windows_raw<T: Type>(

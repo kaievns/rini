@@ -3,7 +3,7 @@
 /// The shadow caster's depth: half a step behind the picture.
 pub const SHADOW_Z: f64 = -0.5;
 
-/// The hairline's depth: over the picture, under a companion's quarter step.
+/// The hairline's depth: an eighth of a step over the picture.
 pub const HAIRLINE_Z: f64 = 0.125;
 
 #[cfg(test)]

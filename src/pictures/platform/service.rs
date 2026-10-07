@@ -1623,10 +1623,10 @@ mod tests {
         use crate::pictures::domain::identity::synthetic_window_id;
         let (mut service, shared) = detached_service();
         let twice = synthetic_window_id(WindowServerId::from(wid(102682)));
-        let border = synthetic_window_id(WindowServerId::new(9001));
+        let unmanaged = synthetic_window_id(WindowServerId::new(9001));
         {
             let mut shared = shared.lock().unwrap();
-            for window in [wid(102682), twice, border] {
+            for window in [wid(102682), twice, unmanaged] {
                 shared.cache.insert(window, sized(859.0, 1081.0));
             }
             shared.learned.saw_alpha(WindowServerId::from(wid(102682)), true);
@@ -1635,7 +1635,7 @@ mod tests {
         let shared = shared.lock().unwrap();
         assert!(shared.cache.get(twice).is_none());
         assert!(shared.cache.get(wid(102682)).is_some());
-        assert!(shared.cache.get(border).is_some());
+        assert!(shared.cache.get(unmanaged).is_some());
         assert_ne!(shared.learned.get(WindowServerId::from(wid(102682))), Knowledge::default());
     }
 

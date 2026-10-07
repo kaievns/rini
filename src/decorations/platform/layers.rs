@@ -183,11 +183,6 @@ impl DecorationLayers {
         self.outline.setContentsScale(scale);
     }
 
-    pub fn set_hidden(&self, hidden: bool) {
-        self.shadow.setHidden(hidden);
-        self.hairline.setHidden(hidden);
-    }
-
     /// Carries the decorations through `resize`, each piece at the corner of every size it passes
     /// through: the caster's silhouette, its mask's frame and path, the hairline's corner while it
     /// changes, and the outline's path. The frame layers' bounds ride the tile's own resize.
@@ -521,16 +516,6 @@ mod tests {
                 CGSize::new(0.0, style.shadow.offset_y)
             );
         }
-    }
-
-    /// A companion's tile wears neither, and a pooled tile handed to a window wears both again.
-    #[test]
-    fn a_hidden_tile_hides_its_caster_and_its_hairline() {
-        let layers = DecorationLayers::new(&CALayer::layer());
-        layers.set_hidden(true);
-        assert!(layers.frame_layers().iter().all(|layer| layer.isHidden()));
-        layers.set_hidden(false);
-        assert!(layers.frame_layers().iter().all(|layer| !layer.isHidden()));
     }
 
     #[test]

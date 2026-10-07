@@ -1199,10 +1199,11 @@ because the border's identity was misdiagnosed twice:
 1. A config-driven drawn border (bronze, mirroring the bordersrc) mismatched
    reality in the other direction — a redrawn border flickers against the
    real one at the handover just as visibly as no border did.
-2. Companion tiles for JankyBorders' border windows ("Border companions" in
-   `src/transitions/docs/coordination.md`) — correct mechanism, wrong target: the `borders` process turned out not to be running at all
+2. Companion tiles for JankyBorders' border windows — correct mechanism, wrong
+   target: the `borders` process turned out not to be running at all
    (`bordersrc` exists, nothing draws it). Live enumeration showed zero
-   border windows.
+   border windows. The companions are gone: rini carries no workaround for
+   another app's tooling ("What rini is" in `specs/README.md`).
 3. **The border that actually flickers is macOS's own window outline**: a
    1pt hairline the window server composites over every window's outermost
    point, present at rest on every window, absent on every tile mid-flight,

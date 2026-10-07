@@ -317,13 +317,17 @@ A pass merged once the overlay is up writes every final frame it changed, a park
 Parked windows have no tile, so a tile-only check missed their moves and left them at the old park.
 Before the overlay is up nothing is written: the show writes the merged frames.
 
-A picture reaches a tile only as a delivery under the flight's tag: frame zero's, which the tiles take
-before the overlay goes up or the coordinator swaps in where they are when they come after it, and the
-watches' and the final capture's, which the coordinator swaps in ("The lifecycle"). Every other capture, a ScreenCaptureKit warm or background picture, goes to the
-cache only, for the next flight. Background captures landed mid-flight in 310 of 321 flights (median 4
-per flight), and every cut of one read as a flicker or a change of transparency. On a resizing tile the
-cut also re-keyed the resize from the presented state, which staggered that tile against its
-neighbours. Every cut logs "picture swapped mid-flight".
+A picture reaches a tile only as a delivery under the flight's tag: frame zero's, which the tiles
+take before the overlay goes up or the coordinator swaps in where they are when they come after it,
+and the watches' and the final capture's, which the coordinator swaps in ("The lifecycle"). Every
+other capture, a ScreenCaptureKit warm or background picture, goes to the cache only, for the next
+flight. Background captures landed mid-flight in 310 of 321 flights (median 4 per flight), and every
+cut of one read as a flicker or a change of transparency. On a resizing tile the cut also re-keyed
+the resize from the presented state, which staggered that tile against its neighbours. Every cut
+logs "picture swapped mid-flight". A cut is hard on purpose: a ~120ms crossfade veil was tried and
+rejected, because stacking two copies of a translucent window pulses its net opacity mid-fade, and
+there is no constant-alpha crossfade with layers. Gratuitous cuts are avoided upstream instead: a
+watch delivers only a picture whose band print is news.
 
 **Focus changing during a flight.** Focus changes a window's rendering without changing its size
 (measured on a 1pt window border: 65 of 255 focused against 42 unfocused). The reactor passes every
@@ -779,64 +783,6 @@ crop-drawn tile on a move re-keys the same way): the frame keeps its curve and o
 the pixels cut (`a_swap_re_keys_a_crop_grid_on_its_tiles_track`). A tile with no track
 of its own rides its container and has nothing to re-key. Re-keying from the presented
 frame over the remaining duration restarted the ease-out and the tile lurched at every swap.
-
-## Border companions
-
-Companion tiles for a border tool's windows were the second attempt at the border that flickers at
-the handover ("The hairline" in `src/pictures/docs/capture-research.md`). They stay
-(`companion_of` / `companion_tiles`): they are the right answer for anyone whose border tool IS
-running, carrying real border windows as tiles:
-
-- Detection is geometric and tool-agnostic: an unmanaged window concentric
-  with a managed one (centers within 4pt) and the same size or up to 8pt
-  larger is that window's border. Candidates exclude every window in the
-  pass, so stacked twins cannot match each other; one border window traces
-  one window (`claimed`).
-- The companion rides at its real relative offset from the window's tile,
-  drawn a quarter depth-step in front of it (under the next tile forward,
-  clear of the half-step shadow casters), with no shadow of its own. It
-  records the window it traces and takes that window's band: a floating
-  window's border is floating, in the floating container with it and lifted
-  with it (`border_tile`, `band_plan`). A move's step carries every strip
-  window's border with the strip and never a floating window's ("The move
-  flight" in `src/animation/docs/animation-smoothness.md`).
-- Captured and cached like any window, keyed by synthetic ids; no picture
-  yet means skipped this flight and warmed for the next. Companions join the
-  post-flight warm set because borders recolor with focus. A companion's
-  picture goes at the first release after the window server no longer has its
-  window ("A window is pictured once, under the id it flies by" in
-  `src/pictures/docs/README.md`).
-- Nothing rini manages can be a companion (`managed_server_ids`: the pass's
-  windows plus every window the cache holds or owes a picture to), and a
-  parked window never traces or is traced (`companion_of`). Every parked
-  window shares the park's frame, so a window arriving from the park matched
-  another parked window as its "border" and flew in wearing that window's
-  picture: two Chrome windows on different workspaces swapped pictures on
-  every switch between them. The geometric test alone did not catch it
-  because macOS clamps the park to 41pt visible, one past `is_off_screen`'s
-  40. An arriving row's window therefore gets no companion, which is what
-  the real screen does, since the border tool only catches up after the
-  window lands.
-- A swap is a hard cut ON PURPOSE: a ~120ms crossfade veil was tried and
-  rejected, because stacking two copies of a translucent window pulses its net
-  opacity mid-fade — there is no constant-alpha crossfade with layers.
-  Gratuitous cuts are avoided upstream instead: a watch delivers only a picture
-  whose band print is news.
-- Companions are never asked for or watched: frame zero, the watches and the
-  final capture picture the windows they trace. They wear no hairline either:
-  the window a companion traces wears its own.
-
-No configuration: the companions reproduce whatever a border tool draws, or nothing, and the
-outline is the platform's.
-
-**Companion geometry.** A border window is recognised by geometry alone:
-same centre within `COMPANION_CENTER_SLACK` (4pt), and at most
-`COMPANION_EXPANSION` (8pt) larger per axis. JankyBorders draws its stroke
-on a sibling window about twice the stroke width larger than the traced
-one, plus rounding, so 8pt covers any plausible stroke without reaching the
-next column. The companion tests use this machine's bordersrc geometry
-(width 1.5, square: a 865x1087 border at 1,29 around an 859x1081 window at
-4,32).
 
 ## Structural findings
 

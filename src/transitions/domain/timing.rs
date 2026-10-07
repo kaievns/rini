@@ -13,13 +13,6 @@ pub(in crate::transitions) const FRAME_INTERVAL: Duration = Duration::from_micro
 /// See "Layout changes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 
-/// How much larger than the window it traces a border window may be, per axis.
-/// See "Border companions" in `src/transitions/docs/coordination.md`.
-pub(in crate::transitions) const COMPANION_EXPANSION: f64 = 8.0;
-
-/// How far the centers may disagree. The border window is centered on what it traces.
-pub(in crate::transitions) const COMPANION_CENTER_SLACK: f64 = 4.0;
-
 /// A real window further than this from its intended frame at lift is a handover miss.
 pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 

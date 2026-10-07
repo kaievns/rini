@@ -7,7 +7,7 @@ use rini_geometry::space::{
 };
 use rini_geometry::stretch::is_a_resize;
 
-use super::surface::{SurfaceGeometry, TileGeometry};
+use super::surface::SurfaceGeometry;
 
 /// The built-in display the generator draws frames on.
 pub(crate) const DISPLAY: ScreenRect = Rect::new(Point::new(0.0, 0.0), Size::new(1728.0, 1117.0));
@@ -145,26 +145,4 @@ impl SurfaceGeometry for OnSurface {
     fn floating(&self) -> bool { self.floating }
 
     fn from(&self) -> Option<SurfaceRect> { self.from }
-}
-
-/// A tile, as a test stages it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct StagedTile {
-    pub window: WindowId,
-    pub from: OverlayRect,
-    pub to: OverlayRect,
-    pub floating: bool,
-    pub companion: Option<WindowId>,
-}
-
-impl TileGeometry for StagedTile {
-    fn window(&self) -> WindowId { self.window }
-
-    fn from(&self) -> OverlayRect { self.from }
-
-    fn to(&self) -> OverlayRect { self.to }
-
-    fn floating(&self) -> bool { self.floating }
-
-    fn companion(&self) -> Option<WindowId> { self.companion }
 }

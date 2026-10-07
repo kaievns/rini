@@ -100,8 +100,6 @@ pub struct TileSummary {
     pub start: ScreenRect,
     pub end: ScreenRect,
     pub floating: bool,
-    /// A border tracing another window: drawn, never pictured on its own here.
-    pub companion: bool,
 }
 
 impl TileSummary {
@@ -176,7 +174,7 @@ impl StageSummary {
     fn frame_zero_strip(&self) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| !t.floating && !t.companion && wholly_inside(t.start, self.display))
+            .filter(|t| !t.floating && wholly_inside(t.start, self.display))
             .map(|t| (t.window, t.start))
             .collect()
     }
@@ -185,7 +183,7 @@ impl StageSummary {
     fn background(&self) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| t.floating && !t.companion && !t.moves() && wholly_inside(t.start, self.display))
+            .filter(|t| t.floating && !t.moves() && wholly_inside(t.start, self.display))
             .map(|t| (t.window, t.start))
             .collect()
     }
@@ -203,7 +201,7 @@ impl StageSummary {
     /// The floating windows, composited behind the strip in its captures so a material in the strip
     /// blurs them.
     fn behind(&self) -> Vec<WindowId> {
-        self.tiles.iter().filter(|t| t.floating && !t.companion).map(|t| t.window).collect()
+        self.tiles.iter().filter(|t| t.floating).map(|t| t.window).collect()
     }
 
     /// Strip windows that end wholly on screen: whose landing is watched and whose tiles get holes.
@@ -212,7 +210,7 @@ impl StageSummary {
             .iter()
             .filter(|(w, f)| {
                 wholly_inside(*f, self.display)
-                    && self.tiles.iter().any(|t| t.window == *w && !t.floating && !t.companion)
+                    && self.tiles.iter().any(|t| t.window == *w && !t.floating)
             })
             .copied()
             .collect()
@@ -223,7 +221,7 @@ impl StageSummary {
     fn awaited_ends(&self, awaiting: &[WindowId]) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| awaiting.contains(&t.window) && !t.companion && wholly_inside(t.end, self.display))
+            .filter(|t| awaiting.contains(&t.window) && wholly_inside(t.end, self.display))
             .map(|t| (t.window, t.end))
             .collect()
     }
@@ -1990,7 +1988,7 @@ mod tests {
         let now = Instant::now();
         let dialog = r(500.0, 300.0, 700.0, 500.0);
         let mut stage = pan();
-        stage.tiles.push(TileSummary { window: w(7), start: dialog, end: dialog, floating: true, companion: false });
+        stage.tiles.push(TileSummary { window: w(7), start: dialog, end: dialog, floating: true });
         stage.final_frames.push((w(7), dialog));
         stage.awaiting = vec![w(7)];
         let mut c = Coordinator::default();

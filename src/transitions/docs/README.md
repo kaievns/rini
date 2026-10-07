@@ -18,7 +18,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **A switch's stack** | `domain/strip_stack.rs` — the stacked workspace strips a vertical switch scrolls through |
 | **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, and how each window's picture where it ends is waited for (`EndPicture`) |
 | **A flight's score** | `domain/flight_score.rs` — `FlightScore`: the score the flight's look composes and bends, every edit it hands the renderer folded into it first, the accents waiting for the motion, and the clock and the lift's settle read from it |
-| **What a flight is** | `domain/flight.rs` — border companions, the handover report, when a pass is worth an overlay |
+| **What a flight is** | `domain/flight.rs` — the handover report, when a pass is worth an overlay |
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the reveal hold, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for |
@@ -106,8 +106,8 @@ then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalle
 
 **Some pure rules are still the engine's.** How a later pass merges into a flight's tiles, how a
 reserved entrance joins, what frame zero's pictures and a focus handover change, which tiles the
-coordinator is told of, how tiles band, a border's tile, which picture is clipped to its corners
-and which focused look a parked target flies are methods on `RunningAnimation` and functions over
+coordinator is told of, how tiles band, which picture is clipped to its corners and which focused
+look a parked target flies are methods on `RunningAnimation` and functions over
 `OverlayTile` and `Picture`, and both carry a platform `Picture`. They and their tests
 (`platform/engine.rs`, grouped by unit) move to `domain/` once a tile holds a picture handle instead.
 `summary`, which assembles the coordinator's `StageSummary` from them and from what the pictures

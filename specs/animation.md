@@ -68,10 +68,9 @@ only the transitions are missing.
   A narrower column, half or two-thirds of the display, is seen moving and MUST NOT step.
 - The step MUST go away from where the window goes, a third of the display and back: a move right
   steps left and opens the right side, where the column it passes was.
-- The whole strip MUST step: every tiled window and every border tracing one. Floating windows and
-  their borders MUST stay where they are. A border arriving mid-step steps with the window it
-  traces. Not yet met: a window that opens or resizes mid-step leaves the step where it is drawn
-  and does not carry the rest of it.
+- The whole strip MUST step: every tiled window MUST step; floating windows MUST stay where they
+  are. Not yet met: a window that opens or resizes mid-step leaves the step where it is drawn and
+  does not carry the rest of it.
 - The column passed MUST be seen going beneath the moved window from the side the step opens, and
   that side MUST NOT show the desktop, except past the strip's end: the column passed fills it, then
   the strip beyond it. The column passed is drawn in its place on the strip, riding the strip
@@ -233,7 +232,8 @@ destination for a window already moving.
   by one at startup, and the first pass on the display knew one window of 21.
 - A picture read off the screen after a lift, such as the bar's, MUST NOT show the overlay: the bar's
   is drawn over every flight after it, so one taken with the overlay up draws the overlay where the
-  bar should be.
+  bar should be. The bar this pictures is one another application draws, which "What rini is" in
+  `specs/README.md` holds as not yet met.
 - A change of display MUST NOT drop the window pictures being captured. Only the desktop render belongs
   to a display; with a second display attached, every flight on the other one threw the window captures
   in flight away.
@@ -272,8 +272,8 @@ destination for a window already moving.
 - A window parked off the display MUST NOT be pictured through the sliver it shows at the corner. It
   keeps its full size there, so the picture costs as much as one of a window on screen, and it is
   pictured by its own identity like every managed window.
-- A picture of a window rini does not manage, such as a border tracing a tile, MAY be kept while the
-  window lives, and MUST go once the window server no longer has the window.
+- A picture of a window rini does not manage MAY be kept while the window lives, and MUST go once
+  the window server no longer has the window.
 - A picture delivered to a flight MUST be held for it only while one of its tiles can still take it.
   One a tile turned down or one delivered to a flight before MUST NOT be held, nor any once the
   overlay has lifted. The pictures kept for the next flight are the cache's.
@@ -550,9 +550,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   and over the 1pt either side of its outline, so a lift can be read against the handover measured on
   2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
   picture and the quiet after the lift MUST then count from the hide, so the bar is never pictured
-  with the overlay over it. It MUST NOT start a capture once a press has asked for a transition, so
-  that press waits at most for the one capture of the overlay or the screen under way as it lands,
-  and it MUST be off unless asked for.
+  with the overlay over it. That bar is one another application draws ("What rini is" in
+  `specs/README.md`, not yet met). It MUST NOT start a capture once a press has asked for a
+  transition, so that press waits at most for the one capture of the overlay or the screen under way
+  as it lands, and it MUST be off unless asked for.
 - Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial
   and rini's steps line up with no wall clock between them.
 - CPU and GPU use MAY be recorded only once what reading them costs is measured, and found to slow
