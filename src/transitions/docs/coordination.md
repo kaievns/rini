@@ -250,11 +250,12 @@ finished layout at frame zero; pinned by
 `a_move_that_drops_the_centring_starts_every_window_where_it_was`. Both are
 taken at the top of every pass, with the strip's layout (`take_strip_layout`),
 before anything can return early: a pass that placed nothing used to leave
-the movement unconsumed for whichever pass came next. A strip movement places only the pass's windows whose frames changed,
-as the per-window path does; a move that scrolled nothing re-placed every
-window on the workspace at frame zero. Still open: both routes land in the same
-machinery, and `take_strip_movement` also feeds the switch's claim on the
-destination's origin and layout, which needs care. The window-voting classifier
+the movement unconsumed for whichever pass came next. A strip movement places
+only the pass's windows whose frames changed, as the per-window path does; a
+move that scrolled nothing re-placed every window on the workspace at frame
+zero. Still open: both routes land in the same machinery, and
+`take_strip_movement` also feeds the switch's claim on the destination's
+origin and layout, which needs care. The window-voting classifier
 (`strip_pan_delta`) is gone: it only ran when the space had no strip, which is
 when there is nothing to pan.
 
