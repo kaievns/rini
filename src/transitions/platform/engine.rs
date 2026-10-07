@@ -1000,10 +1000,9 @@ impl FlightEngine {
             Command::Show => self.shown = self.render(Render::Show),
             Command::Write(frames) => self.owe(self.shown, Owed::Write(frames)),
             Command::Holes(ends) => {
-                let scale = self.display.map_or(2.0, |(_, scale)| scale);
-                let holes = match self.running.as_ref() {
-                    Some(running) => running.holes(ends, scale),
-                    None => ends.into_iter().map(|(_, end)| (end, 0.0)).collect(),
+                let holes = match (self.running.as_ref(), self.display) {
+                    (Some(running), Some((_, scale))) => running.holes(ends, scale),
+                    _ => ends.into_iter().map(|(_, end)| (end, 0.0)).collect(),
                 };
                 self.render(Render::Holes(holes));
             }
