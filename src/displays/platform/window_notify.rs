@@ -1,20 +1,20 @@
 //! The actor behind the SkyLight notification port. Space events go to the spaces actor; a
-//! window moved or resized by something other than rini is reported as a windows-context frame
-//! change; window-server focus edges are coalesced and resolved into `WindowServerFocusChanged`.
-use std::num::NonZeroU32;
+//! window's moves and resizes are read back from the window server on one frames thread and handed
+//! to the application's [`OnServerFrames`] callbacks; window-server focus edges are coalesced and
+//! resolved into `WindowServerFocusChanged`.
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use objc2_core_foundation::CGRect;
 use tracing::{debug, trace};
 
-use crate::windows::domain::transaction::{Requested, WindowTxStore};
-use crate::windows::event::{Event as WindowsEvent, EventSink as WindowsSink};
-use crate::windows::platform::window_server::{self, WindowIterator};
-use rini_core::ids::{WindowId, WindowServerId};
+use crate::windows::platform::window_server;
+use rini_core::ids::WindowServerId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rustc_hash::FxHashSet as HashSet;
 
-use crate::displays::event::{Event, EventSink};
+use crate::displays::domain::frames;
+use crate::displays::event::{Event, EventSink, OnServerFrames, ServerFrame};
 use crate::displays::platform::cgs_notify;
 use crate::displays::platform::spaces;
 use rini_core::ids::SpaceId;
@@ -42,35 +42,34 @@ impl FocusWakeSender {
     }
 }
 
-pub struct WindowNotify<W: WindowsSink + Clone + 'static> {
-    windows_tx: W,
+pub struct WindowNotify {
     spaces_tx: spaces::Sender,
     requests_rx: Option<Receiver>,
     subscribed: HashSet<CGSEventType>,
     initial_events: Vec<CGSEventType>,
-    tx_store: Option<WindowTxStore>,
     focus_wake: FocusWakeSender,
+    moved: mpsc::Sender<u32>,
 }
 
-impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
+impl WindowNotify {
     pub fn new(
-        windows_tx: W,
         displays_tx: impl EventSink + 'static,
         spaces_tx: spaces::Sender,
         requests_rx: Receiver,
         initial_events: &[CGSEventType],
-        tx_store: Option<WindowTxStore>,
+        on_frames: Vec<OnServerFrames>,
     ) -> Self {
         let (focus_wake_tx, focus_wake_rx) = mpsc::sync_channel(1);
         Self::spawn_focus_resolver(displays_tx, focus_wake_rx);
+        let (moved, moved_rx) = mpsc::channel();
+        spawn_frame_reader(window_server::server_frame, on_frames, moved_rx);
         Self {
-            windows_tx,
             spaces_tx,
             requests_rx: Some(requests_rx),
             subscribed: HashSet::default(),
             initial_events: initial_events.iter().copied().collect(),
-            tx_store,
             focus_wake: FocusWakeSender { wake: focus_wake_tx },
+            moved,
         }
     }
 
@@ -82,10 +81,9 @@ impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
         for event in self.initial_events.drain(..) {
             match Self::subscribe(
                 event,
-                self.windows_tx.clone(),
                 self.spaces_tx.clone(),
-                self.tx_store.clone(),
                 self.focus_wake.clone(),
+                self.moved.clone(),
             ) {
                 Ok(()) => {
                     self.subscribed.insert(event);
@@ -118,10 +116,9 @@ impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
                 }
                 match Self::subscribe(
                     event,
-                    self.windows_tx.clone(),
                     self.spaces_tx.clone(),
-                    self.tx_store.clone(),
                     self.focus_wake.clone(),
+                    self.moved.clone(),
                 ) {
                     Ok(()) => {
                         self.subscribed.insert(event);
@@ -142,10 +139,9 @@ impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
 
     fn subscribe(
         event: CGSEventType,
-        windows_tx: W,
         spaces_tx: spaces::Sender,
-        tx_store: Option<WindowTxStore>,
         focus_wake: FocusWakeSender,
+        moved: mpsc::Sender<u32>,
     ) -> Result<(), i32> {
         let res = cgs_notify::init(event);
         if res != 0 {
@@ -216,32 +212,9 @@ impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
                     ) => focus_wake.notify(),
                     CGSEventType::Known(KnownCGSEvent::WindowMoved)
                     | CGSEventType::Known(KnownCGSEvent::WindowResized) => {
-                        // TODO: suppress move/resize while Mission Control is active
-                        let mouse_state = crate::windows::platform::mouse::get_mouse_state();
-                        let Some(window_id) = evt.window_id else {
-                            continue;
-                        };
-                        let wsid = WindowServerId::new(window_id);
-                        if let Some(query) = WindowIterator::new(&[wsid]) {
-                            if query.advance().is_none() {
-                                continue;
-                            }
-                            let bounds = query.bounds();
-                            let pid = query.pid();
-                            if let Some(idx) = NonZeroU32::new(window_id) {
-                                let last_seen = tx_store
-                                    .as_ref()
-                                    .and_then(|store| store.get(&wsid))
-                                    .map(|record| record.txid);
-                                windows_tx.send(WindowsEvent::WindowFrameChanged(
-                                    WindowId { idx, pid },
-                                    bounds,
-                                    last_seen,
-                                    Requested(false),
-                                    mouse_state,
-                                ));
-                            }
-                        };
+                        if let Some(window) = evt.window_id {
+                            let _ = moved.send(window);
+                        }
                     }
                     _ => {}
                 }
@@ -298,9 +271,85 @@ impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
     }
 }
 
+/// The one thread that reads moved windows' frames, so a frame read earlier is never published after
+/// a newer one: 806 and 807 arrive on a thread each, unordered against each other. Each wake drains
+/// what has queued and reads every window in it once, after its last notification.
+fn spawn_frame_reader(
+    read: fn(WindowServerId) -> Option<CGRect>,
+    on_frames: Vec<OnServerFrames>,
+    moved: mpsc::Receiver<u32>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("window-frames".to_string())
+        .spawn(move || {
+            while let Ok(first) = moved.recv() {
+                let burst: Vec<u32> = std::iter::once(first).chain(moved.try_iter()).collect();
+                let batch: Vec<ServerFrame> = frames::latest(&burst)
+                    .into_iter()
+                    .map(WindowServerId::new)
+                    .filter_map(|window| Some(ServerFrame { window, frame: read(window)? }))
+                    .collect();
+                if batch.is_empty() {
+                    continue;
+                }
+                for on_frames in &on_frames {
+                    on_frames(&batch);
+                }
+            }
+        })
+        .expect("failed to spawn the window frames thread")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::FocusWakeSender;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, mpsc};
+
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use rini_core::ids::WindowServerId;
+
+    use super::{FocusWakeSender, spawn_frame_reader};
+    use crate::displays::event::ServerFrame;
+
+    static READS: AtomicUsize = AtomicUsize::new(0);
+
+    fn bounds(_: WindowServerId) -> Option<CGRect> {
+        READS.fetch_add(1, Ordering::SeqCst);
+        Some(CGRect::new(CGPoint::new(10., 20.), CGSize::new(300., 400.)))
+    }
+
+    #[test]
+    fn a_move_and_a_resize_of_one_window_publish_one_frame() {
+        let (moved, moved_rx) = mpsc::channel();
+        moved.send(7).unwrap();
+        moved.send(7).unwrap();
+        drop(moved);
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let sink = published.clone();
+        spawn_frame_reader(
+            bounds,
+            vec![Box::new(move |frames: &[ServerFrame]| {
+                sink.lock().unwrap().push(frames.to_vec())
+            })],
+            moved_rx,
+        )
+        .join()
+        .unwrap();
+
+        let frame = bounds(WindowServerId::new(7)).unwrap();
+        assert_eq!(
+            *published.lock().unwrap(),
+            vec![vec![ServerFrame {
+                window: WindowServerId::new(7),
+                frame
+            }]]
+        );
+        assert_eq!(
+            READS.load(Ordering::SeqCst),
+            2,
+            "one read by the thread, one by the test"
+        );
+    }
 
     #[test]
     fn focus_wakes_coalesce_to_one_signal() {

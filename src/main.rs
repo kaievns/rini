@@ -365,7 +365,6 @@ fn main() {
     );
     let wn_actor = window_notify_actor::WindowNotify::new(
         events_tx.clone(),
-        events_tx.clone(),
         spaces_tx.clone(),
         wnd_rx,
         &[
@@ -389,7 +388,7 @@ fn main() {
             //CGSEventType::Known(KnownCGSEvent::WindowMoved),
             //CGSEventType::Known(KnownCGSEvent::WindowResized),
         ],
-        Some(window_tx_store.clone()),
+        Vec::new(),
     );
 
     let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
