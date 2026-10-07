@@ -192,7 +192,8 @@ destination for a window already moving.
 - A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
   window that ends wholly on screen, so the window server counts it visible. Covered wholly, a
   terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
-  all 24.
+  all 24. So MUST a decoration rini draws around one at rest (`decorations.md`): a point is left
+  clear over its band too.
 - A floating window seen through a translucent one MUST show its live content while the flight runs,
   kept fresh behind the strip once the window gaining focus has its look.
 

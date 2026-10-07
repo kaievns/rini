@@ -602,6 +602,18 @@ impl RunningAnimation {
     /// The windows the flight draws a tile of.
     fn drawn(&self) -> Vec<WindowId> { self.tiles.iter().map(|tile| tile.window).collect() }
 
+    /// Each end the overlay is holed over, with the outset of the band its window wears at rest on a
+    /// display of `scale`: its ring's, if it wears the ring where the flight ends.
+    fn holes(&self, ends: Vec<(WindowId, OverlayRect)>, scale: f64) -> Vec<(OverlayRect, f64)> {
+        ends.into_iter()
+            .map(|(window, end)| {
+                let worn = self.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.worn);
+                let ring = worn.filter(|worn| worn.wears_ring).and_then(|worn| worn.decoration.ring);
+                (end, ring.map_or(0.0, |band| crate::decorations::domain::shape::device_width(band.width, scale)))
+            })
+            .collect()
+    }
+
     /// Adds or retargets one window without disturbing anything already moving.
     fn merge(&mut self, tile: OverlayTile) -> Admitted {
         let action = merge_action(
@@ -987,7 +999,12 @@ impl FlightEngine {
             Command::Show => self.shown = self.render(Render::Show),
             Command::Write(frames) => self.owe(self.shown, Owed::Write(frames)),
             Command::Holes(ends) => {
-                self.render(Render::Holes(ends));
+                let scale = self.display.map_or(2.0, |(_, scale)| scale);
+                let holes = match self.running.as_ref() {
+                    Some(running) => running.holes(ends, scale),
+                    None => ends.into_iter().map(|(_, end)| (end, 0.0)).collect(),
+                };
+                self.render(Render::Holes(holes));
             }
             Command::Watch(end) => {
                 self.ends = end.landing.iter().chain(&end.awaiting).copied().collect();
@@ -2736,6 +2753,25 @@ mod tests {
             assert_eq!(focused(&running), vec![false, true, false]);
             assert_eq!(losing_focus(running.focus, running.shown_focus), None, "a later merge moves none");
             assert_eq!(running.draw_focused(wid(4), true), None, "no tile");
+        }
+
+        /// A window wearing its ring where the flight ends is holed over its band as well as over
+        /// itself, the band's width in whole device pixels; one wearing none is holed over itself.
+        #[test]
+        fn a_decorated_window_is_holed_in_its_band_as_well() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles = vec![stacked(wid(1), slot, slot, Some(0), false), stacked(wid(2), slot, slot, Some(1), false)];
+            let band = crate::decorations::domain::style::Band {
+                width: 1.3,
+                active: crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
+                inactive: crate::decorations::domain::paint::Colour::rgb(0x505050),
+            };
+            let decoration = crate::decorations::domain::style::Decoration { ring: Some(band) };
+            running.tiles[0].worn = Worn { decoration, wore_ring: false, wears_ring: true };
+            running.tiles[1].worn = Worn { decoration, wore_ring: true, wears_ring: false };
+            let holes = running.holes(vec![(wid(1), slot), (wid(2), slot), (wid(3), slot)], 2.0);
+            assert_eq!(holes, vec![(slot, 1.5), (slot, 0.0), (slot, 0.0)]);
         }
 
         #[test]

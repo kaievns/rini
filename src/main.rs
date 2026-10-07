@@ -248,6 +248,7 @@ fn main() {
     let (transitions_tx, transitions_rx) = rini::app::channels::channel();
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
     let (bar_tx, bar_rx) = rini::app::channels::channel();
+    let (rest_tx, rest_rx) = rini::app::channels::channel();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
 
     // Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
@@ -281,6 +282,7 @@ fn main() {
         Some(pictures.clone()),
         Some(switcher_tx.clone()),
         Some(bar_tx.clone()),
+        Some(rest_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
         Some(gesture_tap_tx.clone()),
         opt.one,
@@ -385,10 +387,19 @@ fn main() {
             CGSEventType::Known(KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged),
             CGSEventType::Known(KnownCGSEvent::SpaceCreated),
             CGSEventType::Known(KnownCGSEvent::SpaceDestroyed),
-            //CGSEventType::Known(KnownCGSEvent::WindowMoved),
-            //CGSEventType::Known(KnownCGSEvent::WindowResized),
+            CGSEventType::Known(KnownCGSEvent::WindowMoved),
+            CGSEventType::Known(KnownCGSEvent::WindowResized),
         ],
-        Vec::new(),
+        // The rest windows follow every decorated window the window server moves, and go back above
+        // the ones it reorders.
+        vec![Box::new({
+            let rest_tx = rest_tx.clone();
+            move |frames: &[_]| rest_tx.send(rini::decorations::platform::rest::Event::Frames(frames.to_vec()))
+        })],
+        vec![Box::new({
+            let rest_tx = rest_tx.clone();
+            move |order| rest_tx.send(rini::decorations::platform::rest::Event::Order(order))
+        })],
     );
 
     let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
@@ -425,6 +436,10 @@ fn main() {
     // what the flight engine draws. The engine has a thread of its own, and is made there: its timers
     // run on the loop that makes them. Both stay idle until the reactor sends display geometry and
     // something to animate.
+    // The decorations drawn at rest, on the main thread for AppKit: a rest window above each window
+    // whose band shows, told what each wears by the reactor. The renderer places them before each
+    // lift hides the overlay, so the lift shows each band where its tile had it.
+    let (rest_actor, place_rest) = rini::decorations::platform::rest::RestActor::new(rest_rx, mtm);
     let (render_tx, render_rx) = rini::app::channels::channel();
     let renderer = rini::animation::platform::renderer::Renderer::new(
         render_rx,
@@ -434,6 +449,7 @@ fn main() {
                 transitions_tx.send(rini::transitions::platform::engine::Event::Rendered(answer))
             }
         }),
+        place_rest,
         mtm,
     );
     let flight_engine = rini::transitions::platform::engine::Parts {
@@ -533,6 +549,7 @@ fn main() {
             supervise("renderer", renderer.run()),
             supervise("switcher", switcher_actor.run()),
             supervise("bar", bar_actor.run()),
+            supervise("rest", rest_actor.run()),
         );
     });
 }

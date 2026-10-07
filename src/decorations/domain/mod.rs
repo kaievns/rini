@@ -3,6 +3,7 @@
 //! deep each sits against the picture (`stack`).
 
 pub mod paint;
+pub mod rest;
 pub mod shape;
 pub mod stack;
 pub mod style;

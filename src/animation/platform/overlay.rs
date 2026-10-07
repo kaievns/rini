@@ -28,7 +28,7 @@ use rini_geometry::space::{
 };
 
 use crate::animation::domain::motion::easing::CubicBezier;
-use crate::animation::domain::motion::holes::hole_in;
+use crate::animation::domain::motion::holes::{band_hole_in, hole_in};
 use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Form, Node, Score, Track, Value,
@@ -803,11 +803,12 @@ impl TileOverlay {
         self.visible = false;
     }
 
-    /// Punches a hole through the overlay over each window ending at one of `ends`, replacing the
-    /// holes there were; `paint_background` then clears the window's background so the holes show
-    /// what is below. The caller names the windows that end wholly on screen. See "Holes" in
+    /// Punches a hole through the overlay over each window ending at one of `ends`, and over the band
+    /// of the outset given with it that it wears at rest, replacing the holes there were;
+    /// `paint_background` then clears the window's background so the holes show what is below. The
+    /// caller names the windows that end wholly on screen. See "Holes" in
     /// `src/animation/docs/animation-smoothness.md`.
-    pub fn set_holes(&mut self, ends: &[OverlayRect]) {
+    pub fn set_holes(&mut self, ends: &[(OverlayRect, f64)]) {
         if ends.is_empty() {
             self.clear_holes();
             return;
@@ -815,8 +816,13 @@ impl TileOverlay {
         let Some(clip) = self.window.contentView().and_then(|view| view.layer()) else {
             return;
         };
-        let holes: Vec<CGRect> =
-            ends.iter().map(|end| in_view(hole_in(*end).to_cg(), self.top_band)).collect();
+        let holes: Vec<CGRect> = ends
+            .iter()
+            .flat_map(|&(end, outset)| {
+                std::iter::once(hole_in(end)).chain((outset > 0.0).then(|| band_hole_in(end, outset)))
+            })
+            .map(|hole| in_view(hole.to_cg(), self.top_band))
+            .collect();
         // SAFETY: a shape layer we just made, as the mask of the view's own layer.
         unsafe { clip.setMask(Some(&holes_mask(clip.bounds(), &holes))) };
     }

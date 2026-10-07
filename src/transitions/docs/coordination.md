@@ -127,7 +127,8 @@ floating windows seen behind them. Only then is the pass composed from the cache
 installed hidden, and the coordinator told what was composed (`Event::Merge`). The overlay goes up
 once those pictures arrive, each put on its tile, or 80ms pass (`FRAME_ZERO_PATIENCE`); the real frames
 are written then and never before, for every kind; a 1pt hole is cut over every window that ends wholly
-on screen, so the window server counts it visible and its app keeps painting; and the end state is
+on screen, so the window server counts it visible and its app keeps painting, and another over the
+focus ring rini draws around it at rest when it wears one where it ends; and the end state is
 watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the windows it grows
 or opens to repaint (up to `HOLD_CAP`, and no longer for one whose picture the pictures service reports
 will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a strip movement

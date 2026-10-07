@@ -1,8 +1,8 @@
 //! Where a window's decorations lie and how round they are, in its tile's own points: the corner
 //! radius, the hairline's outline, the shadow's silhouette and the mask it is cut to, and a band
-//! drawn outside the window.
+//! drawn outside the window; and where a band at rest is drawn on its display.
 
-use rini_geometry::space::{Point, Size, Tile, TileRect, TileSize};
+use rini_geometry::space::{Point, ScreenRect, Size, Tile, TileRect, TileSize};
 
 use crate::decorations::domain::style::OUTLINE_PT;
 
@@ -80,6 +80,13 @@ pub fn band(size: TileSize, corner: f64, width: f64) -> (TileRect, f64) {
     (rect, outer.min(size.width.min(size.height) / 2.0))
 }
 
+/// The window a band at rest is drawn in around a window at `frame` on `display`: the band's outer
+/// rect cut to the display, so a window at the display's edge draws nothing onto the next one.
+/// `None` when nothing of it is on the display.
+pub fn rest_frame(frame: ScreenRect, width: f64, display: ScreenRect) -> Option<ScreenRect> {
+    frame.inflate(width, width).intersection(&display).filter(|cut| !cut.is_empty())
+}
+
 /// How far along each side a continuous corner reaches, in radii: Core Animation's
 /// `cornerCurveExpansionFactor` for `kCACornerCurveContinuous`, 1.528665 on macOS 26.7.1.
 pub const CONTINUOUS_REACH: f64 = 1.528665;
@@ -141,6 +148,18 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> TileRect {
         TileRect::new(Point::new(x, y), Size::new(w, h))
+    }
+
+    fn on_screen(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        ScreenRect::new(Point::new(x, y), Size::new(w, h))
+    }
+
+    #[test]
+    fn a_rest_frame_is_cut_to_its_display() {
+        let display = on_screen(0.0, 0.0, 1728.0, 1117.0);
+        assert_eq!(rest_frame(on_screen(3.0, 35.0, 859.0, 1079.0), 4.0, display), Some(on_screen(0.0, 31.0, 866.0, 1086.0)));
+        assert_eq!(rest_frame(on_screen(300.0, 300.0, 400.0, 300.0), 4.0, display), Some(on_screen(296.0, 296.0, 408.0, 308.0)));
+        assert_eq!(rest_frame(on_screen(1800.0, 35.0, 859.0, 1079.0), 4.0, display), None, "on the next display");
     }
 
     #[test]

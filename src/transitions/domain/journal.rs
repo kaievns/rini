@@ -763,7 +763,7 @@ mod tests {
             (Command::AskFrameZero { generation: g, strip: frames.clone(), background: Vec::new(), behind: Vec::new() }, "ask_frame_zero"),
             (Command::Show, "show"),
             (Command::Write(frames.clone()), "write"),
-            (Command::Holes(vec![snap]), "holes"),
+            (Command::Holes(vec![(w(1), snap)]), "holes"),
             (Command::Watch(watch.clone()), "watch"),
             (Command::StopWatches, "stop_watches"),
             (Command::StartMoving, "start_moving"),

@@ -36,8 +36,9 @@ pub enum Render {
     Swap { window: WindowId, picture: Picture, clipped: bool },
     /// `window`'s tile drawn focused or not, and wearing its ring or not.
     Focus { window: WindowId, focused: bool, ringed: bool },
-    /// The overlay holed over each window ending at one of these, the holes before replaced.
-    Holes(Vec<OverlayRect>),
+    /// The overlay holed over each window ending at one of these, and over the band of the outset
+    /// given that it wears at rest, the holes before replaced.
+    Holes(Vec<(OverlayRect, f64)>),
     /// The overlay up.
     Show,
     /// The overlay down, its holes filled, and its tiles and the desktop behind them let go.
@@ -110,6 +111,31 @@ pub fn media_clock() -> MediaClock {
     MediaClock::tightest((0..4).map(read)).expect("four reads")
 }
 
+/// What a drain does around its transaction, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    /// Every window drawn at rest on the display put where its window is, so the lift that follows
+    /// shows each band where the overlay's tile had it.
+    PlaceRest,
+    Hide,
+    /// The commands, in one transaction, flushed.
+    Play,
+    Background,
+    Show,
+}
+
+/// A drain's steps: one that lifts the overlay places what is drawn at rest first and then hides
+/// it, all before its commands; one that shows it puts it up last.
+fn steps(shown: Option<bool>) -> Vec<Step> {
+    let lifts = (shown == Some(false)).then_some([Step::PlaceRest, Step::Hide]).into_iter().flatten();
+    let shows = (shown == Some(true)).then_some(Step::Show);
+    lifts.chain([Step::Play, Step::Background]).chain(shows).collect()
+}
+
+/// What the renderer calls as it lifts the overlay off a display, before it hides: what is drawn at
+/// rest there.
+pub type BeforeLift = Box<dyn Fn(ScreenRect)>;
+
 pub struct Renderer {
     rx: Receiver<Batch>,
     /// Made by the first `Dress` or `Stage` after a `Display`, and kept: making it costs too much to
@@ -120,12 +146,18 @@ pub struct Renderer {
     display: Option<(ScreenRect, f64, f64)>,
     /// Tells the engine what each drain came to.
     report: Box<dyn Fn(Event)>,
+    before_lift: BeforeLift,
     mtm: MainThreadMarker,
 }
 
 impl Renderer {
-    pub fn new(rx: Receiver<Batch>, report: Box<dyn Fn(Event)>, mtm: MainThreadMarker) -> Self {
-        Self { rx, overlay: None, display: None, report, mtm }
+    pub fn new(
+        rx: Receiver<Batch>,
+        report: Box<dyn Fn(Event)>,
+        before_lift: BeforeLift,
+        mtm: MainThreadMarker,
+    ) -> Self {
+        Self { rx, overlay: None, display: None, report, before_lift, mtm }
     }
 
     /// Each time a batch comes, it and every batch queued behind it are played as one drain, and
@@ -142,32 +174,38 @@ impl Renderer {
         }
     }
 
-    /// Plays a drain in one transaction, flushed: the overlay brought down before it when the drain
-    /// lifts it, put up after when the drain shows it, and the window's background set once the
-    /// holes' mask is committed. Without an overlay every command but `Display` does nothing; a drain
-    /// that dressed or posed a flight on none is `Unavailable`. A commit says when the drain began
-    /// and when it was flushed.
+    /// Plays a drain in one transaction, flushed, in its `steps`: when the drain lifts the overlay,
+    /// what is drawn at rest on its display placed and the overlay brought down before it; put up after
+    /// when the drain shows it; and the window's background set once the holes' mask is committed.
+    /// Without an overlay every command but `Display` does nothing; a drain that dressed or posed a
+    /// flight on none is `Unavailable`. A commit says when the drain began and when it was flushed.
     fn play(&mut self, drained: Drained) -> Event {
         let began = Instant::now();
-        let Drained { commands, seq, sent, shown } = drained;
+        let Drained { mut commands, seq, sent, shown } = drained;
         let needed = commands.iter().any(needs_overlay);
-        if shown == Some(false)
-            && let Some(overlay) = self.overlay.as_mut()
-        {
-            overlay.hide();
-        }
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        for command in commands {
-            self.apply(command);
-        }
-        CATransaction::commit();
-        CATransaction::flush();
-        let flushed = Instant::now();
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.paint_background();
-            if shown == Some(true) {
-                overlay.show();
+        let mut flushed = began;
+        for step in steps(shown) {
+            match step {
+                Step::PlaceRest => {
+                    if self.overlay.is_some()
+                        && let Some((frame, _, _)) = self.display
+                    {
+                        (self.before_lift)(frame);
+                    }
+                }
+                Step::Hide => self.overlay.as_mut().into_iter().for_each(TileOverlay::hide),
+                Step::Play => {
+                    CATransaction::begin();
+                    CATransaction::setDisableActions(true);
+                    for command in std::mem::take(&mut commands) {
+                        self.apply(command);
+                    }
+                    CATransaction::commit();
+                    CATransaction::flush();
+                    flushed = Instant::now();
+                }
+                Step::Background => self.overlay.as_mut().into_iter().for_each(TileOverlay::paint_background),
+                Step::Show => self.overlay.as_mut().into_iter().for_each(TileOverlay::show),
             }
         }
         let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
@@ -227,7 +265,7 @@ mod tests {
     use crate::pictures::platform::picture::test_picture;
 
     fn holes(x: f64) -> Render {
-        Render::Holes(vec![OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0))])
+        Render::Holes(vec![(OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0)), 0.0)])
     }
 
     /// Batch `seq`, sent `ms` after `at`.
@@ -239,7 +277,7 @@ mod tests {
         commands
             .iter()
             .filter_map(|command| match command {
-                Render::Holes(ends) => Some(ends[0].origin.x),
+                Render::Holes(ends) => Some(ends[0].0.origin.x),
                 _ => None,
             })
             .collect()
@@ -265,6 +303,13 @@ mod tests {
         assert_eq!(shown(batch(1, at, 0, vec![holes(1.0), Render::Show, holes(2.0)]), Vec::new()), Some(true));
         assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![Render::Lift])]), Some(false), "never shown");
         assert_eq!(shown(batch(1, at, 0, vec![Render::Lift, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
+    }
+
+    #[test]
+    fn the_lift_places_every_rest_border_before_it_hides_the_overlay() {
+        assert_eq!(steps(Some(false)), [Step::PlaceRest, Step::Hide, Step::Play, Step::Background]);
+        assert_eq!(steps(Some(true)), [Step::Play, Step::Background, Step::Show]);
+        assert_eq!(steps(None), [Step::Play, Step::Background], "neither: nothing at rest is touched");
     }
 
     #[test]

@@ -91,6 +91,7 @@ impl Style {
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Rings {
     holders: Vec<WindowId>,
+    focus: Option<WindowId>,
 }
 
 impl Rings {
@@ -101,11 +102,17 @@ impl Rings {
             .filter_map(|(_, active)| *active)
             .collect();
         holders.extend(focus.as_ref().map(|(_, window)| *window));
-        Rings { holders }
+        Rings { holders, focus: focus.map(|(_, window)| window) }
     }
 
     /// Whether `window` wears the ring.
     pub fn ringed(&self, window: WindowId) -> bool { self.holders.contains(&window) }
+
+    /// Every window that wears the ring.
+    pub fn holders(&self) -> &[WindowId] { &self.holders }
+
+    /// Whether `window` holds focus, so wears the active paint.
+    pub fn focused(&self, window: WindowId) -> bool { self.focus == Some(window) }
 }
 
 #[cfg(test)]
@@ -137,6 +144,14 @@ mod tests {
     }
 
     #[test]
+    fn only_the_display_holding_focus_wears_the_active_colour() {
+        let rings = Rings::of(&[("left", Some(w(1))), ("right", Some(w(2)))], Some(("left", w(1))));
+        let paint = |window| Style::of(rings.focused(window), rings.ringed(window), &ringed()).ring;
+        assert_eq!(paint(w(1)), Some(RING.active));
+        assert_eq!(paint(w(2)), Some(RING.inactive));
+    }
+
+    #[test]
     fn a_focused_floating_window_wears_the_ring_instead_of_the_tiled_selection() {
         let rings = Rings::of(&[("left", Some(w(1)))], Some(("left", w(5))));
         assert!(rings.ringed(w(5)));
@@ -146,8 +161,11 @@ mod tests {
     #[test]
     fn with_no_managed_window_focused_nothing_is_active() {
         let rings = Rings::of(&[("left", Some(w(1))), ("right", Some(w(2)))], None);
-        assert!(rings.ringed(w(1)) && rings.ringed(w(2)), "each workspace's active window still");
-        assert_eq!(Style::of(false, true, &ringed()).ring, Some(RING.inactive), "and none of them focused");
+        for window in [w(1), w(2)] {
+            assert!(rings.ringed(window) && !rings.focused(window), "each workspace's active window still");
+            let style = Style::of(rings.focused(window), rings.ringed(window), &ringed());
+            assert_eq!(style.ring, Some(RING.inactive), "and none of them focused");
+        }
     }
 
     #[test]

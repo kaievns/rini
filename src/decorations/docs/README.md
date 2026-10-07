@@ -2,32 +2,38 @@
 
 macOS composites a hairline around every window and casts its shadow, and no capture carries either.
 The overlay draws both over every tile, so a flying window wears what it wears on the desktop. rini
-also draws niri's focus ring, which macOS has no form of. This feature is their shape, their paint by
-focus, who wears the ring, how deep each sits against the picture, and the layers each tile wears
-them on. It names no other feature. `animation` draws its decorations on each tile, `transitions`
-carries what each window wears to its tile unread, and the application decides it and fills the
-ring's settings from the config.
+also draws niri's focus ring, which macOS has no form of: on the tiles through a flight, and at rest
+in windows of its own. This feature is their shape, their paint by focus, who wears the ring, how
+deep each sits against the picture, the layers each tile wears them on, and the windows that draw
+the ring at rest. It reads `windows` (levels, sub-levels, radii, frames, whether a window is ordered
+in) and `displays` (the window server's frames and orders). `animation` draws its decorations on
+each tile, `transitions` carries what each window wears to its tile unread, and the application
+decides it, fills the ring's settings from the config and wires the rest windows.
 
 ## What it owns
 
 | | |
 |---|---|
-| `domain/shape.rs` | A band outside the window, the ring's: its outer rect and corner (`band`) and its width in device pixels (`device_width`). The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given |
+| `domain/shape.rs` | A band outside the window, the ring's: its outer rect and corner (`band`), its width in device pixels (`device_width`), and the window that draws it at rest, cut to its display (`rest_frame`). The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given |
 | `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its two colours (`Band`); what a window wears that rini draws (`Decoration`), and through a pass, with whether it wore and wears the ring (`Worn`); and `Style::of`, the white line's alpha, the shadow and the ring's colour for a window focused or not, wearing the ring or not. Who wears the ring: each workspace's active window, the focused window on its own (`Rings`) |
 | `domain/paint.rs` | `Colour`, sRGB with its alpha, as the config writes a colour |
+| `domain/rest.rs` | The ring at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with what `Held` it), whether a band shows (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), which rest window draws each window (`assign`, `spare`), and which are ordered above their windows again this turn (`to_reorder`) |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
 | `settings.rs` | `DecorationSettings`: `layout › focus-ring`, on or off and its `Band`, niri's by default; `decoration`, what every managed window wears under them |
 | `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the ring (`hairline`, `outline`, `ring`). `Band`, the ring's layer: a border on the continuous curve, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize. It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's ring (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
+| `platform/rest.rs` | The rest windows: borderless, click-through, non-activating panels, pooled, each holding one `Band` and ordered directly above the window it decorates (`RestBorders`); the main-thread actor that takes the reactor's model, the window server's frames and orders, a turn at a time (`RestActor`), and what the renderer calls before each lift (`OnLift`) |
 | `platform/layers.rs`: `Resize` | A tile's resize as Core Animation plays it: an animation of a key path through each value a closure maps from the sizes the tile passes through (`point`, `rect`, `number`, `path`), and whether a value changes on the way (`changes`). The overlay fills it from the tile's track, so `decorations` never names the score. A platform trait, not a port: it speaks Core Animation |
 
-Its `domain/` speaks rini-geometry's `Tile` space (`crates/rini-geometry/docs/README.md`): every rect
-is in a tile's own points, origin at its top-left, the shadow mask's whole rect included, which starts
-one `SHADOW_REACH` out. The layer that draws a rect converts it into its own points.
+Its `domain/` speaks rini-geometry's spaces (`crates/rini-geometry/docs/README.md`): what a window
+wears in the `Tile` space, every rect in a tile's own points, origin at its top-left, the shadow
+mask's whole rect included, which starts one `SHADOW_REACH` out; and where a band is drawn at rest
+in the `Screen` space, the window server's. The layer that draws a rect converts it into its own
+points, and the rest windows convert the window server's frames at their edge.
 
 ## Where it is drawn and measured
 
 - **Drawn:** on the overlay's tiles (`src/animation/platform/overlay.rs`), as "The hairline and the
-  shadow, as drawn" below describes.
+  shadow, as drawn" below describes; the ring also at rest, in rini's own windows ("At rest").
 - **The hairline, measured:** "The hairline is composited outside every capture" in
   `src/pictures/docs/capture-research.md`: the white line's width and alpha by focus, and the black
   outline just outside it.
@@ -89,6 +95,91 @@ the tile is dressed (`DecorationLayers::wear`). A resize carries its bounds on t
 and its corner while it changes; its position, the window's corner less its width, holds. Its paint
 turns with the hairline (`Style::of`, `TileOverlay::set_tile_focused`), at the turn
 `transitions::domain::lifecycle::drawn_ringed` gives it.
+
+## At rest
+
+Between flights macOS draws each window, and rini draws the ring around the windows that wear it in
+windows of its own, one above each, holding a `Band` laid exactly as a tile's
+(`a_tile_wears_its_ring_as_dressed_and_as_focus_turns`, `every_band_rounds_on_the_continuous_curve_at_its_outset`).
+
+**The windows.** Borderless, non-activating `NSPanel`s on rini's main connection, click-through,
+clear, with no shadow, collection `[.moveToActiveSpace, .ignoresCycle, .fullScreenNone]`, each
+holding a flipped view whose layer holds the band at its window's frame. A rest window's frame is the
+band's outer rect cut to its window's display (`shape::rest_frame`), so a ring at the display's edge
+draws nothing onto the next one. Made one per display as the first model arrives (`rest::spare`),
+re-targeted from the pool (`rest::assign`), and made only when the pool is out: a window's first
+show costs 112ms against 14ms to order one in. A window that shows nothing keeps its rest window at
+alpha 0 for the next.
+
+**Shown by alpha, never ordered out.** Ordering a window in costs 13.94ms and out 13.07ms at the
+median, against 0.36ms and 0.34ms for an alpha change ("Toggle alpha, do not order the window in
+and out" in `src/animation/docs/capture-overlay-research.md`). So a rest window is ordered in once,
+as it is made, and every hide after is its alpha.
+
+**Ordering a rest window.** Probe P1 (2026-10-06, an idle machine,
+[`docs/data/2026-10-06-drags/p1-order.jsonl`](../../../docs/data/2026-10-06-drags/p1-order.jsonl))
+ordered a 1pt panel against another process's window and read the window list after. AppKit's
+`orderWindow:NSWindowAbove relativeTo:` held the panel directly above the other window;
+`SLSOrderWindow` against it did nothing, and is no longer declared. Against a window at sub-level 1,
+the panel stayed below until it took that window's level and sub-level too (the `level_copy` row:
+one place below before the copy, above after). So a rest window takes its window's level and
+sub-level as `StackPlace::of` reads them, through `SLSSetWindowLevel` and `SLSSetWindowSubLevel`,
+which act only on the caller's own windows (`window_server::take_stack_place`), and then AppKit
+orders it above. The sub-level is read by the Mach port rini already reads other apps' windows with,
+not by `SLSGetWindowSubLevel` as P1 read it; that the two answer alike is inferred. After each of 10
+raises of the other window, its 808 came 9.4-18.0ms after the raise, and the panel, ordered again
+from the 808, was back on top 7.4-25.4ms after it: 8 of 10 within 16.7ms, p90 25.4ms. The call took
+0.57-6.02ms, about 1.4ms typical. P1 ran against a scratch helper only. So for 1-2 frames after
+another app raises its window, that window sits above its own ring: the window covers none of the
+ring, which lies outside it, but its shadow does, and so does any window it rose past that overlaps
+the ring. A rest window is ordered again when the window server reorders its window or orders it
+back in (808, 816), when it is given a window, and when focus comes to its window, each once a turn
+(`rest::to_reorder`).
+
+**A click-through band is never hit.** Probe P5 drew a click-through band around a window and found
+`SLSFindWindowAndOwner` 2pt inside to 4pt outside its right edge returning the window with the band
+directly above it, every time, and every posted drag resized it, with the band and without. Its pixel
+comparison is confounded: its two phases compared two different looks of the target window, phase
+one's posted presses having made the helper's panel key; its straight-edge rows show the band leaves
+the window's inner hairline alone.
+
+**The corner.** P5's band was a `CALayer` border on the default, circular curve, whose inner edge
+lies outside a continuous window corner everywhere: it left a crescent showing what is beneath, up
+to 0.67 of a device pixel's coverage per pixel, 21.6 pixel-equivalents per corner at 2x for a 16pt
+corner and a 4pt band (offscreen). A band on the continuous curve, its inner contour the window's own
+corner, leaves at most 0.24 of a device pixel's coverage per pixel at its seam, 9.3
+pixel-equivalents per corner (offscreen render, not the screen). Its inner edge is a border's outer
+edge `width` in, so the outer corner is `corner + width` (`shape::band`).
+
+**Following.** A rest window takes its window's frame from the window server's frames
+(`src/displays/docs/live-frames.md`): 806 and 807 saw every frame a 1ms poll saw during Kai's
+drags, n=1165, p90 0.08ms behind it, in Ghostty only. The actor takes what queued each turn, the
+latest frame of each window. Under the overlay the rest windows keep following; none is hidden for a
+flight.
+
+**Parked comes from rini's layout.** macOS clamps a parked Chrome or Finder window so 52pt of it
+shows, past the 40pt `is_off_screen` allows (`PARK_CLAMP_PX` in `crates/rini-geometry/src/lib.rs`), so
+a band read off the window's frame would be drawn around the sliver. The reactor sends a window as
+parked when its workspace is not the one its display shows or its strip has it off the viewport. A
+park, and a window brought back, takes effect at the window's next frame, at a lift, or 250ms after
+the reactor said so (`rest::Parking`): rini parks a window by moving it, after the overlay is up, and
+a band that went at the press would leave its window bare before the overlay covered it.
+
+**The handover.** At the press nothing changes at rest; the overlay covers its display at level 18,
+so a rest window under it is unseen once it is up, as its window is. At the lift the renderer calls
+the rest windows before it hides the overlay (`Renderer::play`'s steps), and every one on that
+display is put at its window's frame as the window server has it, every park that waited taken, and
+drawn as it is then, in the same main-thread turn as the hide. That no frame shows a band out of
+place is inferred, not measured. The overlay is holed over each band as over each window ("Holes" in
+`src/animation/docs/animation-smoothness.md`), so the rest window keeps painting under it, inferred
+as needed.
+
+Not measured: what a rest window costs the window server in memory and the main thread in time, per
+window and under an 808 burst as a strip raise makes one (probe P13, which needs an idle machine
+and was not run); whether a full-size clear panel allocates a full-size backing, which would want
+its shape cut to its band instead; whether a re-order brings a `.moveToActiveSpace` window onto the
+Space shown; and how a rest window moves through macOS's own Space animation, which slides a window
+that is not `.stationary`.
 
 ## The corner, measured
 
@@ -197,5 +288,5 @@ Animation's own curve, read the same `edge_in` and `edge_out` as the `path` rows
 
 ## Reading order
 
-`domain/shape.rs` → `domain/paint.rs` → `domain/style.rs` → `domain/stack.rs` → `settings.rs` →
-`platform/layers.rs`.
+`domain/shape.rs` → `domain/paint.rs` → `domain/style.rs` → `domain/stack.rs` → `domain/rest.rs` →
+`settings.rs` → `platform/layers.rs` → `platform/rest.rs`.

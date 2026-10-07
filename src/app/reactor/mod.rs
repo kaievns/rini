@@ -503,6 +503,7 @@ pub struct Reactor {
     /// The rings as rini's layout had them when the last batch of events ended: what each window wore
     /// before a pass this batch makes.
     rings_drawn: crate::decorations::domain::style::Rings,
+    rest: decorations::RestFeed,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
@@ -590,6 +591,7 @@ impl Reactor {
         pictures: Option<crate::pictures::platform::service::Pictures>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
+        rest_tx: Option<crate::decorations::platform::rest::Sender>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -611,6 +613,7 @@ impl Reactor {
         reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
+        reactor.rest.tx = rest_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());
@@ -646,6 +649,7 @@ impl Reactor {
             switcher_tx: None,
             bar: bar::BarFeed::default(),
             rings_drawn: Default::default(),
+            rest: decorations::RestFeed::default(),
             config: config.clone(),
             one_space,
             app_manager: managers::AppManager::new(),
@@ -1140,13 +1144,15 @@ impl Reactor {
         }
     }
 
-    /// One batch of the loop's events, then what the batch changed on the bar, and the rings it left.
+    /// One batch of the loop's events, then what the batch changed on the bar and at rest, and the
+    /// rings it left.
     fn handle_batch(&mut self, batch: impl IntoIterator<Item = (tracing::Span, Event)>) {
         for (span, event) in batch {
             let _guard = span.enter();
             self.handle_loop_event(event);
         }
         self.publish_bar();
+        self.publish_rest();
         self.rings_drawn = self.layout_rings();
     }
 

@@ -15,7 +15,7 @@ use objc2_core_foundation::{
 use objc2_core_graphics::CGWindowListCopyWindowInfo;
 use objc2_core_graphics::{
     CGError, CGWindowID, CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
-    kCGWindowNumber,
+    kCGWindowNumber, kCGWindowOwnerPID,
 };
 use once_cell::sync::Lazy;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
@@ -25,6 +25,7 @@ use rini_skylight_sys::*;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::windows::domain::info::{WindowServerInfo, reported_radius};
+use crate::windows::domain::listing::listed;
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 use crate::windows::platform::cg_ok;
 #[cfg(not(test))]
@@ -618,14 +619,6 @@ pub fn bounds_from_dict(dict: CFRetained<CFDictionary>) -> Option<CGRect> {
     ))
 }
 
-/// Do two rects share any area?
-pub fn overlaps(a: CGRect, b: CGRect) -> bool {
-    a.origin.x < b.origin.x + b.size.width
-        && b.origin.x < a.origin.x + a.size.width
-        && a.origin.y < b.origin.y + b.size.height
-        && b.origin.y < a.origin.y + a.size.height
-}
-
 /// Front-to-back position of every on-screen window, 0 being frontmost.
 /// `CGWindowListCopyWindowInfo` lists on-screen windows front to back, so the index is the depth.
 #[cfg(not(test))]
@@ -690,32 +683,21 @@ pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) 
     });
 }
 
-/// Layer-0 windows on screen and intersecting `display`, with their frames. Other layers hold the
-/// bar, Dock and notifications. A window parked at the corner is listed: it keeps its full size, and
-/// the sliver it shows is on screen to CoreGraphics.
+/// The windows on screen a listing names as on `display` (`listing::listed`), with their frames.
 pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRect)> {
-    /// Below this in either axis a window is too small to be worth drawing.
-    const MIN_SIDE: f64 = 100.0;
-
+    let own = std::process::id() as pid_t;
     get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
         .iter()
         .filter_map(|window| {
-            if get_num(&window, unsafe { kCGWindowLayer }) != Some(0) {
-                return None;
-            }
             let id = get_num(&window, unsafe { kCGWindowNumber })? as u32;
             let bounds = window
                 .get(unsafe { kCGWindowBounds })?
                 .downcast::<CFDictionary>()
                 .ok()
                 .and_then(bounds_from_dict)?;
-            if bounds.size.width < MIN_SIDE || bounds.size.height < MIN_SIDE {
-                return None;
-            }
-            if !overlaps(bounds, display) {
-                return None;
-            }
-            Some((WindowServerId::new(id), bounds))
+            let layer = get_num(&window, unsafe { kCGWindowLayer });
+            let owner = get_num(&window, unsafe { kCGWindowOwnerPID }).map(|pid| pid as pid_t);
+            listed(layer, owner, own, bounds, display).then(|| (WindowServerId::new(id), bounds))
         })
         .collect()
 }
@@ -1075,10 +1057,8 @@ pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> 
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-
     use super::{
-        WindowServerId, app_window_suitability, overlaps, set_window_ordered_in_override,
+        WindowServerId, app_window_suitability, set_window_ordered_in_override,
         space_window_list_for_connection, window_ordered_in, window_spaces,
     };
 
@@ -1103,53 +1083,6 @@ mod tests {
         assert_eq!(window_ordered_in(id), Some(false));
         set_window_ordered_in_override(id, None);
         assert_eq!(window_ordered_in(id), None);
-    }
-
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-    }
-
-    #[test]
-    fn overlapping_rects_overlap() {
-        assert!(overlaps(
-            rect(0.0, 0.0, 100.0, 100.0),
-            rect(50.0, 50.0, 100.0, 100.0)
-        ));
-    }
-
-    #[test]
-    fn a_window_fully_inside_a_display_overlaps_it() {
-        let display = rect(0.0, 32.0, 1728.0, 1085.0);
-        assert!(overlaps(rect(865.0, 32.0, 859.0, 1081.0), display));
-    }
-
-    #[test]
-    fn a_window_scrolled_entirely_off_the_left_does_not_overlap() {
-        // Real measured geometry: off-strip columns sit at x = -1680 with width 1720, so their right
-        // edge lands at 40 and they DO still touch the display. A window fully clear of it must not.
-        let display = rect(0.0, 32.0, 1728.0, 1085.0);
-        assert!(!overlaps(rect(-2000.0, 32.0, 859.0, 1081.0), display));
-    }
-
-    #[test]
-    fn a_window_overlapping_by_its_parked_sliver_still_counts_as_overlapping() {
-        // The parked case, which the caller filters on size rather than on overlap.
-        let display = rect(0.0, 32.0, 1728.0, 1085.0);
-        assert!(overlaps(rect(-1680.0, 32.0, 1720.0, 1081.0), display));
-    }
-
-    #[test]
-    fn a_window_on_the_next_display_does_not_overlap_this_one() {
-        let display = rect(0.0, 32.0, 1728.0, 1085.0);
-        assert!(!overlaps(rect(1728.0, 32.0, 859.0, 1081.0), display));
-    }
-
-    #[test]
-    fn merely_touching_edges_does_not_count_as_overlap() {
-        // Exclusive comparison, so a window whose right edge is exactly the display's left edge
-        // contributes no visible pixels and is excluded.
-        let display = rect(0.0, 0.0, 100.0, 100.0);
-        assert!(!overlaps(rect(-50.0, 0.0, 50.0, 100.0), display));
     }
 
     #[test]
@@ -1227,6 +1160,18 @@ impl StackPlace {
             level: window_level(id),
             sub_level: window_sub_level(id),
         }
+    }
+}
+
+/// Puts `own`, a window of rini's own connection, at `place`'s level and sub-level: the window server
+/// levels only a connection's own windows, and AppKit orders one directly above another process's
+/// window only once the two share both ("Ordering a rest window" in `src/decorations/docs/README.md`).
+pub fn take_stack_place(own: WindowServerId, place: &StackPlace) {
+    let level = place.level.unwrap_or(NSNormalWindowLevel) as c_int;
+    // SAFETY: plain calls on rini's own connection and one of its own windows.
+    unsafe {
+        SLSSetWindowLevel(*G_CONNECTION, own.as_u32(), level);
+        SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), place.sub_level);
     }
 }
 

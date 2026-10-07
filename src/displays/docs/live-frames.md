@@ -12,8 +12,9 @@ frame back (`window_server::server_frame`, `SLSGetWindowBounds`) and hands the b
   frames thread drains what has queued and reads each window once, after its last notification
   (`domain::frames::latest`). With two readers a frame read earlier could be published after a
   newer one.
-- **Nothing listens yet.** `main.rs` wires no callback and leaves 806 and 807 unsubscribed: with
-  no callback a subscribed stream would read a frame per move for nobody.
+- **The rest windows listen.** `main.rs` wires one callback, the decorations' rest windows
+  (`src/decorations/platform/rest.rs`), which follow every decorated window the window server moves;
+  they take the latest frame of each window from what queued for them on the main thread.
 
 ## Measured 2026-10-06
 

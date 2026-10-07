@@ -1,8 +1,9 @@
 //! The actor behind the SkyLight notification port. Space events go to the spaces actor; a
 //! window's moves and resizes are read back from the window server on one frames thread and handed
-//! to the application's [`OnServerFrames`] callbacks; window-server focus edges are coalesced and
-//! resolved into `WindowServerFocusChanged`.
-use std::sync::mpsc;
+//! to the application's [`OnServerFrames`] callbacks, and its reorders, hides and unhides to its
+//! [`OnServerOrder`] callbacks; window-server focus edges are coalesced and resolved into
+//! `WindowServerFocusChanged`.
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::CGRect;
@@ -14,7 +15,9 @@ use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rustc_hash::FxHashSet as HashSet;
 
 use crate::displays::domain::frames;
-use crate::displays::event::{Event, EventSink, OnServerFrames, ServerFrame};
+use crate::displays::event::{
+    Event, EventSink, OnServerFrames, OnServerOrder, OrderChange, ServerFrame, ServerOrder,
+};
 use crate::displays::platform::cgs_notify;
 use crate::displays::platform::spaces;
 use rini_core::ids::SpaceId;
@@ -49,6 +52,7 @@ pub struct WindowNotify {
     initial_events: Vec<CGSEventType>,
     focus_wake: FocusWakeSender,
     moved: mpsc::Sender<u32>,
+    on_order: Arc<[OnServerOrder]>,
 }
 
 impl WindowNotify {
@@ -58,6 +62,7 @@ impl WindowNotify {
         requests_rx: Receiver,
         initial_events: &[CGSEventType],
         on_frames: Vec<OnServerFrames>,
+        on_order: Vec<OnServerOrder>,
     ) -> Self {
         let (focus_wake_tx, focus_wake_rx) = mpsc::sync_channel(1);
         Self::spawn_focus_resolver(displays_tx, focus_wake_rx);
@@ -70,6 +75,7 @@ impl WindowNotify {
             initial_events: initial_events.iter().copied().collect(),
             focus_wake: FocusWakeSender { wake: focus_wake_tx },
             moved,
+            on_order: on_order.into(),
         }
     }
 
@@ -84,6 +90,7 @@ impl WindowNotify {
                 self.spaces_tx.clone(),
                 self.focus_wake.clone(),
                 self.moved.clone(),
+                self.on_order.clone(),
             ) {
                 Ok(()) => {
                     self.subscribed.insert(event);
@@ -119,6 +126,7 @@ impl WindowNotify {
                     self.spaces_tx.clone(),
                     self.focus_wake.clone(),
                     self.moved.clone(),
+                    self.on_order.clone(),
                 ) {
                     Ok(()) => {
                         self.subscribed.insert(event);
@@ -142,6 +150,7 @@ impl WindowNotify {
         spaces_tx: spaces::Sender,
         focus_wake: FocusWakeSender,
         moved: mpsc::Sender<u32>,
+        on_order: Arc<[OnServerOrder]>,
     ) -> Result<(), i32> {
         let res = cgs_notify::init(event);
         if res != 0 {
@@ -203,8 +212,11 @@ impl WindowNotify {
                     }
                     CGSEventType::Known(KnownCGSEvent::WindowReordered)
                     | CGSEventType::Known(KnownCGSEvent::WindowUnhidden)
-                    | CGSEventType::Known(KnownCGSEvent::WindowHidden)
-                    | CGSEventType::Known(
+                    | CGSEventType::Known(KnownCGSEvent::WindowHidden) => {
+                        focus_wake.notify();
+                        publish_order(&on_order, event, evt.window_id);
+                    }
+                    CGSEventType::Known(
                         KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged,
                     )
                     | CGSEventType::Known(
@@ -271,6 +283,21 @@ impl WindowNotify {
     }
 }
 
+/// Hands a reorder, hide or unhide of `window` to every `OnServerOrder`.
+fn publish_order(on_order: &[OnServerOrder], event: CGSEventType, window: Option<u32>) {
+    let change = match event {
+        CGSEventType::Known(KnownCGSEvent::WindowReordered) => OrderChange::Reordered,
+        CGSEventType::Known(KnownCGSEvent::WindowHidden) => OrderChange::Hidden,
+        CGSEventType::Known(KnownCGSEvent::WindowUnhidden) => OrderChange::Unhidden,
+        _ => return,
+    };
+    let Some(window) = window else { return };
+    let order = ServerOrder { window: WindowServerId::new(window), change };
+    for on_order in on_order {
+        on_order(order);
+    }
+}
+
 /// The one thread that reads moved windows' frames, so a frame read earlier is never published after
 /// a newer one: 806 and 807 arrive on a thread each, unordered against each other. Each wake drains
 /// what has queued and reads every window in it once, after its last notification.
@@ -308,8 +335,28 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
     use rini_core::ids::WindowServerId;
 
-    use super::{FocusWakeSender, spawn_frame_reader};
-    use crate::displays::event::ServerFrame;
+    use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
+
+    use super::{FocusWakeSender, publish_order, spawn_frame_reader};
+    use crate::displays::event::{OnServerOrder, OrderChange, ServerFrame, ServerOrder};
+
+    #[test]
+    fn a_reorder_a_hide_and_an_unhide_publish_their_window() {
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let sink = published.clone();
+        let on_order: Vec<OnServerOrder> = vec![Box::new(move |order| sink.lock().unwrap().push(order))];
+        for event in [KnownCGSEvent::WindowReordered, KnownCGSEvent::WindowHidden, KnownCGSEvent::WindowUnhidden] {
+            publish_order(&on_order, CGSEventType::Known(event), Some(56));
+        }
+        publish_order(&on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), None);
+        publish_order(&on_order, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
+        let window = WindowServerId::new(56);
+        assert_eq!(*published.lock().unwrap(), vec![
+            ServerOrder { window, change: OrderChange::Reordered },
+            ServerOrder { window, change: OrderChange::Hidden },
+            ServerOrder { window, change: OrderChange::Unhidden },
+        ]);
+    }
 
     static READS: AtomicUsize = AtomicUsize::new(0);
 

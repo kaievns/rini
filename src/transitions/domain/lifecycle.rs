@@ -298,8 +298,8 @@ pub enum Command {
     Show,
     Write(Vec<(WindowId, ScreenRect)>),
     /// A point of the overlay left clear over each window that ends on screen, so the window server
-    /// counts it visible and the app keeps painting.
-    Holes(Vec<OverlayRect>),
+    /// counts it visible and the app keeps painting: each window with where it ends.
+    Holes(Vec<(WindowId, OverlayRect)>),
     /// Watch the end state as `EndWatch` says, in place of whatever was watched before.
     Watch(EndWatch),
     StopWatches,
@@ -1017,10 +1017,10 @@ fn final_at(started: Instant, duration: Duration) -> Instant {
 
 /// Over every end window watched: those that land, and those that repaint, floating or not, since a
 /// window the overlay covers wholly may stop painting.
-fn holes(f: &Flight) -> Vec<OverlayRect> {
+fn holes(f: &Flight) -> Vec<(WindowId, OverlayRect)> {
     let (awaited, landing) = f.end_windows();
     let display = f.stage.display;
-    awaited.into_iter().chain(landing).map(|(_, frame)| to_overlay_space(frame, display)).collect()
+    awaited.into_iter().chain(landing).map(|(window, frame)| (window, to_overlay_space(frame, display))).collect()
 }
 
 /// Each tile of `after` with the generation since which it has ended where it ends: what `since` says
@@ -1941,7 +1941,7 @@ mod tests {
         let out = c.on(Event::FrameZero(c.generation()), now);
         let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
         let at_home = |frame: ScreenRect| to_overlay_space(frame, DISPLAY);
-        assert_eq!(holes, pan().final_frames.iter().map(|(_, end)| at_home(*end)).collect::<Vec<_>>());
+        assert_eq!(holes, pan().final_frames.iter().map(|(window, end)| (*window, at_home(*end))).collect::<Vec<_>>());
 
         let mut real = pan().tiles[1].end;
         real.size.width += 1.0;
@@ -2008,7 +2008,7 @@ mod tests {
         assert!(!has(&out, |c| *c == Command::StartMoving), "held for its first picture");
         assert_eq!(watch(&out).unwrap().awaiting, vec![(w(7), dialog)]);
         let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
-        assert!(holes.contains(&to_overlay_space(dialog, DISPLAY)), "a window the overlay covers wholly may not paint");
+        assert!(holes.contains(&(w(7), to_overlay_space(dialog, DISPLAY))), "a window the overlay covers wholly may not paint");
         let g = c.generation();
         let out = c.on(Event::Picture { generation: g, window: w(7), frame: dialog, why: Why::Landed }, now);
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(7) }));

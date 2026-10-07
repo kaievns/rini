@@ -21,13 +21,14 @@ or layout: everything else depends on it and it depends on nothing.
 | **Frame writes** | `domain/frame_write.rs` — which Accessibility writes a frame takes: the position alone when the window server already has the window at the desired size, size, position and size again otherwise, and again after a position written alone that read back at another size |
 | **Title-bar zoom** | `domain/zoom.rs` — which window's title bar a double-click landed on, and what that window's resizes in the next second mean: the zoom, which toggles full width once, or the rest of it, which rini overrules |
 | **The port into a window** | `domain/request.rs` — `Request`/`Quiet`, what the per-app thread accepts |
+| **What a listing names** | `domain/listing.rs` — which of the window server's windows a listing of what is on a display names: layer 0, another process's, 100pt or more each way, overlapping it; so the warm and the debug slide never picture rini's own rest windows |
 
 Two questions about raising and admission that were closed on evidence rather than code are in
 `admission-and-raise-findings.md`.
 
 `platform/` is the macOS side: `app_actor.rs` is the per-app Accessibility actor (one
 thread per application, observing and writing), `window_server.rs` the window-server
-reads, `lifecycle.rs` the launch, quit and front-app listener over `carbon.rs`'s Carbon
+reads, and the level and sub-level a window of rini's own takes from another's (`take_stack_place`), `lifecycle.rs` the launch, quit and front-app listener over `carbon.rs`'s Carbon
 events, `app.rs` the activation-policy and finished-launching observers, `process.rs`
 the process-type check, `sub_level.rs` the SkyLight sub-level port.
 

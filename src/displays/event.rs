@@ -47,6 +47,27 @@ pub struct ServerFrame {
 /// resized since the last batch, once, at the frame read after its last notification.
 pub type OnServerFrames = Box<dyn Fn(&[ServerFrame]) + Send>;
 
+/// What the window server did to a window's place in its stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderChange {
+    /// 808: it was ordered against the others.
+    Reordered,
+    /// 815: it was ordered out, minimised or its app hidden.
+    Hidden,
+    /// 816: it was ordered back in.
+    Unhidden,
+}
+
+/// A window the window server reordered, hid or unhid, as its own notifications name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerOrder {
+    pub window: WindowServerId,
+    pub change: OrderChange,
+}
+
+/// Where each [`ServerOrder`] is handed, on the thread its notification arrives on.
+pub type OnServerOrder = Box<dyn Fn(ServerOrder) + Send + Sync>;
+
 /// Where the spaces actor delivers its events. Implemented for any channel whose message type
 /// can be built from [`Event`].
 pub trait EventSink: Send {
