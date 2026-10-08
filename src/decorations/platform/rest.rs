@@ -167,18 +167,14 @@ impl Panel {
         turns::changed("rest.order");
     }
 
-    /// Lays its layers for `now` when they differ from those it drew; whether it laid them.
-    fn lay(&mut self, now: &Look) -> bool {
-        if !delta(self.look, *now).layers {
-            return false;
-        }
+    /// Lays its layers for `now`.
+    fn lay(&mut self, now: &Look) {
         let Layers { decoration, style, size, corner, scale, inside } = now.layers;
         self.holder.setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), size.to_cg()));
         self.root.setContentsScale(scale);
         self.bands.wear(&decoration, scale);
         self.bands.place(size, corner);
         self.bands.paint(&style);
-        true
     }
 
     /// Shown at `now`'s frame, each set only when it differs from what it drew.
@@ -368,8 +364,10 @@ impl RestBorders {
             self.panels[*at].target = None;
         }
         let looks: Vec<Option<Look>> = self.panels.iter().map(|panel| self.look_of(panel.target?, &wanted)).collect();
-        let lays = self.panels.iter().zip(&looks).any(|(panel, look)| look.is_some_and(|look| delta(panel.look, look).layers));
-        if lays {
+        let lays: Vec<bool> =
+            self.panels.iter().zip(&looks).map(|(panel, look)| look.is_some_and(|look| delta(panel.look, look).layers)).collect();
+        let laying = lays.contains(&true);
+        if laying {
             CATransaction::begin();
             CATransaction::setDisableActions(true);
         }
@@ -377,7 +375,7 @@ impl RestBorders {
             self.panels[at].hide();
         }
         let mut revealed = Vec::new();
-        for (at, (panel, look)) in self.panels.iter_mut().zip(looks).enumerate() {
+        for (at, ((panel, look), lays)) in self.panels.iter_mut().zip(looks).zip(lays).enumerate() {
             if panel.target.is_none() {
                 continue;
             }
@@ -385,14 +383,16 @@ impl RestBorders {
                 panel.hide();
                 continue;
             };
-            panel.lay(&look);
+            if lays {
+                panel.lay(&look);
+            }
             if afresh.contains(&at) {
                 revealed.push((at, look));
             } else {
                 panel.reveal(look);
             }
         }
-        if lays {
+        if laying {
             CATransaction::commit();
             CATransaction::flush();
         }
