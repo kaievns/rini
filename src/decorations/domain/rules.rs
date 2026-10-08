@@ -107,6 +107,7 @@ pub fn shape_borders(settings: &DecorationSettings) -> bool { settings.rules.ite
 mod tests {
     use super::*;
     use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue};
+    use crate::decorations::domain::style::Ring;
     use crate::windows::domain::rules::WindowRule;
 
     const RED: Paint = Paint::Solid(Colour::rgb(0xff0000));
@@ -176,7 +177,10 @@ mod tests {
             ..rule(RuleMatch { is_active: Some(true), ..RuleMatch::default() })
         }]);
         let decoration = decoration(&settings, window("com.example.Editor"));
-        let paint = |focused| crate::decorations::domain::style::Style::of(focused, true, &decoration).ring;
+        let paint = |focused| {
+            let ring = if focused { Ring::Active } else { Ring::Inactive };
+            crate::decorations::domain::style::Style::of(focused, ring, &decoration).ring
+        };
         assert_eq!(paint(true), Some(RED), "holding focus, the rule's active colour");
         assert_eq!(paint(false), Some(settings.focus_ring.band.inactive), "not holding it, the rule does not apply");
         let ring = fold(&settings, window("x")).ring.expect("on");
@@ -263,7 +267,7 @@ mod tests {
         let urgent = WindowRuleContext { state: RuleState { urgent: true, ..RuleState::default() }, ..window("x") };
         let drawn = decoration(&settings, urgent);
         assert!(drawn.urgent);
-        assert_eq!(crate::decorations::domain::style::Style::of(false, false, &drawn).border, Some(RED));
+        assert_eq!(crate::decorations::domain::style::Style::of(false, Ring::None, &drawn).border, Some(RED));
         let calm = decoration(&settings, window("x"));
         assert!(!calm.urgent);
         assert_eq!(calm.border.map(|band| band.urgent), Some(settings.border.band.urgent), "the layout's while it does not ask");

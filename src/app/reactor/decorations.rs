@@ -102,15 +102,16 @@ impl Reactor {
     }
 
     /// The rings with `focus` holding focus: each workspace's active window on every display rini
-    /// manages, `focus` on its own workspace, which a border's paint reads too. None while no window
-    /// can wear a band, so nothing is read.
+    /// manages, `focus` on its own workspace, active on the display `focus` is on and inactive on the
+    /// others, each display named by the Space it shows; `focus` is what a border's paint reads. None
+    /// while no window can wear a band, so nothing is read.
     pub(super) fn rings_with(&self, focus: Option<WindowId>) -> Rings {
         if !self.config.settings.decorations.draws_bands() {
             return Rings::default();
         }
         let engine = &self.layout_manager.layout_engine;
         let workspaces = engine.virtual_workspace_manager();
-        let active: Vec<((SpaceId, VirtualWorkspaceId), Option<WindowId>)> = self
+        let active: Vec<(SpaceId, VirtualWorkspaceId, Option<WindowId>)> = self
             .space_state
             .screens
             .iter()
@@ -118,13 +119,13 @@ impl Reactor {
             .filter(|space| self.is_space_active(*space))
             .flat_map(|space| {
                 workspaces.existing_workspaces(space).into_iter().map(move |(workspace, _)| {
-                    ((space, workspace), engine.active_window(&self.state.windows, space, workspace))
+                    (space, workspace, engine.active_window(&self.state.windows, space, workspace))
                 })
             })
             .collect();
         let focus = focus.and_then(|window| {
             let info = workspaces.workspace_info_for_window_any(&self.state.windows, window)?;
-            Some(((info.space, info.workspace_id), window))
+            Some((info.space, info.workspace_id, window))
         });
         Rings::of(&active, focus)
     }
@@ -138,8 +139,8 @@ impl Reactor {
     pub(super) fn worn(&self, window: WindowId, rings: &Rings) -> Worn {
         Worn {
             decoration: self.decoration_of(window, rings),
-            wore_ring: self.rings_drawn.ringed(window),
-            wears_ring: rings.ringed(window),
+            wore_ring: self.rings_drawn.ring(window),
+            wears_ring: rings.ring(window),
         }
     }
 }
@@ -196,7 +197,7 @@ impl Reactor {
                     window: server_id,
                     decoration: self.decoration_of(window, &rings),
                     focused: rings.focused(window),
-                    ringed: rings.ringed(window),
+                    ring: rings.ring(window),
                     held: Held {
                         parked: !shown_workspace || off_strip,
                         mission_control,

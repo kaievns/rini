@@ -10,7 +10,7 @@ use rini_geometry::space::ScreenRect;
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::decorations::domain::shape;
-use crate::decorations::domain::style::{Decoration, Style};
+use crate::decorations::domain::style::{Decoration, Ring, Style};
 use crate::displays::event::{OrderChange, ServerOrder};
 
 /// How long a change of `parked` waits for its window to move before it takes effect anyway.
@@ -36,13 +36,13 @@ pub struct RestWindow {
     pub decoration: Decoration,
     /// The managed window macOS has focused.
     pub focused: bool,
-    pub ringed: bool,
+    pub ring: Ring,
     pub held: Held,
 }
 
 impl RestWindow {
     /// How its bands are painted: those it wears in their paints, the others none.
-    pub fn style(&self) -> Style { Style::of(self.focused, self.ringed, &self.decoration) }
+    pub fn style(&self) -> Style { Style::of(self.focused, self.ring, &self.decoration) }
 
     /// Whether it wears a band now: the ring, or a border.
     pub fn wears_a_band(&self) -> bool {
@@ -51,7 +51,7 @@ impl RestWindow {
     }
 
     /// How far its bands reach outside it, in points of a display of `scale`.
-    pub fn outset(&self, scale: f64) -> f64 { shape::outset(&self.decoration, self.ringed, scale) }
+    pub fn outset(&self, scale: f64) -> f64 { shape::outset(&self.decoration, self.ring.worn(), scale) }
 }
 
 /// A display a band at rest is drawn on: its whole bounds and its scale.
@@ -334,7 +334,7 @@ mod tests {
             window: ws(56),
             decoration: Decoration { ring: Some(BAND), ..Decoration::default() },
             focused: true,
-            ringed: true,
+            ring: Ring::Active,
             held,
         }
     }
@@ -344,24 +344,24 @@ mod tests {
     #[test]
     fn a_ringed_window_on_its_display_shows_its_band() {
         assert!(shown(&ringed(Held::default()), false, false, Some(SLOT), &display()));
-        let unringed = RestWindow { ringed: false, ..ringed(Held::default()) };
+        let unringed = RestWindow { ring: Ring::None, ..ringed(Held::default()) };
         assert!(!shown(&unringed, false, false, Some(SLOT), &display()), "it wears nothing");
         assert!(!shown(&ringed(Held::default()), false, false, None, &display()), "no frame yet");
     }
 
     #[test]
     fn a_bordered_window_shows_its_band_whether_it_wears_the_ring_or_not() {
-        let bordered = |ringed| RestWindow {
+        let bordered = |ring| RestWindow {
             decoration: Decoration { border: Some(BORDER), ..ringed_window().decoration },
-            ringed,
+            ring,
             focused: false,
             ..ringed_window()
         };
-        for ringed in [true, false] {
-            assert!(shown(&bordered(ringed), false, false, Some(SLOT), &display()), "ringed {ringed}");
+        for ring in [Ring::Inactive, Ring::None] {
+            assert!(shown(&bordered(ring), false, false, Some(SLOT), &display()), "{ring:?}");
         }
-        assert_eq!(bordered(false).style().border, Some(BORDER.inactive));
-        assert_eq!((bordered(true).outset(2.0), bordered(false).outset(2.0)), (8.0, 4.0), "the ring outside the border");
+        assert_eq!(bordered(Ring::None).style().border, Some(BORDER.inactive));
+        assert_eq!((bordered(Ring::Inactive).outset(2.0), bordered(Ring::None).outset(2.0)), (8.0, 4.0), "the ring outside the border");
     }
 
     fn ringed_window() -> RestWindow { ringed(Held::default()) }

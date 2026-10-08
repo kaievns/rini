@@ -1262,7 +1262,10 @@ fn a_request_carries_whether_its_window_wore_and_wears_the_ring() {
         ring: Some(reactor.config.settings.decorations.focus_ring.band),
         ..Default::default()
     };
-    for (wid, wore, wears) in [(first, true, false), (second, false, true), (third, false, false)] {
+    use crate::decorations::domain::style::Ring;
+    for (wid, wore, wears) in
+        [(first, Ring::Active, Ring::None), (second, Ring::None, Ring::Active), (third, Ring::None, Ring::None)]
+    {
         let worn = worn(wid);
         assert_eq!((worn.wore_ring, worn.wears_ring), (wore, wears), "{wid:?}");
         assert_eq!(worn.decoration, decoration);

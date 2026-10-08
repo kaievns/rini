@@ -10,6 +10,7 @@ use crate::app::reactor::*;
 use crate::decorations::domain::paint::{Colour, Paint};
 use crate::decorations::domain::rest::{RestModel, RestWindow};
 use crate::decorations::domain::rules::{BandRule, DecorationRule};
+use crate::decorations::domain::style::Ring;
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
 use crate::windows::domain::attention::Attention;
 use crate::windows::domain::catalogue::NativeFullscreenTransition;
@@ -93,10 +94,10 @@ fn sent(model: &RestModel, wsid: u32) -> RestWindow {
     *model.windows.iter().find(|window| window.window == WindowServerId::new(wsid)).expect("sent")
 }
 
-/// (focused, ringed, parked) of the window `wsid` names.
-fn look(model: &RestModel, wsid: u32) -> (bool, bool, bool) {
+/// (focused, ring, parked) of the window `wsid` names.
+fn look(model: &RestModel, wsid: u32) -> (bool, Ring, bool) {
     let window = sent(model, wsid);
-    (window.focused, window.ringed, window.held.parked)
+    (window.focused, window.ring, window.held.parked)
 }
 
 #[test]
@@ -105,11 +106,24 @@ fn a_focus_change_sends_each_displays_ring_to_the_rest_actor() {
     let left = desk.left;
     let model = focus(&mut desk, left_ghostty(), left);
     assert_eq!(model.displays.len(), 2);
-    assert_eq!(look(&model, 901), (true, true, false), "the focused window: the active ring");
-    assert_eq!(look(&model, 902), (false, false, false), "not its workspace's active window");
-    assert_eq!(look(&model, 903), (false, true, false), "the other display's: the inactive ring");
-    assert_eq!(look(&model, 904), (false, true, true), "its workspace's, which its display does not show");
+    assert_eq!(look(&model, 901), (true, Ring::Active, false), "the focused window: the active ring");
+    assert_eq!(look(&model, 902), (false, Ring::None, false), "not its workspace's active window");
+    assert_eq!(look(&model, 903), (false, Ring::Inactive, false), "the other display's: the inactive ring");
+    assert_eq!(look(&model, 904), (false, Ring::Inactive, true), "its workspace's, which its display does not show");
     assert!(sent(&model, 901).decoration.ring.is_some());
+}
+
+/// niri paints every workspace's active window on the focused monitor active: a workspace a switch
+/// leaves keeps its window's ring active as it slides away, and the other display's turn inactive.
+#[test]
+fn every_ring_on_the_display_holding_focus_is_sent_active() {
+    let mut desk = desk();
+    let (left, right) = (desk.left, desk.right);
+    focus(&mut desk, left_ghostty(), left);
+    let model = focus(&mut desk, WindowId::new(ZEN, 2), right);
+    assert_eq!(look(&model, 903), (true, Ring::Active, false));
+    assert_eq!(look(&model, 904), (false, Ring::Active, true), "another workspace on the display holding focus");
+    assert_eq!(look(&model, 901), (false, Ring::Inactive, false), "the display focus left");
 }
 
 /// rini's decision moves the layout's focus at once; macOS repaints when its key window changes,
@@ -123,8 +137,8 @@ fn the_rest_look_turns_when_the_window_server_reports_the_focus() {
     desk.reactor.handle_test_batch(Vec::new());
     assert!(models(&mut desk.rest).is_empty(), "macOS has not moved its key window: nothing turns");
     let model = focus(&mut desk, left_zen(), left);
-    assert_eq!(look(&model, 902), (true, true, false), "turned with the window server's report");
-    assert_eq!(look(&model, 901), (false, false, false));
+    assert_eq!(look(&model, 902), (true, Ring::Active, false), "turned with the window server's report");
+    assert_eq!(look(&model, 901), (false, Ring::None, false));
 }
 
 #[test]

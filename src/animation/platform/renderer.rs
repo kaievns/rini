@@ -17,6 +17,7 @@ use tracing::warn;
 use crate::animation::domain::motion::score::{Edit, MediaClock, Score};
 use crate::animation::event::Event;
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
+use crate::decorations::domain::style::Ring;
 use crate::decorations::platform::rest::OnLift;
 use crate::pictures::platform::picture::Picture;
 
@@ -35,8 +36,8 @@ pub enum Render {
     /// A fresh picture onto `window`'s tile, `clipped` to its corner or whole, its movement left
     /// alone.
     Swap { window: WindowId, picture: Picture, clipped: bool },
-    /// `window`'s tile drawn focused or not, and wearing its ring or not.
-    Focus { window: WindowId, focused: bool, ringed: bool },
+    /// `window`'s tile drawn focused or not, and wearing `ring`.
+    Focus { window: WindowId, focused: bool, ring: Ring },
     /// The overlay holed over each window ending at one of these, and over the band of the outset
     /// given that it wears at rest, the holes before replaced.
     Holes(Vec<(OverlayRect, f64)>),
@@ -226,8 +227,8 @@ impl Renderer {
             Render::Stage { score, tiles } => overlay.pose(&score, &tiles),
             Render::Play { edits, tiles } => overlay.play(&edits, &tiles),
             Render::Swap { window, picture, clipped } => overlay.swap(window, &picture, clipped),
-            Render::Focus { window, focused, ringed } => {
-                overlay.set_tile_focused(window, focused, ringed)
+            Render::Focus { window, focused, ring } => {
+                overlay.set_tile_focused(window, focused, ring)
             }
             Render::Holes(ends) => overlay.set_holes(&ends),
             // Its alpha goes up after the flush.
@@ -319,7 +320,7 @@ mod tests {
             ("stage", Render::Stage { score: Score::default(), tiles: Vec::new() }),
             ("play", Render::Play { edits: Vec::new(), tiles: Vec::new() }),
             ("swap", Render::Swap { window, picture: test_picture(display.size), clipped: false }),
-            ("focus", Render::Focus { window, focused: true, ringed: true }),
+            ("focus", Render::Focus { window, focused: true, ring: Ring::Active }),
             ("holes", holes(1.0)),
             ("show", Render::Show),
             ("lift", Render::Lift),

@@ -14,7 +14,7 @@ use rini_geometry::{is_off_screen, to_overlay_space};
 use serde::Serialize;
 
 use crate::animation::domain::motion::tile::snap_to;
-use crate::decorations::domain::style::Worn;
+use crate::decorations::domain::style::{Ring, Worn};
 use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
 
 use super::request::SurfaceWindow;
@@ -150,14 +150,21 @@ pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Op
     losing_focus == Some(window) || focus == Some(window) && losing_focus.is_none()
 }
 
-/// Whether `window`'s tile wears its ring now, drawn `focused` or not, given whether it wore the ring
-/// before the pass and wears it where the pass ends: drawn focused it does; the focus target waiting
-/// for its turn wears what it wore; every other tile what it wears at the end. So the ring turns with
-/// the hairline: the window gaining focus on its own display shows none until its turn and then the
-/// active one, and the one losing it the active ring until its turn and then none, or the inactive
-/// one when focus left its display.
-pub fn drawn_ringed(window: WindowId, focus: Option<WindowId>, focused: bool, worn: &Worn) -> bool {
-    focused || if focus == Some(window) { worn.wore_ring } else { worn.wears_ring }
+/// The ring `window`'s tile wears now, drawn `focused` or not, given the ring it wore before the pass
+/// and the one it wears where the pass ends: drawn focused, the active one; the focus target waiting
+/// for its turn what it wore; every other tile what it wears at the end. So the ring turns with the
+/// hairline: the window gaining focus on its own workspace shows none until its turn and then the
+/// active one; the one losing it the active ring until its turn and then none, the active one still
+/// when focus went to another workspace on its display, or the inactive one when focus left its
+/// display.
+pub fn drawn_ringed(window: WindowId, focus: Option<WindowId>, focused: bool, worn: &Worn) -> Ring {
+    if focused {
+        Ring::Active
+    } else if focus == Some(window) {
+        worn.wore_ring
+    } else {
+        worn.wears_ring
+    }
 }
 
 /// The window whose frame-zero picture is its focused look: the one focus leaves, if it was the key
@@ -2060,14 +2067,18 @@ mod tests {
             let target_turned = drawn_ringed(window, to, window == w(2), &worn);
             (before, losing_turned, target_turned)
         };
-        // One display: the ring leaves window 1 and comes to window 2, each at its own turn.
-        assert_eq!(turns(w(1), worn(true, false)), (true, false, false), "losing: active, then none");
-        assert_eq!(turns(w(2), worn(false, true)), (false, false, true), "gaining: none, then active");
+        use Ring::{Active, Inactive, None as Bare};
+        // One workspace: the ring leaves window 1 and comes to window 2, each at its own turn.
+        assert_eq!(turns(w(1), worn(Active, Bare)), (Active, Bare, Bare), "losing: active, then none");
+        assert_eq!(turns(w(2), worn(Bare, Active)), (Bare, Bare, Active), "gaining: none, then active");
+        // Another workspace on the display: each is its workspace's active window throughout.
+        assert_eq!(turns(w(1), worn(Active, Active)), (Active, Active, Active), "leaving: active throughout");
+        assert_eq!(turns(w(2), worn(Active, Active)), (Active, Active, Active), "arriving: active throughout");
         // Across displays each keeps its display's ring, and only its paint turns.
-        assert_eq!(turns(w(1), worn(true, true)), (true, true, true), "losing: active, then inactive");
-        assert_eq!(turns(w(2), worn(true, true)), (true, true, true), "gaining: inactive, then active");
+        assert_eq!(turns(w(1), worn(Active, Inactive)), (Active, Inactive, Inactive), "losing: active, then inactive");
+        assert_eq!(turns(w(2), worn(Inactive, Active)), (Inactive, Inactive, Active), "gaining: inactive, then active");
         assert!(drawn_focused(w(1), to, from) && !drawn_focused(w(2), to, from), "the paint is focus's");
-        assert!(!drawn_ringed(w(3), to, false, &worn(false, false)));
+        assert_eq!(drawn_ringed(w(3), to, false, &worn(Bare, Bare)), Bare);
     }
 
     #[test]

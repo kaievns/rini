@@ -35,7 +35,7 @@ use crate::animation::domain::motion::score::{
 };
 use crate::animation::domain::motion::tile::{ContentMode, content_mode, crop_pieces};
 use crate::animation::domain::motion::z_group::{Band, container_z};
-use crate::decorations::domain::style::{Decoration, Style, Worn};
+use crate::decorations::domain::style::{Decoration, Ring, Style, Worn};
 use crate::decorations::platform::layers::{
     DecorationLayers, Resize, add_under, remove_under, round_continuous,
 };
@@ -83,10 +83,10 @@ pub struct OverlayTile {
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow and
     /// brightens its hairline.
     pub focused: bool,
-    /// What the window wears through the flight, and whether it wears the ring before and after.
+    /// What the window wears through the flight, and the ring it wears before and after.
     pub worn: Worn,
-    /// Whether the tile is drawn wearing its decoration's ring now.
-    pub ringed: bool,
+    /// The ring the tile is drawn wearing now.
+    pub ring: Ring,
     /// The window's corner radius in points, as the window server reports it; `None` when it reports
     /// none.
     pub radius: Option<f64>,
@@ -744,11 +744,11 @@ impl TileOverlay {
         self.tree.swap(window, picture, clipped, media_now());
     }
 
-    /// Draws a tile focused or not and wearing the ring or not, a hard cut: its hairline's white,
-    /// its shadow's depth, its ring and its border. For focus handing over mid-flight; every dressing
-    /// draws what its tile says.
-    pub fn set_tile_focused(&mut self, window: WindowId, focused: bool, ringed: bool) {
-        self.tree.turn(window, focused, ringed);
+    /// Draws a tile focused or not and wearing `ring`, a hard cut: its hairline's white, its shadow's
+    /// depth, its ring and its border. For focus handing over mid-flight; every dressing draws what
+    /// its tile says.
+    pub fn set_tile_focused(&mut self, window: WindowId, focused: bool, ring: Ring) {
+        self.tree.turn(window, focused, ring);
     }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
@@ -1140,10 +1140,10 @@ impl Tree {
         }
     }
 
-    /// `window`'s tile drawn focused or not and wearing its ring or not.
-    fn turn(&self, window: WindowId, focused: bool, ringed: bool) {
+    /// `window`'s tile drawn focused or not and wearing `ring`.
+    fn turn(&self, window: WindowId, focused: bool, ring: Ring) {
         if let Some(entry) = self.tile_layers.get(&window) {
-            entry.decorations.show(Style::of(focused, ringed, &entry.decoration));
+            entry.decorations.show(Style::of(focused, ring, &entry.decoration));
         }
     }
 
@@ -1201,7 +1201,7 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
     let covered = tile.snapshot.coverage.covered;
     let mode = content_mode(covered, tile.from.size, tile.to.size);
     set_tile_content(entry, &tile.snapshot, mode, tile.from.size.respace(), scale);
-    entry.decorations.show(Style::of(tile.focused, tile.ringed, &entry.decoration));
+    entry.decorations.show(Style::of(tile.focused, tile.ring, &entry.decoration));
     entry.picture.setHidden(false);
 }
 
@@ -2555,7 +2555,7 @@ mod tests {
                 depth: 0,
                 focused: false,
                 worn: Worn::default(),
-                ringed: false,
+                ring: Ring::None,
                 radius: None,
                 clipped: false,
             }
@@ -2926,8 +2926,9 @@ mod tests {
             let (active, inactive) = (Colour::rgb(0x7fc8ff), Colour::rgb(0x505050));
             let band = Band { width: 4.0, active: Paint::Solid(active), inactive: Paint::Solid(inactive), urgent: Paint::Solid(inactive) };
             let mut tile = overlay_tile(window, drawn, drawn, false);
-            tile.worn = Worn { decoration: Decoration { ring: Some(band), ..Decoration::default() }, wore_ring: true, wears_ring: true };
-            tile.ringed = true;
+            let ring = Ring::Inactive;
+            tile.worn = Worn { decoration: Decoration { ring: Some(band), ..Decoration::default() }, wore_ring: ring, wears_ring: ring };
+            tile.ring = ring;
             tile.radius = Some(16.0);
             let tiles = [tile];
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
@@ -2945,9 +2946,9 @@ mod tests {
             assert!(!ring.isHidden() && painted(inactive), "worn unfocused");
             assert_eq!(ring.frame(), rect(-4.0, -4.0, 867.0, 1089.0), "outside the window");
             assert_eq!(ring.cornerRadius(), 20.0);
-            tree.turn(window, true, true);
+            tree.turn(window, true, Ring::Active);
             assert!(painted(active));
-            tree.turn(window, false, false);
+            tree.turn(window, false, Ring::None);
             assert!(ring.isHidden());
         }
 

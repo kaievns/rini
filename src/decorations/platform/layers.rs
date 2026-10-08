@@ -513,6 +513,7 @@ mod tests {
     use objc2_quartz_core::{CABasicAnimation, kCACornerCurveCircular};
 
     use super::*;
+    use crate::decorations::domain::style::Ring;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -726,7 +727,7 @@ mod tests {
         let alpha =
             |layers: &DecorationLayers| CGColor::alpha(layers.hairline.borderColor().as_deref());
         for focused in [true, false] {
-            let style = Style::of(focused, false, &Decoration::default());
+            let style = Style::of(focused, Ring::None, &Decoration::default());
             layers.show(style);
             assert_eq!(alpha(&layers), style.light_alpha);
             assert_eq!(layers.shadow.shadowOpacity(), style.shadow.opacity);
@@ -805,9 +806,9 @@ mod tests {
         assert_eq!((border.borderWidth(), border.cornerRadius()), (4.0, 20.0));
         assert_eq!(ring.frame(), rect(-8.0, -8.0, 875.0, 1097.0), "out past the border");
         assert_eq!((ring.borderWidth(), ring.cornerRadius()), (8.0, 24.0), "and in under it to the window");
-        layers.show(Style::of(true, true, &both));
+        layers.show(Style::of(true, Ring::Active, &both));
         assert!(painted(border, BORDER.active) && painted(ring, RING.active));
-        layers.show(Style::of(false, false, &both));
+        layers.show(Style::of(false, Ring::None, &both));
         assert!(painted(border, BORDER.inactive), "worn without the ring");
         assert!(ring.isHidden());
     }
@@ -816,16 +817,16 @@ mod tests {
     fn the_ring_is_shown_only_in_the_paint_its_style_has() {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.wear(&ringed(), 2.0);
-        layers.show(Style::of(true, true, &ringed()));
+        layers.show(Style::of(true, Ring::Active, &ringed()));
         let ring = layers.bands.ring.layer.clone();
         assert!(painted(&ring, RING.active));
         assert!(layers.bands.border.layer.isHidden(), "borders off");
-        layers.show(Style::of(false, true, &ringed()));
+        layers.show(Style::of(false, Ring::Inactive, &ringed()));
         assert!(painted(&ring, RING.inactive));
-        layers.show(Style::of(true, false, &ringed()));
+        layers.show(Style::of(true, Ring::None, &ringed()));
         assert!(ring.isHidden(), "not its workspace's active window");
         layers.wear(&Decoration::default(), 2.0);
-        layers.show(Style::of(true, true, &Decoration::default()));
+        layers.show(Style::of(true, Ring::Active, &Decoration::default()));
         assert!(ring.isHidden(), "rings off");
     }
 
@@ -978,7 +979,7 @@ mod tests {
         let graded = Decoration { ring: Some(crate::decorations::domain::style::Band { active: sunset(45.0), ..RING }), ..Decoration::default() };
         layers.wear(&graded, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
-        layers.show(Style::of(true, true, &graded));
+        layers.show(Style::of(true, Ring::Active, &graded));
         let ring = &layers.bands.ring;
         let Paint::Gradient(gradient) = sunset(45.0) else { unreachable!() };
         assert_eq!(ring.layer.colors().map(|colours| colours.count()), Some(gradient.stops().len()));
@@ -991,7 +992,7 @@ mod tests {
         assert_eq!(&*mask.cornerCurve(), unsafe { kCACornerCurveContinuous });
         let axis = gradient.axis(TileSize::new(867.0, 1089.0));
         assert_eq!((ring.layer.startPoint(), ring.layer.endPoint()), (axis.start.to_cg(), axis.end.to_cg()));
-        layers.show(Style::of(false, true, &graded));
+        layers.show(Style::of(false, Ring::Inactive, &graded));
         assert!(painted(&ring.layer, RING.inactive), "a colour drawn as a border again");
         assert!(ring.layer.mask().is_none());
     }
@@ -1042,14 +1043,14 @@ mod tests {
         let graded = |angle| Decoration { border: Some(crate::decorations::domain::style::Band { active: sunset(angle), ..RING }), ..Decoration::default() };
         let resize = Between(TileSize::new(1200.0, 1081.0), TileSize::new(859.0, 1081.0));
         layers.wear(&graded(45.0), 2.0);
-        layers.show(Style::of(true, false, &graded(45.0)));
+        layers.show(Style::of(true, Ring::None, &graded(45.0)));
         layers.install_resize(&resize);
         let border = &layers.bands.border.layer;
         assert_eq!(
             installed(border),
             pairs([("rini.tile.band.end", "endPoint"), ("rini.tile.band.size", "bounds"), ("rini.tile.band.start", "startPoint")])
         );
-        layers.show(Style::of(true, false, &graded(90.0)));
+        layers.show(Style::of(true, Ring::None, &graded(90.0)));
         assert_eq!(installed(border), pairs([("rini.tile.band.size", "bounds")]), "turned to another angle mid-resize, the axis holds");
         layers.install_resize(&resize);
         assert_eq!(installed(border), pairs([("rini.tile.band.size", "bounds")]), "a right angle's axis is the same at every size");

@@ -102,8 +102,10 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 - The rules MUST apply continuously, as niri's do: when a window's focus, whether it floats or its
   title changes, what it wears MUST follow, on its tiles and at rest, with no reload. A rule matching
   `is-active` or `is-focused` recolours the window focus moves to and the one it left, each at the
-  time its hairline turns. rini paints one window active, the one holding focus, so `is-active` and
-  `is-focused` match the same window.
+  time its hairline turns. `is-active` and `is-focused` both match the window holding focus, where
+  niri's `is-active` matches every window whose ring it paints active; a rini display shows one
+  workspace at rest, so the two differ only in flight, where a ring drawn active on a window not
+  holding focus takes the active paint the rules give the window holding focus.
 - `is-urgent` MUST match a window while it is drawn urgent ("Urgent").
 - Under `is-active`, `is-focused` or `is-urgent`, on a `match` or an `exclude` line, a rule MUST set
   paints only, colours and gradients. A border's `on`, `off` or `width` there MUST be refused: a
@@ -136,11 +138,13 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   outline lies under a ring at rest.
 - When focus moves during a flight, each tile's ring MUST turn with its hairline, at the time
   "Focus changing during a flight" in `animation.md` gives it. The window gaining focus on its own
-  display wears no ring until its turn and then the active one; the window losing it wears the active
-  ring until its turn and then none. When focus moves to another display, each keeps its display's
-  ring, and only the paint turns at each one's time: the window losing focus to the inactive, the one
-  gaining it to the active. Each tile's border turns its paint at the same time as its hairline,
-  by its own focus alone.
+  workspace wears no ring until its turn and then the active one; the window losing it wears the
+  active ring until its turn and then none. When focus moves to another workspace on the same
+  display, each is its workspace's active window throughout and wears the active ring throughout, as
+  niri's do. When focus moves to another display, each keeps its display's ring, and only the paint
+  turns at each one's time: the window losing focus to the inactive, the one gaining it to the
+  active. Each tile's border turns its paint at the same time as its hairline, by its own focus
+  alone.
 
 ## At rest
 
