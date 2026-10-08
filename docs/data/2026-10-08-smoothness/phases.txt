@@ -1,0 +1,11 @@
+usage: python3 phases.py JOURNAL...  (each drain's queued, applied and back times by where in its flight it falls)
+the deploy before the borders (journal since 1b2b6f51)
+  other        n= 423  queued p50   0.03 p90   0.12 p99   2.37 max    4.80 | applied p50  0.17 p90  1.05 p99   3.50 | back p90   6.91 p99  20.86
+  lift/down    n= 133  queued p50   0.03 p90   0.06 p99   0.49 max    2.49 | applied p50  1.53 p90  2.17 p99   6.03 | back p90   0.19 p99   0.33
+  in flight    n= 680  queued p50   0.01 p90   0.03 p99   0.08 max   11.62 | applied p50  0.17 p90  0.29 p99   0.80 | back p90   0.03 p99   0.07
+  show         n= 132  queued p50   0.01 p90   0.03 p99   0.57 max    3.85 | applied p50  0.38 p90  0.78 p99   1.63 | back p90   0.93 p99   7.58
+the borders deployed (journal since 50b29987)
+  other        n= 312  queued p50   0.04 p90   0.28 p99   8.85 max   40.61 | applied p50  0.25 p90  1.65 p99   7.23 | back p90   7.99 p99  20.19
+  lift/down    n= 114  queued p50   0.04 p90   0.11 p99   8.43 max   12.30 | applied p50  1.85 p90  2.76 p99   4.76 | back p90   0.23 p99   0.41
+  in flight    n= 153  queued p50   0.03 p90   0.10 p99  16.38 max  125.34 | applied p50  0.22 p90  0.49 p99   4.33 | back p90   0.03 p99   0.06
+  show         n= 110  queued p50   0.01 p90   0.17 p99  14.44 max   22.27 | applied p50  0.50 p90  1.09 p99   2.04 | back p90   2.73 p99   4.46

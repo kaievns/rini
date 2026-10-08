@@ -1,0 +1,30 @@
+# rini pid 72356 (50b29987), sample 72356 10 1, 2026-10-08, Kai typing, no flight (journal unchanged).
+# rini frames symbolised with atos against a rebuild of 50b29987 with strip=false, whose __text is 1228 bytes
+# longer than the deployed binary's, so the deeper rini names are inferred.
+# main thread: 7216 samples
+    +             !   :       |   + ! 15 __CFRunLoopDoSources0  + 232  
+    +             !   :       |   + ! : 15 __CFRunLoopDoSource0  + 172  
+    +             !   :       |   + ! :   15 __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__  + 28  
+    +             !   :       |   + ! :     14 ???   load address 0x100468000 + 0x525b80  
+    +             !   :       |   + ! :     | 14 ???   load address 0x100468000 + 0x4eda8c  
+    +             !   :       |   + ! :     |   13 ???   load address 0x100468000 + 0x4ea7cc  
+    +             !   :       |   + ! :     |   + 13 ???   RestBorders::take  
+    +             !   :       |   + ! :     |   +   9 ???   RestBorders::draw  
+    +             !   :       |   + ! :     |   +   ! 9 ???   load address 0x100468000 + 0x393eb8  
+    +             !   :       |   + ! :     |   +   !   9 ???   load address 0x100468000 + 0x3b8e84  
+    +             !   :       |   + ! :     |   +   !     9 SLSWindowQueryWindows  + 104  
+    +             !   :       |   + ! :     |   +   !       9 run_query  + 152  
+    +             !   :       |   + ! :     |   +   !         9 SLSConnectionSynchronizeSLSCATransaction  + 32  
+    +             !   :       |   + ! :     |   +   !           9 _os_unfair_lock_lock_slow  + 172  
+    +             !   :       |   + ! :     |   +   !             9 __ulock_wait2  + 8  
+    +             !   :       |   + ! :     |   +   3 ???   RestBorders::draw  
+    +             !   :       |   + ! :     |   +   ! 3 CA::Transaction::commit()  + 652  
+    +             !   :       |   + ! :     |   +   !   3 CA::Context::commit_transaction(CA::Transaction*, double, double*)  + 3468  
+    +             !   :       |   + ! :     |   +   !     3 mach_msg  + 24  
+    +             !   :       |   + ! :     |   +   !       3 mach_msg_overwrite  + 480  
+    +             !   :       |   + ! :     |   +   !         3 mach_msg2_internal  + 76  
+    +             !   :       |   + ! :     |   +   !           3 mach_msg2_trap  + 8  
+    +             !   :       |   + ! :     |   +   1 ???   RestBorders::draw  
+    +             !   :       |   + ! :     |   +     1 ???   load address 0x100468000 + 0x29b548  
+    +             !   :       |   + ! :     |   +       1 ???   load address 0x100468000 + 0x2e3750  
+    +             !   :       |   + ! :     |   +         1 -[CAGradientLayer setColors:]  + 0  

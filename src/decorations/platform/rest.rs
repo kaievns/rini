@@ -1,7 +1,8 @@
 //! The decorations at rest: a borderless, click-through, non-activating panel of rini's own directly
 //! above each window whose bands show, drawing the bands a tile draws (`layers::Bands`). A
 //! main-thread actor: the reactor tells it what each window wears, the window server where each
-//! window is and when it was reordered, hidden or unhidden, and the renderer when its overlay lifts.
+//! window is and when it was reordered, hidden or unhidden, and the renderer when its overlay goes up
+//! and when it lifts.
 //! The rules are `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is "At
 //! rest" in `src/decorations/docs/README.md`.
 
@@ -23,7 +24,7 @@ use rini_runloop::channel;
 use rini_runloop::executor::sleep;
 use tracing::warn;
 
-use crate::decorations::domain::rest::{self, Rest, RestDisplay, RestModel, RestWindow, display_of};
+use crate::decorations::domain::rest::{self, Lifted, Rest, RestDisplay, RestModel, RestWindow, display_of};
 use crate::decorations::domain::shape;
 use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
@@ -41,6 +42,9 @@ pub enum Event {
     Frames(Vec<ServerFrame>),
     /// A window the window server reordered, hid or unhid.
     Order(ServerOrder),
+    /// The overlay has lifted and wants a turn of the actor's: the pool owes rest windows the model
+    /// wants, made now that it is down, or a park waits for its patience.
+    Lifted,
 }
 
 define_class!(
@@ -210,53 +214,56 @@ impl RestBorders {
     }
 
     /// Every event queued, taken as one turn: the latest model, every window's latest frame, and each
-    /// rest window ordered again at most once.
+    /// rest window ordered again at most once. Under the overlay it draws, reads and makes nothing
+    /// (`Rest::turn`).
     fn take(&mut self, events: Vec<Event>, now: Instant) {
         let mut orders = Vec::new();
         let mut moved: Vec<ServerFrame> = Vec::new();
         let mut model = None;
+        let mut grow = false;
         for event in events {
             match event {
                 Event::Model(next) => model = Some(next),
                 Event::Frames(frames) => moved.extend(frames),
                 Event::Order(order) => orders.push(order),
+                Event::Lifted => grow = true,
             }
         }
-        let mut also = Vec::new();
-        if let Some(model) = model {
-            let read = |window| {
-                let frame = window_server::server_frame(window).map(ScreenRect::from_cg);
-                (frame, window_server::window_ordered_in(window) == Some(false))
-            };
-            let focus = self.rest.take_model(model, now, read);
+        grow |= model.is_some();
+        let moved: Vec<(WindowServerId, ScreenRect)> =
+            moved.iter().map(|frame| (frame.window, ScreenRect::from_cg(frame.frame))).collect();
+        let Some(draw) = self.rest.turn(model, &moved, orders, now, read_server) else { return };
+        if grow {
             for _ in self.panels.len()..self.rest.pool_size() {
                 if !self.make_panel() {
                     break;
                 }
             }
-            also.extend(focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus))));
         }
-        let moved: Vec<(WindowServerId, ScreenRect)> =
-            moved.iter().map(|frame| (frame.window, ScreenRect::from_cg(frame.frame))).collect();
-        self.rest.take_frames(&moved, now);
-        self.rest.take_orders(&orders);
-        self.draw(&orders, also);
+        let also = draw.focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
+        self.draw(&draw.orders, also.into_iter().collect());
     }
 
-    /// The overlay lifts off `display`: every park waiting there taken, each window the domain names
-    /// read again from the window server, and every band drawn as it is now, before the overlay hides.
-    fn lift(&mut self, display: ScreenRect, now: Instant) {
+    /// The overlay lifts off `display`, the one it was laid out on if any: what waited under it taken,
+    /// each window the domain names read again from the window server, and every band drawn as it is
+    /// now, before the overlay hides. Whether the actor wants a turn of its own once it is down
+    /// (`Rest::wants_turn`): the pool owes rest windows, or a park waits for its patience.
+    fn lift(&mut self, display: Option<ScreenRect>, now: Instant) -> bool {
         let panels = &self.panels;
-        let reread = self.rest.lift(display, now, |window| panels.iter().any(|panel| panel.target == Some(window)));
+        let drawn = |window| panels.iter().any(|panel| panel.target == Some(window));
+        let Lifted { draw, reread } = self.rest.lift(display, now, read_server, drawn);
         for window in reread {
             self.rest.reread(window, window_server::server_frame(window).map(ScreenRect::from_cg));
         }
-        self.draw(&[], Vec::new());
+        let also = draw.focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
+        self.draw(&draw.orders, also.into_iter().collect());
+        self.rest.wants_turn(self.panels.len())
     }
 
     fn settle(&mut self, now: Instant) {
-        self.rest.settle(now);
-        self.draw(&[], Vec::new());
+        if self.rest.settle(now) {
+            self.draw(&[], Vec::new());
+        }
     }
 
     /// One rest window for each window whose band shows: those `orders` and `also` name, and those
@@ -345,8 +352,18 @@ impl RestBorders {
     }
 }
 
-/// What the renderer calls as it lifts the overlay off a display, before it hides.
-pub type OnLift = Box<dyn Fn(ScreenRect)>;
+/// A window new to the model, read off the window server: its frame, and whether it is ordered out.
+fn read_server(window: WindowServerId) -> (Option<ScreenRect>, bool) {
+    let frame = window_server::server_frame(window).map(ScreenRect::from_cg);
+    (frame, window_server::window_ordered_in(window) == Some(false))
+}
+
+/// What the renderer calls on the main thread as its overlay goes up and as it lifts, each with the
+/// display it was laid out on, if any, the lift before it hides.
+pub struct Handover {
+    pub cover: Box<dyn Fn(Option<ScreenRect>)>,
+    pub lift: Box<dyn Fn(Option<ScreenRect>)>,
+}
 
 pub struct RestActor {
     rx: Receiver,
@@ -354,12 +371,21 @@ pub struct RestActor {
 }
 
 impl RestActor {
-    /// The actor, and what the renderer calls at each lift.
-    pub fn new(rx: Receiver, mtm: MainThreadMarker) -> (RestActor, OnLift) {
+    /// The actor, and what the renderer calls as its overlay goes up and lifts. `wake` is its own
+    /// inbox, told once a lift wants a turn of it.
+    pub fn new(rx: Receiver, wake: Sender, mtm: MainThreadMarker) -> (RestActor, Handover) {
         let borders = Rc::new(RefCell::new(RestBorders::new(mtm)));
-        let at_lift = borders.clone();
-        let on_lift: OnLift = Box::new(move |display| at_lift.borrow_mut().lift(display, Instant::now()));
-        (RestActor { rx, borders }, on_lift)
+        let covered = borders.clone();
+        let lifted = borders.clone();
+        let handover = Handover {
+            cover: Box::new(move |display| covered.borrow_mut().rest.cover(display)),
+            lift: Box::new(move |display| {
+                if lifted.borrow_mut().lift(display, Instant::now()) {
+                    wake.send(Event::Lifted);
+                }
+            }),
+        };
+        (RestActor { rx, borders }, handover)
     }
 
     pub async fn run(mut self) {

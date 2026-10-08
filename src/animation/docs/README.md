@@ -51,10 +51,12 @@ nested in the run loop's implicit transaction is otherwise sent only as that pas
 thread's loop ends, after whatever else runs in it. Sent late, a flight skipped its first frames.
 The window's alpha and background are the window's, not the layers', so they are set around the
 transaction: alpha 0 before a drain that lifts the overlay, and after the flush the background its
-holes need and alpha 1 for a drain that shows it, which puts frame zero up holed and moving. Before
-a lift's alpha 0, the renderer calls what draws the focus ring and the border at rest (`OnLift`,
-which the decorations' rest windows own), so every band on the display is where its window is as the
-overlay goes (`steps`, pinned by `the_lift_places_every_rest_border_before_it_hides_the_overlay`).
+holes need and alpha 1 for a drain that shows it, which puts frame zero up holed and moving. After
+a show's alpha 1 the renderer covers what draws the focus ring and the border at rest on its display,
+which then draws nothing on the main thread until the lift, and before a lift's alpha 0 it calls it again
+(`Handover`, which the decorations' rest windows own), so every band on the display is where its
+window is as the overlay goes (`steps`, pinned by
+`the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay`).
 
 **`tokio::time` panics here.** There is no tokio reactor; see
 [`crates/rini-runloop/docs/run-loop-executor.md`](../../../crates/rini-runloop/docs/run-loop-executor.md).
