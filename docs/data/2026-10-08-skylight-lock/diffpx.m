@@ -8,7 +8,11 @@ static NSData*px(CGImageRef img){ size_t w=CGImageGetWidth(img),h=CGImageGetHeig
   CGContextRef c=CGBitmapContextCreate(d.mutableBytes,w,h,8,w*4,cs,(CGBitmapInfo)kCGImageAlphaPremultipliedLast); CGContextDrawImage(c,CGRectMake(0,0,w,h),img); CGContextRelease(c); CGColorSpaceRelease(cs); return d; }
 int main(int argc,char**argv){
   void*sl=dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",RTLD_NOW); RectCap rc=dlsym(sl,"SLSCaptureWindowsContentsToRectWithOptions");
-  int newc=0; ((int(*)(int,int*))dlsym(sl,"SLSNewConnection"))(0,&newc);
+  int newc;
+  int mainc=((int(*)(void))dlsym(sl,"SLSMainConnectionID"))(); // first: the first SLSNewConnection would become the main one
+  newc=0; ((int(*)(int,int*))dlsym(sl,"SLSNewConnection"))(0,&newc);
+  if(newc==0||newc==mainc){ fprintf(stderr,"no connection of its own: new %d main %d\n",newc,mainc); return 1; }
+  fprintf(stderr,"main %d, new %d\n",mainc,newc);
   uint32_t id=atoi(argv[1]); CGRect r=CGRectMake(atof(argv[2]),atof(argv[3]),atof(argv[4]),atof(argv[5])); uint32_t opt=strtoul(argv[6],0,16);
   CGImageRef a=CGWindowListCreateImage(r,kCGWindowListOptionIncludingWindow,id,kCGWindowImageDefault), x=NULL; rc(newc,&id,1,r,opt,&x);
   NSData*pa=px(a),*pb=px(x); const uint8_t*p=pa.bytes,*q=pb.bytes; size_t w=CGImageGetWidth(a),n=0,mx=0,minx=1e9,maxx=0,miny=1e9,maxy=0, alpha=0;

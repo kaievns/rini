@@ -45,3 +45,14 @@ SLSRequestNotificationsForWindows: no sync within depth 4 (direct callees: CGSGe
 SLSSetConnectionProperty: no sync within depth 4 (direct callees: CGS_CHECK_INIT, std::__1::__function::__value_func<void, SLSServerPort, SLSServerPortCheckError, CGSGetConnectionPortById, CGSPropertyListPerformWithSerializedBytes, _CGSConnectionBarrier, WS::ScopeCleaner::~ScopeCleaner())
 SLSGetDisplayMenubarHeight: no sync within depth 4 (direct callees: get_current_display_system_state(), CGSDisplaySystemState::displayByDisplayID(int))
 SLSNewConnection: no sync within depth 4 (direct callees: SLSServerPort, objc_msgSend$remoteContext, CGSKnownConnectionCount(), objc_msgSend$contextId, SLSServerPortCheckError, SLSLogBreak, shutdown_server_connections(bool), (anonymous, std::__1::map<unsigned, CGSBacktraceCreate, CGSBacktraceLog, std::__1::__shared_weak_count::__release_shared[abi:nqn210106]())
+
+# 2026-10-08, the window lists and the title getter:
+SLSGetOnScreenWindowList: SYNCS  SLSGetOnScreenWindowList -> SLSConnectionSynchronizeSLSCATransaction
+SLSGetWindowList: no sync within depth 4 (direct callees: CGSGetConnectionPortById, SLSServerPortCheckError)
+SLSGetWindowListWithTags: no sync within depth 4 (direct callees: CGSGetConnectionPortById, _CGSGetWindowListWithTags)
+SLSWindowIteratorCopyTitle: no sync within depth 4 (direct callees: iterator_seek, _SLSTransactionDecode_CFString)
+
+# 2026-10-08, the same walk 6 deep to ScreenCaptureKit's proxy (ScreenCaptureKitLibraryCore, get*ProxyingSymbolLoc) instead
+SLSCaptureWindowsContentsToRectWithOptions: REACHES THE PROXY  SLSCaptureWindowsContentsToRectWithOptions -> window_list_create_image_from_array_internal -> ScreenCaptureKitLibraryCore | SLSCaptureWindowsContentsToRectWithOptions -> window_list_create_image_from_array_internal -> getSLSWindowListCreateImageFromArrayProxyingSymbolLoc
+SLSHWCaptureWindowList: no proxy within depth 6 (direct callees: hw_capture_window_list_common)
+SLWindowListCreateImage: REACHES THE PROXY  SLWindowListCreateImage -> ScreenCaptureKitLibraryCore | SLWindowListCreateImage -> getSLSWindowListCreateImageProxyingSymbolLoc

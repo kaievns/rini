@@ -216,8 +216,10 @@ a display, with none for one that is not ("The read connection answers as the ma
 It must never be called inside a ScreenCaptureKit completion. On modern macOS it is
 proxied through the same capture machinery, so a call from the delivery queue deadlocks
 its own reply until a ~20s timeout, and every capture in the process serialises behind it
-(measured as half-minute window switches). Whether a SkyLight capture is proxied the same way is not
-known, so none is made there either. The engine's one framed capture, of a window that has just
+(measured as half-minute window switches). `SLSCaptureWindowsContentsToRectWithOptions` reaches the
+same proxy in its disassembly and `SLSHWCaptureWindowList` does not
+(`docs/data/2026-10-08-skylight-lock/callgraph.txt`); whether the first takes it at run time is not
+measured, so no capture of either is made there. The engine's one framed capture, of a window that has just
 opened, runs on the `transitions` thread as it composes; the service's SkyLight calls run on its
 own thread.
 

@@ -5,7 +5,7 @@
 // https://github.com/asmagill/hs._asm.undocumented.spaces/blob/master/CGSSpace.h.
 // https://github.com/koekeishiya/yabai/blob/d55a647913ab72d8d8b348bee2d3e59e52ce4a5d/src/misc/extern.h.
 
-use std::ffi::{c_int, c_uint, c_void};
+use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::num::NonZeroU32;
 
@@ -407,7 +407,6 @@ unsafe extern "C" {
         wcid: *mut c_int,
     ) -> i32;
     pub fn SLSGetCurrentCursorLocation(cid: cid_t, point: *mut CGPoint) -> CGError;
-    pub fn SLSWindowIsOrderedIn(cid: cid_t, wid: u32, ordered: *mut u8) -> CGError;
     pub fn SLSRegisterConnectionNotifyProc(
         cid: cid_t,
         callback: extern "C" fn(u32, *mut c_void, usize, *mut c_void, cid_t),
@@ -420,14 +419,6 @@ unsafe extern "C" {
         window_list: *const u32,
         window_count: i32,
     ) -> i32;
-    pub fn SLSCopyWindowsWithOptionsAndTags(
-        cid: c_int,
-        owner: c_uint,
-        spaces: *mut CFArray<CFNumber>,
-        options: c_uint,
-        set_tags: *mut u64,
-        clear_tags: *mut u64,
-    ) -> *mut CFArray<CFNumber>;
     pub fn SLSManagedDisplaysCopyRoleWindows(
         cid: c_int,
         display_uuids: *mut CFArray<CFString>,
@@ -452,16 +443,20 @@ unsafe extern "C" {
     pub fn SLSWindowQuerySetValue(query: *mut CFType, key: *mut CFString, value: *mut CFType);
     pub fn SLSWindowQueryRun(cid: c_int, query: *mut CFType, flags: c_int) -> *mut CFType;
     pub fn SLSWindowQueryResultCopyWindows(query: *mut CFType) -> *mut CFType;
-    /// Every window on screen, front to back, of `target_cid`'s or, with 0, of every connection; up
-    /// to `count` written to `list` and how many to `out_count`.
-    pub fn SLSGetOnScreenWindowList(
+    /// `target_cid`'s windows or, with 0, every connection's, front to back: with `on_screen` 1, those
+    /// on screen. Up to `count` written to `list` and how many to `out_count`; `tags_size` is 64.
+    pub fn SLSGetWindowListWithTags(
         cid: cid_t,
         target_cid: cid_t,
         count: c_int,
         list: *mut u32,
         out_count: *mut c_int,
+        on_screen: c_int,
+        set_tags: *mut u64,
+        clear_tags: *mut u64,
+        tags_size: c_int,
     ) -> CGError;
-    /// Every window, on screen or not, as `SLSGetOnScreenWindowList` lists them.
+    /// Every window, on screen or not, of `target_cid`'s or, with 0, of every connection.
     pub fn SLSGetWindowList(
         cid: cid_t,
         target_cid: cid_t,

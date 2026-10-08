@@ -435,15 +435,11 @@ fn no_accessibility_element_is_ever_logged() {
     );
 }
 
-/// The SkyLight reads that wait on their connection's last Core Animation transaction, found by
-/// disassembly (`docs/data/2026-10-08-skylight-lock/callgraph.txt`).
-const WAITS_ON_CORE_ANIMATION: [&str; 8] = [
+/// The SkyLight reads that wait on the last Core Animation transaction of the connection they are
+/// given, found by disassembly (`docs/data/2026-10-08-skylight-lock/callgraph.txt`).
+const WAITS_ON_CORE_ANIMATION: [&str; 4] = [
     "SLSWindowQueryWindows",
     "SLSWindowQueryRun",
-    "SLSGetOnScreenWindowList",
-    "SLSGetWindowBounds",
-    "SLSWindowIsOrderedIn",
-    "SLSCopyWindowsWithOptionsAndTags",
     "SLSHWCaptureWindowList",
     "SLSCaptureWindowsContentsToRectWithOptions",
 ];
@@ -510,22 +506,28 @@ fn a_read_that_waits_on_core_animation_is_made_on_the_read_connection() {
     );
 }
 
-/// `CGWindowList`'s reads, which take no connection: each waits on the main connection's last Core
-/// Animation transaction (`docs/data/2026-10-08-skylight-lock/callgraph.txt`, as `SLWindowList*`).
-const CG_WINDOW_LIST: [&str; 2] = ["CGWindowListCopyWindowInfo", "CGWindowListCreateImage"];
+/// The reads that wait on the main connection's last Core Animation transaction whatever
+/// connection they are given, or that take none (`docs/data/2026-10-08-skylight-lock/callgraph.txt`,
+/// `CGWindowList`'s as `SLWindowList*`).
+const WAITS_ON_THE_MAIN_CONNECTION: [&str; 5] = [
+    "CGWindowListCopyWindowInfo",
+    "CGWindowListCreateImage",
+    "SLSGetOnScreenWindowList",
+    "SLSWindowIsOrderedIn",
+    "SLSCopyWindowsWithOptionsAndTags",
+];
 
-/// No window list or picture is read through `CGWindowList`.
+/// No read is made that waits on the main connection whatever it is given.
 ///
-/// It cannot be asked on the read connection, so it stalls with the main thread's commit for 500ms
-/// as a read on the main connection does. Every read it made has a SkyLight one on the read connection
-/// that answers the same; see "The read connection answers as the main one does" in
-/// `src/windows/docs/window-server-reads.md`.
+/// It stalls with the main thread's commit for 500ms as a read on the main connection does. Each has
+/// a read on the read connection that answers the same; see "Which reads wait, and on which
+/// connection" in `src/windows/docs/window-server-reads.md`.
 #[test]
-fn no_window_list_or_picture_is_read_through_cg_window_list() {
+fn no_read_waits_on_the_main_connection_whatever_it_is_given() {
     let mut broken = Vec::new();
-    for path in rust_files(Path::new("src")) {
+    for path in rust_files(Path::new("src")).into_iter().chain(rust_files(Path::new("crates"))) {
         for (line, code) in code_lines(&path) {
-            for name in CG_WINDOW_LIST {
+            for name in WAITS_ON_THE_MAIN_CONNECTION {
                 if code.contains(name) {
                     broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
                 }
@@ -534,10 +536,10 @@ fn no_window_list_or_picture_is_read_through_cg_window_list() {
     }
     assert!(
         broken.is_empty(),
-        "these read through CGWindowList, which waits on the main connection's last Core Animation \
-         transaction. Read on `READ_CONNECTION` instead (`on_screen_windows`, `every_window`, \
-         `capture_rect`). See \"The read connection answers as the main one does\" in \
-         src/windows/docs/window-server-reads.md:\n{}",
+        "these wait on the main connection's last Core Animation transaction whatever connection \
+         they are given. Read on `READ_CONNECTION` instead (`on_screen_windows`, `every_window`, \
+         `window_ordered_in`, `space_window_list_for_connection`, `capture_rect`). See \"Which reads \
+         wait, and on which connection\" in src/windows/docs/window-server-reads.md:\n{}",
         broken.join("\n")
     );
 }

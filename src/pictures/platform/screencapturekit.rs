@@ -252,7 +252,8 @@ pub fn capture(
         let filled = buffer.as_ref().and_then(|b| content_reaches_edges(b));
         let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
         // No capture calls in here: `CGWindowListCreateImage` is proxied through this same delivery
-        // queue and deadlocks until a ~20s timeout, and whether a SkyLight capture is is not known.
+        // queue and deadlocks until a ~20s timeout, and `SLSCaptureWindowsContentsToRectWithOptions`
+        // reaches the same proxy (`docs/data/2026-10-08-skylight-lock/callgraph.txt`).
         done(window_picture(&target, size, surface, filled, taken));
     });
     unsafe {

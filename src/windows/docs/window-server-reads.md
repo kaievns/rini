@@ -52,27 +52,42 @@ reads windows in a loop. A query over 50ms counts as slow; each run's worst is i
 `ops.txt` splits the panel's changes, 2 runs each on the main connection: alpha alone and order
 alone gave no slow query; the frame alone gave 5 in one run of its 2.
 
-## Which reads wait
+## Which reads wait, and on which connection
 
 `sls-graph.py` disassembles each SkyLight call rini makes and its callees 4 deep, and reports a path
 to `SLSConnectionSynchronizeSLSCATransaction`, `SLSTransactionWait` or `run_query`
-(`callgraph.txt`). The iterator getters read the reply already in hand and wait on nothing.
+(`callgraph.txt`). The iterator getters read the reply already in hand and wait on nothing. Which
+connection a wait is on is read off the same disassembly (`connections.txt`): some calls wait on the
+connection they are given, and some on the main connection whatever they are given, so moving those
+to the read connection changes nothing.
 
-**On `READ_CONNECTION`**, each because it waits:
+**Waits on the connection it is given, so it is made on `READ_CONNECTION`:**
 
-| call | path to the wait | rini's reads through it |
+| call | the wait | rini's reads through it |
 |---|---|---|
-| `SLSWindowQueryWindows` | `run_query` | `WindowIterator`: `get_windows`, `get_window`, `existing_windows`, `window_parent`, `window_level` (so `StackPlace::of`), `corner_radii`, `app_window_suitability`, `space_window_list_for_connection`'s details |
-| `SLSWindowQueryRun` | `run_query` | `key_focused_window` |
-| `SLSGetOnScreenWindowList` | direct | `on_screen_windows`: `front_to_back_depths`, `visible_windows_on_display`, `desktop_backdrop_windows`, `bar_strip`, and the windows a picture of the screen and a framed capture's composite list |
-| `SLSGetWindowBounds` | `GetWindowBounds` → `CGSWindowSynchronizeSLSCATransaction` | `server_frame`: the `window-frames` thread (`src/displays/docs/live-frames.md`) and the pictures watches |
-| `SLSWindowIsOrderedIn` | direct | `window_ordered_in` |
-| `SLSCopyWindowsWithOptionsAndTags` | direct | `space_window_list_for_connection` |
-| `SLSHWCaptureWindowList` | `hw_capture_window_list_common` | every SkyLight composite in `src/pictures/platform/skylight.rs` |
-| `SLSCaptureWindowsContentsToRectWithOptions` | direct | `capture_rect`: the bar's menu-extras capture and its ground, the framed spawn capture and its composite with what is below, a handover check's picture of the screen |
+| `SLSWindowQueryWindows`, `SLSWindowQueryRun` | `run_query`: `CGSConnectionByID(cid)`, then the sync | `WindowIterator`: `get_windows`, `get_window`, `existing_windows`, `window_parent`, `window_level` (so `StackPlace::of`), `corner_radii`, `app_window_suitability`, `window_ordered_in`, `key_focused_window`, `space_window_list_for_connection`, and the listings' details |
+| `SLSHWCaptureWindowList` | `hw_capture_window_list_common`: the main connection only for a cid of 0 | every SkyLight composite in `src/pictures/platform/skylight.rs` |
+| `SLSCaptureWindowsContentsToRectWithOptions` | the main connection only for a cid of 0 | `capture_rect`: the bar's menu-extras capture and its ground, the framed spawn capture and its composite with what is below, a handover check's picture of the screen |
 
-`SLSGetWindowList`, every window on screen or not, waits on nothing; it is asked on the read
-connection with `SLSGetOnScreenWindowList`, beside which it is written (`every_window`, the menu
+**Waits on the main connection whatever it is given, so rini does not call it**, and reads the same
+answer another way (`nosync.txt`, `nosync-2.txt`, two runs on an `SLSNewConnection`):
+
+| call | instead | found the same |
+|---|---|---|
+| `SLSGetOnScreenWindowList` | `SLSGetWindowListWithTags` with its on-screen flag 1, which waits on nothing (`on_screen_windows`) | the same 32 windows in the same order, both runs |
+| `SLSCopyWindowsWithOptionsAndTags` | `SLSWindowQueryRun` over the same spaces, owner 0 and `WorkspaceWindowListOptions` 0x2 or 0x7 (`space_window_list_for_connection`) | the same windows in the same order on every space, current and system, for both options, both runs; owners other than 0 are not compared |
+| `SLSWindowIsOrderedIn` | the window's iterator attribute bit 1 (`window_ordered_in`) | set for exactly the 33 of 177 windows `SLSWindowIsOrderedIn` called ordered in, both runs; no other tag or attribute bit agreed |
+| `CGWindowListCopyWindowInfo`, `CGWindowListCreateImage` | the listings and `capture_rect` ("CGWindowList, replaced") | below |
+
+`no_read_waits_on_the_main_connection_whatever_it_is_given` in `tests/architecture.rs` fails if any
+of these is named in `src/` or `crates/`.
+
+**Waits only for a window of rini's own:** `SLSGetWindowBounds` (`server_frame`: the
+`window-frames` thread, `src/displays/docs/live-frames.md`, and the pictures watches) looks the window
+up among the process's own first, and waits on that window's connection only if it is one; for
+another application's window it waits on nothing. It is asked on the read connection all the same.
+
+`SLSGetWindowList`, every window on screen or not, waits on nothing (`every_window`, the menu
 extras' listing). A window's title is read off the query's reply (`SLSWindowIteratorCopyTitle`, the
 query asked with flag bit 0), and its owner's name from its application
 (`NSRunningApplication.localizedName`, else the process name).
@@ -94,13 +109,13 @@ port of its own, and takes no connection's lock.
 ## CGWindowList, replaced
 
 `CGWindowListCopyWindowInfo` and `CGWindowListCreateImage` call `SLSMainConnection` and then
-`SLSConnectionSynchronizeSLSCATransaction` (`callgraph.txt`, as `SLWindowListCopyWindowInfo` and
-`SLWindowListCreateImage`), and take no connection. `cg.txt` shows them stall 500ms the same way.
-Each read rini made through them is now made on the read connection:
+`SLSConnectionSynchronizeSLSCATransaction` (`callgraph.txt` and `connections.txt`, as
+`SLWindowListCopyWindowInfo` and `SLWindowListCreateImage`), and take no connection. `cg.txt` shows
+them stall 500ms the same way. Each read rini made through them is now made on the read connection:
 
 | read | where it ran | was | is |
 |---|---|---|---|
-| `front_to_back_depths` | `transitions`, at every flight's start; the reactor's strip regroup | on screen, desktop elements excluded | `on_screen_windows` without a window at `kCGDesktopIconWindowLevel` or below |
+| `front_to_back_depths` | `transitions`, at every flight's start; the reactor's strip regroup | on screen, desktop elements excluded | `on_screen_windows` without a window at `kCGDesktopIconWindowLevel` or below (`depths`) |
 | `visible_windows_on_display` | the pictures warm, the debug slide | the same | `on_screen_windows`; only layer-0 windows are listed |
 | `desktop_backdrop_windows`, `bar_strip` | pictures, at a flight's desktop and bar | on screen, owner names and titles | `on_screen_windows` with titles, the owner's name for a desktop window |
 | the menu extras' listing | `bar-extras` | every window, owner names and titles | `every_window` with titles and owner names |
@@ -113,37 +128,54 @@ main connection each waited for rini's last commit to land; on the read connecti
 overlay's picture is taken with the overlay still, and the screen 45ms after its hide, so that
 neither is a commit behind is inferred, not measured.
 
+`SLSCaptureWindowsContentsToRectWithOptions` reaches ScreenCaptureKit's proxy in its disassembly,
+as `CGWindowListCreateImage` does (`window_list_create_image_from_array_internal` →
+`ScreenCaptureKitLibraryCore`, `callgraph.txt`), and `SLSHWCaptureWindowList` does not. Whether it
+takes the proxy at run time is not measured; no capture is made from a ScreenCaptureKit completion
+either way.
+
 ## The read connection answers as the main one does
 
 Measured 2026-10-08 on 23 on-screen layer-0 windows of 11 processes, 4 of them rini's:
 
 - `same.txt`: `SLSWindowQueryWindows` returned the same id, pid, level, alpha and bounds on both.
-- `reads.txt`: `SLSGetWindowBounds`, `SLSWindowIsOrderedIn`, `SLSPackagesGetWindowConstraints`, the
+- `reads.txt`: `SLSGetWindowBounds`, `SLSWindowIsOrderedIn` (no longer called), `SLSPackagesGetWindowConstraints`, the
   iterator's corner radii, and both captures' size and pixels agreed for 21. The other 2 changed
   content between asks: the main connection, asked again after the new one, differed from its own
-  first answer too, so `reads.m` counts them as live. `SLSCopyWindowsWithOptionsAndTags` listed the
-  same 45 windows of the active space in the same order.
-- `replace.txt` and `replace-2.txt`, two runs on 45 and 48 windows on screen and 177 and 179 in all:
-  `SLSGetOnScreenWindowList` listed every window `CGWindowListCopyWindowInfo` lists on screen, in
-  the same order front to back, with the same level and bounds. With desktop elements excluded, CG
-  left out exactly the 3 at `kCGDesktopIconWindowLevel` (-2147483603) or below: the Finder's
-  icons, the Dock's wallpaper and the display's backstop, and Notification Center's widgets at
-  -2147483601 stay. The 23 layer-0 windows agreed in owner name and title too, as did the 6 at the
-  desktop's levels but for the backstop, which CG gives to the Window Server and SkyLight to pid 0,
-  and which no rule reads. `SLSGetWindowList` listed the same 14 status-level windows as every
-  window CG lists, with the same owners and titles.
+  first answer too, so `reads.m` counts them as live. `SLSCopyWindowsWithOptionsAndTags`, no longer
+  called, listed the same 45 windows of the active space in the same order.
+- `replace.txt` and `replace-2.txt`, two runs on an `SLSNewConnection` (`replace.m` asks for the
+  main connection's id first and refuses to run without a connection of its own) on 33 and 35
+  windows on screen and 177 in all: `SLSGetOnScreenWindowList` listed every window
+  `CGWindowListCopyWindowInfo` lists on screen but one, in the same order front to back, with the
+  same level and bounds; `SLSGetWindowListWithTags` lists what it lists (`nosync.txt`). The one is
+  the Window Server's cursor window, id 4, which CG lists frontmost while the cursor shows and
+  SkyLight's on-screen list leaves out on either connection (`cursor.txt`). Every depth CG gave is
+  one more than rini's, and every reader of a depth compares it with another's. With desktop
+  elements excluded, CG left out exactly the 3 at `kCGDesktopIconWindowLevel` (-2147483603) or
+  below: the Finder's icons, the Dock's wallpaper and the display's backstop, and Notification
+  Center's widgets at -2147483601 stay. The 23 layer-0 windows agreed in owner name and title too,
+  as did the 6 at the desktop's levels but for the backstop, which CG gives to the Window Server and
+  SkyLight to pid 0, and which no rule reads. `SLSGetWindowList` listed the same 14 status-level
+  windows as every window CG lists, with the same owners and titles.
 - `replace.txt`, captures, against `CGWindowListCreateImage` asked twice, which agreed with itself
   every time: the framed capture with no bits matched for the 18 of 19 windows not wholly on the
   display; the one wholly on it differed in 23436 of 7432152 pixels without bits 11 and 8, around
   its edges (`diffpx.txt`), and in none with them. Below and including, with bits 11 and 8, matched
-  for that window. The screen, with bits 11 and 8, matched but for at most 36 pixels inside the menu
-  bar's status indicator, which was changing (`diffscreen.txt`), and in none once it was not.
+  for that window. The screen, with bits 11 and 8, differed in 455 of 7720704 pixels, all inside
+  the cursor window CG composites and SkyLight's list leaves out (`diffscreen.txt`, `cursor.txt`:
+  the cursor window at -11,565, 24 by 18pt).
 - `capcost.txt`: a capture costs the same on either connection. Interleaved, p50 over 21 each, at
   gaps of 0, 20, 120 and 300ms since the previous capture: 17.2/17.0, 24.1/22.8, 43.5/40.6 and
   45.5/49.0ms, main/new.
 
-Not measured: rini itself on the read connection, sampled through a flight with the ring on; what
-the new listings cost against `CGWindowListCopyWindowInfo`'s. Not verified with a second display:
+Measured meanwhile by the review's battery, on a deployed build of this branch from before these
+corrections, with the ring on (which commit, and the results, are kept with the battery, not here): its blur check passed 9
+of 9, Outlook, a window with a material, flying in from its park through the new capture code; no
+255ms stall in 3 runs; the drains' heard p99 fell from 21-61ms to 3-12ms. That build still waited on
+the main connection in `SLSGetOnScreenWindowList`, `SLSCopyWindowsWithOptionsAndTags` and
+`SLSWindowIsOrderedIn`. Not measured: this build sampled through a flight; what the new listings
+cost against `CGWindowListCopyWindowInfo`'s. Not verified with a second display:
 there was one. The listings are of every window, whatever its display, so a second display adds its
 windows to the same list; that the list stays front to back across displays as CG's is, and that the
 screen's picture of one display composites another's windows only where they overlap it, are

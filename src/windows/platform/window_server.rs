@@ -226,7 +226,7 @@ impl WindowIterator {
     }
 
     #[inline]
-    #[allow(dead_code)]
+    #[cfg_attr(test, allow(dead_code))]
     pub fn attributes(&self) -> u64 {
         unsafe { SLSWindowIteratorGetAttributes(self.iter) }
     }
@@ -471,14 +471,21 @@ pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
 
 #[cfg(not(test))]
 pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
-    let mut ordered: u8 = 0;
-    if let Ok(_) =
-        cg_ok(unsafe { SLSWindowIsOrderedIn(*READ_CONNECTION, id.as_u32(), &mut ordered) })
-    {
-        return Some(ordered != 0);
+    let query = WindowIterator::new(&[id])?;
+    if query.advance()?.window_id() != id.as_u32() {
+        return None;
     }
+    Some(attributes_ordered_in(query.attributes()))
+}
 
-    None
+/// The iterator attribute set on a window that is ordered in: it agreed with `SLSWindowIsOrderedIn`,
+/// which waits on the main connection whatever it is given, for all 177 windows asked ("Which reads
+/// wait, and on which connection" in `src/windows/docs/window-server-reads.md`).
+const ORDERED_IN_ATTRIBUTE: u64 = 1 << 1;
+
+/// Whether a window whose iterator attributes are `attributes` is ordered in.
+fn attributes_ordered_in(attributes: u64) -> bool {
+    attributes & ORDERED_IN_ATTRIBUTE != 0
 }
 
 pub fn window_is_ordered_in(id: WindowServerId) -> bool {
@@ -526,9 +533,20 @@ fn window_list(on_screen: bool) -> Vec<u32> {
     loop {
         let mut ids = vec![0u32; room];
         let (list, mut count) = (ids.as_mut_ptr(), 0 as c_int);
+        let (mut set_tags, mut clear_tags) = (0u64, 0u64);
         let err = unsafe {
             if on_screen {
-                SLSGetOnScreenWindowList(*READ_CONNECTION, 0, room as c_int, list, &mut count)
+                SLSGetWindowListWithTags(
+                    *READ_CONNECTION,
+                    0,
+                    room as c_int,
+                    list,
+                    &mut count,
+                    1,
+                    &mut set_tags,
+                    &mut clear_tags,
+                    64,
+                )
             } else {
                 SLSGetWindowList(*READ_CONNECTION, 0, room as c_int, list, &mut count)
             }
@@ -972,59 +990,38 @@ pub fn space_window_list_for_connection(
     space_window_list_from_window_server(spaces, owner, include_minimized)
 }
 
-// credit to yabai
+/// The query for the windows on `spaces` of `owner`'s or, with 0, of every connection, minimized
+/// ones as well with `include_minimized`: what `SLSCopyWindowsWithOptionsAndTags` answers, which waits
+/// on the main connection whatever it is given.
+fn space_list_filter(spaces: &[u64], owner: u32, include_minimized: bool) -> WindowQueryFilter<'_> {
+    WindowQueryFilter {
+        owner: owner as i32,
+        spaces,
+        space_list_options: 0,
+        window_list_options: if include_minimized { 0x7 } else { 0x2 },
+        query_flags: 0,
+        include_tags: 0,
+        exclude_tags: 0,
+    }
+}
+
 #[cfg(not(test))]
 fn space_window_list_from_window_server(
     spaces: &[u64],
     owner: u32,
     include_minimized: bool,
 ) -> Vec<u32> {
-    let cf_space_array = cf_array_from_u64s(spaces);
-
-    let mut set_tags: u64 = 0;
-    let mut clear_tags: u64 = 0;
-    let options: u32 = if include_minimized { 0x7 } else { 0x2 };
-
-    let window_list_ref = unsafe {
-        SLSCopyWindowsWithOptionsAndTags(
-            *READ_CONNECTION,
-            owner,
-            CFRetained::as_ptr(&cf_space_array).as_ptr(),
-            options,
-            &mut set_tags,
-            &mut clear_tags,
-        )
-    };
-
-    if window_list_ref.is_null() {
-        return Vec::new();
-    }
-
-    let expected = (unsafe { &*window_list_ref }).len() as i32;
-    if expected == 0 {
-        unsafe { CFRelease(window_list_ref as *mut CFType) };
-        return Vec::new();
-    }
-
-    let iterator = WindowIterator::new_from_cfarray(window_list_ref, 0);
-    unsafe { CFRelease(window_list_ref as *mut CFType) };
-    let Some(iterator) = iterator else {
+    let Some(iterator) = window_query_run(&space_list_filter(spaces, owner, include_minimized))
+    else {
         return Vec::new();
     };
-
-    let mut windows = Vec::with_capacity(expected as usize);
-
+    let mut windows = Vec::new();
     while iterator.advance().is_some() {
         let tags = iterator_window_tags(iterator.iter);
-        let parent_id = iterator.parent_id();
-        let wid = iterator.window_id();
-        let is_candidate = parent_id == 0 && tags_match_app_window_role(tags);
-
-        if is_candidate {
-            windows.push(wid);
+        if iterator.parent_id() == 0 && tags_match_app_window_role(tags) {
+            windows.push(iterator.window_id());
         }
     }
-
     windows
 }
 
@@ -1394,6 +1391,30 @@ mod stack_tests {
     }
 
     #[test]
+    fn a_window_is_ordered_in_by_its_second_attribute_bit_alone() {
+        assert!(attributes_ordered_in(0b10));
+        assert!(attributes_ordered_in(0b1110));
+        assert!(!attributes_ordered_in(0b01));
+        assert!(!attributes_ordered_in(0));
+    }
+
+    #[test]
+    fn a_space_list_asks_for_every_owner_and_minimized_windows_only_when_told() {
+        let spaces = [5];
+        let shown = space_list_filter(&spaces, 0, false);
+        assert_eq!(
+            (shown.owner, shown.spaces, shown.window_list_options),
+            (0, &spaces[..], 0x2)
+        );
+        assert_eq!(
+            (shown.include_tags, shown.exclude_tags, shown.space_list_options),
+            (0, 0, 0)
+        );
+        assert_eq!(space_list_filter(&spaces, 41, true).window_list_options, 0x7);
+        assert_eq!(space_list_filter(&spaces, 41, true).owner, 41);
+    }
+
+    #[test]
     fn a_window_s_depth_counts_the_windows_in_front_of_it_but_not_the_desktop() {
         let depths = depths(vec![
             listed(30, 0),
@@ -1403,7 +1424,11 @@ mod stack_tests {
             listed(32, 0),
         ]);
         assert_eq!(depths.get(&30), Some(&0));
-        assert_eq!(depths.get(&31), Some(&1), "the backstop listed before it is not counted");
+        assert_eq!(
+            depths.get(&31),
+            Some(&1),
+            "the backstop listed before it is not counted"
+        );
         assert_eq!(depths.get(&32), Some(&2));
         assert_eq!(depths.get(&2), None, "a desktop element has no depth");
         assert_eq!(depths.get(&50), None);

@@ -1,0 +1,41 @@
+main 463547, new 1414787
+SLSGetWindowList: 177 windows; SLSGetWindowListWithTags flag 0 (err 0): 144 windows, same list in the same order: NO
+SLSGetOnScreenWindowList: 32 windows; SLSGetWindowListWithTags flag 1 (err 0): 32 windows, same list in the same order: yes
+space 1 options 2: SLSCopyWindowsWithOptionsAndTags 29, SLSWindowQueryRun flags 0 29, same: yes
+space 1 options 2: SLSCopyWindowsWithOptionsAndTags 29, SLSWindowQueryRun flags 2 29, same: yes
+space 1 options 7: SLSCopyWindowsWithOptionsAndTags 60, SLSWindowQueryRun flags 0 60, same: yes
+space 1 options 7: SLSCopyWindowsWithOptionsAndTags 60, SLSWindowQueryRun flags 2 60, same: yes
+space 18 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 18 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 16 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 16 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 15 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 15 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 14 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 14 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 12 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 12 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 6 options 2: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 0 1, same: yes
+space 6 options 2: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 2 1, same: yes
+space 5 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 5 options 2: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 1 options 2: SLSCopyWindowsWithOptionsAndTags 29, SLSWindowQueryRun flags 0 29, same: yes
+space 1 options 2: SLSCopyWindowsWithOptionsAndTags 29, SLSWindowQueryRun flags 2 29, same: yes
+space 18 options 7: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 0 1, same: yes
+space 18 options 7: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 2 1, same: yes
+space 16 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 16 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 15 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 15 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 14 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 14 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 12 options 7: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 0 1, same: yes
+space 12 options 7: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 2 1, same: yes
+space 6 options 7: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 0 1, same: yes
+space 6 options 7: SLSCopyWindowsWithOptionsAndTags 1, SLSWindowQueryRun flags 2 1, same: yes
+space 5 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 0 0, same: yes
+space 5 options 7: SLSCopyWindowsWithOptionsAndTags 0, SLSWindowQueryRun flags 2 0, same: yes
+space 1 options 7: SLSCopyWindowsWithOptionsAndTags 60, SLSWindowQueryRun flags 0 60, same: yes
+space 1 options 7: SLSCopyWindowsWithOptionsAndTags 60, SLSWindowQueryRun flags 2 60, same: yes
+177 windows, 33 ordered in
+  attribute bit 1 is ordered in for all 177

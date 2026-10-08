@@ -68,7 +68,10 @@ int main(int argc,char**argv){
   wid=dlsym(sl,"SLSWindowIteratorGetWindowID"); pid=dlsym(sl,"SLSWindowIteratorGetPID"); lvl=dlsym(sl,"SLSWindowIteratorGetLevel");
   bnd=dlsym(sl,"SLSWindowIteratorGetBounds"); title=dlsym(sl,"SLSWindowIteratorCopyTitle");
   List onscreen=dlsym(sl,"SLSGetOnScreenWindowList"), all=dlsym(sl,"SLSGetWindowList"); RectCap rc=dlsym(sl,"SLSCaptureWindowsContentsToRectWithOptions");
-  ((int(*)(int,int*))dlsym(sl,"SLSNewConnection"))(0,&newc);
+  int mainc=((int(*)(void))dlsym(sl,"SLSMainConnectionID"))(); // first: the first SLSNewConnection would become the main one
+  newc=0; ((int(*)(int,int*))dlsym(sl,"SLSNewConnection"))(0,&newc);
+  if(newc==0||newc==mainc){ fprintf(stderr,"no connection of its own: new %d main %d\n",newc,mainc); return 1; }
+  printf("main %d, new %d\n",mainc,newc);
   static W c[4096], s[4096]; int nc, ns;
   printf("on screen, desktop elements excluded (front_to_back_depths, visible_windows_on_display):\n");
   nc=cgList(kCGWindowListOptionOnScreenOnly|kCGWindowListExcludeDesktopElements,c); ns=slsList(onscreen,s);

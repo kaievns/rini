@@ -1,14 +1,18 @@
+main 1201539, new 976715
 on screen, desktop elements excluded (front_to_back_depths, visible_windows_on_display):
-  sls list 45 ids, query 45, query keeps the list's order: yes
+  sls list 32 ids, query 32, query keeps the list's order: yes
+    cg only: 4 L2147483630 p626 'Window Server' 'Cursor'
     sls only: 50 L-2147483603 p3101 'Finder' ''
     sls only: 46 L-2147483624 p3099 'Dock' 'Wallpaper-'
     sls only: 2 L-2147483626 p0 '' 'Display 1 Backstop'
- every window: cg 42, sls 45, differing 3, same order front to back: yes
- every window, sls without level <= kCGDesktopIconWindowLevel: cg 42, sls 42, differing 0, same order front to back: yes
+ every window: cg 30, sls 32, differing 4, same order front to back: yes
+    cg only: 4 L2147483630 p626 'Window Server' 'Cursor'
+ every window, sls without level <= kCGDesktopIconWindowLevel: cg 30, sls 29, differing 1, same order front to back: yes
  layer 0: cg 23, sls 23, differing 0, same order front to back: yes
 on screen (desktop_backdrop_windows, bar_strip):
-  sls list 45 ids, query 45, query keeps the list's order: yes
- every window: cg 45, sls 45, differing 0, same order front to back: yes
+  sls list 32 ids, query 32, query keeps the list's order: yes
+    cg only: 4 L2147483630 p626 'Window Server' 'Cursor'
+ every window: cg 33, sls 32, differing 1, same order front to back: yes
     differ: 2 L-2147483626 p626 0,0 1728x1117 'Window Server' 'Display 1 Backstop' | L-2147483626 p0 0,0 1728x1117 '' 'Display 1 Backstop'
  desktop levels: cg 6, sls 6, differing 1, same order front to back: yes
  bar levels: cg 0, sls 0, differing 0, same order front to back: yes
@@ -18,10 +22,10 @@ every window (menu extras):
 desktop icon level -2147483603, desktop level -2147483623
   framed 245 'Code' options 0: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 0.102
   below 245 'Code' options 0: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 0.102
-  framed 245 'Code' options 100: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 0.104
+  framed 245 'Code' options 100: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 0.102
   below 245 'Code' options 100: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 0.102
-  framed 73 'Messages' options 900: cg 1720x2158 sls 1720x2158 cg-cg 0.000 cg-sls 100.925
-  framed 67 'Microsoft Outlook' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 103.361
+  framed 73 'Messages' options 900: cg 1720x2158 sls 1720x2158 cg-cg 0.000 cg-sls 100.926
+  framed 67 'Microsoft Outlook' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 103.360
   framed 60 'Obsidian' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 233.171
   framed 2534 'Ghostty' options 900: cg 2296x2158 sls 2296x2158 cg-cg 0.000 cg-sls 78.420
   framed 16842 'Ghostty' options 900: cg 1720x2158 sls 1720x2158 cg-cg 0.000 cg-sls 73.126
@@ -29,18 +33,18 @@ desktop icon level -2147483603, desktop level -2147483623
   framed 53 'Ghostty' options 900: cg 2296x2158 sls 2296x2158 cg-cg 0.000 cg-sls 75.833
   framed 15610 'Google Chrome' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 239.006
   framed 97 'Google Chrome' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 86.791
-  framed 70 'Google Chrome' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 89.764
+  framed 70 'Google Chrome' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 89.772
   framed 15190 'Google Chrome' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 236.102
   framed 4312 'Code' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 102.090
   framed 55 'Ghostty' options 900: cg 1720x2158 sls 1720x2158 cg-cg 0.000 cg-sls 75.809
   framed 12314 'Kiro Crew' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 72.245
   framed 78 'Zen' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 79.577
-  framed 75 'Slack' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 91.240
-  framed 3851 'Zoom' options 900: cg 2560x1920 sls 2560x1920 cg-cg 0.000 cg-sls 89.013
-  framed 66 'Obsidian' options 900: cg 1720x2158 sls 1720x2158 cg-cg 0.000 cg-sls 95.090
+  framed 75 'Slack' options 900: cg 3444x2158 sls 3444x2158 cg-cg 0.000 cg-sls 91.239
+  framed 3851 'Zoom' options 900: cg 2560x1920 sls 2560x1920 cg-cg 0.000 cg-sls 88.985
+  framed 66 'Obsidian' options 900: cg 1720x2158 sls 1720x2158 cg-cg 0.000 cg-sls 95.087
 captures, options 0: framed same as cg for 18 of 19 windows (0 live between the two cg asks), below and including for 0 of the 1 wholly on the display
 captures, options 100: framed same as cg for 18 of 19 windows (0 live between the two cg asks), below and including for 0 of the 1 wholly on the display
 captures, options 900: framed same as cg for 1 of 19 windows (0 live between the two cg asks), below and including for 1 of the 1 wholly on the display
- screen (45 windows), options 0: cg 3456x2234, cg again 3456x2234, sls 3456x2234; mean |diff| per channel cg-cg 0.000, cg-sls 0.174
- screen (45 windows), options 100: cg 3456x2234, cg again 3456x2234, sls 3456x2234; mean |diff| per channel cg-cg 0.000, cg-sls 0.174
- screen (45 windows), options 900: cg 3456x2234, cg again 3456x2234, sls 3456x2234; mean |diff| per channel cg-cg 0.000, cg-sls 0.027
+ screen (33 windows), options 0: cg 3456x2234, cg again 3456x2234, sls 3456x2234; mean |diff| per channel cg-cg 0.000, cg-sls 0.151
+ screen (33 windows), options 100: cg 3456x2234, cg again 3456x2234, sls 3456x2234; mean |diff| per channel cg-cg 0.000, cg-sls 0.151
+ screen (33 windows), options 900: cg 3456x2234, cg again 3456x2234, sls 3456x2234; mean |diff| per channel cg-cg 0.000, cg-sls 0.002

@@ -79,7 +79,8 @@ delivery, and a client takes its own by the tag's client.
 
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels
 out and post them back. No capture call is made there: `CGWindowListCreateImage` is proxied through the
-same delivery queue and deadlocks, and whether a SkyLight capture is is not known. A handover check's
+same delivery queue and deadlocks, and `SLSCaptureWindowsContentsToRectWithOptions` reaches the same
+proxy in its disassembly (`docs/data/2026-10-08-skylight-lock/callgraph.txt`). A handover check's
 screen is one SkyLight capture of every window on a whole display, made on the thread while a
 transition settles. Its two
 pictures, a display's worth each, are drawn and compared on a thread of their own, `handover`, which

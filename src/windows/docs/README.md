@@ -57,13 +57,13 @@ server has it, so `admissible::has_visible_peer` treats "no server id yet" as vi
 rather than absent. The reverse — an id the server does not report — means the window
 is not on screen.
 
-**Reads go on a connection of their own.** A window-server read that waits on its connection's
-last Core Animation transaction (a window query, a frame, whether a window is ordered in, a space's
-window list, the windows on screen, a SkyLight capture) is made on `READ_CONNECTION`, which no window
-of rini's belongs to. On the main connection it took the connection's lock and waited for the commit
-of rini's own windows that the main thread, waiting for the same lock, was making: both stopped
-500ms, until SkyLight timed the wait out. `CGWindowList`, which can only read on the main
-connection, is not called. Writes to rini's own windows stay on the main connection, which owns
+**Reads go on a connection of their own.** A window-server read that waits on the last Core
+Animation transaction of the connection it is given (a window query, a SkyLight capture) is made on
+`READ_CONNECTION`, which no window of rini's belongs to. On the main connection it took the
+connection's lock and waited for the commit of rini's own windows that the main thread, waiting for
+the same lock, was making: both stopped 500ms, until SkyLight timed the wait out. A read that waits
+on the main connection whatever it is given (`CGWindowList`, the on-screen list, a space's window
+list, whether a window is ordered in) is not made: the same answer is read another way. Writes to rini's own windows stay on the main connection, which owns
 them. Each call, which connection it takes and why, and the measurements: `window-server-reads.md`.
 
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
