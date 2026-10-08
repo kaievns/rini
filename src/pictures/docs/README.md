@@ -79,8 +79,10 @@ delivery, and a client takes its own by the tag's client.
 
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels
 out and post them back. No capture call is made there: `CGWindowListCreateImage` is proxied through the
-same delivery queue and deadlocks. A handover check's screen is the one `CGWindowListCreateImage` of a
-whole display, made on the thread while a transition settles: it goes through that queue too. Its two
+same delivery queue and deadlocks, and `SLSCaptureWindowsContentsToRectWithOptions` reaches the same
+proxy in its disassembly (`docs/data/2026-10-08-skylight-lock/callgraph.txt`). A handover check's
+screen is one SkyLight capture of every window on a whole display, made on the thread while a
+transition settles. Its two
 pictures, a display's worth each, are drawn and compared on a thread of their own, `handover`, which
 posts the result back like a completion: a press asks its frame zero of the service's thread.
 
@@ -190,7 +192,9 @@ background and is never waited on. A refresh takes whichever its window's place 
 
 **One SkyLight call, two ways of making it.** `SLSHWCaptureWindowList` with several ids returns one
 composite of them, the first listed in front, covering what each has on its display, and calls are
-served one at a time (27ms for one, 122ms for four at once). A batch of windows on screen, none
+served one at a time (27ms for one, 122ms for four at once). It is made on rini's read connection,
+where it costs what it does on the main one and waits on no commit of rini's own windows
+(`src/windows/docs/window-server-reads.md`). A batch of windows on screen, none
 overlapping another, is captured in up to two calls (`capture_on_screen`):
 
 | call | lists | takes | why |

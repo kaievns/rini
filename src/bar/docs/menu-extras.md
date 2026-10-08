@@ -15,9 +15,17 @@ Every extra is a window at the status level (25) owned by the **Control Center**
 the third-party ones. `CGWindowListCopyWindowInfo` finds them only with `kCGWindowListOptionAll`:
 13 to 14 windows, all at `y = -33` while the menu bar is hidden and all reported off-screen.
 `kCGWindowListOptionOnScreenOnly` returns none of them. The listing costs 2.4 to 5.9ms at the
-median, and 15 to 72ms the first time.
+median, and 15 to 72ms the first time. rini lists them on its read connection instead
+(`SLSGetWindowList`, each window's title, its owner's application name), which found the same 14 windows,
+with the same owners, names and bounds, in two runs on a connection of its own
+(`docs/data/2026-10-08-skylight-lock/replace.txt`) ("The read connection answers as the main one
+does" in `src/windows/docs/window-server-reads.md`); what that listing costs is not measured.
+Each owner's name is looked up once while its process has a status window and kept across ticks
+(`OwnerNames`), each lookup in an autorelease pool of its own: the `bar-extras` thread has none, and
+without one every lookup left its application object and its name behind, 7.2MB over 20000 lookups
+(measured by a review probe on 2026-10-08).
 
-`kCGWindowName` is the module for Apple's own (`Clock`, `BentoBox-0`, `Sound`, `WiFi`, `Battery`,
+The window's title (`kCGWindowName`) is the module for Apple's own (`Clock`, `BentoBox-0`, `Sound`, `WiFi`, `Battery`,
 `AudioVideoModule`), and for third-party extras either a bundle id or the anonymous `Item-0`. On the
 day this was measured all eight were anonymous. The window server's `Menubar` window is at level 24,
 owned by `Window Server`, and is not an extra. Every window at level 25 was Control Center's, so the

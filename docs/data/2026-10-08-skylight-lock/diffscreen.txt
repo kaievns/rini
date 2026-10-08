@@ -1,0 +1,6 @@
+main 673199, new 1202303
+screen, 34 windows: differing pixels 455 of 7720704, max channel diff 234, box x 0-25 y 1138-1161 (pixels)
+main 751243, new 1569851
+screen, 34 windows: differing pixels 455 of 7720704, max channel diff 234, box x 0-25 y 1138-1161 (pixels)
+main 415215, new 1436043
+screen, 34 windows: differing pixels 455 of 7720704, max channel diff 234, box x 0-25 y 1138-1161 (pixels)

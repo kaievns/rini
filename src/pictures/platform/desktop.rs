@@ -2,18 +2,14 @@
 //! composited from. The flight overlay draws them behind and over its tiles, and the bar grounds
 //! itself on the desktop. See "The wallpaper is not reliably a window" and "The bar has to be captured
 //! on its own" in `src/pictures/docs/capture-research.md`.
-use objc2_core_foundation::{CFDictionary, CFString, CFType, CGRect};
-use objc2_core_graphics::{
-    CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName,
-    kCGWindowNumber, kCGWindowOwnerName,
-};
+use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowServerId;
 use rini_geometry::CGRectExt;
 use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 
 use crate::pictures::domain::backdrop::{is_bar_layer, is_desktop_layer};
 use crate::windows::domain::listing::overlaps;
-use crate::windows::platform::window_server::{bounds_from_dict, get_num, get_string, get_windows_raw};
+use crate::windows::platform::window_server::{on_screen_windows, owner_name};
 
 /// The windows making up the desktop backdrop, which of them are the wallpaper, and the rect they
 /// cover together.
@@ -38,42 +34,19 @@ pub fn desktop_backdrop_windows(display: ScreenRect) -> DesktopBackdrop {
     let mut windows = Vec::new();
     let mut wallpaper = Vec::new();
     let mut union: Option<CGRect> = None;
-    for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
-        CGWindowListOption::OptionOnScreenOnly,
-        kCGNullWindowID,
-    )
-    .iter()
-    {
-        let Some(layer) = get_num(&window, unsafe { kCGWindowLayer }) else {
-            continue;
-        };
-        if !is_desktop_layer(layer) {
+    for window in on_screen_windows(true) {
+        if !is_desktop_layer(window.level as i64) || !overlaps(window.bounds, display) {
             continue;
         }
-        let Some(bounds) = window
-            .get(unsafe { kCGWindowBounds })
-            .and_then(|bounds| bounds.downcast::<CFDictionary>().ok())
-            .and_then(bounds_from_dict)
-        else {
-            continue;
-        };
-        if !overlaps(bounds, display) {
-            continue;
-        }
-        let Some(id) = get_num(&window, unsafe { kCGWindowNumber }) else {
-            continue;
-        };
         // Owner "Wallpaper" (wallpaper agent) or owner "Dock" with name "Wallpaper-<uuid>".
-        let names_wallpaper =
-            |key| get_string(&window, key).is_some_and(|value: String| value.contains("Wallpaper"));
-        let id = WindowServerId::new(id as u32);
-        if names_wallpaper(unsafe { kCGWindowOwnerName })
-            || names_wallpaper(unsafe { kCGWindowName })
+        let names_wallpaper = |name: &str| name.contains("Wallpaper");
+        if window.title.as_deref().is_some_and(names_wallpaper)
+            || names_wallpaper(&owner_name(window.pid))
         {
-            wallpaper.push(id);
+            wallpaper.push(window.id);
         }
-        union = Some(union.map_or(bounds, |union| union.union(&bounds)));
-        windows.push(id);
+        union = Some(union.map_or(window.bounds, |union| union.union(&window.bounds)));
+        windows.push(window.id);
     }
     DesktopBackdrop {
         windows,
@@ -92,38 +65,17 @@ pub struct BarStrip {
 /// The bar sitting in the menu bar strip, with the rect it occupies.
 pub fn bar_strip(display: ScreenRect) -> BarStrip {
     let display = display.to_cg();
-    let mut windows = Vec::new();
+    let mut windows: Vec<WindowServerId> = Vec::new();
     let mut bounds: Option<CGRect> = None;
-    for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
-        CGWindowListOption::OptionOnScreenOnly,
-        kCGNullWindowID,
-    )
-    .iter()
-    {
-        let Some(layer) = get_num(&window, unsafe { kCGWindowLayer }) else {
-            continue;
-        };
-        if !is_bar_layer(layer) {
+    for window in on_screen_windows(false) {
+        if !is_bar_layer(window.level as i64) || !overlaps(window.bounds, display) {
             continue;
         }
-        let Some(frame) = window
-            .get(unsafe { kCGWindowBounds })
-            .and_then(|bounds| bounds.downcast::<CFDictionary>().ok())
-            .and_then(bounds_from_dict)
-        else {
-            continue;
-        };
-        if !overlaps(frame, display) {
-            continue;
-        }
-        let Some(id) = get_num(&window, unsafe { kCGWindowNumber }) else {
-            continue;
-        };
         bounds = Some(match bounds {
-            Some(union) => union.union(&frame),
-            None => frame,
+            Some(union) => union.union(&window.bounds),
+            None => window.bounds,
         });
-        windows.push(WindowServerId::new(id as u32));
+        windows.push(window.id);
     }
     BarStrip {
         windows,

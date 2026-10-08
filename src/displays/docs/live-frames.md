@@ -4,8 +4,9 @@ The window server tells rini when a window it tracks moves (806, `WindowMoved`) 
 `WindowResized`). `cgs_notify::update_window_notifications` names every tracked window
 (`SLSRequestNotificationsForWindows`), so the stream covers all of them, whoever moved the window.
 A notification names the window and nothing else. `window_notify`'s `window-frames` thread reads the
-frame back (`window_server::server_frame`, `SLSGetWindowBounds`) and hands the batch to every
-`OnServerFrames` callback the application wires.
+frame back (`window_server::server_frame`, `SLSGetWindowBounds`, which for another application's
+window waits on no commit of rini's: `src/windows/docs/window-server-reads.md`) and hands the batch
+to every `OnServerFrames` callback the application wires.
 
 - **One reader.** SkyLight delivers each event type on its own channel, read on its own thread, so
   806 and 807 arrive unordered against each other. The two threads only forward the window id; the

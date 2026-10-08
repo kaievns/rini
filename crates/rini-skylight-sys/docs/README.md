@@ -31,6 +31,14 @@ AppKit order the two ("Ordering a rest window" in
 [`src/decorations/docs/README.md`](../../../src/decorations/docs/README.md)). `SLSOrderWindow` is
 not declared: against another process's window it did nothing (probe P1, same section).
 
+`SLSNewConnection` opens a further connection of rini's own. Every read that waits on the last Core
+Animation transaction of the connection it is given is made on one such, which no window of rini's
+belongs to, because on the main connection it deadlocks with the main thread's commit for 500ms.
+`SLSGetOnScreenWindowList`, `SLSCopyWindowsWithOptionsAndTags` and `SLSWindowIsOrderedIn` wait on
+the main connection whatever they are given, so they are not declared: which calls wait, on which
+connection, what rini reads instead, and why each other call stays on `SLSMainConnectionID`, is
+[`src/windows/docs/window-server-reads.md`](../../../src/windows/docs/window-server-reads.md).
+
 ## Measured behaviour
 
 Capture options and the desktop's levels are recorded in

@@ -5,7 +5,7 @@
 // https://github.com/asmagill/hs._asm.undocumented.spaces/blob/master/CGSSpace.h.
 // https://github.com/koekeishiya/yabai/blob/d55a647913ab72d8d8b348bee2d3e59e52ce4a5d/src/misc/extern.h.
 
-use std::ffi::{c_int, c_uint, c_void};
+use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::num::NonZeroU32;
 
@@ -382,6 +382,8 @@ unsafe extern "C" {
     pub safe fn CGEnableEventStateCombining(enable: bool);
 
     pub fn SLSMainConnectionID() -> cid_t;
+    /// A further connection of this process's own, written to `cid`. Pass 0 for `zero`.
+    pub fn SLSNewConnection(zero: c_int, cid: *mut cid_t) -> CGError;
     pub fn SLSServerPort(zero: *mut c_void) -> u32;
     pub fn SLSWindowManagementBridgeSetDelegate(delegate: *mut c_void) -> CGError;
     pub safe fn SLSDisableUpdate(cid: cid_t) -> i32;
@@ -405,7 +407,6 @@ unsafe extern "C" {
         wcid: *mut c_int,
     ) -> i32;
     pub fn SLSGetCurrentCursorLocation(cid: cid_t, point: *mut CGPoint) -> CGError;
-    pub fn SLSWindowIsOrderedIn(cid: cid_t, wid: u32, ordered: *mut u8) -> CGError;
     pub fn SLSRegisterConnectionNotifyProc(
         cid: cid_t,
         callback: extern "C" fn(u32, *mut c_void, usize, *mut c_void, cid_t),
@@ -418,14 +419,6 @@ unsafe extern "C" {
         window_list: *const u32,
         window_count: i32,
     ) -> i32;
-    pub fn SLSCopyWindowsWithOptionsAndTags(
-        cid: c_int,
-        owner: c_uint,
-        spaces: *mut CFArray<CFNumber>,
-        options: c_uint,
-        set_tags: *mut u64,
-        clear_tags: *mut u64,
-    ) -> *mut CFArray<CFNumber>;
     pub fn SLSManagedDisplaysCopyRoleWindows(
         cid: c_int,
         display_uuids: *mut CFArray<CFString>,
@@ -450,6 +443,27 @@ unsafe extern "C" {
     pub fn SLSWindowQuerySetValue(query: *mut CFType, key: *mut CFString, value: *mut CFType);
     pub fn SLSWindowQueryRun(cid: c_int, query: *mut CFType, flags: c_int) -> *mut CFType;
     pub fn SLSWindowQueryResultCopyWindows(query: *mut CFType) -> *mut CFType;
+    /// `target_cid`'s windows or, with 0, every connection's, front to back: with `on_screen` 1, those
+    /// on screen. Up to `count` written to `list` and how many to `out_count`; `tags_size` is 64.
+    pub fn SLSGetWindowListWithTags(
+        cid: cid_t,
+        target_cid: cid_t,
+        count: c_int,
+        list: *mut u32,
+        out_count: *mut c_int,
+        on_screen: c_int,
+        set_tags: *mut u64,
+        clear_tags: *mut u64,
+        tags_size: c_int,
+    ) -> CGError;
+    /// Every window, on screen or not, of `target_cid`'s or, with 0, of every connection.
+    pub fn SLSGetWindowList(
+        cid: cid_t,
+        target_cid: cid_t,
+        count: c_int,
+        list: *mut u32,
+        out_count: *mut c_int,
+    ) -> CGError;
 
     pub fn SLSWindowIteratorAdvance(iterator: *mut CFType) -> bool;
     pub fn SLSWindowIteratorGetParentID(iterator: *mut CFType) -> u32;
@@ -461,6 +475,8 @@ unsafe extern "C" {
     pub fn SLSWindowIteratorGetPID(iterator: *mut CFType) -> c_int;
     pub fn SLSWindowIteratorGetBounds(iterator: *mut CFType) -> CGRect;
     pub fn SLSWindowIteratorGetAlpha(iterator: *mut CFType) -> f32;
+    /// The current window's title, +1, or null; only from a query asked with flag bit 0.
+    pub fn SLSWindowIteratorCopyTitle(iterator: *mut CFType) -> *mut CFString;
     pub fn SLSWindowIteratorGetConstraints(
         iterator: *mut CFType,
         min: *mut CGSize,

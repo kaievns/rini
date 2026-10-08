@@ -435,6 +435,139 @@ fn no_accessibility_element_is_ever_logged() {
     );
 }
 
+/// The SkyLight reads that wait on the last Core Animation transaction of the connection they are
+/// given, found by disassembly (`docs/data/2026-10-08-skylight-lock/callgraph.txt`).
+const WAITS_ON_CORE_ANIMATION: [&str; 4] = [
+    "SLSWindowQueryWindows",
+    "SLSWindowQueryRun",
+    "SLSHWCaptureWindowList",
+    "SLSCaptureWindowsContentsToRectWithOptions",
+];
+
+/// The first argument of every call to `name` in `lines`, which may run across lines.
+fn first_arguments(lines: &[(usize, String)], name: &str) -> Vec<(usize, String)> {
+    let text: Vec<&str> = lines.iter().map(|(_, code)| code.as_str()).collect();
+    let mut found = Vec::new();
+    for (i, (line, code)) in lines.iter().enumerate() {
+        let mut from = 0;
+        while let Some(at) = code[from..].find(&format!("{name}(")) {
+            let start = from + at + name.len() + 1;
+            from = start;
+            if code[..start].trim_end_matches(&format!("{name}(")).trim_end().ends_with("fn") {
+                continue;
+            }
+            let rest = std::iter::once(&code[start..]).chain(text[i + 1..].iter().copied());
+            let joined: String = rest.collect::<Vec<_>>().join(" ");
+            let end = joined.find([',', ')']).unwrap_or(joined.len());
+            found.push((*line, joined[..end].trim().to_string()));
+        }
+    }
+    found
+}
+
+/// Every read that waits on Core Animation is made on rini's read connection.
+///
+/// On the main connection such a read takes the connection's lock and waits for the last transaction
+/// a commit of rini's own windows entangled, while the main thread's commit waits for the lock: both
+/// stall 500ms, until SkyLight times the wait out. See "Reads go on a connection of their own" in
+/// `src/windows/docs/README.md`.
+#[test]
+fn a_read_that_waits_on_core_animation_is_made_on_the_read_connection() {
+    let mut broken = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for path in rust_files(Path::new("src")) {
+        let lines = code_lines(&path);
+        for name in WAITS_ON_CORE_ANIMATION {
+            for (line, argument) in first_arguments(&lines, name) {
+                seen.insert(name);
+                if argument != "*READ_CONNECTION" {
+                    broken.push(format!("{}:{line}: {name}({argument}, ..)", slash(&path)));
+                }
+            }
+        }
+    }
+    let unseen: Vec<&str> = WAITS_ON_CORE_ANIMATION
+        .iter()
+        .copied()
+        .filter(|name| !seen.contains(name))
+        .collect();
+    assert!(
+        unseen.is_empty(),
+        "no call to these is found any more, so this test checks nothing of them. Drop them from \
+         WAITS_ON_CORE_ANIMATION:\n{}",
+        unseen.join("\n")
+    );
+    assert!(
+        broken.is_empty(),
+        "these wait on the connection's last Core Animation transaction, so on rini's main connection \
+         they deadlock with the main thread's commit for 500ms. Pass `*READ_CONNECTION` itself, not a \
+         copy of it. See \"Reads go on a connection of their own\" in src/windows/docs/README.md:\n{}",
+        broken.join("\n")
+    );
+}
+
+/// The reads that wait on the main connection's last Core Animation transaction whatever
+/// connection they are given, or that take none (`docs/data/2026-10-08-skylight-lock/callgraph.txt`,
+/// `CGWindowList`'s as `SLWindowList*`).
+const WAITS_ON_THE_MAIN_CONNECTION: [&str; 5] = [
+    "CGWindowListCopyWindowInfo",
+    "CGWindowListCreateImage",
+    "SLSGetOnScreenWindowList",
+    "SLSWindowIsOrderedIn",
+    "SLSCopyWindowsWithOptionsAndTags",
+];
+
+/// No read is made that waits on the main connection whatever it is given.
+///
+/// It stalls with the main thread's commit for 500ms as a read on the main connection does. Each has
+/// a read on the read connection that answers the same; see "Which reads wait, and on which
+/// connection" in `src/windows/docs/window-server-reads.md`.
+#[test]
+fn no_read_waits_on_the_main_connection_whatever_it_is_given() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src")).into_iter().chain(rust_files(Path::new("crates"))) {
+        for (line, code) in code_lines(&path) {
+            for name in WAITS_ON_THE_MAIN_CONNECTION {
+                if code.contains(name) {
+                    broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "these wait on the main connection's last Core Animation transaction whatever connection \
+         they are given. Read on `READ_CONNECTION` instead (`on_screen_windows`, `every_window`, \
+         `window_ordered_in`, `space_window_list_for_connection`, `capture_rect`). See \"Which reads \
+         wait, and on which connection\" in src/windows/docs/window-server-reads.md:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_first_argument_is_read_across_lines_and_never_from_a_declaration() {
+    let lines: Vec<(usize, String)> = [
+        "pub fn SLSWindowQueryRun(cid: c_int, query: *mut CFType) -> *mut CFType;",
+        "let a = unsafe { SLSWindowQueryRun(*G_CONNECTION, query, 0) };",
+        "SLSWindowQueryRun(",
+        "*READ_CONNECTION,",
+        "query)",
+        "SLSWindowQueryRun(SLSMainConnectionID())",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(n, code)| (n + 1, code.to_string()))
+    .collect();
+    assert_eq!(
+        first_arguments(&lines, "SLSWindowQueryRun"),
+        vec![
+            (2, "*G_CONNECTION".to_string()),
+            (3, "*READ_CONNECTION".to_string()),
+            (6, "SLSMainConnectionID(".to_string()),
+        ]
+    );
+}
+
 /// Every spec is reachable from the index, and the index names nothing that is missing.
 ///
 /// A spec nobody links to is a spec nobody reads, and `specs/README.md` is the only way in. The rule

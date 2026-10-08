@@ -198,8 +198,11 @@ that wear them in windows of its own, one above each, holding `Bands` laid exact
 clear, with no shadow, collection `[.moveToActiveSpace, .transient, .ignoresCycle,
 .fullScreenNone]`: `.transient` has Mission Control, App Exposé and Show Desktop hide a rest window
 before the reactor's alpha 0 reaches it, where a managed one would be laid out as a window of its
-own, and `.stationary` would leave it over the thumbnails. Each holds a flipped view whose layer
-holds the band at its window's frame. A rest window's frame is the band's outer rect cut to its
+own, and `.stationary` would leave it over the thumbnails. A rest window's frame change leaving a
+Core Animation transaction pending on the main connection, which a read made on it waits for, is
+inferred from a repro outside rini, where a window's frame change did; rini reads windows on a
+connection of its own (`src/windows/docs/window-server-reads.md`). Each holds a flipped view whose
+layer holds the band at its window's frame. A rest window's frame is the band's outer rect cut to its
 window's display (`shape::rest_frame`), so a ring at the display's edge draws nothing onto the next
 one. Rest windows are made as a model arrives, never from a frame, a lift or under the overlay: a
 model that comes under the overlay waits for the lift, and a pool the lift leaves short is made in
@@ -293,7 +296,10 @@ raise, the key window's turn and each park's patience, each a full draw of every
 its window-server reads and orders. A 10s sample of rini at rest on 2026-10-08, while Kai typed and
 no flight ran, held 13 of 7216 main-thread samples in `RestBorders::take`, 9 of them in
 `SLSWindowQueryWindows` waiting on `SLSConnectionSynchronizeSLSCATransaction`'s lock, the read
-`StackPlace::of` and `corner_radii` make, and 3 in the turn's commit; the frames were symbolised
+`StackPlace::of` and `corner_radii` make, and 3 in the turn's commit. That lock was the main
+connection's, which those reads then shared with the rest windows' own commits; they now go on
+rini's read connection, whose lock no commit of rini's takes ("Reads go on a connection of their
+own" in `src/windows/docs/README.md`). The frames were symbolised
 against a rebuild of the same commit, so their names are inferred
 ([`docs/data/2026-10-08-smoothness/`](../../../docs/data/2026-10-08-smoothness/), with the journal's
 drains split by where in their flight they fall). At the lift the renderer calls

@@ -1,0 +1,12 @@
+mode=main queries=6567 worst_query=500.4ms slow_queries=3 turns=5675 worst_turn_gap=501.2ms slow_turns=4
+mode=new queries=23690 worst_query=18.4ms slow_queries=0 turns=6014 worst_turn_gap=66.3ms slow_turns=1
+mode=main queries=3819 worst_query=500.0ms slow_queries=3 turns=4966 worst_turn_gap=500.3ms slow_turns=4
+mode=new queries=24224 worst_query=29.1ms slow_queries=0 turns=6047 worst_turn_gap=76.4ms slow_turns=1
+mode=main queries=4983 worst_query=503.6ms slow_queries=6 turns=5016 worst_turn_gap=506.2ms slow_turns=7
+mode=new queries=23345 worst_query=16.0ms slow_queries=0 turns=6055 worst_turn_gap=63.3ms slow_turns=1
+mode=main queries=4484 worst_query=500.5ms slow_queries=4 turns=5248 worst_turn_gap=501.5ms slow_turns=5
+mode=new queries=23989 worst_query=16.7ms slow_queries=0 turns=5934 worst_turn_gap=57.2ms slow_turns=1
+mode=main queries=3969 worst_query=502.2ms slow_queries=4 turns=5201 worst_turn_gap=502.9ms slow_turns=5
+mode=new queries=22631 worst_query=15.2ms slow_queries=0 turns=6006 worst_turn_gap=69.6ms slow_turns=1
+mode=main queries=3643 worst_query=501.1ms slow_queries=3 turns=5230 worst_turn_gap=501.8ms slow_turns=4
+mode=new queries=22964 worst_query=17.5ms slow_queries=0 turns=6030 worst_turn_gap=63.6ms slow_turns=1

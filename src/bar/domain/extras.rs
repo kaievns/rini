@@ -7,11 +7,39 @@
 //! module (`WiFi`, `Battery`) or anonymously (`Item-0`). All of them are pictured in one capture a
 //! tick, cut apart here. See `src/bar/docs/menu-extras.md`.
 
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::pid_t;
 use rini_geometry::CGRectExt;
+
+/// Each status window owner's name by its pid, kept from one listing to the next so an owner is
+/// looked up once while it runs. A pid no status window of a listing names is dropped: its process
+/// quit or left the menu bar, and the pid may come back as another process.
+#[derive(Debug, Default)]
+pub struct OwnerNames {
+    names: HashMap<pid_t, String>,
+}
+
+impl OwnerNames {
+    /// The owner names of `pids`, one listing's status windows in order, each looked up only if it
+    /// was not named in the last listing.
+    pub fn of(&mut self, pids: &[pid_t], mut look_up: impl FnMut(pid_t) -> String) -> Vec<String> {
+        let mut kept = HashMap::with_capacity(pids.len());
+        let names = pids
+            .iter()
+            .map(|&pid| {
+                kept.entry(pid)
+                    .or_insert_with(|| self.names.remove(&pid).unwrap_or_else(|| look_up(pid)))
+                    .clone()
+            })
+            .collect();
+        self.names = kept;
+        names
+    }
+}
 
 /// The three extras drawn as vitals, beside the clock, rather than in the tray.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -57,7 +85,7 @@ pub const MAX_WIDTH: f64 = 300.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusWindow {
     pub owner: String,
-    /// `kCGWindowName`: the module, a bundle id, or `Item-0`.
+    /// The window's title: the module, a bundle id, or `Item-0`.
     pub name: String,
     /// Left edge on the menu bar, which is the order the extras are drawn in.
     pub x: f64,
@@ -345,6 +373,21 @@ impl Schedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_owner_is_looked_up_once_while_it_lists_and_again_after_it_does_not() {
+        let mut names = OwnerNames::default();
+        let mut asked = Vec::new();
+        let mut look_up = |pid: pid_t| {
+            asked.push(pid);
+            format!("app {pid}")
+        };
+        assert_eq!(names.of(&[10, 10, 20], &mut look_up), vec!["app 10", "app 10", "app 20"]);
+        assert_eq!(names.of(&[20, 10], &mut look_up), vec!["app 20", "app 10"]);
+        assert_eq!(names.of(&[20], &mut look_up), vec!["app 20"]);
+        assert_eq!(names.of(&[10, 20], &mut look_up), vec!["app 10", "app 20"]);
+        assert_eq!(asked, vec![10, 20, 10], "10 again only once a listing went without it");
+    }
 
     /// On the built-in display's hidden menu bar.
     fn status(name: &str, x: f64) -> StatusWindow {

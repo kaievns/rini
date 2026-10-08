@@ -1,0 +1,35 @@
+# rini pid 77575, 4cddd692 (target/release/rini sha1 40a66589...), sampled 2026-10-08 with `sample <pid> {1,3} 1`.
+# rini frames symbolised by aligning LC_FUNCTION_STARTS of the deployed (stripped) binary with an unstripped rebuild of
+# 4cddd692 at /tmp/rini-night/stall/tgt/release/rini (8491/8492 functions; every frame below mapped "exact"), then atos -i.
+# Counts are from stall-3/a-4.txt (3s window, 2291 main-thread samples ~ 1.31ms each).
+
+## main thread: 403 samples ~ 528ms
+start (dyld)
+ rini::main (main.rs:546) -> rini_runloop::executor::Executor::run_main (executor.rs:60)
+  -[NSApplication run] -> nextEventMatchingMask -> _DPSNextEvent -> ... -> __CFRunLoopRun
+   __CFRunLoopDoSources0 -> UC::DriverCore::continueProcessing() (UpdateCycle)
+    stepTransactionFlush (AppKit)
+     CA::Transaction::flush_as_runloop_observer(bool) -> CA::Transaction::commit()
+      CA::Context::commit_transaction -> CA::Transaction::run_commit_handlers(CATransactionPhase)
+       __39+[_NSCGSTransaction currentTransaction]_block_invoke.26 (AppKit)
+        NSCGSTransactionRunPreCommitActions_ (AppKit)
+         sls_transaction_commit_ca(_SLSTransaction*, bool) (SkyLight) + 588
+          SLSConnectionSetLastSLSCATransaction (SkyLight) + 36
+           _os_unfair_lock_lock_slow -> __ulock_wait2          <-- 403 samples
+
+## reactor thread: 405 samples, same window (holds the connection lock while waiting)
+thread_start -> Reactor::spawn (reactor/mod.rs:632) -> Executor::run -> Reactor::run (mod.rs:1144) -> run_reactor_loop (mod.rs:1153)
+ Reactor::handle_batch -> handle_loop_event (mod.rs:1186) -> handle_event (mod.rs:1321) -> dispatch_workflow (mod.rs:1520, Event::ApplyOverlayFrames)
+  Reactor::apply_overlay_frames (mod.rs:3665-3666)
+   windows::platform::window_server::get_windows (window_server.rs:522)
+    WindowIterator::new -> new_from_cfarray (window_server.rs:121,127; SLSWindowQueryWindows(*G_CONNECTION,...) at :126)
+     SLSWindowQueryWindows (SkyLight) + 104
+      run_query (SkyLight) + 152
+       SLSConnectionSynchronizeSLSCATransaction (SkyLight) + 44
+        _SLSTransactionWaitSource(_SLSTransaction*, bool) (SkyLight) + 156
+         mach_msg -> mach_msg2_trap                           <-- 405 samples
+
+## transitions thread: 126 samples, same window (queued on the same lock)
+FlightEngine::run (engine.rs:873) -> FlightEngine::handle (engine.rs:935) -> FlightEngine::tick (engine.rs:2127)
+ FlightEngine::handover (engine.rs:2245-2248) -> window_server::get_windows -> SLSWindowQueryWindows -> run_query
+  SLSConnectionSynchronizeSLSCATransaction (SkyLight) + 32 -> _os_unfair_lock_lock_slow -> __ulock_wait2   <-- 126 samples

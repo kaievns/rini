@@ -1,0 +1,77 @@
+# Which connection each wait is on: every call to SLSMainConnection(ID), CGSConnectionByID,
+# SLSConnectionSynchronizeSLSCATransaction, CGSWindowSynchronizeSLSCATransaction and CGSWindowGetMappedImpl, with
+# the branch on the cid argument before it, from lldb's disassembly of SkyLight on 2026-10-08 (macOS 26.7.1).
+
+SkyLight`run_query:
+  <+100>:  bl     0x19095d3c8               ; CGSConnectionByID
+  <+148>:  bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+  <+656>:  cbnz   w0, 0x190dd2d88           ; <+828>
+  <+716>:  cbz    x0, 0x190dd2d44           ; <+760>
+
+SkyLight`hw_capture_window_list_common:
+  <+100>:  cbnz   w0, 0x190965634           ; <+112>
+  <+104>:  bl     0x190ca0598               ; SLSMainConnectionID
+  <+292>:  cbnz   w19, 0x1909656f8          ; <+308>
+  <+300>:  bl     0x19095d3c8               ; CGSConnectionByID
+  <+304>:  bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+  <+392>:  cbz    x0, 0x1909657bc           ; <+504>
+  <+400>:  cbz    x0, 0x1909657bc           ; <+504>
+  <+444>:  cbz    x0, 0x1909659c0           ; <+1020>
+  <+620>:  cbnz   w0, 0x190965898           ; <+724>
+  <+916>:  cbz    x0, 0x190965960           ; <+924>
+
+SkyLight`SLSCaptureWindowsContentsToRectWithOptions:
+  <+316>: cbnz   w22, 0x190b342a8          ; <+328>
+  <+320>: bl     0x190ca0598               ; SLSMainConnectionID
+  <+332>: bl     0x19095d3c8               ; CGSConnectionByID
+  <+336>: bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+  <+496>: cbnz   w0, 0x190b34450           ; <+752>
+  <+544>: cbnz   w0, 0x190b34490           ; <+816>
+
+SkyLight`GetWindowBounds:
+  <+132>: bl     0x190c9d784               ; SLSMainConnection
+  <+144>: bl     0x190c711f8               ; CGSWindowGetMappedImpl
+  <+148>: cbz    x0, 0x190c87274           ; <+292>
+  <+180>: bl     0x190c71a04               ; CGSWindowSynchronizeSLSCATransaction
+  <+492>: cbnz   w22, 0x190c87414          ; <+708>
+  <+652>: cbnz   w22, 0x190c874cc          ; <+892>
+  <+760>: cbnz   w22, 0x190c874cc          ; <+892>
+  <+840>: cbnz   w0, 0x190c873d8           ; <+648>
+  <+960>: cbnz   w22, 0x190c87440          ; <+752>
+
+SkyLight`CGSWindowSynchronizeSLSCATransaction:
+SkyLight`CGSWindowSynchronizeSLSCATransaction:
+  <+16>:  cbz    x0, 0x190c71a60           ; <+92>
+  <+52>:  bl     0x19095d3c8               ; CGSConnectionByID
+  <+56>:  bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+
+SkyLight`SLSWindowIsOrderedIn:
+  <+64>:  bl     0x190c9d784               ; SLSMainConnection
+  <+68>:  bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+  <+72>:  bl     0x190c9d784               ; SLSMainConnection
+  <+84>:  bl     0x190c711f8               ; CGSWindowGetMappedImpl
+  <+88>:  cbz    x0, 0x190c8389c           ; <+136>
+
+SkyLight`SLSCopyWindowsWithOptionsAndTags:
+  <+64>:  bl     0x190c9d784               ; SLSMainConnection
+  <+68>:  bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+
+SkyLight`SLSGetOnScreenWindowList:
+  <+64>:  bl     0x190c9d784               ; SLSMainConnection
+  <+68>:  bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+
+SkyLight`SLSGetWindowListWithTags:
+
+SkyLight`SLSGetWindowList:
+
+SkyLight`SLWindowListCopyWindowInfo:
+  <+56>:  bl     0x190c9d784               ; SLSMainConnection
+  <+60>:  bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+
+SkyLight`SLWindowListCreateImage:
+  <+200>: bl     0x190c9d784               ; SLSMainConnection
+  <+204>: bl     0x190ca39c8               ; SLSConnectionSynchronizeSLSCATransaction
+  <+300>: cbz    x0, 0x190b33038           ; <+464>
+  <+308>: cbz    x0, 0x190b33038           ; <+464>
+  <+356>: cbz    x0, 0x190b33204           ; <+924>
+  <+624>: cbnz   w0, 0x190b331ac           ; <+836>

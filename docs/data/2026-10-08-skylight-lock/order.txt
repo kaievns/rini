@@ -1,0 +1,3 @@
+new first: new 1572075 (err 0), second new 673111 (err 0), main 1572075
+main first: main 1569991, new 325767 (err 0), main again 1569991
+NSApp first: new 1058891 (err 0), main 1080467

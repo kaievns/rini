@@ -9,14 +9,9 @@ use libc::{RTLD_DEFAULT, dlsym};
 use objc2_app_kit::{NSNormalWindowLevel, NSWindowLevel};
 use objc2_application_services::AXError;
 use objc2_core_foundation::{
-    CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, Type,
+    CFArray, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, Type,
 };
-#[cfg(not(test))]
-use objc2_core_graphics::CGWindowListCopyWindowInfo;
-use objc2_core_graphics::{
-    CGError, CGWindowID, CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
-    kCGWindowNumber, kCGWindowOwnerPID,
-};
+use objc2_core_graphics::CGError;
 use once_cell::sync::Lazy;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::CGRectExt;
@@ -33,6 +28,34 @@ use crate::windows::platform::process::ProcessSerialNumber;
 use crate::windows::platform::sub_level::window_sub_level;
 
 static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
+/// A connection of rini's own that no window of rini's belongs to, for every read that waits on the
+/// connection's last Core Animation transaction. On the main one such a read deadlocks with the main
+/// thread's commit for 500ms ("Reads go on a connection of their own" in `src/windows/docs/README.md`).
+/// The main connection is made first: the first `SLSNewConnection` in a process becomes the main one.
+pub static READ_CONNECTION: Lazy<i32> = Lazy::new(|| {
+    let main = *G_CONNECTION;
+    let mut cid = 0;
+    let err = unsafe { SLSNewConnection(0, &mut cid) };
+    let read = opened_or(err, cid, main);
+    if read == main {
+        tracing::warn!(
+            ?err,
+            cid,
+            "no SkyLight connection of rini's own; window reads share the main one"
+        );
+    }
+    read
+});
+
+/// The connection `SLSNewConnection` answered `err` and `cid` for, or `main` when it opened none of
+/// rini's own: an error, no id, or the main connection's id.
+fn opened_or(err: CGError, cid: i32, main: i32) -> i32 {
+    if err == CGError::Success && cid != 0 && cid != main {
+        cid
+    } else {
+        main
+    }
+}
 static LAST_WINDOWSERVER_ACTIVITY_US: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 thread_local! {
@@ -123,7 +146,7 @@ impl WindowIterator {
 
     /// `flags` controls optional result decoding; bit 0 requests window titles.
     fn new_from_cfarray(cf_numbers: *mut CFArray<CFNumber>, flags: c_int) -> Option<Self> {
-        let query = unsafe { SLSWindowQueryWindows(*G_CONNECTION, cf_numbers, flags) };
+        let query = unsafe { SLSWindowQueryWindows(*READ_CONNECTION, cf_numbers, flags) };
         if query.is_null() {
             return None;
         }
@@ -185,6 +208,12 @@ impl WindowIterator {
         unsafe { SLSWindowIteratorGetBounds(self.iter) }
     }
 
+    /// The current window's title, from a query asked with flag bit 0.
+    pub fn title(&self) -> Option<String> {
+        let title = NonNull::new(unsafe { SLSWindowIteratorCopyTitle(self.iter) })?;
+        Some(unsafe { CFRetained::from_raw(title) }.to_string())
+    }
+
     #[inline]
     pub fn alpha(&self) -> f32 {
         unsafe { SLSWindowIteratorGetAlpha(self.iter) }
@@ -197,7 +226,7 @@ impl WindowIterator {
     }
 
     #[inline]
-    #[allow(dead_code)]
+    #[cfg_attr(test, allow(dead_code))]
     pub fn attributes(&self) -> u64 {
         unsafe { SLSWindowIteratorGetAttributes(self.iter) }
     }
@@ -347,7 +376,7 @@ fn window_query_run(filter: &WindowQueryFilter<'_>) -> Option<WindowIterator> {
         }
     }
 
-    let result = unsafe { SLSWindowQueryRun(*G_CONNECTION, query, filter.query_flags) };
+    let result = unsafe { SLSWindowQueryRun(*READ_CONNECTION, query, filter.query_flags) };
     let iterator = if result.is_null() {
         std::ptr::null_mut()
     } else {
@@ -442,51 +471,165 @@ pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
 
 #[cfg(not(test))]
 pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
-    let mut ordered: u8 = 0;
-    if let Ok(_) = cg_ok(unsafe { SLSWindowIsOrderedIn(*G_CONNECTION, id.as_u32(), &mut ordered) })
-    {
-        return Some(ordered != 0);
+    let query = WindowIterator::new(&[id])?;
+    if query.advance()?.window_id() != id.as_u32() {
+        return None;
     }
+    Some(attributes_ordered_in(query.attributes()))
+}
 
-    None
+/// The iterator attribute set on a window that is ordered in: it agreed with `SLSWindowIsOrderedIn`,
+/// which waits on the main connection whatever it is given, for all 177 windows asked ("Which reads
+/// wait, and on which connection" in `src/windows/docs/window-server-reads.md`).
+const ORDERED_IN_ATTRIBUTE: u64 = 1 << 1;
+
+/// Whether a window whose iterator attributes are `attributes` is ordered in.
+fn attributes_ordered_in(attributes: u64) -> bool {
+    attributes & ORDERED_IN_ATTRIBUTE != 0
 }
 
 pub fn window_is_ordered_in(id: WindowServerId) -> bool {
     window_ordered_in(id).unwrap_or(false)
 }
 
-/// A test lists no windows: every listing the desktop, the bar, the menu extras, the warm and the
-/// debug slide are read from answers none. See "A unit test must not read the live window server" in
-/// `docs/testing.md`.
-#[cfg(test)]
-pub fn get_windows_raw<T: Type>(
-    _options: CGWindowListOption,
-    _relative_to_window: CGWindowID,
-) -> CFRetained<CFArray<T>> {
-    CFArray::empty()
+/// A window as a listing of the window server names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listed {
+    pub id: WindowServerId,
+    pub level: i32,
+    pub pid: pid_t,
+    pub bounds: CGRect,
+    /// Its title, when the listing asked for titles and the window has one.
+    pub title: Option<String>,
 }
 
+/// `kCGDesktopIconWindowLevel`, the Finder's desktop icons: a window at it or below is a desktop
+/// element, which a list of every window on screen keeps ("The read connection answers as the main
+/// one does" in `src/windows/docs/window-server-reads.md`).
+const DESKTOP_ICON_LEVEL: i32 = -2147483603;
+
+/// Whether a window at `level` is part of the desktop: its icons, the wallpaper, the backstop.
+pub fn is_desktop_element(level: i32) -> bool {
+    level <= DESKTOP_ICON_LEVEL
+}
+
+/// `described`, in the order `ids` lists the windows, and only those `ids` lists.
+fn in_listed_order(ids: &[u32], described: Vec<Listed>) -> Vec<Listed> {
+    let position: std::collections::HashMap<u32, usize> =
+        ids.iter().enumerate().map(|(at, id)| (*id, at)).collect();
+    let mut listed: Vec<(usize, Listed)> = described
+        .into_iter()
+        .filter_map(|window| Some((*position.get(&window.id.as_u32())?, window)))
+        .collect();
+    listed.sort_by_key(|(at, _)| *at);
+    listed.into_iter().map(|(_, window)| window).collect()
+}
+
+/// The ids of every window on screen or, not `on_screen`, of every window, front to back. Asked again
+/// with more room while the list fills what it is given.
 #[cfg(not(test))]
-pub fn get_windows_raw<T: Type>(
-    options: CGWindowListOption,
-    relative_to_window: CGWindowID,
-) -> CFRetained<CFArray<T>> {
-    unsafe {
-        // TODO: cgwindowlistcopywindowinfo does not appear to order windows properly
-        // SAFETY: this will almost always return (pre objc2 was not a result and just a cfarray)
-        if let Some(windows) = CGWindowListCopyWindowInfo(options, relative_to_window) {
-            CFRetained::cast_unchecked(windows)
-        } else {
-            CFArray::empty()
+fn window_list(on_screen: bool) -> Vec<u32> {
+    let mut room = 512usize;
+    loop {
+        let mut ids = vec![0u32; room];
+        let (list, mut count) = (ids.as_mut_ptr(), 0 as c_int);
+        let (mut set_tags, mut clear_tags) = (0u64, 0u64);
+        let err = unsafe {
+            if on_screen {
+                SLSGetWindowListWithTags(
+                    *READ_CONNECTION,
+                    0,
+                    room as c_int,
+                    list,
+                    &mut count,
+                    1,
+                    &mut set_tags,
+                    &mut clear_tags,
+                    64,
+                )
+            } else {
+                SLSGetWindowList(*READ_CONNECTION, 0, room as c_int, list, &mut count)
+            }
+        };
+        if cg_ok(err).is_err() {
+            return Vec::new();
         }
+        let count = count.max(0) as usize;
+        if count < room || room >= 1 << 16 {
+            ids.truncate(count.min(room));
+            return ids;
+        }
+        room *= 2;
     }
 }
 
-pub fn get_visible_windows_raw<T: Type>() -> CFRetained<CFArray<T>> {
-    get_windows_raw(
-        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements,
-        kCGNullWindowID,
-    )
+/// `ids` described in one query, in the order given; with `titles`, each window's title as well.
+#[cfg(not(test))]
+fn describe(ids: &[u32], titles: bool) -> Vec<Listed> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let cf_numbers = cf_array_from_u64s(&ids.iter().map(|&id| id as u64).collect::<Vec<_>>());
+    let Some(query) =
+        WindowIterator::new_from_cfarray(CFRetained::as_ptr(&cf_numbers).as_ptr(), titles as c_int)
+    else {
+        return Vec::new();
+    };
+    let mut described = Vec::with_capacity(ids.len());
+    while query.advance().is_some() {
+        described.push(Listed {
+            id: WindowServerId::new(query.window_id()),
+            level: query.level(),
+            pid: query.pid(),
+            bounds: query.bounds(),
+            title: titles.then(|| query.title()).flatten(),
+        });
+    }
+    in_listed_order(ids, described)
+}
+
+/// Every window on screen, front to back, the desktop's included.
+///
+/// A test lists no windows: every listing the desktop, the bar, the menu extras, the warm and the
+/// debug slide are read from answers none. See "A unit test must not read the live window server" in
+/// `docs/testing.md`.
+pub fn on_screen_windows(titles: bool) -> Vec<Listed> {
+    #[cfg(test)]
+    {
+        let _ = titles;
+        Vec::new()
+    }
+    #[cfg(not(test))]
+    describe(&window_list(true), titles)
+}
+
+/// Every window the window server has, on screen or not. None in a test, as for `on_screen_windows`.
+pub fn every_window(titles: bool) -> Vec<Listed> {
+    #[cfg(test)]
+    {
+        let _ = titles;
+        Vec::new()
+    }
+    #[cfg(not(test))]
+    describe(&window_list(false), titles)
+}
+
+/// The name a window's owner goes by, as the window server's own window list names it: the
+/// application's, or its process's when it is none. In a pool of its own: the threads that ask have
+/// none, and the application and its name are autoreleased.
+pub fn owner_name(pid: pid_t) -> String {
+    use crate::windows::platform::app::NSRunningApplicationExt;
+    let named = objc2::rc::autoreleasepool(|_| {
+        objc2_app_kit::NSRunningApplication::with_process_id(pid)
+            .and_then(|app| app.localized_name())
+            .map(|name| name.to_string())
+    });
+    if let Some(name) = named {
+        return name;
+    }
+    let mut name = [0u8; 256];
+    let len = unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+    String::from_utf8_lossy(&name[..len.max(0) as usize]).into_owned()
 }
 
 /// Every window at the origin, 800x600, unless a test sets its frame with
@@ -586,48 +729,23 @@ pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
 /// `src/animation/docs/capture-overlay-research.md`).
 pub fn server_frame(id: WindowServerId) -> Option<CGRect> {
     let mut frame = CGRect::default();
-    let read = unsafe { SLSGetWindowBounds(*G_CONNECTION, id.as_u32(), &mut frame) };
+    let read = unsafe { SLSGetWindowBounds(*READ_CONNECTION, id.as_u32(), &mut frame) };
     (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
 }
 
-pub fn get_num(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<i64> {
-    dict.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
-}
-
-pub fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
-    Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
-}
-
-/// Reads a `kCGWindowBounds` dictionary, whose keys are the plain strings X, Y, Width and Height.
-///
-/// Parsed by hand because the geometry helper that would do this is not exposed by the bindings in
-/// use. Returns `None` if any component is missing, since a partially read frame would place a
-/// window somewhere arbitrary rather than fail visibly.
-pub fn bounds_from_dict(dict: CFRetained<CFDictionary>) -> Option<CGRect> {
-    // The untyped CFDictionary carries no key or value types, so retype it the same way
-    // get_windows_raw does before reading it.
-    // SAFETY: a kCGWindowBounds dictionary has CFString keys and CFNumber values.
-    let dict: CFRetained<CFDictionary<CFString, CFType>> =
-        unsafe { CFRetained::cast_unchecked(dict) };
-    let component = |name: &str| -> Option<f64> {
-        let key = CFString::from_str(name);
-        dict.get(&key)?.downcast::<CFNumber>().ok()?.as_f64()
-    };
-    Some(CGRect::new(
-        CGPoint::new(component("X")?, component("Y")?),
-        CGSize::new(component("Width")?, component("Height")?),
-    ))
-}
-
-/// Front-to-back position of every on-screen window, 0 being frontmost.
-/// `CGWindowListCopyWindowInfo` lists on-screen windows front to back, so the index is the depth.
+/// Front-to-back position of every on-screen window but the desktop's, 0 being frontmost.
 #[cfg(not(test))]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
-    get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
-        .iter()
-        .filter_map(|window| get_num(&window, unsafe { kCGWindowNumber }).map(|id| id as u32))
+    depths(on_screen_windows(false))
+}
+
+/// The depth of each window in `listed`, a list front to back, counting none of the desktop's.
+fn depths(listed: Vec<Listed>) -> std::collections::HashMap<u32, usize> {
+    listed
+        .into_iter()
+        .filter(|window| !is_desktop_element(window.level))
         .enumerate()
-        .map(|(depth, id)| (id, depth))
+        .map(|(depth, window)| (window.id.as_u32(), depth))
         .collect()
 }
 
@@ -686,19 +804,18 @@ pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) 
 /// The windows on screen a listing names as on `display` (`listing::listed`), with their frames.
 pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRect)> {
     let own = std::process::id() as pid_t;
-    get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
-        .iter()
-        .filter_map(|window| {
-            let id = get_num(&window, unsafe { kCGWindowNumber })? as u32;
-            let bounds = window
-                .get(unsafe { kCGWindowBounds })?
-                .downcast::<CFDictionary>()
-                .ok()
-                .and_then(bounds_from_dict)?;
-            let layer = get_num(&window, unsafe { kCGWindowLayer });
-            let owner = get_num(&window, unsafe { kCGWindowOwnerPID }).map(|pid| pid as pid_t);
-            listed(layer, owner, own, bounds, display).then(|| (WindowServerId::new(id), bounds))
+    on_screen_windows(false)
+        .into_iter()
+        .filter(|window| {
+            listed(
+                Some(window.level as i64),
+                Some(window.pid),
+                own,
+                window.bounds,
+                display,
+            )
         })
+        .map(|window| (window.id, window.bounds))
         .collect()
 }
 
@@ -873,59 +990,38 @@ pub fn space_window_list_for_connection(
     space_window_list_from_window_server(spaces, owner, include_minimized)
 }
 
-// credit to yabai
+/// The query for the windows on `spaces` of `owner`'s or, with 0, of every connection, minimized
+/// ones as well with `include_minimized`: what `SLSCopyWindowsWithOptionsAndTags` answers, which waits
+/// on the main connection whatever it is given.
+fn space_list_filter(spaces: &[u64], owner: u32, include_minimized: bool) -> WindowQueryFilter<'_> {
+    WindowQueryFilter {
+        owner: owner as i32,
+        spaces,
+        space_list_options: 0,
+        window_list_options: if include_minimized { 0x7 } else { 0x2 },
+        query_flags: 0,
+        include_tags: 0,
+        exclude_tags: 0,
+    }
+}
+
 #[cfg(not(test))]
 fn space_window_list_from_window_server(
     spaces: &[u64],
     owner: u32,
     include_minimized: bool,
 ) -> Vec<u32> {
-    let cf_space_array = cf_array_from_u64s(spaces);
-
-    let mut set_tags: u64 = 0;
-    let mut clear_tags: u64 = 0;
-    let options: u32 = if include_minimized { 0x7 } else { 0x2 };
-
-    let window_list_ref = unsafe {
-        SLSCopyWindowsWithOptionsAndTags(
-            *G_CONNECTION,
-            owner,
-            CFRetained::as_ptr(&cf_space_array).as_ptr(),
-            options,
-            &mut set_tags,
-            &mut clear_tags,
-        )
-    };
-
-    if window_list_ref.is_null() {
-        return Vec::new();
-    }
-
-    let expected = (unsafe { &*window_list_ref }).len() as i32;
-    if expected == 0 {
-        unsafe { CFRelease(window_list_ref as *mut CFType) };
-        return Vec::new();
-    }
-
-    let iterator = WindowIterator::new_from_cfarray(window_list_ref, 0);
-    unsafe { CFRelease(window_list_ref as *mut CFType) };
-    let Some(iterator) = iterator else {
+    let Some(iterator) = window_query_run(&space_list_filter(spaces, owner, include_minimized))
+    else {
         return Vec::new();
     };
-
-    let mut windows = Vec::with_capacity(expected as usize);
-
+    let mut windows = Vec::new();
     while iterator.advance().is_some() {
         let tags = iterator_window_tags(iterator.iter);
-        let parent_id = iterator.parent_id();
-        let wid = iterator.window_id();
-        let is_candidate = parent_id == 0 && tags_match_app_window_role(tags);
-
-        if is_candidate {
-            windows.push(wid);
+        if iterator.parent_id() == 0 && tags_match_app_window_role(tags) {
+            windows.push(iterator.window_id());
         }
     }
-
     windows
 }
 
@@ -1269,6 +1365,97 @@ mod stack_tests {
         assert!(
             looks_gone(&info(0, 1.0, 600.0), None, None),
             "a sliver is not a window"
+        );
+    }
+
+    fn listed(id: u32, level: i32) -> Listed {
+        Listed {
+            id: WindowServerId::new(id),
+            level,
+            pid: 1,
+            bounds: CGRect::default(),
+            title: None,
+        }
+    }
+
+    #[test]
+    fn a_description_is_put_back_in_the_order_the_list_gave() {
+        let described = vec![listed(5, 0), listed(9, 3), listed(7, 0), listed(4, 0)];
+        let ordered: Vec<u32> =
+            in_listed_order(&[9, 7, 5], described).iter().map(|w| w.id.as_u32()).collect();
+        assert_eq!(
+            ordered,
+            vec![9, 7, 5],
+            "front to back as listed; one never listed is dropped"
+        );
+    }
+
+    #[test]
+    fn a_window_is_ordered_in_by_its_second_attribute_bit_alone() {
+        assert!(attributes_ordered_in(0b10));
+        assert!(attributes_ordered_in(0b1110));
+        assert!(!attributes_ordered_in(0b01));
+        assert!(!attributes_ordered_in(0));
+    }
+
+    #[test]
+    fn a_space_list_asks_for_every_owner_and_minimized_windows_only_when_told() {
+        let spaces = [5];
+        let shown = space_list_filter(&spaces, 0, false);
+        assert_eq!(
+            (shown.owner, shown.spaces, shown.window_list_options),
+            (0, &spaces[..], 0x2)
+        );
+        assert_eq!(
+            (shown.include_tags, shown.exclude_tags, shown.space_list_options),
+            (0, 0, 0)
+        );
+        assert_eq!(space_list_filter(&spaces, 41, true).window_list_options, 0x7);
+        assert_eq!(space_list_filter(&spaces, 41, true).owner, 41);
+    }
+
+    #[test]
+    fn a_window_s_depth_counts_the_windows_in_front_of_it_but_not_the_desktop() {
+        let depths = depths(vec![
+            listed(30, 0),
+            listed(2, -2147483626),
+            listed(31, 3),
+            listed(50, -2147483603),
+            listed(32, 0),
+        ]);
+        assert_eq!(depths.get(&30), Some(&0));
+        assert_eq!(
+            depths.get(&31),
+            Some(&1),
+            "the backstop listed before it is not counted"
+        );
+        assert_eq!(depths.get(&32), Some(&2));
+        assert_eq!(depths.get(&2), None, "a desktop element has no depth");
+        assert_eq!(depths.get(&50), None);
+    }
+
+    #[test]
+    fn the_desktop_is_the_icons_and_everything_below_them() {
+        assert!(is_desktop_element(-2147483603), "the Finder's desktop icons");
+        assert!(is_desktop_element(-2147483624), "the Dock's wallpaper");
+        assert!(is_desktop_element(-2147483626), "the display's backstop");
+        assert!(
+            !is_desktop_element(-2147483601),
+            "Notification Center's widgets are not"
+        );
+        assert!(!is_desktop_element(-20), "nor is a bar below the windows");
+        assert!(!is_desktop_element(0));
+    }
+
+    #[test]
+    fn reads_fall_back_to_the_main_connection_only_when_none_of_their_own_opens() {
+        assert_eq!(opened_or(CGError::Success, 42, 7), 42);
+        assert_eq!(opened_or(CGError::Failure, 42, 7), 7);
+        assert_eq!(opened_or(CGError::Success, 0, 7), 7);
+        assert_eq!(
+            opened_or(CGError::Success, 7, 7),
+            7,
+            "the main connection is none of rini's own"
         );
     }
 

@@ -1,0 +1,5 @@
+# ./diffpx 245 3 35 1722 1079 0, then 900: Code, wholly on the display
+main 637379, new 751227
+differing pixels 23436 of 7432152, max channel diff 225, alpha differs in 1168, box x 0-3443 y 0-2157
+main 751235, new 1123379
+differing pixels 0 of 7432152, max channel diff 0, alpha differs in 0, box x 1000000000-0 y 1000000000-0

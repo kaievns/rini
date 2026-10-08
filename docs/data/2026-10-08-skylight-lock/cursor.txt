@@ -1,0 +1,5 @@
+main 1123523: 34 windows, window 4 at 0
+new 633795: 34 windows, window 4 at 0
+cg: window 4 at 1 of 35
+cursor at 1.0,574.0 pt
+window 4 at -11,565 24x18 pt

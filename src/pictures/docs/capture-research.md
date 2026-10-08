@@ -205,17 +205,23 @@ material that samples what is behind the window is lost.
 
 Deprecated since macOS 14 and removed from the SDK in 15: a call from Swift is a hard
 compile error, "Please use ScreenCaptureKit instead". It is still in the dylib, and
-`objc2-core-graphics` still binds it, which is how rini takes the two composites only
-it returns: the window with its framing ("The hairline is composited outside every
-capture") and the window with what is below it ("A composite of the window and what is
-below it carries the blur").
+`objc2-core-graphics` still binds it. rini no longer calls it: it waits on the main connection's
+last Core Animation transaction, and `SLSCaptureWindowsContentsToRectWithOptions` on rini's read
+connection returns the same two composites, the window with its framing ("The hairline is
+composited outside every capture") and the window with what is below it ("A composite of the window
+and what is below it carries the blur"), pixel for pixel: with bits 11 and 8 for a window wholly on
+a display, with none for one that is not ("The read connection answers as the main one does" in
+`src/windows/docs/window-server-reads.md`).
 
 It must never be called inside a ScreenCaptureKit completion. On modern macOS it is
 proxied through the same capture machinery, so a call from the delivery queue deadlocks
 its own reply until a ~20s timeout, and every capture in the process serialises behind it
-(measured as half-minute window switches). The engine's one framed capture, of a window
-that has just opened, runs on the `transitions` thread as it composes; the service's SkyLight calls
-run on its own thread.
+(measured as half-minute window switches). `SLSCaptureWindowsContentsToRectWithOptions` reaches the
+same proxy in its disassembly and `SLSHWCaptureWindowList` does not
+(`docs/data/2026-10-08-skylight-lock/callgraph.txt`); whether the first takes it at run time is not
+measured, so no capture of either is made there. The engine's one framed capture, of a window that has just
+opened, runs on the `transitions` thread as it composes; the service's SkyLight calls run on its
+own thread.
 
 The system tool inherited this. `screencapture -l <windowid>` fails with "could
 not create image from window" even for a fully visible window.
@@ -1013,9 +1019,12 @@ put it at 0.25 and failed on Outlook and on a translucent terminal; the
 window-only capture against SkyLight is the comparison that isolates the
 hairline. Light mode is not measured.
 
-The one API that composites framing into its output is the obsoleted
+Two calls composite framing into their output: the obsoleted
 `CGWindowListCreateImage` (alive in the dylib, deprecated since 14.0, removed
-from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
+from the SDK in 15.0 — the crate still binds it), and
+`SLSCaptureWindowsContentsToRectWithOptions` with bits 11 and 8, which rini takes it with, the same
+pixels for a window wholly on a display (`src/windows/docs/window-server-reads.md`). Behaviour,
+measured on the first:
 
 - A rect-bounded call (window's own bounds) returns exactly the window rect,
   hairline composited opaque on the outermost point of every edge, 16-24ms

@@ -1,4 +1,4 @@
-//! Every SkyLight and `CGWindowList` capture: one composite of a list of windows, the batched capture
+//! Every SkyLight capture: one composite of a list of windows, the batched capture
 //! of the windows on screen as regions of it, the framed capture of one window with, wholly on a
 //! display, its blur, and a handover check's two: a window alone and the whole screen.
 //!
@@ -10,10 +10,10 @@ use std::ffi::c_int;
 use std::time::Instant;
 
 use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGImage, CGWindowListOption};
+use objc2_core_graphics::{CGError, CGImage};
 use rini_core::ids::{WindowId, WindowServerId, pid_t};
 use rini_geometry::space::{FromCg, PixelRect, ScreenPoint, ScreenRect, ScreenSize, ToCg};
-use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
+use rini_skylight_sys::{SLSCaptureWindowsContentsToRectWithOptions, SLSHWCaptureWindowList};
 
 use crate::pictures::domain::coverage::Coverage;
 use crate::pictures::domain::knowledge::{Call, Learned};
@@ -23,6 +23,7 @@ use crate::pictures::platform::desktop::DesktopBackdrop;
 use crate::pictures::platform::measure::{first_sight, shows_material};
 use crate::pictures::domain::route::Route;
 use crate::pictures::platform::picture::{Picture, Pixels, image_size};
+use crate::windows::platform::window_server::{READ_CONNECTION, on_screen_windows};
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
 /// actually does" in `src/animation/docs/capture-overlay-research.md`.
@@ -35,10 +36,15 @@ fn composite(windows: &[WindowServerId]) -> Option<CFRetained<CGImage>> {
     if windows.is_empty() {
         return None;
     }
-    let cid = unsafe { SLSMainConnectionID() };
     let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
-    let array: *mut CFArray<CGImage> =
-        unsafe { SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS) };
+    let array: *mut CFArray<CGImage> = unsafe {
+        SLSHWCaptureWindowList(
+            *READ_CONNECTION,
+            ids.as_ptr(),
+            ids.len() as c_int,
+            CAPTURE_OPTIONS,
+        )
+    };
     // SAFETY: SLSHWCaptureWindowList returns a +1 CFArray of CGImage, so ownership transfers here.
     let array = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(array)?) };
     array.iter().next()
@@ -68,17 +74,59 @@ pub fn capture_list_via_skylight(
 /// One window alone, as SkyLight has it now: what the overlay draws, for a handover check.
 pub fn capture_alone(window: WindowServerId) -> Option<CFRetained<CGImage>> { composite(&[window]) }
 
-/// What `display` shows, every window on it, the overlay included while it is up. Through
-/// `CGWindowList`, which is proxied through ScreenCaptureKit's delivery queue: never called from a
-/// ScreenCaptureKit completion, where it deadlocks.
+/// What `display` shows, every window on it, the overlay included while it is up.
 pub fn capture_screen(display: ScreenRect) -> Option<CFRetained<CGImage>> {
-    #[allow(deprecated)]
-    objc2_core_graphics::CGWindowListCreateImage(
-        display.to_cg(),
-        CGWindowListOption::OptionOnScreenOnly,
-        0,
-        objc2_core_graphics::CGWindowImageOption::empty(),
-    )
+    let ids: Vec<u32> = on_screen_windows(false).iter().map(|window| window.id.as_u32()).collect();
+    capture_rect(&ids, display.to_cg(), ON_SCREEN_OPTIONS).ok().flatten()
+}
+
+/// `SLSCaptureWindowsContentsToRectWithOptions` bits for windows wholly on a display: the picture as
+/// the screen composites it. Off a display they capture only what is on it, so a window that is not
+/// wholly on one is captured with none.
+/// Measured in "The read connection answers as the main one does" in
+/// `src/windows/docs/window-server-reads.md`.
+const ON_SCREEN_OPTIONS: u32 = (1 << 11) | (1 << 8);
+
+/// The options a framed capture of a window takes, by whether it is wholly on a display.
+fn framed_options(wholly_on_a_display: bool) -> u32 {
+    if wholly_on_a_display {
+        ON_SCREEN_OPTIONS
+    } else {
+        0
+    }
+}
+
+/// One picture of the windows in `ids`, the first listed in front, over `rect` in global points or,
+/// with `CGRectNull`, the union of their bounds; `Ok(None)` when the call made none.
+pub fn capture_rect(
+    ids: &[u32],
+    rect: CGRect,
+    options: u32,
+) -> Result<Option<CFRetained<CGImage>>, CGError> {
+    let mut image: *mut CGImage = std::ptr::null_mut();
+    // SAFETY: `ids` outlives the call and holds `ids.len()` window ids; the image comes back retained.
+    let err = unsafe {
+        SLSCaptureWindowsContentsToRectWithOptions(
+            *READ_CONNECTION,
+            ids.as_ptr(),
+            ids.len() as c_int,
+            rect,
+            options,
+            &mut image,
+        )
+    };
+    // SAFETY: a non-null image is ours to release.
+    let image = std::ptr::NonNull::new(image).map(|image| unsafe { CFRetained::from_raw(image) });
+    if err != CGError::Success {
+        return Err(err);
+    }
+    Ok(image)
+}
+
+/// `window` and every window listed behind it, front to back; `None` when it is not listed.
+fn from_window_back(listed: &[u32], window: u32) -> Option<&[u32]> {
+    let at = listed.iter().position(|&id| id == window)?;
+    Some(&listed[at..])
 }
 
 /// A window to capture, at the frame the window server has it at.
@@ -265,12 +313,11 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }
-    let framed = capture_window_rect(window, frame, scale)?;
-    let pixels = image_size(&framed);
     let displays = active_display_bounds();
-    let composite = fully_on_a_display(frame, &displays)
-        .then(|| capture_below_and_including(window, frame))
-        .flatten();
+    let on_a_display = fully_on_a_display(frame, &displays);
+    let framed = capture_window_rect(window, frame, scale, on_a_display)?;
+    let pixels = image_size(&framed);
+    let composite = on_a_display.then(|| capture_below_and_including(window, frame)).flatten();
     let after = crate::windows::platform::window_server::get_window(window).map(|w| w.frame);
     let whole = stayed_wholly_on_a_display(frame, after, &displays);
     let composite = composite.filter(|_| whole);
@@ -298,20 +345,23 @@ fn capture_below_and_including(
     window: WindowServerId,
     rect: CGRect,
 ) -> Option<CFRetained<CGImage>> {
-    use objc2_core_graphics::CGWindowImageOption;
-    #[allow(deprecated)]
-    objc2_core_graphics::CGWindowListCreateImage(
-        rect,
-        CGWindowListOption::OptionOnScreenBelowWindow | CGWindowListOption::OptionIncludingWindow,
-        window.as_u32(),
-        CGWindowImageOption::empty(),
-    )
+    let listed: Vec<u32> =
+        on_screen_windows(false).iter().map(|window| window.id.as_u32()).collect();
+    let ids = from_window_back(&listed, window.as_u32())?;
+    capture_rect(ids, rect, ON_SCREEN_OPTIONS).ok().flatten()
 }
 
 /// A test takes no framed capture: its window ids can name the developer's own windows. See "A unit
 /// test must not read the live window server" in `docs/testing.md`.
 #[cfg(test)]
-fn capture_window_rect(_: WindowServerId, _: CGRect, _: f64) -> Option<CFRetained<CGImage>> { None }
+fn capture_window_rect(
+    _: WindowServerId,
+    _: CGRect,
+    _: f64,
+    _: bool,
+) -> Option<CFRetained<CGImage>> {
+    None
+}
 
 /// One framed capture of the window's own rect, or `None` when the window server returned an image
 /// of another size.
@@ -320,14 +370,10 @@ fn capture_window_rect(
     server_id: WindowServerId,
     frame: CGRect,
     scale: f64,
+    wholly_on_a_display: bool,
 ) -> Option<CFRetained<CGImage>> {
-    #[allow(deprecated)]
-    let framed = objc2_core_graphics::CGWindowListCreateImage(
-        frame,
-        CGWindowListOption::OptionIncludingWindow,
-        server_id.as_u32(),
-        objc2_core_graphics::CGWindowImageOption::empty(),
-    )?;
+    let options = framed_options(wholly_on_a_display);
+    let framed = capture_rect(&[server_id.as_u32()], frame, options).ok().flatten()?;
     let pixels = image_size(&framed);
     if (pixels.width - frame.size.width * scale).abs() > 2.0
         || (pixels.height - frame.size.height * scale).abs() > 2.0
@@ -446,6 +492,24 @@ fn fully_on_a_display(frame: CGRect, displays: &[CGRect]) -> bool {
 mod tests {
     use super::*;
     use crate::pictures::domain::coverage::fits_frame;
+
+    #[test]
+    fn a_window_off_a_display_is_captured_without_the_on_screen_bits() {
+        assert_eq!(framed_options(true), (1 << 11) | (1 << 8));
+        assert_eq!(framed_options(false), 0);
+    }
+
+    #[test]
+    fn below_and_including_is_the_window_and_everything_listed_behind_it() {
+        let listed = [9, 7, 5, 3];
+        assert_eq!(from_window_back(&listed, 7), Some(&[7, 5, 3][..]));
+        assert_eq!(from_window_back(&listed, 3), Some(&[3][..]));
+        assert_eq!(
+            from_window_back(&listed, 4),
+            None,
+            "not on screen, so nothing to composite"
+        );
+    }
 
     /// The reported failure: the window was parked between reading its frame and taking the composite,
     /// so the rect showed another window. A composite is only kept if the window is where it was.
