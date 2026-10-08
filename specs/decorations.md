@@ -191,6 +191,11 @@ wearing either is drawn by one rest window holding both.
   raising its window, or by the lift when the overlay is up as it does. Until then the raised
   window's shadow, and any window it rose past, may show over the ring.
 - Drawing or moving it MUST NOT change which application is in front or which window is key.
+- A turn of rini's windows that draw the ring at rest MUST change only those whose look or place
+  changed, and of each only what changed: its layers, its frame or its alpha. Each change is
+  main-thread and window-server time that a flight's show and lift wait behind: while every turn
+  redrew every one, the lift took 4.0-4.5ms to play at the median with the ring on, against
+  1.7-1.9ms with it off.
 - The ring MUST follow its window wherever the window server moves it, whoever moves it: a title-bar
   drag, an edge drag, an application resizing itself, and rini's own writes, and MUST NOT be hidden
   while it does. Through a flight it follows its window at the lift (below).
@@ -262,8 +267,9 @@ and which applications ask for attention, read by `src/windows/platform/attentio
 `src/transitions/domain/lifecycle.rs`, carried out by `src/transitions/platform/engine.rs` on the
 overlay (`src/animation/platform/overlay.rs`), which is holed over each band
 (`src/animation/domain/motion/holes.rs`). At rest, which windows show a band, which rest window
-draws each and which are ordered again are `src/decorations/domain/rest.rs`, carried out by the
-main-thread actor in `src/decorations/platform/rest.rs`, which the reactor tells of each flight's
+draws each, what each changes to draw its look and which are ordered again are
+`src/decorations/domain/rest.rs`, carried out by the main-thread actor in
+`src/decorations/platform/rest.rs`, which the reactor tells of each flight's
 begin (`Reactor::send_flight` in `src/app/reactor/mod.rs`, `publish_rest` in
 `src/app/reactor/decorations.rs`) and the renderer (`src/animation/platform/renderer.rs`) covers as
 its overlay goes up and calls before each lift. Its windows follow the window

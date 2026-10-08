@@ -1,14 +1,14 @@
 //! A decoration at rest, drawn by a window of rini's own directly above the window it decorates:
 //! which windows show a band and when, what each turn of the rest windows makes of the reactor's
 //! word and the window server's, which windows are asked of the window server as they are first
-//! named, what waits for the lift from a flight's begin, which of rini's rest windows draws each,
-//! which are ordered above their windows again and when one takes its window's level, and that none
-//! is kept and nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
+//! named, what waits for the lift from a flight's begin, which of rini's rest windows draws each and
+//! what each changes to draw it, which are ordered above their windows again and when one takes its
+//! window's level, and that none is kept and nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
 use rini_core::ids::WindowServerId;
-use rini_geometry::space::ScreenRect;
+use rini_geometry::space::{Respace, ScreenRect, ScreenVector, TileSize};
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::decorations::domain::shape;
@@ -170,9 +170,9 @@ pub fn stack_change(took: Option<StackLevel>, level: StackLevel) -> Option<Stack
     (took != Some(level)).then_some(level)
 }
 
-/// What a turn draws: every rest window placed and painted, and those whose window the window server
-/// reordered or ordered back in (`orders`, `to_reorder`) and the one whose window focus came to
-/// ordered above their windows again.
+/// What a turn draws: each rest window's look where it changed (`delta`), and those whose window
+/// the window server reordered or ordered back in (`orders`, `to_reorder`) and the one whose window
+/// focus came to ordered above their windows again.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Draw {
     pub orders: Vec<ServerOrder>,
@@ -527,6 +527,70 @@ pub fn afresh(pool: &[(Option<WindowServerId>, bool)], given: &[usize], wanted: 
         .filter(|(at, (target, shown))| shows(target) && (given.contains(at) || !shown))
         .map(|(at, _)| at)
         .collect()
+}
+
+/// What a rest window draws: its bands' layers, its frame on screen, and whether it shows. Each keeps
+/// the look it last drew, and a turn changes only what differs from it (`delta`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub layers: Layers,
+    /// The band's outer rect cut to its display (`shape::rest_frame`).
+    pub outer: ScreenRect,
+    pub shown: bool,
+}
+
+/// What a rest window's layers are laid from: what its window wears and in which paints, the
+/// window's size and corner, the display's scale, and where the window sits in the rest window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layers {
+    pub decoration: Decoration,
+    pub style: Style,
+    pub size: TileSize,
+    pub corner: f64,
+    pub scale: f64,
+    pub inside: ScreenVector,
+}
+
+impl Look {
+    /// `window`'s bands, shown, around its window at `frame` on `display`, its corner `radius` as the
+    /// window server reports it and a window rule's ahead of it; none when no band of it is on the
+    /// display.
+    pub fn of(window: &RestWindow, frame: ScreenRect, radius: Option<f64>, display: RestDisplay) -> Option<Look> {
+        let outer = shape::rest_frame(frame, window.outset(display.scale), display.bounds)?;
+        let size = frame.size.respace();
+        let corner = shape::radius(window.decoration.corner(|| radius), size);
+        let layers = Layers {
+            decoration: window.decoration,
+            style: window.style(),
+            size,
+            corner,
+            scale: display.scale,
+            inside: frame.origin - outer.origin,
+        };
+        Some(Look { layers, outer, shown: true })
+    }
+
+    /// The same, at alpha 0: its layers and its frame stay as they were.
+    pub fn hidden(self) -> Look { Look { shown: false, ..self } }
+}
+
+/// What a rest window changes to draw a look: its layers laid again, its frame, its alpha.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Delta {
+    pub layers: bool,
+    pub frame: bool,
+    pub alpha: bool,
+}
+
+/// What a rest window that drew `was`, none since it was made at alpha 0, changes to draw `now`.
+/// One going to alpha 0 changes its alpha alone, so a window shown again keeps the layers and frame
+/// it hid with and lays only what changed meanwhile.
+pub fn delta(was: Option<Look>, now: Look) -> Delta {
+    Delta {
+        layers: now.shown && was.is_none_or(|was| was.layers != now.layers),
+        frame: now.shown && was.is_none_or(|was| was.outer != now.outer),
+        alpha: was.is_some_and(|was| was.shown) != now.shown,
+    }
 }
 
 /// The rest windows to order above their windows again this turn, each once: those whose window the
@@ -1059,6 +1123,68 @@ mod tests {
         let pool = [(Some(ws(3)), true), (Some(ws(2)), false), (Some(ws(1)), true), (Some(ws(4)), false), (None, true)];
         assert_eq!(afresh(&pool, &[0], &[ws(1), ws(2), ws(3)]), vec![0, 1], "retargeted, and shown again");
         assert_eq!(afresh(&pool, &[3], &[ws(1)]), Vec::<usize>::new(), "given a window that shows nothing");
+    }
+
+    const CLEAR: ScreenRect = ScreenRect::new(Point::new(100.0, 100.0), Size::new(800.0, 600.0));
+
+    fn look_at(window: &RestWindow, frame: ScreenRect) -> Look {
+        Look::of(window, frame, Some(16.0), display()[0]).expect("on the display")
+    }
+
+    /// A turn whose window neither moved nor changed what it wears, a reorder's or a focus report's
+    /// for another window, draws nothing: each change is main-thread and window-server time.
+    #[test]
+    fn an_unchanged_window_changes_nothing() {
+        let look = look_at(&ringed_window(), CLEAR);
+        assert_eq!(delta(Some(look), look_at(&ringed_window(), CLEAR)), Delta::default());
+        assert_eq!(delta(Some(look.hidden()), look.hidden()), Delta::default(), "hidden, and hidden still");
+        assert_eq!(Look::of(&ringed_window(), rect(4000.0, 100.0, 800.0, 600.0), None, display()[0]), None, "off its display");
+    }
+
+    #[test]
+    fn a_moved_window_changes_only_its_frame() {
+        let look = look_at(&ringed_window(), CLEAR);
+        let moved = look_at(&ringed_window(), rect(400.0, 300.0, 800.0, 600.0));
+        assert_eq!(delta(Some(look), moved), Delta { frame: true, ..Delta::default() });
+        let cut = look_at(&ringed_window(), rect(2.0, 100.0, 800.0, 600.0));
+        assert_eq!(
+            delta(Some(look), cut),
+            Delta { layers: true, frame: true, alpha: false },
+            "at the display's edge the band is cut, and the window sits elsewhere in its rest window"
+        );
+    }
+
+    #[test]
+    fn a_resize_a_paint_or_a_scale_lays_its_layers_again() {
+        let window = ringed_window();
+        let look = look_at(&window, CLEAR);
+        let resized = look_at(&window, rect(100.0, 100.0, 900.0, 600.0));
+        assert_eq!(delta(Some(look), resized), Delta { layers: true, frame: true, alpha: false }, "resized");
+        let layers = Delta { layers: true, ..Delta::default() };
+        let inactive = RestWindow { focused: false, ring: Ring::Inactive, ..window };
+        assert_eq!(delta(Some(look), look_at(&inactive, CLEAR)), layers, "focus left it");
+        let bordered = RestWindow { decoration: Decoration { border: Some(BORDER), ..window.decoration }, ..window };
+        assert_eq!(delta(Some(look), look_at(&bordered, CLEAR)), Delta { layers: true, frame: true, alpha: false }, "a border on");
+        let rounded = Look::of(&window, CLEAR, Some(10.0), display()[0]).expect("on the display");
+        assert_eq!(delta(Some(look), rounded), layers, "another corner");
+        let single = RestDisplay { scale: 1.0, ..display()[0] };
+        let scaled = Look::of(&window, CLEAR, Some(16.0), single).expect("on the display");
+        assert_eq!(delta(Some(look), scaled), layers, "another scale");
+    }
+
+    /// A rest window keeps its layers and its frame at alpha 0: shown again, it takes its alpha, and
+    /// lays and moves only for what changed while it was hidden.
+    #[test]
+    fn a_window_shown_again_lays_only_what_changed_while_it_was_hidden() {
+        let window = ringed_window();
+        let look = look_at(&window, CLEAR);
+        let alpha = Delta { alpha: true, ..Delta::default() };
+        assert_eq!(delta(Some(look), look.hidden()), alpha, "hidden");
+        assert_eq!(delta(Some(look.hidden()), look), alpha, "shown again as it was");
+        let elsewhere = look_at(&RestWindow { ring: Ring::Inactive, ..window }, rect(400.0, 100.0, 900.0, 600.0));
+        let all = Delta { layers: true, frame: true, alpha: true };
+        assert_eq!(delta(Some(look.hidden()), elsewhere), all, "resized, moved and repainted meanwhile");
+        assert_eq!(delta(None, look), all, "a rest window just made");
     }
 
     #[test]

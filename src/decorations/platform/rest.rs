@@ -22,16 +22,15 @@ use objc2_app_kit::{
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_quartz_core::{CALayer, CATransaction};
 use rini_core::ids::WindowServerId;
-use rini_geometry::space::{FromCg, Respace, ScreenRect, ToCg};
+use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 use rini_runloop::channel;
 use rini_runloop::executor::sleep;
 use rini_runloop::turns;
 use tracing::warn;
 
 use crate::decorations::domain::rest::{
-    self, Draw, Introduction, Lifted, Rest, RestDisplay, RestModel, RestWindow, display_of, stack_change,
+    self, Draw, Introduction, Layers, Lifted, Look, Rest, RestModel, delta, display_of, stack_change,
 };
-use crate::decorations::domain::shape;
 use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::event::{Following, ServerFrame, ServerOrder, ServerRead, StackLevel, ToRead};
@@ -107,8 +106,8 @@ struct Panel {
     holder: Retained<CALayer>,
     bands: Bands,
     target: Option<WindowServerId>,
-    /// Its frame on screen as last set, and whether it was shown.
-    placed: Option<(ScreenRect, bool)>,
+    /// What it last drew; none since it was made, at alpha 0.
+    look: Option<Look>,
     /// The level and sub-level it last took.
     level: Option<StackLevel>,
 }
@@ -149,7 +148,7 @@ impl Panel {
         // Ordered in once, and only shown or hidden by alpha from here: ordering costs a frame.
         window.orderFrontRegardless();
         turns::changed("rest.open");
-        Some(Panel { window, root, holder, bands, target: None, placed: None, level: None })
+        Some(Panel { window, root, holder, bands, target: None, look: None, level: None })
     }
 
     fn own_id(&self) -> Option<WindowServerId> {
@@ -168,64 +167,47 @@ impl Panel {
         turns::changed("rest.order");
     }
 
-    /// Draws `window`'s bands around its window at `frame`, its corner `radius` as the window server
-    /// reports it, on `display`, or none.
-    fn place(&mut self, window: &RestWindow, frame: ScreenRect, radius: Option<f64>, display: RestDisplay, showing: bool) {
-        if let Some(outer) = self.lay(window, frame, radius, display, showing) {
-            self.reveal(outer);
+    /// Lays its layers for `now` when they differ from those it drew; whether it laid them.
+    fn lay(&self, now: &Look) -> bool {
+        if !delta(self.look, *now).layers {
+            return false;
         }
+        let Layers { decoration, style, size, corner, scale, inside } = now.layers;
+        self.holder.setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), size.to_cg()));
+        self.root.setContentsScale(scale);
+        self.bands.wear(&decoration, scale);
+        self.bands.place(size, corner);
+        self.bands.paint(&style);
+        true
     }
 
-    /// Lays its layers for `window`'s bands around its window at `frame`, its corner `radius` as the
-    /// window server reports it and a window rule's ahead of it, and the rest window's frame they
-    /// want; hides it when none shows.
-    fn lay(
-        &mut self,
-        window: &RestWindow,
-        frame: ScreenRect,
-        radius: Option<f64>,
-        display: RestDisplay,
-        showing: bool,
-    ) -> Option<ScreenRect> {
-        let outset = window.outset(display.scale);
-        let Some(outer) = shape::rest_frame(frame, outset, display.bounds).filter(|_| showing) else {
-            self.hide();
-            return None;
-        };
-        let inside = frame.origin - outer.origin;
-        self.holder.setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), frame.size.to_cg()));
-        self.root.setContentsScale(display.scale);
-        let size = frame.size.respace();
-        self.bands.wear(&window.decoration, display.scale);
-        self.bands.place(size, shape::radius(window.decoration.corner(|| radius), size));
-        self.bands.paint(&window.style());
-        Some(outer)
-    }
-
-    /// At `outer`, shown.
-    fn reveal(&mut self, outer: ScreenRect) {
-        if self.placed.is_none_or(|(at, _)| at != outer) {
+    /// Shown at `now`'s frame, each set only when it differs from what it drew.
+    fn reveal(&mut self, now: Look) {
+        let change = delta(self.look, now);
+        if change.frame {
             let converter = CoordinateConverter::from_height(primary_display_height());
-            if let Some(cocoa) = converter.reframe(outer.to_cg(), self.window.frame()) {
+            if let Some(cocoa) = converter.reframe(now.outer.to_cg(), self.window.frame()) {
                 self.window.setFrame_display(cocoa, false);
                 turns::changed("rest.frame");
             }
         }
-        if self.placed.is_none_or(|(_, shown)| !shown) {
+        if change.alpha {
             self.window.setAlphaValue(1.0);
             turns::changed("rest.show");
         }
-        self.placed = Some((outer, true));
+        self.look = Some(now);
     }
 
-    fn shown(&self) -> bool { self.placed.is_some_and(|(_, shown)| shown) }
+    fn shown(&self) -> bool { self.look.is_some_and(|look| look.shown) }
 
     fn hide(&mut self) {
-        if self.placed.is_none_or(|(_, shown)| shown) {
+        let Some(was) = self.look else { return };
+        let now = was.hidden();
+        if delta(Some(was), now).alpha {
             self.window.setAlphaValue(0.0);
             turns::changed("rest.hide");
         }
-        self.placed = self.placed.map(|(at, _)| (at, false));
+        self.look = Some(now);
     }
 }
 
@@ -345,11 +327,11 @@ impl RestBorders {
     }
 
     /// One rest window for each window whose band shows: those `orders` and `also` name, and those
-    /// just given a window, ordered above their windows, then every one placed and painted in one
-    /// transaction. One showing a window afresh (`rest::afresh`) is hidden first, and takes its frame,
-    /// its place in the stack and alpha 1 only once its layers are committed.
+    /// just given a window, ordered above their windows, then each one's look drawn where it changed
+    /// (`rest::delta`), the layers in one transaction, committed and flushed only when one was laid.
+    /// One showing a window afresh (`rest::afresh`) is hidden first, and takes its frame, its place
+    /// in the stack and alpha 1 only once its layers are committed.
     fn draw(&mut self, orders: &[ServerOrder], mut also: Vec<usize>) {
-        let displays = self.rest.model.displays.clone();
         let wanted = self.rest.wanted();
         let pool: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.target).collect();
         let assignment = rest::assign(&pool, &wanted);
@@ -370,37 +352,52 @@ impl RestBorders {
         for at in &afresh {
             self.panels[*at].hide();
         }
-        let mut revealed = Vec::new();
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
+        for at in &assignment.released {
+            self.panels[*at].target = None;
+        }
+        let looks: Vec<Option<Look>> = self.panels.iter().map(|panel| self.look_of(panel.target?, &wanted)).collect();
+        let lays = self.panels.iter().zip(&looks).any(|(panel, look)| look.is_some_and(|look| delta(panel.look, look).layers));
+        if lays {
+            CATransaction::begin();
+            CATransaction::setDisableActions(true);
+        }
         for at in assignment.released {
-            self.panels[at].target = None;
             self.panels[at].hide();
         }
-        for (at, panel) in self.panels.iter_mut().enumerate() {
-            let Some(target) = panel.target else { continue };
-            let window = self.rest.model.windows.iter().find(|w| w.window == target);
-            let tracked = self.rest.windows.get(&target);
-            let Some((window, frame, radius, display)) = window.zip(tracked).and_then(|(window, tracked)| {
-                let frame = tracked.frame?;
-                Some((window, frame, tracked.radius, display_of(frame, &displays)?))
-            }) else {
+        let mut revealed = Vec::new();
+        for (at, (panel, look)) in self.panels.iter_mut().zip(looks).enumerate() {
+            if panel.target.is_none() {
+                continue;
+            }
+            let Some(look) = look else {
                 panel.hide();
                 continue;
             };
-            let showing = wanted.contains(&target);
+            panel.lay(&look);
             if afresh.contains(&at) {
-                revealed.extend(panel.lay(window, frame, radius, display, showing).map(|outer| (at, outer)));
+                revealed.push((at, look));
             } else {
-                panel.place(window, frame, radius, display, showing);
+                panel.reveal(look);
             }
         }
-        CATransaction::commit();
-        CATransaction::flush();
-        for (at, outer) in revealed {
-            self.panels[at].reveal(outer);
+        if lays {
+            CATransaction::commit();
+            CATransaction::flush();
+        }
+        for (at, look) in revealed {
+            self.panels[at].reveal(look);
             self.order_above_its_window(at);
         }
+    }
+
+    /// What the rest window on `target` draws now: its bands as its window wears them where the
+    /// window server has it, or none when they show nothing.
+    fn look_of(&self, target: WindowServerId, wanted: &[WindowServerId]) -> Option<Look> {
+        let window = self.rest.model.windows.iter().find(|w| w.window == target)?;
+        let tracked = self.rest.windows.get(&target)?;
+        let frame = tracked.frame?;
+        let display = display_of(frame, &self.rest.model.displays)?;
+        Look::of(window, frame, tracked.radius, display).filter(|_| wanted.contains(&target))
     }
 
     fn order_above_its_window(&mut self, at: usize) {
