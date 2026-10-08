@@ -1196,8 +1196,8 @@ impl Tree {
 }
 
 /// Dresses a tile for `tile`: its picture, fitted to how it starts and ends and clipped or whole,
-/// its focus, its decoration and its radius. Tile layers are pooled, so every per-window property is
-/// written.
+/// its focus, its decoration and its radius. A tile posed again within its flight keeps its layers
+/// and is dressed again, so every per-window property is written.
 fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
     entry.decorations.radius = tile.radius;
     entry.decoration = tile.worn.decoration;
@@ -2946,7 +2946,9 @@ mod tests {
                 ],
                 &tiles,
             );
-            let ring = &tree.tile_layers[&window].decorations.bands.as_ref().expect("ringed").ring.layer;
+            let bands = &tree.tile_layers[&window].decorations.bands;
+            assert!(bands.border.is_none(), "no layer for the border it does not wear");
+            let ring = &bands.ring.as_ref().expect("ringed").layer;
             let colour = |c: Colour| objc2_core_graphics::CGColor::new_srgb(c.r.into(), c.g.into(), c.b.into(), c.a.into());
             let painted = |c: Colour| objc2_core_graphics::CGColor::equal_to_color(ring.borderColor().as_deref(), Some(&colour(c)));
             assert!(!ring.isHidden() && painted(inactive), "worn unfocused");
@@ -2977,12 +2979,13 @@ mod tests {
                 &tiles,
             );
             let decorations = &tree.tile_layers[&window].decorations;
-            assert!(decorations.bands.is_none());
+            assert!(decorations.bands.ring.is_none() && decorations.bands.border.is_none());
             // SAFETY: a read of the hairline's own sublayers, which nothing else mutates.
             let children = unsafe { decorations.hairline.sublayers() }.map_or(0, |layers| layers.count());
             assert_eq!(children, 1, "the outline alone");
             tree.turn(window, true, Ring::Active);
-            assert!(tree.tile_layers[&window].decorations.bands.is_none(), "nor as focus turns");
+            let bands = &tree.tile_layers[&window].decorations.bands;
+            assert!(bands.ring.is_none() && bands.border.is_none(), "nor as focus turns");
         }
 
         /// A placed tile moves every layer of the tile at once: the picture, the caster and the hairline,

@@ -154,7 +154,8 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 ## Through a flight
 
 - Each tile MUST wear the ring and the border its window wears, drawn in front of the tile's
-  picture, its hairline and its outline. The tile's outline stays drawn under them, as macOS's own
+  picture, its hairline and its outline, and MUST carry no layer for a band its window does not
+  wear: each layer is main-thread time at the flight's show. The tile's outline stays drawn under them, as macOS's own
   outline lies under a ring at rest.
 - When focus moves during a flight, each tile's ring MUST turn with its hairline, at the time
   "Focus changing during a flight" in `animation.md` gives it. The window gaining focus on its own

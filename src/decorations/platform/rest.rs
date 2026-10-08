@@ -168,7 +168,7 @@ impl Panel {
     }
 
     /// Lays its layers for `now` when they differ from those it drew; whether it laid them.
-    fn lay(&self, now: &Look) -> bool {
+    fn lay(&mut self, now: &Look) -> bool {
         if !delta(self.look, *now).layers {
             return false;
         }

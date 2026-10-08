@@ -24,7 +24,7 @@ layout the width each tiled window gives up to its border, and wires the rest wi
 | `domain/rest.rs` | The bands at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with the workspace it is on, `Group`, what `Held` it, its bands' paint and how far they reach), whether its bands show (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), what each turn makes of the model, the window server's introductions, frames and orders and a lift, what waits for the place ahead of the lift while the overlay is up, and which windows show then (`Rest`, a `Tracked` per window with its corner radius and level as the window server reported them, each known from its `Introduction`, asked once as the model first names it, `ask`, `introduce`: the window focus came to, the turn a `Draw` draws, `cover`, what a landed flight's place draws, `Placed`, with the parks on its display it takes and the frames read again, what the lift after it draws, and whether the actor wants a turn of its own after that, `wants_turn`), how many rest windows the pool holds (`Rest::pool_size`), which rest window draws each window (`assign`), which show theirs afresh (`afresh`), what each changes of the look it last drew to draw the one it wants (`Look`, its `Layers`, `delta`), which are ordered above their windows again this turn (`to_reorder`), and when one takes its window's level and sub-level (`stack_change`); and that, off as it starts and once the reactor turns it off, it holds no window, wants no rest window and takes no frame, order, place, lift or park until a model comes (`Rest::off`, `Rest::on`) |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
 | `settings.rs` | `DecorationSettings`: `layout › focus-ring` and `layout › border`, each on or off and its `Band`, niri's by default but for the ring's width, and the window rules' `DecorationRule`s in file order; `draws_bands`, whether any window can wear a band, which decides whether anything of the ring and the border runs ("Off") |
-| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the bands (`hairline`, `outline`, `bands`), the bands made only as a decoration with a ring or a border is worn and taken away as one with neither is. `Bands`, the ring and the border in front of it, worn, laid, painted and carried through a resize together, on a tile and at rest alike; `Band`, one band's layer: a `CAGradientLayer` drawing a colour as its border on the continuous curve, or a gradient masked to a border of the same shape, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize, its mask and a gradient's axis with it; each gradient's stops as Core Animation takes them, the last 16 kept (`drawn`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's bands (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
+| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the bands (`hairline`, `outline`, `bands`), each band made only as a decoration with it is worn and taken away as one without it is. `Bands`, the ring and the border in front of it, each made while its window wears it and none otherwise, worn, laid, painted and carried through a resize together, on a tile and at rest alike; `Band`, one band's layer: a `CAGradientLayer` drawing a colour as its border on the continuous curve, or a gradient masked to a border of the same shape, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize, a gradient's mask and axis with it; each colour's `CGColor` and each gradient's stops as Core Animation takes them, the last 16 of each kept (`solid`, `drawn`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's bands (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
 | `platform/rest.rs` | The rest windows: borderless, click-through, non-activating panels, pooled, each holding one `Bands` and ordered directly above the window it decorates (`RestBorders`); the main-thread actor that takes the reactor's model, asks the window server of each window it first names through `Following`, and takes what the frames thread read, introductions, frames and orders, a turn at a time (`RestActor`), closing every rest window when the reactor turns it off (`Event::Off`), and what the renderer calls as its overlay goes up, as its flight has landed and before each lift (`Handover`) |
 | `platform/layers.rs`: `Resize` | A tile's resize as Core Animation plays it: an animation of a key path through each value a closure maps from the sizes the tile passes through (`point`, `rect`, `number`, `path`), and whether a value changes on the way (`changes`). The overlay fills it from the tile's track, so `decorations` never names the score. A platform trait, not a port: it speaks Core Animation |
 
@@ -95,7 +95,8 @@ holding focus, as niri paints every workspace's active window on the focused mon
 (`niri:src/layout/monitor.rs:1095-1100`), and `inactive` on the others (`style::Ring`). So the
 workspace a switch leaves keeps its window's ring active as it slides away. On a tile it is the `ring` layer, a `Band`, the hairline's child after the
 outline, so it is drawn in front of the picture, the hairline and the outline, and rides the
-hairline through every move. In a colour it is the layer's border, `width` wide, and in a gradient
+hairline through every move. A tile carries it only while its window's decoration has a ring
+(`Bands::wear`), so a window wearing the ring alone carries one band's layer. In a colour it is the layer's border, `width` wide, and in a gradient
 the layer's gradient masked to a border of the same shape ("Gradients"), round on the continuous
 curve at the window's corner plus its width (`shape::band`), so its inner edge is the window's own
 corner, on the curve every other piece takes; a border's inner edge is its outer one `width` in. The
@@ -108,7 +109,8 @@ the window's corner less its width, holds. Its paint turns with the hairline (`S
 it.
 
 niri's border is the `border` layer, a second `Band`, the hairline's last child, so it is drawn in
-front of the ring, as niri draws it (`niri:src/layout/tile.rs:1279-1341`). Every window its
+front of the ring, as niri draws it (`niri:src/layout/tile.rs:1279-1341`); a ring made after it is
+put under it. A tile carries it only while its window's decoration has a border. Every window its
 decoration has one for wears it, in `urgent` paint while it is drawn urgent, `active` while it holds
 focus and `inactive` otherwise (`Style::of`), so it turns with the hairline as focus moves, on its
 own focus alone. Its inner edge is the window's corner and its outer one that corner grown by its
@@ -142,8 +144,11 @@ A band's paint is a colour or niri's gradient (`paint::Paint`): `active-gradient
 niri's `merge_color_gradient` has it. A gradient is drawn by the band's own layer, a
 `CAGradientLayer`, masked to a `CALayer` border of the band's width, corner and continuous curve:
 the same contour a colour draws, with no path and no bitmap. A colour stays the layer's border, with
-no gradient and no mask. A mask makes Core Animation draw the band offscreen first; what that costs
-per frame is not measured.
+no gradient and no mask, and its `CGColor` is made once a colour (`layers::solid`), as a gradient's
+stops are. A mask makes Core Animation draw the band offscreen first; what that costs per frame is
+not measured. The mask rides a resize only while it masks: a band in a colour animates its own
+bounds and corner alone, a mask taken off carries no animation, and one a gradient attaches
+mid-resize takes the resize its band plays (`a_mask_attached_mid_resize_rides_its_bands_resize`).
 
 **The axis.** niri lays a gradient over the band's own outer rect, the line through its centre at
 `angle` long enough that the corners lie on the lines across its ends, every line across at right
@@ -388,10 +393,9 @@ same batch, so the window-notify actor drops each 806, 807, 808, 815, 816 and 80
 windows where it arrives: no frame is read and nothing is sent to the main thread for them
 (`src/displays/docs/live-frames.md`). 808 and 815 still wake the focus resolver, which is not the
 rest windows'. No ring is read (`Reactor::rings_with`), and a tile whose decoration has neither band
-carries no layer for one: `DecorationLayers::wear` makes `Bands` for a decoration with a ring or a
-border and takes them off the hairline for one with neither, so a pooled tile moving between
-windows a rule decorates and windows it does not makes and drops two layers and their masks at its
-dressing. The hairline and the shadow are drawn as ever.
+carries no layer for one: `DecorationLayers::wear` makes each band's layer for a decoration with
+it and takes it off the hairline for one without it, so a tile dressed again after a rule turns a
+band on or off makes or drops the layer of that band and its mask, and no other. The hairline and the shadow are drawn as ever.
 
 A config reload that turns either band on, in `layout` or in a rule for any window, sends the next
 model, which turns `Following` on, makes the pool and draws; the window server's frames are read
