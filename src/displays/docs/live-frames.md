@@ -10,8 +10,8 @@ wires (`ServerRead`). It makes three reads, each asked through one queue (`ToRea
 | Asked by | Read (`window_server`) | Handed on as |
 |---|---|---|
 | a move or a resize, 806 or 807 | the frame, `server_frame` (`SLSGetWindowBounds`) | `ServerFrame`, in one batch a burst |
-| a reorder, hide, unhide or close, 808, 816, 815 or 804 | after a reorder or an unhide, the level (`window_level`, `SLSWindowQueryWindows`) and the sub-level (`sub_level::window_sub_level`, a Mach read) | `ServerOrder`, its `level` none for a hide or a close |
-| the application introducing a window (`Following::ask`) | the frame, whether it is ordered in (`window_ordered_in`), the corner radius (`corner_radii`) and the level and sub-level | `ServerIntro` |
+| a reorder, hide, unhide or close, 808, 816, 815 or 804 | after a reorder or an unhide, the level and the sub-level (`stack_level`: `window_level`, `SLSWindowQueryWindows`, and `sub_level::window_sub_level`, a Mach read), as `StackPlace::of` reads them | `ServerOrder`, its `level` none for a hide or a close |
+| the application introducing a window (`Following::ask`) | the frame, whether it is ordered in (`window_ordered_in`), the corner radius (`corner_radius`) and the level and sub-level | `ServerIntro` |
 
 - **One reader, one queue.** SkyLight delivers each event type on its own channel, read on its own
   thread, so 806, 807, 808, 815, 816 and 804 arrive unordered against each other, and an

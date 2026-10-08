@@ -1253,7 +1253,7 @@ impl FlightEngine {
         let server_id = WindowServerId::from(window);
         let clipped = picture.source.clips();
         let Some(running) = self.running.as_mut() else { return };
-        let radius = || crate::windows::platform::window_server::corner_radii(&[server_id]).get(&server_id).copied();
+        let radius = || crate::windows::platform::window_server::corner_radius(server_id);
         let took = running.take_picture(window, &picture, clipped, radius);
         let flown = running.flown;
         if matches!(took, Took::Nothing) {

@@ -11,7 +11,7 @@ use objc2_core_foundation::CGRect;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, trace};
 
-use crate::windows::platform::{sub_level, window_server};
+use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rustc_hash::FxHashSet as HashSet;
@@ -310,18 +310,12 @@ const LIVE: Reader = Reader {
     frame: window_server::server_frame,
     level: stack_level,
     ordered_in: window_server::window_ordered_in,
-    radius: corner_radius,
+    radius: window_server::corner_radius,
 };
 
 fn stack_level(window: WindowServerId) -> StackLevel {
-    StackLevel {
-        level: window_server::window_level(window.as_u32()),
-        sub_level: sub_level::window_sub_level(window.as_u32()),
-    }
-}
-
-fn corner_radius(window: WindowServerId) -> Option<f64> {
-    window_server::corner_radii(&[window]).get(&window).copied()
+    let (level, sub_level) = window_server::stack_level(window);
+    StackLevel { level, sub_level }
 }
 
 /// What one burst of the queue reads, in the order it was asked: the frames first, each moved
