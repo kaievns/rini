@@ -198,7 +198,9 @@ wearing either is drawn by one rest window holding both.
 - Drawing or moving it MUST NOT change which application is in front or which window is key.
 - A turn of rini's windows that draw the ring at rest MUST change only those whose look or place
   changed, and of each only what changed: its layers, its frame or its alpha. Each change is
-  main-thread and window-server time that a flight's show and lift wait behind.
+  main-thread and window-server time that a flight's show and lift wait behind. A window whose band
+  shows again MUST be drawn by the one of those windows that last drew it while that one is free,
+  so focus going back to a window that has not moved changes that one's alpha and order alone.
 - rini MUST make no more of those windows than, on each display, the most bands any one of its
   workspaces shows, and one spare: each is a window-sized window on rini's connection to the window
   server. One made stays, at alpha 0 while it shows nothing, until no window can wear a band. With

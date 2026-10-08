@@ -603,20 +603,35 @@ pub struct Assignment {
 }
 
 /// One rest window for each of `wanted`, from `pool`, each window's position the window it draws if
-/// any: a rest window already on a wanted window keeps it, and the others are given one while the
-/// pool has one left (`Rest::pool_size`).
-pub fn assign(pool: &[Option<WindowServerId>], wanted: &[WindowServerId]) -> Assignment {
+/// any, and `drew` the window whose look each one last drew: a rest window already on a wanted window
+/// keeps it, and the others, first in `wanted`'s order, are given one while the pool has one left
+/// (`Rest::pool_size`). A free rest window goes back to the window it last drew, so a band shown
+/// again where it was re-lays and moves nothing; a window none drew takes one free before the turn,
+/// one that drew nothing first, and one freed this turn last, which keeps what it drew the longest.
+pub fn assign(pool: &[Option<WindowServerId>], drew: &[Option<WindowServerId>], wanted: &[WindowServerId]) -> Assignment {
     let kept = |target: &Option<WindowServerId>| target.is_some_and(|target| wanted.contains(&target));
-    let mut free = pool.iter().enumerate().filter(|(_, target)| !kept(target)).map(|(at, _)| at);
+    let mut free: Vec<usize> = (0..pool.len()).filter(|at| !kept(&pool[*at])).collect();
+    let needing: Vec<WindowServerId> = wanted.iter().copied().filter(|window| !pool.contains(&Some(*window))).collect();
+    let given = &needing[..needing.len().min(free.len())];
     let mut assignment = Assignment::default();
-    for window in wanted.iter().filter(|window| !pool.contains(&Some(**window))) {
-        let Some(at) = free.next() else { break };
-        assignment.retargeted.push((at, *window));
+    let mut left = Vec::new();
+    for window in given {
+        match free.iter().position(|at| drew.get(*at).copied().flatten() == Some(*window)) {
+            Some(i) => assignment.retargeted.push((free.remove(i), *window)),
+            None => left.push(*window),
+        }
     }
+    free.sort_by_key(|at| (pool[*at].is_some(), drew.get(*at).copied().flatten().is_some()));
+    let mut free = free.into_iter();
+    for window in left {
+        let Some(at) = free.next() else { break };
+        assignment.retargeted.push((at, window));
+    }
+    assignment.retargeted.sort_by_key(|(_, window)| wanted.iter().position(|w| w == window));
     assignment.released = free.filter(|at| pool[*at].is_some()).collect();
+    assignment.released.sort_unstable();
     assignment
 }
-
 
 /// The rest windows that show a window afresh this turn: each one of `pool`, its window and whether
 /// it was shown before the turn, whose window shows now (`wanted`) and that was `given` it this turn
@@ -1301,7 +1316,7 @@ mod tests {
     #[test]
     fn a_focus_change_retargets_a_rest_window_from_the_pool() {
         let pool = [Some(ws(1)), Some(ws(2))];
-        let focus_moved = assign(&pool, &[ws(3), ws(2)]);
+        let focus_moved = assign(&pool, &pool, &[ws(3), ws(2)]);
         assert_eq!(focus_moved, Assignment { retargeted: vec![(0, ws(3))], released: vec![] });
     }
 
@@ -1316,7 +1331,7 @@ mod tests {
         rest.take_frames(&[(ws(2), SLOT)], now);
         assert_eq!(rest.wanted(), vec![ws(1), ws(2)], "the arriving window's return before the leaving one's park");
         let pool = vec![None; rest.pool_size()];
-        assert_eq!(assign(&pool, &rest.wanted()).retargeted.len(), 2);
+        assert_eq!(assign(&pool, &pool, &rest.wanted()).retargeted.len(), 2);
         let held = Held { mission_control: true, ..Held::default() };
         rest.take_model(model(vec![RestWindow { held, ..at(1, true, false) }]), now);
         assert_eq!(rest.pool_size(), 1, "the spare alone while nothing could show");
@@ -1352,7 +1367,7 @@ mod tests {
     #[test]
     fn a_rest_window_is_retargeted_from_the_pool_while_one_is_left() {
         let pool = [None, Some(ws(9))];
-        let assignment = assign(&pool, &[ws(1), ws(2), ws(3)]);
+        let assignment = assign(&pool, &pool, &[ws(1), ws(2), ws(3)]);
         assert_eq!(assignment.retargeted, vec![(0, ws(1)), (1, ws(2))]);
         assert!(assignment.released.is_empty());
     }
@@ -1360,7 +1375,39 @@ mod tests {
     #[test]
     fn a_window_that_shows_nothing_returns_its_panel_at_alpha_zero() {
         let pool = [Some(ws(1)), Some(ws(2)), None];
-        assert_eq!(assign(&pool, &[ws(2)]), Assignment { retargeted: vec![], released: vec![0] });
+        assert_eq!(assign(&pool, &pool, &[ws(2)]), Assignment { retargeted: vec![], released: vec![0] });
+    }
+
+    /// Focus going back and forth between two windows: the ring's rest window on the one it leaves
+    /// is kept for it, and the spare that last drew the one it comes to is given back to it, so
+    /// neither is laid nor moved again.
+    #[test]
+    fn a_free_rest_window_goes_back_to_the_window_it_last_drew() {
+        let pool = [Some(ws(1)), None];
+        let drew = [Some(ws(1)), Some(ws(2))];
+        assert_eq!(assign(&pool, &drew, &[ws(2)]), Assignment { retargeted: vec![(1, ws(2))], released: vec![0] });
+        let pool = [None, Some(ws(2))];
+        assert_eq!(assign(&pool, &drew, &[ws(1)]), Assignment { retargeted: vec![(0, ws(1))], released: vec![1] });
+    }
+
+    /// A window no free rest window drew takes one that drew nothing, then one free before the turn,
+    /// and the one its band left this turn last: that one keeps the band focus is likeliest to come
+    /// back to.
+    #[test]
+    fn a_window_no_rest_window_drew_takes_the_one_free_longest() {
+        let pool = [Some(ws(1)), None, None];
+        assert_eq!(assign(&pool, &[Some(ws(1)), Some(ws(3)), None], &[ws(4)]).retargeted, vec![(2, ws(4))], "one that drew nothing");
+        assert_eq!(assign(&pool, &[Some(ws(1)), Some(ws(3)), Some(ws(5))], &[ws(4)]).retargeted, vec![(1, ws(4))], "one free before the turn");
+        assert_eq!(assign(&[Some(ws(1))], &[Some(ws(1))], &[ws(4)]), Assignment { retargeted: vec![(0, ws(4))], released: vec![] }, "the one freed now, when it is all there is");
+    }
+
+    /// A short pool gives its rest windows to the first in `wanted`, whatever each last drew.
+    #[test]
+    fn a_short_pool_gives_what_it_has_in_wanted_order_before_what_each_drew() {
+        let pool = [None];
+        assert_eq!(assign(&pool, &[Some(ws(2))], &[ws(1), ws(2)]).retargeted, vec![(0, ws(1))]);
+        let pool = [None, None];
+        assert_eq!(assign(&pool, &[Some(ws(2)), Some(ws(1))], &[ws(1), ws(2), ws(3)]).retargeted, vec![(1, ws(1)), (0, ws(2))]);
     }
 
     /// The ring moving with focus retargets the one rest window shown: it shows the window focus came

@@ -106,8 +106,9 @@ struct Panel {
     holder: Retained<CALayer>,
     bands: Bands,
     target: Option<WindowServerId>,
-    /// What it last drew; none since it was made, at alpha 0.
+    /// What it last drew, and for which window; none since it was made, at alpha 0.
     look: Option<Look>,
+    drew: Option<WindowServerId>,
     /// The level and sub-level it last took.
     level: Option<StackLevel>,
 }
@@ -148,7 +149,7 @@ impl Panel {
         // Ordered in once, and only shown or hidden by alpha from here: ordering costs a frame.
         window.orderFrontRegardless();
         turns::changed("rest.open");
-        Some(Panel { window, root, holder, bands, target: None, look: None, level: None })
+        Some(Panel { window, root, holder, bands, target: None, look: None, drew: None, level: None })
     }
 
     fn own_id(&self) -> Option<WindowServerId> {
@@ -192,6 +193,7 @@ impl Panel {
             turns::changed("rest.show");
         }
         self.look = Some(now);
+        self.drew = self.target;
     }
 
     fn shown(&self) -> bool { self.look.is_some_and(|look| look.shown) }
@@ -342,7 +344,8 @@ impl RestBorders {
     fn draw(&mut self, orders: &[ServerOrder], mut also: Vec<usize>) {
         let wanted = self.rest.wanted();
         let pool: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.target).collect();
-        let assignment = rest::assign(&pool, &wanted);
+        let drew: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.drew).collect();
+        let assignment = rest::assign(&pool, &drew, &wanted);
         let mut given = Vec::new();
         for (at, window) in assignment.retargeted {
             self.panels[at].target = Some(window);

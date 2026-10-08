@@ -217,7 +217,9 @@ pool the lift leaves short is made in the actor's next turn, once the overlay is
 (`Event::Lifted`). The pool holds, for each display, the most windows any one of its workspaces
 has that wear a band and could show it, held by no more than a park, and one spare
 (`Rest::pool_size`, from the workspace the reactor sends with each window, `rest::Group`), and each
-window whose band shows takes one from it (`rest::assign`). A display shows one workspace at a
+window whose band shows takes one from it (`rest::assign`): a free one goes back to the window it
+last drew, and a window none of them drew takes the one free longest, so the band of the window
+focus left is kept at alpha 0 for focus coming back ("What a place costs"). A display shows one workspace at a
 time, and a flight's place takes the parks on its display before it draws, so a flown switch wants
 rest windows for the arriving bands alone. With the ring alone that is 2 a display however many
 workspaces it has: the ring moving with focus, and a switch no flight covers, whose leaving and
@@ -255,6 +257,24 @@ on, the lift's drain played to its flush in 3.98-4.45ms at the median against 1.
 off (the 2026-10-08 timing battery, 3 runs each way), part of which was that draw (inferred: no
 sample split the lift). That AppKit leaves a layer-backed view's root layer as rini set it between
 turns, its contents scale included, is inferred, not seen.
+
+**What a place costs.** A scratch build timed each call of every place drain on the main thread
+(2026-10-09, the ring alone, 140 place drains each way over 7 ring-on batteries, the timing patch
+and each drain's calls in [`docs/data/2026-10-09-place/`](../../../docs/data/2026-10-09-place/)).
+Every place in the battery showed one rest window afresh, the ring's, on the window focus came to.
+Given the rest window the ring left, as the pool gave it then, the place laid it, committed and
+flushed (1.60ms p50, 2.48ms p90: the alpha 0 of the window it left, an AppKit change, opened the
+transaction the layers' nested in, and the flush committed both), set its frame (0.47ms, 3.01ms)
+and ordered it (0.30ms, 6.19ms), and the drain's own transaction then committed the frame and the
+alpha 1 (1.59ms, 2.35ms): the place step took 3.18ms p50, 9.68ms p90. Any commit carrying a change
+to a rest window cost about 1.5ms, its layers or its alpha alike. Given back the rest window that
+last drew it, 105 of 140 places laid nothing and set no frame, so opened no transaction of their
+own: the place step took 0.53ms p50, 6.10ms p90, the order most of it (0.36ms, 4.96ms), and the
+drain's commit the same 1.55ms. The journal's place drains, applied: 4.6-6.1ms p50 and 11.3-12.5ms
+p90 before, 2.3-2.8ms and 6.9-13.8ms after (3 batteries a run, two timed runs and the untimed
+build after): the p90 is the places that still lay, a workspace switch's and a first pan's, and the
+order's tail. The handover check, 3 runs each way, gave every window's interior, edge and band
+differences the same to 0.3%.
 
 **Ordering a rest window.** Probe P1 (2026-10-06, an idle machine,
 [`docs/data/2026-10-06-drags/p1-order.jsonl`](../../../docs/data/2026-10-06-drags/p1-order.jsonl))
@@ -389,8 +409,7 @@ under the overlay stays where it was until the place, so the band's hole at the 
 whatever is below it there, not seen on screen.
 
 Not measured: what a rest window costs the window server in memory and the main thread in time, per
-window and under an 808 burst as a strip raise makes one, and what a place costs drawing what waited
-under the overlay, its reorders included (probe P13, which needs an idle machine
+window and under an 808 burst as a strip raise makes one (probe P13, which needs an idle machine
 and was not run); whether a full-size clear panel allocates a full-size backing, which would want
 its shape cut to its band instead; whether a re-order brings a `.moveToActiveSpace` window onto the
 Space shown; how a rest window moves through macOS's own Space animation, which slides a window

@@ -1,0 +1,143 @@
+diff --git a/src/animation/platform/renderer.rs b/src/animation/platform/renderer.rs
+index 27719a43..0d3f5f71 100644
+--- a/src/animation/platform/renderer.rs
++++ b/src/animation/platform/renderer.rs
+@@ -205,7 +205,9 @@ impl Renderer {
+         let needed = commands.iter().any(needs_overlay);
+         let mut flushed = began;
+         let display = self.display.map(|(frame, _, _)| frame);
++        if places { crate::decorations::platform::rest::prof::start(); }
+         for step in steps(shown, places) {
++            let step_at = Instant::now();
+             match step {
+                 Step::PlaceRest => {
+                     if self.overlay.is_some() {
+@@ -236,7 +238,9 @@ impl Renderer {
+                     }
+                 }
+             }
++            crate::decorations::platform::rest::prof::add(match step { Step::PlaceRest => "s_place", Step::LiftRest => "s_liftrest", Step::Hide => "s_hide", Step::Play => "s_play", Step::Background => "s_bg", Step::Show => "s_show", Step::CoverRest => "s_cover" }, step_at.elapsed());
+         }
++        if places { crate::decorations::platform::rest::prof::dump(if shown == Some(false) { "place+lift" } else { "place" }); }
+         let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
+         answer(seq, needed, overlay, (shown, places), (sent, began, flushed))
+     }
+diff --git a/src/decorations/platform/rest.rs b/src/decorations/platform/rest.rs
+index f9def157..22e57172 100644
+--- a/src/decorations/platform/rest.rs
++++ b/src/decorations/platform/rest.rs
+@@ -37,6 +37,30 @@ use crate::displays::event::{Following, ServerFrame, ServerOrder, ServerRead, St
+ use crate::displays::screen::primary_display_height;
+ use crate::windows::platform::window_server;
+ 
++
++pub mod prof {
++    use std::cell::RefCell;
++    use std::io::Write;
++    use std::time::{Duration, Instant};
++    thread_local! {
++        static ACC: RefCell<Vec<(&'static str, u32, Duration)>> = RefCell::new(Vec::new());
++        static ON: RefCell<bool> = RefCell::new(false);
++        static FILE: RefCell<Option<std::fs::File>> = RefCell::new(None);
++    }
++    pub fn start() { ON.with(|on| *on.borrow_mut() = true); ACC.with(|a| a.borrow_mut().clear()); }
++    pub fn add(name: &'static str, took: Duration) {
++        if !ON.with(|on| *on.borrow()) { return; }
++        ACC.with(|a| { let mut a = a.borrow_mut(); match a.iter_mut().find(|e| e.0 == name) { Some(e) => { e.1 += 1; e.2 += took; } None => a.push((name, 1, took)) } });
++    }
++    pub fn time<T>(name: &'static str, f: impl FnOnce() -> T) -> T { let at = Instant::now(); let r = f(); add(name, at.elapsed()); r }
++    pub fn dump(tag: &str) {
++        ON.with(|on| *on.borrow_mut() = false);
++        let line = ACC.with(|a| a.borrow().iter().map(|(n, c, d)| format!("\"{n}\":[{c},{}]", d.as_micros())).collect::<Vec<_>>().join(","));
++        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros();
++        FILE.with(|f| { let mut f = f.borrow_mut(); if f.is_none() { *f = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/rini-night/prof.log").ok(); } if let Some(f) = f.as_mut() { let _ = writeln!(f, "{{\"t\":{t},\"tag\":\"{tag}\",{line}}}"); } });
++    }
++}
++
+ pub type Sender = channel::Sender<Event>;
+ pub type Receiver = channel::Receiver<Event>;
+ 
+@@ -160,21 +184,23 @@ impl Panel {
+     fn order_above(&mut self, target: WindowServerId, level: StackLevel) {
+         let Some(own) = self.own_id() else { return };
+         if let Some(level) = stack_change(self.level, level) {
+-            window_server::take_stack_place(own, level.level, level.sub_level);
++            prof::time("stack_place", || window_server::take_stack_place(own, level.level, level.sub_level));
+             self.level = Some(level);
+         }
+-        self.window.orderWindow_relativeTo(NSWindowOrderingMode::Above, target.as_u32() as isize);
++        prof::time("order", || self.window.orderWindow_relativeTo(NSWindowOrderingMode::Above, target.as_u32() as isize));
+         turns::changed("rest.order");
+     }
+ 
+     /// Lays its layers for `now`.
+     fn lay(&mut self, now: &Look) {
++        let _at = Instant::now();
+         let Layers { decoration, style, size, corner, scale, inside } = now.layers;
+         self.holder.setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), size.to_cg()));
+         self.root.setContentsScale(scale);
+         self.bands.wear(&decoration, scale);
+         self.bands.place(size, corner);
+         self.bands.paint(&style);
++        prof::add("lay", _at.elapsed());
+     }
+ 
+     /// Shown at `now`'s frame, each set only when it differs from what it drew.
+@@ -183,12 +209,12 @@ impl Panel {
+         if change.frame {
+             let converter = CoordinateConverter::from_height(primary_display_height());
+             if let Some(cocoa) = converter.reframe(now.outer.to_cg(), self.window.frame()) {
+-                self.window.setFrame_display(cocoa, false);
++                prof::time("set_frame", || self.window.setFrame_display(cocoa, false));
+                 turns::changed("rest.frame");
+             }
+         }
+         if change.alpha {
+-            self.window.setAlphaValue(1.0);
++            prof::time("alpha1", || self.window.setAlphaValue(1.0));
+             turns::changed("rest.show");
+         }
+         self.look = Some(now);
+@@ -200,7 +226,7 @@ impl Panel {
+         let Some(was) = self.look else { return };
+         let now = was.hidden();
+         if delta(Some(was), now).alpha {
+-            self.window.setAlphaValue(0.0);
++            prof::time("alpha0", || self.window.setAlphaValue(0.0));
+             turns::changed("rest.hide");
+         }
+         self.look = Some(now);
+@@ -302,14 +328,15 @@ impl RestBorders {
+     fn place(&mut self, display: Option<ScreenRect>, through: Option<Instant>, now: Instant) {
+         let panels = &self.panels;
+         let drawn = |window| panels.iter().any(|panel| panel.target == Some(window));
+-        let Placed { draw, reread } = self.rest.place(display, through, now, drawn);
++        let Placed { draw, reread } = prof::time("domain", || self.rest.place(display, through, now, drawn));
+         if !self.rest.on() {
+             return;
+         }
+         for window in reread {
+-            self.rest.reread(window, window_server::server_frame(window).map(ScreenRect::from_cg));
++            let frame = prof::time("reread", || window_server::server_frame(window));
++            self.rest.reread(window, frame.map(ScreenRect::from_cg));
+         }
+-        self.draw_turn(&draw);
++        prof::time("draw", || self.draw_turn(&draw));
+     }
+ 
+     /// The overlay lifts off `display`: what came since the place drawn where it changed, reading
+@@ -393,10 +420,12 @@ impl RestBorders {
+             }
+         }
+         if laying {
+-            CATransaction::commit();
+-            CATransaction::flush();
++            prof::time("commit", || CATransaction::commit());
++            prof::time("flush", || CATransaction::flush());
+         }
++        prof::add("panels", std::time::Duration::from_micros(self.panels.len() as u64));
+         for (at, look) in revealed {
++            prof::add("afresh", std::time::Duration::ZERO);
+             self.panels[at].reveal(look);
+             self.order_above_its_window(at);
+         }
