@@ -139,9 +139,6 @@ impl Rings {
     /// Whether `window` wears the ring.
     pub fn ringed(&self, window: WindowId) -> bool { self.holders.contains(&window) }
 
-    /// Every window that wears the ring.
-    pub fn holders(&self) -> &[WindowId] { &self.holders }
-
     /// Whether `window` holds focus, so wears the active paint.
     pub fn focused(&self, window: WindowId) -> bool { self.focus == Some(window) }
 

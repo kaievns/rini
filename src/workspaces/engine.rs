@@ -266,8 +266,6 @@ impl LayoutEngine {
         changed
     }
 
-    pub fn borders(&self) -> &Borders { &self.borders }
-
     pub fn set_layout_settings(&mut self, settings: &LayoutSettings) {
         self.layout_settings = settings.clone();
 

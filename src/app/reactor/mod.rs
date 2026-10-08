@@ -1158,7 +1158,7 @@ impl Reactor {
             let _guard = span.enter();
             self.handle_loop_event(event);
         }
-        if self.borders() != *self.layout_manager.layout_engine.borders() {
+        if self.refresh_borders() {
             self.update_layout_or_warn(false, false, None);
         }
         self.publish_bar();

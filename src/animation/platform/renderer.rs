@@ -17,6 +17,7 @@ use tracing::warn;
 use crate::animation::domain::motion::score::{Edit, MediaClock, Score};
 use crate::animation::event::Event;
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
+use crate::decorations::platform::rest::OnLift;
 use crate::pictures::platform::picture::Picture;
 
 /// Everything the engine asks of the overlay, each one of its calls. Nothing asks for anything back.
@@ -132,10 +133,6 @@ fn steps(shown: Option<bool>) -> Vec<Step> {
     lifts.chain([Step::Play, Step::Background]).chain(shows).collect()
 }
 
-/// What the renderer calls as it lifts the overlay off a display, before it hides: what is drawn at
-/// rest there.
-pub type BeforeLift = Box<dyn Fn(ScreenRect)>;
-
 pub struct Renderer {
     rx: Receiver<Batch>,
     /// Made by the first `Dress` or `Stage` after a `Display`, and kept: making it costs too much to
@@ -146,7 +143,7 @@ pub struct Renderer {
     display: Option<(ScreenRect, f64, f64)>,
     /// Tells the engine what each drain came to.
     report: Box<dyn Fn(Event)>,
-    before_lift: BeforeLift,
+    before_lift: OnLift,
     mtm: MainThreadMarker,
 }
 
@@ -154,7 +151,7 @@ impl Renderer {
     pub fn new(
         rx: Receiver<Batch>,
         report: Box<dyn Fn(Event)>,
-        before_lift: BeforeLift,
+        before_lift: OnLift,
         mtm: MainThreadMarker,
     ) -> Self {
         Self { rx, overlay: None, display: None, report, before_lift, mtm }
