@@ -55,7 +55,7 @@ engine, the reactor and the switcher each hold a `Pictures` handle.
 
 | A client | Through the handle |
 |---|---|
-| asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `refresh` windows whose look has just turned, wherever they are, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it rini does not manage |
+| asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `refresh` windows whose look has just turned, wherever they are, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it rini does not manage, for the debug slide |
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
 | measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared on a thread of the check's own |
@@ -224,12 +224,12 @@ names only while its flight is up (`keep_focused`), is dropped there and then ra
 **A window is pictured once, under the id it flies by.** A window rini manages is pictured under its
 own id, and the debug slide flies it by that id; one it does not under a synthetic id, pid 0
 (`synthetic_window_id`), and the slide flies it by that (`picture_id`).
-A warm, at each change of display and on the debug command, pictures only windows rini does not
-manage, told by what the cache holds or owes under a real id, and only those showing at least
-`WARM_MIN_SHOWN` (100pt) of themselves on the display each way: a window parked at the corner keeps
-its full size and shows a sliver, which the window server counts as on screen. At boot the cache may
-hold nothing of a managed window yet, so the warm, or a debug slide, can picture it under a
-synthetic id too; at each release the service lets go of every synthetic picture a managed window
+A warm, on the debug command alone, pictures only windows rini does not manage, told by what the
+cache holds or owes under a real id, and only those showing at least `WARM_MIN_SHOWN` (100pt) of
+themselves on the display each way: a window parked at the corner keeps its full size and shows a
+sliver, which the window server counts as on screen. No flight reads these pictures, so a change of
+display warms nothing. At boot the cache may hold nothing of a managed window yet, so a warm or a
+debug slide can picture it under a synthetic id too; at each release the service lets go of every synthetic picture a managed window
 also has under its own id, and of every one whose window the window server no longer has, asked by
 id wherever the window is (`unwanted`). Why: "The pictures held" in `specs/animation.md`.
 

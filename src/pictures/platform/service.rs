@@ -183,21 +183,19 @@ impl DisplayPictures {
 }
 
 /// The overlay now flies on `display`. A change leaves nothing of the display left behind; a bar
-/// no longer pictured is dropped. True when the display changed.
+/// no longer pictured is dropped.
 fn set_display<P, O, C>(
     schedule: &mut Schedule<P, O, C>,
     held: &mut DisplayPictures,
     display: Display,
     picture_bar: bool,
     now: Instant,
-) -> bool {
-    let changed = schedule.set_display(display, picture_bar, now);
-    if changed {
+) {
+    if schedule.set_display(display, picture_bar, now) {
         *held = DisplayPictures::default();
     } else if !picture_bar {
         held.bar = None;
     }
-    changed
 }
 
 /// A render of `display`'s desktop came back. Held only when it spans the display it was asked of
@@ -483,8 +481,7 @@ impl Pictures {
 
     /// Every window on the display the overlay flies on that rini does not manage and that shows
     /// enough of itself there, pictured in the background under its synthetic id
-    /// (`crate::pictures::domain::identity::warm_targets`). The service runs the same warm at each change
-    /// of display.
+    /// (`crate::pictures::domain::identity::warm_targets`), for the debug slide.
     pub fn warm_visible(&self) { self.commands.send(Command::WarmVisible) }
 
     /// Measures a lift: the overlay alone as the next SkyLight call, its client told `OverlayTaken`,
@@ -725,10 +722,7 @@ impl Service {
             Command::Forget(window) => forget_window(&mut shared, &mut self.looks_checked, window),
             Command::SetDisplay { display, picture_bar } => {
                 let Shared { schedule, display: held, .. } = &mut *shared;
-                if set_display(schedule, held, display, picture_bar, now) {
-                    drop(shared);
-                    self.warm_visible(display);
-                }
+                set_display(schedule, held, display, picture_bar, now);
             }
             Command::WarmVisible => {
                 let display = shared.schedule.display();
@@ -1452,18 +1446,28 @@ mod tests {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
         let mut held = DisplayPictures::default();
-        assert!(set_display(&mut schedule, &mut held, built_in(), true, now));
+        set_display(&mut schedule, &mut held, built_in(), true, now);
         held.desktop = Some(sized(1728.0, 1117.0));
         held.bar = Some((sized(1728.0, 32.0), strip()));
         held.desktop_windows = Some(DesktopBackdrop::default());
 
-        assert!(!set_display(&mut schedule, &mut held, built_in(), false, now));
+        set_display(&mut schedule, &mut held, built_in(), false, now);
         assert!(held.desktop.is_some(), "the desktop stays");
         assert!(held.bar.is_none(), "the bar goes");
 
         held.bar = Some((sized(1728.0, 32.0), strip()));
-        assert!(set_display(&mut schedule, &mut held, external(), true, now));
+        set_display(&mut schedule, &mut held, external(), true, now);
         assert!(held.desktop.is_none() && held.bar.is_none() && held.desktop_windows.is_none());
+    }
+
+    /// Only the debug slide flies a picture of a window rini does not manage, so a change of display
+    /// pictures none of them.
+    #[test]
+    fn a_display_change_warms_nothing() {
+        let (mut service, shared) = detached_service();
+        service.apply(Command::SetDisplay { display: built_in(), picture_bar: false });
+        service.apply(Command::SetDisplay { display: external(), picture_bar: false });
+        assert_eq!(shared.lock().unwrap().schedule.owed().count(), 0);
     }
 
     /// The reported case: a render of the external display, landing after the overlay moved to the
