@@ -2940,7 +2940,7 @@ mod tests {
                 ],
                 &tiles,
             );
-            let ring = &tree.tile_layers[&window].decorations.bands.ring.layer;
+            let ring = &tree.tile_layers[&window].decorations.bands.as_ref().expect("ringed").ring.layer;
             let colour = |c: Colour| objc2_core_graphics::CGColor::new_srgb(c.r.into(), c.g.into(), c.b.into(), c.a.into());
             let painted = |c: Colour| objc2_core_graphics::CGColor::equal_to_color(ring.borderColor().as_deref(), Some(&colour(c)));
             assert!(!ring.isHidden() && painted(inactive), "worn unfocused");
@@ -2950,6 +2950,33 @@ mod tests {
             assert!(painted(active));
             tree.turn(window, false, Ring::None);
             assert!(ring.isHidden());
+        }
+
+        /// With the ring and the border off, a tile wears the hairline and the shadow and no layer for
+        /// either band.
+        #[test]
+        fn a_tile_whose_window_wears_no_band_carries_no_band_layer() {
+            let window = wid(1);
+            let drawn = typed(4.0, 32.0, 859.0, 1081.0);
+            let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
+            let tiles = [overlay_tile(window, drawn, drawn, false)];
+            assert_eq!(tiles[0].worn.decoration, crate::decorations::domain::style::Decoration::default());
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.play(
+                &[
+                    Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                    Edit::Ride(window, GroupKey::STILL),
+                    Edit::Place(Node::Tile(window), Value::Rect(at)),
+                ],
+                &tiles,
+            );
+            let decorations = &tree.tile_layers[&window].decorations;
+            assert!(decorations.bands.is_none());
+            // SAFETY: a read of the hairline's own sublayers, which nothing else mutates.
+            let children = unsafe { decorations.hairline.sublayers() }.map_or(0, |layers| layers.count());
+            assert_eq!(children, 1, "the outline alone");
+            tree.turn(window, true, Ring::Active);
+            assert!(tree.tile_layers[&window].decorations.bands.is_none(), "nor as focus turns");
         }
 
         /// A placed tile moves every layer of the tile at once: the picture, the caster and the hairline,

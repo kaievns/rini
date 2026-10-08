@@ -1,5 +1,8 @@
 //! What the displays context tells the application. The reactor converts these into its own
 //! event type; this crate never imports the reactor.
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowServerId;
 use rini_geometry::CGRectDef;
@@ -69,6 +72,19 @@ pub struct ServerOrder {
 
 /// Where each [`ServerOrder`] is handed, on the thread its notification arrives on.
 pub type OnServerOrder = Box<dyn Fn(ServerOrder) + Send + Sync>;
+
+/// Whether the application follows the window server's frames and orders now. While it does not, no
+/// moved window's frame is read and no [`ServerFrame`] or [`ServerOrder`] is handed to a callback:
+/// they are dropped where the notification arrives. Off until the application turns it on; every
+/// clone is the one switch.
+#[derive(Clone, Debug, Default)]
+pub struct Following(Arc<AtomicBool>);
+
+impl Following {
+    pub fn set(&self, on: bool) { self.0.store(on, Ordering::Relaxed) }
+
+    pub fn on(&self) -> bool { self.0.load(Ordering::Relaxed) }
+}
 
 /// Where the spaces actor delivers its events. Implemented for any channel whose message type
 /// can be built from [`Event`].

@@ -84,8 +84,10 @@ pub struct DecorationLayers {
     /// The hairline's dark outline, a stroke just outside the white line, as the hairline's child.
     pub outline: Retained<CAShapeLayer>,
     /// The ring and the border, bands outside the window, as the hairline's children after the
-    /// outline, so they are drawn in front of the picture, the hairline and the outline.
-    pub bands: Bands,
+    /// outline, so they are drawn in front of the picture, the hairline and the outline. Made as a
+    /// window wearing a band is worn, and taken away as one wearing none is, so a tile whose window
+    /// wears neither carries no layer for them.
+    pub bands: Option<Bands>,
     /// The window's corner radius as the window server reports it, which every piece rounds to;
     /// `None` rounds at the fallback.
     pub radius: Option<f64>,
@@ -122,7 +124,6 @@ impl DecorationLayers {
         outline.setStrokeColor(Some(&CGColor::new_generic_gray(0.0, OUTLINE_ALPHA)));
         outline.setLineWidth(OUTLINE_PT);
         hairline.addSublayer(&outline);
-        let bands = Bands::new(&hairline);
         container.addSublayer(&hairline);
 
         DecorationLayers {
@@ -130,7 +131,7 @@ impl DecorationLayers {
             shadow_mask,
             hairline,
             outline,
-            bands,
+            bands: None,
             radius: None,
             worn: Decoration::default(),
             built: Cell::new(None),
@@ -147,8 +148,10 @@ impl DecorationLayers {
         for layer in [&*self.shadow, &self.shadow_mask, &self.hairline, &self.outline] {
             layer.removeAllAnimations();
         }
-        self.bands.ring.remove_animations();
-        self.bands.border.remove_animations();
+        if let Some(bands) = &self.bands {
+            bands.ring.remove_animations();
+            bands.border.remove_animations();
+        }
     }
 
     /// Draws the decorations of a tile at depth `z`: the caster `SHADOW_Z` behind its picture, the
@@ -173,7 +176,9 @@ impl DecorationLayers {
         self.hairline.setCornerRadius(corner);
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
-        self.bands.place(size, self.band_corner_at(size));
+        if let Some(bands) = &self.bands {
+            bands.place(size, self.band_corner_at(size));
+        }
     }
 
     /// The corner a tile of `size` rounds to, every piece of it but the bands: its window's radius,
@@ -195,15 +200,24 @@ impl DecorationLayers {
         self.shadow.setShadowOpacity(shadow.opacity);
         self.shadow.setShadowRadius(shadow.radius);
         self.shadow.setShadowOffset(CGSize::new(0.0, shadow.offset_y));
-        self.bands.paint(&style);
+        if let Some(bands) = &self.bands {
+            bands.paint(&style);
+        }
     }
 
     /// Draws the outline at the display's `scale`, and the bands of `decoration` in whole device
-    /// pixels of it, at its rule's corner; laid at the next `place`.
+    /// pixels of it, at its rule's corner; laid at the next `place`. The bands' layers are made for a
+    /// decoration with a ring or a border, and taken away for one with neither.
     pub fn wear(&mut self, decoration: &Decoration, scale: f64) {
         self.outline.setContentsScale(scale);
         self.worn = *decoration;
-        self.bands.wear(decoration, scale);
+        if decoration.ring.is_none() && decoration.border.is_none() {
+            if let Some(bands) = self.bands.take() {
+                bands.remove();
+            }
+            return;
+        }
+        self.bands.get_or_insert_with(|| Bands::new(&self.hairline)).wear(decoration, scale);
     }
 
     /// Carries the decorations through `resize`, each piece at the corner of every size it passes
@@ -234,7 +248,9 @@ impl DecorationLayers {
         }
         let outline = resize.path("path", |size| outline_path(size, corner(size)));
         add_under(&self.outline, &outline, OUTLINE_KEY);
-        self.bands.install_resize(resize, |size: TileSize| self.band_corner_at(size));
+        if let Some(bands) = &self.bands {
+            bands.install_resize(resize, |size: TileSize| self.band_corner_at(size));
+        }
     }
 
     /// Takes away every animation `install_resize` put on the decorations.
@@ -243,7 +259,9 @@ impl DecorationLayers {
         remove_under(&self.shadow_mask, &[MASK_MOVE_KEY, MASK_SIZE_KEY, MASK_PATH_KEY]);
         remove_under(&self.hairline, &[CORNER_KEY]);
         remove_under(&self.outline, &[OUTLINE_KEY]);
-        self.bands.remove_resize();
+        if let Some(bands) = &self.bands {
+            bands.remove_resize();
+        }
     }
 }
 
@@ -283,6 +301,12 @@ impl Bands {
     fn remove_resize(&self) {
         self.ring.remove_resize();
         self.border.remove_resize();
+    }
+
+    /// Takes both bands' layers off their parent.
+    fn remove(&self) {
+        self.ring.layer.removeFromSuperlayer();
+        self.border.layer.removeFromSuperlayer();
     }
 }
 
@@ -762,6 +786,17 @@ mod tests {
 
     fn ringed() -> Decoration { Decoration { ring: Some(RING), ..Decoration::default() } }
 
+    fn both() -> Decoration { Decoration { border: Some(BORDER), ..ringed() } }
+
+    fn bands(layers: &DecorationLayers) -> &Bands { layers.bands.as_ref().expect("worn with a band") }
+
+    /// Layers worn for a window wearing the ring and the border.
+    fn banded() -> DecorationLayers {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.wear(&both(), 2.0);
+        layers
+    }
+
     /// Whether `layer` shows in `paint`'s colour, its border drawn in it and no gradient over it.
     fn painted(layer: &CAGradientLayer, paint: Paint) -> bool {
         let Paint::Solid(c) = paint else { panic!("a colour") };
@@ -775,33 +810,56 @@ mod tests {
         sublayers.iter().map(|layer| Retained::as_ptr(&layer)).collect()
     }
 
+    /// With the ring and the border off, or for a window no rule gives either, a tile carries no
+    /// layer for them; worn with one again, it does.
+    #[test]
+    fn a_tile_whose_window_wears_no_band_carries_no_layer_for_one() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        let outline: &CALayer = &layers.outline;
+        let outline = outline as *const CALayer;
+        assert!(layers.bands.is_none() && children(&layers) == [outline], "made with none");
+        layers.wear(&Decoration::default(), 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        layers.show(Style::of(true, Ring::Active, &Decoration::default()));
+        layers.install_resize(&Between(TileSize::new(0.0, 1081.0), TileSize::new(859.0, 1081.0)));
+        layers.remove_resize();
+        layers.remove_animations();
+        assert!(layers.bands.is_none() && children(&layers) == [outline], "dressed and resized with none");
+        layers.wear(&ringed(), 2.0);
+        assert_eq!(children(&layers).len(), 3, "the ring's and the border's, as one is worn");
+        let ring = bands(&layers).ring.layer.clone();
+        layers.wear(&Decoration::default(), 2.0);
+        assert!(layers.bands.is_none() && children(&layers) == [outline], "taken away again");
+        assert!(ring.superlayer().is_none());
+    }
+
     #[test]
     fn the_focus_ring_is_in_front_of_the_hairline_and_the_outline() {
-        let layers = DecorationLayers::new(&CALayer::layer());
-        assert_eq!(parent(&layers.bands.ring.layer), Some(&*layers.hairline as *const CALayer));
+        let layers = banded();
+        assert_eq!(parent(&bands(&layers).ring.layer), Some(&*layers.hairline as *const CALayer));
         let outline: &CALayer = &layers.outline;
-        assert_eq!(children(&layers)[..2], [outline as *const CALayer, &**layers.bands.ring.layer as *const CALayer], "drawn after the outline");
+        assert_eq!(children(&layers)[..2], [outline as *const CALayer, &**bands(&layers).ring.layer as *const CALayer], "drawn after the outline");
         layers.stack(0.0);
         assert!(layers.hairline.zPosition() > 0.0, "and with the hairline, in front of the picture");
     }
 
     #[test]
     fn the_border_is_drawn_in_front_of_the_ring() {
-        let layers = DecorationLayers::new(&CALayer::layer());
-        assert_eq!(parent(&layers.bands.border.layer), Some(&*layers.hairline as *const CALayer));
+        let layers = banded();
+        assert_eq!(parent(&bands(&layers).border.layer), Some(&*layers.hairline as *const CALayer));
         let order = children(&layers);
         assert_eq!(order.len(), 3);
-        assert_eq!(order[2], &**layers.bands.border.layer as *const CALayer, "after the outline and the ring");
+        assert_eq!(order[2], &**bands(&layers).border.layer as *const CALayer, "after the outline and the ring");
     }
 
     #[test]
     fn the_border_is_worn_in_the_paint_focus_gives_it_with_the_ring_outside_it() {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.radius = Some(16.0);
-        let both = Decoration { border: Some(BORDER), ..ringed() };
+        let both = both();
         layers.wear(&both, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
-        let (ring, border) = (&layers.bands.ring.layer, &layers.bands.border.layer);
+        let (ring, border) = (&bands(&layers).ring.layer, &bands(&layers).border.layer);
         assert_eq!(border.frame(), rect(-4.0, -4.0, 867.0, 1089.0));
         assert_eq!((border.borderWidth(), border.cornerRadius()), (4.0, 20.0));
         assert_eq!(ring.frame(), rect(-8.0, -8.0, 875.0, 1097.0), "out past the border");
@@ -818,16 +876,16 @@ mod tests {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.wear(&ringed(), 2.0);
         layers.show(Style::of(true, Ring::Active, &ringed()));
-        let ring = layers.bands.ring.layer.clone();
+        let ring = bands(&layers).ring.layer.clone();
         assert!(painted(&ring, RING.active));
-        assert!(layers.bands.border.layer.isHidden(), "borders off");
+        assert!(bands(&layers).border.layer.isHidden(), "borders off");
         layers.show(Style::of(false, Ring::Inactive, &ringed()));
         assert!(painted(&ring, RING.inactive));
         layers.show(Style::of(true, Ring::None, &ringed()));
         assert!(ring.isHidden(), "not its workspace's active window");
         layers.wear(&Decoration::default(), 2.0);
         layers.show(Style::of(true, Ring::Active, &Decoration::default()));
-        assert!(ring.isHidden(), "rings off");
+        assert!(layers.bands.is_none() && ring.superlayer().is_none(), "rings off: no layer for one");
     }
 
     #[test]
@@ -836,7 +894,7 @@ mod tests {
         layers.radius = Some(16.0);
         layers.wear(&Decoration { ring: Some(crate::decorations::domain::style::Band { width: 1.3, ..RING }), ..Decoration::default() }, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
-        let ring = &layers.bands.ring.layer;
+        let ring = &bands(&layers).ring.layer;
         assert_eq!(ring.borderWidth(), 1.5, "whole device pixels");
         assert_eq!(ring.frame(), rect(-1.5, -1.5, 862.0, 1084.0));
         assert_eq!(ring.cornerRadius(), 17.5);
@@ -856,15 +914,15 @@ mod tests {
         layers.wear(&Decoration { ring: Some(RING), border: Some(border), radius: Some(8.0), urgent: false }, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
         assert_eq!(layers.hairline.cornerRadius(), 16.0, "the window server's");
-        assert_eq!(layers.bands.border.layer.cornerRadius(), 12.0, "the rule's, out by the border");
+        assert_eq!(bands(&layers).border.layer.cornerRadius(), 12.0, "the rule's, out by the border");
         layers.wear(&Decoration { ring: Some(RING), border: Some(border), ..Decoration::default() }, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
-        assert_eq!(layers.bands.border.layer.cornerRadius(), 20.0, "a pooled tile worn with no rule's: the server's");
+        assert_eq!(bands(&layers).border.layer.cornerRadius(), 20.0, "a pooled tile worn with no rule's: the server's");
     }
 
     #[test]
     fn taking_every_animation_away_clears_every_decoration_layer() {
-        let layers = DecorationLayers::new(&CALayer::layer());
+        let layers = banded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
@@ -878,10 +936,10 @@ mod tests {
             &layers.shadow_mask,
             &layers.hairline,
             &layers.outline,
-            &layers.bands.ring.layer,
-            &layers.bands.border.layer,
-            &layers.bands.ring.mask,
-            &layers.bands.border.mask,
+            &bands(&layers).ring.layer,
+            &bands(&layers).border.layer,
+            &bands(&layers).ring.mask,
+            &bands(&layers).border.mask,
         ] {
             assert!(installed(layer).is_empty());
         }
@@ -891,7 +949,7 @@ mod tests {
     /// the corner, and takes away the one an earlier resize animated.
     #[test]
     fn a_resize_installs_each_decoration_under_its_own_key() {
-        let layers = DecorationLayers::new(&CALayer::layer());
+        let layers = banded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
@@ -916,7 +974,7 @@ mod tests {
             installed(&layers.outline),
             pairs([("rini.tile.outline.path", "path")])
         );
-        for band in [&layers.bands.ring, &layers.bands.border] {
+        for band in [&bands(&layers).ring, &bands(&layers).border] {
             for layer in [&**band.layer, &band.mask] {
                 assert_eq!(
                     installed(layer),
@@ -934,7 +992,7 @@ mod tests {
             installed(&layers.outline),
             pairs([("rini.tile.outline.path", "path")])
         );
-        for band in [&layers.bands.ring, &layers.bands.border] {
+        for band in [&bands(&layers).ring, &bands(&layers).border] {
             for layer in [&**band.layer, &band.mask] {
                 assert_eq!(installed(layer), pairs([("rini.tile.band.size", "bounds")]));
             }
@@ -944,7 +1002,7 @@ mod tests {
     /// Only the resize's own keys go: what the overlay installs on the frame layers stays.
     #[test]
     fn taking_a_resize_away_leaves_no_decoration_animation() {
-        let layers = DecorationLayers::new(&CALayer::layer());
+        let layers = banded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
@@ -958,7 +1016,7 @@ mod tests {
         }
         assert!(installed(&layers.shadow_mask).is_empty());
         assert!(installed(&layers.outline).is_empty());
-        for band in [&layers.bands.ring, &layers.bands.border] {
+        for band in [&bands(&layers).ring, &bands(&layers).border] {
             assert!(installed(&band.layer).is_empty() && installed(&band.mask).is_empty());
         }
     }
@@ -980,7 +1038,7 @@ mod tests {
         layers.wear(&graded, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
         layers.show(Style::of(true, Ring::Active, &graded));
-        let ring = &layers.bands.ring;
+        let ring = &bands(&layers).ring;
         let Paint::Gradient(gradient) = sunset(45.0) else { unreachable!() };
         assert_eq!(ring.layer.colors().map(|colours| colours.count()), Some(gradient.stops().len()));
         assert_eq!(ring.layer.locations().map(|at| at.count()), Some(gradient.stops().len()));
@@ -1045,7 +1103,7 @@ mod tests {
         layers.wear(&graded(45.0), 2.0);
         layers.show(Style::of(true, Ring::None, &graded(45.0)));
         layers.install_resize(&resize);
-        let border = &layers.bands.border.layer;
+        let border = &bands(&layers).border.layer;
         assert_eq!(
             installed(border),
             pairs([("rini.tile.band.end", "endPoint"), ("rini.tile.band.size", "bounds"), ("rini.tile.band.start", "startPoint")])

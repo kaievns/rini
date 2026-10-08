@@ -249,6 +249,9 @@ fn main() {
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
     let (bar_tx, bar_rx) = rini::app::channels::channel();
     let (rest_tx, rest_rx) = rini::app::channels::channel();
+    // Whether the window server's frames and orders are followed for the rest windows: the reactor
+    // turns it on while any window can wear a band.
+    let following = rini::displays::event::Following::default();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
 
     // Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
@@ -282,7 +285,7 @@ fn main() {
         Some(pictures.clone()),
         Some(switcher_tx.clone()),
         Some(bar_tx.clone()),
-        Some(rest_tx.clone()),
+        Some((rest_tx.clone(), following.clone())),
         Some((wnd_tx.clone(), window_tx_store.clone())),
         Some(gesture_tap_tx.clone()),
         opt.one,
@@ -392,7 +395,7 @@ fn main() {
             CGSEventType::Known(KnownCGSEvent::WindowResized),
         ],
         // The rest windows follow every decorated window the window server moves, go back above the
-        // ones it reorders, and hide with the ones it hides or closes.
+        // ones it reorders, and hide with the ones it hides or closes, while `following` is on.
         vec![Box::new({
             let rest_tx = rest_tx.clone();
             move |frames: &[_]| rest_tx.send(rini::decorations::platform::rest::Event::Frames(frames.to_vec()))
@@ -401,6 +404,7 @@ fn main() {
             let rest_tx = rest_tx.clone();
             move |order| rest_tx.send(rini::decorations::platform::rest::Event::Order(order))
         })],
+        following,
     );
 
     let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
