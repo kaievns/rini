@@ -208,7 +208,7 @@ impl Renderer {
                 Step::Show => self.overlay.as_mut().into_iter().for_each(TileOverlay::show),
                 Step::CoverRest => {
                     if self.overlay.is_some() {
-                        (self.rest.cover)();
+                        (self.rest.cover)(self.display.map(|(frame, _, _)| frame));
                     }
                 }
             }

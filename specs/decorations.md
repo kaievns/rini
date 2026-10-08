@@ -163,18 +163,22 @@ wearing either is drawn by one rest window holding both.
   drag, an edge drag, an application resizing itself, and rini's own writes, and MUST NOT be hidden
   while it does. Under the overlay it follows its window at the lift (below).
 - From the overlay's show to its lift, rini's windows that draw the ring at rest MUST draw nothing,
-  ask the window server nothing and be made none: each window moved, reordered, hidden or parked
-  under the overlay, focus turning and a window rini starts managing all wait for the lift, which
-  draws them before the overlay hides. The overlay covers them, so nothing drawn there is seen, and
-  each of those draws had been main-thread and window-server time the flight's own frames waited
-  behind.
+  ask the window server nothing and be made none while nothing changes on another display: each
+  window moved, reordered, hidden or parked under the overlay, focus turning and a window rini
+  starts managing all wait for the lift, which draws them before the overlay hides. The overlay
+  covers its display, so nothing drawn there is seen, and each of those draws had been main-thread
+  and window-server time the flight's own frames waited behind. A window on another display that
+  moves, is reordered, hidden or closed, or whose park takes effect, MUST be drawn as it does, with
+  everything that waited: the overlay does not cover it.
 
 > **Reported 2026-10-08.** Kai, after the borders shipped: "the animations smoothenes seem to have
 > degraded". Against the build before them, over 114 flights since the deploy and 133 before it,
-> the renderer's wait for the main thread rose from 0.08 to 16.38ms at p99 for the drains between a
-> show and its lift. Read from the code, the rest windows drew under the overlay at every frame
-> rini's writes made, every 808 of a raise and the key window's turn, each draw with window-server
-> reads that a sample at rest caught waiting 9ms on a lock.
+> the drains between a show and its lift that waited over 1ms for the main thread rose from 1 of
+> 680 to 10 of 153, 6 of them 244 to 264ms into their flight, and the worst from 11.6 to 125ms.
+> Read from the code, the rest windows drew under the overlay at every frame rini's writes made,
+> every 808 of a raise and the key window's turn, each draw with window-server reads that a sample
+> at rest caught waiting on a lock for 9 of its 13 samples in rest turns. That those draws are
+> what the drains waited behind is inferred: no sample ran during a flight.
 - The ring MUST NOT be drawn around a window rini has parked, judged by rini's layout rather than
   the window's frame: macOS leaves up to 52pt of a parked window on screen, and a ring around that
   sliver would draw a stripe at the display's edge. rini parks a window and brings one back by

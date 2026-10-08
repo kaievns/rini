@@ -42,8 +42,8 @@ pub enum Event {
     Frames(Vec<ServerFrame>),
     /// A window the window server reordered, hid or unhid.
     Order(ServerOrder),
-    /// The overlay has lifted and the pool owes rest windows the model wants, made now that it is
-    /// down.
+    /// The overlay has lifted and wants a turn of the actor's: the pool owes rest windows the model
+    /// wants, made now that it is down, or a park waits for its patience.
     Lifted,
 }
 
@@ -246,8 +246,8 @@ impl RestBorders {
 
     /// The overlay lifts off `display`, the one it was laid out on if any: what waited under it taken,
     /// each window the domain names read again from the window server, and every band drawn as it is
-    /// now, before the overlay hides. Whether the pool owes rest windows, which are made only once it
-    /// is down.
+    /// now, before the overlay hides. Whether the actor wants a turn of its own once it is down
+    /// (`Rest::wants_turn`): the pool owes rest windows, or a park waits for its patience.
     fn lift(&mut self, display: Option<ScreenRect>, now: Instant) -> bool {
         let panels = &self.panels;
         let drawn = |window| panels.iter().any(|panel| panel.target == Some(window));
@@ -257,7 +257,7 @@ impl RestBorders {
         }
         let also = draw.focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
         self.draw(&draw.orders, also.into_iter().collect());
-        self.panels.len() < self.rest.pool_size()
+        self.rest.wants_turn(self.panels.len())
     }
 
     fn settle(&mut self, now: Instant) {
@@ -358,10 +358,10 @@ fn read_server(window: WindowServerId) -> (Option<ScreenRect>, bool) {
     (frame, window_server::window_ordered_in(window) == Some(false))
 }
 
-/// What the renderer calls on the main thread as its overlay goes up, and as it lifts off the
-/// display it was laid out on, if any, before it hides.
+/// What the renderer calls on the main thread as its overlay goes up and as it lifts, each with the
+/// display it was laid out on, if any, the lift before it hides.
 pub struct Handover {
-    pub cover: Box<dyn Fn()>,
+    pub cover: Box<dyn Fn(Option<ScreenRect>)>,
     pub lift: Box<dyn Fn(Option<ScreenRect>)>,
 }
 
@@ -372,13 +372,13 @@ pub struct RestActor {
 
 impl RestActor {
     /// The actor, and what the renderer calls as its overlay goes up and lifts. `wake` is its own
-    /// inbox, told once a lift leaves the pool short.
+    /// inbox, told once a lift wants a turn of it.
     pub fn new(rx: Receiver, wake: Sender, mtm: MainThreadMarker) -> (RestActor, Handover) {
         let borders = Rc::new(RefCell::new(RestBorders::new(mtm)));
         let covered = borders.clone();
         let lifted = borders.clone();
         let handover = Handover {
-            cover: Box::new(move || covered.borrow_mut().rest.cover()),
+            cover: Box::new(move |display| covered.borrow_mut().rest.cover(display)),
             lift: Box::new(move |display| {
                 if lifted.borrow_mut().lift(display, Instant::now()) {
                     wake.send(Event::Lifted);

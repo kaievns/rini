@@ -21,7 +21,7 @@ layout the width each tiled window gives up to its border, and wires the rest wi
 | `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its three paints, and which one it is drawn in (`Band`, `paint`); what a window wears that rini draws, its ring, its border, its rule's corner, which the bands round to ahead of the window server's, and whether it is drawn urgent (`Decoration`, `corner`), and through a pass, with the ring it wore and wears (`Worn`); the ring a window wears and in which paint (`Ring`); and `Style::of`, the white line's alpha, the shadow, the ring's paint for a window urgent, else the one its `Ring` names, and the border's for a window urgent, focused or neither. Who wears the ring: each workspace's active window, the focused window on its own, active on the display holding focus; and who is drawn urgent: every window of an application asking for attention while no window of it holds focus (`Rings`) |
 | `domain/paint.rs` | `Colour`, sRGB with its alpha, as the config writes a colour; `Paint`, a band's fill, a colour or a `Gradient`, niri's: two colours along an angle, mixed in a `ColourSpace` (with its `Hue` for `oklch`) as niri's shader mixes them (`colour_at`); its `Axis` over a band of a size, the start and end points Core Animation takes (`axis`), and whether that moves with the size (`follows_size`); and the `Stop`s Core Animation draws it through (`stops`, to `TOLERANCE` at `SAMPLES` steps) |
 | `domain/rules.rs` | What a `window-rule` says a window wears (`DecorationRule`, a `BandRule` for the ring and one for the border, and `geometry-corner-radius`), matched through the open-time rules' matcher (`windows::domain::rules::applies`); the layout's settings with every rule that applies laid over them in file order (`fold`); a window's decoration either side of focus, its active paint as the rules give it while it holds focus and the rest as they give it while it does not, urgent or not (`decoration`); the border a tiled window gives out of its slot, in whole device pixels of its display (`border_width`), and whether a rule can give any other than the layout's (`shape_borders`) |
-| `domain/rest.rs` | The bands at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with what `Held` it, its bands' paint and how far they reach), whether its bands show (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), what each turn makes of the model, the window server's frames and orders and a lift, what waits for the lift while the overlay is up, and which windows show then (`Rest`, a `Tracked` per window: the window focus came to, the turn a `Draw` draws, `cover` and what a lift draws, `Lifted`, the parks a lift on its display takes, the frames read again), how many rest windows the pool holds (`Rest::pool_size`), which rest window draws each window (`assign`), and which are ordered above their windows again this turn (`to_reorder`) |
+| `domain/rest.rs` | The bands at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with what `Held` it, its bands' paint and how far they reach), whether its bands show (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), what each turn makes of the model, the window server's frames and orders and a lift, what waits for the lift while the overlay is up, and which windows show then (`Rest`, a `Tracked` per window: the window focus came to, the turn a `Draw` draws, `cover` and what a lift draws, `Lifted`, and whether the actor wants a turn of its own after it, `wants_turn`, the parks a lift on its display takes, the frames read again), how many rest windows the pool holds (`Rest::pool_size`), which rest window draws each window (`assign`), and which are ordered above their windows again this turn (`to_reorder`) |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
 | `settings.rs` | `DecorationSettings`: `layout › focus-ring` and `layout › border`, each on or off and its `Band`, niri's by default but for the ring's width, and the window rules' `DecorationRule`s in file order; `draws_bands`, whether any window can wear a band |
 | `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the bands (`hairline`, `outline`, `bands`). `Bands`, the ring and the border in front of it, worn, laid, painted and carried through a resize together, on a tile and at rest alike; `Band`, one band's layer: a `CAGradientLayer` drawing a colour as its border on the continuous curve, or a gradient masked to a border of the same shape, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize, its mask and a gradient's axis with it; each gradient's stops as Core Animation takes them, the last 16 kept (`drawn`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's bands (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
@@ -261,9 +261,12 @@ edge `width` in, so the outer corner is `corner + width` (`shape::band`).
 **Following.** A rest window takes its window's frame from the window server's frames
 (`src/displays/docs/live-frames.md`): 806 and 807 saw every frame a 1ms poll saw during Kai's
 drags, n=1165, p90 0.08ms behind it, in Ghostty only. The actor takes what queued each turn, the
-latest frame of each window. Under the overlay the rest windows follow no window: the frames and
-orders are taken as they come, so a park is taken with its window's move and a hide with its order,
-but nothing is drawn, read or ordered until the lift ("The handover"). None is hidden for a flight.
+latest frame of each window. Under the overlay the rest windows follow no window on its display:
+the frames and orders are taken as they come, so a park is taken with its window's move and a hide
+with its order, but nothing is drawn, read or ordered until the lift ("The handover"). A frame or
+an order of a window on another display, or a park there taking effect, draws the turn as if
+nothing covered it, with everything that waited: the overlay covers only its own display. None is
+hidden for a flight.
 A window the window server closes (804) shows no band from its close on (`rest::ordered_out`),
 before the reactor hears of it and drops the window from its model; that 804 reaches rini for every
 window it asks the window server's notifications of is inferred, as JankyBorders listens to it, and
@@ -281,12 +284,13 @@ overlay covered it.
 **The handover.** The overlay covers its display at level 18, so a rest window under it is unseen
 once it is up, as its window is. A press's own model reaches the rest windows before the overlay is
 up and is drawn as it comes (read from the code, not seen). From the show, which covers them
-(`Rest::cover`, after the overlay's alpha 1 in `Renderer::play`'s steps), to the lift, a turn draws,
-reads and makes nothing: what came waits (`Rest::turn`). Each such turn had been main-thread time
+(`Rest::cover`, after the overlay's alpha 1 in `Renderer::play`'s steps, with the display it is
+laid out on), to the lift, a turn draws, reads and makes nothing unless a window on another display
+changed: what came waits (`Rest::turn`). Each such turn had been main-thread time
 the flight's drains waited behind: the frames of every window rini's writes moved, the 808s of a
 raise, the key window's turn and each park's patience, each a full draw of every rest window with
 its window-server reads and orders. A 10s sample of rini at rest on 2026-10-08, while Kai typed and
-no flight ran, held 13 of 7216 main-thread samples in one rest turn, 9 of them in
+no flight ran, held 13 of 7216 main-thread samples in `RestBorders::take`, 9 of them in
 `SLSWindowQueryWindows` waiting on `SLSConnectionSynchronizeSLSCATransaction`'s lock, the read
 `StackPlace::of` and `corner_radii` make, and 3 in the turn's commit; the frames were symbolised
 against a rebuild of the same commit, so their names are inferred
@@ -296,7 +300,10 @@ the rest windows before it hides the overlay, and the model that waited is taken
 display that waited taken, every rest window on it put at its window's frame as the window server
 has it, each one whose window was reordered under the overlay or that focus came to ordered above
 its window again, and every one drawn as it is then, in the same main-thread turn as the hide
-(`Rest::lift`). That no frame shows a band out of place is inferred, not measured. The overlay is
+(`Rest::lift`). A park the lift takes no move for, on another display, still waits for its
+patience, and only the actor's own turn sets that timer, so the lift asks for one
+(`Rest::wants_turn`, `Event::Lifted`), as it does when the pool is short. That no frame shows a band
+out of place is inferred, not measured. The overlay is
 holed over each band as over each window ("Holes" in `src/animation/docs/animation-smoothness.md`),
 so the rest window keeps painting under it, inferred as needed; a rest window whose window moves
 under the overlay stays where it was until the lift, so the band's hole at the window's end shows
