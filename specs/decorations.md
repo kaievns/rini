@@ -196,6 +196,13 @@ wearing either is drawn by one rest window holding both.
   main-thread and window-server time that a flight's show and lift wait behind: while every turn
   redrew every one, the lift took 4.0-4.5ms to play at the median with the ring on, against
   1.7-1.9ms with it off.
+- rini MUST make no more of those windows than, on each display, the most bands any one of its
+  workspaces shows, and one spare: each is a window-sized window on rini's connection to the window
+  server. One made stays, at alpha 0 while it shows nothing, until no window can wear a band. With
+  the ring alone that is 2 a display however many workspaces it has, enough for the ring moving with
+  focus and for a workspace switch's leaving and arriving ring shown together. With the border on, a
+  workspace switch no flight covers MAY show an arriving band up to 250ms late, until the leaving
+  windows' parks take effect.
 - The ring MUST follow its window wherever the window server moves it, whoever moves it: a title-bar
   drag, an edge drag, an application resizing itself, and rini's own writes, and MUST NOT be hidden
   while it does. Through a flight it follows its window as the flight lands (below).
@@ -269,7 +276,8 @@ and which applications ask for attention, read by `src/windows/platform/attentio
 `src/transitions/domain/lifecycle.rs`, carried out by `src/transitions/platform/engine.rs` on the
 overlay (`src/animation/platform/overlay.rs`), which is holed over each band
 (`src/animation/domain/motion/holes.rs`). At rest, which windows show a band, which rest window
-draws each, what each changes to draw its look and which are ordered again are
+draws each, how many rest windows are kept, what each changes to draw its look and which are
+ordered again are
 `src/decorations/domain/rest.rs`, carried out by the main-thread actor in
 `src/decorations/platform/rest.rs`, which the reactor tells of each flight's
 begin (`Reactor::send_flight` in `src/app/reactor/mod.rs`, `publish_rest` in

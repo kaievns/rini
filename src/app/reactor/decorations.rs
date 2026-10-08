@@ -8,18 +8,19 @@
 //! At rest the window holding focus is the key window as macOS reports it, so a band turns when
 //! macOS repaints its window's focus, not at rini's decision; after every batch the rest windows are
 //! told the display of a flight it handed the engine, so they hold that batch's model and what
-//! follows until it lands, then sent what each managed window wears and what holds its band, when
-//! that changed, and while no window can wear a band they are turned off, told of no flight, and the
-//! window server's frames and orders go unfollowed (`DecorationSettings::draws_bands`). Each window is
-//! folded afresh whenever what it wears is asked for, so a rule follows focus, floating and the
+//! follows until it lands, then sent what each managed window wears, the workspace it is on and what
+//! holds its band, when that changed, and while no window can wear a band they are turned off, told
+//! of no flight, and the window server's frames and orders go unfollowed
+//! (`DecorationSettings::draws_bands`). Each window is folded afresh whenever what it wears is asked for, so a rule follows focus, floating and the
 //! title as they change. A window is drawn urgent while its application asks for attention and no
 //! window of it holds focus, read against the same focus as the ring.
 
 use rini_core::ids::{SpaceId, WindowId};
 use rini_geometry::is_off_screen;
 use rini_geometry::space::{FromCg, ScreenRect};
+use slotmap::Key;
 
-use crate::decorations::domain::rest::{Held, RestDisplay, RestModel, RestWindow};
+use crate::decorations::domain::rest::{Group, Held, RestDisplay, RestModel, RestWindow};
 use crate::decorations::domain::rules;
 use crate::decorations::domain::style::{Decoration, Rings, Worn};
 use crate::decorations::platform::rest::{Event as RestEvent, Sender};
@@ -173,8 +174,8 @@ impl Reactor {
         self.rest.sent = model;
     }
 
-    /// Every managed window on a space rini manages, what it wears with the key window holding
-    /// focus, and what holds its bands.
+    /// Every managed window on a space rini manages, the workspace it is on, what it wears with the
+    /// key window holding focus, and what holds its bands.
     pub(super) fn rest_model(&self) -> RestModel {
         let screens = &self.space_state.screens;
         let displays = screens
@@ -208,6 +209,7 @@ impl Reactor {
                     );
                 Some(RestWindow {
                     window: server_id,
+                    group: Group { space: info.space, workspace: info.workspace_id.data().as_ffi() },
                     decoration: self.decoration_of(window, &rings),
                     focused: rings.focused(window),
                     ring: rings.ring(window),

@@ -165,6 +165,19 @@ fn a_column_the_strip_parks_is_sent_to_the_rest_actor_as_parked() {
     }
     assert!(model.windows.iter().any(|window| window.held.parked), "four 0.7-wide columns: the last is off screen");
     assert!(model.windows.iter().any(|window| !window.held.parked));
+    assert!(model.windows.iter().all(|window| window.group == model.windows[0].group), "parked or not, one workspace");
+}
+
+/// The rest windows' pool is counted by workspace, each display showing one at a time.
+#[test]
+fn each_window_is_sent_with_the_workspace_it_is_on() {
+    let mut desk = desk();
+    let left = desk.left;
+    let model = focus(&mut desk, left_ghostty(), left);
+    let group = |wsid| sent(&model, wsid).group;
+    assert_eq!(group(901), group(902), "Ghostty and Zen on the left's workspace 0");
+    assert_eq!((group(901).space, group(903).space, group(904).space), (desk.left, desk.right, desk.right));
+    assert_ne!(group(903), group(904), "the right's workspaces 0 and 2");
 }
 
 #[test]

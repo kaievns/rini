@@ -1,14 +1,14 @@
 //! A decoration at rest, drawn by a window of rini's own directly above the window it decorates:
 //! which windows show a band and when, what each turn of the rest windows makes of the reactor's
 //! word and the window server's, which windows are asked of the window server as they are first
-//! named, what waits from a flight's begin for its place ahead of the lift, which of rini's rest
-//! windows draws each and what each changes to draw it, which are ordered above their windows again
-//! and when one takes its window's level, and that none is kept and nothing taken while they are
-//! off. See "At rest" in `src/decorations/docs/README.md`.
+//! named, what waits from a flight's begin for its place ahead of the lift, how many rest windows
+//! rini keeps, by the fullest workspace on each display, which of them draws each and what each
+//! changes to draw it, which are ordered above their windows again and when one takes its window's
+//! level, and that none is kept and nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
-use rini_core::ids::WindowServerId;
+use rini_core::ids::{SpaceId, WindowServerId};
 use rini_geometry::space::{Respace, ScreenRect, ScreenVector, TileSize};
 use rustc_hash::FxHashMap as HashMap;
 
@@ -37,10 +37,19 @@ pub struct Held {
     pub fullscreen: bool,
 }
 
+/// The workspace a window is on, as plain numbers: the Space it is on, which one display shows, and
+/// the workspace's own, of which that display shows one at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Group {
+    pub space: SpaceId,
+    pub workspace: u64,
+}
+
 /// One window that wears a decoration rini draws at rest, as the reactor sends it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RestWindow {
     pub window: WindowServerId,
+    pub group: Group,
     pub decoration: Decoration,
     /// The managed window macOS has focused.
     pub focused: bool,
@@ -482,19 +491,30 @@ impl Rest {
     /// such a turn sets.
     pub fn wants_turn(&self, pool: usize) -> bool { pool < self.pool_size() || self.due().is_some() }
 
-    /// How many rest windows the pool holds for this model: one for every window that wears a band
-    /// and could show it, held by no more than a park, so a park or a return through a flight takes
-    /// a rest window from the pool and none is made inside a flight; and one per display at least, so
-    /// the ring moving with focus makes none. None at all while off.
+    /// How many rest windows the pool holds for this model: for each display, the most windows one of
+    /// its workspaces has that wear a band and could show it, held by no more than a park, and one
+    /// spare. A display shows one workspace at a time, and a flight's place takes the parks on its
+    /// display before it draws, so a flown switch wants only the arriving workspace's; the spare lets
+    /// the ring moving with focus, and the leaving and arriving ring of a switch no flight covers,
+    /// show together. With the border on such a switch can be short until the leaving parks take
+    /// effect. None at all while off.
     pub fn pool_size(&self) -> usize {
         if !self.on {
             return 0;
         }
-        let could_show = self.model.windows.iter().filter(|window| {
+        let mut bands: HashMap<Group, usize> = HashMap::default();
+        for window in self.model.windows.iter().filter(|window| {
             let Held { parked: _, mission_control, fullscreen } = window.held;
             window.wears_a_band() && !(mission_control || fullscreen)
-        });
-        could_show.count().max(self.model.displays.len())
+        }) {
+            *bands.entry(window.group).or_default() += 1;
+        }
+        let mut most: HashMap<SpaceId, usize> = HashMap::default();
+        for (group, count) in bands {
+            let space = most.entry(group.space).or_default();
+            *space = (*space).max(count);
+        }
+        most.values().sum::<usize>() + self.model.displays.len()
     }
 
     /// Every window whose bands show now, in the model's order.
@@ -656,9 +676,12 @@ mod tests {
 
     fn display() -> Vec<RestDisplay> { vec![RestDisplay { bounds: rect(0.0, 0.0, 1728.0, 1117.0), scale: 2.0 }] }
 
+    fn group(workspace: u64) -> Group { Group { space: SpaceId::new(1), workspace } }
+
     fn ringed(held: Held) -> RestWindow {
         RestWindow {
             window: ws(56),
+            group: group(1),
             decoration: Decoration { ring: Some(BAND), ..Decoration::default() },
             focused: true,
             ring: Ring::Active,
@@ -751,8 +774,9 @@ mod tests {
 
     fn model(windows: Vec<RestWindow>) -> RestModel { RestModel { displays: display(), windows } }
 
+    /// Window `id`, ringed, the active window of a workspace of its own on the first display.
     fn at(id: u32, focused: bool, parked: bool) -> RestWindow {
-        RestWindow { window: ws(id), focused, held: Held { parked, ..Held::default() }, ..ringed_window() }
+        RestWindow { window: ws(id), group: group(id.into()), focused, held: Held { parked, ..Held::default() }, ..ringed_window() }
     }
 
     const LEVEL: StackLevel = StackLevel { level: Some(0), sub_level: 0 };
@@ -1126,7 +1150,7 @@ mod tests {
         assert!(!rest.wants_turn(0), "a lift asks no turn");
         let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now);
         assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }), "a model turns it on again");
-        assert_eq!(rest.pool_size(), 1);
+        assert_eq!(rest.pool_size(), 2, "its band and the spare");
     }
 
     /// Turned on by a config reload during a flight, the rest windows wait for the lift to draw.
@@ -1142,7 +1166,7 @@ mod tests {
         assert!(!rest.on() && rest.pool_size() == 0, "nothing made under the overlay");
         let lifted = rest.lift(Some(display()[0].bounds), now);
         assert_eq!(lifted, Draw { orders: Vec::new(), focus: Some(ws(1)) }, "the reorder from before it went off dropped");
-        assert!(rest.on() && rest.pool_size() == 1);
+        assert!(rest.on() && rest.pool_size() == 2);
     }
 
     #[test]
@@ -1152,8 +1176,8 @@ mod tests {
         assert_eq!(focus_moved, Assignment { retargeted: vec![(0, ws(3))], released: vec![] });
     }
 
-    /// The pool holds a rest window for every window that could show its band, so a workspace
-    /// switch's leaving and arriving windows, shown together for a moment, both have one.
+    /// With the ring alone a workspace shows one band, so its rest window and the spare let a
+    /// workspace switch's leaving and arriving windows, shown together for a moment, both have one.
     #[test]
     fn a_workspace_switch_finds_a_rest_window_for_every_band_in_the_pool() {
         let now = Instant::now();
@@ -1166,7 +1190,34 @@ mod tests {
         assert_eq!(assign(&pool, &rest.wanted()).retargeted.len(), 2);
         let held = Held { mission_control: true, ..Held::default() };
         rest.take_model(model(vec![RestWindow { held, ..at(1, true, false) }]), now);
-        assert_eq!(rest.pool_size(), 1, "one per display while nothing could show");
+        assert_eq!(rest.pool_size(), 1, "the spare alone while nothing could show");
+    }
+
+    /// The pool is the bands the fullest workspace on each display shows, held by no more than a
+    /// park, and one spare per display: a display shows one workspace at a time.
+    #[test]
+    fn the_pool_holds_the_most_bands_one_workspace_shows_and_a_spare_per_display() {
+        let now = Instant::now();
+        let ring_alone: Vec<RestWindow> = (1..=6).map(|id| at(id, id == 1, id != 1)).collect();
+        assert_eq!(rest_with(ring_alone.clone(), SLOT, now).pool_size(), 2, "six workspaces, a ring on each");
+
+        let bordered = |id: u32, workspace: u64| RestWindow {
+            decoration: Decoration { border: Some(BORDER), ..Decoration::default() },
+            ring: Ring::None,
+            group: group(workspace),
+            ..at(id, false, workspace != 1)
+        };
+        let fullscreen = RestWindow { held: Held { fullscreen: true, ..Held::default() }, ..bordered(7, 2) };
+        let borders: Vec<RestWindow> =
+            (1..=4).map(|id| bordered(id, 1)).chain([bordered(5, 2), bordered(6, 2), fullscreen]).collect();
+        assert_eq!(rest_with(borders, SLOT, now).pool_size(), 5, "borders on four windows and on two");
+
+        let mut rest = Rest::default();
+        let elsewhere = |id: u32, workspace: u64| RestWindow { group: Group { space: SpaceId::new(2), workspace }, ..at(id, false, workspace != 7) };
+        let windows = ring_alone.into_iter().chain([elsewhere(7, 7), elsewhere(8, 8)]).collect();
+        let displays = vec![display()[0], RestDisplay { bounds: OTHER, scale: 1.0 }];
+        take_known(&mut rest, RestModel { displays, windows }, now, |_| SLOT);
+        assert_eq!(rest.pool_size(), 4, "two displays, the ring alone");
     }
 
     #[test]
