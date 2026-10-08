@@ -161,6 +161,8 @@ pub enum Event {
     Journal(JournalSettings),
     /// What the renderer made of the batches it drew last. Posted by its report.
     Rendered(crate::animation::event::Event),
+    /// A turn of the main thread over a frame, for the journal. Sent by its run loop's observer.
+    MainTurn(rini_runloop::turns::MainTurn),
 }
 
 /// Hands the renderer a batch of render commands, which it answers as `Event::Rendered`.
@@ -944,6 +946,9 @@ impl FlightEngine {
             Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
             Event::Journal(settings) => self.set_journal(settings),
             Event::Rendered(answer) => self.rendered(answer),
+            Event::MainTurn(turn) => {
+                self.flights.main_turn(turn.began, turn.busy, &turn.actors, turn.outside, &turn.changes)
+            }
         }
         self.keep_held();
         self.send_batch();
@@ -4778,6 +4783,41 @@ mod tests {
             assert_eq!(drawn[0].at, heard, "before the writes it released");
             let mark = Mark::Drawn { seq: shown, shown: Some(true), queued_us: 400, applied_us: 300, flushed_before_us: 800 };
             assert_eq!(drawn[0].mark, mark);
+        }
+
+        /// A slow main-thread turn the observer sends is journalled with the flight it falls in, and draws
+        /// nothing.
+        #[test]
+        fn a_main_turn_is_journalled_and_draws_nothing() {
+            let mut h = Harness::new();
+            let bursts = h.writing();
+            let pan = h.pan();
+            h.step(pan);
+            let began = h.at();
+            let ms = Duration::from_millis;
+            let turn = rini_runloop::turns::MainTurn {
+                began,
+                busy: ms(260),
+                actors: vec![("renderer", ms(2))],
+                outside: ms(258),
+                changes: vec![("overlay.show", began - ms(4))],
+            };
+            assert!(batches(&h.step(Event::MainTurn(turn))).is_empty());
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            h.advance(Duration::from_millis(400));
+            let lift = lift_batch(&h.step(Event::Tick)).expect("lifted").seq;
+            h.commit(lift);
+            h.step(Event::Quiet(Generation(h.generation())));
+            let burst = bursts.try_recv().expect("the settled burst");
+            let at = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. })).expect("marked");
+            let marks: Vec<_> = burst.marks[at..at + 3].iter().map(|stamped| (stamped.at, stamped.mark)).collect();
+            assert_eq!(marks, [
+                Mark::MainTurn { busy_us: 260_000, outside_us: 258_000, actors: 1, changes: 1 },
+                Mark::TurnActor { actor: "renderer", us: 2_000 },
+                Mark::TurnChange { what: "overlay.show", before_us: 4_000 },
+            ].map(|mark| (began, mark)));
         }
 
         /// Every picture a tile takes is journalled with its route, its blur and its age: the cache's as

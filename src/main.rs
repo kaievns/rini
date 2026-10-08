@@ -93,8 +93,10 @@ enum Commands {
 /// this is okay because there is no recovery mechanism for actors
 /// so we want to immediately exit (and most likely restart since
 /// rini runs as a service most of the time)
+///
+/// Each poll is timed into the main thread's turn under `name`, for the journal's `main_turn`.
 async fn supervise(name: &'static str, fut: impl Future<Output = ()>) {
-    fut.await;
+    rini_runloop::turns::timed(name, fut).await;
     panic!("{name} exited");
 }
 
@@ -542,6 +544,12 @@ fn main() {
             panic!("input thread exited");
         })
         .expect("failed to spawn input thread");
+
+    // Every main-thread turn over a frame goes to the flight engine's journal.
+    let _turns = rini_runloop::run_loop::TurnObserver::install({
+        let transitions_tx = transitions_tx.clone();
+        move |turn| transitions_tx.send(rini::transitions::platform::engine::Event::MainTurn(turn))
+    });
 
     Executor::run_main(mtm, async move {
         join!(

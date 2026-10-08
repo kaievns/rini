@@ -23,6 +23,7 @@ use rini_core::ids::WindowServerId;
 use rini_geometry::space::{FromCg, Respace, ScreenRect, ToCg};
 use rini_runloop::channel;
 use rini_runloop::executor::sleep;
+use rini_runloop::turns;
 use tracing::warn;
 
 use crate::decorations::domain::rest::{self, Lifted, Rest, RestDisplay, RestModel, RestWindow, display_of};
@@ -141,6 +142,7 @@ impl Panel {
         let bands = Bands::new(&holder);
         // Ordered in once, and only shown or hidden by alpha from here: ordering costs a frame.
         window.orderFrontRegardless();
+        turns::changed("rest.open");
         Some(Panel { window, root, holder, bands, target: None, placed: None, radius: None })
     }
 
@@ -153,6 +155,7 @@ impl Panel {
         let Some(own) = self.own_id() else { return };
         window_server::take_stack_place(own, &StackPlace::of(target, frame.to_cg()));
         self.window.orderWindow_relativeTo(NSWindowOrderingMode::Above, target.as_u32() as isize);
+        turns::changed("rest.order");
     }
 
     /// Draws `window`'s bands around its window at `frame` on `display`, or none.
@@ -186,10 +189,12 @@ impl Panel {
             let converter = CoordinateConverter::from_height(primary_display_height());
             if let Some(cocoa) = converter.reframe(outer.to_cg(), self.window.frame()) {
                 self.window.setFrame_display(cocoa, false);
+                turns::changed("rest.frame");
             }
         }
         if self.placed.is_none_or(|(_, shown)| !shown) {
             self.window.setAlphaValue(1.0);
+            turns::changed("rest.show");
         }
         self.placed = Some((outer, true));
     }
@@ -199,13 +204,17 @@ impl Panel {
     fn hide(&mut self) {
         if self.placed.is_none_or(|(_, shown)| shown) {
             self.window.setAlphaValue(0.0);
+            turns::changed("rest.hide");
         }
         self.placed = self.placed.map(|(at, _)| (at, false));
     }
 }
 
 impl Drop for Panel {
-    fn drop(&mut self) { self.window.close(); }
+    fn drop(&mut self) {
+        self.window.close();
+        turns::changed("rest.close");
+    }
 }
 
 /// Every rest window, and what it is drawn from.

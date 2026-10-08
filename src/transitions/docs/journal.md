@@ -8,7 +8,7 @@ moving around can be read back afterwards. Kai's ask, and what rini must do abou
 
 ## Where a mark comes from
 
-`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at five
+`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at six
 seams. Its one call into the lifecycle, `FlightEngine::drive`, goes through `Journalled::drive`: it
 reads the event's own marks, the coordinator takes the event, and then those marks and one for each
 command it gave are pushed, every one stamped with the drive's `now` and the generation the drive
@@ -28,7 +28,13 @@ out at its `t`. And each picture a tile takes goes to `Journalled::wears` as the
 (`FlightEngine::journal_wears`): every tile a pass composes, a later pass's only for the windows it
 brings, with the cache's picture or the stand-in; frame zero's, worn before the show; the focused look a
 parked focus target flies; and each picture swapped onto a tile or an entrance joining with its first.
-A `wears` mark each, stamped when the engine put it on. No mark call sits anywhere else, and the engine never reads the journal back: of
+A `wears` mark each, stamped when the engine put it on. And each turn of the main thread's run loop
+over 8ms, one frame at 120Hz, goes to `Journalled::main_turn` as the engine hears it
+(`Event::MainTurn`): a `main_turn` mark, then a `turn_actor` for each actor polled in it and a
+`turn_change` for each window change, all stamped when the turn began, in the generation the
+coordinator is in, so a turn is written with the burst it falls in, and one at rest with the next.
+Where a turn is timed is "Timing the main thread's turns" in
+`crates/rini-runloop/docs/run-loop-executor.md`. No mark call sits anywhere else, and the engine never reads the journal back: of
 what a drive returns, it carries out the commands and sends the writer the burst, if one is due, and
 of `heard` it reads whether the held lift hides now.
 
@@ -62,6 +68,9 @@ until it has a mark.
 | the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `queued_us`, `applied_us`, `flushed_before_us` |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
 | a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out`, and `band` for a window wearing a band at rest (levels, and a share for `interior_over`) |
+| a turn of the main thread's run loop over 8ms, stamped when it began | `main_turn` | `busy_us` (waking to going back to sleep), `outside_us` (the busy time no actor's poll covers: AppKit, Core Animation's commit, the event dispatch), `actors`, `changes` (counts of the marks after it) |
+| each actor polled in it, after its `main_turn` | `turn_actor` | `actor` (the name `src/main.rs` supervises it under), `us` (its polls in the turn, summed) |
+| each window change from 50ms before the turn began to its end, after its actors | `turn_change` | `what` (whose window and what changed, `rest.frame` or `overlay.show`: a rest window, the overlay, a bar or the switcher, opened, framed, shown, hidden, ordered, closed or repainted), `before_us` (before the turn began; negative, made in it) |
 
 How to read them:
 
@@ -93,6 +102,11 @@ How to read them:
 - **`Picture` and `FrameZero` have no mark:** they restate a delivery of the pictures service, which is
   marked whole where the engine hears it. An empty frame-zero delivery is a `delivery` with no
   `delivered` after it.
+- **A `main_turn` says what held the main thread, not what it waited on.** `outside_us` is time in
+  no actor's poll; a stall in AppKit's flush of a window change (Core Animation's commit, at the end
+  of the turn) shows there, and the `turn_change` marks name the window changes that flush could be
+  carrying, made in it or in the 50ms before. A `drawn`'s `queued_us` is how long a drain waited
+  behind such turns.
 
 ## A line
 
@@ -174,7 +188,7 @@ ring loses its oldest marks, and its header says how many.
 While the journal is written, `Journalled` gives a burst, every mark since the last one, at each
 `ReportSettled`: the quiet after a lift, or an abandon. It gives none between a `ReportUp` and its
 `ReportSettled`, so nothing touches the disk while a transition is up. Marks pushed at rest, a look
-turned with nothing flying, go with the next burst. On the `transitions` thread a write is one `Vec`
+turned with nothing flying or a slow main-thread turn, go with the next burst. On the `transitions` thread a write is one `Vec`
 copied out of the ring and one channel send; the `journal` thread formats and appends.
 
 The file is `~/Library/Logs/rini/transitions.jsonl` (`rini_core::paths::journal_file()`). Once it is
@@ -267,6 +281,9 @@ writes.
   written before the renderer's commits were journalled, is drawn at its `show`; one with `drawn`
   marks and none showing it after its `show` never had the overlay up.
 - **The focus target** is the `begin`'s `focus`.
+- **A turn's flight** is the flight whose marks its `main_turn` sits among, and none for one before a
+  burst's first flight: a turn at rest. Its `turn_actor` and `turn_change` marks are the ones right
+  after it.
 - Percentiles are nearest-rank, printed as p50, p90 and p99 with their n.
 
 `summary` splits press to overlay up in order, so the parts of each flight sum to it. It does so for
@@ -333,6 +350,12 @@ starred when it is the flight's focus target (the `begin`'s `focus`), when its t
 its route, its blur and its age in ms (`taken_before_us`), then how many of each `at`, route and blur.
 `--target` keeps the focus targets alone: a window flown in grey shows here as a `skylight` or
 `screencapturekit` picture with no blur where a `baked` one with blur was due.
+
+`turns` lists every `main_turn`, by flight: the flight's generation and kind and the ms from its
+first mark (its press, or its begin) to the turn, or `rest`; how long the turn ran and the time
+outside its actors, in ms; its actors at 0.1ms or more, longest first; and its window changes, each
+ms before the turn began. Then how many there were, how many fell in flights, and busy and outside
+at p50, p90 and p99.
 
 ## What it does not record yet
 

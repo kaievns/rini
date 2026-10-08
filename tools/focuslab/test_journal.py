@@ -204,6 +204,32 @@ class Pictures(unittest.TestCase):
         self.assertEqual(sum(1 for line in listed if "*" in line and line[:6].strip().isdigit()), 3)
 
 
+class Turns(unittest.TestCase):
+    def setUp(self):
+        self.bursts, _ = sample()
+        self.rows = journal.turns(self.bursts)
+
+    def test_each_slow_turn_with_the_flight_it_fell_in_its_actors_and_its_window_changes(self):
+        self.assertEqual(len(self.rows), 2)
+        shown = self.rows[0]
+        self.assertEqual((shown["g"], shown["kind"]), (1, "pan"))
+        self.assertAlmostEqual(shown["after"], 38.4, places=6, msg="ms after the press")
+        self.assertEqual((shown["busy"], shown["outside"]), (11.8, 8.3))
+        self.assertEqual(shown["actors"], {"renderer": 0.4, "rest": 3.1, "window_notify": 0.0})
+        self.assertEqual(shown["changes"], [("overlay.show", 0.9), ("rest.frame", -0.5)])
+
+    def test_a_turn_before_a_bursts_first_flight_is_at_rest(self):
+        rest = self.rows[1]
+        self.assertEqual((rest["g"], rest["kind"], rest["after"]), (None, None, None))
+        self.assertEqual((rest["actors"], rest["changes"]), ({"bar": 8.7}, [("bar.frame", 8.0)]))
+
+    def test_the_listing_names_where_each_turn_fell_and_what_held_it(self):
+        text = journal.turn_listing(self.bursts)
+        self.assertIn("rest 3.1, renderer 0.4; overlay.show 0.9, rest.frame -0.5", text)
+        self.assertIn("2 main-thread turns over 8ms, 1 in flights", text)
+        self.assertNotIn("window_notify", text, "an actor under 0.1ms is left out")
+
+
 class Probe(unittest.TestCase):
     def setUp(self):
         _, found = sample()

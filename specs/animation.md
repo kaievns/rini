@@ -576,6 +576,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   the commit that puts the overlay on screen, split between rini's work on the press, the captures,
   the time the transition waited to hear of them, the wait for the thread that draws it, and that
   commit.
+- rini MUST record every turn of the thread that draws a transition that runs longer than one frame
+  at 120Hz (8ms), with when it began, how long each of the jobs sharing that thread took in it, the
+  time outside them, and each window change rini made from 50ms before it began to its end, so a
+  draw that waited for that thread can be traced to what held it.
 - rini MUST keep the last 8192 steps of its transitions in memory at all times, so a record can be
   written of a glitch seen with the journal off.
 - rini MUST NOT write the journal unless it is turned on (`animations { journal; }`). With it on,
@@ -637,6 +641,8 @@ finds where a moved pair starts and puts the look's staging of it on the strip,
 which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
 what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.
+The main thread's turns are timed in `crates/rini-runloop/src/turns.rs`, from the observer in
+`crates/rini-runloop/src/run_loop.rs` that `src/main.rs` installs.
 A measured lift's handover is compared in `src/pictures/domain/handover.rs`.
 The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
 stand-in, the blur, and the schedule that holds background capture off while a flight runs in

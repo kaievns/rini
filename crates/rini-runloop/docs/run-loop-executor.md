@@ -2,7 +2,7 @@
 
 Every thread that owns a `CFRunLoop` in rini drives one future from it:
 `executor::Executor::run` (or `run_main`, which calls `NSApp.run()` instead of
-`CFRunLoop::run`, or `run_interactive`). The main thread joins eleven actors on
+`CFRunLoop::run`, or `run_interactive`). The main thread joins twelve actors on
 its one loop; the reactor, the config actor, the config watcher, the input tap,
 the pictures service, the flight engine (`transitions`) and each observed
 application have their own thread and their own loop.
@@ -46,3 +46,23 @@ actor thread release its channel senders.
 span with each message, so a handler's spans nest under the sender's. Unbounded
 is deliberate: a bounded channel between threads that also service run loops
 would deadlock the main thread on backpressure.
+
+## Timing the main thread's turns
+
+A drain waiting for the main thread (a `drawn` mark's `queued_us` in the transitions journal) says
+how long, not behind what. So each turn of the main run loop is timed: `run_loop::TurnObserver`, made
+in `src/main.rs` before `run_main`, opens a turn at after-waiting, ordered `CFIndex::MIN` so before any
+other observer, and closes it at before-waiting, ordered `CFIndex::MAX` so after Core Animation's
+commit observer (order 2000000, inferred, not verified). A busy loop that never sleeps between
+iterations is one turn, and AppKit's dispatch of an event between run-loop runs falls inside it.
+`src/main.rs`'s `supervise` wraps each actor in `turns::timed`, which times each of its polls (two
+`Instant` reads, about 24 a wake with twelve actors joined, since `tokio::join!` polls every
+unfinished branch) and sums them by name. Every place rini changes a window on the main thread calls
+`turns::changed`, into a ring of the last 64 per thread.
+
+A turn over 8ms, one frame at 120Hz, becomes a `MainTurn`: when it woke, how long it ran, each actor's
+polls, the busy time no poll covers (AppKit, Core Animation's commit and flush, event dispatch), and
+the window changes from 50ms before it began to its end, since the flush that holds a turn commits
+changes earlier turns made. The handler `src/main.rs` gives sends it to the flight engine, which
+journals it (`main_turn` in `src/transitions/docs/journal.md`). A quick turn allocates nothing; a
+slow one, two `Vec`s and a channel send.

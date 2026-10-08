@@ -26,6 +26,7 @@ use rini_geometry::space::{
     ContentsRect, FromCg, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenPoint, ScreenRect, TileSize,
     ToCg,
 };
+use rini_runloop::turns;
 
 use crate::animation::domain::motion::easing::CubicBezier;
 use crate::animation::domain::motion::holes::{band_hole_in, hole_in};
@@ -659,6 +660,7 @@ impl TileOverlay {
         root.addSublayer(&bar);
 
         window.orderFrontRegardless();
+        turns::changed("overlay.open");
 
         Some(Self {
             window,
@@ -709,6 +711,7 @@ impl TileOverlay {
         let converter = CoordinateConverter::from_height(primary_display_height());
         if let Some(cocoa) = converter.reframe(window_rect(frame, top_band), self.window.frame()) {
             self.window.setFrame_display(cocoa, false);
+            turns::changed("overlay.frame");
         }
         if laid_out {
             return;
@@ -790,6 +793,7 @@ impl TileOverlay {
         }
         self.window.setAlphaValue(1.0);
         self.window.orderFrontRegardless();
+        turns::changed("overlay.show");
         self.visible = true;
     }
 
@@ -800,6 +804,7 @@ impl TileOverlay {
             return;
         }
         self.window.setAlphaValue(0.0);
+        turns::changed("overlay.hide");
         self.visible = false;
     }
 
@@ -849,6 +854,7 @@ impl TileOverlay {
         }
         let colour = if holed { NSColor::clearColor() } else { NSColor::blackColor() };
         self.window.setBackgroundColor(Some(&colour));
+        turns::changed("overlay.background");
         self.clear = holed;
     }
 
