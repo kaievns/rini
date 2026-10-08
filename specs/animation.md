@@ -328,9 +328,11 @@ destination for a window already moving.
 > again", after the borders deploy restarted rini, which learns every window's material afresh at
 > each start and keeps it while the window lives. Rini's test read outside rini the same day put
 > Outlook with its sidebar at 1.99 levels from the window alone, averaged over the whole window,
-> under the 2-level threshold: no material, so pictured alone, grey where the sidebar blurs. The
-> borders change touched neither the test nor the capture. Part of a window changed by its material
-> now counts, not only the whole window's average (`docs/data/2026-10-08-materials`).
+> under the 2-level threshold: no material, so pictured alone, grey where the sidebar blurs. That
+> reading came over an hour after rini learned its windows from 14:09, and nothing reads what rini
+> learned, so Outlook as the window and this as the cause are inferred. The borders change touched
+> neither the test nor the capture. Part of a window changed by its material now counts, not only
+> the whole window's average (`docs/data/2026-10-08-materials`).
 
 ## The window's hairline
 

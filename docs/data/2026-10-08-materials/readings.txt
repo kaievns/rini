@@ -21,3 +21,7 @@ the averaged test found no material, where the baked crop matches the screen (0.
 alone does not (1.99). Messages is the opposite: its crop alone is the screen, and baking it moves
 the sidebar up to 14 summed, so it must stay in the alpha call. messages-alone.rgba and
 messages-baked.rgba are that reading's two 64x64 RGBA crops, which knowledge.rs's tests read.
+
+A second run at 16:22, rini still pid 72356, front Google Chrome: Chrome 1722x1079 mean 0.00,
+share>12 0.000; Zoom 1280x960 mean 0.04, share>12 0.000. Outlook was not on screen, so its share is
+still unmeasured.
