@@ -1,11 +1,13 @@
 //! A decoration at rest, drawn by a window of rini's own directly above the window it decorates:
-//! which windows show a band and when, which of rini's rest windows draws each, and which are
-//! ordered above their windows again. See "At rest" in `src/decorations/docs/README.md`.
+//! which windows show a band and when, what each turn of the rest windows makes of the reactor's
+//! word and the window server's, which of rini's rest windows draws each, and which are ordered above
+//! their windows again. See "At rest" in `src/decorations/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
 use rini_core::ids::WindowServerId;
 use rini_geometry::space::ScreenRect;
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::decorations::domain::shape;
 use crate::decorations::domain::style::{Decoration, Style};
@@ -132,6 +134,116 @@ impl Parking {
 
     /// When a waiting change takes effect if nothing moves.
     pub fn due(&self) -> Option<Instant> { self.waiting.map(|(_, since)| since + PARK_PATIENCE) }
+}
+
+/// What is known of each decorated window between the reactor's words.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tracked {
+    pub frame: Option<ScreenRect>,
+    pub parking: Parking,
+    pub ordered_out: bool,
+}
+
+/// What the rest windows draw from: the reactor's latest model, and what is known of each window it
+/// names. Each turn takes what queued: the model, the window server's frames and orders, a lift.
+#[derive(Clone, Debug, Default)]
+pub struct Rest {
+    pub model: RestModel,
+    pub windows: HashMap<WindowServerId, Tracked>,
+}
+
+impl Rest {
+    /// The reactor's word at `now`: a window new to it is read off the window server (`read`, its
+    /// frame and whether it is ordered out), each park waits for its window's move, and the window
+    /// focus came to is named, when it changed, so its rest window is ordered again.
+    pub fn take_model(
+        &mut self,
+        model: RestModel,
+        now: Instant,
+        read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
+    ) -> Option<WindowServerId> {
+        let focus_before = self.focus();
+        self.windows.retain(|window, _| model.windows.iter().any(|w| w.window == *window));
+        for window in &model.windows {
+            let tracked = self.windows.entry(window.window).or_insert_with(|| {
+                let (frame, ordered_out) = read(window.window);
+                Tracked { frame, parking: Parking::new(window.held.parked), ordered_out }
+            });
+            tracked.parking.want(window.held.parked, now);
+        }
+        self.model = model;
+        self.focus().filter(|focus| Some(*focus) != focus_before)
+    }
+
+    fn focus(&self) -> Option<WindowServerId> {
+        self.model.windows.iter().find(|window| window.focused).map(|window| window.window)
+    }
+
+    /// Where the window server has windows that moved, each latest last: a waiting park is taken
+    /// with its window's move.
+    pub fn take_frames(&mut self, frames: &[(WindowServerId, ScreenRect)], now: Instant) {
+        for (window, frame) in frames {
+            if let Some(tracked) = self.windows.get_mut(window) {
+                tracked.frame = Some(*frame);
+                tracked.parking.settle(true, false, now);
+            }
+        }
+    }
+
+    pub fn take_orders(&mut self, orders: &[ServerOrder]) {
+        for (window, tracked) in self.windows.iter_mut() {
+            tracked.ordered_out = ordered_out(tracked.ordered_out, *window, orders);
+        }
+    }
+
+    /// The overlay lifts off `display` at `now`: every park waiting on a window there is taken. The
+    /// windows whose frame is read again from the window server before the bands are drawn: each one
+    /// there brought back, and each one there a rest window draws (`drawn`).
+    pub fn lift(&mut self, display: ScreenRect, now: Instant, drawn: impl Fn(WindowServerId) -> bool) -> Vec<WindowServerId> {
+        let mut reread = Vec::new();
+        for (window, tracked) in self.windows.iter_mut() {
+            let there = tracked.frame.is_some_and(|frame| frame.intersects(&display));
+            let parked = tracked.parking.parked;
+            tracked.parking.settle(false, there, now);
+            let brought_back = parked && !tracked.parking.parked;
+            if brought_back || (there && drawn(*window)) {
+                reread.push(*window);
+            }
+        }
+        reread
+    }
+
+    /// `window`'s frame as the window server has it now, kept as it was if it has none.
+    pub fn reread(&mut self, window: WindowServerId, frame: Option<ScreenRect>) {
+        if let Some(tracked) = self.windows.get_mut(&window) {
+            tracked.frame = frame.or(tracked.frame);
+        }
+    }
+
+    /// Parks whose patience ran out at `now`, taken.
+    pub fn settle(&mut self, now: Instant) {
+        for tracked in self.windows.values_mut() {
+            tracked.parking.settle(false, false, now);
+        }
+    }
+
+    /// When the next waiting park takes effect.
+    pub fn due(&self) -> Option<Instant> { self.windows.values().filter_map(|tracked| tracked.parking.due()).min() }
+
+    /// Every window whose bands show now, in the model's order.
+    pub fn wanted(&self) -> Vec<WindowServerId> {
+        let displays = &self.model.displays;
+        self.model
+            .windows
+            .iter()
+            .filter(|window| {
+                self.windows.get(&window.window).is_some_and(|tracked| {
+                    shown(window, tracked.parking.parked, tracked.ordered_out, tracked.frame, displays)
+                })
+            })
+            .map(|window| window.window)
+            .collect()
+    }
 }
 
 /// Which rest window draws each window whose band shows.
@@ -279,15 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn a_window_followed_through_a_drag_is_shown_throughout() {
-        let window = ringed(Held::default());
-        for x in [3.0, 120.0, 900.0, 1500.0, -600.0] {
-            assert!(shown(&window, false, false, Some(rect(x, 35.0, 859.0, 1079.0)), &display()), "at {x}");
-        }
-        assert!(!shown(&window, false, false, Some(rect(1800.0, 35.0, 859.0, 1079.0)), &display()), "dragged off every display");
-    }
-
-    #[test]
     fn a_park_waits_for_its_window_to_move_the_lift_or_its_patience() {
         let at = Instant::now();
         let mut parking = Parking::new(false);
@@ -306,6 +409,96 @@ mod tests {
         parking.want(false, at);
         parking.want(true, at);
         assert_eq!(parking.due(), None, "wanted back as it is: nothing waits");
+    }
+
+    fn model(windows: Vec<RestWindow>) -> RestModel { RestModel { displays: display(), windows } }
+
+    fn at(id: u32, focused: bool, parked: bool) -> RestWindow {
+        RestWindow { window: ws(id), focused, held: Held { parked, ..Held::default() }, ..ringed_window() }
+    }
+
+    fn rest_with(windows: Vec<RestWindow>, frame: ScreenRect, now: Instant) -> Rest {
+        let mut rest = Rest::default();
+        rest.take_model(model(windows), now, |_| (Some(frame), false));
+        rest
+    }
+
+    #[test]
+    fn the_window_focus_comes_to_is_named_and_a_model_with_focus_where_it_was_names_none() {
+        let now = Instant::now();
+        let mut rest = Rest::default();
+        assert_eq!(rest.take_model(model(vec![at(1, true, false), at(2, false, false)]), now, |_| (Some(SLOT), false)), Some(ws(1)));
+        assert_eq!(rest.take_model(model(vec![at(1, true, false), at(2, false, true)]), now, |_| (None, false)), None, "focus unchanged");
+        assert_eq!(rest.take_model(model(vec![at(1, false, false), at(2, true, false)]), now, |_| (None, false)), Some(ws(2)));
+        assert_eq!(rest.take_model(model(vec![at(1, false, false)]), now, |_| (None, false)), None, "no window focused");
+        assert_eq!(rest.windows.len(), 1, "a window the reactor no longer names is forgotten");
+    }
+
+    #[test]
+    fn a_window_new_to_the_rest_windows_is_read_off_the_window_server_once() {
+        let now = Instant::now();
+        let mut rest = Rest::default();
+        rest.take_model(model(vec![at(1, true, false)]), now, |_| (Some(SLOT), true));
+        assert_eq!(rest.windows[&ws(1)], Tracked { frame: Some(SLOT), parking: Parking::new(false), ordered_out: true });
+        rest.take_model(model(vec![at(1, true, false)]), now, |_| panic!("read again"));
+    }
+
+    #[test]
+    fn a_window_followed_through_a_drag_is_shown_throughout() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        for x in [3.0, 120.0, 900.0, 1500.0, -600.0] {
+            rest.take_frames(&[(ws(1), rect(x, 35.0, 859.0, 1079.0))], now);
+            assert_eq!(rest.wanted(), vec![ws(1)], "at {x}");
+        }
+        rest.take_frames(&[(ws(1), rect(500.0, 35.0, 859.0, 1079.0)), (ws(1), rect(1800.0, 35.0, 859.0, 1079.0))], now);
+        assert_eq!(rest.windows[&ws(1)].frame, Some(rect(1800.0, 35.0, 859.0, 1079.0)), "the latest frame");
+        assert!(rest.wanted().is_empty(), "dragged off every display");
+    }
+
+    #[test]
+    fn a_park_is_taken_with_its_windows_move() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        rest.take_model(model(vec![at(1, true, true)]), now, |_| (None, false));
+        assert_eq!(rest.wanted(), vec![ws(1)], "until its window moves");
+        rest.take_frames(&[(ws(2), rect(1676.0, 35.0, 1148.0, 1079.0))], now);
+        assert_eq!(rest.wanted(), vec![ws(1)], "another window's move");
+        rest.take_frames(&[(ws(1), rect(1676.0, 35.0, 1148.0, 1079.0))], now);
+        assert!(rest.wanted().is_empty());
+    }
+
+    #[test]
+    fn a_window_the_window_server_hides_is_wanted_again_once_it_is_unhidden() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Hidden }]);
+        assert!(rest.wanted().is_empty());
+        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Unhidden }]);
+        assert_eq!(rest.wanted(), vec![ws(1)]);
+    }
+
+    /// A pass that changes two displays parks a window on each; a lift ends the flight on one.
+    #[test]
+    fn a_lift_takes_the_parks_on_its_display_alone_and_reads_again_what_it_draws_there() {
+        let now = Instant::now();
+        let other = rect(1728.0, 0.0, 1920.0, 1080.0);
+        let mut rest = Rest::default();
+        let frames = |window: WindowServerId| match window.as_u32() {
+            1 | 3 => (Some(SLOT), false),
+            _ => (Some(rect(1731.0, 35.0, 859.0, 1079.0)), false),
+        };
+        rest.take_model(model(vec![at(1, true, false), at(2, false, false), at(3, false, true)]), now, frames);
+        rest.take_model(model(vec![at(1, true, true), at(2, false, true), at(3, false, false)]), now, |_| (None, false));
+        let mut reread = rest.lift(display()[0].bounds, now, |window| window == ws(1));
+        reread.sort_by_key(|window| window.as_u32());
+        assert_eq!(reread, vec![ws(1), ws(3)], "drawn there, and brought back there");
+        assert!(rest.windows[&ws(1)].parking.parked && !rest.windows[&ws(3)].parking.parked);
+        assert!(!rest.windows[&ws(2)].parking.parked, "a park on another display waits for its own move");
+        assert_eq!(rest.lift(other, now, |_| false), Vec::new(), "parked, drawn by none");
+        assert!(rest.windows[&ws(2)].parking.parked, "its own display's lift");
+        rest.reread(ws(1), None);
+        assert_eq!(rest.windows[&ws(1)].frame, Some(SLOT), "no frame read keeps the one known");
     }
 
     #[test]

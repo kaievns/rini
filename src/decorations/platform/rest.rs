@@ -21,15 +21,11 @@ use rini_core::ids::WindowServerId;
 use rini_geometry::space::{FromCg, Respace, ScreenRect, ToCg};
 use rini_runloop::channel;
 use rini_runloop::executor::sleep;
-use rustc_hash::FxHashMap as HashMap;
 use tracing::warn;
 
-use crate::decorations::domain::rest::{
-    self, Parking, RestDisplay, RestModel, RestWindow, display_of, ordered_out, shown,
-};
+use crate::decorations::domain::rest::{self, Rest, RestDisplay, RestModel, RestWindow, display_of};
 use crate::decorations::domain::shape;
 use crate::decorations::platform::layers::Bands;
-use crate::displays::domain::frames;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::event::{ServerFrame, ServerOrder};
 use crate::displays::screen::primary_display_height;
@@ -184,18 +180,10 @@ impl Panel {
     }
 }
 
-/// What is known of each decorated window between the reactor's words.
-struct Tracked {
-    frame: Option<ScreenRect>,
-    parking: Parking,
-    ordered_out: bool,
-}
-
 /// Every rest window, and what it is drawn from.
 pub struct RestBorders {
     mtm: MainThreadMarker,
-    model: RestModel,
-    windows: HashMap<WindowServerId, Tracked>,
+    rest: Rest,
     panels: Vec<Panel>,
     /// Whether the one failure to make a panel has been logged.
     warned: bool,
@@ -203,7 +191,7 @@ pub struct RestBorders {
 
 impl RestBorders {
     fn new(mtm: MainThreadMarker) -> RestBorders {
-        RestBorders { mtm, model: RestModel::default(), windows: HashMap::default(), panels: Vec::new(), warned: false }
+        RestBorders { mtm, rest: Rest::default(), panels: Vec::new(), warned: false }
     }
 
     /// Every event queued, taken as one turn: the latest model, every window's latest frame, and each
@@ -221,88 +209,42 @@ impl RestBorders {
         }
         let mut also = Vec::new();
         if let Some(model) = model {
-            also.extend(self.take_model(model, now));
+            let read = |window| {
+                let frame = window_server::server_frame(window).map(ScreenRect::from_cg);
+                (frame, window_server::window_ordered_in(window) == Some(false))
+            };
+            let focus = self.rest.take_model(model, now, read);
+            also.extend(focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus))));
         }
-        let ids: Vec<u32> = moved.iter().map(|frame| frame.window.as_u32()).collect();
-        for id in frames::latest(&ids) {
-            let window = WindowServerId::new(id);
-            let Some(frame) = moved.iter().rev().find(|frame| frame.window == window) else { continue };
-            if let Some(tracked) = self.windows.get_mut(&window) {
-                tracked.frame = Some(ScreenRect::from_cg(frame.frame));
-                tracked.parking.settle(true, false, now);
-            }
-        }
-        for (window, tracked) in self.windows.iter_mut() {
-            tracked.ordered_out = ordered_out(tracked.ordered_out, *window, &orders);
-        }
+        let moved: Vec<(WindowServerId, ScreenRect)> =
+            moved.iter().map(|frame| (frame.window, ScreenRect::from_cg(frame.frame))).collect();
+        self.rest.take_frames(&moved, now);
+        self.rest.take_orders(&orders);
         self.draw(&orders, also);
     }
 
-    /// The reactor's word: windows new to it are read off the window server, its parks wait for
-    /// their moves, and the rest window of a window focus came to is ordered again.
-    fn take_model(&mut self, model: RestModel, now: Instant) -> Vec<usize> {
-        let focus_before = self.model.windows.iter().find(|window| window.focused).map(|window| window.window);
-        self.windows.retain(|window, _| model.windows.iter().any(|w| w.window == *window));
-        for window in &model.windows {
-            let tracked = self.windows.entry(window.window).or_insert_with(|| Tracked {
-                frame: window_server::server_frame(window.window).map(ScreenRect::from_cg),
-                parking: Parking::new(window.held.parked),
-                ordered_out: window_server::window_ordered_in(window.window) == Some(false),
-            });
-            tracked.parking.want(window.held.parked, now);
-        }
-        let focus = model.windows.iter().find(|window| window.focused).map(|window| window.window);
-        self.model = model;
-        let focused_panel = focus
-            .filter(|focus| Some(*focus) != focus_before)
-            .and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
-        focused_panel.into_iter().collect()
-    }
-
-    /// The overlay lifts off `display`: every park that waited taken, every rest window there and
-    /// every window brought back at its frame as the window server has it, and every band drawn as
-    /// it is now, before the overlay hides.
+    /// The overlay lifts off `display`: every park waiting there taken, each window the domain names
+    /// read again from the window server, and every band drawn as it is now, before the overlay hides.
     fn lift(&mut self, display: ScreenRect, now: Instant) {
-        for (window, tracked) in self.windows.iter_mut() {
-            let parked = tracked.parking.parked;
-            tracked.parking.settle(false, true, now);
-            let brought_back = parked && !tracked.parking.parked;
-            let drawn_there = tracked.frame.is_some_and(|frame| frame.intersects(&display))
-                && self.panels.iter().any(|panel| panel.target == Some(*window));
-            if brought_back || drawn_there {
-                tracked.frame = window_server::server_frame(*window).map(ScreenRect::from_cg).or(tracked.frame);
-            }
+        let panels = &self.panels;
+        let reread = self.rest.lift(display, now, |window| panels.iter().any(|panel| panel.target == Some(window)));
+        for window in reread {
+            self.rest.reread(window, window_server::server_frame(window).map(ScreenRect::from_cg));
         }
         self.draw(&[], Vec::new());
     }
 
-    /// Parks whose patience ran out, taken.
     fn settle(&mut self, now: Instant) {
-        for tracked in self.windows.values_mut() {
-            tracked.parking.settle(false, false, now);
-        }
+        self.rest.settle(now);
         self.draw(&[], Vec::new());
     }
-
-    /// When the next waiting park takes effect.
-    fn due(&self) -> Option<Instant> { self.windows.values().filter_map(|tracked| tracked.parking.due()).min() }
 
     /// One rest window for each window whose band shows: those `orders` and `also` name, and those
     /// just given a window, ordered above their windows, then every one placed and painted in one
     /// transaction.
     fn draw(&mut self, orders: &[ServerOrder], mut also: Vec<usize>) {
-        let displays = self.model.displays.clone();
-        let wanted: Vec<WindowServerId> = self
-            .model
-            .windows
-            .iter()
-            .filter(|window| {
-                self.windows.get(&window.window).is_some_and(|tracked| {
-                    shown(window, tracked.parking.parked, tracked.ordered_out, tracked.frame, &displays)
-                })
-            })
-            .map(|window| window.window)
-            .collect();
+        let displays = self.rest.model.displays.clone();
+        let wanted = self.rest.wanted();
         for _ in 0..rest::spare(self.panels.len(), displays.len()) {
             self.make_panel();
         }
@@ -323,7 +265,7 @@ impl RestBorders {
         let targets: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.target).collect();
         for at in rest::to_reorder(orders, &targets, &also) {
             let panel = &self.panels[at];
-            let target = panel.target.and_then(|target| Some((target, self.windows.get(&target)?.frame?)));
+            let target = panel.target.and_then(|target| Some((target, self.rest.windows.get(&target)?.frame?)));
             if let Some((target, frame)) = target {
                 panel.order_above(target, frame);
             }
@@ -336,8 +278,8 @@ impl RestBorders {
         }
         for panel in self.panels.iter_mut() {
             let Some(target) = panel.target else { continue };
-            let window = self.model.windows.iter().find(|w| w.window == target);
-            let frame = self.windows.get(&target).and_then(|tracked| tracked.frame);
+            let window = self.rest.model.windows.iter().find(|w| w.window == target);
+            let frame = self.rest.windows.get(&target).and_then(|tracked| tracked.frame);
             match (window, frame, frame.and_then(|frame| display_of(frame, &displays))) {
                 (Some(window), Some(frame), Some(display)) => {
                     panel.place(window, frame, display, wanted.contains(&target))
@@ -385,7 +327,7 @@ impl RestActor {
 
     pub async fn run(mut self) {
         loop {
-            let due = self.borders.borrow().due();
+            let due = self.borders.borrow().rest.due();
             let wait = due.map(|due| due.saturating_duration_since(Instant::now()));
             tokio::select! {
                 woke = self.rx.recv() => {
