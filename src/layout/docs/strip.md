@@ -284,8 +284,9 @@ decoration. Each window of a stack is inset by its own, inside slots laid out as
   fingerprints, and drag-swap overlap.
 - A floating window keeps its frame, and the border is drawn outside it.
 
-The width is the config's, as written, where the band is drawn in whole device pixels
-("The focus ring and the border, as drawn" in `src/decorations/docs/README.md`).
+The width is the band's as it is drawn on the window's display, in whole device pixels, so the band
+fills the slot at any width the config writes ("The focus ring and the border, as drawn" in
+`src/decorations/docs/README.md`).
 
 ## Mouse resize
 

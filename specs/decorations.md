@@ -44,7 +44,8 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   active and `#505050` inactive.
 - A tiled window MUST give the border its width out of its own place in the strip: the strip is laid
   out the same with borders on or off, and the window is laid out inside its place by the border's
-  width on every side, so the border fills that place and covers nothing beside it. Its limits count
+  width on every side, so the border fills that place and covers nothing beside it, at any width the
+  config writes: the width it gives is the band's as drawn on its display. Its limits count
   the border too: a window that needs 400pt gets a place 408pt wide under a 4pt border. Outside the
   window, a border would cover its neighbour less the gap, as the ring does, and every window wears
   one. niri draws its border inside the tile the same way.

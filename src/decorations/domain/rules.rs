@@ -7,6 +7,7 @@
 use serde::Serialize;
 
 use crate::decorations::domain::paint::Paint;
+use crate::decorations::domain::shape;
 use crate::decorations::domain::style::{Band, Decoration};
 use crate::decorations::settings::{BandSetting, DecorationSettings};
 use crate::windows::domain::rules::{RuleMatch, WindowRuleContext, RuleState, applies};
@@ -91,11 +92,12 @@ pub fn decoration(settings: &DecorationSettings, context: WindowRuleContext<'_>)
     }
 }
 
-/// The width `context`'s window gives its border out of its slot while it is tiled, 0 while it wears
-/// none. No rule that follows focus or attention sets it, so it holds as either turns.
-pub fn border_width(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> f64 {
+/// The width `context`'s window gives its border out of its slot while it is tiled on a display of
+/// `scale`: the band's width as it is drawn there, in whole device pixels (`shape::device_width`), 0
+/// while it wears none. No rule that follows focus or attention sets it, so it holds as either turns.
+pub fn border_width(settings: &DecorationSettings, context: WindowRuleContext<'_>, scale: f64) -> f64 {
     let tiled = WindowRuleContext { state: RuleState::default(), ..context };
-    fold(settings, tiled).border.map_or(0.0, |band| band.width)
+    fold(settings, tiled).border.map_or(0.0, |band| shape::device_width(band.width, scale))
 }
 
 /// Whether any rule can give a window a border width other than the layout's.
@@ -205,10 +207,20 @@ mod tests {
             },
         ]);
         let floating = WindowRuleContext { state: RuleState { floating: true, ..RuleState::default() }, ..window("com.example.Editor") };
-        assert_eq!(border_width(&settings, floating), 2.0);
+        assert_eq!(border_width(&settings, floating, 2.0), 2.0);
         assert_eq!(fold(&settings, floating).border.map(|band| band.width), Some(9.0), "drawn at the floating rule's");
-        assert_eq!(border_width(&settings, window("com.example.Other")), 0.0, "borders off for the rest");
+        assert_eq!(border_width(&settings, window("com.example.Other"), 2.0), 0.0, "borders off for the rest");
         assert!(shape_borders(&settings) && !shape_borders(&with(vec![DecorationRule { corner_radius: Some(4.0), ..DecorationRule::default() }])));
+    }
+
+    /// The band is drawn in whole device pixels, so the slot gives up the width it is drawn at, and
+    /// the band covers nothing beside its window at any width.
+    #[test]
+    fn a_tiled_window_gives_its_border_out_of_its_slot_as_the_band_is_drawn() {
+        let border = |width| BandSetting { on: true, band: Band { width, ..DecorationSettings::default().border.band } };
+        let at = |width, scale| border_width(&DecorationSettings { border: border(width), ..with(Vec::new()) }, window("x"), scale);
+        assert_eq!((at(1.3, 2.0), at(1.5, 1.0), at(4.0, 2.0), at(4.0, 1.0)), (1.5, 2.0, 4.0, 4.0));
+        assert_eq!(border_width(&with(Vec::new()), window("x"), 2.0), 0.0, "the border off gives up nothing");
     }
 
     /// An open-time rule and a decoration rule written as one `window-rule` apply to the same windows.

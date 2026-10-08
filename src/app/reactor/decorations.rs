@@ -63,21 +63,35 @@ impl Reactor {
         rules::decoration(&self.config.settings.decorations, context)
     }
 
-    /// The border each tiled window gives out of its slot: `layout › border`'s, but for the windows a
-    /// rule gives another.
+    /// The border each tiled window gives out of its slot, as its display draws it: `layout ›
+    /// border`'s at the first display's scale, but for the windows a rule or another display's scale
+    /// gives another. None before any display is known, when nothing is laid out.
     pub(super) fn borders(&self) -> Borders {
         let settings = &self.config.settings.decorations;
-        let mut borders = Borders::every(settings.border_width());
-        if rules::shape_borders(settings) {
-            borders.windows = self
-                .state
-                .windows
-                .iter_windows()
-                .filter(|(_, state)| state.is_effectively_manageable())
-                .map(|(window, _)| (window, rules::border_width(settings, self.rule_context(window))))
-                .filter(|(_, width)| *width != borders.every)
-                .collect();
+        let screens = &self.space_state.screens;
+        let Some(first) = screens.first().map(|screen| screen.scale) else { return Borders::default() };
+        let layout = |scale| rules::border_width(settings, WindowRuleContext::default(), scale);
+        let mut borders = Borders::every(layout(first));
+        let one_width = screens.iter().all(|screen| layout(screen.scale) == borders.every);
+        if one_width && !rules::shape_borders(settings) {
+            return borders;
         }
+        let workspaces = self.layout_manager.layout_engine.virtual_workspace_manager();
+        let scale_of = |window| {
+            let space = workspaces.workspace_info_for_window_any(&self.state.windows, window)?.space;
+            screens.iter().find(|screen| screen.space == Some(space)).map(|screen| screen.scale)
+        };
+        borders.windows = self
+            .state
+            .windows
+            .iter_windows()
+            .filter(|(_, state)| state.is_effectively_manageable())
+            .map(|(window, _)| {
+                let scale = scale_of(window).unwrap_or(first);
+                (window, rules::border_width(settings, self.rule_context(window), scale))
+            })
+            .filter(|(_, width)| *width != borders.every)
+            .collect();
         borders
     }
 

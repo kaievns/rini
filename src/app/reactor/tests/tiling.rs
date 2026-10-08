@@ -1579,6 +1579,15 @@ fn a_reload_changing_the_border_width_lays_the_strip_out_again() {
     assert_eq!(strip.on_screen(strip.window), inset);
 }
 
+/// The slot gives up the border as the band is drawn, in whole device pixels: 1.3pt at 2x is 1.5.
+#[test]
+fn a_border_between_device_pixels_takes_out_of_the_slot_what_the_band_draws() {
+    let mut strip = Strip::new();
+    let before = strip.laid_out(strip.window);
+    reload_with_border(&mut strip.reactor, 1.3);
+    assert_eq!(strip.laid_out(strip.window), window_in(before, 1.5));
+}
+
 /// rini's own write coming back is no resize, with the border on as without; an app's own size is
 /// the window's, its slot the border wider.
 #[test]

@@ -56,11 +56,6 @@ impl Default for DecorationSettings {
 }
 
 impl DecorationSettings {
-    /// The width a tiled window gives up on each side to `layout › border`, 0 with it off: the
-    /// config's width as written, which the band draws in whole device pixels. A rule's is
-    /// `domain::rules::border_width`.
-    pub fn border_width(&self) -> f64 { self.border.worn().map_or(0.0, |band| band.width) }
-
     /// Whether any window can wear a band: the ring or the border is on, or a rule turns one on.
     pub fn draws_bands(&self) -> bool {
         self.focus_ring.on
@@ -95,7 +90,6 @@ mod tests {
         assert_eq!(settings.border.band, Band { width: 4.0, active: solid(0xffc87f), inactive: solid(0x505050), urgent: solid(0x9b0000) });
         let on = DecorationSettings { border: BandSetting { on: true, ..settings.border }, ..settings.clone() };
         assert_eq!(worn(&on).border, Some(settings.border.band));
-        assert_eq!((settings.border_width(), on.border_width()), (0.0, 4.0), "the slot gives up nothing while it is off");
     }
 
     #[test]

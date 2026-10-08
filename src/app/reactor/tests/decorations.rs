@@ -151,6 +151,22 @@ fn a_column_the_strip_parks_is_sent_to_the_rest_actor_as_parked() {
     assert!(model.windows.iter().any(|window| !window.held.parked));
 }
 
+/// A tiled window gives its border out of its slot as its own display draws it, in whole device
+/// pixels: 1.5pt is 3 of them at 2x and rounds to 2pt at 1x.
+#[test]
+fn each_window_gives_its_border_out_of_its_slot_at_its_own_displays_scale() {
+    let mut desk = desk();
+    let decorations = &mut desk.reactor.config.settings.decorations;
+    decorations.border.on = true;
+    decorations.border.band.width = 1.5;
+    let left_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let right_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let mut screens = make_screen_snapshots(vec![left_frame, right_frame], vec![Some(desk.left), Some(desk.right)]);
+    screens[1].scale = 1.0;
+    desk.reactor.handle_test_batch(vec![space_state_event_from_screens(screens)]);
+    let borders = desk.reactor.borders();
+    assert_eq!((borders.of(left_ghostty()), borders.of(WindowId::new(ZEN, 2))), (1.5, 2.0));
+}
 
 /// With the ring off, focus still decides the border's paint, and every managed window wears it.
 #[test]
