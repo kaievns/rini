@@ -59,7 +59,8 @@ coordinator gives `PlaceRest` once a flight end, at the first tick from `FRAME_I
 that reads the real windows landed, or with the lift when none did, and never with nothing drawn
 at rest, and the renderer plays it
 before the transaction of the drain carrying it: every band on the display put where its window
-is, still covered, so a lift's drain only tells the rest windows what came since and brings the
+is, still covered (the place and the lift each pass on the latest press the engine had taken as it
+gave them, so a press heard after them waits for its own flight), so a lift's drain only tells the rest windows what came since and brings the
 overlay down (`steps`, pinned by
 `a_drain_carrying_place_rest_places_what_rests_before_its_commands` and
 `the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay`). Between the place

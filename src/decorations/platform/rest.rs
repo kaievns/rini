@@ -41,10 +41,10 @@ pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
 
 pub enum Event {
-    /// A flight over this display, its whole bounds, was handed to the flight engine: sent before
-    /// the model of the batch that began it, so the rest windows hold that model and what follows
-    /// from the begin to its lift (`Rest::fly`).
-    Flight(ScreenRect),
+    /// A flight over this display, its whole bounds, for the press at `pressed`, was handed to the
+    /// flight engine: sent before the model of the batch that began it, so the rest windows hold that
+    /// model and what follows from the begin to its lift (`Rest::fly`).
+    Flight { display: ScreenRect, pressed: Instant },
     /// What every decorated window wears and what holds its band, sent when it changed.
     Model(RestModel),
     /// What the frames thread read of the window server: where windows that moved or resized are, a
@@ -248,7 +248,7 @@ impl RestBorders {
         let mut grow = false;
         for event in events {
             match event {
-                Event::Flight(display) => flight = Some(display),
+                Event::Flight { display, pressed } => flight = Some((display, pressed)),
                 Event::Model(next) => word = Some(Some(next)),
                 Event::Off => word = Some(None),
                 Event::Server(ServerRead::Frames(frames)) => moved.extend(frames),
@@ -267,8 +267,8 @@ impl RestBorders {
             self.panels.clear();
             return;
         }
-        if let Some(display) = flight {
-            self.rest.fly(display, now);
+        if let Some((display, pressed)) = flight {
+            self.rest.fly(display, pressed, now);
         }
         let model = word.flatten();
         for window in model.iter().flat_map(|model| self.rest.ask(model)) {
@@ -299,13 +299,14 @@ impl RestBorders {
         self.draw(&draw.orders, also.into_iter().collect());
     }
 
-    /// The flight over `display`, the one the overlay was laid out on if any, has landed: what waited
-    /// under it taken, each window the domain names read again from the window server, and every band
-    /// drawn as it is now, under the overlay, a tick before it lifts or in its lift's drain.
-    fn place(&mut self, display: Option<ScreenRect>, now: Instant) {
+    /// The flight over `display`, the one the overlay was laid out on if any, through the press at
+    /// `through`, has landed: what waited under it taken, each window the domain names read again
+    /// from the window server, and every band drawn as it is now, under the overlay, a tick before
+    /// it lifts or in its lift's drain.
+    fn place(&mut self, display: Option<ScreenRect>, through: Option<Instant>, now: Instant) {
         let panels = &self.panels;
         let drawn = |window| panels.iter().any(|panel| panel.target == Some(window));
-        let Placed { draw, reread } = self.rest.place(display, now, drawn);
+        let Placed { draw, reread } = self.rest.place(display, through, now, drawn);
         if !self.rest.on() {
             return;
         }
@@ -319,8 +320,8 @@ impl RestBorders {
     /// nothing, before the overlay hides, and every turn draws as it comes from here. Whether the
     /// actor wants a turn of its own once it is down (`Rest::wants_turn`): the pool owes rest windows,
     /// or a park waits for its patience.
-    fn lift(&mut self, display: Option<ScreenRect>, now: Instant) -> bool {
-        let draw = self.rest.lift(display, now);
+    fn lift(&mut self, display: Option<ScreenRect>, through: Option<Instant>, now: Instant) -> bool {
+        let draw = self.rest.lift(display, through, now);
         if !self.rest.on() {
             return false;
         }
@@ -438,12 +439,13 @@ impl RestBorders {
 }
 
 /// What the renderer calls on the main thread as its overlay goes up, as its flight has landed and
-/// as it lifts, each with the display it was laid out on, if any: the place before its drain's
+/// as it lifts, each with the display it was laid out on, if any, and the place and the lift with
+/// the latest press the engine had taken when it gave them: the place before its drain's
 /// transaction, the lift before it hides.
 pub struct Handover {
     pub cover: Box<dyn Fn(Option<ScreenRect>)>,
-    pub place: Box<dyn Fn(Option<ScreenRect>)>,
-    pub lift: Box<dyn Fn(Option<ScreenRect>)>,
+    pub place: Box<dyn Fn(Option<ScreenRect>, Option<Instant>)>,
+    pub lift: Box<dyn Fn(Option<ScreenRect>, Option<Instant>)>,
 }
 
 pub struct RestActor {
@@ -462,9 +464,9 @@ impl RestActor {
         let lifted = borders.clone();
         let handover = Handover {
             cover: Box::new(move |display| covered.borrow_mut().rest.cover(display)),
-            place: Box::new(move |display| placed.borrow_mut().place(display, Instant::now())),
-            lift: Box::new(move |display| {
-                if lifted.borrow_mut().lift(display, Instant::now()) {
+            place: Box::new(move |display, through| placed.borrow_mut().place(display, through, Instant::now())),
+            lift: Box::new(move |display, through| {
+                if lifted.borrow_mut().lift(display, through, Instant::now()) {
                     wake.send(Event::Lifted);
                 }
             }),

@@ -180,7 +180,9 @@ when no tick saw them land sooner. The engine reads where the windows are from t
 the clock or writes frames places them again before its lift; one that writes nothing keeps the
 place. The lift's drain then only tells the rest windows what came since and hides the overlay
 ("One transaction a drain, flushed" in `src/animation/docs/README.md`), and since the lift waits for
-every batch to be committed, it waits for the place's too. With nothing drawn at rest, as the
+every batch to be committed, it waits for the place's too. The engine gives the place and the lift
+the latest press it had taken (`through`), so the rest windows tell a flight begun after the lift
+was given, which must wait for its own, from a press merged into the one lifting. With nothing drawn at rest, as the
 reactor says with each `SetDisplay` and each flight carries (`StageSummary::rests`), no place is
 given and the landing is read only once the clock is done, as before the place existed.
 

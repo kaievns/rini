@@ -4264,8 +4264,8 @@ impl Reactor {
     }
 
     /// Hands the flight engine `event`, a flight over the display holding `space` (`None` for no
-    /// particular one), told first which display that is, and notes the display for the rest
-    /// windows, which hold what the flight changes from now (`publish_rest`). Whether the engine
+    /// particular one), told first which display that is, and notes the display and the press for
+    /// the rest windows, which hold what the flight changes from now (`publish_rest`). Whether the engine
     /// runs to take it.
     pub(super) fn send_flight(
         &mut self,
@@ -4274,8 +4274,9 @@ impl Reactor {
     ) -> bool {
         let display = self.publish_animation_display_for(space);
         let Some(tx) = &self.communication_manager.transitions_tx else { return false };
+        let pressed = event.pressed();
         _ = tx.send(event);
-        self.rest.flight = display.or(self.rest.flight);
+        self.rest.flight = display.zip(pressed).or(self.rest.flight);
         true
     }
 

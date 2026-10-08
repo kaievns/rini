@@ -336,7 +336,15 @@ or with an empty pass, or merges elsewhere. So a flight not shown `FLIGHT_PATIEN
 its begin lets go, and what waited is drawn (`Rest::settle`, on the timer `Rest::due` sets). Before
 the bands, the journal's begin to show took at most 249ms over 1726 flights: a show after the
 patience is rare, and the rest windows then draw once uncovered before it covers them again. An
-abandoned flight sends its lift, which ends the cover as any lift does. Each turn under the cover
+abandoned flight sends its lift, which ends the cover as any lift does. A press as a flight lifts
+can begin a flight of its own after the engine gave that lift and still be heard by the rest
+windows before the renderer plays it: the begin goes to them from the reactor, the lift from the
+engine through the renderer, and nothing orders the two. So `Event::Flight` carries the press it
+answers, the engine gives each place and lift the latest press it had taken (`Render::PlaceRest`,
+`Render::Lift`, `through`), and a place or a lift given before the press of the flight begun last
+leaves what waited for that flight; the lift hands it the cover, with its patience from its begin
+(`Rest::place`, `Rest::lift`). A press merged into the flight came before its lift was given, so
+that lift draws it. Each turn under the cover
 had been main-thread time the flight's drains waited behind: the frames of every window rini's writes moved, the 808s of a
 raise, the key window's turn and each park's patience, each a full draw of every rest window with
 its window-server reads and orders, where a turn now draws only what changed ("What a turn draws"). A 10s sample of rini at rest on 2026-10-08, while Kai typed and

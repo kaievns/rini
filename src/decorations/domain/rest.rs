@@ -196,15 +196,26 @@ pub struct Placed {
     pub reread: Vec<WindowServerId>,
 }
 
+/// A flight the reactor handed the engine: the display its overlay covers, the press it answers, and
+/// when the rest windows heard of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Begun {
+    display: ScreenRect,
+    pressed: Instant,
+    at: Instant,
+}
+
 /// What waits for the lift from a flight's begin over `display`: the reactor's latest word and the
 /// window server's orders. `until` is when a flight whose overlay has not shown lets go; none once
-/// it shows, when only its lift does.
+/// it shows, when only its lift does. `begun` is the latest flight begun, so a lift that the engine
+/// gave before that flight's press came hands the cover on to it.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Covered {
     display: Option<ScreenRect>,
     until: Option<Instant>,
     model: Option<RestModel>,
     orders: Vec<ServerOrder>,
+    begun: Option<Begun>,
 }
 
 /// What the rest windows draw from: the reactor's latest model, and what is known of each window it
@@ -215,7 +226,9 @@ struct Covered {
 /// another display was introduced, moved, was reordered or settled its park: the rest windows on the
 /// flight's display are under its overlay or show what was there before the press, as its frame
 /// zero does. Once the flight has landed, a tick before its lift or with it, the place draws what
-/// came, still covered (`place`), and the lift what came since (`lift`). A flight whose overlay
+/// came, still covered (`place`), and the lift what came since (`lift`). A place or a lift the
+/// engine gave before the press of a flight begun since leaves what waited for that flight, and the
+/// lift hands it the cover, as a flight beginning with no overlay up. A flight whose overlay
 /// never shows lets go `FLIGHT_PATIENCE` after it began (`settle`). Off, as it starts and once the reactor turns it
 /// off, it holds no model and no window, wants no rest window, and a flight, a turn, a place, a lift
 /// and a park's patience draw nothing; the reactor's next model turns it on.
@@ -243,20 +256,31 @@ impl Rest {
         self.windows.clear();
         self.introducing.clear();
         if let Some(covered) = self.covered.as_mut() {
-            *covered = Covered { display: covered.display, until: covered.until, ..Covered::default() };
+            *covered = Covered { display: covered.display, until: covered.until, begun: covered.begun, ..Covered::default() };
         }
     }
 
-    /// A flight over `display` began at `now`: until its lift, or `FLIGHT_PATIENCE` if its overlay
-    /// has not shown by then, a turn draws nothing unless a window on another display moved. A
-    /// flight beginning under an overlay already up is that overlay's to lift. Off, it takes nothing.
-    pub fn fly(&mut self, display: ScreenRect, now: Instant) {
-        if !self.on || self.covered.as_ref().is_some_and(|covered| covered.until.is_none()) {
+    /// A flight over `display` for the press at `pressed` began at `now`: until its lift, or
+    /// `FLIGHT_PATIENCE` if its overlay has not shown by then, a turn draws nothing unless a window on
+    /// another display moved. A flight beginning under an overlay already up is that overlay's to
+    /// lift, unless the engine gave that lift before its press (`lift`). Off, it takes nothing.
+    pub fn fly(&mut self, display: ScreenRect, pressed: Instant, now: Instant) {
+        if !self.on {
             return;
         }
+        let up = self.covered.as_ref().is_some_and(|covered| covered.until.is_none());
         let covered = self.covered.get_or_insert_with(Covered::default);
-        covered.display = Some(display);
-        covered.until = Some(now + FLIGHT_PATIENCE);
+        covered.begun = Some(Begun { display, pressed, at: now });
+        if !up {
+            covered.display = Some(display);
+            covered.until = Some(now + FLIGHT_PATIENCE);
+        }
+    }
+
+    /// The flight begun after the press a place or a lift the engine gave is `through`: the engine
+    /// had given it before that press came, so that flight is not the one landing.
+    fn begun_after(&self, through: Option<Instant>) -> Option<Begun> {
+        self.covered.as_ref()?.begun.filter(|begun| Some(begun.pressed) > through)
     }
 
     /// The overlay is up over `display`, the one it was laid out on: until it lifts, a turn draws
@@ -408,16 +432,25 @@ impl Rest {
         }
     }
 
-    /// The flight over `display`, the one the overlay was laid out on if any, has landed at `now`,
-    /// a tick before its lift or with it: what waited is taken, the reactor's word with
-    /// `take_model`, and every park waiting on a window there. It draws what waited, still covered,
+    /// The flight over `display`, the one the overlay was laid out on if any, through the press at
+    /// `through`, has landed at `now`, a tick before its lift or with it: what waited is taken, the
+    /// reactor's word with `take_model`, and every park waiting on a window there; the word and the
+    /// orders wait on for a flight begun after `through`. It draws what waited, still covered,
     /// after reading again from the window server the frame of each window there brought back and
     /// each one there a rest window draws (`drawn`). Off, with no model waiting, it draws nothing and
     /// reads nothing.
-    pub fn place(&mut self, display: Option<ScreenRect>, now: Instant, drawn: impl Fn(WindowServerId) -> bool) -> Placed {
+    pub fn place(
+        &mut self,
+        display: Option<ScreenRect>,
+        through: Option<Instant>,
+        now: Instant,
+        drawn: impl Fn(WindowServerId) -> bool,
+    ) -> Placed {
+        let next = self.begun_after(through);
         let (model, orders) = self
             .covered
             .as_mut()
+            .filter(|_| next.is_none())
             .map(|covered| (covered.model.take(), std::mem::take(&mut covered.orders)))
             .unwrap_or_default();
         let focus = model.and_then(|model| self.take_model(model, now));
@@ -429,12 +462,23 @@ impl Rest {
         Placed { draw: Draw { orders, focus }, reread }
     }
 
-    /// The overlay lifts at `now` off `display`: what came since the place is taken, and every park
-    /// on a window there that waited, and it draws what came, reading nothing, as the place before it
-    /// read what it draws and a covered turn takes each frame since. Off, with no model waiting, it
-    /// draws nothing.
-    pub fn lift(&mut self, display: Option<ScreenRect>, now: Instant) -> Draw {
+    /// The overlay of the flight through the press at `through` lifts at `now` off `display`: what
+    /// came since the place is taken, and every park on a window there that waited, and it draws
+    /// what came, reading nothing, as the place before it read what it draws and a covered turn takes
+    /// each frame since. A flight begun after `through` takes the cover on, with the word and the
+    /// orders that waited, until its own lift or its patience from its begin. Off, with no model
+    /// waiting, it draws nothing.
+    pub fn lift(&mut self, display: Option<ScreenRect>, through: Option<Instant>, now: Instant) -> Draw {
+        let next = self.begun_after(through);
         let Covered { model, orders, .. } = self.covered.take().unwrap_or_default();
+        if let Some(begun) = next {
+            let until = Some(begun.at + FLIGHT_PATIENCE);
+            self.covered = Some(Covered { display: Some(begun.display), until, model, orders, begun: next });
+            if self.on {
+                self.land(display, now);
+            }
+            return Draw::default();
+        }
         let focus = model.and_then(|model| self.take_model(model, now));
         if !self.on {
             return Draw::default();
@@ -918,12 +962,12 @@ mod tests {
         };
         take_known(&mut rest, model(vec![at(1, true, false), at(2, false, false), at(3, false, true)]), now, frames);
         rest.take_model(model(vec![at(1, true, true), at(2, false, true), at(3, false, false)]), now);
-        let mut reread = rest.place(Some(display()[0].bounds), now, |window| window == ws(1)).reread;
+        let mut reread = rest.place(Some(display()[0].bounds), Some(now), now, |window| window == ws(1)).reread;
         reread.sort_by_key(|window| window.as_u32());
         assert_eq!(reread, vec![ws(1), ws(3)], "drawn there, and brought back there");
         assert!(rest.windows[&ws(1)].parking.parked && !rest.windows[&ws(3)].parking.parked);
         assert!(!rest.windows[&ws(2)].parking.parked, "a park on another display waits for its own move");
-        assert_eq!(rest.place(Some(other), now, |_| false).reread, Vec::new(), "parked, drawn by none");
+        assert_eq!(rest.place(Some(other), Some(now), now, |_| false).reread, Vec::new(), "parked, drawn by none");
         assert!(rest.windows[&ws(2)].parking.parked, "its own display's place");
         rest.reread(ws(1), None);
         assert_eq!(rest.windows[&ws(1)].frame, Some(SLOT), "no frame read keeps the one known");
@@ -938,11 +982,11 @@ mod tests {
             let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
             rest.cover(Some(display()[0].bounds));
             if placed {
-                rest.place(Some(display()[0].bounds), now, |_| true);
+                rest.place(Some(display()[0].bounds), Some(now), now, |_| true);
             }
             assert_eq!(rest.turn(Some(model(vec![at(1, true, false), at(2, false, true)])), &[], &[], Vec::new(), now + ms(5)), None);
             assert!(!rest.windows[&ws(2)].parking.parked, "placed first: {placed}, under the cover with no move");
-            rest.lift(Some(display()[0].bounds), now + ms(10));
+            rest.lift(Some(display()[0].bounds), Some(now + ms(10)), now + ms(10));
             assert!(rest.windows[&ws(2)].parking.parked, "placed first: {placed}");
             assert_eq!(rest.due(), None, "placed first: {placed}");
         }
@@ -970,7 +1014,7 @@ mod tests {
         assert_eq!(rest.settle(now + PARK_PATIENCE), None, "nor does a park's patience");
         assert_eq!(rest.windows[&ws(1)].frame, Some(elsewhere), "the frames are taken as they come");
         assert!(rest.model.windows[0].focused && !rest.windows.contains_key(&ws(3)), "the word waits for the lift");
-        let lifted = rest.lift(Some(display()[0].bounds), now);
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now), now);
         assert_eq!(lifted, Draw { orders: vec![reorder(1), reorder(2), reorder(2)], focus: Some(ws(2)) });
         assert!(rest.model.windows[1].focused && rest.windows.contains_key(&ws(3)), "taken at the lift, the new window known");
         assert!(!rest.covered());
@@ -995,7 +1039,7 @@ mod tests {
             let reordered = ServerOrder { window: ws(3), change: OrderChange::Reordered, level: Some(raised) };
             let came = [vec![reordered], orders].concat();
             assert_eq!(rest.turn(None, &[], &[(ws(3), written)], came, now + ms(40)), None);
-            rest.place(Some(display()[0].bounds), now + ms(300), |_| false);
+            rest.place(Some(display()[0].bounds), Some(now + ms(300)), now + ms(300), |_| false);
             let Tracked { frame, ordered_out, level, .. } = rest.windows[&ws(3)];
             assert_eq!((frame, ordered_out, level), (Some(written), out, raised), "hidden: {out}");
             assert_eq!(rest.wanted().contains(&ws(3)), !out);
@@ -1011,14 +1055,14 @@ mod tests {
     fn a_flight_handed_over_holds_the_press_model_until_its_lift() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
-        rest.fly(display()[0].bounds, now);
+        rest.fly(display()[0].bounds, now, now);
         assert!(rest.covered());
         let pressed = model(vec![at(1, false, false), at(2, true, false)]);
         assert_eq!(rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)), None, "the press's model");
         assert_eq!(rest.turn(None, &[], &[(ws(1), SLOT)], Vec::new(), now + ms(20)), None, "a frame there");
         rest.cover(Some(display()[0].bounds));
         assert!(rest.model.windows[0].focused, "the band shows the focus before the press");
-        let lifted = rest.lift(Some(display()[0].bounds), now + ms(400));
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now + ms(400)), now + ms(400));
         assert_eq!(lifted, Draw { orders: vec![reorder(2)], focus: Some(ws(2)) });
         assert!(!rest.covered() && rest.model.windows[1].focused);
     }
@@ -1029,7 +1073,7 @@ mod tests {
     fn a_flight_that_never_shows_lets_go_after_its_patience() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
-        rest.fly(display()[0].bounds, now);
+        rest.fly(display()[0].bounds, now, now);
         let pressed = model(vec![at(1, false, false), at(2, true, false), at(3, false, false)]);
         rest.ask(&pressed);
         assert_eq!(rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)), None);
@@ -1040,13 +1084,13 @@ mod tests {
         assert_eq!(drawn, Some(Draw { orders: vec![reorder(2)], focus: Some(ws(2)) }), "drawn with what waited");
         assert!(!rest.covered() && rest.windows.contains_key(&ws(3)) && rest.due().is_none());
 
-        rest.fly(display()[0].bounds, now);
+        rest.fly(display()[0].bounds, now, now);
         rest.off();
         assert_eq!(rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now), None, "turned on under the flight");
         let drawn = rest.settle(now + FLIGHT_PATIENCE);
         assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }), "its patience kept through off");
         let mut off = Rest::default();
-        off.fly(display()[0].bounds, now);
+        off.fly(display()[0].bounds, now, now);
         assert!(!off.covered() && off.due().is_none(), "off, a flight takes nothing");
     }
 
@@ -1056,15 +1100,15 @@ mod tests {
     fn a_show_after_the_flight_began_keeps_it_covered_past_the_patience() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
-        rest.fly(display()[0].bounds, now);
+        rest.fly(display()[0].bounds, now, now);
         rest.cover(Some(display()[0].bounds));
         let pressed = model(vec![at(1, false, false), at(2, true, false)]);
         assert_eq!(rest.turn(Some(pressed), &[], &[], Vec::new(), now + ms(100)), None);
-        rest.fly(display()[0].bounds, now + ms(200));
+        rest.fly(display()[0].bounds, now + ms(200), now + ms(200));
         assert_eq!(rest.due(), None, "the show's lift ends it");
         assert_eq!(rest.settle(now + FLIGHT_PATIENCE * 2), None);
         assert!(rest.covered() && rest.model.windows[0].focused);
-        let lifted = rest.lift(Some(display()[0].bounds), now + ms(600));
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now + ms(600)), now + ms(600));
         assert_eq!(lifted.focus, Some(ws(2)));
     }
 
@@ -1074,17 +1118,50 @@ mod tests {
     fn a_place_ahead_of_the_lift_draws_what_waited_and_stays_covered() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
-        rest.fly(display()[0].bounds, now);
+        rest.fly(display()[0].bounds, now, now);
         rest.cover(Some(display()[0].bounds));
         let pressed = model(vec![at(1, false, false), at(2, true, false)]);
         assert_eq!(rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)), None);
-        let mut placed = rest.place(Some(display()[0].bounds), now + ms(380), |window| window == ws(2));
+        let mut placed = rest.place(Some(display()[0].bounds), Some(now + ms(380)), now + ms(380), |window| window == ws(2));
         placed.reread.sort_by_key(|window| window.as_u32());
         assert_eq!(placed, Placed { draw: Draw { orders: vec![reorder(2)], focus: Some(ws(2)) }, reread: vec![ws(2)] });
         assert!(rest.covered() && rest.model.windows[1].focused, "placed, still under the overlay");
         let moved = rect(868.0, 35.0, 859.0, 1079.0);
         assert_eq!(rest.turn(None, &[], &[(ws(2), moved)], vec![reorder(1)], now + ms(390)), None, "a turn after it waits for the lift");
         assert_eq!(rest.settle(now + ms(390) + PARK_PATIENCE), None);
+    }
+
+    /// A press as a flight lifts can begin a flight of its own after the engine gave that lift, and
+    /// be heard first: the lift, and a place in its drain, leave that press's model waiting and hand
+    /// the cover to its flight, which its own show and lift, or its patience from its begin, end.
+    #[test]
+    fn a_lift_given_before_a_flight_began_hands_the_cover_to_that_flight() {
+        let now = Instant::now();
+        let bounds = display()[0].bounds;
+        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        for placed_ahead in [true, false] {
+            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            rest.fly(bounds, now, now);
+            rest.cover(Some(bounds));
+            if placed_ahead {
+                rest.place(Some(bounds), Some(now), now + ms(380), |_| true);
+            }
+            let next = now + ms(395);
+            rest.fly(bounds, next, next + ms(1));
+            assert_eq!(rest.turn(Some(pressed.clone()), &[], &[], vec![reorder(2)], next + ms(1)), None);
+            if !placed_ahead {
+                let placed = rest.place(Some(bounds), Some(now), next + ms(5), |_| true);
+                assert_eq!(placed.draw, Draw::default(), "placed in the lift's drain, the next press waits");
+            }
+            assert_eq!(rest.lift(Some(bounds), Some(now), next + ms(5)), Draw::default(), "{placed_ahead}");
+            assert!(rest.covered() && rest.model.windows[0].focused, "the band shows the focus before the next press");
+            assert_eq!(rest.due(), Some(next + ms(1) + FLIGHT_PATIENCE), "the next flight's patience");
+            rest.cover(Some(bounds));
+            assert_eq!(rest.due(), None, "its show");
+            let lifted = rest.lift(Some(bounds), Some(next), next + ms(400));
+            assert_eq!(lifted, Draw { orders: vec![reorder(2)], focus: Some(ws(2)) }, "its lift");
+            assert!(!rest.covered());
+        }
     }
 
     /// The lift after a place reads nothing: the place read what it draws, and each frame since came
@@ -1095,11 +1172,11 @@ mod tests {
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
         rest.cover(Some(display()[0].bounds));
         rest.turn(Some(model(vec![at(1, false, false), at(2, true, false)])), &[], &[], vec![reorder(2)], now);
-        rest.place(Some(display()[0].bounds), now, |_| true);
+        rest.place(Some(display()[0].bounds), Some(now), now, |_| true);
         let moved = rect(868.0, 35.0, 859.0, 1079.0);
         let back = model(vec![at(1, true, false), at(2, false, false)]);
         assert_eq!(rest.turn(Some(back), &[], &[(ws(2), moved)], vec![reorder(1)], now + ms(16)), None);
-        let lifted: Draw = rest.lift(Some(display()[0].bounds), now + ms(17));
+        let lifted: Draw = rest.lift(Some(display()[0].bounds), Some(now + ms(17)), now + ms(17));
         assert_eq!(lifted, Draw { orders: vec![reorder(1)], focus: Some(ws(1)) }, "what came since the place");
         assert_eq!(rest.windows[&ws(2)].frame, Some(moved), "the frame a covered turn took");
         assert!(!rest.covered());
@@ -1117,7 +1194,7 @@ mod tests {
         rest.turn(None, &[], &[(ws(1), rect(1676.0, 35.0, 1148.0, 1079.0))], vec![hidden], now);
         assert!(rest.wanted().is_empty());
         let other = rect(1728.0, 0.0, 1920.0, 1080.0);
-        assert_eq!(rest.lift(Some(other), now).orders, vec![hidden]);
+        assert_eq!(rest.lift(Some(other), Some(now), now).orders, vec![hidden]);
     }
 
     const OTHER: ScreenRect = ScreenRect::new(Point::new(1728.0, 0.0), Size::new(1920.0, 1080.0));
@@ -1163,7 +1240,7 @@ mod tests {
         let parks = RestModel { windows: vec![at(1, true, false), at(2, false, true)], ..rest.model.clone() };
         assert_eq!(rest.turn(Some(parks), &[], &[], Vec::new(), now), None);
         let pool = rest.pool_size();
-        rest.lift(Some(display()[0].bounds), now);
+        rest.lift(Some(display()[0].bounds), Some(now), now);
         assert!(rest.windows[&ws(2)].parking.due().is_some());
         assert!(rest.wants_turn(pool), "a full pool, and a park to time");
         rest.settle(now + PARK_PATIENCE);
@@ -1178,7 +1255,7 @@ mod tests {
         let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], vec![reorder(1)], now);
         assert_eq!(drawn, Some(Draw { orders: vec![reorder(1)], focus: Some(ws(1)) }));
         assert_eq!(rest.settle(now), Some(Draw::default()));
-        assert_eq!(rest.lift(None, now), Draw::default(), "laid out on no display, a lift takes no park");
+        assert_eq!(rest.lift(None, Some(now), now), Draw::default(), "laid out on no display, a lift takes no park");
     }
 
     /// With the ring and the border off nothing is decorated: the rest windows want no window of
@@ -1197,8 +1274,8 @@ mod tests {
         assert_eq!(rest.turn(None, &[], &[(ws(1), SLOT)], vec![reorder(1)], now), None, "a frame and a reorder");
         assert!(rest.windows.is_empty(), "the frame not taken");
         assert!(rest.settle(now + PARK_PATIENCE).is_none() && rest.due().is_none());
-        assert_eq!(rest.lift(Some(display()[0].bounds), now), Draw::default());
-        assert_eq!(rest.place(Some(display()[0].bounds), now, |_| true), Placed::default());
+        assert_eq!(rest.lift(Some(display()[0].bounds), Some(now), now), Draw::default());
+        assert_eq!(rest.place(Some(display()[0].bounds), Some(now), now, |_| true), Placed::default());
         assert!(!rest.wants_turn(0), "a lift asks no turn");
         let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now);
         assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }), "a model turns it on again");
@@ -1216,7 +1293,7 @@ mod tests {
         assert!(rest.covered(), "the overlay is still up");
         assert_eq!(rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now), None);
         assert!(!rest.on() && rest.pool_size() == 0, "nothing made under the overlay");
-        let lifted = rest.lift(Some(display()[0].bounds), now);
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now), now);
         assert_eq!(lifted, Draw { orders: Vec::new(), focus: Some(ws(1)) }, "the reorder from before it went off dropped");
         assert!(rest.on() && rest.pool_size() == 2);
     }

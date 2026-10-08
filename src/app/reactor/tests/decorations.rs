@@ -1,5 +1,7 @@
 //! What the rest windows are sent after a batch of events: each managed window's ring and border,
 //! with the key window holding focus, and what holds its bands.
+use std::time::Instant;
+
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
 use rini_geometry::space::ScreenRect;
@@ -493,12 +495,13 @@ fn frame_of(layout: &[(WindowId, CGRect)], window: WindowId) -> CGRect {
     layout.iter().find(|(w, _)| *w == window).map(|(_, frame)| *frame).expect("laid out")
 }
 
-/// What the rest windows have been told since the last look, by kind, with a flight's display.
-fn told(rest: &mut Receiver) -> Vec<(&'static str, Option<ScreenRect>)> {
+/// What the rest windows have been told since the last look, by kind, with a flight's display and
+/// press.
+fn told(rest: &mut Receiver) -> Vec<(&'static str, Option<(ScreenRect, Instant)>)> {
     let mut out = Vec::new();
     while let Ok((_, event)) = rest.try_recv() {
         out.push(match event {
-            RestEvent::Flight(display) => ("flight", Some(display)),
+            RestEvent::Flight { display, pressed } => ("flight", Some((display, pressed))),
             RestEvent::Model(_) => ("model", None),
             RestEvent::Off => ("off", None),
             _ => continue,
@@ -533,11 +536,11 @@ fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
     };
     let flown = |rx: &mut channels::Receiver<Engine>| {
         let mut display = None;
-        let mut flights = 0;
+        let mut flights = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
             match event {
                 Engine::SetDisplay { frame, rests, .. } => display = Some((frame, rests)),
-                Engine::Animate { .. } | Engine::AnimateSurface { .. } => flights += 1,
+                Engine::Animate { .. } | Engine::AnimateSurface { .. } => flights.extend(event.pressed()),
                 _ => {}
             }
         }
@@ -546,16 +549,20 @@ fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
 
     press(&mut reactor, Direction::Right);
     let (flights, display) = flown(&mut transitions_rx);
-    assert!(flights > 0, "the press flies");
+    let pressed = *flights.last().expect("the press flies");
     let (display, rests) = display.expect("the overlay's display");
     assert!(rests, "the rest windows placed ahead of the lift");
-    assert_eq!(told(&mut rest), vec![("flight", Some(display)), ("model", None)], "the flight first, at the overlay's display");
+    assert_eq!(
+        told(&mut rest),
+        vec![("flight", Some((display, pressed))), ("model", None)],
+        "the flight first, at the overlay's display, with the press the engine was handed"
+    );
 
     reload_config(&mut reactor, |decorations| decorations.focus_ring.on = false);
     assert_eq!(told(&mut rest), vec![("off", None)]);
     press(&mut reactor, Direction::Left);
     let (flights, display) = flown(&mut transitions_rx);
-    assert!(flights > 0, "the press still flies");
+    assert!(!flights.is_empty(), "the press still flies");
     assert_eq!(display.map(|(_, rests)| rests), Some(false), "nothing to place ahead of the lift");
     assert!(told(&mut rest).is_empty(), "off, the rest windows are told nothing");
 }

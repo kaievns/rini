@@ -168,6 +168,19 @@ pub enum Event {
     MainTurn(rini_runloop::turns::MainTurn),
 }
 
+impl Event {
+    /// When the event a flight request answers was taken: none for anything but a request.
+    pub fn pressed(&self) -> Option<Instant> {
+        match self {
+            Event::Animate { cause, .. }
+            | Event::AnimateSurface { cause, .. }
+            | Event::Bounce { cause, .. }
+            | Event::DebugSlide { cause, .. } => Some(cause.at),
+            _ => None,
+        }
+    }
+}
+
 /// Hands the renderer a batch of render commands, which it answers as `Event::Rendered`.
 pub type Draw = Box<dyn Fn(Batch) + Send>;
 
@@ -811,6 +824,9 @@ pub struct FlightEngine {
     top_band: f64,
     /// Whether anything is drawn at rest on the display, as the last `SetDisplay` said.
     rests: bool,
+    /// The latest press a request carried: a place or a lift given before a later one's is not that
+    /// press's flight, which what is drawn at rest tells apart.
+    took: Option<Instant>,
     /// When everything happens, and the journal of it.
     flights: Journalled,
     /// What the reactor last said of the journal; `None` until it has.
@@ -858,6 +874,7 @@ impl FlightEngine {
             display_id: None,
             top_band: 0.0,
             rests: false,
+            took: None,
             flights: Journalled::default(),
             journal: None,
             writer: None,
@@ -971,6 +988,7 @@ impl FlightEngine {
     /// A request: a press never waits on a measurement.
     fn take_request(&mut self, cause: Cause) {
         self.lift_heard(Heard::Request);
+        self.took = self.took.max(Some(cause.at));
         self.flights.pressed(cause);
     }
 
@@ -1045,7 +1063,7 @@ impl FlightEngine {
                 self.render(Render::Focus { window, focused, ring });
             }
             Command::PlaceRest => {
-                self.render(Render::PlaceRest);
+                self.render(Render::PlaceRest { through: self.took });
             }
             Command::Lift { generation } => self.lift(generation, now),
             Command::Warm(windows) => {
@@ -2229,7 +2247,7 @@ impl FlightEngine {
 
     /// The overlay down, and its tiles let go; `owed` waits for that to be drawn.
     fn hide(&mut self, owed: Vec<Owed>) {
-        self.lifted = self.render(Render::Lift);
+        self.lifted = self.render(Render::Lift { through: self.took });
         for owed in owed {
             self.owe(self.lifted, owed);
         }
@@ -3997,8 +4015,8 @@ mod tests {
                 Render::Focus { .. } => "focus",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
-                Render::PlaceRest => "place_rest",
-                Render::Lift => "lift",
+                Render::PlaceRest { .. } => "place_rest",
+                Render::Lift { .. } => "lift",
                 Render::Trace => "trace",
             }
         }
@@ -4706,7 +4724,7 @@ mod tests {
                 let pan = h.pan();
                 sent.extend(h.step(pan));
                 let commands: Vec<&Render> = batches(&sent).into_iter().flat_map(|batch| &batch.commands).collect();
-                let lift = commands.iter().rposition(|command| matches!(command, Render::Lift)).expect("lifted");
+                let lift = commands.iter().rposition(|command| matches!(command, Render::Lift { .. })).expect("lifted");
                 let dress = commands.iter().rposition(|command| matches!(command, Render::Dress { .. })).expect("dressed");
                 assert!(lift < dress, "dressed after the lift");
                 assert!(matches!(commands[dress], Render::Dress { desktop: Some(_), .. }), "with the desktop held");
@@ -4735,6 +4753,43 @@ mod tests {
             let sent = tick(&mut h, FRAME_INTERVAL);
             let lift = lift_batch(&sent).expect("lifted");
             assert!(!kinds(lift).contains(&"place_rest"), "{:?}", kinds(lift));
+        }
+
+        /// A place and a lift carry the latest press the engine had taken as it gave them, so what is
+        /// drawn at rest tells a press after them, a flight of its own, from one merged into theirs;
+        /// a lift held for the overlay's picture and hidden by the next press carries the press before.
+        #[test]
+        fn a_place_and_a_lift_carry_the_latest_press_taken_before_them() {
+            let through = |sent: &[Sent]| -> Vec<(&'static str, Option<Instant>)> {
+                batches(sent)
+                    .into_iter()
+                    .flat_map(|batch| &batch.commands)
+                    .filter_map(|command| match command {
+                        Render::PlaceRest { through } => Some(("place_rest", *through)),
+                        Render::Lift { through } => Some(("lift", *through)),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let mut h = Harness::new();
+            let pressed = Some(h.at());
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+            h.advance(left - Duration::from_millis(5));
+            let placed = h.step(Event::Tick);
+            h.commit(only_batch(&placed).seq);
+            h.advance(FRAME_INTERVAL);
+            let lifted = h.step(Event::Tick);
+            assert_eq!([through(&placed), through(&lifted)].concat(), [("place_rest", pressed), ("lift", pressed)]);
+
+            let mut h = Harness::measuring();
+            let pressed = Some(h.at());
+            h.lifted();
+            h.advance(Duration::from_millis(10));
+            let pan = h.pan();
+            let hidden = h.step(pan);
+            assert_eq!(through(&hidden), [("lift", pressed)], "the held lift's press, not the one hiding it");
         }
 
         /// With nothing drawn at rest no place is sent, so the lift waits behind no batch of its own,

@@ -218,7 +218,9 @@ wearing either is drawn by one rest window holding both.
   before the press, as the flight's frame zero does; once it shows it covers its display, so nothing
   drawn there is seen. Each of those draws had been main-thread and window-server time the flight's
   show and frames waited behind. A flight whose overlay has not shown 250ms after its begin, one
-  that was declined or merged elsewhere, MUST let go then and draw what waited. A window on another
+  that was declined or merged elsewhere, MUST let go then and draw what waited. A press that begins
+  a flight of its own as the one before it lifts MUST wait for its own flight, not be drawn at the
+  lift of the one before. A window on another
   display that moves, is reordered, hidden or closed, or whose park takes effect, MUST be drawn as it
   does, with everything that waited: the overlay does not cover it.
 

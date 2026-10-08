@@ -44,10 +44,11 @@ pub enum Render {
     /// The overlay up.
     Show,
     /// What is drawn at rest on the display put where its windows are, under the overlay, ahead of
-    /// the lift.
-    PlaceRest,
-    /// The overlay down, its holes filled, and its tiles and the desktop behind them let go.
-    Lift,
+    /// the lift, given `through` the latest press the engine had taken.
+    PlaceRest { through: Option<Instant> },
+    /// The overlay down, its holes filled, and its tiles and the desktop behind them let go, given
+    /// `through` the latest press the engine had taken.
+    Lift { through: Option<Instant> },
     /// Where each container is presented, logged; sent only while `TRACE_TARGET` is on at trace level.
     Trace,
 }
@@ -61,13 +62,15 @@ pub struct Batch {
 
 /// The batches queued, played as one: their commands in order, the highest number, when the oldest
 /// was sent, whether the overlay ends the drain up (`Some(true)`), down (`Some(false)`) or as it
-/// was, and whether it places what is drawn at rest.
+/// was, whether it places what is drawn at rest, and the press the last place or lift in it was
+/// given through.
 pub struct Drained {
     pub commands: Vec<Render>,
     pub seq: u64,
     pub sent: Instant,
     pub shown: Option<bool>,
     pub places: bool,
+    pub through: Option<Instant>,
 }
 
 /// The batch the renderer woke on and the ones queued behind it, as one drain: whether the overlay
@@ -81,11 +84,15 @@ pub fn in_order(woke: Batch, mut queued: Vec<Batch>) -> Drained {
     let commands: Vec<Render> = queued.into_iter().flat_map(|batch| batch.commands).collect();
     let shown = commands.iter().rev().find_map(|command| match command {
         Render::Show => Some(true),
-        Render::Lift => Some(false),
+        Render::Lift { .. } => Some(false),
         _ => None,
     });
-    let places = commands.iter().any(|command| matches!(command, Render::PlaceRest));
-    Drained { commands, seq, sent, shown, places }
+    let places = commands.iter().any(|command| matches!(command, Render::PlaceRest { .. }));
+    let through = commands.iter().rev().find_map(|command| match command {
+        Render::PlaceRest { through } | Render::Lift { through } => Some(*through),
+        _ => None,
+    });
+    Drained { commands, seq, sent, shown, places, through: through.flatten() }
 }
 
 /// Whether `command` makes the overlay when there is none: it dresses or poses a flight.
@@ -193,7 +200,7 @@ impl Renderer {
     /// flight on none is `Unavailable`. A commit says when the drain began and when it was flushed.
     fn play(&mut self, drained: Drained) -> Event {
         let began = Instant::now();
-        let Drained { mut commands, seq, sent, shown, places } = drained;
+        let Drained { mut commands, seq, sent, shown, places, through } = drained;
         let needed = commands.iter().any(needs_overlay);
         let mut flushed = began;
         let display = self.display.map(|(frame, _, _)| frame);
@@ -201,12 +208,12 @@ impl Renderer {
             match step {
                 Step::PlaceRest => {
                     if self.overlay.is_some() {
-                        (self.rest.place)(display);
+                        (self.rest.place)(display, through);
                     }
                 }
                 Step::LiftRest => {
                     if self.overlay.is_some() {
-                        (self.rest.lift)(display);
+                        (self.rest.lift)(display, through);
                     }
                 }
                 Step::Hide => self.overlay.as_mut().into_iter().for_each(TileOverlay::hide),
@@ -255,8 +262,8 @@ impl Renderer {
             }
             Render::Holes(ends) => overlay.set_holes(&ends),
             // Its alpha goes up after the flush; the rest windows are placed before the transaction.
-            Render::Show | Render::PlaceRest => {}
-            Render::Lift => {
+            Render::Show | Render::PlaceRest { .. } => {}
+            Render::Lift { .. } => {
                 overlay.clear_holes();
                 overlay.release();
             }
@@ -284,6 +291,9 @@ mod tests {
 
     use super::*;
     use crate::pictures::platform::picture::test_picture;
+
+    const LIFT: Render = Render::Lift { through: None };
+    const PLACE: Render = Render::PlaceRest { through: None };
 
     fn holes(x: f64) -> Render {
         Render::Holes(vec![(OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0)), 0.0)])
@@ -322,12 +332,12 @@ mod tests {
         let at = Instant::now();
         let shown = |woke: Batch, queued: Vec<Batch>| in_order(woke, queued).shown;
         assert_eq!(shown(batch(1, at, 0, vec![holes(1.0), Render::Show, holes(2.0)]), Vec::new()), Some(true));
-        assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![Render::Lift])]), Some(false), "never shown");
-        assert_eq!(shown(batch(1, at, 0, vec![Render::Lift, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
+        assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![LIFT])]), Some(false), "never shown");
+        assert_eq!(shown(batch(1, at, 0, vec![LIFT, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
     }
 
-    /// What is drawn at rest draws nothing from the overlay's show to its lift, and the lift draws
-    /// every band as it is before the overlay hides.
+    /// The show covers what is drawn at rest, so it draws nothing until it is placed, and the lift
+    /// draws what came since the place before the overlay hides.
     #[test]
     fn the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay() {
         assert_eq!(steps(Some(false), false), [Step::LiftRest, Step::Hide, Step::Play, Step::Background]);
@@ -340,14 +350,17 @@ mod tests {
     #[test]
     fn a_drain_carrying_place_rest_places_what_rests_before_its_commands() {
         let at = Instant::now();
-        let ahead = in_order(batch(7, at, 0, vec![holes(1.0), Render::PlaceRest]), Vec::new());
+        let ahead = in_order(batch(7, at, 0, vec![holes(1.0), PLACE]), Vec::new());
         assert!(ahead.places && ahead.shown.is_none());
         assert_eq!(steps(ahead.shown, ahead.places), [Step::PlaceRest, Step::Play, Step::Background]);
-        let with_the_lift = in_order(batch(9, at, 1, vec![Render::Lift]), vec![batch(8, at, 0, vec![Render::PlaceRest])]);
+        let pressed = Some(at + std::time::Duration::from_millis(5));
+        let with_the_lift =
+            in_order(batch(9, at, 1, vec![Render::Lift { through: pressed }]), vec![batch(8, at, 0, vec![PLACE])]);
         assert_eq!(
             steps(with_the_lift.shown, with_the_lift.places),
             [Step::PlaceRest, Step::LiftRest, Step::Hide, Step::Play, Step::Background]
         );
+        assert_eq!(with_the_lift.through, pressed, "both through the press the lift was given after");
         assert!(!in_order(batch(1, at, 0, vec![holes(1.0)]), Vec::new()).places);
     }
 
@@ -364,8 +377,8 @@ mod tests {
             ("focus", Render::Focus { window, focused: true, ring: Ring::Active }),
             ("holes", holes(1.0)),
             ("show", Render::Show),
-            ("place_rest", Render::PlaceRest),
-            ("lift", Render::Lift),
+            ("place_rest", PLACE),
+            ("lift", LIFT),
             ("trace", Render::Trace),
         ];
         let making: Vec<&str> =

@@ -15,6 +15,8 @@
 //! title as they change. A window is drawn urgent while its application asks for attention and no
 //! window of it holds focus, read against the same focus as the ring.
 
+use std::time::Instant;
+
 use rini_core::ids::{SpaceId, WindowId};
 use rini_geometry::is_off_screen;
 use rini_geometry::space::{FromCg, ScreenRect};
@@ -32,14 +34,14 @@ use crate::workspaces::VirtualWorkspaceId;
 use super::Reactor;
 
 /// Where the rest windows are drawn, whether the window server's frames and orders are followed for
-/// them, the display of the last flight this batch handed the engine, and the model they were last
-/// sent: `None` while they are off, as they start.
+/// them, the display of the last flight this batch handed the engine with the press it answers, and
+/// the model they were last sent: `None` while they are off, as they start.
 #[derive(Default)]
 pub(super) struct RestFeed {
     /// `None` until the main thread's rest windows are wired in, and in tests that do not look.
     pub(super) tx: Option<Sender>,
     pub(super) following: Following,
-    pub(super) flight: Option<ScreenRect>,
+    pub(super) flight: Option<(ScreenRect, Instant)>,
     sent: Option<RestModel>,
 }
 
@@ -164,8 +166,8 @@ impl Reactor {
         let Some(tx) = &self.rest.tx else { return };
         let model = self.config.settings.decorations.draws_bands().then(|| self.rest_model());
         self.rest.following.set(model.is_some());
-        if let Some(display) = flight.filter(|_| model.is_some()) {
-            tx.send(RestEvent::Flight(display));
+        if let Some((display, pressed)) = flight.filter(|_| model.is_some()) {
+            tx.send(RestEvent::Flight { display, pressed });
         }
         if self.rest.sent == model {
             return;
