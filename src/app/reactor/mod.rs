@@ -628,7 +628,7 @@ impl Reactor {
 
     pub fn new(
         config: Config,
-        mut layout_engine: LayoutEngine,
+        layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
         mut record: Record,
         broadcast_tx: BroadcastSender,
@@ -639,7 +639,6 @@ impl Reactor {
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
         record.start(&layout_engine, &display_memory);
-        layout_engine.set_border_width(config.settings.decorations.border_width());
         let (raise_manager_tx, _rx) = channels::channel();
         let (window_notify_tx, window_tx_store) = match window_notify {
             Some((tx, store)) => (Some(tx), store),
@@ -1145,12 +1144,15 @@ impl Reactor {
         }
     }
 
-    /// One batch of the loop's events, then what the batch changed on the bar and at rest, and the
-    /// rings it left.
+    /// One batch of the loop's events, then the strip laid out again if a rule now gives a window
+    /// another border, what the batch changed on the bar and at rest, and the rings it left.
     fn handle_batch(&mut self, batch: impl IntoIterator<Item = (tracing::Span, Event)>) {
         for (span, event) in batch {
             let _guard = span.enter();
             self.handle_loop_event(event);
+        }
+        if self.borders() != *self.layout_manager.layout_engine.borders() {
+            self.update_layout_or_warn(false, false, None);
         }
         self.publish_bar();
         self.publish_rest();

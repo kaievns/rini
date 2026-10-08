@@ -16,7 +16,7 @@ principle, and deliberately is not reused — see "Why this shape" in
 | `domain/strip.rs` | Where the strip sits and how wide its columns are: `anchor_x` and `centres`, `column_starts`, `gap_share`, `reveal_offset`, `offset_keeping_right_edge` |
 | `domain/edge_drag.rs` | One report of a mouse drag (`Drag`), which edge of a window it moves, read off the frame it started from and the one it has now, the width the drag asks of its column, and the height a stacked edge trades with the window across it |
 | `domain/constraints.rs` | `column_ratio` for how wide a column asks to be by its `ColumnKind`, `column_limits` for what its windows' slots allow, `solve_axis_lengths` for row heights, and `clamp_to_constraints` for what a window will accept |
-| `domain/tile.rs` | A tiled window and its slot, the window and the border it wears: the window inside a slot (`window_in`), the slot of a reported frame (`slot_of`), and a slot's limits (`slot_limits`) |
+| `domain/tile.rs` | A tiled window and its slot, the window and the border it wears: the border each window wears (`Borders`), the window inside a slot (`window_in`), the slot of a reported frame (`slot_of`), and a slot's limits (`slot_limits`) |
 | `domain/preset_width.rs` | Which width the next `ctrl-R` asks for, and whether that width is the maximise mode |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
 | `domain/boundary.rs` | What a swipe means once the strip has run out: which workspace step a strip edge implies, and the inversion flag that swaps it |

@@ -88,7 +88,8 @@ struct Panel {
     target: Option<WindowServerId>,
     /// Its frame on screen as last set, and whether it was shown.
     placed: Option<(ScreenRect, bool)>,
-    /// Its target's corner radius, read when it was given the target.
+    /// Its target's corner radius as the window server reports it, read when it was given the
+    /// target; a window rule's goes ahead of it.
     radius: Option<f64>,
 }
 
@@ -161,7 +162,7 @@ impl Panel {
         self.root.setContentsScale(display.scale);
         let size = frame.size.respace();
         self.bands.wear(&window.decoration, display.scale);
-        self.bands.place(size, shape::radius(self.radius, size));
+        self.bands.place(size, shape::radius(window.decoration.corner(|| self.radius), size));
         self.bands.paint(&window.style());
         if self.placed.is_none_or(|(_, shown)| !shown) {
             self.window.setAlphaValue(1.0);

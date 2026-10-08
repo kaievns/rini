@@ -247,6 +247,7 @@ impl LayoutManager {
         is_workspace_switch: bool,
         space_scope: Option<SpaceId>,
     ) -> Result<bool, crate::app::reactor::state::ReactorError> {
+        reactor.refresh_borders();
         let layout_result = Self::calculate_layout(reactor, space_scope);
         Self::apply_layout(reactor, layout_result, is_resize, is_workspace_switch)
     }

@@ -11,9 +11,10 @@ use super::{
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::boundary::{strip_edge, workspace_stack_direction};
 use crate::layout::domain::edge_drag::Drag;
+use crate::layout::domain::tile::Borders;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
-use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
+use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext, RuleState};
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::broadcast::{BroadcastEvent, protocol_workspace_id};
 use crate::workspaces::domain::app_rules::{
@@ -138,8 +139,8 @@ pub struct LayoutEngine {
     app_rules: AppRuleEngine,
     focused_window: Option<WindowId>,
     window_layout_constraints: HashMap<WindowId, WindowLayoutConstraints>,
-    /// The border every tiled window wears, in points, which the strip takes out of its slot.
-    border_width: f64,
+    /// The border each tiled window wears, in points, which the strip takes out of its slot.
+    borders: Borders,
     virtual_workspace_manager: WorkspaceStore,
     layout_settings: LayoutSettings,
     /// Events the engine wants announced, for the application to send.
@@ -257,9 +258,15 @@ impl LayoutEngine {
 }
 
 impl LayoutEngine {
-    /// The border every tiled window wears from the next layout pass: each window is laid out inside
-    /// its slot by `width` on every side.
-    pub fn set_border_width(&mut self, width: f64) { self.border_width = width; }
+    /// The border each tiled window wears from the next layout pass: each window is laid out inside
+    /// its slot by its width on every side. Whether they differ from the ones it had.
+    pub fn set_borders(&mut self, borders: Borders) -> bool {
+        let changed = self.borders != borders;
+        self.borders = borders;
+        changed
+    }
+
+    pub fn borders(&self) -> &Borders { &self.borders }
 
     pub fn set_layout_settings(&mut self, settings: &LayoutSettings) {
         self.layout_settings = settings.clone();
@@ -1331,6 +1338,7 @@ impl LayoutEngine {
             ax_role,
             ax_subrole,
             is_modal,
+            state: RuleState::default(),
         })
     }
 
@@ -1500,7 +1508,7 @@ impl LayoutEngine {
             app_rules: AppRuleEngine::new(&virtual_workspace_config.app_rules),
             focused_window: None,
             window_layout_constraints: HashMap::default(),
-            border_width: 0.0,
+            borders: Borders::default(),
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
             outbox: Default::default(),
@@ -1563,7 +1571,7 @@ impl LayoutEngine {
         };
         let gaps = self.layout_settings.gaps.effective_for_display(display_uuid);
         let previous_selection = self.workspace_tree(resize.workspace_id).selected_window(layout);
-        let border = self.border_width;
+        let border = self.borders.of(resize.window);
         let tree = self.workspace_tree_mut(resize.workspace_id);
         let _ = tree.select_window(layout, resize.window);
         tree.on_window_resized(layout, resize.window, None, new_frame, border, screen_frame, &gaps);
@@ -1899,7 +1907,7 @@ impl LayoutEngine {
                     };
                     let gaps =
                         self.layout_settings.gaps.effective_for_display(display_uuid.as_deref());
-                    let border = self.border_width;
+                    let border = self.borders.of(wid);
                     self.workspace_tree_mut(ws_id).on_window_resized(
                         layout,
                         wid,
@@ -2185,7 +2193,7 @@ impl LayoutEngine {
             layout,
             screen,
             &self.window_layout_constraints,
-            self.border_width,
+            &self.borders,
             gaps,
         )
     }
@@ -2259,7 +2267,7 @@ impl LayoutEngine {
                     layout,
                     screen,
                     &self.window_layout_constraints,
-                    self.border_width,
+                    &self.borders,
                     gaps,
                 );
 
@@ -2413,7 +2421,7 @@ impl LayoutEngine {
                 layout,
                 screen,
                 &self.window_layout_constraints,
-                self.border_width,
+                &self.borders,
                 gaps,
             );
             for (wid, rect) in tiled_positions {
@@ -2876,6 +2884,7 @@ impl LayoutEngine {
             ax_role,
             ax_subrole,
             is_modal,
+            state: RuleState::default(),
         });
 
         // Where this application's windows were, but only when the config had nothing to say and the

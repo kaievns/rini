@@ -18,7 +18,7 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   the others. A display holds focus while a managed window on it is focused; with none focused, every
   ring MUST be the inactive one. A window rini does not manage, a sheet or another application's
   panel, wears no ring, and while one is focused no display holds focus.
-- The ring MUST be on unless `layout › focus-ring { off; }` turns it off: 2pt wide, `#7fc8ff`
+- The ring MUST be on unless `layout › focus-ring { off; }` or a window rule turns it off: 2pt wide, `#7fc8ff`
   active and `#505050` inactive, niri's ring but for its width, which is 4pt in niri.
 
 > **Reported 2026-10-06.** Kai's decision D1: the focus ring on by default, as niri's, active
@@ -35,9 +35,9 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 
 ## The border
 
-- While `layout › border` is on, every window rini manages, tiled or floating, MUST wear the border,
-  in `active-color` while it holds focus and in `inactive-color` otherwise, as niri paints it. A
-  window rini does not manage wears none.
+- While `layout › border` is on, every window rini manages, tiled or floating, MUST wear the border
+  unless a window rule turns it off for that window, in `active-color` while it holds focus and in
+  `inactive-color` otherwise, as niri paints it. A window rini does not manage wears none.
 - The border MUST be off unless `layout › border` turns it on, and a `border` block that writes
   neither `on` nor `off` turns it on, as in niri (`config.md`). It is niri's: 4pt wide, `#ffc87f`
   active and `#505050` inactive.
@@ -55,6 +55,43 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 - With both on, the ring MUST lie outside the border and the border be drawn in front of it, as
   niri stacks them; the ring is drawn under the border in to the window's edge, so the two meet at
   no seam.
+
+## Window rules
+
+- A `window-rule`'s `focus-ring` and `border` MUST set the ring and the border of each window the
+  rule applies to, part by part over `layout`'s, every rule that applies in file order, a later one
+  overriding an earlier one: a later `off` beats an earlier `on` and the reverse, as in niri. Within
+  one rule, `on` and `off` both written MUST be refused, as in `layout`. A rule's block MUST NOT turn
+  its band on by being written; only its `on` does, as in niri, where only `layout › border` has
+  that exception (`config.md`).
+- The rules MUST apply continuously, as niri's do: when a window's focus, whether it floats or its
+  title changes, what it wears MUST follow, on its tiles and at rest, with no reload. A rule matching
+  `is-active` or `is-focused` recolours the window focus moves to and the one it left, each at the
+  time its hairline turns. rini paints one window active, the one holding focus, so `is-active` and
+  `is-focused` match the same window.
+- Under `is-active` or `is-focused`, on a `match` or an `exclude` line, a rule MUST set colours
+  only. A border's `on`, `off` or `width` there MUST be refused: a tiled window gives its border's
+  width out of its place in the strip, so a border that changed with focus would lay the strip out
+  again on every focus change, at 2-60ms a size write plus a flight (`windows.md`). A ring's `on`,
+  `off` or `width` and `geometry-corner-radius` there are refused as not yet supported: the tile's
+  bands and corner are laid when it is staged, and only its paint turns during a flight.
+- A rule that gives a tiled window another border width MUST lay the strip out again as soon as it
+  applies, a title change included, so the window lands inside its place with the new width.
+- `geometry-corner-radius` MUST round the window's ring and border, on its tiles and at rest, ahead
+  of the radius the window server reports, as niri's does without `clip-to-geometry`. The hairline,
+  the shadow and a clipped picture MUST keep the window's own corner: on a tile they draw what macOS
+  draws at rest, and a corner that differed between the two would show at the lift. Four radii MUST
+  be refused unless equal: rini rounds every corner of a band alike, and the window server reports
+  no window with unequal corners.
+- A rule that says only what a window wears MUST NOT change what the window opens with: with no
+  other rule applying, a new window still opens where its application's windows last were.
+- At open a window holds no focus and does not float, as niri reads it, so a rule matching either
+  sets nothing the window opens with.
+- `draw-border-with-background false` MUST be accepted, since rini draws the bands hollow;
+  `true` is refused as not yet supported, since it needs a fill under another application's window.
+- niri's `is-active-in-column` MUST be refused: a rini column keeps no window of its own that focus
+  lands on, since focus entering a column lands on the row it came from. `is-urgent` is refused as
+  not yet supported until rini reads an application asking for attention.
 
 ## Through a flight
 
@@ -110,12 +147,14 @@ wearing either is drawn by one rest window holding both.
 The ring's and the border's settings are `src/decorations/settings.rs`, decoded from
 `layout › focus-ring` and `layout › border` in `src/app/config/kdl/layout.rs` and
 `src/app/config/kdl/apply.rs`. Who wears the ring, the paint of each by focus and their colours are
-`src/decorations/domain/style.rs` and `src/decorations/domain/paint.rs`; each band, its width and
+`src/decorations/domain/style.rs` and `src/decorations/domain/paint.rs`; what the window rules give
+each window, `src/decorations/domain/rules.rs`, matched through `src/windows/domain/rules.rs` and
+decoded with each `window-rule` in `src/app/config/kdl/window_rule.rs` and `apply.rs`; each band, its width and
 corner, how far the two reach, and their rest window's frame, `src/decorations/domain/shape.rs`; the
 layers they are drawn on, `src/decorations/platform/layers.rs`. A tiled window inside its place in
 the strip, the border's width in, is `src/layout/domain/tile.rs`, read by
-`src/layout/domain/scrolling.rs` with the width the reactor hands `src/workspaces/engine.rs` at
-launch and at each reload. The reactor decides each window's ring and what
+`src/layout/domain/scrolling.rs` with each window's width, which the reactor hands
+`src/workspaces/engine.rs` before every pass and after any batch of events that changed one. The reactor decides each window's ring and what
 holds its band at rest in `src/app/reactor/decorations.rs`, from each workspace's active window
 (`src/workspaces/engine.rs`). When a tile's ring turns is `src/transitions/domain/lifecycle.rs`,
 carried out by `src/transitions/platform/engine.rs` on the overlay

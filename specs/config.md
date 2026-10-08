@@ -75,6 +75,10 @@
   property by property.
 - `app-id`, `title` and `app-name` MUST be regular expressions, case-sensitive and unanchored, as
   niri's are. An invalid one MUST be refused, naming the line.
+- `is-active`, `is-focused` and `is-floating` MUST match a window by whether it holds focus and
+  whether it floats. What a window opens with reads it as it opens, holding no focus and not
+  floating, as niri reads a new window; what a rule says a window wears follows it while it is open
+  (`decorations.md`).
 - Modal dialogs MUST float by an ordinary rule in `rini.default.kdl`, so a later rule can decide
   otherwise for the windows it matches.
 

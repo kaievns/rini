@@ -262,8 +262,9 @@ common case of a window with no limits from costing a pass.
 niri's border is drawn inside a tiled window's place in the strip, its slot, the way niri draws it
 inside the tile: every column width, gap, limit and scroll offset is a slot's, and the window is
 the slot inset by the border on every side (`tile::window_in`). The application hands the layout
-one width for every tiled window (`LayoutEngine::set_border_width`, from
-`DecorationSettings::border_width`), so `layout` names no decoration.
+each tiled window's width as a plain number before every pass, one for every window but those a
+window rule gives another (`tile::Borders`, `LayoutEngine::set_borders`), so `layout` names no
+decoration. Each window of a stack is inset by its own, inside slots laid out as before.
 
 - **Frames leave once, as windows.** `calculate_layout` lays every slot out as before, then insets
   each and holds the window to its own limits inside it (`clamp_to_constraints`), so a window held

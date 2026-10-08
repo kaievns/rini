@@ -5,8 +5,25 @@
 //! window" in `src/layout/docs/strip.md`.
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::WindowId;
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::layout::WindowLayoutConstraints;
+
+/// The border each tiled window wears, in points: `every` window's, but for the windows a rule gives
+/// another.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Borders {
+    pub every: f64,
+    pub windows: HashMap<WindowId, f64>,
+}
+
+impl Borders {
+    /// One width for every window.
+    pub fn every(width: f64) -> Borders { Borders { every: width, windows: HashMap::default() } }
+
+    pub fn of(&self, window: WindowId) -> f64 { self.windows.get(&window).copied().unwrap_or(self.every) }
+}
 
 /// The window laid out in `slot` under a border `border` wide on every side.
 pub fn window_in(slot: CGRect, border: f64) -> CGRect {
@@ -56,6 +73,14 @@ mod tests {
         assert_eq!(window, rect(604.0, 7.0, 874.0, 1103.0));
         assert_eq!(slot_of(window, 4.0), slot);
         assert_eq!(window_in(rect(0.0, 0.0, 6.0, 400.0), 4.0).size.width, 0.0, "never inside out");
+    }
+
+    #[test]
+    fn a_window_a_rule_names_wears_its_own_border_and_the_rest_every_windows() {
+        let (named, other) = (WindowId::new(1, 1), WindowId::new(1, 2));
+        let borders = Borders { every: 4.0, windows: [(named, 0.0)].into_iter().collect() };
+        assert_eq!((borders.of(named), borders.of(other)), (0.0, 4.0));
+        assert_eq!(Borders::default().of(other), 0.0, "borders off");
     }
 
     #[test]

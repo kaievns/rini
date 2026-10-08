@@ -1078,15 +1078,15 @@ impl ScrollingLayoutSystem {
         }
     }
 
-    /// Every tiled window's frame: its slot in the strip, inset by the `border` each window wears
-    /// (`tile::window_in`) and held to the window's own limits. Every width, gap and limit the strip
-    /// is laid out from is a slot's.
+    /// Every tiled window's frame: its slot in the strip, inset by the border each window wears
+    /// (`borders`, `tile::window_in`) and held to the window's own limits. Every width, gap and
+    /// limit the strip is laid out from is a slot's.
     pub fn calculate_layout(
         &self,
         layout: LayoutId,
         screen: CGRect,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
-        border: f64,
+        borders: &tile::Borders,
         gaps: &Gaps,
     ) -> Vec<(WindowId, CGRect)> {
         let Some(state) = self.layouts.get(layout) else {
@@ -1119,8 +1119,7 @@ impl ScrollingLayoutSystem {
                 self.settings.max_column_width_ratio,
             );
             let limits = column_limits(
-                col.windows.iter().filter_map(|wid| constraints.get(wid).copied()),
-                border,
+                col.windows.iter().filter_map(|wid| Some((constraints.get(wid).copied()?, borders.of(*wid)))),
             );
             let width = column_width(kind, ratio, tiling.size.width, gap_x, limits);
             column_widths.push(width);
@@ -1270,7 +1269,7 @@ impl ScrollingLayoutSystem {
                         .get(wid)
                         .copied()
                         .map(|c| {
-                            let c = tile::slot_limits(c, border);
+                            let c = tile::slot_limits(c, borders.of(*wid));
                             (
                                 c.min_for_axis(false),
                                 c.fixed_for_axis(false),
@@ -1333,7 +1332,7 @@ impl ScrollingLayoutSystem {
                         CGSize::new(tiling.size.width.round(), tiling.size.height.round()),
                     );
                 }
-                frame = tile::window_in(frame, border);
+                frame = tile::window_in(frame, borders.of(*wid));
                 if let Some(c) = constraints.get(wid).copied() {
                     frame.size = clamp_to_constraints(frame.size, c);
                 }
@@ -2096,6 +2095,7 @@ mod tests {
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::Drag;
+    use crate::layout::domain::tile;
     use crate::layout::settings::{
         CenterFocusedColumn, Gaps, ScrollingLayoutSettings, WindowInsertionPoint,
     };
@@ -2121,7 +2121,7 @@ mod tests {
         gaps: &Gaps,
     ) -> Vec<(WindowId, CGRect)> {
         let constraints = HashMap::default();
-        system.calculate_layout(layout, screen, &constraints, 0.0, gaps)
+        system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), gaps)
     }
 
     fn constraints_none() -> HashMap<WindowId, WindowLayoutConstraints> {
@@ -2191,7 +2191,7 @@ mod tests {
             layout,
             screen(800.0, 600.0),
             &constraints,
-            0.0,
+            &tile::Borders::default(),
             &Gaps::default(),
         );
         let frame = frame_for(&frames, window);
@@ -2238,7 +2238,7 @@ mod tests {
             layout,
             screen(700.0, 600.0),
             &constraints,
-            0.0,
+            &tile::Borders::default(),
             &Gaps::default(),
         );
         let frame = frame_for(&frames, w1);
@@ -2272,7 +2272,7 @@ mod tests {
             layout,
             screen(1200.0, 700.0),
             &constraints,
-            0.0,
+            &tile::Borders::default(),
             &Gaps::default(),
         );
         let frame = frame_for(&frames, window);
@@ -2331,7 +2331,7 @@ mod tests {
             layout,
             screen(1200.0, 700.0),
             &constraints,
-            0.0,
+            &tile::Borders::default(),
             &Gaps::default(),
         );
         let locked_frame = frame_for(&frames, locked);
@@ -2366,7 +2366,7 @@ mod tests {
         let screen = screen(1200.0, 700.0);
         let gaps = Gaps::default();
         let tiling = compute_tiling_area(screen, &gaps);
-        let frames = system.calculate_layout(layout, screen, &constraints, 0.0, &gaps);
+        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
         let frame = frame_for(&frames, window);
         assert!(frame.size.width <= tiling.size.width);
         assert!(frame.origin.x >= tiling.origin.x);
@@ -3908,7 +3908,7 @@ mod tests {
         );
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints, 0.0, &gaps);
+        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
 
         let maximized = frame_for(&frames, narrow);
         let neighbour = frame_for(&frames, next);
@@ -3946,7 +3946,7 @@ mod tests {
         );
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints, 0.0, &gaps);
+        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
 
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
@@ -3967,7 +3967,7 @@ mod tests {
 
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints_none(), 0.0, &gaps);
+        let frames = system.calculate_layout(layout, screen, &constraints_none(), &tile::Borders::default(), &gaps);
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
             (a.size.height - b.size.height).abs() < 2.0,
@@ -3992,7 +3992,7 @@ mod tests {
 
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints_none(), 0.0, &gaps);
+        let frames = system.calculate_layout(layout, screen, &constraints_none(), &tile::Borders::default(), &gaps);
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
             a.size.height > b.size.height + 10.0,
@@ -4017,7 +4017,7 @@ mod tests {
 
         let screen = screen(1000.0, 900.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints_none(), 0.0, &gaps);
+        let frames = system.calculate_layout(layout, screen, &constraints_none(), &tile::Borders::default(), &gaps);
         let heights: Vec<f64> = w.iter().map(|id| frame_for(&frames, *id).size.height).collect();
         let spread = heights.iter().cloned().fold(f64::MIN, f64::max)
             - heights.iter().cloned().fold(f64::MAX, f64::min);
@@ -4050,7 +4050,7 @@ mod tests {
         );
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints, 0.0, &gaps);
+        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
 
         let wide = frame_for(&frames, acme);
         let next = frame_for(&frames, neighbour);
@@ -4904,7 +4904,7 @@ mod tests {
             constraints: &HashMap<WindowId, WindowLayoutConstraints>,
             border: f64,
         ) -> Vec<(WindowId, CGRect)> {
-            system.calculate_layout(layout, KAI_SCREEN, constraints, border, &kai_s_gaps())
+            system.calculate_layout(layout, KAI_SCREEN, constraints, &tile::Borders::every(border), &kai_s_gaps())
         }
 
         fn bordered(system: &ScrollingLayoutSystem, layout: LayoutId, wid: WindowId) -> CGRect {
@@ -5012,6 +5012,18 @@ mod tests {
             assert!(slot.size.width > 500.0 + 2.0 * BORDER, "{slot:?}");
             let narrow = frame_for(&frames, w[0]);
             assert_eq!((narrow.origin.x, narrow.size.width), (slot.origin.x + BORDER, 500.0));
+        }
+
+        /// A rule can give one window of a stack another border: each is laid inside its own slot by
+        /// its own width, and the slots are the strip's as before.
+        #[test]
+        fn each_window_of_a_stack_is_inset_by_its_own_border() {
+            let (system, layout, w) = kai_s_stack();
+            let slots = render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+            let borders = tile::Borders { every: BORDER, windows: [(w[0], 0.0)].into_iter().collect() };
+            let frames = system.calculate_layout(layout, KAI_SCREEN, &constraints_none(), &borders, &kai_s_gaps());
+            assert_eq!(frame_for(&frames, w[0]), frame_for(&slots, w[0]), "no border, the whole slot");
+            assert_eq!(frame_for(&frames, w[1]), window_in(frame_for(&slots, w[1]), BORDER));
         }
     }
 }

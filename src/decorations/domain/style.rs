@@ -44,12 +44,21 @@ pub struct Band {
     pub inactive: Colour,
 }
 
-/// What a window wears that rini draws rather than macOS: its focus ring, while rings are on, and
-/// its border, while borders are.
+/// What a window wears that rini draws rather than macOS: its focus ring and its border, each while
+/// it is on for the window, and the corner a window rule gives the two.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Decoration {
     pub ring: Option<Band>,
     pub border: Option<Band>,
+    /// `geometry-corner-radius`, in points.
+    pub radius: Option<f64>,
+}
+
+impl Decoration {
+    /// The radius its ring and border round to: its rule's, else `reported`, the one the window
+    /// server reports, read only when no rule gives one. What macOS draws at rest, the hairline and
+    /// the shadow, keeps the window server's on a tile too.
+    pub fn corner(&self, reported: impl FnOnce() -> Option<f64>) -> Option<f64> { self.radius.or_else(reported) }
 }
 
 /// What a window wears through a pass: its decoration, and whether it wears the ring before the pass
@@ -192,6 +201,14 @@ mod tests {
             assert_eq!(Style::of(false, ringed, &bordered).border, Some(BORDER.inactive), "ringed {ringed}");
         }
         assert_eq!(Style::of(true, true, &ringed()).border, None, "borders off");
+    }
+
+    #[test]
+    fn a_rule_radius_goes_ahead_of_the_reported_one() {
+        let ruled = Decoration { radius: Some(12.0), ..Decoration::default() };
+        assert_eq!(ruled.corner(|| panic!("no read while a rule gives the radius")), Some(12.0));
+        assert_eq!(Decoration::default().corner(|| Some(26.0)), Some(26.0));
+        assert_eq!(Decoration::default().corner(|| None), None, "the fallback is shape's");
     }
 
     /// Three radii plus the offset is where a gaussian ramp is visually spent.

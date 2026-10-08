@@ -86,6 +86,8 @@ pub struct DecorationLayers {
     /// The window's corner radius as the window server reports it, which every piece rounds to;
     /// `None` rounds at the fallback.
     pub radius: Option<f64>,
+    /// What the bands were last worn for, whose rule's corner they round to ahead of `radius`.
+    worn: Decoration,
     /// The size and corner the caster's silhouette and its mask were last shaped for.
     built: Cell<Option<(TileSize, f64)>>,
 }
@@ -127,6 +129,7 @@ impl DecorationLayers {
             outline,
             bands,
             radius: None,
+            worn: Decoration::default(),
             built: Cell::new(None),
         }
     }
@@ -172,13 +175,18 @@ impl DecorationLayers {
         self.hairline.setCornerRadius(corner);
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
-        self.bands.place(size, corner);
+        self.bands.place(size, self.band_corner_at(size));
     }
 
-    /// The corner a tile of `size` rounds to, every piece of it: its window's radius, clamped to the
-    /// tile.
+    /// The corner a tile of `size` rounds to, every piece of it but the bands: its window's radius,
+    /// clamped to the tile.
     pub fn corner_at(&self, size: TileSize) -> f64 {
         shape::radius(self.radius, size)
+    }
+
+    /// The corner the bands round to on a tile of `size`: a window rule's, else its window's.
+    fn band_corner_at(&self, size: TileSize) -> f64 {
+        shape::radius(self.worn.corner(|| self.radius), size)
     }
 
     /// Paints the hairline's white, the shadow's depth, the ring and the border as `style` has them.
@@ -193,9 +201,10 @@ impl DecorationLayers {
     }
 
     /// Draws the outline at the display's `scale`, and the bands of `decoration` in whole device
-    /// pixels of it; laid at the next `place`.
+    /// pixels of it, at its rule's corner; laid at the next `place`.
     pub fn wear(&mut self, decoration: &Decoration, scale: f64) {
         self.outline.setContentsScale(scale);
+        self.worn = *decoration;
         self.bands.wear(decoration, scale);
     }
 
@@ -227,7 +236,7 @@ impl DecorationLayers {
         }
         let outline = resize.path("path", |size| outline_path(size, corner(size)));
         add_under(&self.outline, &outline, OUTLINE_KEY);
-        self.bands.install_resize(resize, corner);
+        self.bands.install_resize(resize, |size: TileSize| self.band_corner_at(size));
     }
 
     /// Takes away every animation `install_resize` put on the decorations.
@@ -730,7 +739,7 @@ mod tests {
     fn every_band_rounds_on_the_continuous_curve_at_its_outset() {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.radius = Some(16.0);
-        layers.wear(&Decoration { ring: Some(crate::decorations::domain::style::Band { width: 1.3, ..RING }), border: None }, 2.0);
+        layers.wear(&Decoration { ring: Some(crate::decorations::domain::style::Band { width: 1.3, ..RING }), ..Decoration::default() }, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
         let ring = &layers.bands.ring.layer;
         assert_eq!(ring.borderWidth(), 1.5, "whole device pixels");
@@ -740,6 +749,22 @@ mod tests {
         assert_eq!(&*ring.cornerCurve(), unsafe { kCACornerCurveContinuous });
         layers.place(TileSize::new(12.0, 400.0));
         assert_eq!(ring.cornerRadius(), 7.5, "the window's clamped corner, out by the width");
+    }
+
+    /// A window rule's corner is the bands' alone: the hairline, its outline and the shadow are what
+    /// macOS draws at rest, at the window's own corner, and keep it.
+    #[test]
+    fn a_rule_radius_rounds_the_bands_and_leaves_the_hairline_at_the_windows_corner() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(16.0);
+        let border = crate::decorations::domain::style::Band { width: 4.0, ..RING };
+        layers.wear(&Decoration { ring: Some(RING), border: Some(border), radius: Some(8.0) }, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        assert_eq!(layers.hairline.cornerRadius(), 16.0, "the window server's");
+        assert_eq!(layers.bands.border.layer.cornerRadius(), 12.0, "the rule's, out by the border");
+        layers.wear(&Decoration { ring: Some(RING), border: Some(border), radius: None }, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        assert_eq!(layers.bands.border.layer.cornerRadius(), 20.0, "a pooled tile worn with no rule's: the server's");
     }
 
     #[test]

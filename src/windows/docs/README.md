@@ -13,7 +13,7 @@ or layout: everything else depends on it and it depends on nothing.
 | **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`, and `reported_radius`, the one corner radius a window rounds at from the four the window server reports) and `domain/state.rs` (`WindowState`, manageability) |
 | **The AX boundary's rules** | `domain/ax_events.rs` — whether a failed Accessibility request means the window is gone, and the codec for the one `usize` an observer callback carries |
 | **What rini takes on** | `domain/admissible.rs` — the four reasons an Accessibility window is turned away before anything else knows it exists |
-| **Window rules** | `domain/rules.rs` — every `window-rule` that applies to a window, folded in file order as niri does. Resolving the result against workspaces is `workspaces::domain::app_rules` |
+| **Window rules** | `domain/rules.rs` — every `window-rule` that applies to a window, folded in file order as niri does, and the one matcher (`applies`) that the rules for what a window wears (`decorations::domain::rules`) share, which reads whether a window holds focus or floats (`RuleState`) beside what it is. Resolving the result against workspaces is `workspaces::domain::app_rules` |
 | **Focus** | `domain/focus.rs` — `MainWindowTracker` and the key window it has heard of, which windows' looks a change of it turns, the raise-echo rule, and the activation-focus rule that stops cmd-tab moving a display |
 | **Raising** | `domain/raise.rs` — the raise manager |
 | **Raise order** | `domain/raise_order.rs` — which windows are worth raising, and in what order; `StackGroup`, on the strip or off it, and `regroup_tiled`, which raises the strip back in front of a window off it that sits inside it |

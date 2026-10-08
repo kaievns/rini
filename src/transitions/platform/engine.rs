@@ -2770,7 +2770,7 @@ mod tests {
                 active: crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
                 inactive: crate::decorations::domain::paint::Colour::rgb(0x505050),
             };
-            let decoration = crate::decorations::domain::style::Decoration { ring: Some(band), border: None };
+            let decoration = crate::decorations::domain::style::Decoration { ring: Some(band), ..Default::default() };
             running.tiles[0].worn = Worn { decoration, wore_ring: false, wears_ring: true };
             running.tiles[1].worn = Worn { decoration, wore_ring: true, wears_ring: false };
             let holes = running.holes(vec![(wid(1), slot), (wid(2), slot), (wid(3), slot)], 2.0);
@@ -4401,7 +4401,7 @@ mod tests {
                 active: crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
                 inactive: crate::decorations::domain::paint::Colour::rgb(0x505050),
             };
-            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), border: None };
+            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), ..Default::default() };
             let worn = |wore_ring, wears_ring| Worn { decoration, wore_ring, wears_ring };
             let request = |id: u32, from, to, worn| AnimationRequest {
                 window: wid(id),

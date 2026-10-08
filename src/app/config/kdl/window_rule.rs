@@ -2,7 +2,8 @@
 
 use knus::span::Span;
 
-use super::value::{Coordinate, Flag, Number, Size};
+use super::layout::BandPart;
+use super::value::{Coordinate, Flag, Number, Pixels, Size};
 use crate::windows::domain::rules::{RegexEq, RelativeTo};
 use crate::workspaces::domain::display_pin::DisplayRole;
 
@@ -31,6 +32,14 @@ pub struct WindowRulePart {
     pub manage: Option<bool>,
     #[knus(child, unwrap(argument))]
     pub open_on_output: Option<DisplayRole>,
+    #[knus(child)]
+    pub focus_ring: Option<BandPart>,
+    #[knus(child)]
+    pub border: Option<BandPart>,
+    #[knus(child)]
+    pub geometry_corner_radius: Option<RadiusPart>,
+    #[knus(child)]
+    pub draw_border_with_background: Option<BoolPart>,
 }
 
 #[derive(knus::Decode, Debug)]
@@ -50,6 +59,18 @@ pub struct MatchPart {
     pub ax_subrole: Option<String>,
     #[knus(property)]
     pub is_modal: Option<bool>,
+    #[knus(property)]
+    pub is_active: Option<bool>,
+    #[knus(property)]
+    pub is_focused: Option<bool>,
+    #[knus(property)]
+    pub is_floating: Option<bool>,
+    /// niri's, refused with its reason.
+    #[knus(property)]
+    pub is_active_in_column: Option<bool>,
+    /// niri's, refused with its reason.
+    #[knus(property)]
+    pub is_urgent: Option<bool>,
 }
 
 #[derive(knus::Decode, Debug)]
@@ -68,6 +89,16 @@ pub struct BoolPart {
     pub span: Span,
     #[knus(argument)]
     pub value: bool,
+}
+
+/// `geometry-corner-radius 12`, or niri's four corners, from the top left clockwise.
+#[derive(knus::Decode, Debug)]
+#[knus(span_type = Span)]
+pub struct RadiusPart {
+    #[knus(span)]
+    pub span: Span,
+    #[knus(arguments)]
+    pub radii: Vec<Number<Pixels>>,
 }
 
 #[derive(knus::Decode, Debug)]

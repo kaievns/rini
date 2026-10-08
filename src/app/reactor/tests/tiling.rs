@@ -1258,8 +1258,10 @@ fn a_request_carries_whether_its_window_wore_and_wears_the_ring() {
         }
     }
     let worn = |wid| animated.iter().find(|request| request.window == wid).expect("requested").worn;
-    let decoration = reactor.config.settings.decorations.decoration();
-    assert!(decoration.ring.is_some(), "on by default");
+    let decoration = crate::decorations::domain::style::Decoration {
+        ring: Some(reactor.config.settings.decorations.focus_ring.band),
+        ..Default::default()
+    };
     for (wid, wore, wears) in [(first, true, false), (second, false, true), (third, false, false)] {
         let worn = worn(wid);
         assert_eq!((worn.wore_ring, worn.wears_ring), (wore, wears), "{wid:?}");

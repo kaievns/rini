@@ -3,7 +3,9 @@
 //!
 //! niri's semantics. A rule applies to a window that matches ANY of its `match` lines and NONE of
 //! its `exclude` lines, and a rule with no `match` applies to every window. Every rule that applies
-//! is applied, in order, a later one overriding an earlier one property by property.
+//! is applied, in order, a later one overriding an earlier one property by property. One matcher
+//! (`applies`) serves both folds: the one here, at open, and what a window wears
+//! (`crate::decorations::domain::rules`), whenever its state changes.
 use std::fmt;
 use std::str::FromStr;
 
@@ -57,17 +59,36 @@ pub struct RuleMatch {
     pub ax_subrole: Option<String>,
     /// The window's `AXModal` attribute.
     pub is_modal: Option<bool>,
+    /// Whether the window wears the active paint. rini draws one such window, the one holding focus,
+    /// so this and `is_focused` match the same window.
+    pub is_active: Option<bool>,
+    /// Whether the window holds focus.
+    pub is_focused: Option<bool>,
+    pub is_floating: Option<bool>,
 }
 
 impl RuleMatch {
     fn holds(&self, context: WindowRuleContext<'_>) -> bool {
+        let state = context.state;
         regex_holds(self.app_id.as_ref(), context.app_bundle_id)
             && regex_holds(self.title.as_ref(), context.window_title)
             && regex_holds(self.app_name.as_ref(), context.app_name)
             && exact_holds(self.ax_role.as_deref(), context.ax_role)
             && exact_holds(self.ax_subrole.as_deref(), context.ax_subrole)
             && self.is_modal.is_none_or(|modal| modal == context.is_modal)
+            && self.is_active.is_none_or(|active| active == state.focused)
+            && self.is_focused.is_none_or(|focused| focused == state.focused)
+            && self.is_floating.is_none_or(|floating| floating == state.floating)
     }
+
+    /// Whether it names a matcher that turns as focus moves.
+    pub fn follows_focus(&self) -> bool { self.is_active.is_some() || self.is_focused.is_some() }
+}
+
+/// Whether a rule with these lines applies to `context`'s window: it matches one of `matches`, or
+/// there are none, and none of `excludes`.
+pub fn applies(matches: &[RuleMatch], excludes: &[RuleMatch], context: WindowRuleContext<'_>) -> bool {
+    (matches.is_empty() || matches.iter().any(|m| m.holds(context))) && !excludes.iter().any(|m| m.holds(context))
 }
 
 fn regex_holds(regex: Option<&RegexEq>, actual: Option<&str>) -> bool {
@@ -133,9 +154,11 @@ pub struct WindowRule {
 }
 
 impl WindowRule {
-    fn applies(&self, context: WindowRuleContext<'_>) -> bool {
-        (self.matches.is_empty() || self.matches.iter().any(|m| m.holds(context)))
-            && !self.excludes.iter().any(|m| m.holds(context))
+    fn applies(&self, context: WindowRuleContext<'_>) -> bool { applies(&self.matches, &self.excludes, context) }
+
+    /// Whether it sets anything a window opens with.
+    pub fn sets_anything(&self) -> bool {
+        *self != WindowRule { matches: self.matches.clone(), excludes: self.excludes.clone(), ..WindowRule::default() }
     }
 
     /// `self` with every property `later` sets replaced by `later`'s.
@@ -192,6 +215,16 @@ pub struct WindowRuleContext<'a> {
     pub ax_subrole: Option<&'a str>,
     /// The window's `AXModal` attribute.
     pub is_modal: bool,
+    pub state: RuleState,
+}
+
+/// What the matchers that change while a window is open read. `Default` is a window as it opens:
+/// not focused and not floating, as niri reads one, so a rule that asks for either sets nothing at
+/// open.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct RuleState {
+    pub focused: bool,
+    pub floating: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -475,5 +508,25 @@ mod tests {
             engine.evaluate(window("com.example.Hud")),
             AppRuleDecision::Unmanaged
         );
+    }
+    /// At open a window holds no focus and does not float, as niri reads one: a rule asking for
+    /// either sets nothing it opens with, and one asking for neither does.
+    #[test]
+    fn dynamic_matchers_read_the_window_as_it_opens() {
+        let rule = |line: RuleMatch| {
+            AppRuleEngine::new(&[WindowRule { open_on_workspace: Some("main".into()), ..WindowRule::when(line) }])
+        };
+        let opening = window("com.example.Editor");
+        for line in [
+            RuleMatch { is_active: Some(true), ..RuleMatch::default() },
+            RuleMatch { is_focused: Some(true), ..RuleMatch::default() },
+            RuleMatch { is_floating: Some(true), ..RuleMatch::default() },
+        ] {
+            assert_eq!(rule(line.clone()).evaluate(opening), AppRuleDecision::NoMatch, "{line:?}");
+        }
+        let unfocused = RuleMatch { is_focused: Some(false), is_floating: Some(false), ..RuleMatch::default() };
+        assert_ne!(rule(unfocused.clone()).evaluate(opening), AppRuleDecision::NoMatch);
+        let focused = WindowRuleContext { state: RuleState { focused: true, floating: false }, ..opening };
+        assert!(!applies(&[unfocused], &[], focused), "the same line, once the window holds focus");
     }
 }

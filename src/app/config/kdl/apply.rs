@@ -17,8 +17,9 @@ use super::binds::{BindPart, BindsPart};
 use super::error::Problem;
 use super::layout::{BandPart, LayoutPart, ProportionPart};
 use super::value::{ColourValue, Flag, Number};
-use super::window_rule::{FixedPart, MatchPart, WindowRulePart};
+use super::window_rule::{FixedPart, MatchPart, RadiusPart, WindowRulePart};
 use crate::app::config::{BASE_ANIMATION_SECONDS, Config, MAX_WORKSPACES};
+use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::settings::BandSetting;
 use crate::input::domain::binding::{Action, Bind};
 use crate::input::domain::key::{
@@ -196,11 +197,18 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
 
     let names = (!part.undecoded.workspace_names).then(|| workspaces.workspace_names.clone());
     if !part.window_rules.is_empty() {
-        workspaces.app_rules = part
+        let rules: Vec<(WindowRule, DecorationRule)> = part
             .window_rules
             .into_iter()
             .map(|rule| window_rule(rule, names.as_deref(), &mut problems))
             .collect();
+        workspaces.app_rules = rules
+            .iter()
+            .filter(|(opening, decorating)| opening.sets_anything() || !decorating.decorates())
+            .map(|(opening, _)| opening.clone())
+            .collect();
+        settings.decorations.rules =
+            rules.into_iter().map(|(_, decorating)| decorating).filter(DecorationRule::decorates).collect();
     } else if !part.undecoded.window_rules
         && let Some(names) = &names
     {
@@ -396,11 +404,12 @@ fn apply_workspaces(
     settings.workspace_names = parts.iter().map(|workspace| workspace.name.clone()).collect();
 }
 
+/// A `window-rule`, as what a window opens with and what it wears.
 fn window_rule(
     part: WindowRulePart,
     names: Option<&[String]>,
     problems: &mut Vec<Problem>,
-) -> WindowRule {
+) -> (WindowRule, DecorationRule) {
     let line = |part: MatchPart, problems: &mut Vec<Problem>| {
         let patterns = [&part.app_id, &part.title, &part.app_name];
         if patterns
@@ -415,11 +424,22 @@ fn window_rule(
         let names_nothing = patterns.iter().all(|pattern| pattern.is_none())
             && part.ax_role.is_none()
             && part.ax_subrole.is_none()
-            && part.is_modal.is_none();
+            && [part.is_modal, part.is_active, part.is_focused, part.is_floating, part.is_active_in_column, part.is_urgent]
+                .iter()
+                .all(Option::is_none);
         if names_nothing {
             problems.push(
                 Problem::at(&part.span, "this line names no matcher", "matches every window")
                     .help("a rule with no `match` line already applies to every window"),
+            );
+        }
+        let not_yet = [
+            (part.is_active_in_column, "is-active-in-column", "a column keeps no window of its own to focus: focus lands on the row it comes from"),
+            (part.is_urgent, "is-urgent", "rini does not read an application asking for attention yet"),
+        ];
+        for (_, name, why) in not_yet.into_iter().filter(|(written, _, _)| written.is_some()) {
+            problems.push(
+                Problem::at(&part.span, format!("`{name}` is not supported yet"), "here").help(why),
             );
         }
         RuleMatch {
@@ -429,10 +449,13 @@ fn window_rule(
             ax_role: part.ax_role,
             ax_subrole: part.ax_subrole,
             is_modal: part.is_modal,
+            is_active: part.is_active,
+            is_focused: part.is_focused,
+            is_floating: part.is_floating,
         }
     };
-    let matches = part.matches.into_iter().map(|m| line(m, problems)).collect();
-    let excludes = part.excludes.into_iter().map(|m| line(m, problems)).collect();
+    let matches: Vec<RuleMatch> = part.matches.into_iter().map(|m| line(m, problems)).collect();
+    let excludes: Vec<RuleMatch> = part.excludes.into_iter().map(|m| line(m, problems)).collect();
 
     let open_on_workspace = part.open_on_workspace.map(|workspace| {
         if let Some(names) = names {
@@ -464,7 +487,23 @@ fn window_rule(
             .help("rini cannot stop a new window taking focus yet; leave it out"),
         );
     }
-    WindowRule {
+    if let Some(background) = &part.draw_border_with_background
+        && background.value
+    {
+        problems.push(
+            Problem::at(&background.span, "`draw-border-with-background true` is not supported yet", "here")
+                .help("rini draws the border and the ring hollow; a fill would go under another application's window"),
+        );
+    }
+    let decorating = DecorationRule {
+        matches: matches.clone(),
+        excludes: excludes.clone(),
+        focus_ring: band_rule(part.focus_ring, problems),
+        border: band_rule(part.border, problems),
+        corner_radius: part.geometry_corner_radius.and_then(|radius| corner_radius(radius, problems)),
+    };
+    let decorating = held_by_focus(decorating, &part.span, problems);
+    let opening = WindowRule {
         matches,
         excludes,
         open_on_workspace,
@@ -481,6 +520,76 @@ fn window_rule(
         open_focused: part.open_focused.map(|focused| focused.value),
         manage: part.manage,
         open_on_output: part.open_on_output,
+    };
+    (opening, decorating)
+}
+
+/// A rule's `focus-ring` or `border`: what it writes, `on` and `off` refused together as in `layout`,
+/// and no block turning the band on by being written, as niri's rules have it.
+fn band_rule(part: Option<BandPart>, problems: &mut Vec<Problem>) -> BandRule {
+    let Some(part) = part else { return BandRule::default() };
+    BandRule {
+        on: on_off(part.on, part.off, &part.span, problems),
+        width: part.width.map(Number::get),
+        active: part.active_color.map(|ColourValue(colour)| colour),
+        inactive: part.inactive_color.map(|ColourValue(colour)| colour),
+    }
+}
+
+/// `geometry-corner-radius`: one radius, or four only when they are equal, since every piece rini
+/// draws rounds each corner alike.
+fn corner_radius(part: RadiusPart, problems: &mut Vec<Problem>) -> Option<f64> {
+    let radii: Vec<f64> = part.radii.iter().map(|radius| radius.get()).collect();
+    match radii[..] {
+        [radius] => Some(radius),
+        [first, _, _, _] if radii.iter().all(|radius| *radius == first) => Some(first),
+        [_, _, _, _] => {
+            problems.push(
+                Problem::at(&part.span, "corners of different radii are not supported yet", "here")
+                    .help("rini rounds every corner of a window alike; write one radius"),
+            );
+            None
+        }
+        _ => {
+            problems.push(Problem::at(&part.span, "expected one radius, or four", "here"));
+            None
+        }
+    }
+}
+
+/// A rule that applies by whether a window holds focus may set colours alone: what else it writes is
+/// refused and left out.
+fn held_by_focus(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>) -> DecorationRule {
+    if !rule.follows_focus() {
+        return rule;
+    }
+    let mut refuse = |what: &str, why: &str| {
+        problems.push(
+            Problem::at(span, format!("{what} under `is-active` or `is-focused` is not supported"), "in this rule")
+                .help(why.to_owned()),
+        );
+    };
+    if rule.border.shapes() {
+        refuse(
+            "a `border`'s `on`, `off` or `width`",
+            "a border that changes with focus lays the strip out again on every focus change; its colours may follow focus",
+        );
+    }
+    if rule.focus_ring.shapes() {
+        refuse(
+            "a `focus-ring`'s `on`, `off` or `width`",
+            "not supported yet: a ring drawn or sized by focus; its colours may follow focus",
+        );
+    }
+    if rule.corner_radius.is_some() {
+        refuse("`geometry-corner-radius`", "not supported yet: a corner that changes with focus");
+    }
+    let colours = |band: BandRule| BandRule { on: None, width: None, ..band };
+    DecorationRule {
+        focus_ring: colours(rule.focus_ring),
+        border: colours(rule.border),
+        corner_radius: None,
+        ..rule
     }
 }
 

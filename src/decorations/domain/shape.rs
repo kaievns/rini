@@ -211,16 +211,16 @@ mod tests {
         use crate::decorations::domain::paint::Colour;
         use crate::decorations::domain::style::Band;
         let band = |width| Some(Band { width, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) });
-        let both = Decoration { ring: band(2.0), border: band(4.0) };
+        let both = Decoration { ring: band(2.0), border: band(4.0), radius: None };
         assert_eq!(widths(&both, 2.0), Widths { border: 4.0, ring: 6.0 });
         let (ring, corner) = band_of(widths(&both, 2.0).ring);
         assert_eq!((ring, corner), (rect(-6.0, -6.0, 871.0, 1093.0), 22.0), "outside the border, its inner edge the window's");
         assert_eq!(outset(&both, true, 2.0), 6.0);
         assert_eq!(outset(&both, false, 2.0), 4.0, "the ring not worn");
-        let ring_only = Decoration { ring: band(2.0), border: None };
+        let ring_only = Decoration { ring: band(2.0), ..Decoration::default() };
         assert_eq!(widths(&ring_only, 2.0), Widths { border: 0.0, ring: 2.0 });
         assert_eq!(outset(&ring_only, false, 2.0), 0.0);
-        assert_eq!(outset(&Decoration { ring: None, border: band(1.3) }, true, 2.0), 1.5, "whole device pixels");
+        assert_eq!(outset(&Decoration { border: band(1.3), ..Decoration::default() }, true, 2.0), 1.5, "whole device pixels");
     }
 
     fn band_of(width: f64) -> (TileRect, f64) { band(TileSize::new(859.0, 1081.0), 16.0, width) }

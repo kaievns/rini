@@ -7,10 +7,13 @@ use test_log::test;
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::decorations::domain::paint::Colour;
 use crate::decorations::domain::rest::{RestModel, RestWindow};
+use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
+use crate::windows::domain::rules::RuleMatch;
 use crate::windows::platform::window_server::set_space_window_list_for_space_override;
-use crate::workspaces::LayoutEvent;
+use crate::workspaces::{LayoutCommand, LayoutEvent};
 
 const GHOSTTY: i32 = 1;
 const ZEN: i32 = 2;
@@ -163,4 +166,126 @@ fn with_only_borders_on_every_managed_window_is_sent_its_border_and_whether_it_h
         assert_eq!(window.decoration.ring, None, "{wsid}");
         assert_eq!(window.focused, wsid == 901, "{wsid}");
     }
+}
+
+fn ruled(rule: DecorationRule) -> Vec<DecorationRule> { vec![rule] }
+
+fn border(on: Option<bool>, width: Option<f64>) -> BandRule { BandRule { on, width, ..BandRule::default() } }
+
+/// niri's border rules follow focus as it moves: the window focus moves to takes the colours a rule
+/// gives the focused window, and the one it left those a rule gives the others.
+#[test]
+fn focus_moving_recolours_the_two_windows_it_moved_between() {
+    let mut desk = desk();
+    let (red, green) = (Colour::rgb(0xff0000), Colour::rgb(0x00ff00));
+    let decorations = &mut desk.reactor.config.settings.decorations;
+    decorations.border.on = true;
+    decorations.rules = vec![
+        DecorationRule {
+            border: BandRule { active: Some(red), ..BandRule::default() },
+            ..rule_for(RuleMatch { is_focused: Some(true), ..RuleMatch::default() })
+        },
+        DecorationRule {
+            border: BandRule { inactive: Some(green), ..BandRule::default() },
+            ..rule_for(RuleMatch { is_active: Some(false), ..RuleMatch::default() })
+        },
+    ];
+    let left = desk.left;
+    let paint = |model: &RestModel, wsid| sent(model, wsid).style().border;
+    let model = focus(&mut desk, left_ghostty(), left);
+    assert_eq!((paint(&model, 901), paint(&model, 902)), (Some(red), Some(green)));
+    let model = focus(&mut desk, left_zen(), left);
+    assert_eq!((paint(&model, 901), paint(&model, 902)), (Some(green), Some(red)));
+}
+
+fn rule_for(line: RuleMatch) -> DecorationRule { DecorationRule { matches: vec![line], ..DecorationRule::default() } }
+
+fn worn_border(model: &RestModel, reactor: &Reactor, window: WindowId) -> Option<f64> {
+    sent(model, reactor.test_window_server_id(window).as_u32()).decoration.border.map(|band| band.width)
+}
+
+/// A rule for tiled windows gives each a border out of its slot, the strip laid out again as soon as
+/// it applies; a window floated wears what the rules give a floating window, and laid back in the
+/// strip, its slot's border again.
+#[test]
+fn toggling_floating_refolds_and_relays_the_window_out() {
+    let (mut apps, mut reactor) = test_context();
+    let mut rest = reactor.connect_test_rest();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+    let (window, other) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
+    reactor.handle_test_batch(Vec::new());
+    let slots = test_layout(&mut reactor, space, screen);
+    reactor.config.settings.decorations.rules = ruled(DecorationRule {
+        border: border(Some(true), Some(6.0)),
+        ..rule_for(RuleMatch { is_floating: Some(false), ..RuleMatch::default() })
+    });
+    reactor.handle_test_batch(Vec::new());
+    let inset = test_layout(&mut reactor, space, screen);
+    for (laid, slot) in slots.iter().map(|(w, slot)| (frame_of(&inset, *w), *slot)) {
+        assert_eq!(laid, crate::layout::domain::tile::window_in(slot, 6.0), "laid out again in its slot");
+    }
+    let model = models(&mut rest).pop().expect("sent");
+    assert_eq!((worn_border(&model, &reactor, window), worn_border(&model, &reactor, other)), (Some(6.0), Some(6.0)));
+
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    reactor.handle_test_batch(Vec::new());
+    let model = models(&mut rest).pop().expect("sent");
+    assert!(reactor.layout_manager.layout_engine.is_window_floating(window));
+    assert_eq!((worn_border(&model, &reactor, window), worn_border(&model, &reactor, other)), (None, Some(6.0)));
+
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    reactor.handle_test_batch(Vec::new());
+    let model = models(&mut rest).pop().expect("sent");
+    assert_eq!(worn_border(&model, &reactor, window), Some(6.0));
+    let back = frame_of(&test_layout(&mut reactor, space, screen), window);
+    let slot = crate::layout::domain::tile::slot_of(back, 6.0);
+    assert!(slots.iter().any(|(_, laid)| laid.size == slot.size), "inset in a slot the strip lays out: {back:?}");
+}
+
+/// A title a rule matches on is read afresh: the window it now names is laid out inside its slot by
+/// the rule's border, with no other event asking for a pass.
+#[test]
+fn a_title_a_border_rule_names_lays_the_strip_out_again() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+    reactor.config.settings.decorations.rules = ruled(DecorationRule {
+        border: border(Some(true), Some(6.0)),
+        ..rule_for(RuleMatch::title("^Wide$"))
+    });
+    reactor.handle_test_batch(Vec::new());
+    let slots = test_layout(&mut reactor, space, screen);
+    let window = WindowId::new(1, 1);
+    reactor.handle_test_batch(vec![Event::WindowTitleChanged(window, "Wide".into())]);
+    let laid = test_layout(&mut reactor, space, screen);
+    assert_eq!(frame_of(&laid, window), crate::layout::domain::tile::window_in(frame_of(&slots, window), 6.0));
+    let other = WindowId::new(1, 2);
+    assert_eq!(frame_of(&laid, other), frame_of(&slots, other), "the rule names one window");
+}
+
+/// One `geometry-corner-radius` rule reaches the window's bands on its tile and at rest alike, ahead
+/// of what the window server reports.
+#[test]
+fn a_rule_radius_reaches_the_tile_and_the_rest_panel() {
+    let mut desk = desk();
+    desk.reactor.config.settings.decorations.rules =
+        ruled(DecorationRule { corner_radius: Some(9.0), ..rule_for(RuleMatch::app("com.mitchellh.ghostty")) });
+    let left = desk.left;
+    let model = focus(&mut desk, left_ghostty(), left);
+    assert_eq!((sent(&model, 901).decoration.radius, sent(&model, 902).decoration.radius), (Some(9.0), None));
+    let rings = desk.reactor.layout_rings();
+    assert_eq!(desk.reactor.worn(left_ghostty(), &rings).decoration.radius, Some(9.0), "carried to its tile");
+    assert_eq!(desk.reactor.worn(left_zen(), &rings).decoration.radius, None);
+}
+
+fn frame_of(layout: &[(WindowId, CGRect)], window: WindowId) -> CGRect {
+    layout.iter().find(|(w, _)| *w == window).map(|(_, frame)| *frame).expect("laid out")
 }

@@ -429,7 +429,7 @@ fn urgent_and_gradients_are_refused_as_not_yet_supported() {
         let report = refused(&format!("layout {{\n    focus-ring {{\n        {name}\n    }}\n}}\n"));
         assert!(report.contains("not supported yet"), "{name}: {report}");
     }
-    assert!(refused("window-rule {\n    focus-ring {\n        off\n    }\n}\n").contains("not supported yet"));
+    assert!(refused("window-rule {\n    focus-ring {\n        urgent-color \"#9b0000\"\n    }\n}\n").contains("not supported yet"));
 }
 
 /// niri's own default config led its users to write `border {}` to turn the border on, so a block
@@ -642,7 +642,95 @@ fn rule_shapes_rini_cannot_honour_are_refused() {
         refused("window-rule {\n    default-column-width { proportion 0.5; }\n}\n")
             .contains("sizes in pixels")
     );
-    assert!(refused("window-rule {\n    match is-active=true\n}\n").contains("is-active"));
+    for (matcher, why) in [("is-active-in-column", "a column keeps no window of its own"), ("is-urgent", "asking for attention")] {
+        let report = refused(&format!("window-rule {{\n    match {matcher}=true\n}}\n"));
+        assert!(report.contains(&format!("`{matcher}` is not supported yet")) && report.contains(why), "{report}");
+    }
+}
+
+fn decoration_rule(config: &Config) -> &crate::decorations::domain::rules::DecorationRule {
+    &config.settings.decorations.rules[0]
+}
+
+#[test]
+fn a_window_rule_decodes_its_focus_ring_border_and_corner_as_niri_writes_them() {
+    let config = parse(concat!(
+        "window-rule {\n",
+        "    match app-id=\"Ghostty\" is-floating=true\n",
+        "    exclude title=\"Prefs\"\n",
+        "    focus-ring {\n        off\n    }\n",
+        "    border {\n        width 2\n        inactive-color \"#202020\"\n    }\n",
+        "    geometry-corner-radius 12\n",
+        "    draw-border-with-background false\n",
+        "}\n",
+    ));
+    let rule = decoration_rule(&config);
+    assert_eq!(rule.matches[0].is_floating, Some(true));
+    assert_eq!(rule.excludes[0].title.as_ref().map(|title| title.as_str()), Some("Prefs"));
+    assert_eq!(rule.focus_ring.on, Some(false));
+    assert_eq!((rule.border.on, rule.border.width, rule.border.inactive), (None, Some(2.0), Some(Colour::rgb(0x202020))), "a rule's block turns nothing on");
+    assert_eq!(rule.corner_radius, Some(12.0));
+    let active = parse("window-rule {\n    match is-active=true\n    exclude is-focused=false\n    border {\n        active-color \"#ff0000\"\n    }\n}\n");
+    let rule = decoration_rule(&active);
+    assert_eq!((rule.matches[0].is_active, rule.excludes[0].is_focused), (Some(true), Some(false)));
+}
+
+/// A rule's decoration never changes what a window opens with: a rule saying only what it wears
+/// leaves an unmatched window to where its application's windows last were.
+#[test]
+fn a_rule_that_only_decorates_leaves_the_open_time_decision_alone() {
+    let config = parse("window-rule {\n    match app-id=\"Ghostty\"\n    border {\n        off\n    }\n}\nwindow-rule {\n    match app-id=\"Zed\"\n}\n");
+    assert_eq!(config.settings.decorations.rules.len(), 1);
+    let engine = AppRuleEngine::new(&config.virtual_workspaces.app_rules);
+    let app = |id| WindowRuleContext { app_bundle_id: Some(id), ..Default::default() };
+    assert_eq!(engine.evaluate(app("Ghostty")), AppRuleDecision::NoMatch);
+    assert_ne!(engine.evaluate(app("Zed")), AppRuleDecision::NoMatch, "a rule setting nothing applies as before");
+}
+
+/// Under a focus matcher a border's width would lay the strip out again on every focus change.
+#[test]
+fn a_border_width_under_a_focus_matcher_is_refused_with_its_reason() {
+    for (line, body) in [("match is-active=true", "width 8"), ("exclude is-focused=true", "off"), ("match is-focused=false", "on")] {
+        let report = refused(&format!("window-rule {{\n    {line}\n    border {{\n        {body}\n    }}\n}}\n"));
+        assert!(report.contains("lays the strip out again on every focus change"), "{line} {body}: {report}");
+    }
+    let floating = parse("window-rule {\n    match is-floating=true\n    border {\n        width 8\n    }\n}\n");
+    assert_eq!(decoration_rule(&floating).border.width, Some(8.0), "floating is not focus");
+}
+
+#[test]
+fn a_ring_width_or_a_corner_under_a_focus_matcher_is_refused_as_not_yet_supported() {
+    for body in ["focus-ring {\n        width 6\n    }", "focus-ring {\n        off\n    }", "geometry-corner-radius 8"] {
+        let report = refused(&format!("window-rule {{\n    match is-active=false\n    {body}\n}}\n"));
+        assert!(report.contains("not supported yet"), "{body}: {report}");
+    }
+}
+
+#[test]
+fn a_colour_under_a_focus_matcher_is_accepted() {
+    let config = parse("window-rule {\n    match is-focused=true\n    focus-ring {\n        active-color \"#ff0000\"\n    }\n    border {\n        inactive-color \"#00ff00\"\n    }\n}\n");
+    let rule = decoration_rule(&config);
+    assert_eq!((rule.focus_ring.active, rule.border.inactive), (Some(Colour::rgb(0xff0000)), Some(Colour::rgb(0x00ff00))));
+}
+
+#[test]
+fn four_equal_corner_radii_are_one_radius() {
+    let config = parse("window-rule {\n    geometry-corner-radius 10 10 10 10\n}\n");
+    assert_eq!(decoration_rule(&config).corner_radius, Some(10.0));
+}
+
+/// Every piece rini draws rounds each corner of a window alike.
+#[test]
+fn unequal_corner_radii_are_refused() {
+    assert!(refused("window-rule {\n    geometry-corner-radius 12 12 0 0\n}\n").contains("corners of different radii are not supported yet"));
+    assert!(refused("window-rule {\n    geometry-corner-radius 12 12\n}\n").contains("expected one radius, or four"));
+}
+
+/// rini draws the border and the ring hollow, which is niri's `false`.
+#[test]
+fn draw_border_with_background_true_is_refused() {
+    assert!(refused("window-rule {\n    draw-border-with-background true\n}\n").contains("not supported yet"));
+    parse("window-rule {\n    draw-border-with-background false\n}\n");
 }
 
 // --- binds -------------------------------------------------------------------------------------

@@ -203,7 +203,7 @@ mod tests {
     fn ringed(held: Held) -> RestWindow {
         RestWindow {
             window: ws(56),
-            decoration: Decoration { ring: Some(BAND), border: None },
+            decoration: Decoration { ring: Some(BAND), ..Decoration::default() },
             focused: true,
             ringed: true,
             held,
