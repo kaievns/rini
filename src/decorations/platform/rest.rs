@@ -214,6 +214,11 @@ impl RestBorders {
                 (frame, window_server::window_ordered_in(window) == Some(false))
             };
             let focus = self.rest.take_model(model, now, read);
+            for _ in self.panels.len()..self.rest.pool_size() {
+                if !self.make_panel() {
+                    break;
+                }
+            }
             also.extend(focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus))));
         }
         let moved: Vec<(WindowServerId, ScreenRect)> =
@@ -245,18 +250,9 @@ impl RestBorders {
     fn draw(&mut self, orders: &[ServerOrder], mut also: Vec<usize>) {
         let displays = self.rest.model.displays.clone();
         let wanted = self.rest.wanted();
-        for _ in 0..rest::spare(self.panels.len(), displays.len()) {
-            self.make_panel();
-        }
         let pool: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.target).collect();
         let assignment = rest::assign(&pool, &wanted);
-        let mut retargeted = assignment.retargeted;
-        for window in assignment.made {
-            if self.make_panel() {
-                retargeted.push((self.panels.len() - 1, window));
-            }
-        }
-        for (at, window) in retargeted {
+        for (at, window) in assignment.retargeted {
             let panel = &mut self.panels[at];
             panel.target = Some(window);
             panel.radius = window_server::corner_radii(&[window]).get(&window).copied();

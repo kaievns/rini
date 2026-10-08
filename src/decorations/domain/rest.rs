@@ -230,6 +230,18 @@ impl Rest {
     /// When the next waiting park takes effect.
     pub fn due(&self) -> Option<Instant> { self.windows.values().filter_map(|tracked| tracked.parking.due()).min() }
 
+    /// How many rest windows the pool holds for this model: one for every window that wears a band
+    /// and could show it, held by no more than a park, so a park or a return through a flight takes
+    /// a rest window from the pool and none is made inside a flight; and one per display at least, so
+    /// the ring moving with focus makes none.
+    pub fn pool_size(&self) -> usize {
+        let could_show = self.model.windows.iter().filter(|window| {
+            let Held { parked: _, mission_control, fullscreen, space_hidden } = window.held;
+            window.wears_a_band() && !(mission_control || fullscreen || space_hidden)
+        });
+        could_show.count().max(self.model.displays.len())
+    }
+
     /// Every window whose bands show now, in the model's order.
     pub fn wanted(&self) -> Vec<WindowServerId> {
         let displays = &self.model.displays;
@@ -253,30 +265,23 @@ pub struct Assignment {
     pub retargeted: Vec<(usize, WindowServerId)>,
     /// Rest windows whose window shows nothing now: drawn at alpha 0, kept for the next.
     pub released: Vec<usize>,
-    /// Windows no rest window is left for: one is made for each.
-    pub made: Vec<WindowServerId>,
 }
 
 /// One rest window for each of `wanted`, from `pool`, each window's position the window it draws if
-/// any: a rest window already on a wanted window keeps it, the others are given one, and one is made
-/// only when the pool has no rest window left.
+/// any: a rest window already on a wanted window keeps it, and the others are given one while the
+/// pool has one left (`Rest::pool_size`).
 pub fn assign(pool: &[Option<WindowServerId>], wanted: &[WindowServerId]) -> Assignment {
     let kept = |target: &Option<WindowServerId>| target.is_some_and(|target| wanted.contains(&target));
     let mut free = pool.iter().enumerate().filter(|(_, target)| !kept(target)).map(|(at, _)| at);
     let mut assignment = Assignment::default();
     for window in wanted.iter().filter(|window| !pool.contains(&Some(**window))) {
-        match free.next() {
-            Some(at) => assignment.retargeted.push((at, *window)),
-            None => assignment.made.push(*window),
-        }
+        let Some(at) = free.next() else { break };
+        assignment.retargeted.push((at, *window));
     }
     assignment.released = free.filter(|at| pool[*at].is_some()).collect();
     assignment
 }
 
-/// How many rest windows to make with a pool of `pool` on `displays` displays: one per display, so
-/// the ring moving with focus makes none. Making a window costs about 112ms.
-pub fn spare(pool: usize, displays: usize) -> usize { displays.saturating_sub(pool) }
 
 /// The rest windows to order above their windows again this turn, each once: those whose window the
 /// window server reordered or ordered back in, and those in `also`, a rest window just given a window
@@ -502,27 +507,41 @@ mod tests {
     }
 
     #[test]
-    fn the_pool_makes_one_panel_per_display_at_launch_and_none_for_a_focus_change() {
-        assert_eq!(spare(0, 2), 2, "one per display at launch");
-        assert_eq!(spare(2, 2), 0);
+    fn a_focus_change_retargets_a_rest_window_from_the_pool() {
         let pool = [Some(ws(1)), Some(ws(2))];
         let focus_moved = assign(&pool, &[ws(3), ws(2)]);
-        assert_eq!(focus_moved, Assignment { retargeted: vec![(0, ws(3))], released: vec![], made: vec![] });
+        assert_eq!(focus_moved, Assignment { retargeted: vec![(0, ws(3))], released: vec![] });
+    }
+
+    /// The pool holds a rest window for every window that could show its band, so a workspace
+    /// switch's leaving and arriving windows, shown together for a moment, both have one.
+    #[test]
+    fn a_workspace_switch_finds_a_rest_window_for_every_band_in_the_pool() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, true)], SLOT, now);
+        assert_eq!(rest.pool_size(), 2);
+        rest.take_model(model(vec![at(1, false, true), at(2, true, false)]), now, |_| (None, false));
+        rest.take_frames(&[(ws(2), SLOT)], now);
+        assert_eq!(rest.wanted(), vec![ws(1), ws(2)], "the arriving window's return before the leaving one's park");
+        let pool = vec![None; rest.pool_size()];
+        assert_eq!(assign(&pool, &rest.wanted()).retargeted.len(), 2);
+        let held = Held { mission_control: true, ..Held::default() };
+        rest.take_model(model(vec![RestWindow { held, ..at(1, true, false) }]), now, |_| (None, false));
+        assert_eq!(rest.pool_size(), 1, "one per display while nothing could show");
     }
 
     #[test]
-    fn a_panel_is_retargeted_from_the_pool_before_one_is_made() {
+    fn a_rest_window_is_retargeted_from_the_pool_while_one_is_left() {
         let pool = [None, Some(ws(9))];
         let assignment = assign(&pool, &[ws(1), ws(2), ws(3)]);
         assert_eq!(assignment.retargeted, vec![(0, ws(1)), (1, ws(2))]);
-        assert_eq!(assignment.made, vec![ws(3)]);
         assert!(assignment.released.is_empty());
     }
 
     #[test]
     fn a_window_that_shows_nothing_returns_its_panel_at_alpha_zero() {
         let pool = [Some(ws(1)), Some(ws(2)), None];
-        assert_eq!(assign(&pool, &[ws(2)]), Assignment { retargeted: vec![], released: vec![0], made: vec![] });
+        assert_eq!(assign(&pool, &[ws(2)]), Assignment { retargeted: vec![], released: vec![0] });
     }
 
     #[test]
