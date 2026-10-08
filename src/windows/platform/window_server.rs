@@ -715,11 +715,15 @@ pub fn server_frame(id: WindowServerId) -> Option<CGRect> {
     (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
 }
 
-/// Front-to-back position of every on-screen window but the desktop's, 0 being frontmost: the list is
-/// front to back, so the index is the depth.
+/// Front-to-back position of every on-screen window but the desktop's, 0 being frontmost.
 #[cfg(not(test))]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
-    on_screen_windows(false)
+    depths(on_screen_windows(false))
+}
+
+/// The depth of each window in `listed`, a list front to back, counting none of the desktop's.
+fn depths(listed: Vec<Listed>) -> std::collections::HashMap<u32, usize> {
+    listed
         .into_iter()
         .filter(|window| !is_desktop_element(window.level))
         .enumerate()
@@ -1387,6 +1391,22 @@ mod stack_tests {
             vec![9, 7, 5],
             "front to back as listed; one never listed is dropped"
         );
+    }
+
+    #[test]
+    fn a_window_s_depth_counts_the_windows_in_front_of_it_but_not_the_desktop() {
+        let depths = depths(vec![
+            listed(30, 0),
+            listed(2, -2147483626),
+            listed(31, 3),
+            listed(50, -2147483603),
+            listed(32, 0),
+        ]);
+        assert_eq!(depths.get(&30), Some(&0));
+        assert_eq!(depths.get(&31), Some(&1), "the backstop listed before it is not counted");
+        assert_eq!(depths.get(&32), Some(&2));
+        assert_eq!(depths.get(&2), None, "a desktop element has no depth");
+        assert_eq!(depths.get(&50), None);
     }
 
     #[test]
