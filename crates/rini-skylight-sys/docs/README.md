@@ -25,6 +25,12 @@ encodes, so a pure module may name the first and not the second.
 `rini-core` re-exports `SpaceId` and `WindowServerId`, so nothing takes a dependency on
 this crate just to hold a number.
 
+`SLSSetWindowLevel` and `SLSSetWindowSubLevel` act only on a window of the caller's own
+connection: rini sets them on its rest windows, copied from the window each decorates, and lets
+AppKit order the two ("Ordering a rest window" in
+[`src/decorations/docs/README.md`](../../../src/decorations/docs/README.md)). `SLSOrderWindow` is
+not declared: against another process's window it did nothing (probe P1, same section).
+
 ## Measured behaviour
 
 Capture options and the desktop's levels are recorded in

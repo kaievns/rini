@@ -50,8 +50,12 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "preset-column-widths",
         "center-focused-column",
         "window-insertion-point",
+        "focus-ring",
+        "border",
     ]),
     ("layout/struts", &SIDES),
+    ("layout/focus-ring", &BAND),
+    ("layout/border", &BAND),
     ("layout/default-column-width", &["proportion"]),
     ("layout/min-column-width", &["proportion"]),
     ("layout/max-column-width", &["proportion"]),
@@ -101,12 +105,29 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "open-focused",
         "manage",
         "open-on-output",
+        "focus-ring",
+        "border",
+        "geometry-corner-radius",
+        "draw-border-with-background",
     ]),
+    ("window-rule/focus-ring", &BAND),
+    ("window-rule/border", &BAND),
     ("window-rule/default-column-width", &["fixed"]),
     ("window-rule/default-window-height", &["fixed"]),
 ];
 
 const SIDES: [&str; 4] = ["left", "right", "top", "bottom"];
+const BAND: [&str; 9] = [
+    "on",
+    "off",
+    "width",
+    "active-color",
+    "inactive-color",
+    "urgent-color",
+    "active-gradient",
+    "inactive-gradient",
+    "urgent-gradient",
+];
 
 const NOT_IN_RINI: &str = "niri has this and rini does not";
 const MACOS_DISPLAYS: &str = "macOS owns the display's mode, scale and arrangement; an `output` \
@@ -183,16 +204,6 @@ pub const NIRI: &[(&str, &str, &str)] = &[
         "rini draws no background; the desktop shows",
     ),
     ("layout", "preset-window-heights", NOT_IN_RINI),
-    (
-        "layout",
-        "focus-ring",
-        "rini draws no focus ring; macOS draws the windows",
-    ),
-    (
-        "layout",
-        "border",
-        "rini draws no borders; macOS draws the windows",
-    ),
     ("layout", "shadow", "macOS draws window shadows"),
     ("layout", "tab-indicator", "rini has no tabbed columns"),
     ("layout", "insert-hint", NOT_IN_RINI),
@@ -256,6 +267,18 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ("output", "max-bpc", MACOS_DISPLAYS),
     ("output", "hot-corners", NOT_IN_RINI),
     (
+        "output/layout",
+        "focus-ring",
+        "the focus ring is the whole file's, in `layout`; an `output`'s `layout` overrides its gaps \
+         and struts only",
+    ),
+    (
+        "output/layout",
+        "border",
+        "the border is the whole file's, in `layout`; an `output`'s `layout` overrides its gaps and \
+         struts only",
+    ),
+    (
         "workspace",
         "open-on-output",
         "rini's workspaces span every display",
@@ -286,11 +309,6 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ("window-rule", "min-height", NOT_IN_RINI),
     ("window-rule", "max-height", NOT_IN_RINI),
     ("window-rule", "opacity", NOT_IN_RINI),
-    (
-        "window-rule",
-        "draw-border-with-background",
-        "rini draws no borders",
-    ),
     ("window-rule", "block-out-from", NOT_IN_RINI),
     ("window-rule", "variable-refresh-rate", NOT_IN_RINI),
     (
@@ -300,15 +318,8 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ),
     ("window-rule", "scroll-factor", NOT_IN_RINI),
     ("window-rule", "pinch-sensitivity", NOT_IN_RINI),
-    ("window-rule", "focus-ring", "rini draws no focus ring"),
-    ("window-rule", "border", "rini draws no borders"),
     ("window-rule", "shadow", "macOS draws window shadows"),
     ("window-rule", "tab-indicator", "rini has no tabbed columns"),
-    (
-        "window-rule",
-        "geometry-corner-radius",
-        "macOS draws the windows",
-    ),
     ("window-rule", "clip-to-geometry", "macOS draws the windows"),
     ("window-rule", "tiled-state", NOT_IN_RINI),
     ("window-rule", "baba-is-float", NOT_IN_RINI),

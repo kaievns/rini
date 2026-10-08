@@ -49,6 +49,7 @@ Rules for keeping this honest:
 | [`input.md`](input.md) | Bindings, modifiers, and the gestures |
 | [`persistence.md`](persistence.md) | What survives a restart, and what a bad file costs |
 | [`animation.md`](animation.md) | What moves, and what must never be seen to move |
+| [`decorations.md`](decorations.md) | Borders and the focus ring: what rini draws around a window |
 | [`service.md`](service.md) | Running as a launchd agent, and which build it runs |
 | [`bar.md`](bar.md) | The menu bar across the top of every display |
 | [`config.md`](config.md) | The config file: niri's format, what a bad one costs, and changing it live |
@@ -58,3 +59,23 @@ Rules for keeping this honest:
 An opinionated remake of the niri experience for macOS: **one** scrolling layout, one strip of columns
 per display, with workspaces stacked vertically. Not a general tiling framework — there is no second
 layout mode, and adding one is out of scope rather than unimplemented.
+
+rini MUST meet every requirement here with nothing but itself and macOS. It MUST NOT need another
+application's tool to look or behave as specified, and it MUST NOT carry code that exists only to
+accommodate such a tool running beside it. What rini needs drawn, it draws. rini's own IPC and
+`rini-cli`, which other tools call (the sketchybar `subscribe` hooks), are rini's interface, not
+such code; nor is a look rini keeps from a setup it replaced, as the bar keeps sketchybar's, nor the
+niri config format.
+
+> **Reported 2026-10-06.** Kai's decision: "yes, no external deps on apps tooling, make it general
+> requirement. rini comes with batteries out of the box". The border companions went in the same
+> change: a flight flew any unmanaged window concentric with a managed one, at most 8pt larger, as
+> that window's border. They matched nothing that ran. No border tool runs here, and JankyBorders
+> 1.9 makes its window 2·(w+8)pt larger than the one it borders, 19pt at a 1.5pt border. Once rini
+> draws borders of its own, they would have matched rini's own border windows and flown pictures of
+> them over the borders rini draws on the tiles.
+
+Not yet met: with rini's bar off, a flight still pictures what another application draws between the
+desktop and the windows as the bar, a path that exists for sketchybar. The two requirements it
+serves in `animation.md`, the bar's picture never showing the overlay and the handover measure
+counting the bar's picture from the hide, say so.

@@ -13,7 +13,7 @@ or layout: everything else depends on it and it depends on nothing.
 | **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`, and `reported_radius`, the one corner radius a window rounds at from the four the window server reports) and `domain/state.rs` (`WindowState`, manageability) |
 | **The AX boundary's rules** | `domain/ax_events.rs` — whether a failed Accessibility request means the window is gone, and the codec for the one `usize` an observer callback carries |
 | **What rini takes on** | `domain/admissible.rs` — the four reasons an Accessibility window is turned away before anything else knows it exists |
-| **Window rules** | `domain/rules.rs` — every `window-rule` that applies to a window, folded in file order as niri does. Resolving the result against workspaces is `workspaces::domain::app_rules` |
+| **Window rules** | `domain/rules.rs` — every `window-rule` that applies to a window, folded in file order as niri does, and the one matcher (`applies`) that the rules for what a window wears (`decorations::domain::rules`) share, which reads whether a window holds focus, floats or is drawn urgent (`RuleState`) beside what it is. Resolving the result against workspaces is `workspaces::domain::app_rules` |
 | **Focus** | `domain/focus.rs` — `MainWindowTracker` and the key window it has heard of, which windows' looks a change of it turns, the raise-echo rule, and the activation-focus rule that stops cmd-tab moving a display |
 | **Raising** | `domain/raise.rs` — the raise manager |
 | **Raise order** | `domain/raise_order.rs` — which windows are worth raising, and in what order; `StackGroup`, on the strip or off it, and `regroup_tiled`, which raises the strip back in front of a window off it that sits inside it |
@@ -21,15 +21,19 @@ or layout: everything else depends on it and it depends on nothing.
 | **Frame writes** | `domain/frame_write.rs` — which Accessibility writes a frame takes: the position alone when the window server already has the window at the desired size, size, position and size again otherwise, and again after a position written alone that read back at another size |
 | **Title-bar zoom** | `domain/zoom.rs` — which window's title bar a double-click landed on, and what that window's resizes in the next second mean: the zoom, which toggles full width once, or the rest of it, which rini overrules |
 | **The port into a window** | `domain/request.rs` — `Request`/`Quiet`, what the per-app thread accepts |
+| **Attention** | `domain/attention.rs` — which applications ask for attention (`Attention`), per application as macOS asks it |
+| **What a listing names** | `domain/listing.rs` — which of the window server's windows a listing of what is on a display names: layer 0, another process's, 100pt or more each way, overlapping it; so the warm and the debug slide never picture rini's own rest windows |
 
 Two questions about raising and admission that were closed on evidence rather than code are in
 `admission-and-raise-findings.md`.
 
-`platform/` is the macOS side: `app_actor.rs` is the per-app Accessibility actor (one
-thread per application, observing and writing), `window_server.rs` the window-server
-reads, `lifecycle.rs` the launch, quit and front-app listener over `carbon.rs`'s Carbon
-events, `app.rs` the activation-policy and finished-launching observers, `process.rs`
-the process-type check, `sub_level.rs` the SkyLight sub-level port.
+`platform/` is the macOS side: `app_actor.rs` is the per-app Accessibility actor (one thread per
+application, observing and writing), `window_server.rs` the window-server reads, and the level and
+sub-level a window of rini's own takes from another's (`take_stack_place`), `lifecycle.rs` the
+launch, quit and front-app listener over `carbon.rs`'s Carbon events, `app.rs` the activation-policy
+and finished-launching observers, `process.rs` the process-type check, `sub_level.rs` the SkyLight
+sub-level port, `attention.rs` the thread that reads from LaunchServices once a second which
+applications ask for attention.
 
 ## The shape that matters
 
@@ -71,6 +75,8 @@ was raised first instead of last and ended up behind the strip.
   of each app's focused window, and how cmd-tab is told apart from cmd-`
 - [`launch-notifications.md`](launch-notifications.md) — what macOS reports while an
   application launches, measured, and how to read a launch back out of the unified log
+- [`attention.md`](attention.md) — what shows an application asking for attention, measured, and
+  what the attention reader reads and costs
 
 Cross-feature detail is at the top of the tree: [`docs/architecture.md`](../../../docs/architecture.md),
 [`docs/testing.md`](../../../docs/testing.md).

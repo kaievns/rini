@@ -218,14 +218,11 @@ fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
     )
 }
 
-// NOTE on z-order: scrolled-away columns keep whatever stacking they had, so a
-// parked sliver can sit ON TOP of a window that is actually on screen. There is
-// no fix available from here. AX exposes only AXRaise, with no lower/send-to-back
-// counterpart, and the SkyLight ordering calls used elsewhere in this file
-// (SLSOrderWindow via CgsWindow) work only on windows owned by our own
-// connection — a cross-process SLSOrderWindow/SLSSetWindowLevel is refused by the
-// window server (kCGErrorIllegalArgument). Keeping the sliver at 1pt is the
-// available mitigation.
+// A scrolled-away column keeps the stacking it had, so a parked sliver can sit on top of a window
+// on screen. AX has AXRaise and no lower, and the sliver is another app's window: SkyLight orders
+// and levels only the caller's own windows, and AppKit orders rini's own against another
+// process's (src/decorations/docs/README.md, "Ordering a rest window"), which cannot lower that
+// app's. Keeping the sliver small is the mitigation.
 
 fn bound_scrolling_tiled_frames_to_screen(
     reactor: &Reactor,
@@ -250,6 +247,7 @@ impl LayoutManager {
         is_workspace_switch: bool,
         space_scope: Option<SpaceId>,
     ) -> Result<bool, crate::app::reactor::state::ReactorError> {
+        reactor.refresh_borders();
         let layout_result = Self::calculate_layout(reactor, space_scope);
         Self::apply_layout(reactor, layout_result, is_resize, is_workspace_switch)
     }

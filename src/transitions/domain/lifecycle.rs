@@ -14,6 +14,7 @@ use rini_geometry::{is_off_screen, to_overlay_space};
 use serde::Serialize;
 
 use crate::animation::domain::motion::tile::snap_to;
+use crate::decorations::domain::style::{Ring, Worn};
 use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
 
 use super::request::SurfaceWindow;
@@ -100,8 +101,6 @@ pub struct TileSummary {
     pub start: ScreenRect,
     pub end: ScreenRect,
     pub floating: bool,
-    /// A border tracing another window: drawn, never pictured on its own here.
-    pub companion: bool,
 }
 
 impl TileSummary {
@@ -151,6 +150,23 @@ pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Op
     losing_focus == Some(window) || focus == Some(window) && losing_focus.is_none()
 }
 
+/// The ring `window`'s tile wears now, drawn `focused` or not, given the ring it wore before the pass
+/// and the one it wears where the pass ends: drawn focused, the active one; the focus target waiting
+/// for its turn what it wore; every other tile what it wears at the end. So the ring turns with the
+/// hairline: the window gaining focus on its own workspace shows none until its turn and then the
+/// active one; the one losing it the active ring until its turn and then none, the active one still
+/// when focus went to another workspace on its display, or the inactive one when focus left its
+/// display.
+pub fn drawn_ringed(window: WindowId, focus: Option<WindowId>, focused: bool, worn: &Worn) -> Ring {
+    if focused {
+        Ring::Active
+    } else if focus == Some(window) {
+        worn.wore_ring
+    } else {
+        worn.wears_ring
+    }
+}
+
 /// The window whose frame-zero picture is its focused look: the one focus leaves, if it was the key
 /// window as the press went out. A click's report has made its target key before the request it
 /// causes, and another application's panel taking the keys leaves the layout's window drawn unfocused.
@@ -176,7 +192,7 @@ impl StageSummary {
     fn frame_zero_strip(&self) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| !t.floating && !t.companion && wholly_inside(t.start, self.display))
+            .filter(|t| !t.floating && wholly_inside(t.start, self.display))
             .map(|t| (t.window, t.start))
             .collect()
     }
@@ -185,7 +201,7 @@ impl StageSummary {
     fn background(&self) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| t.floating && !t.companion && !t.moves() && wholly_inside(t.start, self.display))
+            .filter(|t| t.floating && !t.moves() && wholly_inside(t.start, self.display))
             .map(|t| (t.window, t.start))
             .collect()
     }
@@ -203,7 +219,7 @@ impl StageSummary {
     /// The floating windows, composited behind the strip in its captures so a material in the strip
     /// blurs them.
     fn behind(&self) -> Vec<WindowId> {
-        self.tiles.iter().filter(|t| t.floating && !t.companion).map(|t| t.window).collect()
+        self.tiles.iter().filter(|t| t.floating).map(|t| t.window).collect()
     }
 
     /// Strip windows that end wholly on screen: whose landing is watched and whose tiles get holes.
@@ -212,7 +228,7 @@ impl StageSummary {
             .iter()
             .filter(|(w, f)| {
                 wholly_inside(*f, self.display)
-                    && self.tiles.iter().any(|t| t.window == *w && !t.floating && !t.companion)
+                    && self.tiles.iter().any(|t| t.window == *w && !t.floating)
             })
             .copied()
             .collect()
@@ -223,7 +239,7 @@ impl StageSummary {
     fn awaited_ends(&self, awaiting: &[WindowId]) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| awaiting.contains(&t.window) && !t.companion && wholly_inside(t.end, self.display))
+            .filter(|t| awaiting.contains(&t.window) && wholly_inside(t.end, self.display))
             .map(|t| (t.window, t.end))
             .collect()
     }
@@ -289,8 +305,8 @@ pub enum Command {
     Show,
     Write(Vec<(WindowId, ScreenRect)>),
     /// A point of the overlay left clear over each window that ends on screen, so the window server
-    /// counts it visible and the app keeps painting.
-    Holes(Vec<OverlayRect>),
+    /// counts it visible and the app keeps painting: each window with where it ends.
+    Holes(Vec<(WindowId, OverlayRect)>),
     /// Watch the end state as `EndWatch` says, in place of whatever was watched before.
     Watch(EndWatch),
     StopWatches,
@@ -1008,10 +1024,10 @@ fn final_at(started: Instant, duration: Duration) -> Instant {
 
 /// Over every end window watched: those that land, and those that repaint, floating or not, since a
 /// window the overlay covers wholly may stop painting.
-fn holes(f: &Flight) -> Vec<OverlayRect> {
+fn holes(f: &Flight) -> Vec<(WindowId, OverlayRect)> {
     let (awaited, landing) = f.end_windows();
     let display = f.stage.display;
-    awaited.into_iter().chain(landing).map(|(_, frame)| to_overlay_space(frame, display)).collect()
+    awaited.into_iter().chain(landing).map(|(window, frame)| (window, to_overlay_space(frame, display))).collect()
 }
 
 /// Each tile of `after` with the generation since which it has ended where it ends: what `since` says
@@ -1932,7 +1948,7 @@ mod tests {
         let out = c.on(Event::FrameZero(c.generation()), now);
         let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
         let at_home = |frame: ScreenRect| to_overlay_space(frame, DISPLAY);
-        assert_eq!(holes, pan().final_frames.iter().map(|(_, end)| at_home(*end)).collect::<Vec<_>>());
+        assert_eq!(holes, pan().final_frames.iter().map(|(window, end)| (*window, at_home(*end))).collect::<Vec<_>>());
 
         let mut real = pan().tiles[1].end;
         real.size.width += 1.0;
@@ -1990,7 +2006,7 @@ mod tests {
         let now = Instant::now();
         let dialog = r(500.0, 300.0, 700.0, 500.0);
         let mut stage = pan();
-        stage.tiles.push(TileSummary { window: w(7), start: dialog, end: dialog, floating: true, companion: false });
+        stage.tiles.push(TileSummary { window: w(7), start: dialog, end: dialog, floating: true });
         stage.final_frames.push((w(7), dialog));
         stage.awaiting = vec![w(7)];
         let mut c = Coordinator::default();
@@ -1999,7 +2015,7 @@ mod tests {
         assert!(!has(&out, |c| *c == Command::StartMoving), "held for its first picture");
         assert_eq!(watch(&out).unwrap().awaiting, vec![(w(7), dialog)]);
         let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
-        assert!(holes.contains(&to_overlay_space(dialog, DISPLAY)), "a window the overlay covers wholly may not paint");
+        assert!(holes.contains(&(w(7), to_overlay_space(dialog, DISPLAY))), "a window the overlay covers wholly may not paint");
         let g = c.generation();
         let out = c.on(Event::Picture { generation: g, window: w(7), frame: dialog, why: Why::Landed }, now);
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(7) }));
@@ -2039,10 +2055,37 @@ mod tests {
         assert!(!drawn_focused(w(3), None, None));
     }
 
+    /// Focus moves from window 1 to window 2: each tile's ring before the handover, after the window
+    /// losing focus has turned, and after the target has.
+    #[test]
+    fn the_ring_turns_with_the_hairline_at_the_handover() {
+        let worn = |wore_ring, wears_ring| Worn { wore_ring, wears_ring, ..Worn::default() };
+        let (from, to) = (Some(w(1)), Some(w(2)));
+        let turns = |window, worn: Worn| {
+            let before = drawn_ringed(window, to, drawn_focused(window, to, from), &worn);
+            let losing_turned = drawn_ringed(window, to, false, &worn);
+            let target_turned = drawn_ringed(window, to, window == w(2), &worn);
+            (before, losing_turned, target_turned)
+        };
+        use Ring::{Active, Inactive, None as Bare};
+        // One workspace: the ring leaves window 1 and comes to window 2, each at its own turn.
+        assert_eq!(turns(w(1), worn(Active, Bare)), (Active, Bare, Bare), "losing: active, then none");
+        assert_eq!(turns(w(2), worn(Bare, Active)), (Bare, Bare, Active), "gaining: none, then active");
+        // Another workspace on the display: each is its workspace's active window throughout.
+        assert_eq!(turns(w(1), worn(Active, Active)), (Active, Active, Active), "leaving: active throughout");
+        assert_eq!(turns(w(2), worn(Active, Active)), (Active, Active, Active), "arriving: active throughout");
+        // Across displays each keeps its display's ring, and only its paint turns.
+        assert_eq!(turns(w(1), worn(Active, Inactive)), (Active, Inactive, Inactive), "losing: active, then inactive");
+        assert_eq!(turns(w(2), worn(Inactive, Active)), (Inactive, Inactive, Active), "gaining: inactive, then active");
+        assert!(drawn_focused(w(1), to, from) && !drawn_focused(w(2), to, from), "the paint is focus's");
+        assert_eq!(drawn_ringed(w(3), to, false, &worn(Bare, Bare)), Bare);
+    }
+
     #[test]
     fn a_strip_movement_is_a_move_when_a_column_crosses_it_and_a_switch_when_it_travels_between_rows() {
         let frame = SurfaceRect::new(Point::new(4.0, 32.0), Size::new(859.0, 1081.0));
         let window = |from| SurfaceWindow {
+            worn: Default::default(),
             window: w(1),
             server_id: rini_core::ids::WindowServerId::new(1),
             frame,

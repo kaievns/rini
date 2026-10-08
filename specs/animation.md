@@ -68,10 +68,9 @@ only the transitions are missing.
   A narrower column, half or two-thirds of the display, is seen moving and MUST NOT step.
 - The step MUST go away from where the window goes, a third of the display and back: a move right
   steps left and opens the right side, where the column it passes was.
-- The whole strip MUST step: every tiled window and every border tracing one. Floating windows and
-  their borders MUST stay where they are. A border arriving mid-step steps with the window it
-  traces. Not yet met: a window that opens or resizes mid-step leaves the step where it is drawn
-  and does not carry the rest of it.
+- The whole strip MUST step: every tiled window MUST step; floating windows MUST stay where they
+  are. Not yet met: a window that opens or resizes mid-step leaves the step where it is drawn and
+  does not carry the rest of it.
 - The column passed MUST be seen going beneath the moved window from the side the step opens, and
   that side MUST NOT show the desktop, except past the strip's end: the column passed fills it, then
   the strip beyond it. The column passed is drawn in its place on the strip, riding the strip
@@ -193,7 +192,8 @@ destination for a window already moving.
 - A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
   window that ends wholly on screen, so the window server counts it visible. Covered wholly, a
   terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
-  all 24.
+  all 24. So MUST a decoration rini draws around one at rest (`decorations.md`): a point is left
+  clear over its band too.
 - A floating window seen through a translucent one MUST show its live content while the flight runs,
   kept fresh behind the strip once the window gaining focus has its look.
 
@@ -233,7 +233,8 @@ destination for a window already moving.
   by one at startup, and the first pass on the display knew one window of 21.
 - A picture read off the screen after a lift, such as the bar's, MUST NOT show the overlay: the bar's
   is drawn over every flight after it, so one taken with the overlay up draws the overlay where the
-  bar should be.
+  bar should be. The bar this pictures is one another application draws, which "What rini is" in
+  `specs/README.md` holds as not yet met.
 - A change of display MUST NOT drop the window pictures being captured. Only the desktop render belongs
   to a display; with a second display attached, every flight on the other one threw the window captures
   in flight away.
@@ -272,8 +273,8 @@ destination for a window already moving.
 - A window parked off the display MUST NOT be pictured through the sliver it shows at the corner. It
   keeps its full size there, so the picture costs as much as one of a window on screen, and it is
   pictured by its own identity like every managed window.
-- A picture of a window rini does not manage, such as a border tracing a tile, MAY be kept while the
-  window lives, and MUST go once the window server no longer has the window.
+- A picture of a window rini does not manage MAY be kept while the window lives, and MUST go once
+  the window server no longer has the window.
 - A picture delivered to a flight MUST be held for it only while one of its tiles can still take it.
   One a tile turned down or one delivered to a flight before MUST NOT be held, nor any once the
   overlay has lifted. The pictures kept for the next flight are the cache's.
@@ -336,7 +337,8 @@ destination for a window already moving.
   its corners.
 - When focus moves during a flight, each window's hairline and shadow MUST turn with its own picture: the
   window losing focus dimmer as its picture turns unfocused, the window gaining focus brighter as its
-  picture turns focused, each at its own time.
+  picture turns focused, each at its own time. Its focus ring and its border turn with them
+  (`decorations.md`).
 
 The hairline's values are a fit measured 2026-10-02 in dark mode, on 27 window edges across 11
 applications: within 0.3 levels rms on focused edges and 0.1 on unfocused ones. Light mode is not
@@ -363,8 +365,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or grew it: one a pass
   opened or grew is pictured once it has repainted instead. A look a window already had when it landed
-  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its shadow
-  turning with it: the window losing focus unfocused, the window gaining focus focused.
+  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline, its shadow,
+  its focus ring and its border turning with it: the window losing focus unfocused, the window gaining
+  focus focused.
 - The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
   focus MUST wait for the other's at most 15ms, one capture interval, and not at all once the other's
   turn can no longer be pictured; two that come in together MUST turn old, then new. Waiting for the
@@ -547,12 +550,14 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - With `animations { journal { measure-handover; } }`, rini MUST record for each lift, over every
   window ending wholly on screen, the mean RGB difference between the overlay's own picture just
   before the lift and the screen just after it, taken apart over the window's interior, inset 4pt,
-  and over the 1pt either side of its outline, so a lift can be read against the handover measured on
-  2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
+  over the 1pt either side of its outline, and over the band a decoration draws outside the outline
+  where the window wears one at rest (`decorations.md`), so a lift can be read against the handover
+  measured on 2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
   picture and the quiet after the lift MUST then count from the hide, so the bar is never pictured
-  with the overlay over it. It MUST NOT start a capture once a press has asked for a transition, so
-  that press waits at most for the one capture of the overlay or the screen under way as it lands,
-  and it MUST be off unless asked for.
+  with the overlay over it. That bar is one another application draws ("What rini is" in
+  `specs/README.md`, not yet met). It MUST NOT start a capture once a press has asked for a
+  transition, so that press waits at most for the one capture of the overlay or the screen under way
+  as it lands, and it MUST be off unless asked for.
 - Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial
   and rini's steps line up with no wall clock between them.
 - CPU and GPU use MAY be recorded only once what reading them costs is measured, and found to slow
@@ -580,9 +585,10 @@ depth bands, the edge bounce and the nudge. The looks
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
-`src/decorations/domain/` is what each tile wears: the hairline's and the shadow's shape, style and
-depth, which the overlay draws on the layers in `src/decorations/platform/layers.rs`. A window's
-corner radius is read in `src/windows/platform/window_server.rs`, decoded in
+`src/decorations/domain/` is what each tile wears: the hairline's, the shadow's, the focus ring's and
+the border's shape, style and depth, which the overlay draws on the layers in
+`src/decorations/platform/layers.rs`. A window's corner radius is read in
+`src/windows/platform/window_server.rs`, decoded in
 `src/windows/domain/info.rs` and resolved, with the fallback and the clamp, in
 `src/decorations/domain/shape.rs`. When each step happens is `src/transitions/`:
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`

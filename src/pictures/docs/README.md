@@ -16,7 +16,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
-| **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window and either side of its outline, sampled as the research measured it |
+| **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window, either side of its outline and over a band drawn outside it, sampled as the research measured it |
 | **Settled** | `domain/settle.rs` — when a capture of a window that has to repaint is its settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |
@@ -55,7 +55,7 @@ engine, the reactor and the switcher each hold a `Pictures` handle.
 
 | A client | Through the handle |
 |---|---|
-| asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `refresh` windows whose look has just turned, wherever they are, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it rini does not manage |
+| asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `refresh` windows whose look has just turned, wherever they are, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it rini does not manage, for the debug slide |
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
 | measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared on a thread of the check's own |
@@ -222,14 +222,14 @@ only where the cache still holds the picture it was made of; what each client wa
 names only while its flight is up (`keep_focused`), is dropped there and then rather than copied.
 
 **A window is pictured once, under the id it flies by.** A window rini manages is pictured under its
-own id, and the debug slide flies it by that id; one it does not, such as a border tracing a tile,
-under a synthetic id, pid 0 (`synthetic_window_id`), and the slide flies it by that (`picture_id`).
-A warm, at each change of display and on the debug command, pictures only windows rini does not
-manage, told by what the cache holds or owes under a real id, and only those showing at least
-`WARM_MIN_SHOWN` (100pt) of themselves on the display each way: a window parked at the corner keeps
-its full size and shows a sliver, which the window server counts as on screen. At boot the cache may
-hold nothing of a managed window yet, so the warm, or a debug slide, can picture it under a
-synthetic id too; at each release the service lets go of every synthetic picture a managed window
+own id, and the debug slide flies it by that id; one it does not under a synthetic id, pid 0
+(`synthetic_window_id`), and the slide flies it by that (`picture_id`).
+A warm, on the debug command alone, pictures only windows rini does not manage, told by what the
+cache holds or owes under a real id, and only those showing at least `WARM_MIN_SHOWN` (100pt) of
+themselves on the display each way: a window parked at the corner keeps its full size and shows a
+sliver, which the window server counts as on screen. No flight reads these pictures, so a change of
+display warms nothing. At boot the cache may hold nothing of a managed window yet, so a warm or a
+debug slide can picture it under a synthetic id too; at each release the service lets go of every synthetic picture a managed window
 also has under its own id, and of every one whose window the window server no longer has, asked by
 id wherever the window is (`unwanted`). Why: "The pictures held" in `specs/animation.md`.
 
@@ -265,10 +265,6 @@ too. The window losing focus that ends a flight clipped or parked is one.
 windows, with nothing in `behind`: the service knows nothing of what lies below a window at rest, so a
 floating window below a window with a material is missing from that picture's blur until a flight next
 pictures it on screen.
-
-**The cache is a registry too.** A border companion may never be a window rini manages, and the engine
-learns which those are from `Pictures::windows`, the windows with a picture held or owed. The managed
-set belongs to the reactor's world; it comes from there once the coordinator composes flights.
 
 **A transition on a display before its first render lands composites on the `transitions` thread.**
 `dressing` takes the desktop, and the first time the bar, synchronously while the service holds none

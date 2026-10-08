@@ -13,7 +13,7 @@ use rini_geometry::stretch::is_a_resize;
 use rini_geometry::{SameAs, to_overlay_space};
 use rini_ipc::protocol::Direction;
 
-use crate::animation::domain::motion::surface::{SurfaceGeometry, TileGeometry, pan_travel};
+use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 
 /// Two translation vectors this close on both axes ride one container.
 pub const GROUP_TOLERANCE: f64 = 2.0;
@@ -60,8 +60,6 @@ pub struct GroupMember {
     pub window: WindowId,
     /// Frame inside the container: `from` less the container's position at install.
     pub rel: GroupRect,
-    /// For a border window, the window it traces; drawn a quarter step in front of it.
-    pub companion: Option<WindowId>,
 }
 
 /// How one window takes part in a plan.
@@ -129,11 +127,7 @@ impl ReflowPlan {
     /// Puts a rigid member starting at `from` into the group travelling by `vector`, opening one
     /// when none is within `GROUP_TOLERANCE`.
     fn place(&mut self, window: WindowId, from: GroupRect, vector: OverlayVector) -> GroupKey {
-        let member = GroupMember {
-            window,
-            rel: from,
-            companion: None,
-        };
+        let member = GroupMember { window, rel: from };
         if let Some(group) = self.groups.iter_mut().find(|g| same_vector(g.travel, vector)) {
             group.members.push(member);
             return group.key;
@@ -143,28 +137,6 @@ impl ReflowPlan {
         group.members.push(member);
         self.groups.push(group);
         key
-    }
-
-    /// Adds a tile the plan did not derive itself (a border companion) by the same
-    /// rules: floating stays loose, a resize is `changing`, anything else rides the group with its vector.
-    /// A floating tile's frames are in the floating container's space, as its anchor's are, so a
-    /// floating window's border travels with the container and not a second time on its own.
-    pub fn adopt<T: TileGeometry>(&mut self, tile: &T) {
-        let (window, from, to) = (tile.window(), tile.from(), tile.to());
-        if tile.floating() {
-            let landed = group_relative(to, self.floating_travel.to_point());
-            self.floating.push((window, installed(from), landed));
-        } else if is_a_resize(from.size, to.size) {
-            self.changing.push((window, installed(from), installed(to)));
-        } else {
-            let key = self.place(window, installed(from), to.origin - from.origin);
-            if let Some(anchor) = tile.companion()
-                && let Some(group) = self.groups.iter_mut().find(|g| g.key == key)
-                && let Some(member) = group.members.iter_mut().find(|m| m.window == window)
-            {
-                member.companion = Some(anchor);
-            }
-        }
     }
 
     /// The group `window` rides, if it is a rigid member.
@@ -217,7 +189,7 @@ fn member_in(
     None
 }
 
-/// Every window in the lists, in plan order, companions left out.
+/// Every window in the lists, in plan order.
 fn windows_in(
     groups: &[RigidGroup],
     changing: &[(WindowId, GroupRect, GroupRect)],
@@ -226,7 +198,7 @@ fn windows_in(
 ) -> Vec<WindowId> {
     let mut out: Vec<WindowId> = groups
         .iter()
-        .flat_map(|g| g.members.iter().filter(|m| m.companion.is_none()).map(|m| m.window))
+        .flat_map(|g| g.members.iter().map(|m| m.window))
         .collect();
     out.extend(changing.iter().map(|(w, _, _)| *w));
     out.extend(entrances.iter().map(|(w, _, _)| *w));
@@ -264,7 +236,7 @@ impl FlightPlan {
         )
     }
 
-    /// Every window the flight names, companions left out.
+    /// Every window the flight names.
     pub fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
@@ -302,7 +274,7 @@ pub struct Banding {
     /// The floating windows drawn in front of the strip: the application gaining focus, and any the
     /// server already has there. Every other floating window is drawn behind it.
     pub lifted: Vec<WindowId>,
-    /// Depth inside its container per tile; a companion carries its window's.
+    /// Depth inside its container per tile.
     pub within: HashMap<WindowId, usize>,
     /// Strip containers front to back: the one holding focus first, then by shallowest member.
     pub group_order: Vec<GroupKey>,
@@ -547,11 +519,7 @@ pub fn merge_plans(
                     retarget_loose(&mut next.floating, i, to_rel, &mut delta);
                 }
                 Located::Absent => {
-                    let member = GroupMember {
-                        window: m.window,
-                        rel: m.rel,
-                        companion: m.companion,
-                    };
+                    let member = GroupMember { window: m.window, rel: m.rel };
                     joins.push((member, group.travel));
                 }
             }
@@ -611,13 +579,7 @@ pub fn merge_plans(
                 // carries it there. Else it leaves in a container of its own from where it is
                 // drawn.
                 let remaining = p - from_along;
-                let to_key = match landing_for(
-                    &next,
-                    &presented.along,
-                    remaining,
-                    Some(key),
-                    member.companion,
-                ) {
+                let to_key = match landing_for(&next, &presented.along, remaining, Some(key)) {
                     Some(to_key) => {
                         let shift = from_along - position_in(&presented.along, to_key);
                         let rel = member.rel.translate(shift.respace());
@@ -730,18 +692,14 @@ fn retarget_loose(
 }
 
 /// The group whose remaining travel (destination less where its leg has it, `along`) matches
-/// `remaining`, for a member leaving another; a border prefers the group of the window it traces.
+/// `remaining`, for a member leaving another.
 fn landing_for(
     next: &FlightPlan,
     along: &HashMap<GroupKey, OverlayPoint>,
     remaining: OverlayVector,
     exclude: Option<GroupKey>,
-    companion: Option<WindowId>,
 ) -> Option<GroupKey> {
-    let fitting = travelling(next, along, remaining, exclude);
-    traced(fitting.clone(), companion)
-        .or_else(|| fitting.clone().next())
-        .map(|g| g.key)
+    travelling(next, along, remaining, exclude).next().map(|g| g.key)
 }
 
 /// The groups other than `exclude` whose travel from `start` to where the merge sends them matches
@@ -751,28 +709,18 @@ fn travelling<'a>(
     start: &'a HashMap<GroupKey, OverlayPoint>,
     travel: OverlayVector,
     exclude: Option<GroupKey>,
-) -> impl Iterator<Item = &'a RigidGroup> + Clone {
+) -> impl Iterator<Item = &'a RigidGroup> {
     next.groups.iter().filter(move |g| {
         let p = start.get(&g.key).copied().unwrap_or(next.position(g.key));
         Some(g.key) != exclude && same_vector(next.position(g.key) - p, travel)
     })
 }
 
-/// Of `groups`, the one holding the window a border traces.
-fn traced<'a>(
-    mut groups: impl Iterator<Item = &'a RigidGroup>,
-    companion: Option<WindowId>,
-) -> Option<&'a RigidGroup> {
-    let anchor = companion?;
-    groups.find(|g| g.members.iter().any(|m| m.window == anchor))
-}
-
 /// A rigid newcomer. Its frame is a place on the strip as the last pass left it (`sent`), so it rides
 /// a group that travels as it does from there, placed in it where that pass left it: it starts
 /// beside the windows it sits beside, wherever they are drawn, and a bounce or nudge riding the
-/// group carries it too. Of several, a border takes the group of the window it traces, and any other
-/// the group holding the window nearest it. A newcomer travelling as no group does opens one, from its
-/// frame.
+/// group carries it too. Of several, it takes the group holding the window nearest it. A newcomer
+/// travelling as no group does opens one, from its frame.
 fn join(
     next: &mut FlightPlan,
     member: GroupMember,
@@ -790,8 +738,7 @@ fn join(
             .map(|m| distance(overlay_of(m.rel, at), frame))
             .fold(f64::INFINITY, f64::min)
     };
-    let nearest = fitting.clone().min_by(|a, b| apart(a).total_cmp(&apart(b)));
-    let chosen = traced(fitting, member.companion).or(nearest).map(|g| g.key);
+    let chosen = fitting.min_by(|a, b| apart(a).total_cmp(&apart(b))).map(|g| g.key);
     match chosen {
         Some(key) => {
             let p = sent.get(&key).copied().unwrap_or(next.position(key));
@@ -1301,7 +1248,7 @@ mod tests {
 
         use super::*;
         use crate::animation::domain::motion::testing::{
-            Gen, OnSurface, RUNS, StagedTile, VIEWPORT, random_requests,
+            Gen, OnSurface, RUNS, VIEWPORT, random_requests,
         };
 
         /// An external display at a non-zero origin, so a retarget that forgot the conversion shows.
@@ -1780,13 +1727,7 @@ mod tests {
                                 let Some(from) = dest(&plan, *w) else { continue };
                                 match plan.member(*w) {
                                     Some(Member::Rigid { .. }) => {
-                                        p.adopt(&StagedTile {
-                                            window: *w,
-                                            from,
-                                            to: shifted(from, d),
-                                            floating: false,
-                                            companion: None,
-                                        });
+                                        p.place(*w, installed(from), d);
                                     }
                                     _ => {}
                                 }

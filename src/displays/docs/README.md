@@ -10,10 +10,12 @@ windows are on this space" is a window-server query over window ids.
 |---|---|
 | `domain/topology.rs` | `ForwardedSpaceState`: one coherent snapshot of screens, spaces and their windows. `analyze_space_snapshot` says what an incoming snapshot changes; `display_set_delta` says which displays arrived, which departed, and whether the set is settled |
 | `domain/screen.rs` | `ScreenInfo` (a display's whole `bounds`, and the `frame` left for windows), `CoordinateConverter` (with `reframe`: where one of rini's own windows has to go, measured against where AppKit has it), `usable_frame` (what the menu bar and Dock leave), `menu_bar_inset`, `top_inset` (the menu bar's inset or a band reserved at the top, whichever is taller), the visible-space ordering |
+| `domain/frames.rs` | `latest`: which windows a burst of move and resize notifications names, each once, in the order to read their frames |
 | `domain/space_activation.rs` | Which spaces rini manages, and how activation transfers when macOS mints a new space id |
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot |
 | `platform/space_switch.rs`, `space_query.rs` | Switching to a space, and asking what one is |
-| `platform/display_churn.rs`, `cgs_notify.rs`, `window_notify.rs` | Display reconfiguration and the CGS notification streams |
+| `platform/display_churn.rs`, `cgs_notify.rs` | Display reconfiguration and the CGS notification streams |
+| `platform/window_notify.rs` | The actor over those streams: space events to the spaces actor, focus edges coalesced into `WindowServerFocusChanged`, every tracked window's moves and resizes read back on one `window-frames` thread and handed to the application's `OnServerFrames` callbacks as `ServerFrame`s, and each reorder, hide and unhide handed to its `OnServerOrder` callbacks as a `ServerOrder` |
 | `platform/cursor_warp.rs` | Carrying the pointer across the edge between two stacked displays, over their whole bounds |
 | `platform/mission_control.rs` | Detecting Mission Control, during which nothing may be moved |
 
@@ -51,6 +53,8 @@ hardest file in the tree and worth reading last.
 
 - [`topology.md`](topology.md) — why the snapshot is conservative, and the failure that
   taught it
+- [`live-frames.md`](live-frames.md) — the window server's frames, why one thread reads them, and
+  how they compare with accessibility's during a drag (measured)
 
 ## Known debt
 

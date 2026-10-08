@@ -17,6 +17,7 @@ use crate::app::reactor::*;
 use crate::input::event::LeftPress;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::edge_drag::End;
+use crate::layout::domain::tile::window_in;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
@@ -1221,6 +1222,56 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     );
 }
 
+/// Focus moved from the first window to the second since the last batch: the first wore the ring
+/// and the second wears it, each request saying so with the decoration every managed window wears.
+#[test]
+fn a_request_carries_whether_its_window_wore_and_wears_the_ring() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
+    apps.requests();
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
+    reactor.handle_test_batch(Vec::new());
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
+
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let layout: Vec<(WindowId, CGRect)> = [first, second, third]
+        .into_iter()
+        .map(|wid| {
+            let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+            let shift = if wid == first { 120. } else { -120. };
+            (wid, CGRect::new(CGPoint::new(frame.origin.x + shift, frame.origin.y), frame.size))
+        })
+        .collect();
+    crate::app::reactor::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
+
+    let mut animated = Vec::new();
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
+            animated = windows;
+        }
+    }
+    let worn = |wid| animated.iter().find(|request| request.window == wid).expect("requested").worn;
+    let decoration = crate::decorations::domain::style::Decoration {
+        ring: Some(reactor.config.settings.decorations.focus_ring.band),
+        ..Default::default()
+    };
+    use crate::decorations::domain::style::Ring;
+    for (wid, wore, wears) in
+        [(first, Ring::Active, Ring::None), (second, Ring::None, Ring::Active), (third, Ring::None, Ring::None)]
+    {
+        let worn = worn(wid);
+        assert_eq!((worn.wore_ring, worn.wears_ring), (wore, wears), "{wid:?}");
+        assert_eq!(worn.decoration, decoration);
+    }
+}
+
 /// A floating window oscillated between x = 502 and x = 503 on every space-state refresh. Animating that
 /// covers the display for 350ms and buys nothing, so a pass with no visible travel is placed instead.
 #[test]
@@ -1501,6 +1552,80 @@ impl Strip {
     fn on_screen(&self, window: WindowId) -> CGRect {
         self.apps.windows[&window].frame
     }
+
+    /// The config reloaded with niri's border on at `width`, and what that writes carried out.
+    fn with_border(mut self, width: f64) -> Self {
+        reload_with_border(&mut self.reactor, width);
+        self.apps.simulate_until_quiet(&mut self.reactor);
+        self
+    }
+}
+
+fn reload_with_border(reactor: &mut Reactor, width: f64) {
+    let mut config = reactor.config.clone();
+    config.settings.decorations.border.on = true;
+    config.settings.decorations.border.band.width = width;
+    reactor.handle_event(Event::ConfigUpdated(config));
+}
+
+/// A border takes its width out of each tiled window's slot, and a reload changing it lays the
+/// strip out again at once.
+#[test]
+fn a_reload_changing_the_border_width_lays_the_strip_out_again() {
+    let mut strip = Strip::new();
+    let before = strip.laid_out(strip.window);
+    assert_eq!(strip.on_screen(strip.window), before);
+    reload_with_border(&mut strip.reactor, 4.);
+    let inset = window_in(before, 4.);
+    assert_eq!(strip.laid_out(strip.window), inset);
+    assert_eq!(strip.settle(strip.window).last(), Some(&inset), "written by the reload");
+    assert_eq!(strip.on_screen(strip.window), inset);
+}
+
+/// The slot gives up the border as the band is drawn, in whole device pixels: 1.3pt at 2x is 1.5.
+#[test]
+fn a_border_between_device_pixels_takes_out_of_the_slot_what_the_band_draws() {
+    let mut strip = Strip::new();
+    let before = strip.laid_out(strip.window);
+    reload_with_border(&mut strip.reactor, 1.3);
+    assert_eq!(strip.laid_out(strip.window), window_in(before, 1.5));
+}
+
+/// rini's own write coming back is no resize, with the border on as without; an app's own size is
+/// the window's, its slot the border wider.
+#[test]
+fn a_window_at_its_written_frame_is_not_taken_for_a_user_resize_with_a_border_on() {
+    let mut strip = Strip::new().with_border(4.);
+    let written = strip.laid_out(strip.window);
+    strip.app_reports(strip.window, written, MouseState::Up);
+    assert_eq!(strip.laid_out(strip.window), written);
+    assert_eq!(strip.settle(strip.window), Vec::<CGRect>::new(), "nothing to write back");
+
+    let narrower = CGRect::new(written.origin, CGSize::new(written.size.width - 100., written.size.height));
+    strip.app_reports(strip.window, narrower, MouseState::Up);
+    assert_eq!(strip.laid_out(strip.window).size, narrower.size, "the window at the app's width, not 8pt less");
+}
+
+#[test]
+fn a_floating_window_keeps_its_frame_under_a_border() {
+    let (mut apps, mut reactor) = test_context();
+    let space = SpaceId::new(1);
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    make_active_app_with_count(&mut apps, &mut reactor, 1, 2, Some(WindowId::new(1, 1)));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    let floating = WindowId::new(1, 1);
+    assert!(reactor.layout_manager.layout_engine.is_window_floating(floating));
+    let before = test_layout(&mut reactor, space, screen);
+
+    reload_with_border(&mut reactor, 4.);
+    apps.simulate_until_quiet(&mut reactor);
+    let after = test_layout(&mut reactor, space, screen);
+    let frame = |frames: &[(WindowId, CGRect)], window| frames.iter().find(|(w, _)| *w == window).map(|(_, f)| *f);
+    assert_eq!(frame(&after, floating), frame(&before, floating), "it wears the band outside");
+    let tiled = WindowId::new(1, 2);
+    assert_eq!(frame(&after, tiled), frame(&before, tiled).map(|slot| window_in(slot, 4.)));
 }
 
 #[test]
@@ -2036,6 +2161,21 @@ mod title_bar_zoom {
             strip.click_back();
             assert_eq!(strip.laid_out(strip.window), before, "{unzoomed_to}: and it stays there");
         }
+    }
+
+    /// rini's full width is the tiling area's, and the window ends inside it by the border.
+    #[test]
+    fn a_title_bar_zoom_with_a_border_on_ends_at_the_inset_full_width_frame() {
+        let mut strip = Strip::new().with_border(4.);
+        strip.zoom(VISIBLE);
+        assert_eq!(strip.full_width(), Some(true));
+        let full = strip.laid_out(strip.window);
+        assert_eq!(full, window_in(strip.tiling(), 4.));
+        assert_eq!(strip.settle(strip.window).last(), Some(&full), "written at once");
+        assert_eq!(strip.on_screen(strip.window), full);
+        strip.click_back();
+        assert_eq!(strip.settle(strip.window), Vec::<CGRect>::new(), "the next click writes nothing back");
+        assert_eq!(strip.full_width(), Some(true));
     }
 
     #[test]

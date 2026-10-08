@@ -17,10 +17,17 @@
   names that rini lacks MUST be refused with the reason (below), so a snippet need not paste in whole.
   A concept niri does not have MAY have a name of rini's own, in the section niri would put it in.
 - Every section MUST be optional. A setting left out keeps its default; binds and window rules are the
-  exception, and a file that writes none has none, as in niri.
-- An empty section MUST mean exactly what an absent one does. Two TOML settings broke this: a
-  workspace swipe skipped empty workspaces when its table was absent and not when it was empty, and
-  the drag-swap overlap was 0 with no table, 0.3 with one, and 0.5 after any reload.
+  exception, and a file that writes none has none, as in niri. So is `layout › border`'s `on`: a
+  `border` block that writes neither `on` nor `off` turns the border on, as niri's does.
+- An empty section MUST mean exactly what an absent one does, but for `layout › border`, whose empty
+  block `border {}` turns the border on, as above. Two TOML settings broke this: a workspace swipe
+  skipped empty workspaces when its table was absent and not when it was empty, and the drag-swap
+  overlap was 0 with no table, 0.3 with one, and 0.5 after any reload.
+
+> **Reported 2026-10-06.** Kai's decision D2: a `layout › border` with neither `on` nor `off` means
+> on, exactly as niri. niri reads it so because its default config's wording led users to write
+> `border {}` to turn borders on (`niri:niri-config/src/lib.rs:253-271`), so a niri `border` block
+> pasted in means here what it means there.
 - Order MUST be the file's: binds, window rules and workspaces keep the order they are written in.
 - The reference, `rini.default.kdl`, MUST mean the same settings and workspaces as an empty file, so
   it cannot drift from what rini does when a setting is left out.
@@ -68,6 +75,10 @@
   property by property.
 - `app-id`, `title` and `app-name` MUST be regular expressions, case-sensitive and unanchored, as
   niri's are. An invalid one MUST be refused, naming the line.
+- `is-active`, `is-focused`, `is-floating` and `is-urgent` MUST match a window by whether it holds
+  focus, whether it floats and whether it is drawn urgent. What a window opens with reads it as it
+  opens, holding no focus, not floating and not urgent, as niri reads a new window; what a rule says
+  a window wears follows it while it is open (`decorations.md`).
 - Modal dialogs MUST float by an ordinary rule in `rini.default.kdl`, so a later rule can decide
   otherwise for the windows it matches.
 

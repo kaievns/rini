@@ -753,6 +753,7 @@ mod tests {
     /// A strip column, as the animation path describes one: where it is now, where the layout wants it.
     fn moving(from_x: f64, to_x: f64) -> AnimationRequest {
         AnimationRequest {
+            worn: Default::default(),
             window: WindowId::new(1, (from_x.abs() as u32).max(1)),
             server_id: WindowServerId::new(1),
             from: ScreenRect::new(ScreenPoint::new(from_x, 32.0), ScreenSize::new(859.0, 1081.0)),

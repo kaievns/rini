@@ -69,6 +69,9 @@ pub struct Settings {
     /// measured, which holds a lift's hide for the overlay's own picture.
     pub journal: crate::transitions::settings::JournalSettings,
     pub window_snapping: WindowSnappingSettings,
+    /// `layout › focus-ring`, `layout › border` and what each `window-rule` says of them: the ring
+    /// and the border rini draws around windows.
+    pub decorations: crate::decorations::settings::DecorationSettings,
     pub run_on_start: Vec<StartupCommand>,
     /// Mark every bar while the config file cannot be used, until it can.
     pub mark_failed_config: bool,
@@ -97,6 +100,7 @@ impl Default for Settings {
             bar: Default::default(),
             journal: Default::default(),
             window_snapping: WindowSnappingSettings::default(),
+            decorations: Default::default(),
             run_on_start: Vec::new(),
             mark_failed_config: true,
         }

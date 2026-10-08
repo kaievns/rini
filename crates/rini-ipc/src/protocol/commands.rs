@@ -77,7 +77,7 @@ pub enum ReactorCommand {
         dy: i32,
         duration_ms: u64,
     },
-    /// Picture every window on screen that rini does not manage, such as a border tracing a window.
+    /// Picture every window on screen that rini does not manage.
     ///
     /// Background work only. Nothing is drawn and no window is touched.
     DebugWarmSnapshots,

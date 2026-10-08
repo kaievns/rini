@@ -25,6 +25,7 @@ bitflags = { workspace = true }
 block2 = { workspace = true }
 clap = { workspace = true }
 continue = { workspace = true }
+csscolorparser = "0.8"
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true }

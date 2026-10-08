@@ -40,17 +40,6 @@ pub trait SurfaceGeometry {
     }
 }
 
-/// Every window not carried by the surface is drawn where it stands; the caller decides what
-/// "the window" is, so this is a description and not a window.
-pub trait TileGeometry {
-    fn window(&self) -> WindowId;
-    fn from(&self) -> OverlayRect;
-    fn to(&self) -> OverlayRect;
-    fn floating(&self) -> bool;
-    /// For a border window, the window it traces.
-    fn companion(&self) -> Option<WindowId>;
-}
-
 /// What the viewport at `offset` shows of the surface: the surface less `offset`.
 pub fn viewport(offset: SurfacePoint) -> Translation<Surface, Overlay> {
     Translation::new(-offset.x, -offset.y)

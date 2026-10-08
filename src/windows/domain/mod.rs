@@ -2,12 +2,14 @@
 
 pub mod admissible;
 pub mod app_threads;
+pub mod attention;
 pub mod ax_events;
 pub mod catalogue;
 pub mod focus;
 pub mod focus_order;
 pub mod frame_write;
 pub mod info;
+pub mod listing;
 pub mod raise;
 pub mod raise_order;
 pub mod request;

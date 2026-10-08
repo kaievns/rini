@@ -28,14 +28,14 @@ use rini_geometry::space::{
 };
 
 use crate::animation::domain::motion::easing::CubicBezier;
-use crate::animation::domain::motion::holes::hole_in;
+use crate::animation::domain::motion::holes::{band_hole_in, hole_in};
 use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Form, Node, Score, Track, Value,
 };
 use crate::animation::domain::motion::tile::{ContentMode, content_mode, crop_pieces};
 use crate::animation::domain::motion::z_group::{Band, container_z};
-use crate::decorations::domain::style::Style;
+use crate::decorations::domain::style::{Decoration, Ring, Style, Worn};
 use crate::decorations::platform::layers::{
     DecorationLayers, Resize, add_under, remove_under, round_continuous,
 };
@@ -80,36 +80,19 @@ pub struct OverlayTile {
     pub server_order: Option<usize>,
     /// Front-to-back position in the overlay, 0 frontmost; derived once per flight by the engine.
     pub depth: usize,
-    /// For a border window riding the window it traces, that window: a quarter step in front of it,
-    /// no shadow.
-    pub companion: Option<WindowId>,
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow and
     /// brightens its hairline.
     pub focused: bool,
+    /// What the window wears through the flight, and the ring it wears before and after.
+    pub worn: Worn,
+    /// The ring the tile is drawn wearing now.
+    pub ring: Ring,
     /// The window's corner radius in points, as the window server reports it; `None` when it reports
     /// none.
     pub radius: Option<f64>,
     /// Whether the overlay clips the tile's picture to its corner: a picture whose corners carry
     /// what was behind its window, or the stand-in, which has no corners of its own.
     pub clipped: bool,
-}
-
-impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
-    fn window(&self) -> WindowId {
-        self.window
-    }
-    fn from(&self) -> OverlayRect {
-        self.from
-    }
-    fn to(&self) -> OverlayRect {
-        self.to
-    }
-    fn floating(&self) -> bool {
-        self.floating
-    }
-    fn companion(&self) -> Option<WindowId> {
-        self.companion
-    }
 }
 
 /// Above every tile; tiles sit at `-depth`, never above zero.
@@ -472,8 +455,10 @@ fn install_crop_grid(tile: &Tile, track: &Track) {
 struct Tile {
     picture: Retained<CALayer>,
     /// Beside the picture rather than in it, so a corner clip (`clip_corners`) leaves the outline
-    /// outside the window whole.
+    /// and the ring outside the window whole.
     decorations: DecorationLayers,
+    /// What its window wears that rini draws, as last dressed, which every turn of focus paints.
+    decoration: Decoration,
     /// The four crop pieces, created on first crop-drawn animation and pooled with the tile.
     crop_grid: Option<CropGrid>,
     /// Size in points of the picture the crop pieces show; `None` when stretching.
@@ -481,7 +466,6 @@ struct Tile {
     /// The part of the contents image that is the tile's picture, which the crop pieces' contents
     /// are composed with: all of it unless the picture is a region of a composite.
     region: ContentsRect,
-    companion: bool,
 }
 
 /// The four layers a crop-drawn tile is composed of, children of the tile's picture layer.
@@ -760,13 +744,11 @@ impl TileOverlay {
         self.tree.swap(window, picture, clipped, media_now());
     }
 
-    /// Draws a tile focused or not, a hard cut: its hairline's white and its shadow's depth. For
-    /// focus handing over mid-flight; every dressing draws what its tile says.
-    pub fn set_tile_focused(&mut self, window: WindowId, focused: bool) {
-        let Some(entry) = self.tree.tile_layers.get(&window) else {
-            return;
-        };
-        entry.decorations.show(Style::of(focused));
+    /// Draws a tile focused or not and wearing `ring`, a hard cut: its hairline's white, its shadow's
+    /// depth, its ring and its border. For focus handing over mid-flight; every dressing draws what
+    /// its tile says.
+    pub fn set_tile_focused(&mut self, window: WindowId, focused: bool, ring: Ring) {
+        self.tree.turn(window, focused, ring);
     }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
@@ -821,11 +803,12 @@ impl TileOverlay {
         self.visible = false;
     }
 
-    /// Punches a hole through the overlay over each window ending at one of `ends`, replacing the
-    /// holes there were; `paint_background` then clears the window's background so the holes show
-    /// what is below. The caller names the windows that end wholly on screen. See "Holes" in
+    /// Punches a hole through the overlay over each window ending at one of `ends`, and over the band
+    /// of the outset given with it that it wears at rest, replacing the holes there were;
+    /// `paint_background` then clears the window's background so the holes show what is below. The
+    /// caller names the windows that end wholly on screen. See "Holes" in
     /// `src/animation/docs/animation-smoothness.md`.
-    pub fn set_holes(&mut self, ends: &[OverlayRect]) {
+    pub fn set_holes(&mut self, ends: &[(OverlayRect, f64)]) {
         if ends.is_empty() {
             self.clear_holes();
             return;
@@ -833,8 +816,13 @@ impl TileOverlay {
         let Some(clip) = self.window.contentView().and_then(|view| view.layer()) else {
             return;
         };
-        let holes: Vec<CGRect> =
-            ends.iter().map(|end| in_view(hole_in(*end).to_cg(), self.top_band)).collect();
+        let holes: Vec<CGRect> = ends
+            .iter()
+            .flat_map(|&(end, outset)| {
+                std::iter::once(hole_in(end)).chain((outset > 0.0).then(|| band_hole_in(end, outset)))
+            })
+            .map(|hole| in_view(hole.to_cg(), self.top_band))
+            .collect();
         // SAFETY: a shape layer we just made, as the mask of the view's own layer.
         unsafe { clip.setMask(Some(&holes_mask(clip.bounds(), &holes))) };
     }
@@ -1032,7 +1020,7 @@ impl Tree {
             return;
         };
         let within = self.replica.banding().within.get(&window).copied().unwrap_or(0);
-        place_tile(entry, frame, tile_z(within, entry.companion));
+        place_tile(entry, frame, -(within as f64));
     }
 
     /// Whether `track` is the replica's track on its node with only its end moved, as a snap makes it.
@@ -1148,7 +1136,14 @@ impl Tree {
             let Some(&within) = banding.within.get(window) else {
                 continue;
             };
-            tile.stack(tile_z(within, tile.companion));
+            tile.stack(-(within as f64));
+        }
+    }
+
+    /// `window`'s tile drawn focused or not and wearing `ring`.
+    fn turn(&self, window: WindowId, focused: bool, ring: Ring) {
+        if let Some(entry) = self.tile_layers.get(&window) {
+            entry.decorations.show(Style::of(focused, ring, &entry.decoration));
         }
     }
 
@@ -1194,32 +1189,24 @@ impl Tree {
     }
 }
 
-/// The depth a tile is drawn at in its container, `within` its band: a companion's quarter step
-/// in front of its window stays clear of the half step the shadow casters sit behind (`SHADOW_Z`)
-/// and of the eighth its hairline sits in front (`HAIRLINE_Z`).
-fn tile_z(within: usize, companion: bool) -> f64 {
-    -(within as f64) + if companion { 0.25 } else { 0.0 }
-}
-
 /// Dresses a tile for `tile`: its picture, fitted to how it starts and ends and clipped or whole,
-/// its focus, its radius and whether it is a companion. Tile layers are pooled, so every per-window
-/// property is written.
+/// its focus, its decoration and its radius. Tile layers are pooled, so every per-window property is
+/// written.
 fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
-    entry.companion = tile.companion.is_some();
     entry.decorations.radius = tile.radius;
+    entry.decoration = tile.worn.decoration;
     entry.picture.setContentsScale(scale);
-    entry.decorations.set_scale(scale);
+    entry.decorations.wear(&entry.decoration, scale);
     clip_corners(&entry.picture, tile.clipped);
     let covered = tile.snapshot.coverage.covered;
     let mode = content_mode(covered, tile.from.size, tile.to.size);
     set_tile_content(entry, &tile.snapshot, mode, tile.from.size.respace(), scale);
-    entry.decorations.show(Style::of(tile.focused));
+    entry.decorations.show(Style::of(tile.focused, tile.ring, &entry.decoration));
     entry.picture.setHidden(false);
-    entry.decorations.set_hidden(tile.companion.is_some());
 }
 
 /// Puts `snapshot` on a tile, leaving its movement alone: a hard cut, on purpose, since a crossfade
-/// pulses a translucent window's net opacity (see "Border companions" in
+/// pulses a translucent window's net opacity (see "Mid-flight passes" in
 /// `src/transitions/docs/coordination.md`). A crop-drawn tile's grid is laid again for `size`, its
 /// model, and re-keyed along `playing`, its own track while it plays, so the frame keeps its curve
 /// and only the pixels cut. Callers hold the transaction.
@@ -1265,10 +1252,10 @@ fn new_tile(container: &CALayer) -> Tile {
     Tile {
         picture,
         decorations,
+        decoration: Decoration::default(),
         crop_grid: None,
         crop_of: None,
         region: WHOLE,
-        companion: false,
     }
 }
 
@@ -2388,7 +2375,6 @@ mod tests {
         let hairline = &tile.decorations.hairline;
         assert_eq!(hairline.frame(), frame.to_cg());
         assert!(hairline.zPosition() > tile.picture.zPosition());
-        assert!(hairline.zPosition() < tile.picture.zPosition() + 0.25, "under a companion");
     }
 
     /// An entrance grows from no width: the hairline's bounds ride the tile's track, and its corner
@@ -2567,8 +2553,9 @@ mod tests {
                 floating,
                 server_order: Some(0),
                 depth: 0,
-                companion: None,
                 focused: false,
+                worn: Worn::default(),
+                ring: Ring::None,
                 radius: None,
                 clipped: false,
             }
@@ -2628,7 +2615,7 @@ mod tests {
                     "{window:?} under {key:?}, lifted {lifted}"
                 );
                 let within = banding.within.get(&window).copied().unwrap_or(0);
-                let z = -(within as f64) + if entry.companion { 0.25 } else { 0.0 };
+                let z = -(within as f64);
                 assert_eq!(entry.picture.zPosition(), z, "{window:?}");
                 assert_eq!(entry.decorations.shadow.zPosition(), z + SHADOW_Z, "{window:?}");
             }
@@ -2925,6 +2912,44 @@ mod tests {
             );
             tree.swap(window, &test_picture(ScreenSize::new(12.0, 400.0)), false, 0.0);
             assert!(!tree.tile_layers[&window].picture.masksToBounds(), "whole");
+        }
+
+        /// A tile wears the ring its window's decoration has, as dressed and as focus turns it, around
+        /// the window at its frame.
+        #[test]
+        fn a_tile_wears_its_ring_as_dressed_and_as_focus_turns() {
+            use crate::decorations::domain::paint::{Colour, Paint};
+            use crate::decorations::domain::style::{Band, Decoration};
+            let window = wid(1);
+            let drawn = typed(4.0, 32.0, 859.0, 1081.0);
+            let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
+            let (active, inactive) = (Colour::rgb(0x7fc8ff), Colour::rgb(0x505050));
+            let band = Band { width: 4.0, active: Paint::Solid(active), inactive: Paint::Solid(inactive), urgent: Paint::Solid(inactive) };
+            let mut tile = overlay_tile(window, drawn, drawn, false);
+            let ring = Ring::Inactive;
+            tile.worn = Worn { decoration: Decoration { ring: Some(band), ..Decoration::default() }, wore_ring: ring, wears_ring: ring };
+            tile.ring = ring;
+            tile.radius = Some(16.0);
+            let tiles = [tile];
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.play(
+                &[
+                    Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                    Edit::Ride(window, GroupKey::STILL),
+                    Edit::Place(Node::Tile(window), Value::Rect(at)),
+                ],
+                &tiles,
+            );
+            let ring = &tree.tile_layers[&window].decorations.bands.ring.layer;
+            let colour = |c: Colour| objc2_core_graphics::CGColor::new_srgb(c.r.into(), c.g.into(), c.b.into(), c.a.into());
+            let painted = |c: Colour| objc2_core_graphics::CGColor::equal_to_color(ring.borderColor().as_deref(), Some(&colour(c)));
+            assert!(!ring.isHidden() && painted(inactive), "worn unfocused");
+            assert_eq!(ring.frame(), rect(-4.0, -4.0, 867.0, 1089.0), "outside the window");
+            assert_eq!(ring.cornerRadius(), 20.0);
+            tree.turn(window, true, Ring::Active);
+            assert!(painted(active));
+            tree.turn(window, false, Ring::None);
+            assert!(ring.isHidden());
         }
 
         /// A placed tile moves every layer of the tile at once: the picture, the caster and the hairline,

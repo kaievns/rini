@@ -1,8 +1,10 @@
 //! What the windows context tells the application: one event per thing the per-app actor learns
-//! from Accessibility. The reactor converts these into its own event type; this crate never
+//! from Accessibility, and which applications ask for attention, as the attention reader learns it
+//! from LaunchServices. The reactor converts these into its own event type; this crate never
 //! imports the reactor.
 use objc2_core_foundation::CGRect;
 
+use crate::windows::domain::attention::Attention;
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
@@ -66,6 +68,8 @@ pub enum Event {
     RaisesIdle {
         requests_seen: u64,
     },
+    /// The applications asking for attention changed; sent by `platform::attention`.
+    AttentionChanged(Attention),
 }
 
 /// Where the per-app actor delivers its events. Implemented for any channel whose message type

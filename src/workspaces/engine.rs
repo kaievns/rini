@@ -11,9 +11,10 @@ use super::{
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::boundary::{strip_edge, workspace_stack_direction};
 use crate::layout::domain::edge_drag::Drag;
+use crate::layout::domain::tile::Borders;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
-use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
+use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext, RuleState};
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::broadcast::{BroadcastEvent, protocol_workspace_id};
 use crate::workspaces::domain::app_rules::{
@@ -138,6 +139,8 @@ pub struct LayoutEngine {
     app_rules: AppRuleEngine,
     focused_window: Option<WindowId>,
     window_layout_constraints: HashMap<WindowId, WindowLayoutConstraints>,
+    /// The border each tiled window wears, in points, which the strip takes out of its slot.
+    borders: Borders,
     virtual_workspace_manager: WorkspaceStore,
     layout_settings: LayoutSettings,
     /// Events the engine wants announced, for the application to send.
@@ -255,6 +258,14 @@ impl LayoutEngine {
 }
 
 impl LayoutEngine {
+    /// The border each tiled window wears from the next layout pass: each window is laid out inside
+    /// its slot by its width on every side. Whether they differ from the ones it had.
+    pub fn set_borders(&mut self, borders: Borders) -> bool {
+        let changed = self.borders != borders;
+        self.borders = borders;
+        changed
+    }
+
     pub fn set_layout_settings(&mut self, settings: &LayoutSettings) {
         self.layout_settings = settings.clone();
 
@@ -326,6 +337,17 @@ impl LayoutEngine {
             last_floating: self.floating.last_focus().filter(|wid| floating.contains(wid)),
             first_floating: floating.first().copied(),
         })
+    }
+
+    /// A workspace's active window, as niri has one: the window focus lands on when the workspace
+    /// takes it, which is the one it was on last.
+    pub fn active_window(
+        &self,
+        window_store: &WindowStore,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+    ) -> Option<WindowId> {
+        self.preferred_focus_for_workspace(window_store, space, workspace_id, None)
     }
 
     pub fn commit_workspace_focus(
@@ -1314,6 +1336,7 @@ impl LayoutEngine {
             ax_role,
             ax_subrole,
             is_modal,
+            state: RuleState::default(),
         })
     }
 
@@ -1483,6 +1506,7 @@ impl LayoutEngine {
             app_rules: AppRuleEngine::new(&virtual_workspace_config.app_rules),
             focused_window: None,
             window_layout_constraints: HashMap::default(),
+            borders: Borders::default(),
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
             outbox: Default::default(),
@@ -1545,9 +1569,10 @@ impl LayoutEngine {
         };
         let gaps = self.layout_settings.gaps.effective_for_display(display_uuid);
         let previous_selection = self.workspace_tree(resize.workspace_id).selected_window(layout);
+        let border = self.borders.of(resize.window);
         let tree = self.workspace_tree_mut(resize.workspace_id);
         let _ = tree.select_window(layout, resize.window);
-        tree.on_window_resized(layout, resize.window, None, new_frame, screen_frame, &gaps);
+        tree.on_window_resized(layout, resize.window, None, new_frame, border, screen_frame, &gaps);
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
@@ -1880,11 +1905,13 @@ impl LayoutEngine {
                     };
                     let gaps =
                         self.layout_settings.gaps.effective_for_display(display_uuid.as_deref());
+                    let border = self.borders.of(wid);
                     self.workspace_tree_mut(ws_id).on_window_resized(
                         layout,
                         wid,
                         drag,
                         new_frame,
+                        border,
                         screen_frame,
                         &gaps,
                     );
@@ -2164,6 +2191,7 @@ impl LayoutEngine {
             layout,
             screen,
             &self.window_layout_constraints,
+            &self.borders,
             gaps,
         )
     }
@@ -2237,6 +2265,7 @@ impl LayoutEngine {
                     layout,
                     screen,
                     &self.window_layout_constraints,
+                    &self.borders,
                     gaps,
                 );
 
@@ -2390,6 +2419,7 @@ impl LayoutEngine {
                 layout,
                 screen,
                 &self.window_layout_constraints,
+                &self.borders,
                 gaps,
             );
             for (wid, rect) in tiled_positions {
@@ -2852,6 +2882,7 @@ impl LayoutEngine {
             ax_role,
             ax_subrole,
             is_modal,
+            state: RuleState::default(),
         });
 
         // Where this application's windows were, but only when the config had nothing to say and the

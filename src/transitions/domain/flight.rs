@@ -1,45 +1,17 @@
 //! What a flight is.
 //!
-//! One pass over the layout becomes a flight: which unmanaged window traces a tile as its border,
-//! whether a pass is worth an overlay, and how far the real windows are at the handover. Decided over
-//! ids and frames, with nothing of Core Animation in it. When each step of a flight happens is
-//! `crate::transitions::domain::lifecycle`; when the pictures service makes the captures a flight asks
-//! for is `crate::pictures::domain::schedule`. Design in `src/transitions/docs/coordination.md`.
+//! One pass over the layout becomes a flight: whether a pass is worth an overlay, and how far the real
+//! windows are at the handover. Decided over ids and frames, with nothing of Core Animation in it.
+//! When each step of a flight happens is `crate::transitions::domain::lifecycle`; when the pictures
+//! service makes the captures a flight asks for is `crate::pictures::domain::schedule`. Design in
+//! `src/transitions/docs/coordination.md`.
 
 use std::collections::HashMap;
 
-use rini_core::ids::{WindowId, WindowServerId};
+use rini_core::ids::WindowId;
 use rini_geometry::space::ScreenRect;
 
-use super::timing::{COMPANION_CENTER_SLACK, COMPANION_EXPANSION, HANDOVER_THRESHOLD_PT};
-
-/// The unmanaged window tracing `frame` as its border, if any. A parked window never traces and is
-/// never traced. See "Border companions" in `src/transitions/docs/coordination.md`.
-pub(in crate::transitions) fn companion_of(
-    frame: ScreenRect,
-    candidates: &[(WindowServerId, ScreenRect)],
-    display: ScreenRect,
-) -> Option<(WindowServerId, ScreenRect)> {
-    if rini_geometry::is_off_screen(display, frame) {
-        return None;
-    }
-    let center =
-        |r: ScreenRect| (r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0);
-    let (cx, cy) = center(frame);
-    candidates
-        .iter()
-        .filter(|(_, candidate)| !rini_geometry::is_off_screen(display, *candidate))
-        .find(|(_, candidate)| {
-            let dw = candidate.size.width - frame.size.width;
-            let dh = candidate.size.height - frame.size.height;
-            let (kx, ky) = center(*candidate);
-            (-1.0..=COMPANION_EXPANSION).contains(&dw)
-                && (-1.0..=COMPANION_EXPANSION).contains(&dh)
-                && (kx - cx).abs() <= COMPANION_CENTER_SLACK
-                && (ky - cy).abs() <= COMPANION_CENTER_SLACK
-        })
-        .copied()
-}
+use super::timing::HANDOVER_THRESHOLD_PT;
 
 /// How far the real windows were from their tiles at lift. See `report_handover_error`.
 #[derive(Debug, Clone, PartialEq)]
@@ -96,87 +68,12 @@ pub(in crate::transitions) fn worth_flying(moving_drawable: bool, running: bool)
     moving_drawable || running
 }
 
-/// The window server ids a border companion may never be: everything rini manages, the pass's windows
-/// and every window the pictures service holds or owes a picture of. Synthetic (companion) ids are
-/// left out, or a border seen once could never match again.
-pub(in crate::transitions) fn managed_server_ids(
-    pass: &std::collections::HashSet<u32>,
-    pictured: impl Iterator<Item = WindowId>,
-) -> std::collections::HashSet<u32> {
-    let mut ids = pass.clone();
-    ids.extend(crate::pictures::domain::identity::managed_server_ids(pictured));
-    ids
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn window(idx: u32) -> WindowId {
         WindowId::new(7, idx)
-    }
-
-    mod companions {
-        use super::*;
-        use crate::animation::domain::motion::testing::{DISPLAY, rect};
-
-        /// Border geometry from the user's bordersrc: a concentric sibling window a few points larger.
-        #[test]
-        fn a_border_window_tracing_a_window_is_its_companion() {
-            let window = rect(4.0, 32.0, 859.0, 1081.0);
-            let border = (WindowServerId::new(9001), rect(1.0, 29.0, 865.0, 1087.0));
-            let neighbor = (WindowServerId::new(9002), rect(867.0, 32.0, 859.0, 1081.0));
-            let zoom = (WindowServerId::new(9003), rect(224.0, 95.0, 1280.0, 960.0));
-            let found = companion_of(window, &[neighbor, zoom, border], DISPLAY);
-            assert_eq!(found.map(|(id, _)| id.as_u32()), Some(9001));
-        }
-
-        #[test]
-        fn only_a_concentric_hug_counts_as_a_border() {
-            let window = rect(4.0, 32.0, 859.0, 1081.0);
-            let exact = (WindowServerId::new(1), rect(4.0, 32.0, 859.0, 1081.0));
-            assert!(companion_of(window, &[exact], DISPLAY).is_some());
-            let shifted = (WindowServerId::new(2), rect(24.0, 32.0, 859.0, 1081.0));
-            let larger = (WindowServerId::new(3), rect(-16.0, 12.0, 899.0, 1121.0));
-            let smaller = (WindowServerId::new(4), rect(6.0, 34.0, 855.0, 1077.0));
-            assert!(companion_of(window, &[shifted, larger, smaller], DISPLAY).is_none());
-        }
-
-        /// Parked windows share a frame macOS clamps to 41pt visible, past `is_off_screen`; only the
-        /// managed-id exclusion separates them. A synthetic companion id (pid 0) stays a candidate.
-        #[test]
-        fn a_managed_window_is_never_a_border_candidate() {
-            let pass: std::collections::HashSet<u32> = [102698].into_iter().collect();
-            let pictured = [WindowId::new(82799, 102682), WindowId::new(0, 9001), WindowId::new(872, 51462)];
-            let managed = managed_server_ids(&pass, pictured.into_iter());
-            assert!(managed.contains(&102698) && managed.contains(&102682) && managed.contains(&51462));
-            assert!(
-                !managed.contains(&9001),
-                "a border seen before is still a border"
-            );
-            // The clamped park is not judged off screen, so geometry alone cannot exclude it.
-            let park = rect(1727.0, 1076.0, 1720.0, 1081.0);
-            assert!(!rini_geometry::is_off_screen(DISPLAY, park));
-            assert!(companion_of(park, &[(WindowServerId::new(102682), park)], DISPLAY).is_some());
-        }
-
-        #[test]
-        fn a_parked_window_neither_traces_nor_is_traced() {
-            let park = rect(
-                DISPLAY.size.width - 1.0,
-                DISPLAY.size.height - 1.0,
-                859.0,
-                1081.0,
-            );
-            assert!(rini_geometry::is_off_screen(DISPLAY, park));
-            let twin = (WindowServerId::new(7), park);
-            assert!(companion_of(park, &[twin], DISPLAY).is_none(), "a parked anchor");
-            let on_screen = rect(4.0, 32.0, 859.0, 1081.0);
-            let border = (WindowServerId::new(8), rect(1.0, 29.0, 865.0, 1087.0));
-            assert!(
-                companion_of(on_screen, &[twin, border], DISPLAY).map(|(id, _)| id.as_u32()) == Some(8)
-            );
-        }
     }
 
     mod handover {

@@ -192,6 +192,19 @@ impl Reactor {
         self.handle_batch(events.into_iter().map(|event| (tracing::Span::none(), event)));
     }
 
+    /// Where the active workspace's strip had each window at the last pass.
+    pub fn test_strip_layout(&self, space: SpaceId) -> Vec<(WindowId, CGRect)> {
+        let workspace = self.layout_manager.layout_engine.active_workspace(space);
+        workspace.and_then(|workspace| self.last_strip_layout.get(&(space, workspace)).cloned()).unwrap_or_default()
+    }
+
+    /// Wire in the rest windows, returning what they are sent.
+    pub fn connect_test_rest(&mut self) -> crate::decorations::platform::rest::Receiver {
+        let (tx, rx) = channels::channel();
+        self.rest.tx = Some(tx);
+        rx
+    }
+
     /// Wire in a bar, returning what it is sent.
     pub fn connect_test_bar(&mut self) -> crate::bar::platform::actor::Receiver {
         let (tx, rx) = channels::channel();

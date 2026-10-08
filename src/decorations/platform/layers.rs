@@ -1,23 +1,26 @@
 //! The layers a tile's decorations are drawn with: the caster behind the picture with its mask, and
-//! the hairline in front with its outline. They ride the tile's frame beside its picture, and every
-//! value they are set to or animated through comes from `domain`. See "The hairline and the shadow,
-//! as drawn" in `src/decorations/docs/README.md`.
+//! the hairline in front with its outline, the focus ring and the border. They ride the tile's frame
+//! beside its picture, and every value they are set to or animated through comes from `domain`. See
+//! "The hairline and the shadow, as drawn" and "The focus ring and the border, as drawn" in
+//! `src/decorations/docs/README.md`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColor, CGMutablePath, CGPath};
-use objc2_foundation::NSString;
+use objc2_foundation::{NSArray, NSNumber, NSString};
 use objc2_quartz_core::{
-    CAAnimation, CALayer, CAPropertyAnimation, CAShapeLayer, kCACornerCurveContinuous,
-    kCAFillRuleEvenOdd,
+    CAAnimation, CAGradientLayer, CALayer, CAPropertyAnimation, CAShapeLayer,
+    kCACornerCurveContinuous, kCAFillRuleEvenOdd,
 };
-use rini_geometry::space::{TileRect, TileSize, ToCg, Vector};
+use rini_geometry::space::{FromCg, TileRect, TileSize, ToCg, Vector};
 
+use crate::decorations::domain::paint::{Colour, Gradient, Paint};
 use crate::decorations::domain::shape::{self, SHADOW_REACH, Segment};
 use crate::decorations::domain::stack::{HAIRLINE_Z, SHADOW_Z};
-use crate::decorations::domain::style::{LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
+use crate::decorations::domain::style::{Decoration, LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
 
 // What a resize installs on the decorations, by the layer it rides.
 const SILHOUETTE_KEY: &str = "rini.tile.shadow.path";
@@ -26,6 +29,10 @@ const MASK_SIZE_KEY: &str = "rini.tile.mask.size";
 const MASK_PATH_KEY: &str = "rini.tile.mask.path";
 const CORNER_KEY: &str = "rini.tile.hairline.corner";
 const OUTLINE_KEY: &str = "rini.tile.outline.path";
+const BAND_SIZE_KEY: &str = "rini.tile.band.size";
+const BAND_CORNER_KEY: &str = "rini.tile.band.corner";
+const BAND_START_KEY: &str = "rini.tile.band.start";
+const BAND_END_KEY: &str = "rini.tile.band.end";
 
 pub fn add_under(layer: &CALayer, animation: &CAAnimation, key: &str) {
     layer.addAnimation_forKey(animation, Some(&NSString::from_str(key)));
@@ -76,9 +83,14 @@ pub struct DecorationLayers {
     pub hairline: Retained<CALayer>,
     /// The hairline's dark outline, a stroke just outside the white line, as the hairline's child.
     pub outline: Retained<CAShapeLayer>,
+    /// The ring and the border, bands outside the window, as the hairline's children after the
+    /// outline, so they are drawn in front of the picture, the hairline and the outline.
+    pub bands: Bands,
     /// The window's corner radius as the window server reports it, which every piece rounds to;
     /// `None` rounds at the fallback.
     pub radius: Option<f64>,
+    /// What the bands were last worn for, whose rule's corner they round to ahead of `radius`.
+    worn: Decoration,
     /// The size and corner the caster's silhouette and its mask were last shaped for.
     built: Cell<Option<(TileSize, f64)>>,
 }
@@ -110,6 +122,7 @@ impl DecorationLayers {
         outline.setStrokeColor(Some(&CGColor::new_generic_gray(0.0, OUTLINE_ALPHA)));
         outline.setLineWidth(OUTLINE_PT);
         hairline.addSublayer(&outline);
+        let bands = Bands::new(&hairline);
         container.addSublayer(&hairline);
 
         DecorationLayers {
@@ -117,7 +130,9 @@ impl DecorationLayers {
             shadow_mask,
             hairline,
             outline,
+            bands,
             radius: None,
+            worn: Decoration::default(),
             built: Cell::new(None),
         }
     }
@@ -129,14 +144,11 @@ impl DecorationLayers {
 
     /// Takes every animation off every decoration layer.
     pub fn remove_animations(&self) {
-        for layer in [
-            &*self.shadow,
-            &self.shadow_mask,
-            &self.hairline,
-            &self.outline,
-        ] {
+        for layer in [&*self.shadow, &self.shadow_mask, &self.hairline, &self.outline] {
             layer.removeAllAnimations();
         }
+        self.bands.ring.remove_animations();
+        self.bands.border.remove_animations();
     }
 
     /// Draws the decorations of a tile at depth `z`: the caster `SHADOW_Z` behind its picture, the
@@ -161,15 +173,21 @@ impl DecorationLayers {
         self.hairline.setCornerRadius(corner);
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
+        self.bands.place(size, self.band_corner_at(size));
     }
 
-    /// The corner a tile of `size` rounds to, every piece of it: its window's radius, clamped to the
-    /// tile.
+    /// The corner a tile of `size` rounds to, every piece of it but the bands: its window's radius,
+    /// clamped to the tile.
     pub fn corner_at(&self, size: TileSize) -> f64 {
         shape::radius(self.radius, size)
     }
 
-    /// Paints the hairline's white and the shadow's depth as `style` has them.
+    /// The corner the bands round to on a tile of `size`: a window rule's, else its window's.
+    fn band_corner_at(&self, size: TileSize) -> f64 {
+        shape::radius(self.worn.corner(|| self.radius), size)
+    }
+
+    /// Paints the hairline's white, the shadow's depth, the ring and the border as `style` has them.
     pub fn show(&self, style: Style) {
         self.hairline
             .setBorderColor(Some(&CGColor::new_generic_gray(1.0, style.light_alpha)));
@@ -177,15 +195,15 @@ impl DecorationLayers {
         self.shadow.setShadowOpacity(shadow.opacity);
         self.shadow.setShadowRadius(shadow.radius);
         self.shadow.setShadowOffset(CGSize::new(0.0, shadow.offset_y));
+        self.bands.paint(&style);
     }
 
-    pub fn set_scale(&self, scale: f64) {
+    /// Draws the outline at the display's `scale`, and the bands of `decoration` in whole device
+    /// pixels of it, at its rule's corner; laid at the next `place`.
+    pub fn wear(&mut self, decoration: &Decoration, scale: f64) {
         self.outline.setContentsScale(scale);
-    }
-
-    pub fn set_hidden(&self, hidden: bool) {
-        self.shadow.setHidden(hidden);
-        self.hairline.setHidden(hidden);
+        self.worn = *decoration;
+        self.bands.wear(decoration, scale);
     }
 
     /// Carries the decorations through `resize`, each piece at the corner of every size it passes
@@ -216,6 +234,7 @@ impl DecorationLayers {
         }
         let outline = resize.path("path", |size| outline_path(size, corner(size)));
         add_under(&self.outline, &outline, OUTLINE_KEY);
+        self.bands.install_resize(resize, |size: TileSize| self.band_corner_at(size));
     }
 
     /// Takes away every animation `install_resize` put on the decorations.
@@ -224,7 +243,203 @@ impl DecorationLayers {
         remove_under(&self.shadow_mask, &[MASK_MOVE_KEY, MASK_SIZE_KEY, MASK_PATH_KEY]);
         remove_under(&self.hairline, &[CORNER_KEY]);
         remove_under(&self.outline, &[OUTLINE_KEY]);
+        self.bands.remove_resize();
     }
+}
+
+/// The bands a window wears outside it, laid alike on a tile and at rest: the ring, and the border
+/// in front of it, each a `Band` under one parent, in that order.
+pub struct Bands {
+    pub ring: Band,
+    pub border: Band,
+}
+
+impl Bands {
+    pub fn new(parent: &CALayer) -> Bands { Bands { ring: Band::new(parent), border: Band::new(parent) } }
+
+    /// The widths `decoration`'s bands are laid at on a display of `scale` (`shape::widths`).
+    pub fn wear(&self, decoration: &Decoration, scale: f64) {
+        let widths = shape::widths(decoration, scale);
+        self.ring.set_width(widths.ring);
+        self.border.set_width(widths.border);
+    }
+
+    pub fn place(&self, size: TileSize, corner: f64) {
+        self.ring.place(size, corner);
+        self.border.place(size, corner);
+    }
+
+    /// Shows each band in the paint `style` gives it, or hides it.
+    pub fn paint(&self, style: &Style) {
+        self.ring.paint(style.ring);
+        self.border.paint(style.border);
+    }
+
+    fn install_resize(&self, resize: &impl Resize, corner: impl Fn(TileSize) -> f64 + Copy) {
+        self.ring.install_resize(resize, corner);
+        self.border.install_resize(resize, corner);
+    }
+
+    fn remove_resize(&self) {
+        self.ring.remove_resize();
+        self.border.remove_resize();
+    }
+}
+
+/// A band drawn outside a window, as the ring and the border are, its inner contour the window's own
+/// corner (`shape::band`), hanging from the window's top-left in its parent's points: in a colour, a
+/// `CALayer` border on the continuous curve; in a gradient, the same layer's gradient masked to a
+/// border of the same width and corner. On a tile and at rest alike, so the two draw the same pixels.
+/// See "Gradients" in `src/decorations/docs/README.md`.
+pub struct Band {
+    pub layer: Retained<CAGradientLayer>,
+    /// The band's own shape, black, which the layer is masked to while a gradient fills it.
+    mask: Retained<CALayer>,
+    /// In points, whole device pixels of the display it is drawn on; 0 draws nothing.
+    width: Cell<f64>,
+    /// The gradient it is filled with, if one is.
+    gradient: Cell<Option<Gradient>>,
+}
+
+impl Band {
+    /// A band under `parent`, drawn nowhere until it is given a width and a paint.
+    pub fn new(parent: &CALayer) -> Band {
+        let layer = CAGradientLayer::layer();
+        layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        round_continuous(&layer);
+        layer.setHidden(true);
+        let mask = CALayer::layer();
+        mask.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        round_continuous(&mask);
+        mask.setBorderColor(Some(&CGColor::new_generic_gray(0.0, 1.0)));
+        parent.addSublayer(&layer);
+        Band { layer, mask, width: Cell::new(0.0), gradient: Cell::new(None) }
+    }
+
+    pub fn set_width(&self, width: f64) {
+        self.width.set(width);
+        self.layer.setBorderWidth(width);
+        self.mask.setBorderWidth(width);
+    }
+
+    /// Lays the band around a window of `size` at `corner`, the window at its parent's origin.
+    pub fn place(&self, size: TileSize, corner: f64) {
+        let (rect, outer) = shape::band(size, corner, self.width.get());
+        self.layer.setFrame(rect.to_cg());
+        self.layer.setCornerRadius(outer);
+        self.mask.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), rect.size.to_cg()));
+        self.mask.setCornerRadius(outer);
+        self.lay_axis(rect.size);
+    }
+
+    /// Shows the band in `paint`, or hides it with none.
+    pub fn paint(&self, paint: Option<Paint>) {
+        let shown = paint.filter(|_| self.width.get() > 0.0);
+        match shown {
+            Some(Paint::Solid(colour)) => {
+                self.layer.setBorderColor(Some(&srgb(colour)));
+                // SAFETY: no colours draws no gradient, and no mask leaves the border whole.
+                unsafe {
+                    self.layer.setColors(None);
+                    self.layer.setMask(None);
+                }
+                self.gradient.set(None);
+            }
+            Some(Paint::Gradient(gradient)) => {
+                self.layer.setBorderColor(None);
+                let (colours, locations) = drawn(&gradient);
+                self.layer.setLocations(Some(&locations));
+                // SAFETY: an array of `CGColor`s, which is what `colors` takes, and a mask layer the
+                // band owns and hangs on no other.
+                unsafe {
+                    self.layer.setColors(Some(&colours));
+                    self.layer.setMask(Some(&self.mask));
+                }
+                if self.gradient.get().is_some_and(|was| was.angle != gradient.angle) {
+                    remove_under(&self.layer, &[BAND_START_KEY, BAND_END_KEY]);
+                }
+                self.gradient.set(Some(gradient));
+                self.lay_axis(TileSize::from_cg(self.layer.bounds().size));
+            }
+            None => {}
+        }
+        self.layer.setHidden(shown.is_none());
+    }
+
+    /// Lays the gradient's axis over a band of `size`, if a gradient fills it.
+    fn lay_axis(&self, size: TileSize) {
+        if let Some(gradient) = self.gradient.get() {
+            let axis = gradient.axis(size);
+            self.layer.setStartPoint(axis.start.to_cg());
+            self.layer.setEndPoint(axis.end.to_cg());
+        }
+    }
+
+    /// Carries the band through `resize`: its bounds and its mask's at every size, their corner while
+    /// it changes, and a gradient's axis while it moves with the size. Its position, the window's
+    /// corner less its width, holds. A gradient painted mid-resize at another angle keeps the axis
+    /// of the size the band is laid at until the next.
+    fn install_resize(&self, resize: &impl Resize, corner: impl Fn(TileSize) -> f64) {
+        let width = self.width.get();
+        let band = |size: TileSize| shape::band(size, corner(size), width);
+        let bounds = resize.rect("bounds", |size| CGRect::new(CGPoint::new(0.0, 0.0), band(size).0.size.to_cg()));
+        let outer = |size: TileSize| band(size).1;
+        let rounds = resize.changes(outer).then(|| resize.number("cornerRadius", outer));
+        for layer in [&**self.layer, &self.mask] {
+            add_under(layer, &bounds, BAND_SIZE_KEY);
+            match &rounds {
+                Some(rounding) => add_under(layer, rounding, BAND_CORNER_KEY),
+                None => remove_under(layer, &[BAND_CORNER_KEY]),
+            }
+        }
+        match self.gradient.get().filter(Gradient::follows_size) {
+            Some(gradient) => {
+                let axis = |size: TileSize| gradient.axis(band(size).0.size);
+                add_under(&self.layer, &resize.point("startPoint", |size| axis(size).start.to_cg()), BAND_START_KEY);
+                add_under(&self.layer, &resize.point("endPoint", |size| axis(size).end.to_cg()), BAND_END_KEY);
+            }
+            None => remove_under(&self.layer, &[BAND_START_KEY, BAND_END_KEY]),
+        }
+    }
+
+    fn remove_resize(&self) {
+        remove_under(&self.layer, &[BAND_SIZE_KEY, BAND_CORNER_KEY, BAND_START_KEY, BAND_END_KEY]);
+        remove_under(&self.mask, &[BAND_SIZE_KEY, BAND_CORNER_KEY]);
+    }
+
+    /// Takes every animation off the band and its mask.
+    fn remove_animations(&self) {
+        self.layer.removeAllAnimations();
+        self.mask.removeAllAnimations();
+    }
+}
+
+fn srgb(Colour { r, g, b, a }: Colour) -> CFRetained<CGColor> { CGColor::new_srgb(r.into(), g.into(), b.into(), a.into()) }
+
+/// How many gradients' stops are kept, so a band painted again, or another band painted alike,
+/// is not given them afresh: placing them takes milliseconds.
+const DRAWN_KEPT: usize = 16;
+
+thread_local! {
+    static DRAWN: RefCell<Vec<(Gradient, Retained<NSArray>, Retained<NSArray<NSNumber>>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `gradient`'s stops as Core Animation takes them, its colours and their locations.
+fn drawn(gradient: &Gradient) -> (Retained<NSArray>, Retained<NSArray<NSNumber>>) {
+    DRAWN.with_borrow_mut(|kept| {
+        if let Some((_, colours, locations)) = kept.iter().find(|(kept, ..)| kept == gradient) {
+            return (colours.clone(), locations.clone());
+        }
+        let stops = gradient.stops();
+        let colours: Vec<Retained<AnyObject>> = stops.iter().map(|stop| Retained::from(&**srgb(stop.colour))).collect();
+        let locations: Vec<Retained<NSNumber>> = stops.iter().map(|stop| NSNumber::numberWithDouble(stop.location)).collect();
+        let drawn = (NSArray::from_retained_slice(&colours), NSArray::from_retained_slice(&locations));
+        if kept.len() == DRAWN_KEPT {
+            kept.remove(0);
+        }
+        kept.push((*gradient, drawn.0.clone(), drawn.1.clone()));
+        drawn
+    })
 }
 
 /// Rounds `layer`'s corner on the window's own curve, continuous, the one every path here follows.
@@ -298,6 +513,7 @@ mod tests {
     use objc2_quartz_core::{CABasicAnimation, kCACornerCurveCircular};
 
     use super::*;
+    use crate::decorations::domain::style::Ring;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -511,7 +727,7 @@ mod tests {
         let alpha =
             |layers: &DecorationLayers| CGColor::alpha(layers.hairline.borderColor().as_deref());
         for focused in [true, false] {
-            let style = Style::of(focused);
+            let style = Style::of(focused, Ring::None, &Decoration::default());
             layers.show(style);
             assert_eq!(alpha(&layers), style.light_alpha);
             assert_eq!(layers.shadow.shadowOpacity(), style.shadow.opacity);
@@ -523,21 +739,127 @@ mod tests {
         }
     }
 
-    /// A companion's tile wears neither, and a pooled tile handed to a window wears both again.
     #[test]
-    fn a_hidden_tile_hides_its_caster_and_its_hairline() {
-        let layers = DecorationLayers::new(&CALayer::layer());
-        layers.set_hidden(true);
-        assert!(layers.frame_layers().iter().all(|layer| layer.isHidden()));
-        layers.set_hidden(false);
-        assert!(layers.frame_layers().iter().all(|layer| !layer.isHidden()));
+    fn the_outline_is_drawn_at_the_displays_scale() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.wear(&Decoration::default(), 2.0);
+        assert_eq!(layers.outline.contentsScale(), 2.0);
+    }
+
+    const RING: crate::decorations::domain::style::Band = crate::decorations::domain::style::Band {
+        width: 4.0,
+        active: Paint::Solid(Colour { r: 0.5, g: 0.78, b: 1.0, a: 1.0 }),
+        inactive: Paint::Solid(Colour { r: 0.31, g: 0.31, b: 0.31, a: 1.0 }),
+        urgent: Paint::Solid(Colour { r: 0.61, g: 0.0, b: 0.0, a: 1.0 }),
+    };
+
+    const BORDER: crate::decorations::domain::style::Band = crate::decorations::domain::style::Band {
+        width: 4.0,
+        active: Paint::Solid(Colour { r: 1.0, g: 0.78, b: 0.5, a: 1.0 }),
+        inactive: Paint::Solid(Colour { r: 0.31, g: 0.31, b: 0.31, a: 1.0 }),
+        urgent: Paint::Solid(Colour { r: 0.61, g: 0.0, b: 0.0, a: 1.0 }),
+    };
+
+    fn ringed() -> Decoration { Decoration { ring: Some(RING), ..Decoration::default() } }
+
+    /// Whether `layer` shows in `paint`'s colour, its border drawn in it and no gradient over it.
+    fn painted(layer: &CAGradientLayer, paint: Paint) -> bool {
+        let Paint::Solid(c) = paint else { panic!("a colour") };
+        !layer.isHidden() && layer.colors().is_none() && CGColor::equal_to_color(layer.borderColor().as_deref(), Some(&srgb(c)))
+    }
+
+    /// The hairline's children, first drawn first.
+    fn children(layers: &DecorationLayers) -> Vec<*const CALayer> {
+        // SAFETY: a read of the layer's own sublayers, which nothing else mutates.
+        let sublayers = unsafe { layers.hairline.sublayers() }.expect("the outline and the bands");
+        sublayers.iter().map(|layer| Retained::as_ptr(&layer)).collect()
     }
 
     #[test]
-    fn the_outline_is_drawn_at_the_displays_scale() {
+    fn the_focus_ring_is_in_front_of_the_hairline_and_the_outline() {
         let layers = DecorationLayers::new(&CALayer::layer());
-        layers.set_scale(2.0);
-        assert_eq!(layers.outline.contentsScale(), 2.0);
+        assert_eq!(parent(&layers.bands.ring.layer), Some(&*layers.hairline as *const CALayer));
+        let outline: &CALayer = &layers.outline;
+        assert_eq!(children(&layers)[..2], [outline as *const CALayer, &**layers.bands.ring.layer as *const CALayer], "drawn after the outline");
+        layers.stack(0.0);
+        assert!(layers.hairline.zPosition() > 0.0, "and with the hairline, in front of the picture");
+    }
+
+    #[test]
+    fn the_border_is_drawn_in_front_of_the_ring() {
+        let layers = DecorationLayers::new(&CALayer::layer());
+        assert_eq!(parent(&layers.bands.border.layer), Some(&*layers.hairline as *const CALayer));
+        let order = children(&layers);
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[2], &**layers.bands.border.layer as *const CALayer, "after the outline and the ring");
+    }
+
+    #[test]
+    fn the_border_is_worn_in_the_paint_focus_gives_it_with_the_ring_outside_it() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(16.0);
+        let both = Decoration { border: Some(BORDER), ..ringed() };
+        layers.wear(&both, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        let (ring, border) = (&layers.bands.ring.layer, &layers.bands.border.layer);
+        assert_eq!(border.frame(), rect(-4.0, -4.0, 867.0, 1089.0));
+        assert_eq!((border.borderWidth(), border.cornerRadius()), (4.0, 20.0));
+        assert_eq!(ring.frame(), rect(-8.0, -8.0, 875.0, 1097.0), "out past the border");
+        assert_eq!((ring.borderWidth(), ring.cornerRadius()), (8.0, 24.0), "and in under it to the window");
+        layers.show(Style::of(true, Ring::Active, &both));
+        assert!(painted(border, BORDER.active) && painted(ring, RING.active));
+        layers.show(Style::of(false, Ring::None, &both));
+        assert!(painted(border, BORDER.inactive), "worn without the ring");
+        assert!(ring.isHidden());
+    }
+
+    #[test]
+    fn the_ring_is_shown_only_in_the_paint_its_style_has() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.wear(&ringed(), 2.0);
+        layers.show(Style::of(true, Ring::Active, &ringed()));
+        let ring = layers.bands.ring.layer.clone();
+        assert!(painted(&ring, RING.active));
+        assert!(layers.bands.border.layer.isHidden(), "borders off");
+        layers.show(Style::of(false, Ring::Inactive, &ringed()));
+        assert!(painted(&ring, RING.inactive));
+        layers.show(Style::of(true, Ring::None, &ringed()));
+        assert!(ring.isHidden(), "not its workspace's active window");
+        layers.wear(&Decoration::default(), 2.0);
+        layers.show(Style::of(true, Ring::Active, &Decoration::default()));
+        assert!(ring.isHidden(), "rings off");
+    }
+
+    #[test]
+    fn every_band_rounds_on_the_continuous_curve_at_its_outset() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(16.0);
+        layers.wear(&Decoration { ring: Some(crate::decorations::domain::style::Band { width: 1.3, ..RING }), ..Decoration::default() }, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        let ring = &layers.bands.ring.layer;
+        assert_eq!(ring.borderWidth(), 1.5, "whole device pixels");
+        assert_eq!(ring.frame(), rect(-1.5, -1.5, 862.0, 1084.0));
+        assert_eq!(ring.cornerRadius(), 17.5);
+        // SAFETY: Core Animation's constant string.
+        assert_eq!(&*ring.cornerCurve(), unsafe { kCACornerCurveContinuous });
+        layers.place(TileSize::new(12.0, 400.0));
+        assert_eq!(ring.cornerRadius(), 7.5, "the window's clamped corner, out by the width");
+    }
+
+    /// A window rule's corner is the bands' alone: the hairline, its outline and the shadow are what
+    /// macOS draws at rest, at the window's own corner, and keep it.
+    #[test]
+    fn a_rule_radius_rounds_the_bands_and_leaves_the_hairline_at_the_windows_corner() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(16.0);
+        let border = crate::decorations::domain::style::Band { width: 4.0, ..RING };
+        layers.wear(&Decoration { ring: Some(RING), border: Some(border), radius: Some(8.0), urgent: false }, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        assert_eq!(layers.hairline.cornerRadius(), 16.0, "the window server's");
+        assert_eq!(layers.bands.border.layer.cornerRadius(), 12.0, "the rule's, out by the border");
+        layers.wear(&Decoration { ring: Some(RING), border: Some(border), ..Decoration::default() }, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        assert_eq!(layers.bands.border.layer.cornerRadius(), 20.0, "a pooled tile worn with no rule's: the server's");
     }
 
     #[test]
@@ -556,6 +878,10 @@ mod tests {
             &layers.shadow_mask,
             &layers.hairline,
             &layers.outline,
+            &layers.bands.ring.layer,
+            &layers.bands.border.layer,
+            &layers.bands.ring.mask,
+            &layers.bands.border.mask,
         ] {
             assert!(installed(layer).is_empty());
         }
@@ -590,6 +916,14 @@ mod tests {
             installed(&layers.outline),
             pairs([("rini.tile.outline.path", "path")])
         );
+        for band in [&layers.bands.ring, &layers.bands.border] {
+            for layer in [&**band.layer, &band.mask] {
+                assert_eq!(
+                    installed(layer),
+                    pairs([("rini.tile.band.corner", "cornerRadius"), ("rini.tile.band.size", "bounds")])
+                );
+            }
+        }
 
         layers.install_resize(&Between(
             TileSize::new(1200.0, 1081.0),
@@ -600,6 +934,11 @@ mod tests {
             installed(&layers.outline),
             pairs([("rini.tile.outline.path", "path")])
         );
+        for band in [&layers.bands.ring, &layers.bands.border] {
+            for layer in [&**band.layer, &band.mask] {
+                assert_eq!(installed(layer), pairs([("rini.tile.band.size", "bounds")]));
+            }
+        }
     }
 
     /// Only the resize's own keys go: what the overlay installs on the frame layers stays.
@@ -619,6 +958,102 @@ mod tests {
         }
         assert!(installed(&layers.shadow_mask).is_empty());
         assert!(installed(&layers.outline).is_empty());
+        for band in [&layers.bands.ring, &layers.bands.border] {
+            assert!(installed(&band.layer).is_empty() && installed(&band.mask).is_empty());
+        }
+    }
+
+    fn sunset(angle: f64) -> Paint {
+        Paint::Gradient(Gradient {
+            from: Colour::rgb(0x000000),
+            to: Colour::rgb(0xffffff),
+            angle,
+            space: crate::decorations::domain::paint::ColourSpace::Oklch(crate::decorations::domain::paint::Hue::Longer),
+        })
+    }
+
+    #[test]
+    fn a_gradient_fills_the_band_through_a_border_of_its_shape() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        layers.radius = Some(16.0);
+        let graded = Decoration { ring: Some(crate::decorations::domain::style::Band { active: sunset(45.0), ..RING }), ..Decoration::default() };
+        layers.wear(&graded, 2.0);
+        layers.place(TileSize::new(859.0, 1081.0));
+        layers.show(Style::of(true, Ring::Active, &graded));
+        let ring = &layers.bands.ring;
+        let Paint::Gradient(gradient) = sunset(45.0) else { unreachable!() };
+        assert_eq!(ring.layer.colors().map(|colours| colours.count()), Some(gradient.stops().len()));
+        assert_eq!(ring.layer.locations().map(|at| at.count()), Some(gradient.stops().len()));
+        assert!(ring.layer.borderColor().is_none(), "no border drawn over it");
+        let mask = ring.layer.mask().expect("masked to the band");
+        assert_eq!(Retained::as_ptr(&mask), Retained::as_ptr(&ring.mask));
+        assert_eq!((mask.frame(), mask.borderWidth(), mask.cornerRadius()), (rect(0.0, 0.0, 867.0, 1089.0), 4.0, 20.0), "the band's own shape");
+        // SAFETY: Core Animation's constant string.
+        assert_eq!(&*mask.cornerCurve(), unsafe { kCACornerCurveContinuous });
+        let axis = gradient.axis(TileSize::new(867.0, 1089.0));
+        assert_eq!((ring.layer.startPoint(), ring.layer.endPoint()), (axis.start.to_cg(), axis.end.to_cg()));
+        layers.show(Style::of(false, Ring::Inactive, &graded));
+        assert!(painted(&ring.layer, RING.inactive), "a colour drawn as a border again");
+        assert!(ring.layer.mask().is_none());
+    }
+
+    /// RGBA of `layer` rendered at 2x into a bitmap of `size`, top row first.
+    fn rendered_colour(layer: &CALayer, size: TileSize) -> Vec<[u8; 4]> {
+        use objc2_core_graphics::{CGBitmapContextCreate, CGBitmapContextGetData, CGColorSpace, CGContext, CGImageAlphaInfo};
+        let (w, h) = ((size.width * 2.0) as usize, (size.height * 2.0) as usize);
+        let space = CGColorSpace::new_device_rgb().unwrap();
+        // SAFETY: a fresh context that owns its bytes.
+        let ctx = unsafe { CGBitmapContextCreate(std::ptr::null_mut(), w, h, 8, w * 4, Some(&space), CGImageAlphaInfo::PremultipliedLast.0) }.unwrap();
+        CGContext::translate_ctm(Some(&ctx), 0.0, h as f64);
+        CGContext::scale_ctm(Some(&ctx), 2.0, -2.0);
+        layer.setGeometryFlipped(true);
+        layer.renderInContext(&ctx);
+        let data = CGBitmapContextGetData(Some(&ctx)) as *const u8;
+        // SAFETY: the context owns `w * h * 4` bytes and outlives this copy.
+        unsafe { std::slice::from_raw_parts(data, w * h * 4) }.chunks(4).map(|p| [p[0], p[1], p[2], p[3]]).collect()
+    }
+
+    /// Core Animation draws a gradient's lines across at right angles to its axis in unit space; the
+    /// axis `Gradient::axis` lays makes them right angles in points, as niri's are.
+    #[test]
+    fn a_gradient_is_drawn_at_niris_angle_in_points() {
+        let size = TileSize::new(220.0, 120.0);
+        let root = CALayer::layer();
+        root.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
+        let holder = CALayer::layer();
+        holder.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        holder.setFrame(rect(10.0, 10.0, 200.0, 100.0));
+        root.addSublayer(&holder);
+        let band = Band::new(&holder);
+        band.set_width(10.0);
+        band.place(TileSize::new(200.0, 100.0), 0.0);
+        let Paint::Gradient(grey) = sunset(45.0) else { unreachable!() };
+        band.paint(Some(Paint::Gradient(Gradient { space: crate::decorations::domain::paint::ColourSpace::Srgb, ..grey })));
+        let pixels = rendered_colour(&root, size);
+        let at = |x: f64, y: f64| pixels[(y * 2.0) as usize * 440 + (x * 2.0) as usize];
+        let (top, right) = (at(115.0, 5.0), at(215.0, 105.0));
+        assert!(top[0].abs_diff(right[0]) <= 2, "one line across at 45 degrees in points: {top:?} and {right:?}");
+        assert!(at(5.0, 115.0)[0] < 10 && at(215.0, 5.0)[0] > 245, "black at the bottom left, white at the top right");
+        assert_eq!(at(110.0, 60.0)[3], 0, "nothing drawn inside the band");
+    }
+
+    #[test]
+    fn a_gradient_at_an_angle_rides_its_axis_through_a_resize() {
+        let mut layers = DecorationLayers::new(&CALayer::layer());
+        let graded = |angle| Decoration { border: Some(crate::decorations::domain::style::Band { active: sunset(angle), ..RING }), ..Decoration::default() };
+        let resize = Between(TileSize::new(1200.0, 1081.0), TileSize::new(859.0, 1081.0));
+        layers.wear(&graded(45.0), 2.0);
+        layers.show(Style::of(true, Ring::None, &graded(45.0)));
+        layers.install_resize(&resize);
+        let border = &layers.bands.border.layer;
+        assert_eq!(
+            installed(border),
+            pairs([("rini.tile.band.end", "endPoint"), ("rini.tile.band.size", "bounds"), ("rini.tile.band.start", "startPoint")])
+        );
+        layers.show(Style::of(true, Ring::None, &graded(90.0)));
+        assert_eq!(installed(border), pairs([("rini.tile.band.size", "bounds")]), "turned to another angle mid-resize, the axis holds");
+        layers.install_resize(&resize);
+        assert_eq!(installed(border), pairs([("rini.tile.band.size", "bounds")]), "a right angle's axis is the same at every size");
     }
 
     #[test]

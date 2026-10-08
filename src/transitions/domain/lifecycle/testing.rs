@@ -22,7 +22,7 @@ pub(in crate::transitions) const DISPLAY: ScreenRect =
 pub(in crate::transitions) const PLAYS: Duration = Duration::from_millis(350);
 
 pub(in crate::transitions) fn tile(window: WindowId, start: ScreenRect, end: ScreenRect) -> TileSummary {
-    TileSummary { window, start, end, floating: false, companion: false }
+    TileSummary { window, start, end, floating: false }
 }
 
 /// The strip scrolling one column left: window 1 leaves on the right, window 2 comes in from the
@@ -38,7 +38,7 @@ pub(in crate::transitions) fn pan() -> StageSummary {
         tiles: vec![
             tile(w(1), a_start, a_end),
             tile(w(2), b_start, b_end),
-            TileSummary { window: w(9), start: floating, end: floating, floating: true, companion: false },
+            TileSummary { window: w(9), start: floating, end: floating, floating: true },
         ],
         final_frames: vec![(w(1), a_end), (w(2), b_end)],
         focus: Some(w(2)),

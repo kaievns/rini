@@ -8,6 +8,7 @@ use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayRect, ScreenRect, ScreenSize};
 use rini_geometry::{SameAs, to_overlay_space};
 
+use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::coverage::outgrows;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
@@ -18,6 +19,7 @@ pub(in crate::transitions) struct PendingEntrance {
     /// Destination.
     pub(in crate::transitions) to: OverlayRect,
     pub(in crate::transitions) floating: bool,
+    pub(in crate::transitions) worn: Worn,
 }
 
 /// What became of a tile offered to an animation in flight.
@@ -173,6 +175,7 @@ mod tests {
     fn a_reserved_entrance_is_retargeted_into_overlay_space() {
         let display = rect(1000., 500., 1000., 800.);
         let mut entrances = vec![PendingEntrance {
+            worn: Default::default(),
             window: window(1),
             to: rect(0., 0., 100., 100.),
             floating: false,
@@ -197,6 +200,7 @@ mod tests {
         let display = rect(0., 0., 1000., 800.);
         let to: OverlayRect = rect(10., 10., 100., 100.);
         let mut entrances = vec![PendingEntrance {
+            worn: Default::default(),
             window: window(1),
             to,
             floating: false,
@@ -214,6 +218,7 @@ mod tests {
         let display = rect(0., 0., 1000., 800.);
         let frame = rect(10., 10., 100., 100.);
         let mut entrances = vec![PendingEntrance {
+            worn: Default::default(),
             window: window(1),
             to: to_overlay_space(frame, display),
             floating: false,
@@ -417,11 +422,13 @@ mod tests {
             );
             let pan = ScreenVector::new(-574.0, 0.0);
             let newcomer = PendingEntrance {
+                worn: Default::default(),
                 window: window(51462),
                 to: to_overlay_space(slot, EXTERNAL),
                 floating: false,
             };
             let untouched = PendingEntrance {
+                worn: Default::default(),
                 window: window(51463),
                 to: to_overlay_space(rect(2000.0, 32.0, 400.0, 1081.0), EXTERNAL),
                 floating: false,

@@ -29,6 +29,7 @@ impl AnimationManager {
     ) -> Vec<PassWindow> {
         let engine = &reactor.layout_manager.layout_engine;
         let windows = &reactor.state.windows;
+        let rings = reactor.layout_rings();
         // An unassigned window is not on the active workspace: it must not fly.
         let active_ws = engine.active_workspace(space);
         let in_active = |wid| {
@@ -64,6 +65,7 @@ impl AnimationManager {
                     in_active_workspace: in_active(wid),
                     floating: engine.is_window_floating(wid),
                     app_alive,
+                    worn: reactor.worn(wid, &rings),
                 })
             })
             .collect()

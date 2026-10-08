@@ -504,7 +504,8 @@ unsafe extern "C" {
     ) -> CGError;
 
     pub fn SLSSetWindowLevel(cid: cid_t, wid: u32, level: c_int) -> CGError;
-    pub fn SLSOrderWindow(cid: cid_t, wid: u32, order: c_int, relative_to: u32) -> CGError;
+    /// Only for a window of the caller's own connection.
+    pub fn SLSSetWindowSubLevel(cid: cid_t, wid: u32, sub_level: c_int) -> CGError;
 }
 
 /// `SLSWindowIteratorGetCornerRadii`: the current window's four corner radii in points, a CFArray of

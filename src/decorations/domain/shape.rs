@@ -1,9 +1,11 @@
 //! Where a window's decorations lie and how round they are, in its tile's own points: the corner
-//! radius, the hairline's outline, the shadow's silhouette and the mask it is cut to.
+//! radius, the hairline's outline, the shadow's silhouette and the mask it is cut to, and the bands
+//! drawn outside the window, the border and the ring; and where the bands at rest are drawn on their
+//! display.
 
-use rini_geometry::space::{Point, Size, Tile, TileRect, TileSize};
+use rini_geometry::space::{Point, ScreenRect, Size, Tile, TileRect, TileSize};
 
-use crate::decorations::domain::style::OUTLINE_PT;
+use crate::decorations::domain::style::{Decoration, OUTLINE_PT};
 
 /// The corner radius of a window the window server reports none for, in points: the commonest a
 /// standard window reports. See "The corner, measured" in `src/decorations/docs/README.md`.
@@ -55,6 +57,57 @@ pub fn silhouette(size: TileSize, corner: f64) -> (TileRect, f64) {
 pub fn shadow_mask(size: TileSize, corner: f64) -> (TileRect, TileRect, f64) {
     let (hole, corner) = silhouette(size, corner);
     (shadow_mask_frame(hole.size), hole, corner)
+}
+
+/// A band's width in points as it is drawn on a display of `scale`, as niri rounds one
+/// (`niri:src/utils/mod.rs:185-191`): whole device pixels, never below one, and no band at all left
+/// at none.
+pub fn device_width(width: f64, scale: f64) -> f64 {
+    if width <= 0.0 {
+        return 0.0;
+    }
+    (width * scale).max(1.0).round() / scale
+}
+
+/// How wide each band a window's decoration has is laid, in points of a display of `scale`, 0 for
+/// one it has none of: the border, and the ring, which reaches in under the border to the window's
+/// edge, so the two share no seam and the ring shows past the border by its own width.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Widths {
+    pub border: f64,
+    pub ring: f64,
+}
+
+pub fn widths(decoration: &Decoration, scale: f64) -> Widths {
+    let border = decoration.border.map_or(0.0, |band| device_width(band.width, scale));
+    let ring = decoration.ring.map_or(0.0, |band| border + device_width(band.width, scale));
+    Widths { border, ring }
+}
+
+/// How far a window's decoration reaches outside it on a display of `scale`: past its ring while it
+/// wears the ring (`ringed`), else past its border.
+pub fn outset(decoration: &Decoration, ringed: bool, scale: f64) -> f64 {
+    let Widths { border, ring } = widths(decoration, scale);
+    if ringed { ring.max(border) } else { border }
+}
+
+/// The band `width` wide outside a window of `size` with corners of `corner`: its outer rect, and
+/// that rect's corner. The inner contour is the window's own corner, a border's inner edge being its
+/// outer one `width` in, so the outer corner is `corner + width`; a square window keeps a square
+/// band, as niri's `expanded_by` keeps 0 at 0; and the corner is clamped to half the band's shorter
+/// side, since Core Animation draws one past it as given.
+pub fn band(size: TileSize, corner: f64, width: f64) -> (TileRect, f64) {
+    let size = TileSize::new(size.width.max(0.0) + 2.0 * width, size.height.max(0.0) + 2.0 * width);
+    let rect = TileRect::new(Point::new(-width, -width), size);
+    let outer = if corner > 0.0 { corner + width } else { 0.0 };
+    (rect, outer.min(size.width.min(size.height) / 2.0))
+}
+
+/// The window a band at rest is drawn in around a window at `frame` on `display`: the band's outer
+/// rect cut to the display, so a window at the display's edge draws nothing onto the next one.
+/// `None` when nothing of it is on the display.
+pub fn rest_frame(frame: ScreenRect, width: f64, display: ScreenRect) -> Option<ScreenRect> {
+    frame.inflate(width, width).intersection(&display).filter(|cut| !cut.is_empty())
 }
 
 /// How far along each side a continuous corner reaches, in radii: Core Animation's
@@ -118,6 +171,64 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> TileRect {
         TileRect::new(Point::new(x, y), Size::new(w, h))
+    }
+
+    fn on_screen(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        ScreenRect::new(Point::new(x, y), Size::new(w, h))
+    }
+
+    #[test]
+    fn a_rest_frame_is_cut_to_its_display() {
+        let display = on_screen(0.0, 0.0, 1728.0, 1117.0);
+        assert_eq!(rest_frame(on_screen(3.0, 35.0, 859.0, 1079.0), 4.0, display), Some(on_screen(0.0, 31.0, 866.0, 1086.0)));
+        assert_eq!(rest_frame(on_screen(300.0, 300.0, 400.0, 300.0), 4.0, display), Some(on_screen(296.0, 296.0, 408.0, 308.0)));
+        assert_eq!(rest_frame(on_screen(1800.0, 35.0, 859.0, 1079.0), 4.0, display), None, "on the next display");
+    }
+
+    #[test]
+    fn a_width_rounds_to_whole_device_pixels_and_never_below_one_unless_zero() {
+        assert_eq!(device_width(4.0, 2.0), 4.0);
+        assert_eq!(device_width(1.3, 2.0), 1.5);
+        assert_eq!(device_width(0.2, 2.0), 0.5, "one device pixel at least");
+        assert_eq!(device_width(0.2, 1.0), 1.0);
+        assert_eq!(device_width(0.0, 2.0), 0.0, "none stays none");
+    }
+
+    #[test]
+    fn the_ring_band_rounds_r_plus_its_width_and_square_stays_square() {
+        assert_eq!(band(TileSize::new(859.0, 1081.0), 16.0, 4.0), (rect(-4.0, -4.0, 867.0, 1089.0), 20.0));
+        assert_eq!(band(TileSize::new(859.0, 1081.0), 0.0, 4.0).1, 0.0);
+    }
+
+    #[test]
+    fn the_border_band_rounds_r_plus_its_width() {
+        assert_eq!(band(TileSize::new(859.0, 1081.0), 16.0, 4.0), (rect(-4.0, -4.0, 867.0, 1089.0), 20.0));
+        assert_eq!(band(TileSize::new(859.0, 1081.0), 26.0, 1.5), (rect(-1.5, -1.5, 862.0, 1084.0), 27.5));
+    }
+
+    #[test]
+    fn with_a_border_on_the_ring_reaches_under_it_to_the_window() {
+        use crate::decorations::domain::paint::{Colour, Paint};
+        use crate::decorations::domain::style::Band;
+        let band = |width| Some(Band { width, active: Paint::Solid(Colour::rgb(0x7fc8ff)), inactive: Paint::Solid(Colour::rgb(0x505050)), urgent: Paint::Solid(Colour::rgb(0x9b0000)) });
+        let both = Decoration { ring: band(2.0), border: band(4.0), ..Decoration::default() };
+        assert_eq!(widths(&both, 2.0), Widths { border: 4.0, ring: 6.0 });
+        let (ring, corner) = band_of(widths(&both, 2.0).ring);
+        assert_eq!((ring, corner), (rect(-6.0, -6.0, 871.0, 1093.0), 22.0), "outside the border, its inner edge the window's");
+        assert_eq!(outset(&both, true, 2.0), 6.0);
+        assert_eq!(outset(&both, false, 2.0), 4.0, "the ring not worn");
+        let ring_only = Decoration { ring: band(2.0), ..Decoration::default() };
+        assert_eq!(widths(&ring_only, 2.0), Widths { border: 0.0, ring: 2.0 });
+        assert_eq!(outset(&ring_only, false, 2.0), 0.0);
+        assert_eq!(outset(&Decoration { border: band(1.3), ..Decoration::default() }, true, 2.0), 1.5, "whole device pixels");
+    }
+
+    fn band_of(width: f64) -> (TileRect, f64) { band(TileSize::new(859.0, 1081.0), 16.0, width) }
+
+    #[test]
+    fn the_ring_bands_radius_is_clamped_to_half_its_shorter_side() {
+        assert_eq!(band(TileSize::new(12.0, 400.0), 6.0, 4.0), (rect(-4.0, -4.0, 20.0, 408.0), 10.0));
+        assert_eq!(band(TileSize::new(2.0, 400.0), 1.0, 4.0).1, 5.0);
     }
 
     #[test]

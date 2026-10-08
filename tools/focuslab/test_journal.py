@@ -158,6 +158,9 @@ class Handover(unittest.TestCase):
         self.assertEqual([(row["interior"], row["edge_in"], row["edge_out"]) for row in rows],
                          [(0.26, 0.37, 1.56), (0.79, 1.08, 2.26)])
 
+    def test_the_band_is_read_where_a_window_wore_one_and_none_where_it_did_not(self):
+        self.assertEqual([row["band"] for row in journal.handovers(self.bursts)], [None, 0.42])
+
     def test_each_held_lift_says_whether_it_hid_on_its_picture_and_how_long_it_held(self):
         self.assertEqual([(row["measured"], row["waited"]) for row in journal.holds(self.bursts)],
                          [(True, 31.4), (False, 60.0)])

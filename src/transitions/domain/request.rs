@@ -9,6 +9,7 @@ use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{ScreenRect, SurfaceRect};
 
 use crate::animation::domain::motion::surface::SurfaceGeometry;
+use crate::decorations::domain::style::Worn;
 
 /// When the reactor took the event a request answers, and what it was: where the request's journal
 /// starts.
@@ -29,6 +30,8 @@ pub struct AnimationRequest {
     pub to: ScreenRect,
     /// Off the strip, and so in the other z-order group.
     pub floating: bool,
+    /// What the window wears, carried to its tile unread.
+    pub worn: Worn,
 }
 
 /// One window of a strip movement. `frame` is where it lands; the viewport moves, and only a window
@@ -46,6 +49,8 @@ pub struct SurfaceWindow {
     /// in the slot it held before the move, and a window that was away from where the travel draws
     /// it, where it was (`strip_move::start_where_standing`).
     pub from: Option<SurfaceRect>,
+    /// What the window wears, carried to its tile unread.
+    pub worn: Worn,
 }
 
 impl SurfaceGeometry for SurfaceWindow {

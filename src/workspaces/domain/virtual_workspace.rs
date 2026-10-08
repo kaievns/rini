@@ -1023,6 +1023,7 @@ impl WorkspaceStore {
                 ax_role,
                 ax_subrole,
                 is_modal: false,
+                state: crate::windows::domain::rules::RuleState::default(),
             });
         self.apply_app_rule_decision(window_store, window_id, space, decision)
     }

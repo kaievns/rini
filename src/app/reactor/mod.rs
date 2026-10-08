@@ -7,6 +7,7 @@
 mod animation;
 mod bar;
 mod commands;
+mod decorations;
 mod diagnostics;
 mod events;
 mod managers;
@@ -334,6 +335,9 @@ pub enum Event {
         requests_seen: u64,
     },
 
+    /// The applications asking for attention changed.
+    AttentionChanged(crate::windows::domain::attention::Attention),
+
     #[serde(skip)]
     Query(query::QueryRequest),
 
@@ -430,6 +434,7 @@ impl From<crate::windows::event::Event> for Event {
             }
             W::RaiseTimeout { sequence_id } => Event::RaiseTimeout { sequence_id },
             W::RaisesIdle { requests_seen } => Event::RaisesIdle { requests_seen },
+            W::AttentionChanged(attention) => Event::AttentionChanged(attention),
         }
     }
 }
@@ -499,6 +504,12 @@ pub struct Reactor {
     /// tests — the switch works without it, which is what keeps the popup cosmetic.
     switcher_tx: Option<crate::switcher::platform::actor::Sender>,
     bar: bar::BarFeed,
+    /// The rings as rini's layout had them when the last batch of events ended: what each window wore
+    /// before a pass this batch makes.
+    rings_drawn: crate::decorations::domain::style::Rings,
+    /// The applications asking for attention, whose windows are drawn urgent.
+    attention: crate::windows::domain::attention::Attention,
+    rest: decorations::RestFeed,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
@@ -586,6 +597,7 @@ impl Reactor {
         pictures: Option<crate::pictures::platform::service::Pictures>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
+        rest_tx: Option<crate::decorations::platform::rest::Sender>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -607,6 +619,7 @@ impl Reactor {
         reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
+        reactor.rest.tx = rest_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());
@@ -641,6 +654,9 @@ impl Reactor {
             live_switch: None,
             switcher_tx: None,
             bar: bar::BarFeed::default(),
+            rings_drawn: Default::default(),
+            attention: Default::default(),
+            rest: decorations::RestFeed::default(),
             config: config.clone(),
             one_space,
             app_manager: managers::AppManager::new(),
@@ -1135,13 +1151,19 @@ impl Reactor {
         }
     }
 
-    /// One batch of the loop's events, then what the batch changed on the bar.
+    /// One batch of the loop's events, then the strip laid out again if a rule now gives a window
+    /// another border, what the batch changed on the bar and at rest, and the rings it left.
     fn handle_batch(&mut self, batch: impl IntoIterator<Item = (tracing::Span, Event)>) {
         for (span, event) in batch {
             let _guard = span.enter();
             self.handle_loop_event(event);
         }
+        if self.refresh_borders() {
+            self.update_layout_or_warn(false, false, None);
+        }
         self.publish_bar();
+        self.publish_rest();
+        self.rings_drawn = self.layout_rings();
     }
 
     fn handle_loop_event(&mut self, event: Event) {
@@ -1542,6 +1564,10 @@ impl Reactor {
             }
             Event::RaisesIdle { requests_seen } => {
                 self.raise_echo.idle(requests_seen, std::time::Instant::now());
+                return Ok(EventOutcome::no_change());
+            }
+            Event::AttentionChanged(attention) => {
+                self.attention = attention;
                 return Ok(EventOutcome::no_change());
             }
             Event::ConfigUpdated(new_cfg) => {
@@ -3892,6 +3918,7 @@ impl Reactor {
         pin_floating: bool,
     ) -> Vec<crate::transitions::domain::request::SurfaceWindow> {
         let mut windows = Vec::with_capacity(layout.len());
+        let rings = self.layout_rings();
         for (wid, frame) in layout {
             let Some(window) = self.state.windows.window(*wid) else {
                 continue;
@@ -3910,6 +3937,7 @@ impl Reactor {
                 pinned: pin_floating && floating,
                 floating,
                 from: None,
+                worn: self.worn(*wid, &rings),
             });
         }
         windows
@@ -4034,6 +4062,7 @@ impl Reactor {
 
         let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
         let mut destination_layout = Vec::new();
+        let rings = self.layout_rings();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else {
                 continue;
@@ -4071,6 +4100,7 @@ impl Reactor {
                     pinned: false,
                     floating: self.layout_manager.layout_engine.is_window_floating(wid),
                     from: None,
+                    worn: self.worn(wid, &rings),
                 });
             }
         }

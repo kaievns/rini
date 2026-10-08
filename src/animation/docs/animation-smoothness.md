@@ -96,15 +96,13 @@ every frame a pass carries is a place on the strip as the last pass left it, whi
 from where that pass sends every window. A newcomer rides a group whose travel from there matches its
 own, placed in it where that pass left it, so it starts beside the windows it sits beside wherever
 they are drawn, and an accent riding the group carries it too; of several such groups it takes the
-one holding the window nearest it, a border the one holding the window it traces. Judged against
+one holding the window nearest it. Judged against
 where the leg has it, a column a second pan brought mid-leg matched no group's remaining
 travel, opened its own and started where the first pan sends the strip, short of the strip by the
 travel left: of two 863pt pans, the second merged 7ms into the first started its column 759pt short,
 20ms in 591pt (measured with the test that pins it against that rule; not seen on screen); pinned
 by `a_column_a_pan_brings_in_mid_flight_starts_beside_the_strip` and, for every look, by
-`every_look_bends_a_flight_without_a_jump`. Judged against the drawn position, a border landing
-mid-nudge matched no container and was left a third of the display from its window; pinned by
-`a_border_arriving_mid_nudge_rides_with_the_moved_window`. A floating window a switch brings is
+`every_look_bends_a_flight_without_a_jump`. A floating window a switch brings is
 placed in the floating container where the last pass left it, the same way. A move's step rides
 every strip container, so a still window joining mid-step takes the still
 piece and steps with the strip; pinned by
@@ -205,8 +203,7 @@ behind on landing ("Which windows come forward together", `specs/animation.md`).
 
 Strip containers sit a quarter step apart in `Banding.group_order`. Each tile
 sits at its within-band depth inside its container (`Banding.within`; a
-companion a quarter step in front of its window, a shadow half a step behind its
-picture). `container_z - within` is `-depth`, so the drawn order is
+shadow half a step behind its picture). `container_z - within` is `-depth`, so the drawn order is
 what `restack` computes for `tile.depth` and what the reactor's regroup
 (`regroup_tiled`, "Real order" in `capture-overlay-research.md`) puts on the
 real screen at lift. Core Animation sorts `zPosition` among siblings only,
@@ -233,7 +230,16 @@ Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
 coordinates, flipped as the canvas is; where a hole lands on screen was not
 measured on a window shorter than the display. Which windows get holes, and
 when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
-it watches end wholly on screen, from the show to the lift.
+it watches end wholly on screen, from the show to the lift. A window wearing a
+border, or its focus ring where the flight ends, gets a second hole, over the
+bands rini draws around it at rest: a point square, or their width where that is
+narrower, halfway across their left edge and halfway down (`band_hole_in`, pinned
+by `the_band_hole_is_outside_the_window_and_inside_its_band`), where its tile and
+the rest window draw the same pixels. The engine gives each end how far its bands
+reach, in device pixels (`shape::outset`,
+`a_decorated_window_is_holed_in_its_band_as_well`).
+That a rest window wholly under the overlay is held back as a window is, and so
+needs the hole, is inferred, not measured.
 
 **Corners of a baked picture and of the stand-in.** A tile cut from a composite
 of the desktop carries the wallpaper in the window's rounded corners, where the
@@ -365,12 +371,9 @@ keyframe animation, under its own key (`"rini.group.nudge"`), on every
 container `carries_out_and_back` names (`step_tracks`), sampled every
 1/120s from `nudge_displacement`,
 `sin²(πt)`: at rest and motionless at both ends, furthest out at half time.
-That is every strip container: the moved window's, the strip's, and with them
-every border tracing a strip window, which rides its window's container. The
+That is every strip container: the moved window's and the strip's. The
 floating container rides only a vertical out-and-back and a nudge is sideways,
-so floating windows stay where they are, and so do their borders: a floating
-window's border is floating like its window (`border_tile`) and stands with it
-in the floating container. The first design stepped the moved window's
+so floating windows stay where they are. The first design stepped the moved window's
 container alone. The side it opened showed whatever was under the window, and
 N crossed on `MOTION_CURVE` in about 60ms, so for nearly the whole step that
 was the desktop (a screen recording and the engine's debug log, 2026-09-30).

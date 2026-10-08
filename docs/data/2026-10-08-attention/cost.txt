@@ -1,0 +1,5 @@
+2026-10-08T01:31:53Z
+array only p50 0.08225 p90 0.111166 max 0.258667
+item per app, cached array p50 2.998208 p90 4.002209 max 4.348458
+array + item per app p50 3.314666 p90 3.863416 max 4.113542
+array + information, two keys, per app (what rini reads) p50 3.184792 p90 3.993875 max 4.53975

@@ -12,9 +12,8 @@ use rini_geometry::CGRectExt;
 use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 
 use crate::pictures::domain::backdrop::{is_bar_layer, is_desktop_layer};
-use crate::windows::platform::window_server::{
-    bounds_from_dict, get_num, get_string, get_windows_raw, overlaps,
-};
+use crate::windows::domain::listing::overlaps;
+use crate::windows::platform::window_server::{bounds_from_dict, get_num, get_string, get_windows_raw};
 
 /// The windows making up the desktop backdrop, which of them are the wallpaper, and the rect they
 /// cover together.

@@ -1,5 +1,6 @@
 //! The Okibi 燠火 palette, dark ground, v1.8: the neutral spine, the one accent, and the meaning
-//! colours. Every colour rini draws is a step on this, by name.
+//! colours. Every colour rini's own chrome draws is a step on this, by name; a decoration's colours
+//! are the config's.
 //!
 //! Source: <https://kaievns.github.io/okibi-akiri-design-system-spec/llm-context.md>.
 

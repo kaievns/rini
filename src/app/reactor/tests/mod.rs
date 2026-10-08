@@ -11,6 +11,7 @@
 mod fixtures;
 
 mod bar;
+mod decorations;
 mod displays;
 mod focus;
 mod fullscreen;
