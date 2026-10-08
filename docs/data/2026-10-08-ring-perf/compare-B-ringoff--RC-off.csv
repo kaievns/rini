@@ -1,0 +1,88 @@
+metric,base_min,base_max,cand_median,cand_runs,stage1,stage2_base_max,stage2_cand_median,verdict
+pan.overlay_up.p50,36.85,40.71,39.1,39.35 39.1 35.12,pass,,,pass
+pan.overlay_up.p90,45.02,57.5,47.31,52.86 47.31 37.54,pass,,,pass
+pan.overlay_up.max,49.85,72.85,56.31,56.31 63.31 41.65,pass,,,pass
+pan.lift.p50,390.95,395.61,396.32,396.32 406.88 388.46,FAIL,,,needs stage 2
+pan.lift.p90,409.36,415.16,410.17,410.17 410.32 395.13,pass,,,pass
+pan.lift.max,411.03,423.64,412.02,412.02 414.04 395.77,pass,,,pass
+pan.screen_up_after_post.p50,72.93,76.05,70.94,77.09 70.94 65.92,pass,,,pass
+pan.screen_up_after_post.p90,77.73,92.39,90.59,90.59 91.57 79.81,pass,,,pass
+pan.screen_up_after_post.max,78.59,105.26,92.84,98.97 92.84 82.87,pass,,,pass
+pan.screen_gone_after_post.p50,408.27,415.15,410.93,410.93 417.54 400.11,pass,,,pass
+pan.screen_gone_after_post.p90,422.25,442.38,426.54,426.54 438.3 409.27,pass,,,pass
+pan.screen_gone_after_post.max,431.11,443.17,428.3,428.3 441.97 409.32,pass,,,pass
+pan.overdue_lifts,0,0,0,0 0 0,pass,,,pass
+pan.frame_zero_timeouts,0,0,0,0 0 0,pass,,,pass
+switch.overlay_up.p50,34.25,49.66,33.7,29.52 35.93 33.7,pass,,,pass
+switch.overlay_up.p90,39.95,55.5,42.2,42.97 39.41 42.2,pass,,,pass
+switch.overlay_up.max,39.95,55.5,42.2,42.97 39.41 42.2,pass,,,pass
+switch.lift.p50,390.09,406.6,390.37,391.66 390.37 388.04,pass,,,pass
+switch.lift.p90,392.85,419.48,406.05,406.98 406.05 406.03,pass,,,pass
+switch.lift.max,392.85,419.48,406.05,406.98 406.05 406.03,pass,,,pass
+switch.screen_up_after_post.p50,64.11,77.62,76.48,76.48 69.31 76.94,pass,,,pass
+switch.screen_up_after_post.p90,77.06,94.73,82.67,82.67 78.21 84.02,pass,,,pass
+switch.screen_up_after_post.max,77.06,94.73,82.67,82.67 78.21 84.02,pass,,,pass
+switch.screen_gone_after_post.p50,402.04,421.3,401.19,397.01 402.0 401.19,pass,,,pass
+switch.screen_gone_after_post.p90,409.91,431.87,422.02,422.77 422.02 420.21,pass,,,pass
+switch.screen_gone_after_post.max,409.91,431.87,422.02,422.77 422.02 420.21,pass,,,pass
+switch.overdue_lifts,0,0,0,0 0 0,pass,,,pass
+switch.frame_zero_timeouts,0,0,0,0 0 0,pass,,,pass
+drains.queued.p50,0.03,0.03,0.03,0.03 0.03 0.04,pass,,,pass
+drains.queued.p90,0.09,0.17,0.07,0.06 0.07 0.09,pass,,,pass
+drains.queued.p99,1.99,14.26,5.08,5.08 4.47 8.27,pass,,,pass
+drains.queued.max,1.99,14.26,5.08,5.08 4.47 8.27,pass,,,pass
+drains.applied.p50,0.53,0.61,0.6,0.6 0.53 0.65,pass,,,pass
+drains.applied.p90,1.8,2.0,2.06,1.96 2.11 2.06,FAIL,,,needs stage 2
+drains.applied.p99,3.24,5.4,3.93,4.9 3.23 3.93,pass,,,pass
+drains.applied.max,3.24,5.4,3.93,4.9 3.23 3.93,pass,,,pass
+drains.heard.p50,0.11,0.11,0.1,0.1 0.1 0.1,pass,,,pass
+drains.heard.p90,8.98,11.54,0.54,0.49 0.84 0.54,pass,,,pass
+drains.heard.p99,20.97,32.74,3.73,11.56 3.73 2.72,pass,,,pass
+drains.heard.max,20.97,32.74,3.73,11.56 3.73 2.72,pass,,,pass
+phase.show.queued.p50,0.015,0.017,0.013,0.014 0.013 0.013,pass,,,pass
+phase.show.queued.p90,0.031,0.043,0.017,0.016 0.017 0.024,pass,,,pass
+phase.show.queued.max,0.115,2.348,0.057,0.024 0.057 0.057,pass,,,pass
+phase.show.applied.p50,0.588,0.625,0.633,0.625 0.633 0.652,FAIL,,,needs stage 2
+phase.show.applied.p90,0.867,1.677,0.886,0.886 0.796 1.61,pass,,,pass
+phase.show.applied.max,1.115,3.056,2.113,1.968 2.113 3.366,pass,,,pass
+phase.flight.queued.p50,0.038,0.044,0.031,0.03 0.031 0.043,pass,,,pass
+phase.flight.queued.p90,0.164,1.095,0.093,0.071 0.093 0.86,pass,,,pass
+phase.flight.queued.max,1.985,14.262,4.47,2.144 4.47 8.265,pass,,,pass
+phase.flight.applied.p50,0.209,0.302,0.245,0.202 0.246 0.245,pass,,,pass
+phase.flight.applied.p90,1.46,1.502,1.777,1.947 1.363 1.777,FAIL,,,needs stage 2
+phase.flight.applied.max,2.66,5.4,4.106,4.899 4.106 3.229,pass,,,pass
+phase.lift.queued.p50,0.038,0.046,0.029,0.037 0.029 0.029,pass,,,pass
+phase.lift.queued.p90,0.058,0.07,0.053,0.058 0.053 0.052,pass,,,pass
+phase.lift.queued.max,0.071,10.403,0.56,5.08 0.56 0.11,pass,,,pass
+phase.lift.applied.p50,1.655,1.908,1.736,1.744 1.736 1.663,pass,,,pass
+phase.lift.applied.p90,1.973,3.083,2.215,3.017 2.215 2.128,pass,,,pass
+phase.lift.applied.max,2.94,4.749,3.686,3.686 3.231 3.932,pass,,,pass
+pacing.comms_pan.interval.p50,17.2,17.32,17.42,17.32 17.42 17.44,FAIL,,,needs stage 2
+pacing.comms_pan.interval.p90,18.63,20.09,20.12,23.56 20.12 19.84,FAIL,,,needs stage 2
+pacing.comms_pan.interval.p99,22.84,39.2,46.28,46.28 40.83 48.46,FAIL,,,needs stage 2
+pacing.comms_pan.interval.max,27.23,50.73,49.31,49.31 41.13 52.74,pass,,,pass
+pacing.comms_pan.over_25ms,1,5,7,11 7 3,FAIL,,,needs stage 2
+pacing.comms_pan.over_33ms,0,4,4,6 4 2,pass,,,pass
+pacing.comms_pan.black_frames,0,0,0,0 0 0,pass,,,pass
+pacing.switch.interval.p50,17.09,17.31,17.17,17.14 17.17 17.36,pass,,,pass
+pacing.switch.interval.p90,18.75,19.02,19.22,18.52 19.22 19.68,FAIL,,,needs stage 2
+pacing.switch.interval.p99,20.24,21.44,20.89,20.36 29.12 20.89,pass,,,pass
+pacing.switch.interval.max,20.24,21.44,20.89,20.36 29.12 20.89,pass,,,pass
+pacing.switch.over_25ms,0,0,0,0 2 0,pass,,,pass
+pacing.switch.over_33ms,0,0,0,0 0 0,pass,,,pass
+pacing.switch.black_frames,0,0,0,0 0 0,pass,,,pass
+pacing.spare_pan.interval.p50,17.72,17.99,17.69,17.8 17.68 17.69,pass,,,pass
+pacing.spare_pan.interval.p90,20.76,21.25,21.42,21.41 22.2 21.42,FAIL,,,needs stage 2
+pacing.spare_pan.interval.p99,22.68,27.16,25.33,25.33 25.57 24.38,pass,,,pass
+pacing.spare_pan.interval.max,23.85,28.94,26.97,26.97 28.64 25.86,pass,,,pass
+pacing.spare_pan.over_25ms,0,2,2,2 2 1,pass,,,pass
+pacing.spare_pan.over_33ms,0,0,0,0 0 0,pass,,,pass
+pacing.spare_pan.black_frames,0,0,0,0 0 1,pass,,,pass
+pacing.all.interval.p50,17.31,17.49,17.48,17.48 17.42 17.48,pass,,,pass
+pacing.all.interval.p90,19.64,20.52,21.03,21.03 21.23 20.42,FAIL,,,needs stage 2
+pacing.all.interval.p99,22.68,34.3,33.83,37.76 33.83 25.86,pass,,,pass
+pacing.all.interval.max,27.23,50.73,49.31,49.31 41.13 52.74,pass,,,pass
+pacing.all.over_25ms,1,6,11,13 11 4,FAIL,,,needs stage 2
+pacing.all.over_33ms,0,4,4,6 4 2,pass,,,pass
+pacing.all.black_frames,0,0,0,0 0 0,pass,,,pass
+blur.failed,0,0,0,0 0 0,pass,,,pass

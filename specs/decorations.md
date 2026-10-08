@@ -296,4 +296,7 @@ server's frames, orders, levels and introductions, all read on the frames thread
 (`src/displays/platform/window_notify.rs`), and are ordered with the level and sub-level calls in
 `src/windows/platform/window_server.rs`; no listing of windows names
 them (`src/windows/domain/listing.rs`). What was measured, what a turn that redrew every rest
-window cost among it ("What a turn draws"), is "At rest" in `src/decorations/docs/README.md`.
+window cost among it ("What a turn draws"), is "At rest" in `src/decorations/docs/README.md`. The
+timing battery a flight's cost with the ring or the border on is judged by is
+`tools/focuslab/battery.sh`, its rule `tools/focuslab/compare.py` (`tools/focuslab/README.md`,
+"The battery"; `docs/testing.md`); the 2026-10-08 runs are in `docs/data/2026-10-08-ring-perf/`.

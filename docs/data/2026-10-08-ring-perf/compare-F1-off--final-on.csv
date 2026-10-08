@@ -1,0 +1,88 @@
+metric,base_min,base_max,cand_median,cand_runs,stage1,stage2_base_max,stage2_cand_median,verdict
+pan.overlay_up.p50,39.31,40.98,38.21,38.08 38.21 39.94,pass,,,pass
+pan.overlay_up.p90,57.25,58.39,56.54,62.79 51.42 56.54,pass,,,pass
+pan.overlay_up.max,60.89,81.87,68.53,68.53 70.17 60.61,pass,,,pass
+pan.lift.p50,397.36,406.06,396.8,393.76 396.8 405.64,pass,,,pass
+pan.lift.p90,412.7,423.34,413.78,417.37 407.5 413.78,pass,,,pass
+pan.lift.max,424.06,433.67,425.53,429.9 422.63 425.53,pass,,,pass
+pan.screen_up_after_post.p50,71.43,74.98,79.18,79.46 79.18 77.33,FAIL,,,needs stage 2
+pan.screen_up_after_post.p90,89.37,112.22,106.95,106.95 106.13 108.78,pass,,,pass
+pan.screen_up_after_post.max,98.88,113.4,111.18,112.45 111.18 110.13,pass,,,pass
+pan.screen_gone_after_post.p50,409.63,420.9,415.15,415.15 413.5 423.25,pass,,,pass
+pan.screen_gone_after_post.p90,428.73,436.09,440.05,441.25 430.68 440.05,FAIL,,,needs stage 2
+pan.screen_gone_after_post.max,441.7,458.11,444.36,455.91 435.9 444.36,pass,,,pass
+pan.overdue_lifts,0,0,0,0 0 0,pass,,,pass
+pan.frame_zero_timeouts,0,0,0,0 0 0,pass,,,pass
+switch.overlay_up.p50,28.6,36.7,27.25,28.59 26.69 27.25,pass,,,pass
+switch.overlay_up.p90,54.04,64.9,55.51,55.51 58.25 52.31,pass,,,pass
+switch.overlay_up.max,54.04,64.9,55.51,55.51 58.25 52.31,pass,,,pass
+switch.lift.p50,388.36,389.4,390.32,390.32 390.38 388.66,FAIL,,,needs stage 2
+switch.lift.p90,412.29,425.28,408.86,417.63 408.86 408.64,pass,,,pass
+switch.lift.max,412.29,425.28,408.86,417.63 408.86 408.64,pass,,,pass
+switch.screen_up_after_post.p50,69.56,74.94,66.78,74.23 66.78 63.42,pass,,,pass
+switch.screen_up_after_post.p90,87.05,99.61,89.98,89.98 110.21 84.14,pass,,,pass
+switch.screen_up_after_post.max,87.05,99.61,89.98,89.98 110.21 84.14,pass,,,pass
+switch.screen_gone_after_post.p50,393.95,403.96,401.81,406.43 401.76 401.81,pass,,,pass
+switch.screen_gone_after_post.p90,422.15,441.82,431.27,435.51 419.24 431.27,pass,,,pass
+switch.screen_gone_after_post.max,422.15,441.82,431.27,435.51 419.24 431.27,pass,,,pass
+switch.overdue_lifts,0,0,0,0 0 0,pass,,,pass
+switch.frame_zero_timeouts,0,0,0,0 0 0,pass,,,pass
+drains.queued.p50,0.03,0.04,0.04,0.04 0.04 0.04,pass,,,pass
+drains.queued.p90,0.07,0.09,0.11,0.11 0.16 0.08,FAIL,,,needs stage 2
+drains.queued.p99,0.57,11.57,1.13,2.41 1.1 1.13,pass,,,pass
+drains.queued.max,0.57,11.57,3.83,3.83 3.73 5.7,pass,,,pass
+drains.applied.p50,0.57,0.7,0.79,0.73 0.79 0.87,FAIL,,,needs stage 2
+drains.applied.p90,1.89,2.34,3.0,2.94 3.71 3.0,FAIL,,,needs stage 2
+drains.applied.p99,5.08,8.34,9.27,9.27 9.45 6.48,FAIL,,,needs stage 2
+drains.applied.max,5.08,8.34,12.32,12.32 10.81 16.71,FAIL,,,needs stage 2
+drains.heard.p50,0.1,0.12,0.06,0.06 0.07 0.06,pass,,,pass
+drains.heard.p90,0.64,1.05,0.73,0.73 1.09 0.47,pass,,,pass
+drains.heard.p99,5.23,14.61,7.3,6.05 19.09 7.3,pass,,,pass
+drains.heard.max,5.23,14.61,25.77,18.97 27.03 25.77,FAIL,,,needs stage 2
+phase.show.queued.p50,0.013,0.016,0.015,0.015 0.016 0.013,pass,,,pass
+phase.show.queued.p90,0.02,0.026,0.025,0.02 0.055 0.025,pass,,,pass
+phase.show.queued.max,0.025,0.1,0.211,0.068 0.803 0.211,FAIL,,,needs stage 2
+phase.show.applied.p50,0.618,0.7,0.667,0.665 0.732 0.667,pass,,,pass
+phase.show.applied.p90,0.833,1.158,0.947,0.947 1.234 0.937,pass,,,pass
+phase.show.applied.max,1.164,2.264,1.994,2.132 1.994 1.0,pass,,,pass
+phase.flight.queued.p50,0.039,0.047,0.041,0.037 0.049 0.041,pass,,,pass
+phase.flight.queued.p90,0.08,0.185,0.118,0.118 0.151 0.108,pass,,,pass
+phase.flight.queued.max,0.567,7.142,2.406,2.406 3.73 1.134,pass,,,pass
+phase.flight.applied.p50,0.226,0.262,0.378,0.324 0.401 0.378,FAIL,,,needs stage 2
+phase.flight.applied.p90,1.822,2.053,4.063,4.393 4.063 3.926,FAIL,,,needs stage 2
+phase.flight.applied.max,5.078,8.347,12.322,12.322 11.305 16.714,FAIL,,,needs stage 2
+phase.lift.queued.p50,0.034,0.045,0.039,0.033 0.044 0.039,pass,,,pass
+phase.lift.queued.p90,0.062,0.068,0.062,0.051 0.241 0.062,pass,,,pass
+phase.lift.queued.max,0.078,11.575,3.832,3.832 1.101 5.703,pass,,,pass
+phase.lift.applied.p50,1.461,2.031,1.717,1.547 1.717 1.719,pass,,,pass
+phase.lift.applied.p90,2.214,2.647,2.863,2.863 2.272 4.018,FAIL,,,needs stage 2
+phase.lift.applied.max,2.911,6.066,4.913,4.913 2.945 6.432,pass,,,pass
+pacing.comms_pan.interval.p50,17.18,17.28,17.3,17.45 17.11 17.3,FAIL,,,needs stage 2
+pacing.comms_pan.interval.p90,19.22,21.59,19.64,25.49 19.0 19.64,pass,,,pass
+pacing.comms_pan.interval.p99,21.75,56.97,32.73,46.56 23.67 32.73,pass,,,pass
+pacing.comms_pan.interval.max,25.63,75.05,39.47,58.33 23.97 39.47,pass,,,pass
+pacing.comms_pan.over_25ms,1,12,2,13 0 2,pass,,,pass
+pacing.comms_pan.over_33ms,0,6,1,8 0 1,pass,,,pass
+pacing.comms_pan.black_frames,0,0,0,0 0 0,pass,,,pass
+pacing.switch.interval.p50,17.14,17.18,17.14,17.11 17.14 17.32,pass,,,pass
+pacing.switch.interval.p90,18.1,19.03,19.01,19.03 19.01 18.91,pass,,,pass
+pacing.switch.interval.p99,19.68,24.28,21.59,23.88 20.73 21.59,pass,,,pass
+pacing.switch.interval.max,19.68,24.28,21.59,23.88 20.73 21.59,pass,,,pass
+pacing.switch.over_25ms,0,0,0,0 0 0,pass,,,pass
+pacing.switch.over_33ms,0,0,0,0 0 0,pass,,,pass
+pacing.switch.black_frames,0,0,0,0 0 0,pass,,,pass
+pacing.spare_pan.interval.p50,17.55,18.01,18.12,18.12 17.63 18.51,FAIL,,,needs stage 2
+pacing.spare_pan.interval.p90,20.56,22.33,21.83,21.83 21.19 22.49,pass,,,pass
+pacing.spare_pan.interval.p99,28.72,36.64,25.99,39.79 24.64 25.99,pass,,,pass
+pacing.spare_pan.interval.max,28.78,47.63,27.34,68.13 25.28 27.34,pass,,,pass
+pacing.spare_pan.over_25ms,2,5,3,6 1 3,pass,,,pass
+pacing.spare_pan.over_33ms,0,2,0,3 0 0,pass,,,pass
+pacing.spare_pan.black_frames,0,0,0,0 0 0,pass,,,pass
+pacing.all.interval.p50,17.31,17.38,17.46,17.48 17.29 17.46,FAIL,,,needs stage 2
+pacing.all.interval.p90,19.73,21.2,21.29,21.54 20.12 21.29,FAIL,,,needs stage 2
+pacing.all.interval.p99,24.05,44.13,25.99,42.96 23.67 25.99,pass,,,pass
+pacing.all.interval.max,30.43,75.05,39.47,68.13 25.28 39.47,pass,,,pass
+pacing.all.over_25ms,3,17,5,19 1 5,pass,,,pass
+pacing.all.over_33ms,0,8,1,11 0 1,pass,,,pass
+pacing.all.black_frames,0,0,0,0 0 0,pass,,,pass
+blur.failed,0,0,0,1 0 0,FAIL,,,regression
