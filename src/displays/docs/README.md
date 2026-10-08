@@ -15,7 +15,7 @@ windows are on this space" is a window-server query over window ids.
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot |
 | `platform/space_switch.rs`, `space_query.rs` | Switching to a space, and asking what one is |
 | `platform/display_churn.rs`, `cgs_notify.rs` | Display reconfiguration and the CGS notification streams |
-| `platform/window_notify.rs` | The actor over those streams: space events to the spaces actor, focus edges coalesced into `WindowServerFocusChanged`, every tracked window's moves and resizes read back on one `window-frames` thread and handed to the application's `OnServerFrames` callbacks as `ServerFrame`s, and each reorder, hide and unhide handed to its `OnServerOrder` callbacks as a `ServerOrder`, both only while the application is `Following` them |
+| `platform/window_notify.rs` | The actor over those streams: space events to the spaces actor, focus edges coalesced into `WindowServerFocusChanged`, and one `window-frames` thread that reads the window server for the application, in the order it was asked through `Following`'s queue (`ToRead`): every tracked window's moves and resizes, as `ServerFrame`s, each reorder, hide, unhide and close, as a `ServerOrder` with the level and sub-level read after a reorder or an unhide (`StackLevel`), and each window the application introduces, whole, as a `ServerIntro`, all handed to its `OnServerRead` callbacks, only while the application is `Following` them ("Live frames" in `live-frames.md`) |
 | `platform/cursor_warp.rs` | Carrying the pointer across the edge between two stacked displays, over their whole bounds |
 | `platform/mission_control.rs` | Detecting Mission Control, during which nothing may be moved |
 

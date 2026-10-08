@@ -195,7 +195,8 @@ wearing either is drawn by one rest window holding both.
   drag, an edge drag, an application resizing itself, and rini's own writes, and MUST NOT be hidden
   while it does. Through a flight it follows its window at the lift (below).
 - From the flight's begin to its lift, rini's windows that draw the ring at rest MUST draw nothing,
-  ask the window server nothing and be made none while nothing changes on another display: the
+  ask the window server nothing on the main thread and be made none while nothing changes on
+  another display: the
   press's own change, each window moved, reordered, hidden or parked under the overlay, focus
   turning and a window rini starts managing all wait for the lift, which draws them before the
   overlay hides. Until the overlay shows, the rings on its display show the windows as they were
@@ -243,7 +244,8 @@ The ring's and the border's settings are `src/decorations/settings.rs`, decoded 
 focus-ring` and `layout › border` in `src/app/config/kdl/layout.rs` and
 `src/app/config/kdl/apply.rs`; whether any window can wear a band, which turns all of it on or off,
 is `DecorationSettings::draws_bands` there, and the switch the window server's frames and orders
-are dropped by while it is off is `Following` in `src/displays/event.rs`. Who wears the ring and
+are dropped by while it is off is `Following` in `src/displays/event.rs`, whose queue the rest
+windows also ask a window first named through. Who wears the ring and
 the paint of each by focus are `src/decorations/domain/style.rs`; their colours and gradients, and the axis and stops each gradient
 is drawn with, `src/decorations/domain/paint.rs`; what the window rules give each window,
 `src/decorations/domain/rules.rs`, matched through `src/windows/domain/rules.rs` and decoded with
@@ -265,7 +267,8 @@ main-thread actor in `src/decorations/platform/rest.rs`, which the reactor tells
 begin (`Reactor::send_flight` in `src/app/reactor/mod.rs`, `publish_rest` in
 `src/app/reactor/decorations.rs`) and the renderer (`src/animation/platform/renderer.rs`) covers as
 its overlay goes up and calls before each lift. Its windows follow the window
-server's frames and orders (`src/displays/platform/window_notify.rs`), and are ordered with the
-level and sub-level calls in `src/windows/platform/window_server.rs`; no listing of windows names
+server's frames, orders, levels and introductions, all read on the frames thread
+(`src/displays/platform/window_notify.rs`), and are ordered with the level and sub-level calls in
+`src/windows/platform/window_server.rs`; no listing of windows names
 them (`src/windows/domain/listing.rs`). What was measured is "At rest" in
 `src/decorations/docs/README.md`.

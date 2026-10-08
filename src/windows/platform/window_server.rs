@@ -1177,15 +1177,16 @@ impl StackPlace {
     }
 }
 
-/// Puts `own`, a window of rini's own connection, at `place`'s level and sub-level: the window server
-/// levels only a connection's own windows, and AppKit orders one directly above another process's
-/// window only once the two share both ("Ordering a rest window" in `src/decorations/docs/README.md`).
-pub fn take_stack_place(own: WindowServerId, place: &StackPlace) {
-    let level = place.level.unwrap_or(NSNormalWindowLevel) as c_int;
+/// Puts `own`, a window of rini's own connection, at another window's `level` and `sub_level`, the
+/// normal level when it has none: the window server levels only a connection's own windows, and
+/// AppKit orders one directly above another process's window only once the two share both
+/// ("Ordering a rest window" in `src/decorations/docs/README.md`).
+pub fn take_stack_place(own: WindowServerId, level: Option<NSWindowLevel>, sub_level: c_int) {
+    let level = level.unwrap_or(NSNormalWindowLevel) as c_int;
     // SAFETY: plain calls on rini's own connection and one of its own windows.
     unsafe {
         SLSSetWindowLevel(*G_CONNECTION, own.as_u32(), level);
-        SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), place.sub_level);
+        SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), sub_level);
     }
 }
 

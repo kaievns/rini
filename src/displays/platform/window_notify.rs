@@ -1,23 +1,25 @@
 //! The actor behind the SkyLight notification port. Space events go to the spaces actor; a
-//! window's moves and resizes are read back from the window server on one frames thread and handed
-//! to the application's [`OnServerFrames`] callbacks, and its reorders, hides and unhides to its
-//! [`OnServerOrder`] callbacks, both only while the application is [`Following`] them;
-//! window-server focus edges are coalesced and resolved into `WindowServerFocusChanged`.
-use std::sync::{Arc, mpsc};
+//! window's moves, resizes, reorders, hides, unhides and closes, and each window the application
+//! introduces, are read from the window server on one frames thread, in the order they came, and
+//! handed to the application's [`OnServerRead`] callbacks, only while the application is
+//! [`Following`] them; window-server focus edges are coalesced and resolved into
+//! `WindowServerFocusChanged`.
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::CGRect;
+use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, trace};
 
-use crate::windows::platform::window_server;
+use crate::windows::platform::{sub_level, window_server};
 use rini_core::ids::WindowServerId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rustc_hash::FxHashSet as HashSet;
 
 use crate::displays::domain::frames;
 use crate::displays::event::{
-    Event, EventSink, Following, OnServerFrames, OnServerOrder, OrderChange, ServerFrame,
-    ServerOrder,
+    Event, EventSink, Following, OnServerRead, OrderChange, ServerFrame, ServerIntro, ServerOrder,
+    ServerRead, StackLevel, ToRead,
 };
 use crate::displays::platform::cgs_notify;
 use crate::displays::platform::spaces;
@@ -52,8 +54,6 @@ pub struct WindowNotify {
     subscribed: HashSet<CGSEventType>,
     initial_events: Vec<CGSEventType>,
     focus_wake: FocusWakeSender,
-    moved: mpsc::Sender<u32>,
-    on_order: Arc<[OnServerOrder]>,
     following: Following,
 }
 
@@ -63,22 +63,19 @@ impl WindowNotify {
         spaces_tx: spaces::Sender,
         requests_rx: Receiver,
         initial_events: &[CGSEventType],
-        on_frames: Vec<OnServerFrames>,
-        on_order: Vec<OnServerOrder>,
+        on_read: Vec<OnServerRead>,
         following: Following,
+        reads: mpsc::Receiver<ToRead>,
     ) -> Self {
         let (focus_wake_tx, focus_wake_rx) = mpsc::sync_channel(1);
         Self::spawn_focus_resolver(displays_tx, focus_wake_rx);
-        let (moved, moved_rx) = mpsc::channel();
-        spawn_frame_reader(window_server::server_frame, on_frames, moved_rx);
+        spawn_frame_reader(LIVE, on_read, reads);
         Self {
             spaces_tx,
             requests_rx: Some(requests_rx),
             subscribed: HashSet::default(),
             initial_events: initial_events.iter().copied().collect(),
             focus_wake: FocusWakeSender { wake: focus_wake_tx },
-            moved,
-            on_order: on_order.into(),
             following,
         }
     }
@@ -93,8 +90,6 @@ impl WindowNotify {
                 event,
                 self.spaces_tx.clone(),
                 self.focus_wake.clone(),
-                self.moved.clone(),
-                self.on_order.clone(),
                 self.following.clone(),
             ) {
                 Ok(()) => {
@@ -130,8 +125,6 @@ impl WindowNotify {
                     event,
                     self.spaces_tx.clone(),
                     self.focus_wake.clone(),
-                    self.moved.clone(),
-                    self.on_order.clone(),
                     self.following.clone(),
                 ) {
                     Ok(()) => {
@@ -155,8 +148,6 @@ impl WindowNotify {
         event: CGSEventType,
         spaces_tx: spaces::Sender,
         focus_wake: FocusWakeSender,
-        moved: mpsc::Sender<u32>,
-        on_order: Arc<[OnServerOrder]>,
         following: Following,
     ) -> Result<(), i32> {
         let res = cgs_notify::init(event);
@@ -221,10 +212,10 @@ impl WindowNotify {
                     | CGSEventType::Known(KnownCGSEvent::WindowUnhidden)
                     | CGSEventType::Known(KnownCGSEvent::WindowHidden) => {
                         focus_wake.notify();
-                        publish_order(&following, &on_order, event, evt.window_id);
+                        note(&following, event, evt.window_id);
                     }
                     CGSEventType::Known(KnownCGSEvent::WindowClosed) => {
-                        publish_order(&following, &on_order, event, evt.window_id)
+                        note(&following, event, evt.window_id)
                     }
                     CGSEventType::Known(
                         KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged,
@@ -234,7 +225,7 @@ impl WindowNotify {
                     ) => focus_wake.notify(),
                     CGSEventType::Known(KnownCGSEvent::WindowMoved)
                     | CGSEventType::Known(KnownCGSEvent::WindowResized) => {
-                        note_move(&following, &moved, evt.window_id)
+                        note(&following, event, evt.window_id)
                     }
                     _ => {}
                 }
@@ -291,60 +282,108 @@ impl WindowNotify {
     }
 }
 
-/// Hands a reorder, hide, unhide or close of `window` to every `OnServerOrder`, while `following`.
-fn publish_order(
-    following: &Following,
-    on_order: &[OnServerOrder],
-    event: CGSEventType,
-    window: Option<u32>,
-) {
-    if !following.on() {
-        return;
-    }
-    let change = match event {
-        CGSEventType::Known(KnownCGSEvent::WindowReordered) => OrderChange::Reordered,
-        CGSEventType::Known(KnownCGSEvent::WindowHidden) => OrderChange::Hidden,
-        CGSEventType::Known(KnownCGSEvent::WindowUnhidden) => OrderChange::Unhidden,
-        CGSEventType::Known(KnownCGSEvent::WindowClosed) => OrderChange::Closed,
+/// Queues for the frames thread what the window server's `event` asks of `window`, while
+/// `following`: its frame after a move or a resize, its order otherwise.
+fn note(following: &Following, event: CGSEventType, window: Option<u32>) {
+    let Some(window) = window.map(WindowServerId::new) else { return };
+    let read = match event {
+        CGSEventType::Known(KnownCGSEvent::WindowMoved | KnownCGSEvent::WindowResized) => ToRead::Frame(window),
+        CGSEventType::Known(KnownCGSEvent::WindowReordered) => ToRead::Order(window, OrderChange::Reordered),
+        CGSEventType::Known(KnownCGSEvent::WindowHidden) => ToRead::Order(window, OrderChange::Hidden),
+        CGSEventType::Known(KnownCGSEvent::WindowUnhidden) => ToRead::Order(window, OrderChange::Unhidden),
+        CGSEventType::Known(KnownCGSEvent::WindowClosed) => ToRead::Order(window, OrderChange::Closed),
         _ => return,
     };
-    let Some(window) = window else { return };
-    let order = ServerOrder { window: WindowServerId::new(window), change };
-    for on_order in on_order {
-        on_order(order);
+    following.ask(read);
+}
+
+/// What the frames thread asks the window server, one call each.
+#[derive(Clone, Copy)]
+struct Reader {
+    frame: fn(WindowServerId) -> Option<CGRect>,
+    level: fn(WindowServerId) -> StackLevel,
+    ordered_in: fn(WindowServerId) -> Option<bool>,
+    radius: fn(WindowServerId) -> Option<f64>,
+}
+
+const LIVE: Reader = Reader {
+    frame: window_server::server_frame,
+    level: stack_level,
+    ordered_in: window_server::window_ordered_in,
+    radius: corner_radius,
+};
+
+fn stack_level(window: WindowServerId) -> StackLevel {
+    StackLevel {
+        level: window_server::window_level(window.as_u32()),
+        sub_level: sub_level::window_sub_level(window.as_u32()),
     }
 }
 
-/// Queues `window`'s frame for the frames thread to read, while `following`.
-fn note_move(following: &Following, moved: &mpsc::Sender<u32>, window: Option<u32>) {
-    if let Some(window) = window.filter(|_| following.on()) {
-        let _ = moved.send(window);
-    }
+fn corner_radius(window: WindowServerId) -> Option<f64> {
+    window_server::corner_radii(&[window]).get(&window).copied()
 }
 
-/// The one thread that reads moved windows' frames, so a frame read earlier is never published after
-/// a newer one: 806 and 807 arrive on a thread each, unordered against each other. Each wake drains
-/// what has queued and reads every window in it once, after its last notification.
+/// What one burst of the queue reads, in the order it was asked: the frames first, each moved
+/// window read once after its last notification (`frames::latest`), then each order and each
+/// introduction as they came. A window's level is read once a burst, for its reorders and unhides
+/// and its introduction alike: every read in a burst comes after every notification in it.
+fn read_burst(read: &Reader, burst: &[ToRead]) -> Vec<ServerRead> {
+    let moved: Vec<u32> = burst
+        .iter()
+        .filter_map(|asked| match asked {
+            ToRead::Frame(window) => Some(window.as_u32()),
+            _ => None,
+        })
+        .collect();
+    let frames: Vec<ServerFrame> = frames::latest(&moved)
+        .into_iter()
+        .map(WindowServerId::new)
+        .filter_map(|window| Some(ServerFrame { window, frame: (read.frame)(window)? }))
+        .collect();
+    let mut levels: HashMap<WindowServerId, StackLevel> = HashMap::default();
+    let mut level = |window| *levels.entry(window).or_insert_with(|| (read.level)(window));
+    let mut out: Vec<ServerRead> = Vec::new();
+    if !frames.is_empty() {
+        out.push(ServerRead::Frames(frames));
+    }
+    for asked in burst {
+        match *asked {
+            ToRead::Frame(_) => {}
+            ToRead::Order(window, change) => {
+                let leveled = matches!(change, OrderChange::Reordered | OrderChange::Unhidden);
+                out.push(ServerRead::Order(ServerOrder { window, change, level: leveled.then(|| level(window)) }));
+            }
+            ToRead::Intro(window) => out.push(ServerRead::Intro(ServerIntro {
+                window,
+                frame: (read.frame)(window),
+                ordered_in: (read.ordered_in)(window),
+                radius: (read.radius)(window),
+                level: level(window),
+            })),
+        }
+    }
+    out
+}
+
+/// The one thread that reads the window server for the application, so nothing read earlier is
+/// published after something newer: 806, 807, 808, 815, 816 and 804 arrive on a thread each,
+/// unordered against each other, and an introduction comes from the application's own thread. Each
+/// wake drains what has queued and reads it as one burst (`read_burst`).
 fn spawn_frame_reader(
-    read: fn(WindowServerId) -> Option<CGRect>,
-    on_frames: Vec<OnServerFrames>,
-    moved: mpsc::Receiver<u32>,
+    read: Reader,
+    on_read: Vec<OnServerRead>,
+    reads: mpsc::Receiver<ToRead>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("window-frames".to_string())
         .spawn(move || {
-            while let Ok(first) = moved.recv() {
-                let burst: Vec<u32> = std::iter::once(first).chain(moved.try_iter()).collect();
-                let batch: Vec<ServerFrame> = frames::latest(&burst)
-                    .into_iter()
-                    .map(WindowServerId::new)
-                    .filter_map(|window| Some(ServerFrame { window, frame: read(window)? }))
-                    .collect();
-                if batch.is_empty() {
-                    continue;
-                }
-                for on_frames in &on_frames {
-                    on_frames(&batch);
+            while let Ok(first) = reads.recv() {
+                let burst: Vec<ToRead> = std::iter::once(first).chain(reads.try_iter()).collect();
+                for served in read_burst(&read, &burst) {
+                    for on_read in &on_read {
+                        on_read(served.clone());
+                    }
                 }
             }
         })
@@ -361,101 +400,170 @@ mod tests {
 
     use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 
-    use super::{FocusWakeSender, note_move, publish_order, spawn_frame_reader};
-    use crate::displays::event::{Following, OnServerOrder, OrderChange, ServerFrame, ServerOrder};
+    use super::{FocusWakeSender, Reader, note, read_burst, spawn_frame_reader};
+    use crate::displays::event::{
+        Following, OnServerRead, OrderChange, ServerFrame, ServerIntro, ServerOrder, ServerRead, StackLevel,
+        ToRead,
+    };
 
-    fn following() -> Following {
-        let following = Following::default();
+    fn following() -> (Following, mpsc::Receiver<ToRead>) {
+        let (following, reads) = Following::new();
         following.set(true);
-        following
+        (following, reads)
+    }
+
+    fn ws(id: u32) -> WindowServerId { WindowServerId::new(id) }
+
+    const AT: CGRect = CGRect::new(CGPoint::new(10., 20.), CGSize::new(300., 400.));
+    const LEVEL: StackLevel = StackLevel { level: Some(3), sub_level: 1 };
+
+    fn bounds(_: WindowServerId) -> Option<CGRect> { Some(AT) }
+    fn level(_: WindowServerId) -> StackLevel { LEVEL }
+    fn ordered_in(_: WindowServerId) -> Option<bool> { Some(false) }
+    fn radius(_: WindowServerId) -> Option<f64> { Some(16.0) }
+
+    const STUB: Reader = Reader { frame: bounds, level, ordered_in, radius };
+
+    /// The reader on its own thread over `queued`, run to the queue's end, and everything it
+    /// handed on.
+    fn run(read: Reader, queued: mpsc::Receiver<ToRead>) -> Vec<ServerRead> {
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let sink = published.clone();
+        let on_read: Vec<OnServerRead> = vec![Box::new(move |read| sink.lock().unwrap().push(read))];
+        spawn_frame_reader(read, on_read, queued).join().unwrap();
+        Arc::try_unwrap(published).unwrap().into_inner().unwrap()
     }
 
     #[test]
     fn a_reorder_a_hide_an_unhide_and_a_close_publish_their_window() {
-        let published = Arc::new(Mutex::new(Vec::new()));
-        let sink = published.clone();
-        let on_order: Vec<OnServerOrder> = vec![Box::new(move |order| sink.lock().unwrap().push(order))];
-        let following = following();
+        let (following, reads) = following();
         for event in [
             KnownCGSEvent::WindowReordered,
             KnownCGSEvent::WindowHidden,
             KnownCGSEvent::WindowUnhidden,
             KnownCGSEvent::WindowClosed,
         ] {
-            publish_order(&following, &on_order, CGSEventType::Known(event), Some(56));
+            note(&following, CGSEventType::Known(event), Some(56));
         }
-        publish_order(&following, &on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), None);
-        publish_order(&following, &on_order, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
-        let window = WindowServerId::new(56);
-        assert_eq!(*published.lock().unwrap(), vec![
-            ServerOrder { window, change: OrderChange::Reordered },
-            ServerOrder { window, change: OrderChange::Hidden },
-            ServerOrder { window, change: OrderChange::Unhidden },
-            ServerOrder { window, change: OrderChange::Closed },
+        note(&following, CGSEventType::Known(KnownCGSEvent::WindowReordered), None);
+        note(&following, CGSEventType::Known(KnownCGSEvent::SpaceCreated), Some(56));
+        drop(following);
+        let window = ws(56);
+        let order = |change, level| ServerRead::Order(ServerOrder { window, change, level });
+        assert_eq!(run(STUB, reads), vec![
+            order(OrderChange::Reordered, Some(LEVEL)),
+            order(OrderChange::Hidden, None),
+            order(OrderChange::Unhidden, Some(LEVEL)),
+            order(OrderChange::Closed, None),
         ]);
     }
 
-    /// Nothing follows the window server's frames and orders while no window wears a band: a move
-    /// queues no frame read and an order reaches no callback, until the switch is on again.
+    /// Nothing follows the window server's frames and orders while no window wears a band: a move, an
+    /// order and an introduction queue nothing to be read, until the switch is on again.
     #[test]
     fn nothing_is_read_or_handed_on_while_nothing_follows() {
-        let published = Arc::new(Mutex::new(Vec::new()));
-        let sink = published.clone();
-        let on_order: Vec<OnServerOrder> = vec![Box::new(move |order| sink.lock().unwrap().push(order))];
-        let (moved, moved_rx) = mpsc::channel();
-        let off = Following::default();
+        let (off, reads) = Following::new();
         assert!(!off.on(), "off until turned on");
-        publish_order(&off, &on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
-        note_move(&off, &moved, Some(56));
-        assert!(published.lock().unwrap().is_empty());
-        assert_eq!(moved_rx.try_iter().count(), 0, "no frame queued to be read");
+        note(&off, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
+        note(&off, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
+        off.ask(ToRead::Intro(ws(56)));
+        assert_eq!(reads.try_iter().count(), 0, "nothing queued to be read");
         let on = off.clone();
         on.set(true);
         assert!(off.on(), "one switch");
-        publish_order(&off, &on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
-        note_move(&off, &moved, Some(56));
-        assert_eq!(published.lock().unwrap().len(), 1);
-        assert_eq!(moved_rx.try_iter().collect::<Vec<_>>(), vec![56]);
+        note(&off, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
+        note(&off, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
+        on.ask(ToRead::Intro(ws(56)));
+        assert_eq!(reads.try_iter().collect::<Vec<_>>(), vec![
+            ToRead::Order(ws(56), OrderChange::Reordered),
+            ToRead::Frame(ws(56)),
+            ToRead::Intro(ws(56)),
+        ], "one queue");
     }
 
-    static READS: AtomicUsize = AtomicUsize::new(0);
+    static FRAME_READS: AtomicUsize = AtomicUsize::new(0);
 
-    fn bounds(_: WindowServerId) -> Option<CGRect> {
-        READS.fetch_add(1, Ordering::SeqCst);
-        Some(CGRect::new(CGPoint::new(10., 20.), CGSize::new(300., 400.)))
+    fn counted(window: WindowServerId) -> Option<CGRect> {
+        FRAME_READS.fetch_add(1, Ordering::SeqCst);
+        bounds(window)
     }
 
     #[test]
     fn a_move_and_a_resize_of_one_window_publish_one_frame() {
-        let (moved, moved_rx) = mpsc::channel();
-        moved.send(7).unwrap();
-        moved.send(7).unwrap();
-        drop(moved);
-        let published = Arc::new(Mutex::new(Vec::new()));
-        let sink = published.clone();
-        spawn_frame_reader(
-            bounds,
-            vec![Box::new(move |frames: &[ServerFrame]| {
-                sink.lock().unwrap().push(frames.to_vec())
-            })],
-            moved_rx,
-        )
-        .join()
-        .unwrap();
+        let (following, reads) = following();
+        note(&following, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(7));
+        note(&following, CGSEventType::Known(KnownCGSEvent::WindowResized), Some(7));
+        drop(following);
+        let published = run(Reader { frame: counted, ..STUB }, reads);
+        assert_eq!(published, vec![ServerRead::Frames(vec![ServerFrame { window: ws(7), frame: AT }])]);
+        assert_eq!(FRAME_READS.load(Ordering::SeqCst), 1, "one read for the two");
+    }
 
-        let frame = bounds(WindowServerId::new(7)).unwrap();
-        assert_eq!(
-            *published.lock().unwrap(),
-            vec![vec![ServerFrame {
-                window: WindowServerId::new(7),
-                frame
-            }]]
-        );
-        assert_eq!(
-            READS.load(Ordering::SeqCst),
-            2,
-            "one read by the thread, one by the test"
-        );
+    /// A window new to the rest windows is read on the frames thread, never on the main thread that
+    /// asked: its frame, whether it is ordered in, its corner and its place in the stack.
+    #[test]
+    fn an_introduced_window_is_read_whole_on_the_frames_thread() {
+        let (following, reads) = following();
+        following.ask(ToRead::Intro(ws(9)));
+        drop(following);
+        assert_eq!(run(STUB, reads), vec![ServerRead::Intro(ServerIntro {
+            window: ws(9),
+            frame: Some(AT),
+            ordered_in: Some(false),
+            radius: Some(16.0),
+            level: LEVEL,
+        })]);
+    }
+
+    static LEVEL_READS: AtomicUsize = AtomicUsize::new(0);
+
+    fn counted_level(window: WindowServerId) -> StackLevel {
+        LEVEL_READS.fetch_add(1, Ordering::SeqCst);
+        level(window)
+    }
+
+    /// A raise is several 808s of one window: its level and sub-level are read once for them, and
+    /// once for the window introduced beside them.
+    #[test]
+    fn a_reorder_of_a_followed_window_carries_its_stack_level() {
+        let order = |id, change| ToRead::Order(ws(id), change);
+        let burst = [
+            order(7, OrderChange::Reordered),
+            order(7, OrderChange::Reordered),
+            order(7, OrderChange::Hidden),
+            ToRead::Intro(ws(7)),
+            order(8, OrderChange::Unhidden),
+        ];
+        let read = read_burst(&Reader { level: counted_level, ..STUB }, &burst);
+        let levels: Vec<Option<StackLevel>> = read
+            .iter()
+            .map(|read| match read {
+                ServerRead::Order(order) => order.level,
+                ServerRead::Intro(intro) => Some(intro.level),
+                ServerRead::Frames(_) => None,
+            })
+            .collect();
+        assert_eq!(levels, vec![Some(LEVEL), Some(LEVEL), None, Some(LEVEL), Some(LEVEL)]);
+        assert_eq!(LEVEL_READS.load(Ordering::SeqCst), 2, "once a window a burst");
+    }
+
+    /// 816 and 815 arrive on a thread each; queued in the order they came, they are published in it,
+    /// whatever else the burst holds.
+    #[test]
+    fn a_hide_then_an_unhide_publish_in_order() {
+        let (following, reads) = following();
+        note(&following, CGSEventType::Known(KnownCGSEvent::WindowHidden), Some(5));
+        note(&following, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(5));
+        note(&following, CGSEventType::Known(KnownCGSEvent::WindowUnhidden), Some(5));
+        drop(following);
+        let changes: Vec<OrderChange> = run(STUB, reads)
+            .into_iter()
+            .filter_map(|read| match read {
+                ServerRead::Order(order) => Some(order.change),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(changes, vec![OrderChange::Hidden, OrderChange::Unhidden]);
     }
 
     #[test]

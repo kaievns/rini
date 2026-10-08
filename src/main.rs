@@ -251,9 +251,10 @@ fn main() {
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
     let (bar_tx, bar_rx) = rini::app::channels::channel();
     let (rest_tx, rest_rx) = rini::app::channels::channel();
-    // Whether the window server's frames and orders are followed for the rest windows: the reactor
-    // turns it on while any window can wear a band.
-    let following = rini::displays::event::Following::default();
+    // Whether the window server's frames and orders are followed for the rest windows, and the
+    // frames thread's queue they and the window notifications ask it through: the reactor turns it
+    // on while any window can wear a band.
+    let (following, server_reads) = rini::displays::event::Following::new();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
 
     // Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
@@ -397,16 +398,14 @@ fn main() {
             CGSEventType::Known(KnownCGSEvent::WindowResized),
         ],
         // The rest windows follow every decorated window the window server moves, go back above the
-        // ones it reorders, and hide with the ones it hides or closes, while `following` is on.
+        // ones it reorders, hide with the ones it hides or closes, and learn each one they first
+        // meet, all read on the frames thread, while `following` is on.
         vec![Box::new({
             let rest_tx = rest_tx.clone();
-            move |frames: &[_]| rest_tx.send(rini::decorations::platform::rest::Event::Frames(frames.to_vec()))
+            move |read| rest_tx.send(rini::decorations::platform::rest::Event::Server(read))
         })],
-        vec![Box::new({
-            let rest_tx = rest_tx.clone();
-            move |order| rest_tx.send(rini::decorations::platform::rest::Event::Order(order))
-        })],
-        following,
+        following.clone(),
+        server_reads,
     );
 
     let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
@@ -451,7 +450,7 @@ fn main() {
     // flight's begin to its lift they draw nothing, and the renderer places them before each lift
     // hides the overlay, so the lift shows each band where its tile had it.
     let (rest_actor, rest_handover) =
-        rini::decorations::platform::rest::RestActor::new(rest_rx, rest_tx.clone(), mtm);
+        rini::decorations::platform::rest::RestActor::new(rest_rx, rest_tx.clone(), following, mtm);
     let (render_tx, render_rx) = rini::app::channels::channel();
     let renderer = rini::animation::platform::renderer::Renderer::new(
         render_rx,
