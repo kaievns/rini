@@ -188,12 +188,13 @@ pub enum Mark {
         waited_us: u32,
     },
     /// A drain of render commands the renderer committed, as the engine heard it: the highest batch
-    /// in it, whether it put the overlay up or down (`None`: neither), how long its oldest batch
-    /// waited for the renderer, how long playing it took to its flush, and how long before this mark
-    /// it was flushed.
+    /// in it, whether it put the overlay up or down (`None`: neither), whether it placed what is drawn
+    /// at rest, how long its oldest batch waited for the renderer, how long playing it took to its
+    /// flush, and how long before this mark it was flushed.
     Drawn {
         seq: u64,
         shown: Option<bool>,
+        places: bool,
         queued_us: u32,
         applied_us: u32,
         flushed_before_us: u32,
@@ -642,11 +643,19 @@ impl Journalled {
 
     /// The renderer committed the drain up to batch `seq`, heard `now`, before what it releases is
     /// carried out: `sent` when its oldest batch was sent, `began` when the renderer began playing it,
-    /// `flushed` when it was flushed, and `shown` whether it put the overlay up or down.
-    pub fn drawn(&mut self, now: Instant, seq: u64, shown: Option<bool>, sent: Instant, began: Instant, flushed: Instant) {
+    /// `flushed` when it was flushed, `shown` whether it put the overlay up or down, and `places`
+    /// whether it placed what is drawn at rest.
+    pub fn drawn(
+        &mut self,
+        now: Instant,
+        seq: u64,
+        (shown, places): (Option<bool>, bool),
+        (sent, began, flushed): (Instant, Instant, Instant),
+    ) {
         let mark = Mark::Drawn {
             seq,
             shown,
+            places,
             queued_us: micros(began.saturating_duration_since(sent)),
             applied_us: micros(flushed.saturating_duration_since(began)),
             flushed_before_us: micros(now.saturating_duration_since(flushed)),
@@ -1033,8 +1042,8 @@ mod tests {
         let sent = now + Duration::from_micros(200);
         let at = |us| sent + Duration::from_micros(us);
         let before = held(&flights).len();
-        flights.drawn(at(2_000), 4, Some(true), sent, at(1_300), at(1_700));
-        let mark = Mark::Drawn { seq: 4, shown: Some(true), queued_us: 1_300, applied_us: 400, flushed_before_us: 300 };
+        flights.drawn(at(2_000), 4, (Some(true), false), (sent, at(1_300), at(1_700)));
+        let mark = Mark::Drawn { seq: 4, shown: Some(true), places: false, queued_us: 1_300, applied_us: 400, flushed_before_us: 300 };
         assert_eq!(held(&flights)[before..], [Stamped { at: at(2_000), generation: g, mark }], "stamped when the engine heard it");
     }
 
@@ -1553,9 +1562,9 @@ mod tests {
         }
 
         /// The renderer's commit of the drain up to `seq`, heard at `us`.
-        fn drawn(&mut self, us: i64, seq: u64, shown: Option<bool>, (sent, began, flushed): (i64, i64, i64)) {
+        fn drawn(&mut self, us: i64, seq: u64, (shown, places): (Option<bool>, bool), (sent, began, flushed): (i64, i64, i64)) {
             let (sent, began, flushed) = (self.at(sent), self.at(began), self.at(flushed));
-            self.flights.drawn(self.at(us), seq, shown, sent, began, flushed);
+            self.flights.drawn(self.at(us), seq, (shown, places), (sent, began, flushed));
         }
 
         /// The picture `window`'s tile took `at` that moment, heard at `us`, its capture started at `taken`.
@@ -1606,14 +1615,14 @@ mod tests {
         script.wears(6_000, w(9), Wearing::Compose, Route::SkyLight, false, -1_600_000);
         script.drive(6_100, Event::Merge { stage: pan(), moved: false });
         script.flights.answered();
-        script.drawn(7_000, 2, None, (6_200, 6_400, 6_800));
+        script.drawn(7_000, 2, (None, false), (6_200, 6_400, 6_800));
         let g = script.flights.coordinator().generation();
         script.deliver(33_200, g, Why::FrameZero, 31_000, &[(w(1), starts, 1_300), (w(9), floating, 16_500)]);
         script.wears(33_300, w(1), Wearing::FrameZero, Route::Baked, true, 1_300);
         script.wears(33_300, w(9), Wearing::FrameZero, Route::SkyLight, false, 16_500);
         script.drive(33_600, Event::FrameZero(g));
         script.drive(34_500, Event::Extend(Duration::from_millis(349)));
-        script.drawn(35_500, 3, Some(true), (34_600, 34_900, 35_200));
+        script.drawn(35_500, 3, (Some(true), false), (34_600, 34_900, 35_200));
         script.turn(36_000, 11_800, &[("renderer", 400), ("rest", 3_100), ("window_notify", 0)], &[
             ("overlay.show", 35_100),
             ("rest.frame", 36_500),
@@ -1628,10 +1637,11 @@ mod tests {
         script.drive(273_600, Event::Tick { settled: false, landed: false });
         script.offer(312_000, g, Why::Final, 309_500, &[(w(1), left, 280_200)]);
         script.drive(370_000, Event::Tick { settled: false, landed: true });
+        script.drawn(372_000, 8, (None, true), (370_200, 370_400, 371_700));
         script.drive(383_700, Event::Tick { settled: true, landed: true });
         script.lifted(383_700, g);
         script.heard(415_100, Heard::OverlayTaken { generation: g, taken: true });
-        script.drawn(416_000, 9, Some(false), (415_200, 415_400, 415_700));
+        script.drawn(416_000, 9, (Some(false), false), (415_200, 415_400, 415_700));
         let diff = |interior, interior_over, edge_in, edge_out, band| HandoverDiff { interior, interior_over, edge_in, edge_out, band };
         let measured = [(w(2), diff(0.26, 0.0012, 0.37, 1.56, None)), (w(1), diff(0.79, 0.004, 1.08, 2.26, Some(0.42)))];
         script.handover(480_300, g, &measured);
@@ -1652,7 +1662,7 @@ mod tests {
         let first = script.flights.coordinator().generation();
         script.drive(3_080_000, Event::Tick { settled: false, landed: false });
         script.drive(3_080_900, Event::Extend(Duration::from_millis(349)));
-        script.drawn(3_082_300, 12, Some(true), (3_081_000, 3_081_400, 3_081_900));
+        script.drawn(3_082_300, 12, (Some(true), false), (3_081_000, 3_081_400, 3_081_900));
         let late = [(w(1), starts, 3_002_000), (w(9), floating, 3_002_000)];
         script.offer(3_096_000, first, Why::FrameZero, 3_093_500, &late);
         script.wears(3_096_100, w(1), Wearing::Swap, Route::Baked, true, 3_002_000);
@@ -1669,7 +1679,7 @@ mod tests {
         script.drive(3_850_000, Event::Tick { settled: true, landed: false });
         script.lifted(3_850_000, merged);
         script.heard(3_910_000, Heard::Patience);
-        script.drawn(3_911_000, 17, Some(false), (3_910_100, 3_910_300, 3_910_700));
+        script.drawn(3_911_000, 17, (Some(false), false), (3_910_100, 3_910_300, 3_910_700));
         script.drive(4_250_000, Event::Quiet(merged));
 
         let anchor = |at: Instant| Anchor { at, uptime_ns: 81_234_560_000_000 + nanos(at - script.base) };

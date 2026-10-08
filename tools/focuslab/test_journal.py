@@ -57,7 +57,9 @@ class Summary(unittest.TestCase):
         self.assertAlmostEqual(self.clean["press_to_up"], self.clean["overlay_up"], places=6)
 
     def test_the_overlay_is_up_once_the_first_drain_showing_it_after_the_show_is_flushed(self):
-        self.assertEqual(self.flights[0].count("drawn", lambda mark: mark["shown"] is None), 1, "a drain before the show")
+        in_flight = lambda mark: mark["shown"] is None and not mark["places"]
+        self.assertEqual(self.flights[0].count("drawn", in_flight), 1, "a drain before the show")
+        self.assertEqual(self.flights[0].count("drawn", lambda mark: mark["places"]), 1, "the place ahead of the lift")
         marks = [mark for mark in self.flights[0].marks if not (mark["mark"] == "drawn" and mark["shown"])]
         never_up = journal.Flight(self.flights[0].header, marks).times()
         self.assertIsNone(never_up["overlay_up"], "drained, never shown")
@@ -126,7 +128,7 @@ class Summary(unittest.TestCase):
     def test_each_drain_drawn_is_its_wait_for_the_renderer_its_commit_and_the_way_back(self):
         rows = journal.drains(self.flights)
         self.assertEqual([(row["queued"], row["applied"], row["heard"]) for row in rows], [
-            (0.2, 0.4, 0.2), (0.3, 0.3, 0.3), (0.2, 0.3, 0.3), (0.4, 0.5, 0.4), (0.2, 0.4, 0.3),
+            (0.2, 0.4, 0.2), (0.3, 0.3, 0.3), (0.2, 1.3, 0.3), (0.2, 0.3, 0.3), (0.4, 0.5, 0.4), (0.2, 0.4, 0.3),
         ])
 
     def test_nearest_rank_percentiles(self):

@@ -100,17 +100,18 @@ fn needs_overlay(command: &Render) -> bool { matches!(command, Render::Dress { .
 
 /// What a drain comes to, given the overlay after it and its window's number: not drawn when it
 /// `needed` the overlay and there is none, else committed, any drain with no overlay included, with
-/// the window's number once the window server has numbered it.
+/// the window's number once the window server has numbered it, whether it showed or lifted the
+/// overlay and whether it placed what is drawn at rest.
 fn answer(
     seq: u64,
     needed: bool,
     overlay: Option<Option<WindowServerId>>,
-    shown: Option<bool>,
+    (shown, places): (Option<bool>, bool),
     (sent, began, flushed): (Instant, Instant, Instant),
 ) -> Event {
     match overlay {
         None if needed => Event::Unavailable { seq },
-        overlay => Event::Committed { seq, overlay: overlay.flatten(), shown, sent, began, flushed },
+        overlay => Event::Committed { seq, overlay: overlay.flatten(), shown, places, sent, began, flushed },
     }
 }
 
@@ -237,7 +238,7 @@ impl Renderer {
             }
         }
         let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
-        answer(seq, needed, overlay, shown, (sent, began, flushed))
+        answer(seq, needed, overlay, (shown, places), (sent, began, flushed))
     }
 
     fn apply(&mut self, command: Render) {
@@ -389,7 +390,7 @@ mod tests {
     #[test]
     fn a_drain_that_needed_the_overlay_and_has_none_is_not_drawn() {
         let at = Instant::now();
-        assert_eq!(answer(3, true, None, Some(true), (at, at, at)), Event::Unavailable { seq: 3 });
+        assert_eq!(answer(3, true, None, (Some(true), false), (at, at, at)), Event::Unavailable { seq: 3 });
     }
 
     #[test]
@@ -397,12 +398,14 @@ mod tests {
         let at = Instant::now();
         let times = (at, at + std::time::Duration::from_millis(1), at + std::time::Duration::from_millis(2));
         let (sent, began, flushed) = times;
-        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, sent, began, flushed };
+        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, places: false, sent, began, flushed };
         let numbered = WindowServerId(4_242);
-        assert_eq!(answer(3, false, None, None, times), committed(None), "a display or holes, no overlay");
-        assert_eq!(answer(3, true, Some(None), None, times), committed(None), "made, not numbered yet");
-        assert_eq!(answer(3, true, Some(Some(numbered)), None, times), committed(Some(numbered)));
-        assert_eq!(answer(3, false, Some(Some(numbered)), None, times), committed(Some(numbered)), "every drain");
+        assert_eq!(answer(3, false, None, (None, false), times), committed(None), "a display or holes, no overlay");
+        assert_eq!(answer(3, true, Some(None), (None, false), times), committed(None), "made, not numbered yet");
+        assert_eq!(answer(3, true, Some(Some(numbered)), (None, false), times), committed(Some(numbered)));
+        assert_eq!(answer(3, false, Some(Some(numbered)), (None, false), times), committed(Some(numbered)), "every drain");
+        let placed = Event::Committed { seq: 3, overlay: Some(numbered), shown: None, places: true, sent, began, flushed };
+        assert_eq!(answer(3, false, Some(Some(numbered)), (None, true), times), placed, "a place, told apart from a drain in flight");
     }
 
     #[test]

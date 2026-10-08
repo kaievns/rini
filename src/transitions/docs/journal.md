@@ -65,7 +65,7 @@ until it has a mark.
 | `Focus { window, focused }` | `focus` | `window`, `focused` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
-| the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `queued_us`, `applied_us`, `flushed_before_us` |
+| the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `places` (it placed what is drawn at rest: with `shown` `null`, the place a tick ahead of the lift, not a drain in flight), `queued_us`, `applied_us`, `flushed_before_us` |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
 | a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out`, and `band` for a window wearing a band at rest (levels, and a share for `interior_over`) |
 | a turn of the main thread's run loop over 8ms, stamped when it began | `main_turn` | `busy_us` (waking to going back to sleep), `outside_us` (the busy time no actor's poll covers: AppKit, Core Animation's commit, the event dispatch), `actors`, `changes` (counts of the marks after it) |
