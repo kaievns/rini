@@ -43,7 +43,7 @@ use crate::pictures::platform::measure::{band_print, body_samples, rgba};
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
-use crate::windows::platform::window_server::server_frame;
+use crate::windows::platform::window_server::{key_focus_pid, server_frame};
 
 /// What a client asks of the service.
 #[derive(Debug)]
@@ -530,14 +530,6 @@ impl Pictures {
         held.desktop = Some(desktop);
     }
 
-    /// `window` known as a first alpha capture and a material check would have found it.
-    #[cfg(test)]
-    pub fn learn(&self, window: WindowServerId, translucent: bool, material: bool) {
-        let mut shared = self.lock();
-        shared.learned.saw_alpha(window, translucent);
-        shared.learned.saw_material(window, material);
-    }
-
     /// `look` held as `window`'s focused look, as a delivery kept focused would hold it.
     #[cfg(test)]
     pub fn hold_focused(&self, window: WindowId, look: Picture) { self.lock().cache.keep_focused(window, look) }
@@ -702,7 +694,12 @@ impl Service {
                 schedule.retarget(id, watch, now, &|window| held_print(cache, window));
             }
             Command::Stop(id) => shared.schedule.stop(id),
-            Command::Hint(hint) => shared.schedule.hint(hint, now),
+            Command::Hint(hint) => {
+                if let Hint::Focused(window) = hint {
+                    shared.learned.focused(window, now);
+                }
+                shared.schedule.hint(hint, now)
+            }
             Command::KeepFocused(tag, window) => {
                 if let Some(look) = shared.delivered.under(tag, window).cloned() {
                     shared.cache.keep_focused(window, look);
@@ -911,6 +908,7 @@ impl Service {
         let display = self.shared.lock().unwrap().schedule.display();
         // Taken from the shared state only once something is captured: most looks are landing polls.
         let mut known: Option<(Learned, Option<DesktopBackdrop>)> = None;
+        let mut key = None;
         let mut looks = Vec::new();
         let mut looked = Vec::new();
         let mut captured: Vec<(WindowId, Picture)> = Vec::new();
@@ -924,6 +922,7 @@ impl Service {
                 let behind: Vec<(WindowServerId, CGRect)> =
                     set.behind.iter().filter_map(|id| Some((*id, server_frame(*id)?))).collect();
                 let (learned, desktop) = known.get_or_insert_with(|| {
+                    key = key_focus_pid();
                     let shared = self.shared.lock().unwrap();
                     (shared.learned.clone(), shared.display.desktop_windows.clone())
                 });
@@ -934,7 +933,7 @@ impl Service {
                     let windows: Vec<skylight::OnScreen> = group.into_iter().map(|at| wanted[at]).collect();
                     let on = display.frame.to_cg();
                     let batch =
-                        skylight::capture_on_screen(&windows, &behind, desktop, on, learned, &halt);
+                        skylight::capture_on_screen(&windows, &behind, desktop, on, learned, key, &halt);
                     desktop_stale |= batch.desktop_stale;
                     captured.extend(batch.pictures);
                     halted.extend(batch.halted);
@@ -1869,6 +1868,8 @@ mod tests {
         assert!(matches!(next(), Next::Idle), "no focus reported");
         service.apply(Command::Hint(Hint::Focused(wid(4))));
         assert_eq!(looked(next()), vec![wid(4)]);
+        let settled = Instant::now() + crate::pictures::domain::knowledge::ACTIVE_SETTLED;
+        assert!(shared.lock().unwrap().learned.active(wid(4), Some(1), settled), "what a material is measured by");
     }
 
     /// Every handle method that asks sends its command, in order; the reads are of what is shared.

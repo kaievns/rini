@@ -25,3 +25,31 @@ messages-baked.rgba are that reading's two 64x64 RGBA crops, which knowledge.rs'
 A second run at 16:22, rini still pid 72356, front Google Chrome: Chrome 1722x1079 mean 0.00,
 share>12 0.000; Zoom 1280x960 mean 0.04, share>12 0.000. Outlook was not on screen, so its share is
 still unmeasured.
+
+Active against inactive, 17:32-17:35, rini f0706f25 running (pid 89401), the same display and
+wallpaper. Each window brought on screen by activating its application (`open -a`), then made
+inactive in place by activating Finder, which has no window, so nothing moved. probe.swift:
+
+window                      front      mean   share>12  baked/below  alone/below
+Microsoft Outlook 1722x1079 Outlook    1.96   0.090     0.00         1.96
+Microsoft Outlook 1722x1079 Finder     0.00   0.000     0.00         0.00
+Messages 860x1079           Messages   0.37   0.000     0.37         0.00   (share>6 0.038)
+Messages 860x1079           Finder     0.00   0.000     0.00         0.00
+
+Inactive, Outlook's folder pane is drawn flat: alone, baked and the screen agree. A material test
+of an inactive window finds none whatever it has. Rini's first flight after its 16:34 start (the
+journal, g1, application_launched, no focus) pictured Outlook at 3,35 with another application in
+front, so it learned no material there (inferred: nothing reads what rini learned).
+
+sck.swift, the window alone through SkyLight and through ScreenCaptureKit, mean RGB and chroma
+(max minus min channel, averaged) over a rect of the window, x and y as fractions:
+
+window    front     rect                  SkyLight alone            ScreenCaptureKit
+Messages  Finder    0.02-0.30 x 0.10-0.90  57.9/57.5/58.6 chroma 1.7  57.9/57.5/58.6 chroma 1.7
+Messages  Messages  0.02-0.30 x 0.10-0.90  55.4/54.5/55.4 chroma 2.4  55.4/54.5/55.4 chroma 2.4
+Outlook   Outlook   0.01-0.12 x 0.10-0.90  74.3/73.3/71.9 chroma 2.9  74.3/73.3/71.9 chroma 2.9
+
+ScreenCaptureKit's picture of a window equals SkyLight's picture of it alone, active or not: neither
+carries a blur the other lacks. Outlook's folder pane alone, active, is 74.3 grey; the screen shows
+it near 60 with the wallpaper's tint (60.6/59.3/54.7 chroma 7.1, read off the screen at rest the
+same afternoon over a rect of its own), and only the baked call carries that.

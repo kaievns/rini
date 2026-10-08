@@ -1,14 +1,16 @@
 //! What rini learns about each window the first time it sees it on screen: whether it is translucent,
-//! and whether it has a material that blurs what is behind it. What is learned
-//! decides which SkyLight call a window goes in. Pure: the pixels arrive as plain bytes, drawn small
-//! by `crate::pictures::platform::measure`.
+//! and whether it has a material that blurs what is behind it, found only while the window is active.
+//! What is learned decides which SkyLight call a window goes in. Pure: the pixels arrive as plain
+//! bytes, drawn small by `crate::pictures::platform::measure`.
 //!
 //! Measured in "SLSHWCaptureWindowList captures only the visible portion" and "Translucency is three
-//! things, and only one of them is lost" in `src/pictures/docs/capture-research.md`.
+//! things, and only one of them is lost" in `src/pictures/docs/capture-research.md`, and the material
+//! of an inactive window in `docs/data/2026-10-08-materials`.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
-use rini_core::ids::WindowServerId;
+use rini_core::ids::{WindowId, WindowServerId, pid_t};
 
 /// What is known of one window. `None` until measured.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -16,14 +18,19 @@ pub struct Knowledge {
     /// Per-pixel transparency worth keeping: what is behind it shows through.
     pub translucent: Option<bool>,
     /// A material that samples what is behind the window, which only a capture with the desktop after
-    /// it carries.
+    /// it carries. `Some(false)` only once measured absent with the window active.
     pub material: Option<bool>,
+    /// Measured with no material only while the window was inactive, where macOS draws a material
+    /// flat: still unknown, and measured again the first time the window is captured active.
+    pub flat_inactive: bool,
 }
 
 impl Knowledge {
-    /// Nothing behind the window shows through it: measured opaque, and no material.
+    /// Nothing behind the window shows through it as it is drawn: measured opaque, and no material
+    /// found, active or not.
     pub fn is_opaque(&self) -> bool {
-        self.translucent == Some(false) && self.material == Some(false)
+        self.translucent == Some(false)
+            && (self.material == Some(false) || self.material.is_none() && self.flat_inactive)
     }
 
     /// Which call a window is captured in first.
@@ -36,9 +43,13 @@ impl Knowledge {
     }
 
     /// After the alpha call, measured: whether the window keeps its picture from it, or joins the
-    /// baked call, which a window opaque and not known to lack a material does.
-    pub fn after_alpha(&self) -> Call {
-        if self.translucent != Some(false) || self.material == Some(false) {
+    /// baked call, which a window opaque and not known to lack a material does, but for one seen
+    /// flat while inactive and still inactive: its picture alone is what the screen shows.
+    pub fn after_alpha(&self, active: bool) -> Call {
+        if self.translucent != Some(false)
+            || self.material == Some(false)
+            || self.material.is_none() && self.flat_inactive && !active
+        {
             Call::Alpha
         } else {
             Call::Baked
@@ -57,10 +68,16 @@ pub enum Call {
     Baked,
 }
 
-/// Every window's knowledge, by window server id.
+/// How long after the window server reports a window focused a capture of it shows it active:
+/// past the slowest focused look of 316 measured presses, 158ms after the input
+/// (`docs/data/2026-10-03-focus`). A capture taken sooner can show the material still flat.
+pub const ACTIVE_SETTLED: Duration = Duration::from_millis(200);
+
+/// Every window's knowledge, by window server id, and the window last reported focused.
 #[derive(Clone, Default)]
 pub struct Learned {
     windows: HashMap<WindowServerId, Knowledge>,
+    focused: Option<(WindowId, Instant)>,
 }
 
 impl Learned {
@@ -73,9 +90,30 @@ impl Learned {
         self.windows.entry(window).or_default().translucent = Some(translucent);
     }
 
-    /// What comparing the window alone with it baked showed.
-    pub fn saw_material(&mut self, window: WindowServerId, material: bool) {
-        self.windows.entry(window).or_default().material = Some(material);
+    /// What comparing the window alone with it baked showed, `active` or not as it was captured. A
+    /// material found is found for good; none found counts only with the window active, since an
+    /// inactive window draws its material flat.
+    pub fn saw_material(&mut self, window: WindowServerId, material: bool, active: bool) {
+        let known = self.windows.entry(window).or_default();
+        match (material, active) {
+            (true, _) => known.material = Some(true),
+            (false, true) => known.material = known.material.or(Some(false)),
+            (false, false) => known.flat_inactive = true,
+        }
+    }
+
+    /// The window server reported `window` focused at `at`.
+    pub fn focused(&mut self, window: WindowId, at: Instant) {
+        self.focused = Some((window, at));
+    }
+
+    /// Whether `window` is drawn active in a capture taken at `taken`: it is the window last reported
+    /// focused, `ACTIVE_SETTLED` before, and its application holds the keys, `key` the process that
+    /// does as the window server says. A panel of another application taking the keys reports no
+    /// window of its own.
+    pub fn active(&self, window: WindowId, key: Option<pid_t>, taken: Instant) -> bool {
+        key == Some(window.pid)
+            && self.focused.is_some_and(|(focused, at)| focused == window && taken >= at + ACTIVE_SETTLED)
     }
 
     /// A window that is gone: its id may be handed to another.
@@ -153,6 +191,14 @@ mod tests {
         Knowledge {
             translucent,
             material,
+            flat_inactive: false,
+        }
+    }
+
+    fn seen_flat() -> Knowledge {
+        Knowledge {
+            flat_inactive: true,
+            ..known(Some(false), None)
         }
     }
 
@@ -183,8 +229,69 @@ mod tests {
             (known(Some(true), None), Call::Alpha),
             (known(Some(true), Some(true)), Call::Alpha),
         ] {
-            assert_eq!(k.after_alpha(), call, "{k:?}");
+            assert_eq!(k.after_alpha(false), call, "{k:?}");
+            assert_eq!(k.after_alpha(true), call, "{k:?} active");
         }
+    }
+
+    /// A window seen with no material only while inactive keeps its picture alone while it stays
+    /// inactive, which is what the screen shows of it then, and is baked again the first time it is
+    /// captured active, which is how its material is found.
+    #[test]
+    fn a_window_seen_flat_while_inactive_is_baked_again_once_active() {
+        assert_eq!(seen_flat().after_alpha(false), Call::Alpha);
+        assert_eq!(seen_flat().after_alpha(true), Call::Baked);
+        assert_eq!(seen_flat().first_call(), Call::Alpha);
+        assert!(seen_flat().is_opaque(), "as it is drawn while inactive");
+    }
+
+    /// The reported case: Outlook first seen while another application was in front, its folder pane
+    /// drawn flat, alone and baked alike, so it was learned to have no material and flew grey for as
+    /// long as it lived. Inactive, nothing found is not an answer; found active, it is.
+    #[test]
+    fn no_material_counts_only_when_the_window_was_active() {
+        let mut learned = Learned::default();
+        learned.saw_alpha(id(1), false);
+        learned.saw_material(id(1), false, false);
+        assert_eq!(learned.get(id(1)), seen_flat(), "still unknown");
+        assert_eq!(learned.get(id(1)).after_alpha(true), Call::Baked);
+        learned.saw_material(id(1), true, true);
+        assert_eq!(learned.get(id(1)).material, Some(true));
+        assert_eq!(learned.get(id(1)).first_call(), Call::Baked);
+
+        learned.saw_alpha(id(2), false);
+        learned.saw_material(id(2), false, false);
+        learned.saw_material(id(2), false, true);
+        assert_eq!(learned.get(id(2)).material, Some(false), "measured active");
+        assert_eq!(learned.get(id(2)).after_alpha(false), Call::Alpha);
+        assert_eq!(learned.get(id(2)).after_alpha(true), Call::Alpha, "and never again");
+
+        learned.saw_alpha(id(3), false);
+        learned.saw_material(id(3), true, false);
+        assert_eq!(learned.get(id(3)).material, Some(true), "a material found inactive is found");
+    }
+
+    fn wid(idx: u32) -> WindowId {
+        WindowId::new(7, idx)
+    }
+
+    /// Active is the window last reported focused, `ACTIVE_SETTLED` after the report, with its
+    /// application holding the keys: a capture sooner can show its material still flat, and a panel
+    /// of another application taking the keys reports no window.
+    #[test]
+    fn a_window_is_active_once_settled_after_its_focus_report_while_its_application_holds_the_keys() {
+        let at = Instant::now();
+        let mut learned = Learned::default();
+        let settled = at + ACTIVE_SETTLED;
+        assert!(!learned.active(wid(1), Some(7), settled), "no report yet");
+        learned.focused(wid(1), at);
+        assert!(learned.active(wid(1), Some(7), settled));
+        assert!(!learned.active(wid(1), Some(7), settled - Duration::from_millis(1)), "too soon");
+        assert!(!learned.active(wid(1), Some(8), settled), "another application holds the keys");
+        assert!(!learned.active(wid(1), None, settled));
+        assert!(!learned.active(wid(2), Some(7), settled), "another window of the application");
+        learned.focused(wid(2), at);
+        assert!(!learned.active(wid(1), Some(7), settled), "focus moved on");
     }
 
     #[test]
@@ -201,14 +308,8 @@ mod tests {
         let mut learned = Learned::default();
         assert_eq!(learned.get(id(1)), Knowledge::default());
         learned.saw_alpha(id(1), false);
-        learned.saw_material(id(1), true);
-        assert_eq!(
-            learned.get(id(1)),
-            Knowledge {
-                translucent: Some(false),
-                material: Some(true),
-            }
-        );
+        learned.saw_material(id(1), true, true);
+        assert_eq!(learned.get(id(1)), known(Some(false), Some(true)));
         learned.saw_alpha(id(2), true);
         learned.forget(id(1));
         assert_eq!(learned.get(id(1)), Knowledge::default());

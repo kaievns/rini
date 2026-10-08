@@ -39,7 +39,6 @@ use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
 use crate::pictures::domain::handover::HandoverCheck;
-use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
 use crate::pictures::domain::identity::picture_id;
@@ -49,14 +48,15 @@ use crate::pictures::domain::watch::{
     WatchId, Why,
 };
 use crate::decorations::domain::style::{Ring, Worn};
-use crate::pictures::platform::picture::{Picture, Route};
+use crate::pictures::domain::route::Route;
+use crate::pictures::platform::picture::Picture;
 use crate::pictures::platform::service::Pictures;
 use crate::pictures::platform::skylight::capture_via_framed;
 use crate::transitions::domain::admission::*;
 use crate::transitions::domain::drawn::{Drawn, Owed};
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::flight_score::FlightScore;
-use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, measures};
+use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures};
 use crate::transitions::domain::lifecycle::{
     self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
     drawn_ringed, extend_latest, losing_focus,
@@ -447,17 +447,27 @@ impl RunningAnimation {
         )
     }
 
-    /// Frame zero's pictures, each on its window's tile, clipped or whole; how many were taken.
-    fn wear(&mut self, pictures: Vec<(WindowId, Picture, bool)>) -> usize {
-        let mut worn = 0;
+    /// Frame zero's pictures, each on its window's tile, clipped or whole; the windows whose tiles
+    /// took one.
+    fn wear(&mut self, pictures: Vec<(WindowId, Picture, bool)>) -> Vec<WindowId> {
+        let mut worn = Vec::new();
         for (window, picture, clipped) in pictures {
             if let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window) {
                 tile.snapshot = picture;
                 tile.clipped = clipped;
-                worn += 1;
+                worn.push(window);
             }
         }
         worn
+    }
+
+    /// What the journal records of the picture each of `windows`' tiles wears now.
+    fn worn(&self, windows: &[WindowId]) -> Vec<(WindowId, Route, bool, Instant)> {
+        self.tiles
+            .iter()
+            .filter(|tile| windows.contains(&tile.window))
+            .map(|tile| (tile.window, tile.snapshot.source, tile.snapshot.carries_blur, tile.snapshot.taken))
+            .collect()
     }
 
     /// The tile a reserved entrance becomes with its first picture, `clipped` or whole and rounded at
@@ -683,14 +693,6 @@ fn on_screen(
 /// turned look is asked for at.
 fn sized_targets(windows: Vec<(WindowId, ScreenRect)>) -> Vec<PictureTarget> {
     windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
-}
-
-/// Whether the overlay clips `picture` to its tile's corner: the stand-in, which has no corners of
-/// its own, and a SkyLight picture of a window baked with the desktop behind it, which has the
-/// wallpaper in its corners. Any other picture is drawn whole.
-fn clips(knowledge: Knowledge, picture: &Picture) -> bool {
-    picture.source == Route::StandIn
-        || (picture.source == Route::SkyLight && knowledge.after_alpha() == Call::Baked)
 }
 
 /// The end state's watches: one slot for each kind, kept from one generation to the next and
@@ -1185,17 +1187,21 @@ impl FlightEngine {
         } else if self.flights.coordinator().generation() == generation
             && self.flights.coordinator().is_flying()
             && let Some(running) = self.running.as_mut()
-            && running.wear(
+        {
+            let worn = running.wear(
                 pictures
                     .into_iter()
                     .map(|(window, picture, _)| {
-                        let clipped = clips(self.pictures.knowledge(WindowServerId::from(window)), &picture);
+                        let clipped = picture.source.clips();
                         (window, picture, clipped)
                     })
                     .collect(),
-            ) > 0
-        {
-            self.reinstall();
+            );
+            let worn = running.worn(&worn);
+            if !worn.is_empty() {
+                self.journal_wears(Wearing::FrameZero, worn);
+                self.reinstall();
+            }
         }
         self.drive(lifecycle::Event::FrameZero(generation));
     }
@@ -1208,16 +1214,20 @@ impl FlightEngine {
         }
         let Some((_, _, picture)) = self.delivered.remove(&window) else { return };
         let server_id = WindowServerId::from(window);
-        let clipped = clips(self.pictures.knowledge(server_id), &picture);
+        let clipped = picture.source.clips();
         let Some(running) = self.running.as_mut() else { return };
         let radius = || crate::windows::platform::window_server::corner_radii(&[server_id]).get(&server_id).copied();
-        match running.take_picture(window, &picture, clipped, radius) {
-            Took::Entrance(tile) => return self.admit_entrance(tile, now),
-            Took::Tile => {}
-            Took::Nothing => return,
+        let took = running.take_picture(window, &picture, clipped, radius);
+        let flown = running.flown;
+        if matches!(took, Took::Nothing) {
+            return;
         }
-        debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, flown = running.flown, "picture swapped mid-flight");
-        if !running.flown {
+        self.journal_wears(Wearing::Swap, vec![(window, picture.source, picture.carries_blur, picture.taken)]);
+        if let Took::Entrance(tile) = took {
+            return self.admit_entrance(tile, now);
+        }
+        debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, flown, "picture swapped mid-flight");
+        if !flown {
             self.reinstall();
             return;
         }
@@ -1518,7 +1528,7 @@ impl FlightEngine {
             match snapshot {
                 Some(snapshot) => {
                     waits(request.window, EndPicture::of_picture(snapshot.coverage.covered, request.to.size));
-                    let clipped = clips(self.pictures.knowledge(request.server_id), &snapshot);
+                    let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
                         window: request.window,
@@ -1573,7 +1583,7 @@ impl FlightEngine {
                                 "entrance from spawn"
                             );
                             self.pictures.insert(request.window, snapshot.clone());
-                            let clipped = clips(self.pictures.knowledge(request.server_id), &snapshot);
+                            let clipped = snapshot.source.clips();
                             let from_o = to_overlay_space(from, display_frame);
                             let to_o = to_overlay_space(to, display_frame);
                             // Already at its slot (a cold cache, not an open): a still tile.
@@ -1708,7 +1718,9 @@ impl FlightEngine {
             running.score.wait(accent);
         }
         restack(&mut running.tiles, focus);
+        let composed = running.worn(&running.drawn());
         self.running = Some(running);
+        self.journal_wears(Wearing::Compose, composed);
         let Some(mut stage) = self.stage(pass.shape) else { return };
         if let Some(target) = stage.parked_focus()
             && self.fly_focused_look(target)
@@ -1723,9 +1735,22 @@ impl FlightEngine {
     /// fits: frame zero cannot picture it, and it arrives focused. Whether it does.
     fn fly_focused_look(&mut self, target: WindowId) -> bool {
         let look = self.pictures.focused(target);
-        let knowledge = self.pictures.knowledge(WindowServerId::from(target));
-        let clipped = look.as_ref().is_some_and(|look| clips(knowledge, look));
-        self.running.as_mut().is_some_and(|running| running.fly_focused_look(target, look, clipped))
+        let clipped = look.as_ref().is_some_and(|look| look.source.clips());
+        let worn = look.as_ref().map(|look| (target, look.source, look.carries_blur, look.taken));
+        let flown = self.running.as_mut().is_some_and(|running| running.fly_focused_look(target, look, clipped));
+        if flown {
+            self.journal_wears(Wearing::FocusedLook, worn.into_iter().collect());
+        }
+        flown
+    }
+
+    /// The journal's record of each picture a tile took `at` that moment of the flight: its route,
+    /// whether it carries its window's blur, and when it was taken.
+    fn journal_wears(&mut self, at: Wearing, worn: Vec<(WindowId, Route, bool, Instant)>) {
+        let now = self.now();
+        for (window, route, blur, taken) in worn {
+            self.flights.wears(now, window, at, route, blur, taken);
+        }
     }
 
     /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
@@ -1771,7 +1796,10 @@ impl FlightEngine {
         let drawn_focused_before: Vec<(WindowId, (bool, Ring))> =
             running.tiles.iter().map(|t| (t.window, (t.focused, t.ring))).collect();
         let (pass_focus, _) = pass.focus;
+        let joining: Vec<WindowId> =
+            pass.tiles.iter().map(|tile| tile.window).filter(|window| !running.drawn().contains(window)).collect();
         running.merge_pass(pass.tiles, pass_focus);
+        let composed = running.worn(&joining);
         let mut shape = pass.shape;
         let drawn = running.drawn();
         let folded = Pass {
@@ -1853,6 +1881,7 @@ impl FlightEngine {
         let flown = running.flown;
         let extend = (flown && !moved).then(|| running.score.outlasting(left, at)).flatten();
         let focus_moved = running.focus != focus_before;
+        self.journal_wears(Wearing::Compose, composed);
         self.play(played);
         let look = if focus_moved
             && let Some(target) = self.stage(shape.clone()).and_then(|stage| stage.parked_focus())
@@ -1954,7 +1983,7 @@ impl FlightEngine {
                     } else if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
-                    let clipped = clips(self.pictures.knowledge(window.server_id), &snapshot);
+                    let clipped = snapshot.source.clips();
                     let focused = drawn_focused(window.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
                         window: window.window,
@@ -2578,7 +2607,7 @@ mod tests {
             running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
             let fresh = test_picture(ScreenSize::new(859.0, 1000.0));
             let worn = running.wear(vec![(wid(1), fresh.clone(), true), (wid(5), fresh.clone(), true)]);
-            assert_eq!(worn, 1, "a window with no tile is the cache's alone");
+            assert_eq!(worn, vec![wid(1)], "a window with no tile is the cache's alone");
             assert_eq!(running.tiles[0].snapshot.coverage, fresh.coverage);
             assert!(running.tiles[0].clipped, "as it was handed");
             assert_eq!(running.tiles.len(), 1);
@@ -2782,25 +2811,6 @@ mod tests {
             running.tiles[1].worn.decoration = bordered;
             let holes = running.holes(vec![(wid(1), slot), (wid(2), slot)], 2.0);
             assert_eq!(holes, vec![(slot, 3.0), (slot, 1.5)], "past the ring outside the border, and past the border");
-        }
-
-        #[test]
-        fn the_stand_in_and_a_baked_skylight_picture_are_clipped_and_no_other_is() {
-            use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
-            let size = ScreenSize::new(859.0, 1081.0);
-            let mut skylight = test_picture(size);
-            skylight.source = Route::SkyLight;
-            let baked = Knowledge { translucent: Some(false), material: Some(true) };
-            assert!(clips(baked, &skylight));
-            let unknown = Knowledge { translucent: Some(false), material: None };
-            assert!(clips(unknown, &skylight), "baked to learn its material");
-            let translucent = Knowledge { translucent: Some(true), ..baked };
-            assert!(!clips(translucent, &skylight), "captured alone, its corners clear");
-            let plain = Knowledge { material: Some(false), ..baked };
-            assert!(!clips(plain, &skylight));
-            assert!(!clips(baked, &test_picture(size)), "ScreenCaptureKit leaves the corners clear");
-            let stand_in = stand_in_picture(size, stand_in_image().expect("drawn"));
-            assert!(clips(Knowledge::default(), &stand_in), "no corners of its own");
         }
 
         #[test]
@@ -4247,14 +4257,13 @@ mod tests {
         fn frame_zeros_pictures_are_clipped_by_what_each_one_is() {
             let mut h = Harness::new();
             park(2);
-            h.engine.pictures.learn(WindowServerId::new(1), false, true);
             let press = strip_of(&h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
             let pressed = h.step(press);
             assert!(handed(&pressed, wid(1)).iter().all(|tile| !tile.clipped), "its picture captured alone");
             assert!(handed(&pressed, wid(2)).iter().all(|tile| tile.clipped), "the stand-in");
             h.advance(Duration::from_millis(5));
             let mut baked = test_picture(start().size);
-            baked.source = Route::SkyLight;
+            baked.source = Route::Baked;
             let frame_zero = Event::Pictures(crate::pictures::event::Event::Delivered {
                 tag: Tag { client: CLIENT, generation: h.generation() },
                 why: Why::FrameZero,
@@ -4274,7 +4283,7 @@ mod tests {
             };
             let (one, two) = (staged(wid(1)), staged(wid(2)));
             assert!(!one.is_empty() && !two.is_empty(), "both staged again");
-            assert!(one.iter().all(|tile| tile.snapshot.source == Route::SkyLight && tile.clipped), "baked");
+            assert!(one.iter().all(|tile| tile.snapshot.source == Route::Baked && tile.clipped), "baked");
             assert!(two.iter().all(|tile| tile.snapshot.source == Route::ScreenCaptureKit && !tile.clipped), "captured alone");
             crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
         }
@@ -4290,9 +4299,8 @@ mod tests {
             h.advance(Duration::from_millis(50));
             park(2);
             let mut baked = test_picture(end().size);
-            baked.source = Route::SkyLight;
+            baked.source = Route::Baked;
             h.engine.pictures.insert(wid(3), baked);
-            h.engine.pictures.learn(WindowServerId::new(3), false, true);
             let merge = strip_of(&h, &[1, 2, 3], SurfacePoint::new(867.0, 0.0), SurfacePoint::new(967.0, 0.0));
             let sent = h.step(merge);
             let joined = |window| {
@@ -4310,23 +4318,22 @@ mod tests {
         /// clipped when the look was baked with the desktop behind it and drawn whole when it was not.
         #[test]
         fn a_parked_targets_focused_look_swaps_in_clipped_by_what_it_is() {
-            for (material, clipped) in [(true, true), (false, false)] {
+            for (route, clipped) in [(Route::Baked, true), (Route::SkyLight, false)] {
                 let mut h = Harness::new();
                 let (_, shown) = h.shown();
                 h.commit(shown);
                 h.advance(Duration::from_millis(50));
                 park(2);
                 let mut look = test_picture(end().size);
-                look.source = Route::SkyLight;
+                look.source = route;
                 h.engine.pictures.hold_focused(wid(2), look);
-                h.engine.pictures.learn(WindowServerId::new(2), !material, material);
                 let mut merge = strip_of(&h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
                 if let Event::AnimateSurface { focus, .. } = &mut merge {
                     *focus = Some(wid(2));
                 }
                 let sent = h.step(merge);
                 assert_eq!(h.engine.running.as_ref().and_then(|running| running.focused_look), Some(wid(2)), "flown");
-                assert_eq!(swapped(&sent, wid(2)), [clipped], "baked: {material}");
+                assert_eq!(swapped(&sent, wid(2)), [clipped], "{route:?}");
                 crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
             }
         }
@@ -4771,6 +4778,47 @@ mod tests {
             assert_eq!(drawn[0].at, heard, "before the writes it released");
             let mark = Mark::Drawn { seq: shown, shown: Some(true), queued_us: 400, applied_us: 300, flushed_before_us: 800 };
             assert_eq!(drawn[0].mark, mark);
+        }
+
+        /// Every picture a tile takes is journalled with its route, its blur and its age: the cache's as
+        /// the flight composes, frame zero's before the show, and one swapped in mid-flight.
+        #[test]
+        fn every_picture_a_tile_takes_is_journalled_with_its_route_blur_and_age() {
+            let mut h = Harness::new();
+            let bursts = h.writing();
+            let pan = h.pan();
+            h.step(pan);
+            h.advance(Duration::from_millis(5));
+            let mut baked = test_picture(start().size);
+            (baked.source, baked.carries_blur, baked.taken) = (Route::Baked, true, h.at() - Duration::from_millis(30));
+            let frame_zero = Event::Pictures(crate::pictures::event::Event::Delivered {
+                tag: Tag { client: CLIENT, generation: h.generation() },
+                why: Why::FrameZero,
+                sent: h.at(),
+                pictures: vec![(wid(1), baked, start())],
+            });
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            let swapped = only_batch(&h.step(background(h.generation(), h.at()))).seq;
+            h.commit(swapped);
+            h.advance(Duration::from_millis(400));
+            let lift = lift_batch(&h.step(Event::Tick)).expect("lifted").seq;
+            h.commit(lift);
+            h.step(Event::Quiet(Generation(h.generation())));
+            let burst = bursts.try_recv().expect("the settled burst");
+            let worn: Vec<_> = burst
+                .marks
+                .iter()
+                .filter_map(|stamped| match stamped.mark {
+                    Mark::Wears { window, at, route, blur, taken_before_us } => Some((window, at, route, blur, taken_before_us)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(worn.len(), 3, "{worn:?}");
+            assert_eq!((worn[0].0, worn[0].1, worn[0].2, worn[0].3), (wid(1), Wearing::Compose, Route::ScreenCaptureKit, false), "the cache's");
+            assert_eq!(worn[1], (wid(1), Wearing::FrameZero, Route::Baked, true, 30_000));
+            assert_eq!((worn[2].1, worn[2].2, worn[2].3), (Wearing::Swap, Route::ScreenCaptureKit, false));
         }
 
         #[test]

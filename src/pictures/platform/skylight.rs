@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGImage, CGWindowListOption};
-use rini_core::ids::{WindowId, WindowServerId};
+use rini_core::ids::{WindowId, WindowServerId, pid_t};
 use rini_geometry::space::{FromCg, PixelRect, ScreenPoint, ScreenRect, ScreenSize, ToCg};
 use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 
@@ -21,7 +21,8 @@ use crate::pictures::domain::region::{composite_frame, composite_scale, contains
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::desktop::DesktopBackdrop;
 use crate::pictures::platform::measure::{first_sight, shows_material};
-use crate::pictures::platform::picture::{Picture, Pixels, Route, image_size};
+use crate::pictures::domain::route::Route;
+use crate::pictures::platform::picture::{Picture, Pixels, image_size};
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
 /// actually does" in `src/animation/docs/capture-overlay-research.md`.
@@ -106,7 +107,9 @@ pub struct Batch {
 ///   what is really behind it; a window seen for the first time is measured from it;
 /// - the baked call lists the opaque windows, then `behind`, then the desktop, so a material carries the
 ///   blur of what is below it. A window opaque and of unknown material is in both, and its material is
-///   learned from the difference.
+///   learned from the difference, as far as the window is active: an inactive window draws its
+///   material flat, so finding none there is not an answer (`Learned::saw_material`), and `key`, the
+///   process the window server has holding the keys, is what says it is active.
 ///
 /// A composite of another shape than its windows yields no picture. Measured in "A batched call
 /// composites in the order given" in `src/pictures/docs/capture-research.md`. `halt` is asked before
@@ -117,6 +120,7 @@ pub fn capture_on_screen(
     desktop: &DesktopBackdrop,
     display: CGRect,
     learned: &mut Learned,
+    key: Option<pid_t>,
     halt: &dyn Fn() -> bool,
 ) -> Batch {
     let taken = Instant::now();
@@ -140,8 +144,8 @@ pub fn capture_on_screen(
             if learned.get(window.server_id).translucent.is_none() {
                 learned.saw_alpha(window.server_id, first_sight(&crop));
             }
-            match learned.get(window.server_id).after_alpha() {
-                Call::Alpha => pictures.push(region(&window, &composite, rect, taken, false)),
+            match learned.get(window.server_id).after_alpha(learned.active(window.window, key, taken)) {
+                Call::Alpha => pictures.push(region(&window, &composite, rect, taken, Route::SkyLight, false)),
                 Call::Baked => {
                     alone.insert(window.server_id, crop);
                     baked.push(window);
@@ -160,10 +164,11 @@ pub fn capture_on_screen(
                         continue;
                     };
                     if let Some(alone) = alone.get(&window.server_id) {
-                        learned.saw_material(window.server_id, shows_material(alone, &crop));
+                        let active = learned.active(window.window, key, taken);
+                        learned.saw_material(window.server_id, shows_material(alone, &crop), active);
                     }
                     let material = learned.get(window.server_id).material == Some(true);
-                    pictures.push(region(&window, &composite, rect, taken, material));
+                    pictures.push(region(&window, &composite, rect, taken, Route::Baked, material));
                 }
             }
             None => desktop_stale = true,
@@ -227,6 +232,7 @@ fn region(
     composite: &CFRetained<CGImage>,
     rect: PixelRect,
     taken: Instant,
+    source: Route,
     carries_blur: bool,
 ) -> (WindowId, Picture) {
     let size = ScreenSize::from_cg(window.frame.size);
@@ -241,7 +247,7 @@ fn region(
                 covered: size,
                 window: size,
             },
-            source: Route::SkyLight,
+            source,
             taken,
             carries_blur,
         },

@@ -21,6 +21,7 @@ use serde_with::{SerializeAs, serde_as};
 use super::lifecycle::{Command, Coordinator, Event, Generation, Kind, Start};
 use super::request::Cause;
 use crate::pictures::domain::handover::HandoverDiff;
+use crate::pictures::domain::route::Route;
 use crate::pictures::domain::watch::Why;
 
 /// How many marks the ring holds.
@@ -156,6 +157,17 @@ pub enum Mark {
         #[serde_as(as = "Xywh")]
         frame: OverlayRect,
     },
+    /// A picture a tile took: as the flight composed it, from frame zero before the show, as its
+    /// focused look, or swapped in. Which way the picture was taken, whether it carries its window's
+    /// blur, and how long before this mark its capture started.
+    Wears {
+        #[serde_as(as = "PidIdx")]
+        window: WindowId,
+        at: Wearing,
+        route: Route,
+        blur: bool,
+        taken_before_us: u32,
+    },
     Focus {
         #[serde_as(as = "PidIdx")]
         window: WindowId,
@@ -199,6 +211,20 @@ pub enum Mark {
     },
     ReportUp,
     ReportSettled,
+}
+
+/// When a tile took the picture a `wears` mark records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Wearing {
+    /// The flight composed the tile with the cache's picture, or the stand-in.
+    Compose,
+    /// Frame zero's picture, put on before the overlay was up.
+    FrameZero,
+    /// The parked focus target's focused look.
+    FocusedLook,
+    /// A delivered picture swapped onto the tile, or an entrance joining with its first.
+    Swap,
 }
 
 /// A mark, when its drive ran and the generation that drive left.
@@ -575,6 +601,14 @@ impl Journalled {
         self.journal.delivery(now, self.coordinator.generation(), of, why, sent, pictures);
     }
 
+    /// `window`'s tile took a picture `at` that moment of the flight, heard `now`: taken by `route`,
+    /// carrying its window's blur or not (`blur`), its capture started at `taken`.
+    pub fn wears(&mut self, now: Instant, window: WindowId, at: Wearing, route: Route, blur: bool, taken: Instant) {
+        let taken_before_us = micros(now.saturating_duration_since(taken));
+        let mark = Mark::Wears { window, at, route, blur, taken_before_us };
+        self.journal.push(now, self.coordinator.generation(), mark);
+    }
+
     /// The renderer committed the drain up to batch `seq`, heard `now`, before what it releases is
     /// carried out: `sent` when its oldest batch was sent, `began` when the renderer began playing it,
     /// `flushed` when it was flushed, and `shown` whether it put the overlay up or down.
@@ -694,6 +728,7 @@ mod tests {
     use crate::transitions::domain::lifecycle::EndWatch;
     use crate::transitions::domain::lifecycle::testing::{PLAYS, pan, r, w};
     use crate::transitions::domain::timing::{LIFT_GRACE, SETTLE_BEFORE_CAPTURES};
+    use crate::pictures::domain::route::Route;
 
     fn name(mark: &Mark) -> String {
         serde_json::to_value(mark).unwrap()["mark"].as_str().unwrap().to_owned()
@@ -1425,6 +1460,11 @@ mod tests {
             self.flights.drawn(self.at(us), seq, shown, sent, began, flushed);
         }
 
+        /// The picture `window`'s tile took `at` that moment, heard at `us`, its capture started at `taken`.
+        fn wears(&mut self, us: i64, window: WindowId, at: Wearing, route: Route, blur: bool, taken: i64) {
+            self.flights.wears(self.at(us), window, at, route, blur, self.at(taken));
+        }
+
         /// A delivery and the pictures the engine offers the coordinator from it, 0.1ms later.
         fn offer(&mut self, us: i64, of: Generation, why: Why, sent: i64, pictures: &[(WindowId, ScreenRect, i64)]) {
             self.deliver(us, of, why, sent, pictures);
@@ -1452,16 +1492,23 @@ mod tests {
 
         script.press(-2_400, "move_focus");
         script.drive(0, Event::Begin(pan()));
+        script.wears(6_000, w(1), Wearing::Compose, Route::Baked, true, -2_100_000);
+        script.wears(6_000, w(2), Wearing::Compose, Route::ScreenCaptureKit, false, -900_000);
+        script.wears(6_000, w(9), Wearing::Compose, Route::SkyLight, false, -1_600_000);
         script.drive(6_100, Event::Merge { stage: pan(), moved: false });
         script.flights.answered();
         script.drawn(7_000, 2, None, (6_200, 6_400, 6_800));
         let g = script.flights.coordinator().generation();
         script.deliver(33_200, g, Why::FrameZero, 31_000, &[(w(1), starts, 1_300), (w(9), floating, 16_500)]);
+        script.wears(33_300, w(1), Wearing::FrameZero, Route::Baked, true, 1_300);
+        script.wears(33_300, w(9), Wearing::FrameZero, Route::SkyLight, false, 16_500);
         script.drive(33_600, Event::FrameZero(g));
         script.drive(34_500, Event::Extend(Duration::from_millis(349)));
         script.drawn(35_500, 3, Some(true), (34_600, 34_900, 35_200));
         script.offer(95_000, g, Why::Landed, 93_100, &[(w(2), target, 88_400)]);
+        script.wears(95_100, w(2), Wearing::Swap, Route::Baked, true, 88_400);
         script.offer(112_000, g, Why::Landed, 110_200, &[(w(1), left, 104_000)]);
+        script.wears(112_100, w(1), Wearing::Swap, Route::Baked, true, 104_000);
         script.offer(141_000, g, Why::FocusChanged, 139_000, &[(w(2), target, 131_500)]);
         script.drive(156_100, Event::Tick { settled: false, landed: false });
         script.offer(160_000, g, Why::Background, 158_400, &[(w(9), floating, 152_000)]);
@@ -1482,6 +1529,9 @@ mod tests {
         resized.final_frames[0].1 = wider;
         script.press(2_998_200, "move_focus");
         script.drive(3_000_000, Event::Begin(pan()));
+        script.wears(3_004_900, w(1), Wearing::Compose, Route::Baked, true, 1_002_000);
+        script.wears(3_004_900, w(2), Wearing::FocusedLook, Route::Baked, true, 2_104_000);
+        script.wears(3_004_900, w(9), Wearing::Compose, Route::StandIn, false, 3_004_900);
         script.drive(3_005_000, Event::Merge { stage: pan(), moved: false });
         script.flights.answered();
         let first = script.flights.coordinator().generation();
@@ -1490,6 +1540,7 @@ mod tests {
         script.drawn(3_082_300, 12, Some(true), (3_081_000, 3_081_400, 3_081_900));
         let late = [(w(1), starts, 3_002_000), (w(9), floating, 3_002_000)];
         script.offer(3_096_000, first, Why::FrameZero, 3_093_500, &late);
+        script.wears(3_096_100, w(1), Wearing::Swap, Route::Baked, true, 3_002_000);
         script.drive(3_096_300, Event::FrameZero(first));
         script.press(3_148_700, "cycle_preset_column_width");
         script.drive(3_150_000, Event::Merge { stage: resized, moved: true });

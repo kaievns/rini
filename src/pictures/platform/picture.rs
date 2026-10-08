@@ -16,6 +16,7 @@ use rini_geometry::space::{
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
 use crate::pictures::domain::region::{WHOLE, unit_rect};
+use crate::pictures::domain::route::Route;
 use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
 
 /// A window's pixels, whichever API produced them. Core Animation accepts each form.
@@ -79,18 +80,6 @@ pub struct Picture {
     /// picture like this is not given up for a same-sized capture of the window alone, which would
     /// be flat grey exactly where the blur is. See [`crate::pictures::domain::translucency`].
     pub carries_blur: bool,
-}
-
-/// Which way a picture was taken.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Route {
-    /// Captured fresh from the framebuffer. Only valid for a fully visible window.
-    SkyLight,
-    /// Captured from the window's own surface. Valid at any visibility, but expensive.
-    ScreenCaptureKit,
-    /// Not a capture: the dark stand-in a window with no picture flies with, so its slot is never a
-    /// hole. Never cached.
-    StandIn,
 }
 
 impl Picture {

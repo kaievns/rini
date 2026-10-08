@@ -13,7 +13,8 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Coverage and fit** | `domain/coverage.rs` — `Coverage`, whether a capture is usable, whether it fits a frame, whether a grow outgrows it, whether a warm must recapture, whether a desktop picture spans its display, when a picture is stale |
 | **The cache's rules** | `domain/cache.rs` — `PictureCache`: never downgrade a usable picture, keep a blurred one over a grey one of the same size, put a copy back only over the picture it was made of |
 | **Regions** | `domain/region.rs` — where a window lies in a batched composite: its pixel rect, whether the composite holds it, whether the composite is the shape of what it was asked for, its unit rect, and a crop piece's rect within a region |
-| **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
+| **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, or was seen with none only while inactive; the window last reported focused, which says whether a capture shows a window active; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
+| **Routes** | `domain/route.rs` — `Route`, which way a picture was taken: SkyLight alone, SkyLight's baked call, ScreenCaptureKit, or the stand-in; which of them the overlay clips to the tile's corner |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
 | **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window, either side of its outline and over a band drawn outside it, sampled as the research measured it |
@@ -27,7 +28,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
-| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in, one pixel; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
+| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route` (`domain/route.rs`); the stand-in, one pixel; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
 | **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
@@ -206,8 +207,16 @@ its sidebar averaged 1.99 levels, under the threshold. The share is set clear of
 glass sidebar samples its own content and captures whole: its baked crop changed 0.1% of samples by
 more than 12 and none by more than 14, and is further from the screen than its crop alone, 0.35
 levels against 0.00. Readings and the probe in
-[`docs/data/2026-10-08-materials`](../../../docs/data/2026-10-08-materials). What is learned is kept
-until the window goes. A baked picture of a window with a material carries its blur
+[`docs/data/2026-10-08-materials`](../../../docs/data/2026-10-08-materials). A material found is kept
+until the window goes, and so is none found while the window is active. None found while it is
+inactive is no answer: macOS draws an inactive window's material flat, and Outlook inactive read 0.00
+baked against alone where active it read 1.96 with 9% of samples changed. Such a window keeps to the
+alpha call, whose picture is then what the screen shows, and is baked again, and measured, the first
+time it is captured active (`Learned::active`): the window last reported focused, `ACTIVE_SETTLED`
+(200ms) after the report, past the slowest focused look of 316 presses (158ms after the input,
+`docs/data/2026-10-03-focus`), while the process the window server has holding the keys
+(`SLPSGetKeyFocusProcess`) is its own. A panel of another application taking the keys reports no
+window, which the key process catches. A baked picture of a window with a material carries its blur
 (`carries_blur`), so the cache keeps it over a grey capture of the window alone. Each composite is
 checked against the shape of what it listed, the desktop windows included for the baked one, and a
 misshapen one yields no picture: a frame read is wrong, or a listed window has gone. The
@@ -243,7 +252,7 @@ id wherever the window is (`unwanted`). Why: "The pictures held" in `specs/anima
 
 ## Reading order
 
-`domain/coverage.rs` → `domain/cache.rs` → `platform/picture.rs` → `domain/region.rs` →
+`domain/coverage.rs` → `domain/cache.rs` → `domain/route.rs` → `platform/picture.rs` → `domain/region.rs` →
 `domain/knowledge.rs` → `domain/schedule.rs` → `domain/watch.rs` → `domain/refresh.rs` →
 `platform/service.rs` → `platform/skylight.rs` → `platform/measure.rs` →
 `platform/screencapturekit.rs`.

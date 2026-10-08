@@ -177,6 +177,33 @@ class Handover(unittest.TestCase):
             self.assertIn(label, text)
 
 
+class Pictures(unittest.TestCase):
+    def setUp(self):
+        _, found = sample()
+        self.rows = journal.wears(found)
+
+    def test_each_picture_a_tile_took_with_its_route_blur_and_age_flight_by_flight(self):
+        self.assertEqual(len(self.rows), 11)
+        first = [row for row in self.rows if row["g"] == 1]
+        self.assertEqual([(row["window"], row["at"], row["route"]) for row in first[:3]], [
+            ((1, 1), "compose", "baked"),
+            ((1, 2), "compose", "screencapturekit"),
+            ((1, 9), "compose", "skylight"),
+        ])
+        self.assertEqual([row["target"] for row in first[:3]], [False, True, False])
+        self.assertAlmostEqual(first[1]["age"], 906.0, places=6, msg="the cache's picture of the parked target")
+        swap = next(row for row in first if row["at"] == "swap" and row["target"])
+        self.assertEqual((swap["route"], swap["blur"]), ("baked", True))
+        self.assertAlmostEqual(swap["age"], 6.7, places=6)
+        look = next(row for row in self.rows if row["at"] == "focused_look")
+        self.assertEqual((look["g"], look["window"], look["target"]), (2, (1, 2), True))
+
+    def test_the_listing_can_keep_the_focus_target_alone(self):
+        _, found = sample()
+        listed = journal.pictures(found, target=True).splitlines()
+        self.assertEqual(sum(1 for line in listed if "*" in line and line[:6].strip().isdigit()), 3)
+
+
 class Probe(unittest.TestCase):
     def setUp(self):
         _, found = sample()

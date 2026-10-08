@@ -26,7 +26,8 @@ use tracing::{debug, warn};
 use crate::pictures::domain::coverage::Coverage;
 use crate::pictures::domain::schedule::Display;
 use crate::pictures::domain::target::PictureTarget;
-use crate::pictures::platform::picture::{Picture, Pixels, Route};
+use crate::pictures::domain::route::Route;
+use crate::pictures::platform::picture::{Picture, Pixels};
 
 /// Alpha above which a pixel counts as painted; shadows are excluded, so a painted edge is opaque.
 const PAINTED_ALPHA: u8 = 8;
