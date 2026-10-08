@@ -173,15 +173,21 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   the overlay is already up, so that drain is the first frame showing the merged end, as the show
   is for a press. A pass merged before the show is drawn with them at the show.
 - A flight MUST be as fast and as smooth with the ring or the border on as with both off: on the
-  timing battery, every measure with them on within the spread of the same build with both off, and
-  every blurred window flying with its blur.
+  timing battery, every measure of what is seen with them on (press to overlay up, the lift, frame
+  pacing, the handover) within the spread of the same build with both off, and every blurred window
+  flying with its blur. The main thread's drain work MAY exceed that spread by what AppKit takes to
+  order a rest window above the window focus raised, about 0.3ms typical and a few milliseconds at
+  p90 on 2026-10-09 (`docs/data/2026-10-08-ring-perf/readings.md`), as Kai accepted.
 
-> **Reported 2026-10-09.** Kai, after the sequence was explained to him (at the press the tiles wear
+> **Reported 2026-10-09.** Kai, after the sequence was explained (at the press the tiles wear
 > the rings they had, each tile's ring turns as its window's turned picture comes in, the window
 > losing focus first, and the ring at rest is placed one tick before the lift): "can you try to move
 > it at the beginning of the transition? when the overlay animation starts". Each tile's ring and
 > border now wear where the flight ends from frame zero. The hairline and the shadow still turn with
-> each window's picture, as Kai asked on 2026-10-05 (`animation.md`).
+> each window's picture, as Kai asked on 2026-10-05 (`animation.md`). Kai, on the result: "this is
+> much better experience. moving it on focus handover felt laggy and added to the change flicker.
+> this version feels instantenious and actually plays in our favour because it masks the actual focus
+> handover a bit visually."
 
 > **Reported 2026-10-08.** Kai: "what i can tell you with 100% certainty is that all the animations
 > are _significantly_ slower with the rings, which makes no sense because it's just a bunch more
@@ -190,7 +196,10 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 > transitions performance and causing issues with blured windows again." Measured on 4cddd692
 > against 3 runs with the ring off, 42 of 87 measures with it on fell past the ring-off spread: the
 > overlay was seen up 10ms and gone 15ms later at the median, and 10 of 386 ring-on flights stalled
-> about 260ms.
+> about 260ms. The overlay's bands cost nothing a frame; the rest windows' main-thread work did, and
+> a 500ms SkyLight lock wait the reactor's window query held against the main thread's commit. On
+> 2026-10-09, offered the AppKit ordering cost as what is left, Kai: "i accept the reordering option
+> 1".
 
 ## At rest
 
