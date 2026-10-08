@@ -111,22 +111,34 @@ pub const MATERIAL_SIDE: usize = 64;
 const MATERIAL_BORDER: usize = 6;
 /// Mean RGB difference above which the baked picture shows a material the window alone lacks.
 const MATERIAL_ABOVE: f64 = 2.0;
+/// A sample's RGB difference, summed over the three channels, above which the baked picture changed
+/// it, and the share of samples, in parts per thousand, that has to change for part of the window to
+/// be a material, set clear of Messages' sidebar, which captures whole: "One SkyLight call, two ways of
+/// making it" in `src/pictures/docs/README.md`.
+const MATERIAL_SAMPLE_ABOVE: u32 = 12;
+const MATERIAL_PER_MILLE: usize = 10;
 
 /// Whether a window has a material: its picture alone and its picture baked over what is behind it,
-/// each drawn into a `MATERIAL_SIDE` square of RGBA bytes, differ by more than two levels on average.
+/// each drawn into a `MATERIAL_SIDE` square of RGBA bytes away from their border, differ by more than
+/// two levels on average, or by more than four on more than a hundredth of the samples, as a sidebar
+/// does over a backdrop near its grey.
 pub fn has_material(alone: &[u8], baked: &[u8], stride: usize) -> bool {
-    let (mut sum, mut samples) = (0.0, 0usize);
+    let (mut sum, mut changed, mut samples) = (0u64, 0usize, 0usize);
     for y in MATERIAL_BORDER..MATERIAL_SIDE - MATERIAL_BORDER {
         for x in MATERIAL_BORDER..MATERIAL_SIDE - MATERIAL_BORDER {
             let at = y * stride + x * 4;
             let (Some(a), Some(b)) = (alone.get(at..at + 3), baked.get(at..at + 3)) else {
                 continue;
             };
-            sum += a.iter().zip(b).map(|(a, b)| a.abs_diff(*b) as f64).sum::<f64>() / 3.0;
+            let distance: u32 = a.iter().zip(b).map(|(a, b)| a.abs_diff(*b) as u32).sum();
+            sum += u64::from(distance);
+            changed += (distance > MATERIAL_SAMPLE_ABOVE) as usize;
             samples += 1;
         }
     }
-    samples > 0 && sum / samples as f64 > MATERIAL_ABOVE
+    samples > 0
+        && (sum as f64 / 3.0 / samples as f64 > MATERIAL_ABOVE
+            || changed * 1000 > samples * MATERIAL_PER_MILLE)
 }
 
 #[cfg(test)]
@@ -267,5 +279,36 @@ mod tests {
             !has_material(&alone, &border_only, stride),
             "only the border differs"
         );
+    }
+
+    /// The reported case: Outlook with its sidebar was 1.99 levels from the window alone on average
+    /// over the whole window, under the threshold, so the average found no material. A material on
+    /// part of the window counts as much as one over all of it.
+    #[test]
+    fn a_material_over_part_of_the_window_is_a_material() {
+        let stride = MATERIAL_SIDE * 4;
+        let alone = flat(MATERIAL_SIDE, [84, 84, 83]);
+        let with = |columns: std::ops::Range<usize>, rows: std::ops::Range<usize>, rgb: [u8; 3]| {
+            let mut baked = alone.clone();
+            for y in rows {
+                for x in columns.clone() {
+                    baked[(y * MATERIAL_SIDE + x) * 4..][..3].copy_from_slice(&rgb);
+                }
+            }
+            baked
+        };
+        let whole = 0..MATERIAL_SIDE;
+        assert!(has_material(&alone, &with(6..17, whole.clone(), [76, 76, 75]), stride), "a sidebar 8 levels off");
+        assert!(!has_material(&alone, &with(6..17, whole, [80, 80, 79]), stride), "4 levels, as Messages' at most");
+        assert!(!has_material(&alone, &with(6..10, 6..11, [76, 76, 75]), stride), "20 samples of 2704");
+    }
+
+    /// Messages' glass sidebar samples its own content, so its picture alone is the screen and the
+    /// baked one is not: it stays out of the baked call. Its two crops as read on 2026-10-08.
+    #[test]
+    fn messages_sidebar_is_no_material() {
+        let alone = include_bytes!("../../../docs/data/2026-10-08-materials/messages-alone.rgba");
+        let baked = include_bytes!("../../../docs/data/2026-10-08-materials/messages-baked.rgba");
+        assert!(!has_material(alone, baked, MATERIAL_SIDE * 4));
     }
 }
