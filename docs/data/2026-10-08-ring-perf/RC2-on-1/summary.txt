@@ -1,0 +1,31 @@
+battery RC2-on-1  2026-10-08 23:35:26  run 41s  rini pid 18487  binary 2d9e548b6a51
+
+journal, by kind (ms)               p50/p90/max
+  pan      flights 14   overdue lifts 0  frame-zero timeouts 0
+    press->overlay up      40.2/54.5/65.5 n=14
+    lift                   392.7/407.6/425.0 n=14
+    post->seen up / gone   75.5/98.3/99.0 n=14  |  419.3/438.1/445.8 n=14
+  switch   flights  4   overdue lifts 0  frame-zero timeouts 0
+    press->overlay up      27.2/49.7/49.7 n=4
+    lift                   389.8/406.6/406.6 n=4
+    post->seen up / gone   58.1/110.6/110.6 n=4  |  421.7/426.4/426.4 n=4
+
+renderer drains, all joined flights (ms, p50/p90/p99/max)
+  waiting for the renderer   0.0/0.5/12.7/12.7 n=92
+  played to its flush        0.8/3.9/7.6/7.6 n=92
+  flushed to heard           0.1/0.7/13.1/13.1 n=92
+
+frame pacing (recorded overlay, 60fps cap; intervals p50/p90/max ms)
+  comms_pan  8/8 joined pan          frames  153  17.2/18.9/23.6 n=145  >20 8 >25 0 >33 0
+             alt+j: >25 0 max 20.7   alt+l: >25 0 max 23.6
+  switch     4/4 joined switch       frames   78  17.1/18.8/19.9 n=74  >20 0 >25 0 >33 0
+             alt+;: >25 0 max 19.6   alt+p: >25 0 max 19.9
+  spare_pan  6/6 joined pan          frames  113  17.5/20.5/27.2 n=107  >20 19 >25 1 >33 0
+             alt+j: >25 0 max 24.3   alt+l: >25 1 max 27.2
+  all                                      frames  344  17.3/19.7/27.2 n=326  >20 27 >25 1 >33 0
+  worst flights: spare_pan#5 pan max 27.2 >20ms 3; spare_pan#0 pan max 24.3 >20ms 5; comms_pan#5 pan max 23.6 >20ms 2
+
+blur, Messages->Microsoft Outlook (pane last 3 frames, pass chroma >= 5.0): 3/3 pass
+  rgb  59.1  58.0  53.4  chroma  7.07  PASS
+  rgb  59.1  58.0  53.4  chroma  7.07  PASS
+  rgb  59.1  58.0  53.4  chroma  7.07  PASS

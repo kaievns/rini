@@ -109,3 +109,22 @@ turned out to be sampling noise. Single-threaded runs never reproduced it across
 from about 0.4s to 1.25s, which is not a trade worth thinking about. The tests
 that build capture fixtures also avoid `IOSurface` entirely for the same reason
 and use a CPU bitmap instead.
+
+## What a flight costs is measured on the screen, by the timing battery
+
+The suite cannot say whether a change slows a flight or flies a blurred window flat: that takes the
+live service, the window server and Kai's windows. The timing battery does, and any change to what
+a flight or the rest windows do at a show, in flight or at a lift is measured with it before it is
+called done (`specs/decorations.md`, "Through a flight"). It is a screen test: it posts key
+presses, so it runs only while Kai is away, and it refuses otherwise.
+
+```bash
+tools/focuslab/battery.sh --check                         # the windows it would fly; posts nothing
+tools/focuslab/measure.sh <signed binary> <prefix>        # deploy, then ring off and on, 1 warm-up + 3 each
+python3 tools/focuslab/compare.py /tmp/rini-focuslab/<prefix>-off-{1,2,3} -- /tmp/rini-focuslab/<prefix>-on-{1,2,3}
+```
+
+What it presses and records, the 87 metrics, the acceptance rule and its second stage are in
+`tools/focuslab/README.md` ("The battery"). Its tests (`tools/focuslab/test_battery.py`) run inside
+`tests/focuslab.rs`, so `cargo test` counts them as one test. The 2026-10-08 runs are in
+`docs/data/2026-10-08-ring-perf/`.

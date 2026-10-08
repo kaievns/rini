@@ -254,7 +254,8 @@ no layer opens, commits and flushes no transaction, so a reorder, a focus report
 look stays, or a frame that did not move changes nothing but the order it asks for. On 4cddd692 a
 turn laid every rest window with a target, and committed and flushed, whatever came; with the ring
 on, the lift's drain played to its flush in 3.98-4.45ms at the median against 1.66-1.91ms with it
-off (the 2026-10-08 timing battery, 3 runs each way), part of which was that draw (inferred: no
+off (the 2026-10-08 timing battery, 3 runs each way,
+[`docs/data/2026-10-08-ring-perf/`](../../../docs/data/2026-10-08-ring-perf/)), part of which was that draw (inferred: no
 sample split the lift). That AppKit leaves a layer-backed view's root layer as rini set it between
 turns, its contents scale included, is inferred, not seen.
 
@@ -349,7 +350,8 @@ overlay covered it.
 **The handover.** The overlay covers its display at level 18, so a rest window under it is unseen
 once it is up, as its window is. A press's own model reaches the rest windows before the overlay is
 up. Drawn as it came, a full draw of every rest window sat on the main thread ahead of the show:
-on 4cddd692's timing battery (2026-10-08, 3 runs each way) the show's drain waited for the main
+on 4cddd692's timing battery (2026-10-08, 3 runs each way, `B-ringoff` and `C-ringon` in
+[`docs/data/2026-10-08-ring-perf/`](../../../docs/data/2026-10-08-ring-perf/)) the show's drain waited for the main
 thread 4.9-18.7ms at p90 with the ring on, against 0.03-0.04ms with it off. So the reactor tells the
 rest windows of each flight it hands the engine, with the display its overlay covers, before that
 batch's model (`Event::Flight`, sent by `publish_rest` for what `Reactor::send_flight` noted), and

@@ -171,7 +171,8 @@ Measured 2026-10-08 on 23 on-screen layer-0 windows of 11 processes, 4 of them r
   45.5/49.0ms, main/new.
 
 Measured meanwhile by the review's battery, on a deployed build of this branch from before these
-corrections, with the ring on (which commit, and the results, are kept with the battery, not here): its blur check passed 9
+corrections, with the ring on (`RC-on` in
+[`docs/data/2026-10-08-ring-perf/`](../../../docs/data/2026-10-08-ring-perf/readings.md)): its blur check passed 9
 of 9, Outlook, a window with a material, flying in from its park through the new capture code; no
 255ms stall in 3 runs; the drains' heard p99 fell from 21-61ms to 3-12ms. That build still waited on
 the main connection in `SLSGetOnScreenWindowList`, `SLSCopyWindowsWithOptionsAndTags` and

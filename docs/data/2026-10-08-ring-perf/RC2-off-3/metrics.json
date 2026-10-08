@@ -1,0 +1,1083 @@
+{
+ "meta": {
+  "label": "RC2-off-3",
+  "rini_pid": 18487,
+  "started": "2026-10-08 23:34:02",
+  "run_s": 40,
+  "focused_at_start": [
+   "{\"pid\": 12408, \"idx\": 245}",
+   "comms",
+   "Code"
+  ],
+  "aborted": null,
+  "binary_sha": "2d9e548b6a515ef7d9ea6a2cd5da81aa824eb1ed6ac77033a17e5a95bf27e316",
+  "repo_head": "4cddd692",
+  "journal_from_line": 151260,
+  "windows": {
+   "comms": {
+    "workspace": "comms",
+    "app": "Code",
+    "id": {
+     "pid": 12408,
+     "idx": 245
+    }
+   },
+   "spare": {
+    "workspace": "spare",
+    "app": "Messages",
+    "id": {
+     "pid": 3089,
+     "idx": 73
+    }
+   },
+   "blur": {
+    "workspace": "spare",
+    "app": "Microsoft Outlook",
+    "pid": 3090
+   }
+  },
+  "pane": [
+   20,
+   140,
+   280,
+   900
+  ]
+ },
+ "by_kind": {
+  "pan": {
+   "flights": 14,
+   "overlay_up": {
+    "n": 14,
+    "p50": 36.04,
+    "p90": 68.14,
+    "p99": 76.71,
+    "max": 76.71
+   },
+   "lift": {
+    "n": 14,
+    "p50": 390.69,
+    "p90": 432.18,
+    "p99": 434.19,
+    "max": 434.19
+   },
+   "screen_up_after_post": {
+    "n": 14,
+    "p50": 73.93,
+    "p90": 99.3,
+    "p99": 115.55,
+    "max": 115.55
+   },
+   "screen_gone_after_post": {
+    "n": 14,
+    "p50": 404.47,
+    "p90": 438.54,
+    "p99": 446.34,
+    "max": 446.34
+   },
+   "drains": {
+    "queued": {
+     "n": 73,
+     "p50": 0.03,
+     "p90": 0.07,
+     "p99": 3.22,
+     "max": 3.22
+    },
+    "applied": {
+     "n": 73,
+     "p50": 0.66,
+     "p90": 2.11,
+     "p99": 21.84,
+     "max": 21.84
+    },
+    "heard": {
+     "n": 73,
+     "p50": 0.09,
+     "p90": 0.63,
+     "p99": 22.93,
+     "max": 22.93
+    }
+   },
+   "overdue_lifts": 0,
+   "frame_zero_timeouts": 0
+  },
+  "switch": {
+   "flights": 4,
+   "overlay_up": {
+    "n": 4,
+    "p50": 31.26,
+    "p90": 49.84,
+    "p99": 49.84,
+    "max": 49.84
+   },
+   "lift": {
+    "n": 4,
+    "p50": 389.45,
+    "p90": 409.68,
+    "p99": 409.68,
+    "max": 409.68
+   },
+   "screen_up_after_post": {
+    "n": 4,
+    "p50": 74.15,
+    "p90": 87.86,
+    "p99": 87.86,
+    "max": 87.86
+   },
+   "screen_gone_after_post": {
+    "n": 4,
+    "p50": 399.15,
+    "p90": 419.62,
+    "p99": 419.62,
+    "max": 419.62
+   },
+   "drains": {
+    "queued": {
+     "n": 20,
+     "p50": 0.03,
+     "p90": 0.51,
+     "p99": 4.82,
+     "max": 4.82
+    },
+    "applied": {
+     "n": 20,
+     "p50": 0.46,
+     "p90": 1.75,
+     "p99": 2.67,
+     "max": 2.67
+    },
+    "heard": {
+     "n": 20,
+     "p50": 0.13,
+     "p90": 0.5,
+     "p99": 5.71,
+     "max": 5.71
+    }
+   },
+   "overdue_lifts": 0,
+   "frame_zero_timeouts": 0
+  }
+ },
+ "drains_all": {
+  "queued": {
+   "n": 93,
+   "p50": 0.03,
+   "p90": 0.07,
+   "p99": 4.82,
+   "max": 4.82
+  },
+  "applied": {
+   "n": 93,
+   "p50": 0.58,
+   "p90": 2.11,
+   "p99": 21.84,
+   "max": 21.84
+  },
+  "heard": {
+   "n": 93,
+   "p50": 0.11,
+   "p90": 0.63,
+   "p99": 22.93,
+   "max": 22.93
+  }
+ },
+ "segments": {
+  "comms_pan": {
+   "presses": 8,
+   "joined": 8,
+   "kinds": [
+    "pan"
+   ],
+   "frames": 150,
+   "intervals": {
+    "n": 142,
+    "p50": 17.3,
+    "p90": 19.02,
+    "p99": 22.61,
+    "max": 23.03
+   },
+   "over_20ms": 6,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "flights_without_frames": 0,
+   "black_frames": 0,
+   "by_key": {
+    "alt+j": {
+     "flights": 4,
+     "over_25ms": 0,
+     "max": 21.13
+    },
+    "alt+l": {
+     "flights": 4,
+     "over_25ms": 0,
+     "max": 23.03
+    }
+   }
+  },
+  "switch": {
+   "presses": 4,
+   "joined": 4,
+   "kinds": [
+    "switch"
+   ],
+   "frames": 75,
+   "intervals": {
+    "n": 71,
+    "p50": 17.21,
+    "p90": 19.67,
+    "p99": 26.25,
+    "max": 26.25
+   },
+   "over_20ms": 5,
+   "over_25ms": 1,
+   "over_33ms": 0,
+   "flights_without_frames": 0,
+   "black_frames": 0,
+   "by_key": {
+    "alt+;": {
+     "flights": 2,
+     "over_25ms": 0,
+     "max": 21.27
+    },
+    "alt+p": {
+     "flights": 2,
+     "over_25ms": 1,
+     "max": 26.25
+    }
+   }
+  },
+  "spare_pan": {
+   "presses": 6,
+   "joined": 6,
+   "kinds": [
+    "pan"
+   ],
+   "frames": 106,
+   "intervals": {
+    "n": 100,
+    "p50": 18.22,
+    "p90": 21.93,
+    "p99": 26.85,
+    "max": 27.66
+   },
+   "over_20ms": 36,
+   "over_25ms": 4,
+   "over_33ms": 0,
+   "flights_without_frames": 0,
+   "black_frames": 0,
+   "by_key": {
+    "alt+j": {
+     "flights": 3,
+     "over_25ms": 4,
+     "max": 27.66
+    },
+    "alt+l": {
+     "flights": 3,
+     "over_25ms": 0,
+     "max": 22.62
+    }
+   }
+  }
+ },
+ "pacing_all": {
+  "intervals": {
+   "n": 313,
+   "p50": 17.48,
+   "p90": 21.02,
+   "p99": 26.01,
+   "max": 27.66
+  },
+  "over_20ms": 47,
+  "over_25ms": 5,
+  "over_33ms": 0,
+  "intervals_n": 313
+ },
+ "blur": {
+  "flights": 3,
+  "passed": 3,
+  "chroma": [
+   7.07,
+   7.07,
+   7.07
+  ],
+  "rgb": [
+   [
+    59.2,
+    58.1,
+    53.4
+   ],
+   [
+    59.1,
+    58.0,
+    53.4
+   ],
+   [
+    59.1,
+    58.0,
+    53.4
+   ]
+  ]
+ },
+ "drains_by_phase": {
+  "show": {
+   "queued": {
+    "n": 20,
+    "p50": 0.014,
+    "p90": 0.021,
+    "p99": 0.025,
+    "max": 0.025
+   },
+   "applied": {
+    "n": 20,
+    "p50": 0.735,
+    "p90": 1.386,
+    "p99": 2.042,
+    "max": 2.042
+   }
+  },
+  "flight": {
+   "queued": {
+    "n": 66,
+    "p50": 0.036,
+    "p90": 0.079,
+    "p99": 4.821,
+    "max": 4.821
+   },
+   "applied": {
+    "n": 66,
+    "p50": 0.246,
+    "p90": 1.326,
+    "p99": 9.187,
+    "max": 9.187
+   }
+  },
+  "lift": {
+   "queued": {
+    "n": 21,
+    "p50": 0.043,
+    "p90": 0.069,
+    "p99": 3.219,
+    "max": 3.219
+   },
+   "applied": {
+    "n": 21,
+    "p50": 1.876,
+    "p90": 3.183,
+    "p99": 21.838,
+    "max": 21.838
+   }
+  }
+ },
+ "flights": [
+  {
+   "segment": "comms_pan",
+   "n": 0,
+   "key": "alt+j",
+   "join": "began",
+   "kind": "pan",
+   "g": 68,
+   "target": [
+    3086,
+    2534
+   ],
+   "overlay_up": 68.142291,
+   "press_to_up": 68.142291,
+   "lift": 434.191666,
+   "show_to_landed": 44.307417,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.386958,
+   "frames": 20,
+   "intervals": {
+    "n": 19,
+    "p50": 17.31,
+    "p90": 18.78,
+    "p99": 19.28,
+    "max": 19.28
+   },
+   "over_20ms": 0,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 0,
+   "repeats": 1,
+   "black_frames": 0,
+   "screen_up": 99.302666,
+   "screen_gone": 446.342
+  },
+  {
+   "segment": "comms_pan",
+   "n": 1,
+   "key": "alt+l",
+   "join": "began",
+   "kind": "pan",
+   "g": 69,
+   "target": [
+    12408,
+    245
+   ],
+   "overlay_up": 35.228833,
+   "press_to_up": 35.228833,
+   "lift": 388.140292,
+   "show_to_landed": 65.462667,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.386292,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 17.09,
+    "p90": 22.29,
+    "p99": 22.61,
+    "max": 22.61
+   },
+   "over_20ms": 2,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 2,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 78.412875,
+   "screen_gone": 397.63025
+  },
+  {
+   "segment": "comms_pan",
+   "n": 2,
+   "key": "alt+j",
+   "join": "began",
+   "kind": "pan",
+   "g": 70,
+   "target": [
+    3086,
+    2534
+   ],
+   "overlay_up": 46.052959,
+   "press_to_up": 46.052959,
+   "lift": 407.080667,
+   "show_to_landed": 53.043375,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.520749,
+   "frames": 19,
+   "intervals": {
+    "n": 18,
+    "p50": 17.24,
+    "p90": 18.51,
+    "p99": 19.02,
+    "max": 19.02
+   },
+   "over_20ms": 0,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 0,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 88.121375,
+   "screen_gone": 436.104792
+  },
+  {
+   "segment": "comms_pan",
+   "n": 3,
+   "key": "alt+l",
+   "join": "began",
+   "kind": "pan",
+   "g": 71,
+   "target": [
+    12408,
+    245
+   ],
+   "overlay_up": 76.707917,
+   "press_to_up": 76.707917,
+   "lift": 432.178167,
+   "show_to_landed": 49.558042,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.568917,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 17.96,
+    "p90": 21.32,
+    "p99": 23.03,
+    "max": 23.03
+   },
+   "over_20ms": 2,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 2,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 115.55075,
+   "screen_gone": 438.53525
+  },
+  {
+   "segment": "comms_pan",
+   "n": 4,
+   "key": "alt+j",
+   "join": "began",
+   "kind": "pan",
+   "g": 72,
+   "target": [
+    3086,
+    2534
+   ],
+   "overlay_up": 36.042709,
+   "press_to_up": 36.042709,
+   "lift": 389.499834,
+   "show_to_landed": 52.753375,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.343416,
+   "frames": 19,
+   "intervals": {
+    "n": 18,
+    "p50": 17.17,
+    "p90": 18.79,
+    "p99": 21.13,
+    "max": 21.13
+   },
+   "over_20ms": 1,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 1,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 68.406041,
+   "screen_gone": 396.989083
+  },
+  {
+   "segment": "comms_pan",
+   "n": 5,
+   "key": "alt+l",
+   "join": "began",
+   "kind": "pan",
+   "g": 73,
+   "target": [
+    12408,
+    245
+   ],
+   "overlay_up": 34.80025,
+   "press_to_up": 34.80025,
+   "lift": 388.964,
+   "show_to_landed": 43.294958,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.505,
+   "frames": 19,
+   "intervals": {
+    "n": 18,
+    "p50": 17.38,
+    "p90": 19.43,
+    "p99": 19.44,
+    "max": 19.44
+   },
+   "over_20ms": 0,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 0,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 73.138708,
+   "screen_gone": 404.471167
+  },
+  {
+   "segment": "comms_pan",
+   "n": 6,
+   "key": "alt+j",
+   "join": "began",
+   "kind": "pan",
+   "g": 74,
+   "target": [
+    3086,
+    2534
+   ],
+   "overlay_up": 41.838292,
+   "press_to_up": 41.838292,
+   "lift": 406.220042,
+   "show_to_landed": 46.055666,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.249791,
+   "frames": 19,
+   "intervals": {
+    "n": 18,
+    "p50": 17.24,
+    "p90": 18.65,
+    "p99": 19.02,
+    "max": 19.02
+   },
+   "over_20ms": 0,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 0,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 83.979041,
+   "screen_gone": 416.271208
+  },
+  {
+   "segment": "comms_pan",
+   "n": 7,
+   "key": "alt+l",
+   "join": "began",
+   "kind": "pan",
+   "g": 75,
+   "target": [
+    12408,
+    245
+   ],
+   "overlay_up": 35.044791,
+   "press_to_up": 35.044791,
+   "lift": 390.686916,
+   "show_to_landed": 72.256542,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.378125,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 17.29,
+    "p90": 18.97,
+    "p99": 22.58,
+    "max": 22.58
+   },
+   "over_20ms": 1,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 1,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 79.377417,
+   "screen_gone": 397.520042
+  },
+  {
+   "segment": "switch",
+   "n": 0,
+   "key": "alt+;",
+   "join": "began",
+   "kind": "switch",
+   "g": 76,
+   "target": [
+    3087,
+    60
+   ],
+   "overlay_up": 49.843417,
+   "press_to_up": 49.843417,
+   "lift": 409.680792,
+   "show_to_landed": 62.506583,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.20475,
+   "frames": 19,
+   "intervals": {
+    "n": 18,
+    "p50": 17.09,
+    "p90": 19.77,
+    "p99": 20.64,
+    "max": 20.64
+   },
+   "over_20ms": 1,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 1,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 87.863875,
+   "screen_gone": 419.615083
+  },
+  {
+   "segment": "switch",
+   "n": 1,
+   "key": "alt+p",
+   "join": "began",
+   "kind": "switch",
+   "g": 77,
+   "target": [
+    12408,
+    245
+   ],
+   "overlay_up": 32.172,
+   "press_to_up": 32.172,
+   "lift": 389.8345,
+   "show_to_landed": 57.639666,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.145167,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 17.14,
+    "p90": 19.19,
+    "p99": 20.01,
+    "max": 20.01
+   },
+   "over_20ms": 1,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 1,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 87.308667,
+   "screen_gone": 399.145667
+  },
+  {
+   "segment": "switch",
+   "n": 2,
+   "key": "alt+;",
+   "join": "began",
+   "kind": "switch",
+   "g": 78,
+   "target": [
+    3087,
+    60
+   ],
+   "overlay_up": 31.259125,
+   "press_to_up": 31.259125,
+   "lift": 389.449375,
+   "show_to_landed": 17.49075,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.181916,
+   "frames": 19,
+   "intervals": {
+    "n": 18,
+    "p50": 17.2,
+    "p90": 19.67,
+    "p99": 21.27,
+    "max": 21.27
+   },
+   "over_20ms": 1,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 1,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 74.151416,
+   "screen_gone": 405.227583
+  },
+  {
+   "segment": "switch",
+   "n": 3,
+   "key": "alt+p",
+   "join": "began",
+   "kind": "switch",
+   "g": 79,
+   "target": [
+    12408,
+    245
+   ],
+   "overlay_up": 21.986917,
+   "press_to_up": 21.986917,
+   "lift": 376.128542,
+   "show_to_landed": 83.988291,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.183458,
+   "frames": 19,
+   "intervals": {
+    "n": 18,
+    "p50": 17.48,
+    "p90": 21.02,
+    "p99": 26.25,
+    "max": 26.25
+   },
+   "over_20ms": 2,
+   "over_25ms": 1,
+   "over_33ms": 0,
+   "over_20ms_changed": 2,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 55.222292,
+   "screen_gone": 389.515375
+  },
+  {
+   "segment": "spare_pan",
+   "n": 0,
+   "key": "alt+j",
+   "join": "began",
+   "kind": "pan",
+   "g": 81,
+   "target": [
+    3090,
+    67
+   ],
+   "overlay_up": 43.123958,
+   "press_to_up": 43.123958,
+   "lift": 405.756083,
+   "show_to_landed": 95.858542,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.169417,
+   "frames": 16,
+   "intervals": {
+    "n": 15,
+    "p50": 20.81,
+    "p90": 26.01,
+    "p99": 26.85,
+    "max": 26.85
+   },
+   "over_20ms": 8,
+   "over_25ms": 2,
+   "over_33ms": 0,
+   "over_20ms_changed": 8,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 69.531833,
+   "screen_gone": 416.167708,
+   "blur": {
+    "frames": 3,
+    "rgb": [
+     59.2,
+     58.1,
+     53.4
+    ],
+    "chroma": 7.07,
+    "per_frame_chroma": [
+     7.08,
+     7.07,
+     7.07
+    ],
+    "pass": true
+   }
+  },
+  {
+   "segment": "spare_pan",
+   "n": 1,
+   "key": "alt+l",
+   "join": "began",
+   "kind": "pan",
+   "g": 82,
+   "target": [
+    3089,
+    73
+   ],
+   "overlay_up": 37.950084,
+   "press_to_up": 37.950084,
+   "lift": 401.06125,
+   "show_to_landed": 103.315916,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.174958,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 17.32,
+    "p90": 22.16,
+    "p99": 22.62,
+    "max": 22.62
+   },
+   "over_20ms": 5,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 5,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 73.926833,
+   "screen_gone": 405.504083
+  },
+  {
+   "segment": "spare_pan",
+   "n": 2,
+   "key": "alt+j",
+   "join": "began",
+   "kind": "pan",
+   "g": 83,
+   "target": [
+    3090,
+    67
+   ],
+   "overlay_up": 40.904625,
+   "press_to_up": 40.904625,
+   "lift": 404.733333,
+   "show_to_landed": 111.76375,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.280708,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 20.14,
+    "p90": 22.4,
+    "p99": 25.47,
+    "max": 25.47
+   },
+   "over_20ms": 9,
+   "over_25ms": 1,
+   "over_33ms": 0,
+   "over_20ms_changed": 9,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 59.879959,
+   "screen_gone": 434.745375,
+   "blur": {
+    "frames": 3,
+    "rgb": [
+     59.1,
+     58.0,
+     53.4
+    ],
+    "chroma": 7.07,
+    "per_frame_chroma": [
+     7.07,
+     7.07,
+     7.07
+    ],
+    "pass": true
+   }
+  },
+  {
+   "segment": "spare_pan",
+   "n": 3,
+   "key": "alt+l",
+   "join": "began",
+   "kind": "pan",
+   "g": 84,
+   "target": [
+    3089,
+    73
+   ],
+   "overlay_up": 34.696708,
+   "press_to_up": 34.696708,
+   "lift": 388.248875,
+   "show_to_landed": 103.163917,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.237958,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 17.12,
+    "p90": 20.93,
+    "p99": 20.95,
+    "max": 20.95
+   },
+   "over_20ms": 2,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 2,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 78.369875,
+   "screen_gone": 398.851917
+  },
+  {
+   "segment": "spare_pan",
+   "n": 4,
+   "key": "alt+j",
+   "join": "began",
+   "kind": "pan",
+   "g": 85,
+   "target": [
+    3090,
+    67
+   ],
+   "overlay_up": 27.900083,
+   "press_to_up": 27.900083,
+   "lift": 388.249083,
+   "show_to_landed": 106.2435,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.257792,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 18.11,
+    "p90": 21.24,
+    "p99": 27.66,
+    "max": 27.66
+   },
+   "over_20ms": 6,
+   "over_25ms": 1,
+   "over_33ms": 0,
+   "over_20ms_changed": 6,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 56.384375,
+   "screen_gone": 400.009542,
+   "blur": {
+    "frames": 3,
+    "rgb": [
+     59.1,
+     58.0,
+     53.4
+    ],
+    "chroma": 7.07,
+    "per_frame_chroma": [
+     7.07,
+     7.07,
+     7.07
+    ],
+    "pass": true
+   }
+  },
+  {
+   "segment": "spare_pan",
+   "n": 5,
+   "key": "alt+l",
+   "join": "began",
+   "kind": "pan",
+   "g": 86,
+   "target": [
+    3089,
+    73
+   ],
+   "overlay_up": 35.410542,
+   "press_to_up": 35.410542,
+   "lift": 387.845833,
+   "show_to_landed": 104.496625,
+   "merges": 0,
+   "swaps": 1,
+   "overdue_lift": 0,
+   "frame_zero_timeout": 0,
+   "post_to_press": 0.208959,
+   "frames": 18,
+   "intervals": {
+    "n": 17,
+    "p50": 18.89,
+    "p90": 21.11,
+    "p99": 21.75,
+    "max": 21.75
+   },
+   "over_20ms": 6,
+   "over_25ms": 0,
+   "over_33ms": 0,
+   "over_20ms_changed": 6,
+   "repeats": 0,
+   "black_frames": 0,
+   "screen_up": 59.222625,
+   "screen_gone": 396.612083
+  }
+ ]
+}
