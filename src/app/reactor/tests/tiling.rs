@@ -1222,10 +1222,11 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     );
 }
 
-/// Focus moved from the first window to the second since the last batch: the first wore the ring
-/// and the second wears it, each request saying so with the decoration every managed window wears.
+/// Focus moved from the first window to the second since the last batch: the second wears the ring
+/// and holds focus where the pass ends and the first neither, each request saying so with the
+/// decoration every managed window wears.
 #[test]
-fn a_request_carries_whether_its_window_wore_and_wears_the_ring() {
+fn a_request_carries_the_ring_and_focus_its_window_ends_with() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -1263,11 +1264,9 @@ fn a_request_carries_whether_its_window_wore_and_wears_the_ring() {
         ..Default::default()
     };
     use crate::decorations::domain::style::Ring;
-    for (wid, wore, wears) in
-        [(first, Ring::Active, Ring::None), (second, Ring::None, Ring::Active), (third, Ring::None, Ring::None)]
-    {
+    for (wid, wears, holds) in [(first, Ring::None, false), (second, Ring::Active, true), (third, Ring::None, false)] {
         let worn = worn(wid);
-        assert_eq!((worn.wore_ring, worn.wears_ring), (wore, wears), "{wid:?}");
+        assert_eq!((worn.wears_ring, worn.holds_focus), (wears, holds), "{wid:?}");
         assert_eq!(worn.decoration, decoration);
     }
 }

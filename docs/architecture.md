@@ -109,9 +109,9 @@ permission, builds every actor and joins them.
    `ServerRead`: frames, orders with their levels and introductions with radius and ordered-in, in
    the order asked, and `Following` to ask it), and draws at rest by itself. `animation` draws with it, and `transitions` names
    `decorations::domain::style` to carry each window's `Worn` from the reactor to its tile,
-   `decorations::domain::shape::outset` for how far its bands reach when it holes the overlay, and
-   decides from `Worn`'s `wore_ring` and `wears_ring` which ring a tile shows until its turn
-   (`transitions::domain::lifecycle::drawn_ringed`).
+   and `decorations::domain::shape::outset` for how far its bands reach when it holes the overlay;
+   the overlay paints each tile's bands as `Worn::style` gives them, where the flight ends, from its
+   show.
    `layout` takes the border each tiled window wears as plain widths the application hands it, so it
    names `decorations` no more than anything else.
    `pictures` reads the window server through `windows` and is upstream of `animation`, `transitions`, `switcher` and `bar`:

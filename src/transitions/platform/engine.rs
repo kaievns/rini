@@ -47,7 +47,7 @@ use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
     WatchId, Why,
 };
-use crate::decorations::domain::style::{Ring, Worn};
+use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::route::Route;
 use crate::pictures::platform::picture::Picture;
 use crate::pictures::platform::service::Pictures;
@@ -59,7 +59,7 @@ use crate::transitions::domain::flight_score::FlightScore;
 use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures};
 use crate::transitions::domain::lifecycle::{
     self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
-    drawn_ringed, extend_latest, losing_focus,
+    extend_latest, losing_focus,
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::timing::*;
@@ -292,7 +292,6 @@ fn entrance_tile(
         depth: 0,
         focused: true,
         worn: entrance.worn,
-        ring: Ring::Active,
         radius,
         clipped,
     }
@@ -540,22 +539,18 @@ impl RunningAnimation {
         tile.snapshot = look;
         tile.clipped = clipped;
         tile.focused = true;
-        tile.ring = Ring::Active;
         self.focused_look = Some(target);
         true
     }
 
-    /// `window`'s tile drawn focused or not from now, and the ring that leaves it wearing (`None`
-    /// with no tile); drawn focused, focus has handed over to it.
-    fn draw_focused(&mut self, window: WindowId, focused: bool) -> Option<Ring> {
+    /// `window`'s tile drawn focused or not from now; drawn focused, focus has handed over to it.
+    fn draw_focused(&mut self, window: WindowId, focused: bool) {
         if focused {
             self.shown_focus = Some(window);
         }
-        let focus = self.focus;
-        let tile = self.tiles.iter_mut().find(|t| t.window == window)?;
-        tile.focused = focused;
-        tile.ring = drawn_ringed(window, focus, focused, &tile.worn);
-        Some(tile.ring)
+        if let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window) {
+            tile.focused = focused;
+        }
     }
 
     /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`. A
@@ -583,7 +578,6 @@ impl RunningAnimation {
             let shown = self.shown_focus;
             for tile in self.tiles.iter_mut().filter(|t| Some(t.window) != shown) {
                 tile.focused = drawn_focused(tile.window, self.focus, losing);
-                tile.ring = drawn_ringed(tile.window, self.focus, tile.focused, &tile.worn);
             }
             self.focused_look = None;
         }
@@ -645,14 +639,19 @@ impl RunningAnimation {
         ends.into_iter().map(|(window, end)| (end, self.band(window, scale))).collect()
     }
 
-    /// Adds or retargets one window without disturbing anything already moving.
+    /// Adds or retargets one window without disturbing anything already moving, each tile already
+    /// flying wearing what the pass ends with.
     fn merge(&mut self, tile: OverlayTile) -> Admitted {
         let action = merge_action(
             self.tiles.iter().find(|t| t.window == tile.window).map(|t| t.to),
             tile.to,
         );
         match action {
-            Admitted::Redundant => {}
+            Admitted::Redundant => {
+                if let Some(existing) = self.tiles.iter_mut().find(|t| t.window == tile.window) {
+                    existing.worn = tile.worn;
+                }
+            }
             Admitted::Retargeted => {
                 let existing = self
                     .tiles
@@ -666,7 +665,7 @@ impl RunningAnimation {
                 existing.floating = tile.floating;
                 existing.server_order = tile.server_order;
                 existing.depth = tile.depth;
-                existing.worn = Worn { wore_ring: existing.worn.wore_ring, ..tile.worn };
+                existing.worn = tile.worn;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -1058,9 +1057,10 @@ impl FlightEngine {
                 self.pictures.keep_focused(self.tag(generation), window)
             }
             Command::Focus { window, focused } => {
-                let ring = self.running.as_mut().and_then(|running| running.draw_focused(window, focused));
-                let ring = ring.unwrap_or(if focused { Ring::Active } else { Ring::None });
-                self.render(Render::Focus { window, focused, ring });
+                if let Some(running) = self.running.as_mut() {
+                    running.draw_focused(window, focused);
+                }
+                self.render(Render::Focus { window, focused });
             }
             Command::PlaceRest => {
                 self.render(Render::PlaceRest { through: self.took });
@@ -1577,7 +1577,6 @@ impl FlightEngine {
                         depth: 0,
                         focused,
                         worn: request.worn,
-                        ring: drawn_ringed(request.window, drawing_focus, focused, &request.worn),
                         radius: radii.get(&request.server_id).copied(),
                         clipped,
                     });
@@ -1641,7 +1640,6 @@ impl FlightEngine {
                                 depth: 0,
                                 focused,
                                 worn: request.worn,
-                                ring: drawn_ringed(request.window, drawing_focus, focused, &request.worn),
                                 radius: radii.get(&request.server_id).copied(),
                                 clipped,
                             });
@@ -1790,19 +1788,23 @@ impl FlightEngine {
         }
     }
 
-    /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
-    /// a new parked target flies cut onto its tile: a retarget draws neither.
-    fn redraw_focus(&mut self, before: &[(WindowId, (bool, Ring))], look: Option<WindowId>) {
+    /// On a flight that moves, the tiles a merge turned focused or not drawn so, the focused look a
+    /// new parked target flies cut onto its tile, and the ring and border of every tile whose end the
+    /// merge changed worn at once, as the overlay showed the first pass's: a retarget draws none.
+    fn redraw_focus(&mut self, before: &[(WindowId, (bool, Worn))], look: Option<WindowId>) {
         let Some(running) = self.running.as_ref() else { return };
         let mut drawn = Vec::new();
         for tile in running.tiles.iter() {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, drawn)| *drawn);
-            let (window, focused, ring) = (tile.window, tile.focused, tile.ring);
+            let (window, focused, worn) = (tile.window, tile.focused, tile.worn);
             if look == Some(window) {
                 drawn.push(Render::Swap { window, picture: tile.snapshot.clone(), clipped: tile.clipped });
-                drawn.push(Render::Focus { window, focused: true, ring: Ring::Active });
-            } else if was.is_some_and(|was| was != (focused, ring)) {
-                drawn.push(Render::Focus { window, focused, ring });
+                drawn.push(Render::Focus { window, focused: true });
+            } else if was.is_some_and(|(was, _)| was != focused) {
+                drawn.push(Render::Focus { window, focused });
+            }
+            if was.is_some_and(|(_, was)| was != worn) {
+                drawn.push(Render::Wear { window, worn });
             }
         }
         for command in drawn {
@@ -1830,8 +1832,8 @@ impl FlightEngine {
         }
         extend_latest(&mut running.final_frames, pass.final_frames.into_iter());
         let focus_before = running.focus;
-        let drawn_focused_before: Vec<(WindowId, (bool, Ring))> =
-            running.tiles.iter().map(|t| (t.window, (t.focused, t.ring))).collect();
+        let drawn_focused_before: Vec<(WindowId, (bool, Worn))> =
+            running.tiles.iter().map(|t| (t.window, (t.focused, t.worn))).collect();
         let (pass_focus, _) = pass.focus;
         let joining: Vec<WindowId> =
             pass.tiles.iter().map(|tile| tile.window).filter(|window| !running.drawn().contains(window)).collect();
@@ -2032,7 +2034,6 @@ impl FlightEngine {
                         depth: 0,
                         focused,
                         worn: window.worn,
-                        ring: drawn_ringed(window.window, drawing_focus, focused, &window.worn),
                         radius: radii.get(&window.server_id).copied(),
                         clipped,
                     });
@@ -2402,6 +2403,7 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::surface::viewport;
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, VIEWPORT, rect};
+    use crate::decorations::domain::style::Ring;
     use crate::pictures::platform::picture::test_picture;
 
     /// A frame on `DISPLAY`, which sits at the origin, on the overlay over it.
@@ -2452,7 +2454,6 @@ mod tests {
             depth: 0,
             focused: false,
             worn: Worn::default(),
-            ring: Ring::None,
             radius: None,
             clipped: false,
         }
@@ -2812,18 +2813,21 @@ mod tests {
                 stacked(wid(3), slot, slot, Some(2), false),
             ];
             running.tiles[0].focused = true;
-            running.tiles[0].worn = Worn { wore_ring: Ring::Active, ..Worn::default() };
-            running.tiles[1].worn = Worn { wears_ring: Ring::Active, ..Worn::default() };
+            running.tiles[1].worn = Worn { wears_ring: Ring::Active, holds_focus: true, ..Worn::default() };
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
             let focused = |running: &RunningAnimation| running.tiles.iter().map(|t| t.focused).collect::<Vec<_>>();
-            assert_eq!(running.draw_focused(wid(1), false), Some(Ring::None), "its ring goes with its turn");
+            let worn = |running: &RunningAnimation| running.tiles.iter().map(|t| t.worn).collect::<Vec<_>>();
+            let ends = worn(&running);
+            running.draw_focused(wid(1), false);
             assert_eq!(focused(&running), vec![false, false, false]);
             assert_eq!(losing_focus(running.focus, running.shown_focus), Some(wid(1)), "still leaving it");
-            assert_eq!(running.draw_focused(wid(2), true), Some(Ring::Active), "and comes to the target with its own");
+            running.draw_focused(wid(2), true);
             assert_eq!(focused(&running), vec![false, true, false]);
             assert_eq!(losing_focus(running.focus, running.shown_focus), None, "a later merge moves none");
-            assert_eq!(running.draw_focused(wid(4), true), None, "no tile");
+            running.draw_focused(wid(4), true);
+            assert_eq!(focused(&running), vec![false, true, false], "no tile");
+            assert_eq!(worn(&running), ends, "no turn wears anything");
         }
 
         /// A window wearing its ring where the flight ends is holed over its band as well as over
@@ -2840,8 +2844,8 @@ mod tests {
                 urgent: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x9b0000)),
             };
             let decoration = crate::decorations::domain::style::Decoration { ring: Some(band), ..Default::default() };
-            running.tiles[0].worn = Worn { decoration, wore_ring: Ring::None, wears_ring: Ring::Inactive };
-            running.tiles[1].worn = Worn { decoration, wore_ring: Ring::Active, wears_ring: Ring::None };
+            running.tiles[0].worn = Worn { decoration, wears_ring: Ring::Inactive, holds_focus: false };
+            running.tiles[1].worn = Worn { decoration, wears_ring: Ring::None, holds_focus: false };
             let holes = running.holes(vec![(wid(1), slot), (wid(2), slot), (wid(3), slot)], 2.0);
             assert_eq!(holes, vec![(slot, 1.5), (slot, 0.0), (slot, 0.0)]);
             let bordered = crate::decorations::domain::style::Decoration { border: Some(band), ..decoration };
@@ -4013,6 +4017,7 @@ mod tests {
                 Render::Play { .. } => "play",
                 Render::Swap { .. } => "swap",
                 Render::Focus { .. } => "focus",
+                Render::Wear { .. } => "wear",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
                 Render::PlaceRest { .. } => "place_rest",
@@ -4377,6 +4382,42 @@ mod tests {
             }
         }
 
+        /// The ring and border of every tile worn again among `sent`, by window.
+        fn worn_again(sent: &[Sent]) -> Vec<(WindowId, Worn)> {
+            batches(sent)
+                .into_iter()
+                .flat_map(|batch| &batch.commands)
+                .filter_map(|command| if let Render::Wear { window, worn } = command { Some((*window, *worn)) } else { None })
+                .collect()
+        }
+
+        /// A merge moving focus mid-flight wears the ring and border of each tile already flying as
+        /// where the merged flight ends, in the merge's own drain, before any picture turns; one
+        /// joining wears them as it is dressed, and a merge that changes no end wears none again.
+        #[test]
+        fn a_merge_moving_focus_wears_each_flying_tiles_new_end_at_once() {
+            let mut h = Harness::new();
+            h.worn = Worn { wears_ring: Ring::Active, holds_focus: true, ..Worn::default() };
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            let unchanged = h.pan_on();
+            assert!(worn_again(&h.step(unchanged)).is_empty(), "the same end");
+            park(2);
+            let leaving = Worn::default();
+            let gaining = Worn { wears_ring: Ring::Active, holds_focus: true, ..Worn::default() };
+            let mut merge = strip_of(&h, &[1, 2], SurfacePoint::new(967.0, 0.0), SurfacePoint::new(1834.0, 0.0));
+            if let Event::AnimateSurface { windows, focus, .. } = &mut merge {
+                *focus = Some(wid(2));
+                windows[0].worn = leaving;
+                windows[1].worn = gaining;
+            }
+            let sent = h.step(merge);
+            assert_eq!(worn_again(&sent), [(wid(1), leaving)], "at once, and only the tile already flying");
+            assert!(handed(&sent, wid(2)).iter().all(|tile| tile.worn == gaining), "dressed with its own");
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+        }
+
         /// A layout pass of `wid(1)` from `start` to `end` and of each of `others` from and to its
         /// own frame.
         fn pass_of(h: &Harness, others: &[(u32, ScreenRect, ScreenRect)]) -> Event {
@@ -4439,9 +4480,9 @@ mod tests {
             report_corners(2, None);
         }
 
-        /// Each tile carries what its window wears as its request has it, unread, and starts wearing
-        /// the ring its focus turn gives it: the window focus leaves, drawn focused, its own; the target,
-        /// drawn unfocused until its turn, the one it wore.
+        /// Each tile carries what its window wears as its request has it, unread, which its ring and
+        /// border show from frame zero, and is drawn focused or not until its turn: the window focus
+        /// leaves focused, the target unfocused.
         #[test]
         fn each_tile_is_staged_with_the_decoration_and_ring_its_request_carries() {
             let mut h = Harness::new();
@@ -4453,7 +4494,7 @@ mod tests {
                 urgent: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x9b0000)),
             };
             let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), ..Default::default() };
-            let worn = |wore_ring, wears_ring| Worn { decoration, wore_ring, wears_ring };
+            let worn = |wears_ring, holds_focus| Worn { decoration, wears_ring, holds_focus };
             let request = |id: u32, from, to, worn| AnimationRequest {
                 window: wid(id),
                 server_id: WindowServerId::new(id),
@@ -4465,8 +4506,8 @@ mod tests {
             let parked = rect(1727.0, 1085.0, 859.0, 1081.0);
             let press = Event::Animate {
                 windows: vec![
-                    request(1, start(), end(), worn(Ring::Active, Ring::None)),
-                    request(2, parked, rect(867.0, 0.0, 859.0, 1081.0), worn(Ring::None, Ring::Active)),
+                    request(1, start(), end(), worn(Ring::None, false)),
+                    request(2, parked, rect(867.0, 0.0, 859.0, 1081.0), worn(Ring::Active, true)),
                 ],
                 focus: Some(wid(2)),
                 focused_before: Some(wid(1)),
@@ -4479,11 +4520,11 @@ mod tests {
             let staged = |window| {
                 let tiles = handed(&sent, window);
                 assert!(!tiles.is_empty(), "{window:?} flies");
-                tiles.iter().map(|tile| (tile.worn, tile.focused, tile.ring)).collect::<Vec<_>>()
+                tiles.iter().map(|tile| (tile.worn, tile.focused)).collect::<Vec<_>>()
             };
-            let losing = (worn(Ring::Active, Ring::None), true, Ring::Active);
+            let losing = (worn(Ring::None, false), true);
             assert!(staged(wid(1)).iter().all(|drawn| *drawn == losing), "losing focus");
-            let target = (worn(Ring::None, Ring::Active), false, Ring::None);
+            let target = (worn(Ring::Active, true), false);
             assert!(staged(wid(2)).iter().all(|drawn| *drawn == target), "the target");
             crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
         }
@@ -4534,7 +4575,7 @@ mod tests {
             let solid = Paint::Solid(Colour::rgb(0x7fc8ff));
             let ring = crate::decorations::domain::style::Band { width: 1.3, active: solid, inactive: solid, urgent: solid };
             let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), ..Default::default() };
-            Worn { decoration, wore_ring: Ring::Active, wears_ring: Ring::Active }
+            Worn { decoration, wears_ring: Ring::Active, holds_focus: true }
         }
 
         fn holes(sent: &[Sent]) -> Vec<f64> {

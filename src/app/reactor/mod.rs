@@ -504,9 +504,6 @@ pub struct Reactor {
     /// tests — the switch works without it, which is what keeps the popup cosmetic.
     switcher_tx: Option<crate::switcher::platform::actor::Sender>,
     bar: bar::BarFeed,
-    /// The rings as rini's layout had them when the last batch of events ended: what each window wore
-    /// before a pass this batch makes.
-    rings_drawn: crate::decorations::domain::style::Rings,
     /// The applications asking for attention, whose windows are drawn urgent.
     attention: crate::windows::domain::attention::Attention,
     rest: decorations::RestFeed,
@@ -657,7 +654,6 @@ impl Reactor {
             live_switch: None,
             switcher_tx: None,
             bar: bar::BarFeed::default(),
-            rings_drawn: Default::default(),
             attention: Default::default(),
             rest: decorations::RestFeed::default(),
             config: config.clone(),
@@ -1155,7 +1151,7 @@ impl Reactor {
     }
 
     /// One batch of the loop's events, then the strip laid out again if a rule now gives a window
-    /// another border, what the batch changed on the bar and at rest, and the rings it left.
+    /// another border, and what the batch changed on the bar and at rest.
     fn handle_batch(&mut self, batch: impl IntoIterator<Item = (tracing::Span, Event)>) {
         for (span, event) in batch {
             let _guard = span.enter();
@@ -1166,7 +1162,6 @@ impl Reactor {
         }
         self.publish_bar();
         self.publish_rest();
-        self.rings_drawn = self.layout_rings();
     }
 
     fn handle_loop_event(&mut self, event: Event) {

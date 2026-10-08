@@ -191,13 +191,19 @@ impl DecorationLayers {
 
     /// Paints the hairline's white, the shadow's depth, the ring and the border as `style` has them.
     pub fn show(&self, style: Style) {
+        self.light(style);
+        self.bands.paint(&style);
+    }
+
+    /// Paints the hairline's white and the shadow's depth as `style` has them, the bands left as
+    /// they are.
+    pub fn light(&self, style: Style) {
         self.hairline
             .setBorderColor(Some(&CGColor::new_generic_gray(1.0, style.light_alpha)));
         let shadow = style.shadow;
         self.shadow.setShadowOpacity(shadow.opacity);
         self.shadow.setShadowRadius(shadow.radius);
         self.shadow.setShadowOffset(CGSize::new(0.0, shadow.offset_y));
-        self.bands.paint(&style);
     }
 
     /// Draws the outline at the display's `scale`, and the bands of `decoration` in whole device

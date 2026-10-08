@@ -159,18 +159,29 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   picture, its hairline and its outline, and MUST carry no layer for a band its window does not
   wear: each layer is main-thread time at the flight's show. The tile's outline stays drawn under them, as macOS's own
   outline lies under a ring at rest.
-- When focus moves during a flight, each tile's ring MUST turn with its hairline, at the time
-  "Focus changing during a flight" in `animation.md` gives it. The window gaining focus on its own
-  workspace wears no ring until its turn and then the active one; the window losing it wears the
-  active ring until its turn and then none. When focus moves to another workspace on the same
-  display, each is its workspace's active window throughout and wears the active ring throughout, as
-  niri's do. When focus moves to another display, each keeps its display's ring, and only the paint
-  turns at each one's time: the window losing focus to the inactive, the one gaining it to the
-  active. Each tile's border turns its paint at the same time as its hairline, by its own focus
-  alone.
+- When focus moves during a flight, each tile's ring and border MUST turn at the flight's show, its
+  frame zero, to what its window wears where the flight ends, and MUST NOT turn with its picture.
+  The window gaining focus on its own workspace wears the active ring from the first frame; the
+  window losing it wears none. When focus moves to another workspace on the same display, each is
+  its workspace's active window and wears the active ring throughout, as niri's do. When focus moves
+  to another display, each wears its display's ring from the show: the window losing focus the
+  inactive one, the one gaining it the active one. Each tile's border wears its paint where the
+  flight ends from the show too, by its own focus alone. Only each tile's hairline and shadow turn
+  with its own picture, at the time "Focus changing during a flight" in `animation.md` gives it.
+- A pass merged into a flight that moves focus again MUST turn the ring and the border of every tile
+  already flying at once, in the drain that merges it, and a tile it adds MUST be dressed with them:
+  the overlay is already up, so that drain is the first frame showing the merged end, as the show
+  is for a press. A pass merged before the show is drawn with them at the show.
 - A flight MUST be as fast and as smooth with the ring or the border on as with both off: on the
   timing battery, every measure with them on within the spread of the same build with both off, and
   every blurred window flying with its blur.
+
+> **Reported 2026-10-09.** Kai, after the sequence was explained to him (at the press the tiles wear
+> the rings they had, each tile's ring turns as its window's turned picture comes in, the window
+> losing focus first, and the ring at rest is placed one tick before the lift): "can you try to move
+> it at the beginning of the transition? when the overlay animation starts". Each tile's ring and
+> border now wear where the flight ends from frame zero. The hairline and the shadow still turn with
+> each window's picture, as Kai asked on 2026-10-05 (`animation.md`).
 
 > **Reported 2026-10-08.** Kai: "what i can tell you with 100% certainty is that all the animations
 > are _significantly_ slower with the rings, which makes no sense because it's just a bunch more
@@ -217,8 +228,8 @@ wearing either is drawn by one rest window holding both.
   press's own change, each window moved, reordered, hidden or parked under the overlay, focus
   turning and a window rini starts managing all wait for it to land, and are drawn then, under the
   overlay, before it hides. Until the overlay shows, the rings on its display show the windows as they were
-  before the press, as the flight's frame zero does; once it shows it covers its display, so nothing
-  drawn there is seen. Each of those draws had been main-thread and window-server time the flight's
+  before the press; once it shows it covers its display, so nothing drawn there is seen, and its
+  tiles wear the rings where the flight ends (above). Each of those draws had been main-thread and window-server time the flight's
   show and frames waited behind. A flight whose overlay has not shown 250ms after its begin, one
   that was declined or merged elsewhere, MUST let go then and draw what waited. A press that begins
   a flight of its own as the one before it lifts MUST wait for its own flight, not be drawn at the
@@ -279,9 +290,9 @@ the strip, the border's width in, is `src/layout/domain/tile.rs`, read by
 reactor decides each window's ring and what holds its band at rest in
 `src/app/reactor/decorations.rs`, from each workspace's active window (`src/workspaces/engine.rs`),
 and which applications ask for attention, read by `src/windows/platform/attention.rs` into
-`src/windows/domain/attention.rs`. When a tile's ring turns is
-`src/transitions/domain/lifecycle.rs`, carried out by `src/transitions/platform/engine.rs` on the
-overlay (`src/animation/platform/overlay.rs`), which is holed over each band
+`src/windows/domain/attention.rs`. What a tile's ring and border show
+through a flight is `Worn::style` in `src/decorations/domain/style.rs`, worn by
+`src/transitions/platform/engine.rs` on the overlay (`src/animation/platform/overlay.rs`), which is holed over each band
 (`src/animation/domain/motion/holes.rs`). At rest, which windows show a band, which rest window
 draws each, how many rest windows are kept, what each changes to draw its look and which are
 ordered again are
