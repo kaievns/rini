@@ -308,6 +308,12 @@ destination for a window already moving.
   A capture that contains the blur also fills the corners with whatever was behind them.
 - Once a window's picture carries its blur, a later capture of the same size that lacks it MUST NOT
   replace it.
+- A window MUST be found to have a material wherever the material covers a visible part of it, a
+  sidebar as much as a whole background, however close what is behind it comes to the grey on
+  average over the whole window. What is found is kept until the window goes, so a window wrongly
+  found to have none flies grey for as long as it lives. Not yet met: a material only within the
+  outer tenth of the window each way, such as a toolbar along its top, is left out of the test with
+  the corners.
 - A picture MUST NOT be built from a capture of the window's rect taken while the window was somewhere
   else. The rect then holds whatever the window was covering, and merging that in replaces the window
   with another one — found on the first live run, and far worse than grey.
@@ -317,6 +323,14 @@ destination for a window already moving.
 > here and there now, so it's quite prevalent and needs a better fix." Every per-window capture route
 > had already been measured returning the same flat grey. The window captured together with what is
 > below it carries the real blur and leaves out anything above it, measured the same day.
+
+> **Reported 2026-10-08.** "you broke the blurred windows capture, they travel with the default gray
+> again", after the borders deploy restarted rini, which learns every window's material afresh at
+> each start and keeps it while the window lives. Rini's test read outside rini the same day put
+> Outlook with its sidebar at 1.99 levels from the window alone, averaged over the whole window,
+> under the 2-level threshold: no material, so pictured alone, grey where the sidebar blurs. The
+> borders change touched neither the test nor the capture. Part of a window changed by its material
+> now counts, not only the whole window's average (`docs/data/2026-10-08-materials`).
 
 ## The window's hairline
 

@@ -198,13 +198,21 @@ overlapping another, is captured in up to two calls (`capture_on_screen`):
 | baked | the opaque windows, then `behind`, then the display's desktop windows | opaque windows with a material, and an opaque window of unknown material after its alpha capture | a material carries the blur of what is composited after it: 0.5 levels from the screen, against 24.9 for the window alone |
 
 A window seen for the first time is measured from its alpha crop: translucent when more than a fifth
-of a 40x40 interior grid of a 48x48 draw is below alpha 250. An opaque one is baked too, and has a material when the two crops drawn
-64x64 differ by more than two levels away from their border. A baked picture of a window with a
-material carries its blur (`carries_blur`), so the cache keeps it over a grey capture of the window
-alone. Each composite is checked against the shape of what it listed, the desktop windows included
-for the baked one, and a misshapen one yields no picture: a frame read is wrong, or a listed window
-has gone. The measurements are in "SLSHWCaptureWindowList captures only the visible portion" and
-"Translucency is three things" in [`capture-research.md`](capture-research.md).
+of a 40x40 interior grid of a 48x48 draw is below alpha 250. An opaque one is baked too, and has a
+material when its two crops, drawn 64x64 and compared away from their border, differ by more than
+two levels on average, or by more than four (12 summed over the channels) on more than a hundredth
+of the samples. The average alone lost a material on part of a window: on 2026-10-08 Outlook with
+its sidebar averaged 1.99 levels, under the threshold. The share is set clear of Messages, whose
+glass sidebar samples its own content and captures whole: its baked crop changed 0.1% of samples by
+more than 12 and none by more than 14, and is further from the screen than its crop alone, 0.35
+levels against 0.00. Readings and the probe in
+[`docs/data/2026-10-08-materials`](../../../docs/data/2026-10-08-materials). What is learned is kept
+until the window goes. A baked picture of a window with a material carries its blur
+(`carries_blur`), so the cache keeps it over a grey capture of the window alone. Each composite is
+checked against the shape of what it listed, the desktop windows included for the baked one, and a
+misshapen one yields no picture: a frame read is wrong, or a listed window has gone. The
+measurements are in "SLSHWCaptureWindowList captures only the visible portion" and "Translucency is
+three things" in [`capture-research.md`](capture-research.md).
 
 **One place turns a picture into layer contents.** The flight overlay, the switcher's cards and the
 bar all go through `platform/layer.rs`, so a bitmap and a surface are handed over the one way objc2

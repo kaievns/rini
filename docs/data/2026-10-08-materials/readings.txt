@@ -1,0 +1,23 @@
+probe.swift against the live screen, 2026-10-08 15:46-16:10, rini 50b29987 running (pid 72356), one
+display at 2x, the Aerials wallpaper. Each window alone (SLSHWCaptureWindowList, rini's options) and
+baked with the 6 desktop windows behind it, both drawn 64x64 as rini's measure does; compared over
+the 52x52 samples inside a border of 6. mean: levels, averaged over the channels and the samples.
+share>12: samples whose difference summed over the channels is above 12. below: the window and what
+is below it (CGWindowListCreateImage OnScreenBelowWindow | IncludingWindow), the screen without
+anything above the window. clear: share of a 48x48 draw's interior below alpha 250 (translucent
+above 0.2). front: the frontmost application at the time.
+
+window                      front  clear  mean   share>12  baked/below  alone/below
+Microsoft Outlook 1722x1079 yes    0.000  1.99   -         0.01         1.99
+Messages 860x1079           yes    0.000  0.35   0.001     0.35         0.00   (max sample 14)
+Ghostty 572x1079 (x3)       yes    0.83-0.96  -  -         -            -      translucent: alpha call
+Visual Studio Code          yes    0.000  0.00   0.000     0.00         0.00
+Google Chrome               yes    0.000  0.00   0.000     0.00         0.00   4.29-6.90 while its page moved
+Slack                       yes    0.000  0.00   0.000     0.00         0.00   3.29 once, a message arriving
+Zoom 1280x960               no     0.000  0.04   0.000     0.28         0.29
+
+Outlook was read before the share was printed. Its mean of 1.99 sat under the 2-level threshold, so
+the averaged test found no material, where the baked crop matches the screen (0.01) and the crop
+alone does not (1.99). Messages is the opposite: its crop alone is the screen, and baking it moves
+the sidebar up to 14 summed, so it must stay in the alpha call. messages-alone.rgba and
+messages-baked.rgba are that reading's two 64x64 RGBA crops, which knowledge.rs's tests read.
