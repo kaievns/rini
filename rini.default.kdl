@@ -74,7 +74,9 @@ layout {
     // niri's focus ring, drawn around each workspace's active window, the one focus lands on there:
     // in `active-color` on the display holding focus and `inactive-color` on the others. It lies
     // outside the window and takes no space, so it covers `width` of whatever is beside it, less the
-    // gap: with `gaps 3`, nothing. `off` turns it off. A colour is any CSS form.
+    // gap: with `gaps 3`, nothing. `off` turns it off. A colour is any CSS form. niri's gradient,
+    // `active-gradient from="#80c8ff" to="#bbddff" angle=45 in="oklch longer hue"`, is drawn instead
+    // of the colour beside it, here and in `border`.
     focus-ring {
         width 2
         active-color "#7fc8ff"

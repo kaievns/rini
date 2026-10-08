@@ -7,7 +7,7 @@ use test_log::test;
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
-use crate::decorations::domain::paint::Colour;
+use crate::decorations::domain::paint::{Colour, Paint};
 use crate::decorations::domain::rest::{RestModel, RestWindow};
 use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
@@ -177,7 +177,7 @@ fn border(on: Option<bool>, width: Option<f64>) -> BandRule { BandRule { on, wid
 #[test]
 fn focus_moving_recolours_the_two_windows_it_moved_between() {
     let mut desk = desk();
-    let (red, green) = (Colour::rgb(0xff0000), Colour::rgb(0x00ff00));
+    let (red, green) = (Paint::Solid(Colour::rgb(0xff0000)), Paint::Solid(Colour::rgb(0x00ff00)));
     let decorations = &mut desk.reactor.config.settings.decorations;
     decorations.border.on = true;
     decorations.rules = vec![

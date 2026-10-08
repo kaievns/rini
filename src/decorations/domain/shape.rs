@@ -208,9 +208,9 @@ mod tests {
 
     #[test]
     fn with_a_border_on_the_ring_reaches_under_it_to_the_window() {
-        use crate::decorations::domain::paint::Colour;
+        use crate::decorations::domain::paint::{Colour, Paint};
         use crate::decorations::domain::style::Band;
-        let band = |width| Some(Band { width, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) });
+        let band = |width| Some(Band { width, active: Paint::Solid(Colour::rgb(0x7fc8ff)), inactive: Paint::Solid(Colour::rgb(0x505050)) });
         let both = Decoration { ring: band(2.0), border: band(4.0), radius: None };
         assert_eq!(widths(&both, 2.0), Widths { border: 4.0, ring: 6.0 });
         let (ring, corner) = band_of(widths(&both, 2.0).ring);

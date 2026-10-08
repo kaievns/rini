@@ -15,10 +15,11 @@ use rustc_hash::FxHashSet as HashSet;
 use super::ConfigPart;
 use super::binds::{BindPart, BindsPart};
 use super::error::Problem;
-use super::layout::{BandPart, LayoutPart, ProportionPart};
-use super::value::{ColourValue, Flag, Number};
+use super::layout::{BandPart, GradientPart, GradientRelativeTo, LayoutPart, ProportionPart};
+use super::value::{ColourSpaceValue, ColourValue, Flag, Number};
 use super::window_rule::{FixedPart, MatchPart, RadiusPart, WindowRulePart};
 use crate::app::config::{BASE_ANIMATION_SECONDS, Config, MAX_WORKSPACES};
+use crate::decorations::domain::paint::{ColourSpace, Gradient, Paint};
 use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::settings::BandSetting;
 use crate::input::domain::binding::{Action, Bind};
@@ -263,11 +264,37 @@ fn apply_band(part: BandPart, setting: &mut BandSetting, problems: &mut Vec<Prob
     if let Some(width) = part.width {
         setting.band.width = width.get();
     }
-    if let Some(ColourValue(colour)) = part.active_color {
-        setting.band.active = colour;
+    if let Some(paint) = paint(part.active_color, part.active_gradient, problems) {
+        setting.band.active = paint;
     }
-    if let Some(ColourValue(colour)) = part.inactive_color {
-        setting.band.inactive = colour;
+    if let Some(paint) = paint(part.inactive_color, part.inactive_gradient, problems) {
+        setting.band.inactive = paint;
+    }
+}
+
+/// A band's paint for one state as one block writes it: its gradient, drawn instead of its colour
+/// when both are written, as niri draws it.
+fn paint(colour: Option<ColourValue>, gradient: Option<GradientPart>, problems: &mut Vec<Problem>) -> Option<Paint> {
+    match gradient {
+        Some(gradient) => Some(Paint::Gradient(self::gradient(gradient, problems))),
+        None => colour.map(|ColourValue(colour)| Paint::Solid(colour)),
+    }
+}
+
+/// niri's gradient over its band. One laid over the workspace's view is refused: rini lays each
+/// band's gradient over the band alone.
+fn gradient(part: GradientPart, problems: &mut Vec<Problem>) -> Gradient {
+    if part.relative_to == Some(GradientRelativeTo::WorkspaceView) {
+        problems.push(
+            Problem::at(&part.span, "`relative-to=\"workspace-view\"` is not supported yet", "here")
+                .help("rini lays a gradient over its own band; leave `relative-to` out"),
+        );
+    }
+    Gradient {
+        from: part.from.0,
+        to: part.to.0,
+        angle: f64::from(part.angle),
+        space: part.space.map_or_else(ColourSpace::default, |ColourSpaceValue(space)| space),
     }
 }
 
@@ -531,8 +558,8 @@ fn band_rule(part: Option<BandPart>, problems: &mut Vec<Problem>) -> BandRule {
     BandRule {
         on: on_off(part.on, part.off, &part.span, problems),
         width: part.width.map(Number::get),
-        active: part.active_color.map(|ColourValue(colour)| colour),
-        inactive: part.inactive_color.map(|ColourValue(colour)| colour),
+        active: paint(part.active_color, part.active_gradient, problems),
+        inactive: paint(part.inactive_color, part.inactive_gradient, problems),
     }
 }
 
@@ -557,7 +584,7 @@ fn corner_radius(part: RadiusPart, problems: &mut Vec<Problem>) -> Option<f64> {
     }
 }
 
-/// A rule that applies by whether a window holds focus may set colours alone: what else it writes is
+/// A rule that applies by whether a window holds focus may set paints alone: what else it writes is
 /// refused and left out.
 fn held_by_focus(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>) -> DecorationRule {
     if !rule.follows_focus() {
@@ -572,13 +599,13 @@ fn held_by_focus(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>)
     if rule.border.shapes() {
         refuse(
             "a `border`'s `on`, `off` or `width`",
-            "a border that changes with focus lays the strip out again on every focus change; its colours may follow focus",
+            "a border that changes with focus lays the strip out again on every focus change; its colours and gradients may follow focus",
         );
     }
     if rule.focus_ring.shapes() {
         refuse(
             "a `focus-ring`'s `on`, `off` or `width`",
-            "not supported yet: a ring drawn or sized by focus; its colours may follow focus",
+            "not supported yet: a ring drawn or sized by focus; its colours and gradients may follow focus",
         );
     }
     if rule.corner_radius.is_some() {

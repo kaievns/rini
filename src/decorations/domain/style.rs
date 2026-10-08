@@ -5,7 +5,7 @@
 use rini_core::ids::WindowId;
 use serde::Serialize;
 
-use crate::decorations::domain::paint::Colour;
+use crate::decorations::domain::paint::Paint;
 
 /// The white line's width in points: two device pixels at 2x.
 pub const LIGHT_PT: f64 = 1.0;
@@ -36,12 +36,12 @@ const FOCUSED_SHADOW: ShadowStyle = ShadowStyle {
 };
 
 /// A band rini draws outside a window, as niri's focus ring and border are: its width in points, and
-/// its paint on the window holding focus and on the others that wear it.
+/// its paint, a colour or a gradient, on the window holding focus and on the others that wear it.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
 pub struct Band {
     pub width: f64,
-    pub active: Colour,
-    pub inactive: Colour,
+    pub active: Paint,
+    pub inactive: Paint,
 }
 
 /// What a window wears that rini draws rather than macOS: its focus ring and its border, each while
@@ -71,13 +71,13 @@ pub struct Worn {
 }
 
 /// How a window's decorations are painted: the alpha of the white line, the shadow, and the ring's
-/// and the border's colours, for each it wears.
+/// and the border's paint, for each it wears.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Style {
     pub light_alpha: f64,
     pub shadow: ShadowStyle,
-    pub ring: Option<Colour>,
-    pub border: Option<Colour>,
+    pub ring: Option<Paint>,
+    pub border: Option<Paint>,
 }
 
 impl Style {
@@ -129,18 +129,19 @@ impl Rings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decorations::domain::paint::Colour;
     use crate::decorations::domain::shape::SHADOW_REACH;
 
     const RING: Band = Band {
         width: 4.0,
-        active: Colour::rgb(0x7fc8ff),
-        inactive: Colour::rgb(0x505050),
+        active: Paint::Solid(Colour::rgb(0x7fc8ff)),
+        inactive: Paint::Solid(Colour::rgb(0x505050)),
     };
 
     const BORDER: Band = Band {
         width: 4.0,
-        active: Colour::rgb(0xffc87f),
-        inactive: Colour::rgb(0x505050),
+        active: Paint::Solid(Colour::rgb(0xffc87f)),
+        inactive: Paint::Solid(Colour::rgb(0x505050)),
     };
 
     fn ringed() -> Decoration { Decoration { ring: Some(RING), ..Decoration::default() } }

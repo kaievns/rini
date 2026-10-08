@@ -2,7 +2,7 @@
 
 use knus::span::Span;
 
-use super::value::{ColourValue, Flag, Number, Pixels, Proportion};
+use super::value::{ColourSpaceValue, ColourValue, Flag, Number, Pixels, Proportion};
 use crate::layout::settings::{CenterFocusedColumn, Edges, WindowInsertionPoint};
 
 #[derive(knus::Decode, Debug, Default)]
@@ -30,8 +30,8 @@ pub struct LayoutPart {
     pub border: Option<BandPart>,
 }
 
-/// niri's `focus-ring` and `border`: `on` or `off`, its width, and its colour on the display holding
-/// focus and on the others.
+/// niri's `focus-ring` and `border`: `on` or `off`, its width, and its colour or gradient on the
+/// window holding focus and on the others.
 #[derive(knus::Decode, Debug, Default)]
 #[knus(span_type = Span)]
 pub struct BandPart {
@@ -47,6 +47,36 @@ pub struct BandPart {
     pub active_color: Option<ColourValue>,
     #[knus(child, unwrap(argument))]
     pub inactive_color: Option<ColourValue>,
+    #[knus(child)]
+    pub active_gradient: Option<GradientPart>,
+    #[knus(child)]
+    pub inactive_gradient: Option<GradientPart>,
+}
+
+/// niri's `active-gradient from="#80c8ff" to="#bbddff" angle=45 relative-to="window" in="oklch
+/// longer hue"`, `angle` 180 and `in` srgb unless written (`niri:niri-config/src/appearance.rs:86-98`).
+#[derive(knus::Decode, Debug)]
+#[knus(span_type = Span)]
+pub struct GradientPart {
+    #[knus(span)]
+    pub span: Span,
+    #[knus(property)]
+    pub from: ColourValue,
+    #[knus(property)]
+    pub to: ColourValue,
+    #[knus(property, default = 180)]
+    pub angle: i16,
+    #[knus(property)]
+    pub relative_to: Option<GradientRelativeTo>,
+    #[knus(property(name = "in"))]
+    pub space: Option<ColourSpaceValue>,
+}
+
+/// What a gradient is laid over: its band, or niri's view of the workspace, which is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientRelativeTo {
+    Window,
+    WorkspaceView,
 }
 
 /// niri's `struts`: replaced as a whole, so a side left out is 0.

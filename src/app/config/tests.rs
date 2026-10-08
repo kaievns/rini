@@ -5,7 +5,7 @@ use strum::VariantNames;
 
 use super::*;
 use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
-use crate::decorations::domain::paint::Colour;
+use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue, Paint};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
 use crate::layout::settings::{CenterFocusedColumn, Gaps, WindowInsertionPoint};
@@ -389,10 +389,10 @@ fn the_focus_ring_decodes_as_niri_writes_it() {
     let ring = config.settings.decorations.focus_ring;
     assert!(ring.on, "written without `off`, it stays on");
     assert_eq!(ring.band.width, 2.5);
-    assert_eq!(ring.band.active, Colour::rgb(0xff8000));
-    assert_eq!(ring.band.inactive, Colour { a: 0.5, ..Colour::rgb(0x505050) });
+    assert_eq!(ring.band.active, Paint::Solid(Colour::rgb(0xff8000)));
+    assert_eq!(ring.band.inactive, Paint::Solid(Colour { a: 0.5, ..Colour::rgb(0x505050) }));
     let named = parse("layout {\n    focus-ring {\n        active-color \"teal\"\n    }\n}\n");
-    assert_eq!(named.settings.decorations.focus_ring.band.active, Colour::rgb(0x008080));
+    assert_eq!(named.settings.decorations.focus_ring.band.active, Paint::Solid(Colour::rgb(0x008080)));
     let off = parse("layout {\n    focus-ring {\n        off\n    }\n}\n");
     assert!(!off.settings.decorations.focus_ring.on);
     assert!(refused("layout {\n    focus-ring {\n        active-color \"#zz\"\n    }\n}\n").contains("expected a colour"));
@@ -403,8 +403,8 @@ fn the_focus_ring_is_on_by_default_in_niris_colours_at_2pt() {
     let ring = parse("").settings.decorations.focus_ring;
     assert!(ring.on);
     assert_eq!(ring.band.width, 2.0, "Kai's width, not niri's 4");
-    assert_eq!(ring.band.active, Colour::rgb(0x7fc8ff));
-    assert_eq!(ring.band.inactive, Colour::rgb(0x505050));
+    assert_eq!(ring.band.active, Paint::Solid(Colour::rgb(0x7fc8ff)));
+    assert_eq!(ring.band.inactive, Paint::Solid(Colour::rgb(0x505050)));
     assert_eq!(parse("layout {\n    focus-ring {\n    }\n}\n"), parse(""), "an empty block is an absent one");
 }
 
@@ -424,8 +424,8 @@ fn a_focus_ring_in_an_output_is_refused_with_its_reason() {
 }
 
 #[test]
-fn urgent_and_gradients_are_refused_as_not_yet_supported() {
-    for name in ["urgent-color \"#9b0000\"", "active-gradient from=\"#80c8ff\" to=\"#bbddff\"", "inactive-gradient from=\"#505050\" to=\"#808080\"", "urgent-gradient from=\"#800\" to=\"#a33\""] {
+fn the_urgent_colour_and_gradient_are_refused_as_not_yet_supported() {
+    for name in ["urgent-color \"#9b0000\"", "urgent-gradient from=\"#800\" to=\"#a33\""] {
         let report = refused(&format!("layout {{\n    focus-ring {{\n        {name}\n    }}\n}}\n"));
         assert!(report.contains("not supported yet"), "{name}: {report}");
     }
@@ -445,7 +445,7 @@ fn a_border_with_neither_on_nor_off_turns_it_on() {
     let border = widened.settings.decorations.border;
     assert!(border.on);
     assert_eq!(border.band.width, 2.0);
-    assert_eq!((border.band.active, border.band.inactive), (Colour::rgb(0xff8000), Colour::rgb(0x202020)));
+    assert_eq!((border.band.active, border.band.inactive), (Paint::Solid(Colour::rgb(0xff8000)), Paint::Solid(Colour::rgb(0x202020))));
     assert_eq!(empty.band, parse("").settings.decorations.border.band, "niri's width and colours");
 }
 
@@ -462,9 +462,70 @@ fn border_off_stays_off() {
 fn a_border_in_an_output_is_refused_with_its_reason() {
     let report = refused("output \"D\" {\n    layout {\n        border {\n            width 2\n        }\n    }\n}\n");
     assert!(report.contains("the border is the whole file's, in `layout`"), "{report}");
-    for name in ["urgent-color \"#9b0000\"", "active-gradient from=\"#ffbb66\" to=\"#ffc880\""] {
+    for name in ["urgent-color \"#9b0000\"", "urgent-gradient from=\"#ffbb66\" to=\"#ffc880\""] {
         let report = refused(&format!("layout {{\n    border {{\n        {name}\n    }}\n}}\n"));
         assert!(report.contains("not supported yet"), "{name}: {report}");
+    }
+}
+
+fn ring_paints(text: &str) -> (Paint, Paint) {
+    let band = parse(&format!("layout {{\n    focus-ring {{\n{text}    }}\n}}\n")).settings.decorations.focus_ring.band;
+    (band.active, band.inactive)
+}
+
+#[test]
+fn a_gradient_decodes_as_niri_writes_it() {
+    let (active, inactive) = ring_paints(
+        "        active-gradient from=\"#80c8ff\" to=\"#bbddff\" angle=45 relative-to=\"window\" in=\"oklch longer hue\"\n        inactive-gradient from=\"#505050\" to=\"rgba(128, 128, 128, 0.5)\"\n",
+    );
+    assert_eq!(active, Paint::Gradient(Gradient {
+        from: Colour::rgb(0x80c8ff),
+        to: Colour::rgb(0xbbddff),
+        angle: 45.0,
+        space: ColourSpace::Oklch(Hue::Longer),
+    }));
+    let Paint::Gradient(inactive) = inactive else { panic!("{inactive:?}") };
+    assert_eq!((inactive.angle, inactive.space), (180.0, ColourSpace::Srgb), "niri's defaults: top to bottom, in srgb");
+    assert_eq!(inactive.to, Colour { a: 0.5, ..Colour::rgb(0x808080) });
+    let config = parse("window-rule {\n    border {\n        active-gradient from=\"red\" to=\"blue\" in=\"srgb-linear\"\n    }\n}\n");
+    let Some(Paint::Gradient(rule)) = config.settings.decorations.rules[0].border.active else { panic!("a rule's gradient") };
+    assert_eq!((rule.from, rule.to, rule.space), (Colour::rgb(0xff0000), Colour::rgb(0x0000ff), ColourSpace::SrgbLinear));
+}
+
+/// niri draws a part's gradient over its colour, whichever is written first.
+#[test]
+fn a_gradient_beats_a_colour_in_the_same_part() {
+    for text in [
+        "        active-color \"#ff0000\"\n        active-gradient from=\"#00ff00\" to=\"#0000ff\"\n",
+        "        active-gradient from=\"#00ff00\" to=\"#0000ff\"\n        active-color \"#ff0000\"\n",
+    ] {
+        let (active, inactive) = ring_paints(text);
+        assert!(matches!(active, Paint::Gradient(Gradient { from, .. }) if from == Colour::rgb(0x00ff00)), "{text}: {active:?}");
+        assert_eq!(inactive, Paint::Solid(Colour::rgb(0x505050)), "the other state keeps its colour");
+    }
+}
+
+#[test]
+fn workspace_view_is_refused_as_not_yet_supported() {
+    let report = refused("layout {\n    border {\n        active-gradient from=\"red\" to=\"blue\" relative-to=\"workspace-view\"\n    }\n}\n");
+    assert!(report.contains("`relative-to=\"workspace-view\"` is not supported yet"), "{report}");
+}
+
+#[test]
+fn a_colour_space_is_read_as_niri_reads_it() {
+    for (space, problem) in [
+        ("oklab longer hue", "only oklch color space can have hue interpolation"),
+        ("oklch longer", "interpolation must end with \"hue\""),
+        ("oklch sideways hue", "invalid hue interpolation sideways"),
+        ("oklch longer hue please", "unexpected text after hue interpolation"),
+        ("cmyk", "invalid color space cmyk"),
+    ] {
+        let report = refused(&format!("layout {{\n    focus-ring {{\n        active-gradient from=\"red\" to=\"blue\" in=\"{space}\"\n    }}\n}}\n"));
+        assert!(report.contains(problem), "{space}: {report}");
+    }
+    for (space, expected) in [("oklch", ColourSpace::Oklch(Hue::Shorter)), ("oklch decreasing hue", ColourSpace::Oklch(Hue::Decreasing)), ("oklab", ColourSpace::Oklab)] {
+        let (active, _) = ring_paints(&format!("        active-gradient from=\"red\" to=\"blue\" in=\"{space}\"\n"));
+        assert!(matches!(active, Paint::Gradient(gradient) if gradient.space == expected), "{space}");
     }
 }
 
@@ -668,7 +729,7 @@ fn a_window_rule_decodes_its_focus_ring_border_and_corner_as_niri_writes_them() 
     assert_eq!(rule.matches[0].is_floating, Some(true));
     assert_eq!(rule.excludes[0].title.as_ref().map(|title| title.as_str()), Some("Prefs"));
     assert_eq!(rule.focus_ring.on, Some(false));
-    assert_eq!((rule.border.on, rule.border.width, rule.border.inactive), (None, Some(2.0), Some(Colour::rgb(0x202020))), "a rule's block turns nothing on");
+    assert_eq!((rule.border.on, rule.border.width, rule.border.inactive), (None, Some(2.0), Some(Paint::Solid(Colour::rgb(0x202020)))), "a rule's block turns nothing on");
     assert_eq!(rule.corner_radius, Some(12.0));
     let active = parse("window-rule {\n    match is-active=true\n    exclude is-focused=false\n    border {\n        active-color \"#ff0000\"\n    }\n}\n");
     let rule = decoration_rule(&active);
@@ -710,7 +771,7 @@ fn a_ring_width_or_a_corner_under_a_focus_matcher_is_refused_as_not_yet_supporte
 fn a_colour_under_a_focus_matcher_is_accepted() {
     let config = parse("window-rule {\n    match is-focused=true\n    focus-ring {\n        active-color \"#ff0000\"\n    }\n    border {\n        inactive-color \"#00ff00\"\n    }\n}\n");
     let rule = decoration_rule(&config);
-    assert_eq!((rule.focus_ring.active, rule.border.inactive), (Some(Colour::rgb(0xff0000)), Some(Colour::rgb(0x00ff00))));
+    assert_eq!((rule.focus_ring.active, rule.border.inactive), (Some(Paint::Solid(Colour::rgb(0xff0000))), Some(Paint::Solid(Colour::rgb(0x00ff00)))));
 }
 
 #[test]

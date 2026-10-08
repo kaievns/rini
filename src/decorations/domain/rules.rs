@@ -5,18 +5,20 @@
 
 use serde::Serialize;
 
-use crate::decorations::domain::paint::Colour;
+use crate::decorations::domain::paint::Paint;
 use crate::decorations::domain::style::{Band, Decoration};
 use crate::decorations::settings::{BandSetting, DecorationSettings};
 use crate::windows::domain::rules::{RuleMatch, WindowRuleContext, RuleState, applies};
 
-/// What one rule says of a band: each part it leaves out keeps what came before it.
+/// What one rule says of a band: each part it leaves out keeps what came before it. A paint it
+/// writes, colour or gradient, replaces the one before whole, so a colour clears a gradient, as
+/// niri's `merge_color_gradient` has it (`niri:niri-config/src/macros.rs:31-57`).
 #[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
 pub struct BandRule {
     pub on: Option<bool>,
     pub width: Option<f64>,
-    pub active: Option<Colour>,
-    pub inactive: Option<Colour>,
+    pub active: Option<Paint>,
+    pub inactive: Option<Paint>,
 }
 
 impl BandRule {
@@ -68,7 +70,7 @@ pub fn fold(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> De
 
 /// What `context`'s window wears whether it holds focus or not: each band's active paint as the
 /// rules give it while the window holds focus, and everything else as they give it while it does not.
-/// A rule that follows focus sets colours alone (the config refuses the rest), so this one value is
+/// A rule that follows focus sets paints alone (the config refuses the rest), so this one value is
 /// painted right on either side of a focus turn (`Style::of`).
 pub fn decoration(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> Decoration {
     let at = |focused| fold(settings, WindowRuleContext { state: RuleState { focused, ..context.state }, ..context });
@@ -96,10 +98,11 @@ pub fn shape_borders(settings: &DecorationSettings) -> bool { settings.rules.ite
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue};
     use crate::windows::domain::rules::WindowRule;
 
-    const RED: Colour = Colour::rgb(0xff0000);
-    const GREEN: Colour = Colour::rgb(0x00ff00);
+    const RED: Paint = Paint::Solid(Colour::rgb(0xff0000));
+    const GREEN: Paint = Paint::Solid(Colour::rgb(0x00ff00));
 
     fn app(bundle_id: &str) -> RuleMatch { RuleMatch::app(bundle_id) }
 
@@ -122,6 +125,27 @@ mod tests {
         assert_eq!(ring.inactive, settings.focus_ring.band.inactive, "what neither wrote is the layout's");
         let other = fold(&settings, window("com.example.Other")).ring.expect("on");
         assert_eq!((other.width, other.active), (settings.focus_ring.band.width, GREEN));
+    }
+
+    #[test]
+    fn a_colour_in_a_later_part_clears_an_earlier_gradient() {
+        let sunset = Paint::Gradient(Gradient {
+            from: Colour::rgb(0xf38ba8),
+            to: Colour::rgb(0xf9e2af),
+            angle: 45.0,
+            space: ColourSpace::Oklch(Hue::Longer),
+        });
+        let mut layout = DecorationSettings::default();
+        layout.focus_ring.band.active = sunset;
+        let settings = DecorationSettings {
+            rules: vec![DecorationRule { focus_ring: BandRule { active: Some(RED), ..BandRule::default() }, ..rule(app("com.example.Editor")) }],
+            ..layout
+        };
+        assert_eq!(fold(&settings, window("com.example.Editor")).ring.map(|band| band.active), Some(RED));
+        assert_eq!(fold(&settings, window("com.example.Other")).ring.map(|band| band.active), Some(sunset), "the layout's gradient elsewhere");
+        let regraded = DecorationRule { focus_ring: BandRule { active: Some(sunset), ..BandRule::default() }, ..DecorationRule::default() };
+        let again = DecorationSettings { rules: vec![settings.rules[0].clone(), regraded], ..settings };
+        assert_eq!(fold(&again, window("com.example.Editor")).ring.map(|band| band.active), Some(sunset), "and a later gradient the colour");
     }
 
     #[test]

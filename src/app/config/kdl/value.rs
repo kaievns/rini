@@ -9,7 +9,8 @@ use knus::errors::DecodeError;
 use knus::span::Spanned;
 use knus::traits::ErrorSpan;
 
-use crate::decorations::domain::paint::Colour;
+use super::layout::GradientRelativeTo;
+use crate::decorations::domain::paint::{Colour, ColourSpace, Hue};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Decimal;
 use crate::input::platform::haptics::HapticPattern;
@@ -97,6 +98,54 @@ impl<S: ErrorSpan> knus::DecodeScalar<S> for ColourValue {
     }
 }
 
+/// A gradient's `in`, as niri writes it: `srgb`, `srgb-linear`, `oklab`, or `oklch` with
+/// optionally the way round its hue goes, as `"oklch longer hue"` (`niri:niri-config/src/appearance.rs:725-780`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColourSpaceValue(pub ColourSpace);
+
+impl<S: ErrorSpan> knus::DecodeScalar<S> for ColourSpaceValue {
+    fn type_check(type_name: &Option<Spanned<TypeName, S>>, ctx: &mut Context<S>) {
+        Decimal::type_check(type_name, ctx);
+    }
+
+    fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
+        let Literal::String(text) = &**value else {
+            return Err(DecodeError::conversion(value, "expected a colour space, such as \"oklch longer hue\""));
+        };
+        colour_space(text).map(ColourSpaceValue).map_err(|why| DecodeError::conversion(value, why))
+    }
+}
+
+fn colour_space(text: &str) -> Result<ColourSpace, String> {
+    let mut words = text.split_whitespace();
+    let space = match words.next() {
+        None => return Err("missing color space".to_owned()),
+        Some("srgb") => ColourSpace::Srgb,
+        Some("srgb-linear") => ColourSpace::SrgbLinear,
+        Some("oklab") => ColourSpace::Oklab,
+        Some("oklch") => ColourSpace::Oklch(Hue::Shorter),
+        Some(other) => return Err(format!("invalid color space {other}; can be srgb, srgb-linear, oklab or oklch")),
+    };
+    let Some(way) = words.next() else { return Ok(space) };
+    if space != ColourSpace::Oklch(Hue::Shorter) {
+        return Err("only oklch color space can have hue interpolation".to_owned());
+    }
+    if words.next() != Some("hue") {
+        return Err("interpolation must end with \"hue\", like \"oklch shorter hue\"".to_owned());
+    }
+    if words.next().is_some() {
+        return Err("unexpected text after hue interpolation".to_owned());
+    }
+    let hue = match way {
+        "shorter" => Hue::Shorter,
+        "longer" => Hue::Longer,
+        "increasing" => Hue::Increasing,
+        "decreasing" => Hue::Decreasing,
+        other => return Err(format!("invalid hue interpolation {other}; can be shorter, longer, increasing, decreasing")),
+    };
+    Ok(ColourSpace::Oklch(hue))
+}
+
 macro_rules! bounds {
     ($($name:ident: $min:expr, $max:expr $(, above = $above:expr)? $(, integer = $integer:expr)?;)*) => {
         $(
@@ -173,6 +222,10 @@ kebab_scalar!(WindowInsertionPoint {
     "end-of-tree" => WindowInsertionPoint::EndOfTree,
 });
 kebab_scalar!(DisplayRole { "internal" => DisplayRole::Internal, "external" => DisplayRole::External });
+kebab_scalar!(GradientRelativeTo {
+    "window" => GradientRelativeTo::Window,
+    "workspace-view" => GradientRelativeTo::WorkspaceView,
+});
 kebab_scalar!(RelativeTo {
     "top-left" => RelativeTo::TopLeft,
     "top-right" => RelativeTo::TopRight,

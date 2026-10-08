@@ -40,7 +40,7 @@ pub struct RestWindow {
 }
 
 impl RestWindow {
-    /// How its bands are painted: those it wears in their colours, the others none.
+    /// How its bands are painted: those it wears in their paints, the others none.
     pub fn style(&self) -> Style { Style::of(self.focused, self.ringed, &self.decoration) }
 
     /// Whether it wears a band now: the ring, or a border.
@@ -188,11 +188,11 @@ mod tests {
     use rini_geometry::space::{Point, Size};
 
     use super::*;
-    use crate::decorations::domain::paint::Colour;
+    use crate::decorations::domain::paint::{Colour, Paint};
     use crate::decorations::domain::style::Band;
 
-    const BAND: Band = Band { width: 4.0, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) };
-    const BORDER: Band = Band { width: 4.0, active: Colour::rgb(0xffc87f), inactive: Colour::rgb(0x505050) };
+    const BAND: Band = Band { width: 4.0, active: Paint::Solid(Colour::rgb(0x7fc8ff)), inactive: Paint::Solid(Colour::rgb(0x505050)) };
+    const BORDER: Band = Band { width: 4.0, active: Paint::Solid(Colour::rgb(0xffc87f)), inactive: Paint::Solid(Colour::rgb(0x505050)) };
 
     fn ws(id: u32) -> WindowServerId { WindowServerId::new(id) }
 

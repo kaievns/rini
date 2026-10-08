@@ -14,10 +14,11 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   workspace's active window is the one focus lands on when the workspace takes it, the window focused
   there last, as niri's is; on the workspace holding the focused window it is that window, a floating
   one included. niri draws its ring the same way.
-- The ring MUST be drawn in `active-color` on the display holding focus and in `inactive-color` on
-  the others. A display holds focus while a managed window on it is focused; with none focused, every
-  ring MUST be the inactive one. A window rini does not manage, a sheet or another application's
-  panel, wears no ring, and while one is focused no display holds focus.
+- The ring MUST be drawn in its active paint, `active-color` or `active-gradient`, on the display
+  holding focus and in its inactive paint on the others. A display holds focus while a managed
+  window on it is focused; with none focused, every ring MUST be the inactive one. A window rini
+  does not manage, a sheet or another application's panel, wears no ring, and while one is focused
+  no display holds focus.
 - The ring MUST be on unless `layout › focus-ring { off; }` or a window rule turns it off: 2pt wide, `#7fc8ff`
   active and `#505050` inactive, niri's ring but for its width, which is 4pt in niri.
 
@@ -36,8 +37,8 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 ## The border
 
 - While `layout › border` is on, every window rini manages, tiled or floating, MUST wear the border
-  unless a window rule turns it off for that window, in `active-color` while it holds focus and in
-  `inactive-color` otherwise, as niri paints it. A window rini does not manage wears none.
+  unless a window rule turns it off for that window, in its active paint while it holds focus and in
+  its inactive paint otherwise, as niri paints it. A window rini does not manage wears none.
 - The border MUST be off unless `layout › border` turns it on, and a `border` block that writes
   neither `on` nor `off` turns it on, as in niri (`config.md`). It is niri's: 4pt wide, `#ffc87f`
   active and `#505050` inactive.
@@ -56,6 +57,23 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   niri stacks them; the ring is drawn under the border in to the window's edge, so the two meet at
   no seam.
 
+## Gradients
+
+- A band's `active-gradient` and `inactive-gradient` MUST be drawn as niri draws them, in place of
+  the colour beside them however the two are ordered: from `from` to `to` along `angle` in degrees,
+  0 up and 90 right, 180 unless written; over the band's own outer rect, its corners on the lines
+  across its ends, each line across at right angles in points; mixed in the space `in` names,
+  `srgb` unless written, and in `oklch` the way round the hue it names, `shorter` unless written.
+  `in` MUST be refused as niri refuses it: a space niri lacks, a hue path in any space but `oklch`,
+  or a path not ending in `hue`.
+- What a band draws MUST stay within one level of 255 of niri's colour all along it, whether the
+  renderer mixes the colours it is given in sRGB's values or in linear light.
+- A colour that a later rule or a later part writes MUST replace an earlier gradient, and a
+  gradient an earlier colour, as in niri.
+- `relative-to="workspace-view"` MUST be refused as not yet supported: one gradient across the
+  display needs each band masked over a still gradient that rides its tile through a flight.
+  `relative-to="window"` is the default and accepted.
+
 ## Window rules
 
 - A `window-rule`'s `focus-ring` and `border` MUST set the ring and the border of each window the
@@ -69,12 +87,13 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   `is-active` or `is-focused` recolours the window focus moves to and the one it left, each at the
   time its hairline turns. rini paints one window active, the one holding focus, so `is-active` and
   `is-focused` match the same window.
-- Under `is-active` or `is-focused`, on a `match` or an `exclude` line, a rule MUST set colours
-  only. A border's `on`, `off` or `width` there MUST be refused: a tiled window gives its border's
-  width out of its place in the strip, so a border that changed with focus would lay the strip out
-  again on every focus change, at 2-60ms a size write plus a flight (`windows.md`). A ring's `on`,
-  `off` or `width` and `geometry-corner-radius` there are refused as not yet supported: the tile's
-  bands and corner are laid when it is staged, and only its paint turns during a flight.
+- Under `is-active` or `is-focused`, on a `match` or an `exclude` line, a rule MUST set paints only,
+  colours and gradients. A border's `on`, `off` or `width` there MUST be refused: a tiled window
+  gives its border's width out of its place in the strip, so a border that changed with focus would
+  lay the strip out again on every focus change, at 2-60ms a size write plus a flight
+  (`windows.md`). A ring's `on`, `off` or `width` and `geometry-corner-radius` there are refused as
+  not yet supported: the tile's bands and corner are laid when it is staged, and only its paint
+  turns during a flight.
 - A rule that gives a tiled window another border width MUST lay the strip out again as soon as it
   applies, a title change included, so the window lands inside its place with the new width.
 - `geometry-corner-radius` MUST round the window's ring and border, on its tiles and at rest, ahead
@@ -146,8 +165,9 @@ wearing either is drawn by one rest window holding both.
 
 The ring's and the border's settings are `src/decorations/settings.rs`, decoded from
 `layout › focus-ring` and `layout › border` in `src/app/config/kdl/layout.rs` and
-`src/app/config/kdl/apply.rs`. Who wears the ring, the paint of each by focus and their colours are
-`src/decorations/domain/style.rs` and `src/decorations/domain/paint.rs`; what the window rules give
+`src/app/config/kdl/apply.rs`. Who wears the ring and the paint of each by focus are
+`src/decorations/domain/style.rs`; their colours and gradients, and the axis and stops each gradient
+is drawn with, `src/decorations/domain/paint.rs`; what the window rules give
 each window, `src/decorations/domain/rules.rs`, matched through `src/windows/domain/rules.rs` and
 decoded with each `window-rule` in `src/app/config/kdl/window_rule.rs` and `apply.rs`; each band, its width and
 corner, how far the two reach, and their rest window's frame, `src/decorations/domain/shape.rs`; the

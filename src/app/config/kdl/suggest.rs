@@ -117,7 +117,7 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
 ];
 
 const SIDES: [&str; 4] = ["left", "right", "top", "bottom"];
-const BAND: [&str; 5] = ["on", "off", "width", "active-color", "inactive-color"];
+const BAND: [&str; 7] = ["on", "off", "width", "active-color", "inactive-color", "active-gradient", "inactive-gradient"];
 
 const NOT_IN_RINI: &str = "niri has this and rini does not";
 const NOT_YET: &str = "not supported yet";
@@ -197,12 +197,8 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ("layout", "preset-window-heights", NOT_IN_RINI),
     ("layout", "shadow", "macOS draws window shadows"),
     ("layout/focus-ring", "urgent-color", NOT_YET),
-    ("layout/focus-ring", "active-gradient", NOT_YET),
-    ("layout/focus-ring", "inactive-gradient", NOT_YET),
     ("layout/focus-ring", "urgent-gradient", NOT_YET),
     ("layout/border", "urgent-color", NOT_YET),
-    ("layout/border", "active-gradient", NOT_YET),
-    ("layout/border", "inactive-gradient", NOT_YET),
     ("layout/border", "urgent-gradient", NOT_YET),
     ("layout", "tab-indicator", "rini has no tabbed columns"),
     ("layout", "insert-hint", NOT_IN_RINI),
@@ -318,12 +314,8 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ("window-rule", "scroll-factor", NOT_IN_RINI),
     ("window-rule", "pinch-sensitivity", NOT_IN_RINI),
     ("window-rule/focus-ring", "urgent-color", NOT_YET),
-    ("window-rule/focus-ring", "active-gradient", NOT_YET),
-    ("window-rule/focus-ring", "inactive-gradient", NOT_YET),
     ("window-rule/focus-ring", "urgent-gradient", NOT_YET),
     ("window-rule/border", "urgent-color", NOT_YET),
-    ("window-rule/border", "active-gradient", NOT_YET),
-    ("window-rule/border", "inactive-gradient", NOT_YET),
     ("window-rule/border", "urgent-gradient", NOT_YET),
     ("window-rule", "shadow", "macOS draws window shadows"),
     ("window-rule", "tab-indicator", "rini has no tabbed columns"),

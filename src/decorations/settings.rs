@@ -3,7 +3,7 @@
 
 use serde::Serialize;
 
-use crate::decorations::domain::paint::Colour;
+use crate::decorations::domain::paint::{Colour, Paint};
 use crate::decorations::domain::rules::DecorationRule;
 use crate::decorations::domain::style::Band;
 
@@ -34,11 +34,19 @@ impl Default for DecorationSettings {
         Self {
             focus_ring: BandSetting {
                 on: true,
-                band: Band { width: 2.0, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) },
+                band: Band {
+                    width: 2.0,
+                    active: Paint::Solid(Colour::rgb(0x7fc8ff)),
+                    inactive: Paint::Solid(Colour::rgb(0x505050)),
+                },
             },
             border: BandSetting {
                 on: false,
-                band: Band { width: 4.0, active: Colour::rgb(0xffc87f), inactive: Colour::rgb(0x505050) },
+                band: Band {
+                    width: 4.0,
+                    active: Paint::Solid(Colour::rgb(0xffc87f)),
+                    inactive: Paint::Solid(Colour::rgb(0x505050)),
+                },
             },
             rules: Vec::new(),
         }
@@ -81,7 +89,8 @@ mod tests {
     fn the_border_is_niris_and_off_unless_turned_on() {
         let settings = DecorationSettings::default();
         assert_eq!(worn(&settings).border, None);
-        assert_eq!(settings.border.band, Band { width: 4.0, active: Colour::rgb(0xffc87f), inactive: Colour::rgb(0x505050) });
+        let solid = |rgb| Paint::Solid(Colour::rgb(rgb));
+        assert_eq!(settings.border.band, Band { width: 4.0, active: solid(0xffc87f), inactive: solid(0x505050) });
         let on = DecorationSettings { border: BandSetting { on: true, ..settings.border }, ..settings.clone() };
         assert_eq!(worn(&on).border, Some(settings.border.band));
         assert_eq!((settings.border_width(), on.border_width()), (0.0, 4.0), "the slot gives up nothing while it is off");

@@ -17,13 +17,13 @@ wires the rest windows.
 | | |
 |---|---|
 | `domain/shape.rs` | A band outside the window, the ring's or the border's: its outer rect and corner (`band`), a width in device pixels (`device_width`), the width each band a decoration has is laid at, the ring reaching in under the border (`widths`), how far a window's bands reach outside it (`outset`), and the window that draws them at rest, cut to its display (`rest_frame`). The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given |
-| `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its two colours (`Band`); what a window wears that rini draws, its ring, its border and its rule's corner, which the bands round to ahead of the window server's (`Decoration`, `corner`), and through a pass, with whether it wore and wears the ring (`Worn`); and `Style::of`, the white line's alpha, the shadow, the ring's colour for a window focused or not, wearing the ring or not, and the border's by focus alone. Who wears the ring: each workspace's active window, the focused window on its own (`Rings`) |
-| `domain/paint.rs` | `Colour`, sRGB with its alpha, as the config writes a colour |
+| `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its two paints (`Band`); what a window wears that rini draws, its ring, its border and its rule's corner, which the bands round to ahead of the window server's (`Decoration`, `corner`), and through a pass, with whether it wore and wears the ring (`Worn`); and `Style::of`, the white line's alpha, the shadow, the ring's paint for a window focused or not, wearing the ring or not, and the border's by focus alone. Who wears the ring: each workspace's active window, the focused window on its own (`Rings`) |
+| `domain/paint.rs` | `Colour`, sRGB with its alpha, as the config writes a colour; `Paint`, a band's fill, a colour or a `Gradient`, niri's: two colours along an angle, mixed in a `ColourSpace` (with its `Hue` for `oklch`) as niri's shader mixes them (`colour_at`); its `Axis` over a band of a size, the start and end points Core Animation takes (`axis`), and whether that moves with the size (`follows_size`); and the `Stop`s Core Animation draws it through (`stops`, to `TOLERANCE` at `SAMPLES` steps) |
 | `domain/rules.rs` | What a `window-rule` says a window wears (`DecorationRule`, a `BandRule` for the ring and one for the border, and `geometry-corner-radius`), matched through the open-time rules' matcher (`windows::domain::rules::applies`); the layout's settings with every rule that applies laid over them in file order (`fold`); a window's decoration either side of focus, its active paint as the rules give it while it holds focus and the rest as they give it while it does not (`decoration`); the border a tiled window gives out of its slot (`border_width`), and whether a rule can give any other than the layout's (`shape_borders`) |
 | `domain/rest.rs` | The bands at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with what `Held` it, its bands' paint and how far they reach), whether its bands show (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), which rest window draws each window (`assign`, `spare`), and which are ordered above their windows again this turn (`to_reorder`) |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
 | `settings.rs` | `DecorationSettings`: `layout › focus-ring` and `layout › border`, each on or off and its `Band`, niri's by default but for the ring's width, and the window rules' `DecorationRule`s in file order; `border_width`, what a tiled window gives up to `layout › border` on each side; `draws_bands`, whether any window can wear a band |
-| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the bands (`hairline`, `outline`, `bands`). `Bands`, the ring and the border in front of it, worn, laid, painted and carried through a resize together, on a tile and at rest alike; `Band`, one band's layer: a `CALayer` border on the continuous curve, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize. It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's bands (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
+| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the bands (`hairline`, `outline`, `bands`). `Bands`, the ring and the border in front of it, worn, laid, painted and carried through a resize together, on a tile and at rest alike; `Band`, one band's layer: a `CAGradientLayer` drawing a colour as its border on the continuous curve, or a gradient masked to a border of the same shape, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize, its mask and a gradient's axis with it; each gradient's stops as Core Animation takes them, the last 16 kept (`drawn`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's bands (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
 | `platform/rest.rs` | The rest windows: borderless, click-through, non-activating panels, pooled, each holding one `Bands` and ordered directly above the window it decorates (`RestBorders`); the main-thread actor that takes the reactor's model, the window server's frames and orders, a turn at a time (`RestActor`), and what the renderer calls before each lift (`OnLift`) |
 | `platform/layers.rs`: `Resize` | A tile's resize as Core Animation plays it: an animation of a key path through each value a closure maps from the sizes the tile passes through (`point`, `rect`, `number`, `path`), and whether a value changes on the way (`changes`). The overlay fills it from the tile's track, so `decorations` never names the score. A platform trait, not a port: it speaks Core Animation |
 
@@ -44,6 +44,8 @@ points, and the rest windows convert the window server's frames at their edge.
 - **The shadow, measured:** "Shadows are never in the surface" and "A layer shadow covers the whole
   layer" in `src/animation/docs/capture-overlay-research.md`: the two styles' fit, why the caster is
   masked, and why the mask reaches 70pt.
+- **Gradients, measured:** "Gradients" below: how Core Animation draws a gradient's axis and mixes
+  its stops offscreen, and why each gradient is drawn through stops.
 - **The corner, measured:** "The corner, measured" below: where a window's radius comes from and
   why 16pt where none is reported, the window's own curve against the one rini draws, and why every
   corner is clamped.
@@ -89,8 +91,9 @@ covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
 niri's ring is a band outside the window, worn by each workspace's active window (`Rings`, in
 `domain::style`): in `active` paint on the window holding focus, `inactive` on the others. On a tile
 it is the `ring` layer, a `Band`, the hairline's child after the outline, so it is drawn in front of
-the picture, the hairline and the outline, and rides the hairline through every move. It is a
-`CALayer` border, `width` wide, round on the continuous curve at the window's corner plus its width
+the picture, the hairline and the outline, and rides the hairline through every move. In a colour it
+is the layer's border, `width` wide, and in a gradient the layer's gradient masked to a border of
+the same shape ("Gradients"), round on the continuous curve at the window's corner plus its width
 (`shape::band`), so its inner edge is the window's own corner, on the curve every other piece takes;
 a border's inner edge is its outer one `width` in. The corner is clamped to half the band's shorter
 side, and a square window keeps a square band, as niri's `expanded_by` keeps 0 at 0. Its width is
@@ -116,6 +119,59 @@ The layout takes the width as the config writes it and the band draws it in whol
 which agree for any width of whole device pixels; a width between them leaves the band up to half a
 device pixel past or short of the slot. A floating window keeps its frame and wears the border
 outside it, where niri grows the tile instead.
+
+## Gradients
+
+A band's paint is a colour or niri's gradient (`paint::Paint`): `active-gradient` and
+`inactive-gradient` beat the colour beside them, and a colour written later clears the gradient, as
+niri's `merge_color_gradient` has it. A gradient is drawn by the band's own layer, a
+`CAGradientLayer`, masked to a `CALayer` border of the band's width, corner and continuous curve:
+the same contour a colour draws, with no path and no bitmap. A colour stays the layer's border, with
+no gradient and no mask. A mask makes Core Animation draw the band offscreen first; what that costs
+per frame is not measured.
+
+**The axis.** niri lays a gradient over the band's own outer rect, the line through its centre at
+`angle` long enough that the corners lie on the lines across its ends, every line across at right
+angles in points, as CSS does (`niri:src/render_helpers/border.rs:160-175`). Core Animation takes
+the start and end points in the layer's unit space and draws the lines across at right angles
+there: offscreen, `(0, 0)` to `(1, 1)` on a 200×100 layer drew the top-right corner 147, the
+bottom-left 145 and the centre 146
+([`axis.txt`](../../../docs/data/2026-10-08-gradients/axis.txt)), the corners on one line as unit
+space has it. So `Gradient::axis` stretches the axis by the size to put the lines at right angles in
+points (`a_gradient_is_drawn_at_niris_angle_in_points`). In a flipped tree, as every rini tree is,
+unit `(0, 0)` is the top-left, offscreen. Off a right angle the axis depends on the band's shape, so
+a resize carries it on the tile's track; painted mid-resize at another angle, the band keeps the
+axis of the size it was laid at until the next placement. `relative-to="workspace-view"` is refused: one gradient across
+the display needs each band masked over a still gradient, riding its tile through a flight.
+
+**The colours.** niri's shader mixes the two colours premultiplied, in `srgb`, `srgb-linear`,
+`oklab` or `oklch` with its hue path, taking sRGB's curve as a 2.2 power (`colour_at`, after
+`niri:src/render_helpers/shaders/border.frag`). niri leaves a colour mixed out of sRGB in `oklab` to
+the GPU's power of a negative; rini clamps it into sRGB, as niri does for `oklch`. Core Animation
+mixes between stops in a space of its own, unpremultiplied
+([`interpolation.txt`](../../../docs/data/2026-10-08-gradients/interpolation.txt), offscreen):
+
+| black to white, offscreen | middle |
+|---|---|
+| Core Animation, into an sRGB context | 147 |
+| Core Animation, into a linear context, as sRGB | 147 (74 linear) |
+| sRGB's values mixed | 128 |
+| linear light mixed (niri's `srgb-linear`) | 186 |
+
+147 is a 1.8 power, and the destination's space does not move it. Red at alpha 1 to blue at alpha 0
+drew `(146, 33, 150)` at half alpha in the middle, the colour of the opaque gradient's middle: each
+channel and the alpha mixed alone. Its ends drew sRGB red as `(255, 38, 1)`, where a solid layer of
+that red drew `(255, 0, 0)`, so the offscreen renderer is no measure of a gradient's colours on
+screen. So every gradient is drawn through stops, `srgb`'s too: `Gradient::stops` places them over
+4096 steps, about a device pixel apart on a band around a full-screen window at 2x, each segment as
+long as the colour drawn along it stays within half a level of niri's both mixed in sRGB's values
+and in linear light. A 1.8 power lies between the two, and holds within one level over 42 hard
+cases, black to white, primaries, complements, fades, in every space and hue path
+(`the_stop_count_keeps_each_space_within_one_level`); two stops alone miss by more than 10 levels.
+Those cases take 3 to 63 stops, and placing them took 1.5 to 6.1ms in a release build
+([`stops.csv`](../../../docs/data/2026-10-08-gradients/stops.csv)), so the last 16 gradients' stops
+are kept (`layers::drawn`). How Core Animation mixes on screen, in the window's colour space, is not
+measured.
 
 ## At rest
 

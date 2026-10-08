@@ -2918,12 +2918,13 @@ mod tests {
         /// the window at its frame.
         #[test]
         fn a_tile_wears_its_ring_as_dressed_and_as_focus_turns() {
-            use crate::decorations::domain::paint::Colour;
+            use crate::decorations::domain::paint::{Colour, Paint};
             use crate::decorations::domain::style::{Band, Decoration};
             let window = wid(1);
             let drawn = typed(4.0, 32.0, 859.0, 1081.0);
             let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
-            let band = Band { width: 4.0, active: Colour::rgb(0x7fc8ff), inactive: Colour::rgb(0x505050) };
+            let (active, inactive) = (Colour::rgb(0x7fc8ff), Colour::rgb(0x505050));
+            let band = Band { width: 4.0, active: Paint::Solid(active), inactive: Paint::Solid(inactive) };
             let mut tile = overlay_tile(window, drawn, drawn, false);
             tile.worn = Worn { decoration: Decoration { ring: Some(band), ..Decoration::default() }, wore_ring: true, wears_ring: true };
             tile.ringed = true;
@@ -2941,11 +2942,11 @@ mod tests {
             let ring = &tree.tile_layers[&window].decorations.bands.ring.layer;
             let colour = |c: Colour| objc2_core_graphics::CGColor::new_srgb(c.r.into(), c.g.into(), c.b.into(), c.a.into());
             let painted = |c: Colour| objc2_core_graphics::CGColor::equal_to_color(ring.borderColor().as_deref(), Some(&colour(c)));
-            assert!(!ring.isHidden() && painted(band.inactive), "worn unfocused");
+            assert!(!ring.isHidden() && painted(inactive), "worn unfocused");
             assert_eq!(ring.frame(), rect(-4.0, -4.0, 867.0, 1089.0), "outside the window");
             assert_eq!(ring.cornerRadius(), 20.0);
             tree.turn(window, true, true);
-            assert!(painted(band.active));
+            assert!(painted(active));
             tree.turn(window, false, false);
             assert!(ring.isHidden());
         }

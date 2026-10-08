@@ -1,0 +1,43 @@
+space,from,to,stops,release_ms
+srgb,#000000,#ffffff,18,6.09
+srgb,#ff0000,#0000ff,25,4.06
+srgb,#00ff00,#ff00ff,25,4.82
+srgb,#ff0000,#ffff00,18,2.40
+srgb,#ff0000,#0000ff00,3,1.85
+srgb,#7fc8ff,#5050504d,9,3.68
+srgb-linear,#000000,#ffffff,17,4.66
+srgb-linear,#ff0000,#0000ff,28,3.07
+srgb-linear,#00ff00,#ff00ff,28,3.67
+srgb-linear,#ff0000,#ffff00,17,2.16
+srgb-linear,#ff0000,#0000ff00,3,1.70
+srgb-linear,#7fc8ff,#5050504d,10,3.35
+oklab,#000000,#ffffff,20,3.07
+oklab,#ff0000,#0000ff,26,3.18
+oklab,#00ff00,#ff00ff,29,3.02
+oklab,#ff0000,#ffff00,17,2.56
+oklab,#ff0000,#0000ff00,3,1.52
+oklab,#7fc8ff,#5050504d,9,3.25
+oklch shorter hue,#000000,#ffffff,20,2.92
+oklch shorter hue,#ff0000,#0000ff,27,2.46
+oklch shorter hue,#00ff00,#ff00ff,44,1.89
+oklch shorter hue,#ff0000,#ffff00,16,1.88
+oklch shorter hue,#ff0000,#0000ff00,22,2.65
+oklch shorter hue,#7fc8ff,#5050504d,13,3.10
+oklch longer hue,#000000,#ffffff,20,2.58
+oklch longer hue,#ff0000,#0000ff,50,2.14
+oklch longer hue,#00ff00,#ff00ff,43,1.82
+oklch longer hue,#ff0000,#ffff00,63,1.95
+oklch longer hue,#ff0000,#0000ff00,36,1.99
+oklch longer hue,#7fc8ff,#5050504d,13,2.96
+oklch increasing hue,#000000,#ffffff,20,2.75
+oklch increasing hue,#ff0000,#0000ff,50,2.15
+oklch increasing hue,#00ff00,#ff00ff,43,1.84
+oklch increasing hue,#ff0000,#ffff00,16,1.95
+oklch increasing hue,#ff0000,#0000ff00,36,2.22
+oklch increasing hue,#7fc8ff,#5050504d,13,3.25
+oklch decreasing hue,#000000,#ffffff,20,2.82
+oklch decreasing hue,#ff0000,#0000ff,27,2.31
+oklch decreasing hue,#00ff00,#ff00ff,44,1.67
+oklch decreasing hue,#ff0000,#ffff00,63,1.75
+oklch decreasing hue,#ff0000,#0000ff00,22,2.50
+oklch decreasing hue,#7fc8ff,#5050504d,13,2.95
