@@ -25,7 +25,9 @@ wires (`ServerRead`). It makes three reads, each asked through one queue (`ToRea
 - **The rest windows listen.** `main.rs` wires one callback, the decorations' rest windows
   (`src/decorations/platform/rest.rs`), which follow every decorated window the window server moves,
   reorders, hides or closes, and introduce each window their model first names; they take what
-  queued for them on the main thread, and read the window server there only at a lift.
+  queued for them on the main thread, and read the window server there only as a landed flight
+  places them (`Rest::place`), the frame of each window drawn or brought back on its display; the
+  lift reads nothing.
 - **Only while followed.** The application turns `Following` (`displays::event`) on while any
   window can wear a band. Off, nothing is queued for the frames thread, which reads nothing, and no
   `ServerRead` reaches a callback: each notification is dropped on the thread it arrives on

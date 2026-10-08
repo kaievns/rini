@@ -20,8 +20,8 @@ use crate::displays::event::{OrderChange, ServerOrder, StackLevel};
 pub const PARK_PATIENCE: Duration = Duration::from_millis(250);
 
 /// How long a flight that has not shown holds the rest windows before they let go and draw what
-/// waited: past the 80ms the engine waits for frame zero, and the 249ms its show took at most
-/// after its begin over 1726 flights before the bands.
+/// waited: past the engine's wait for frame zero and the slowest show measured ("The handover" in
+/// `src/decorations/docs/README.md`).
 pub const FLIGHT_PATIENCE: Duration = Duration::from_millis(250);
 
 /// Why a window shows no band wherever it is, as rini's own stores have it. A window on a Space its

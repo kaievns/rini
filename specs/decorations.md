@@ -191,14 +191,14 @@ wearing either is drawn by one rest window holding both.
   between, and takes no click: a press on the ring reaches the window under it, and the window's own
   edges stay resizable through it.
 - That window MUST be back directly above its window within two frames of another application
-  raising its window, or by the lift when the overlay is up as it does. Until then the raised
-  window's shadow, and any window it rose past, may show over the ring.
+  raising its window, or, from a flight's begin, as the flight lands (below). A window server slow
+  to answer, as while another client holds its lock, MAY delay that by as long as the read of the
+  window's level waits. Until then the raised window's shadow, and any window it rose past, may show
+  over the ring.
 - Drawing or moving it MUST NOT change which application is in front or which window is key.
 - A turn of rini's windows that draw the ring at rest MUST change only those whose look or place
   changed, and of each only what changed: its layers, its frame or its alpha. Each change is
-  main-thread and window-server time that a flight's show and lift wait behind: while every turn
-  redrew every one, the lift took 4.0-4.5ms to play at the median with the ring on, against
-  1.7-1.9ms with it off.
+  main-thread and window-server time that a flight's show and lift wait behind.
 - rini MUST make no more of those windows than, on each display, the most bands any one of its
   workspaces shows, and one spare: each is a window-sized window on rini's connection to the window
   server. One made stays, at alpha 0 while it shows nothing, until no window can wear a band. With
@@ -293,5 +293,5 @@ its overlay goes up, places as the coordinator's `PlaceRest` says the flight has
 server's frames, orders, levels and introductions, all read on the frames thread
 (`src/displays/platform/window_notify.rs`), and are ordered with the level and sub-level calls in
 `src/windows/platform/window_server.rs`; no listing of windows names
-them (`src/windows/domain/listing.rs`). What was measured is "At rest" in
-`src/decorations/docs/README.md`.
+them (`src/windows/domain/listing.rs`). What was measured, what a turn that redrew every rest
+window cost among it ("What a turn draws"), is "At rest" in `src/decorations/docs/README.md`.

@@ -5,9 +5,11 @@ The overlay draws both over every tile, so a flying window wears what it wears o
 also draws niri's focus ring and border, which macOS has no form of: on the tiles through a flight,
 and at rest in windows of its own. This feature is their shape, their paint by focus and attention,
 who wears the ring, how deep each sits against the picture, the layers each tile wears them on, and
-the windows that draw the bands at rest. It reads `windows` (levels, sub-levels, radii, frames,
-whether a window is ordered in, which applications ask for attention) and `displays` (the window
-server's frames and orders). `animation` draws its decorations on each tile, `transitions` carries
+the windows that draw the bands at rest. It reads `windows` (a place's frames, the calls a rest
+window takes a level and sub-level with, the window rules' matcher, and which applications ask for
+attention) and `displays` (what its frames thread reads, `ServerRead`: frames, orders with their
+levels, and introductions with radius and ordered-in, in the order asked, and `Following` to ask
+it). `animation` draws its decorations on each tile, `transitions` carries
 what each window wears to its tile, reads from it which ring a tile shows until its turn and holes
 the overlay as far as its bands reach (`shape::outset`), and the application decides it, fills the ring's and the
 border's settings and the window rules from the config, folds the rules for each window, hands the
