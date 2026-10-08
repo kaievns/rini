@@ -3,8 +3,8 @@
 //! main-thread actor: the reactor tells it what each window wears and when a flight begins, the
 //! window server, read on the frames thread, each window it asks of it as the model first names it,
 //! where each window is and when it was reordered, hidden or unhidden, and the renderer when its
-//! overlay goes up and when it lifts. It reads the window server itself only at a lift, each frame
-//! drawn there. While no window can wear a band the reactor turns it
+//! overlay goes up, when its flight has landed and when it lifts. It reads the window server itself
+//! only as a landed flight places it, each frame drawn there. While no window can wear a band the reactor turns it
 //! off: every rest window is closed, and it does nothing until the next model.
 //! The rules are `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is "At
 //! rest" in `src/decorations/docs/README.md`.
@@ -29,7 +29,7 @@ use rini_runloop::turns;
 use tracing::warn;
 
 use crate::decorations::domain::rest::{
-    self, Draw, Introduction, Layers, Lifted, Look, Rest, RestModel, delta, display_of, stack_change,
+    self, Draw, Introduction, Layers, Look, Placed, Rest, RestModel, delta, display_of, stack_change,
 };
 use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
@@ -299,19 +299,30 @@ impl RestBorders {
         self.draw(&draw.orders, also.into_iter().collect());
     }
 
-    /// The overlay lifts off `display`, the one it was laid out on if any: what waited under it taken,
-    /// each window the domain names read again from the window server, and every band drawn as it is
-    /// now, before the overlay hides. Whether the actor wants a turn of its own once it is down
-    /// (`Rest::wants_turn`): the pool owes rest windows, or a park waits for its patience.
-    fn lift(&mut self, display: Option<ScreenRect>, now: Instant) -> bool {
+    /// The flight over `display`, the one the overlay was laid out on if any, has landed: what waited
+    /// under it taken, each window the domain names read again from the window server, and every band
+    /// drawn as it is now, under the overlay, a tick before it lifts or in its lift's drain.
+    fn place(&mut self, display: Option<ScreenRect>, now: Instant) {
         let panels = &self.panels;
         let drawn = |window| panels.iter().any(|panel| panel.target == Some(window));
-        let Lifted { draw, reread } = self.rest.lift(display, now, drawn);
+        let Placed { draw, reread } = self.rest.place(display, now, drawn);
         if !self.rest.on() {
-            return false;
+            return;
         }
         for window in reread {
             self.rest.reread(window, window_server::server_frame(window).map(ScreenRect::from_cg));
+        }
+        self.draw_turn(&draw);
+    }
+
+    /// The overlay lifts off `display`: what came since the place drawn where it changed, reading
+    /// nothing, before the overlay hides, and every turn draws as it comes from here. Whether the
+    /// actor wants a turn of its own once it is down (`Rest::wants_turn`): the pool owes rest windows,
+    /// or a park waits for its patience.
+    fn lift(&mut self, display: Option<ScreenRect>, now: Instant) -> bool {
+        let draw = self.rest.lift(display, now);
+        if !self.rest.on() {
+            return false;
         }
         self.draw_turn(&draw);
         self.rest.wants_turn(self.panels.len())
@@ -426,10 +437,12 @@ impl RestBorders {
     }
 }
 
-/// What the renderer calls on the main thread as its overlay goes up and as it lifts, each with the
-/// display it was laid out on, if any, the lift before it hides.
+/// What the renderer calls on the main thread as its overlay goes up, as its flight has landed and
+/// as it lifts, each with the display it was laid out on, if any: the place before its drain's
+/// transaction, the lift before it hides.
 pub struct Handover {
     pub cover: Box<dyn Fn(Option<ScreenRect>)>,
+    pub place: Box<dyn Fn(Option<ScreenRect>)>,
     pub lift: Box<dyn Fn(Option<ScreenRect>)>,
 }
 
@@ -439,15 +452,17 @@ pub struct RestActor {
 }
 
 impl RestActor {
-    /// The actor, and what the renderer calls as its overlay goes up and lifts. `wake` is its own
-    /// inbox, told once a lift wants a turn of it; `following` is where it asks the window server of
-    /// a window first named.
+    /// The actor, and what the renderer calls as its overlay goes up, its flight lands and it lifts.
+    /// `wake` is its own inbox, told once a lift wants a turn of it; `following` is where it asks the
+    /// window server of a window first named.
     pub fn new(rx: Receiver, wake: Sender, following: Following, mtm: MainThreadMarker) -> (RestActor, Handover) {
         let borders = Rc::new(RefCell::new(RestBorders::new(mtm, following)));
         let covered = borders.clone();
+        let placed = borders.clone();
         let lifted = borders.clone();
         let handover = Handover {
             cover: Box::new(move |display| covered.borrow_mut().rest.cover(display)),
+            place: Box::new(move |display| placed.borrow_mut().place(display, Instant::now())),
             lift: Box::new(move |display| {
                 if lifted.borrow_mut().lift(display, Instant::now()) {
                     wake.send(Event::Lifted);

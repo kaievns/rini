@@ -447,8 +447,8 @@ fn main() {
     // something to animate.
     // The decorations drawn at rest, on the main thread for AppKit: a rest window above each window
     // whose band shows, told what each wears and when each flight begins by the reactor. From a
-    // flight's begin to its lift they draw nothing, and the renderer places them before each lift
-    // hides the overlay, so the lift shows each band where its tile had it.
+    // flight's begin they draw nothing until the renderer places them, a tick before the lift once
+    // the flight has landed or in the lift's drain, so the lift shows each band where its tile had it.
     let (rest_actor, rest_handover) =
         rini::decorations::platform::rest::RestActor::new(rest_rx, rest_tx.clone(), following, mtm);
     let (render_tx, render_rx) = rini::app::channels::channel();

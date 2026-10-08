@@ -50,8 +50,9 @@
 {"t":81234872000000,"g":1,"mark":"delivery","of":1,"why":"final","pictures":1,"sent_before_us":2500}
 {"t":81234872000000,"g":1,"mark":"delivered","window":[1,1],"frame":[866.0,35.0,860.0,1079.0],"taken_before_us":31800}
 {"t":81234872100000,"g":1,"mark":"swap","of":1,"window":[1,1]}
+{"t":81234930000000,"g":1,"mark":"landed"}
+{"t":81234930000000,"g":1,"mark":"place_rest"}
 {"t":81234943700000,"g":1,"mark":"at_rest"}
-{"t":81234943700000,"g":1,"mark":"landed"}
 {"t":81234943700000,"g":1,"mark":"stop_watches"}
 {"t":81234943700000,"g":1,"mark":"lift","at_rest":true,"landed":true}
 {"t":81234943700000,"g":1,"mark":"settle"}
@@ -107,6 +108,7 @@
 {"t":81237950000000,"g":3,"mark":"focus","window":[1,1],"focused":false}
 {"t":81237950000000,"g":3,"mark":"focus","window":[1,2],"focused":true}
 {"t":81238060100000,"g":3,"mark":"at_rest"}
+{"t":81238410000000,"g":3,"mark":"place_rest"}
 {"t":81238410000000,"g":3,"mark":"stop_watches"}
 {"t":81238410000000,"g":3,"mark":"lift","at_rest":true,"landed":false}
 {"t":81238410000000,"g":3,"mark":"settle"}

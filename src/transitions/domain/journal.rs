@@ -174,6 +174,7 @@ pub enum Mark {
         window: WindowId,
         focused: bool,
     },
+    PlaceRest,
     /// What the tick that lifted it read: either false, `LIFT_GRACE` ran out.
     Lift {
         at_rest: bool,
@@ -495,6 +496,7 @@ impl Journal {
                 Mark::KeepFocusedLook { of: *generation, window: *window }
             }
             Command::Focus { window, focused } => Mark::Focus { window: *window, focused: *focused },
+            Command::PlaceRest => Mark::PlaceRest,
             Command::Lift { .. } => Mark::Lift { at_rest, landed },
             Command::Warm(windows) => Mark::Warm { windows: count(windows.len()) },
             Command::Refresh(windows) => Mark::Refresh { windows: count(windows.len()) },
@@ -867,6 +869,7 @@ mod tests {
             (Command::Snap { window: w(1), frame: snap }, "snap"),
             (Command::KeepFocusedLook { generation: g, window: w(1) }, "keep_focused_look"),
             (Command::Focus { window: w(1), focused: false }, "focus"),
+            (Command::PlaceRest, "place_rest"),
             (Command::Lift { generation: g }, "lift"),
             (Command::Warm(frames.clone()), "warm"),
             (Command::Refresh(frames), "refresh"),
@@ -925,7 +928,7 @@ mod tests {
         flights.drive(Event::Tick { settled: true, landed: false }, end + Duration::from_millis(16));
         flights.drive(Event::Tick { settled: true, landed: true }, end + Duration::from_millis(32));
         let marks = held(&flights);
-        assert_eq!(names(&marks[before..]), ["at_rest", "landed", "stop_watches", "lift", "settle"]);
+        assert_eq!(names(&marks[before..]), ["at_rest", "landed", "place_rest", "stop_watches", "lift", "settle"]);
         assert_eq!(marks[before].at, end, "stamped with the tick that first read it");
     }
 
@@ -1624,6 +1627,7 @@ mod tests {
         script.offer(160_000, g, Why::Background, 158_400, &[(w(9), floating, 152_000)]);
         script.drive(273_600, Event::Tick { settled: false, landed: false });
         script.offer(312_000, g, Why::Final, 309_500, &[(w(1), left, 280_200)]);
+        script.drive(370_000, Event::Tick { settled: false, landed: true });
         script.drive(383_700, Event::Tick { settled: true, landed: true });
         script.lifted(383_700, g);
         script.heard(415_100, Heard::OverlayTaken { generation: g, taken: true });

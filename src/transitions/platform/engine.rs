@@ -1033,6 +1033,9 @@ impl FlightEngine {
                 let ring = ring.unwrap_or(if focused { Ring::Active } else { Ring::None });
                 self.render(Render::Focus { window, focused, ring });
             }
+            Command::PlaceRest => {
+                self.render(Render::PlaceRest);
+            }
             Command::Lift { generation } => self.lift(generation, now),
             Command::Warm(windows) => {
                 if !windows.is_empty() {
@@ -2120,8 +2123,9 @@ impl FlightEngine {
         self.drive(lifecycle::Event::Extend(remaining));
     }
 
-    /// One frame of the clock: where the tiles are drawn and where the windows are, read only once
-    /// the clock is done; the tiles are where they end only once every batch is committed. It draws
+    /// One frame of the clock: where the tiles are drawn and where the windows are, read only from a
+    /// tick before the clock is done, for the rest windows' place and the lift; the tiles are where
+    /// they end only once every batch is committed, the place's among them. It draws
     /// only the trace of where each container is presented, and that only while its target is on.
     fn tick(&mut self) {
         if self.flights.coordinator().is_flying() {
@@ -3982,6 +3986,7 @@ mod tests {
                 Render::Focus { .. } => "focus",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
+                Render::PlaceRest => "place_rest",
                 Render::Lift => "lift",
                 Render::Trace => "trace",
             }
@@ -4612,8 +4617,13 @@ mod tests {
             let (begun, shown) = h.shown();
             h.commit(begun);
             h.advance(Duration::from_millis(400));
-            assert!(lift_batch(&h.step(Event::Tick)).is_none(), "the show's batch is not drawn");
+            let sent = h.step(Event::Tick);
+            assert!(lift_batch(&sent).is_none(), "the show's batch is not drawn");
+            let placed = only_batch(&sent).seq;
             h.commit(shown);
+            h.advance(FRAME_INTERVAL);
+            assert!(lift_batch(&h.step(Event::Tick)).is_none(), "nor the rest windows' place");
+            h.commit(placed);
             h.advance(FRAME_INTERVAL);
             assert!(lift_batch(&h.step(Event::Tick)).is_some());
         }
@@ -4690,6 +4700,30 @@ mod tests {
                 assert!(lift < dress, "dressed after the lift");
                 assert!(matches!(commands[dress], Render::Dress { desktop: Some(_), .. }), "with the desktop held");
             }
+        }
+
+        /// The tick that sees the windows landed a frame before the clock runs out sends the rest
+        /// windows' place in a batch of its own, so the lift's batch only hides.
+        #[test]
+        fn a_landed_flight_places_the_rest_a_tick_before_it_lifts() {
+            let mut h = Harness::new();
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+            let mut tick = |h: &mut Harness, by: Duration| {
+                h.advance(by);
+                let sent = h.step(Event::Tick);
+                if let Some(seq) = batches(&sent).iter().map(|batch| batch.seq).max() {
+                    h.commit(seq);
+                }
+                sent
+            };
+            assert!(!batches(&tick(&mut h, left - Duration::from_millis(120))).iter().any(|batch| kinds(batch).contains(&"place_rest")));
+            let sent = tick(&mut h, Duration::from_millis(115));
+            assert_eq!(kinds(only_batch(&sent)), ["place_rest"], "a tick ahead");
+            let sent = tick(&mut h, FRAME_INTERVAL);
+            let lift = lift_batch(&sent).expect("lifted");
+            assert!(!kinds(lift).contains(&"place_rest"), "{:?}", kinds(lift));
         }
 
         #[test]
