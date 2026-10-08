@@ -15,6 +15,11 @@ frame back (`window_server::server_frame`, `SLSGetWindowBounds`) and hands the b
 - **The rest windows listen.** `main.rs` wires one callback, the decorations' rest windows
   (`src/decorations/platform/rest.rs`), which follow every decorated window the window server moves;
   they take the latest frame of each window from what queued for them on the main thread.
+- **Only while followed.** The application turns `Following` (`displays::event`) on while any
+  window can wear a band. Off, a move or a resize queues nothing for the frames thread, which reads
+  no frame, and no reorder, hide, unhide or close reaches an `OnServerOrder` callback: each is
+  dropped on the thread its notification arrives on (`note_move`, `publish_order`), and nothing
+  reaches the main thread for them. The focus resolver still wakes on 808 and 815.
 
 ## Measured 2026-10-06
 

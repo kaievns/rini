@@ -402,6 +402,75 @@ fn a_pass_focusing_an_asking_application_carries_its_windows_calm() {
     }
 }
 
+/// Every word the rest windows have been sent since the last look: a model, or `None` for off.
+fn words(rest: &mut Receiver) -> Vec<Option<RestModel>> {
+    let mut out = Vec::new();
+    while let Ok((_, event)) = rest.try_recv() {
+        match event {
+            RestEvent::Model(model) => out.push(Some(model)),
+            RestEvent::Off => out.push(None),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Reloads the config with the decorations `change` leaves.
+fn reload(desk: &mut Desk, change: impl FnOnce(&mut crate::decorations::settings::DecorationSettings)) {
+    let mut config = desk.reactor.config.clone();
+    change(&mut config.settings.decorations);
+    desk.reactor.handle_test_batch(vec![Event::ConfigUpdated(config)]);
+}
+
+/// Kai, 2026-10-08: "not make it transparrent, i mean disable the feature". With the ring and the
+/// border off the rest windows are turned off once, the window server's frames and orders go
+/// unfollowed, and focus moving sends nothing; turning the ring back on starts it all again.
+#[test]
+fn with_the_ring_and_the_border_off_the_rest_windows_are_turned_off_and_nothing_is_followed() {
+    let mut desk = desk();
+    assert!(desk.reactor.rest.following.on(), "the ring on by default");
+    reload(&mut desk, |decorations| decorations.focus_ring.on = false);
+    assert_eq!(words(&mut desk.rest), vec![None], "turned off, once");
+    assert!(!desk.reactor.rest.following.on());
+    let left = desk.left;
+    desk.reactor.handle_test_batch(vec![
+        Event::ApplicationGloballyActivated(left_zen().pid),
+        Event::WindowServerFocusChanged(left_zen(), left),
+    ]);
+    reload(&mut desk, |decorations| decorations.focus_ring.band.width = 6.0);
+    assert!(words(&mut desk.rest).is_empty(), "focus and a reload that turns nothing on send nothing");
+    assert!(desk.reactor.layout_rings() == crate::decorations::domain::style::Rings::default(), "no ring read");
+    reload(&mut desk, |decorations| decorations.focus_ring.on = true);
+    let [Some(model)] = &words(&mut desk.rest)[..] else { panic!("one model, turning it on") };
+    assert_eq!(sent(model, 902).decoration.ring.map(|band| band.width), Some(6.0));
+    assert!(desk.reactor.rest.following.on());
+    reload(&mut desk, |decorations| {
+        decorations.focus_ring.on = false;
+        decorations.border.on = true;
+    });
+    assert!(matches!(&words(&mut desk.rest)[..], [Some(_)]) && desk.reactor.rest.following.on(), "the border alone keeps it on");
+}
+
+/// A window rule turning the ring on for one application keeps the rest windows on with both off in
+/// `layout`, and only that application's windows wear it.
+#[test]
+fn a_rule_turning_one_windows_ring_on_keeps_the_rest_windows_on() {
+    let mut desk = desk();
+    reload(&mut desk, |decorations| {
+        decorations.focus_ring.on = false;
+        decorations.rules = ruled(DecorationRule {
+            focus_ring: BandRule { on: Some(true), ..BandRule::default() },
+            ..rule_for(RuleMatch::app("com.mitchellh.ghostty"))
+        });
+    });
+    let [Some(model)] = &words(&mut desk.rest)[..] else { panic!("still on, with the rule") };
+    assert!(desk.reactor.rest.following.on());
+    let ringed = |wsid| sent(model, wsid).decoration.ring.is_some();
+    assert_eq!([901, 902, 903, 904].map(ringed), [true, false, false, true]);
+    reload(&mut desk, |decorations| decorations.rules.clear());
+    assert_eq!(words(&mut desk.rest), vec![None], "the rule gone, nothing is decorated");
+}
+
 fn frame_of(layout: &[(WindowId, CGRect)], window: WindowId) -> CGRect {
     layout.iter().find(|(w, _)| *w == window).map(|(_, frame)| *frame).expect("laid out")
 }

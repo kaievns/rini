@@ -1,8 +1,8 @@
 //! A decoration at rest, drawn by a window of rini's own directly above the window it decorates:
 //! which windows show a band and when, what each turn of the rest windows makes of the reactor's
 //! word and the window server's, what waits for the lift while the overlay is up, which of rini's
-//! rest windows draws each, and which are ordered above their windows again. See "At rest" in
-//! `src/decorations/docs/README.md`.
+//! rest windows draws each, which are ordered above their windows again, and that none is kept and
+//! nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
@@ -173,15 +173,33 @@ struct Covered {
 /// names. Each turn takes what queued: the model, the window server's frames and orders, a lift.
 /// From the overlay's show to its lift a turn draws nothing and reads nothing (`cover`) unless a
 /// window on another display moved, was reordered or settled its park: the rest windows on the
-/// overlay's display are under it, and the lift draws what came.
+/// overlay's display are under it, and the lift draws what came. Off, as it starts and once the
+/// reactor turns it off, it holds no model and no window, wants no rest window, and a turn, a lift
+/// and a park's patience draw nothing; the reactor's next model turns it on.
 #[derive(Clone, Debug, Default)]
 pub struct Rest {
     pub model: RestModel,
     pub windows: HashMap<WindowServerId, Tracked>,
     covered: Option<Covered>,
+    on: bool,
 }
 
 impl Rest {
+    /// Whether a model has come since it started or was last turned off.
+    pub fn on(&self) -> bool { self.on }
+
+    /// No window can wear a band: the model, every window known and every word and order waiting
+    /// for the lift are dropped, and nothing is taken until the next model. Whether the overlay is up
+    /// is kept, so a model that turns it on under the overlay waits for the lift.
+    pub fn off(&mut self) {
+        self.on = false;
+        self.model = RestModel::default();
+        self.windows.clear();
+        if let Some(covered) = self.covered.as_mut() {
+            *covered = Covered { display: covered.display, ..Covered::default() };
+        }
+    }
+
     /// The overlay is up over `display`, the one it was laid out on: until it lifts, a turn draws
     /// nothing unless a window on another display moved.
     pub fn cover(&mut self, display: Option<ScreenRect>) {
@@ -195,7 +213,8 @@ impl Rest {
     /// model with `read`). Covered, the frames and the orders are taken, so a park is taken with its
     /// window's move and a hide from its order, but the word and the orders' reordering wait for the
     /// lift, and nothing is read or drawn. A frame or an order of a window on a display the overlay
-    /// is not over draws the turn as uncovered, with everything that waited.
+    /// is not over draws the turn as uncovered, with everything that waited. Off, a turn without a
+    /// model takes nothing and draws nothing.
     pub fn turn(
         &mut self,
         mut model: Option<RestModel>,
@@ -204,6 +223,9 @@ impl Rest {
         now: Instant,
         read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
     ) -> Option<Draw> {
+        if !self.on && model.is_none() {
+            return None;
+        }
         let displays = &self.model.displays;
         let tracked = |window: WindowServerId| self.windows.get(&window).and_then(|tracked| tracked.frame);
         let seen = self.covered.as_ref().is_some_and(|covered| {
@@ -238,6 +260,7 @@ impl Rest {
         read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
     ) -> Option<WindowServerId> {
         let focus_before = self.focus();
+        self.on = true;
         self.windows.retain(|window, _| model.windows.iter().any(|w| w.window == *window));
         for window in &model.windows {
             let tracked = self.windows.entry(window.window).or_insert_with(|| {
@@ -274,7 +297,8 @@ impl Rest {
     /// The overlay lifts at `now` off `display`, the one it was laid out on if any: what waited under
     /// it is taken, the reactor's word with `take_model` and `read`, and every park waiting on a window
     /// there. It draws what waited, after reading again from the window server the frame of each
-    /// window there brought back and each one there a rest window draws (`drawn`).
+    /// window there brought back and each one there a rest window draws (`drawn`). Off, with no
+    /// model waiting, it draws nothing and reads nothing.
     pub fn lift(
         &mut self,
         display: Option<ScreenRect>,
@@ -284,6 +308,9 @@ impl Rest {
     ) -> Lifted {
         let Covered { model, orders, .. } = self.covered.take().unwrap_or_default();
         let focus = model.and_then(|model| self.take_model(model, now, read));
+        if !self.on {
+            return Lifted::default();
+        }
         let mut reread = Vec::new();
         for (window, tracked) in self.windows.iter_mut() {
             let there = display.is_some_and(|display| tracked.frame.is_some_and(|frame| frame.intersects(&display)));
@@ -307,6 +334,9 @@ impl Rest {
     /// Parks whose patience ran out at `now`, taken; whether the turn draws them, which it does
     /// unless the overlay is up and every one taken is on its display.
     pub fn settle(&mut self, now: Instant) -> bool {
+        if !self.on {
+            return false;
+        }
         let over = self.covered.as_ref().map(|covered| covered.display);
         let mut seen = false;
         for tracked in self.windows.values_mut() {
@@ -328,8 +358,11 @@ impl Rest {
     /// How many rest windows the pool holds for this model: one for every window that wears a band
     /// and could show it, held by no more than a park, so a park or a return through a flight takes
     /// a rest window from the pool and none is made inside a flight; and one per display at least, so
-    /// the ring moving with focus makes none.
+    /// the ring moving with focus makes none. None at all while off.
     pub fn pool_size(&self) -> usize {
+        if !self.on {
+            return 0;
+        }
         let could_show = self.model.windows.iter().filter(|window| {
             let Held { parked: _, mission_control, fullscreen } = window.held;
             window.wears_a_band() && !(mission_control || fullscreen)
@@ -727,6 +760,45 @@ mod tests {
         assert_eq!(drawn, Some(Draw { orders: vec![reorder(1)], focus: Some(ws(1)) }));
         assert!(rest.settle(now));
         assert_eq!(rest.lift(None, now, |_| panic!("no word waited"), |_| true), Lifted::default(), "laid out on no display, a lift takes no park");
+    }
+
+    /// With the ring and the border off nothing is decorated: the rest windows want no window of
+    /// their own, and take no frame, order, lift or park until a model turns them on again.
+    #[test]
+    fn off_it_wants_no_rest_window_and_takes_nothing_until_a_model_comes() {
+        let now = Instant::now();
+        let mut rest = Rest::default();
+        assert!(!rest.on() && rest.pool_size() == 0, "off as it starts");
+        assert_eq!(rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("read while off")), None);
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, true)], SLOT, now);
+        assert!(rest.on() && rest.pool_size() == 2);
+        rest.off();
+        assert_eq!((rest.on(), rest.pool_size(), rest.windows.len()), (false, 0, 0), "every rest window let go");
+        assert_eq!(rest.model, RestModel::default());
+        assert_eq!(rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("read while off")), None, "a frame and a reorder");
+        assert!(rest.windows.is_empty(), "the frame not taken");
+        assert!(!rest.settle(now + PARK_PATIENCE) && rest.due().is_none());
+        assert_eq!(rest.lift(Some(display()[0].bounds), now, |_| panic!("read while off"), |_| true), Lifted::default());
+        assert!(!rest.wants_turn(0), "a lift asks no turn");
+        let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], Vec::new(), now, |_| (Some(SLOT), false));
+        assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }), "a model turns it on again");
+        assert_eq!(rest.pool_size(), 1);
+    }
+
+    /// Turned on by a config reload during a flight, the rest windows wait for the lift to draw.
+    #[test]
+    fn a_model_turning_it_on_under_the_overlay_waits_for_the_lift() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        rest.cover(Some(display()[0].bounds));
+        rest.turn(None, &[], vec![reorder(1)], now, |_| panic!("read"));
+        rest.off();
+        assert!(rest.covered(), "the overlay is still up");
+        assert_eq!(rest.turn(Some(model(vec![at(1, true, false)])), &[], Vec::new(), now, |_| panic!("read")), None);
+        assert!(!rest.on() && rest.pool_size() == 0, "nothing made under the overlay");
+        let lifted = rest.lift(Some(display()[0].bounds), now, |_| (Some(SLOT), false), |_| false);
+        assert_eq!(lifted.draw, Draw { orders: Vec::new(), focus: Some(ws(1)) }, "the reorder from before it went off dropped");
+        assert!(rest.on() && rest.pool_size() == 1);
     }
 
     #[test]

@@ -597,7 +597,7 @@ impl Reactor {
         pictures: Option<crate::pictures::platform::service::Pictures>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
-        rest_tx: Option<crate::decorations::platform::rest::Sender>,
+        rest: Option<(crate::decorations::platform::rest::Sender, crate::displays::event::Following)>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -619,7 +619,10 @@ impl Reactor {
         reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
-        reactor.rest.tx = rest_tx;
+        if let Some((tx, following)) = rest {
+            reactor.rest.tx = Some(tx);
+            reactor.rest.following = following;
+        }
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());

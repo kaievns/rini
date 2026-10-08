@@ -1,8 +1,8 @@
 //! The actor behind the SkyLight notification port. Space events go to the spaces actor; a
 //! window's moves and resizes are read back from the window server on one frames thread and handed
 //! to the application's [`OnServerFrames`] callbacks, and its reorders, hides and unhides to its
-//! [`OnServerOrder`] callbacks; window-server focus edges are coalesced and resolved into
-//! `WindowServerFocusChanged`.
+//! [`OnServerOrder`] callbacks, both only while the application is [`Following`] them;
+//! window-server focus edges are coalesced and resolved into `WindowServerFocusChanged`.
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -16,7 +16,8 @@ use rustc_hash::FxHashSet as HashSet;
 
 use crate::displays::domain::frames;
 use crate::displays::event::{
-    Event, EventSink, OnServerFrames, OnServerOrder, OrderChange, ServerFrame, ServerOrder,
+    Event, EventSink, Following, OnServerFrames, OnServerOrder, OrderChange, ServerFrame,
+    ServerOrder,
 };
 use crate::displays::platform::cgs_notify;
 use crate::displays::platform::spaces;
@@ -53,6 +54,7 @@ pub struct WindowNotify {
     focus_wake: FocusWakeSender,
     moved: mpsc::Sender<u32>,
     on_order: Arc<[OnServerOrder]>,
+    following: Following,
 }
 
 impl WindowNotify {
@@ -63,6 +65,7 @@ impl WindowNotify {
         initial_events: &[CGSEventType],
         on_frames: Vec<OnServerFrames>,
         on_order: Vec<OnServerOrder>,
+        following: Following,
     ) -> Self {
         let (focus_wake_tx, focus_wake_rx) = mpsc::sync_channel(1);
         Self::spawn_focus_resolver(displays_tx, focus_wake_rx);
@@ -76,6 +79,7 @@ impl WindowNotify {
             focus_wake: FocusWakeSender { wake: focus_wake_tx },
             moved,
             on_order: on_order.into(),
+            following,
         }
     }
 
@@ -91,6 +95,7 @@ impl WindowNotify {
                 self.focus_wake.clone(),
                 self.moved.clone(),
                 self.on_order.clone(),
+                self.following.clone(),
             ) {
                 Ok(()) => {
                     self.subscribed.insert(event);
@@ -127,6 +132,7 @@ impl WindowNotify {
                     self.focus_wake.clone(),
                     self.moved.clone(),
                     self.on_order.clone(),
+                    self.following.clone(),
                 ) {
                     Ok(()) => {
                         self.subscribed.insert(event);
@@ -151,6 +157,7 @@ impl WindowNotify {
         focus_wake: FocusWakeSender,
         moved: mpsc::Sender<u32>,
         on_order: Arc<[OnServerOrder]>,
+        following: Following,
     ) -> Result<(), i32> {
         let res = cgs_notify::init(event);
         if res != 0 {
@@ -214,10 +221,10 @@ impl WindowNotify {
                     | CGSEventType::Known(KnownCGSEvent::WindowUnhidden)
                     | CGSEventType::Known(KnownCGSEvent::WindowHidden) => {
                         focus_wake.notify();
-                        publish_order(&on_order, event, evt.window_id);
+                        publish_order(&following, &on_order, event, evt.window_id);
                     }
                     CGSEventType::Known(KnownCGSEvent::WindowClosed) => {
-                        publish_order(&on_order, event, evt.window_id)
+                        publish_order(&following, &on_order, event, evt.window_id)
                     }
                     CGSEventType::Known(
                         KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged,
@@ -227,9 +234,7 @@ impl WindowNotify {
                     ) => focus_wake.notify(),
                     CGSEventType::Known(KnownCGSEvent::WindowMoved)
                     | CGSEventType::Known(KnownCGSEvent::WindowResized) => {
-                        if let Some(window) = evt.window_id {
-                            let _ = moved.send(window);
-                        }
+                        note_move(&following, &moved, evt.window_id)
                     }
                     _ => {}
                 }
@@ -286,8 +291,16 @@ impl WindowNotify {
     }
 }
 
-/// Hands a reorder, hide, unhide or close of `window` to every `OnServerOrder`.
-fn publish_order(on_order: &[OnServerOrder], event: CGSEventType, window: Option<u32>) {
+/// Hands a reorder, hide, unhide or close of `window` to every `OnServerOrder`, while `following`.
+fn publish_order(
+    following: &Following,
+    on_order: &[OnServerOrder],
+    event: CGSEventType,
+    window: Option<u32>,
+) {
+    if !following.on() {
+        return;
+    }
     let change = match event {
         CGSEventType::Known(KnownCGSEvent::WindowReordered) => OrderChange::Reordered,
         CGSEventType::Known(KnownCGSEvent::WindowHidden) => OrderChange::Hidden,
@@ -299,6 +312,13 @@ fn publish_order(on_order: &[OnServerOrder], event: CGSEventType, window: Option
     let order = ServerOrder { window: WindowServerId::new(window), change };
     for on_order in on_order {
         on_order(order);
+    }
+}
+
+/// Queues `window`'s frame for the frames thread to read, while `following`.
+fn note_move(following: &Following, moved: &mpsc::Sender<u32>, window: Option<u32>) {
+    if let Some(window) = window.filter(|_| following.on()) {
+        let _ = moved.send(window);
     }
 }
 
@@ -341,24 +361,31 @@ mod tests {
 
     use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 
-    use super::{FocusWakeSender, publish_order, spawn_frame_reader};
-    use crate::displays::event::{OnServerOrder, OrderChange, ServerFrame, ServerOrder};
+    use super::{FocusWakeSender, note_move, publish_order, spawn_frame_reader};
+    use crate::displays::event::{Following, OnServerOrder, OrderChange, ServerFrame, ServerOrder};
+
+    fn following() -> Following {
+        let following = Following::default();
+        following.set(true);
+        following
+    }
 
     #[test]
     fn a_reorder_a_hide_an_unhide_and_a_close_publish_their_window() {
         let published = Arc::new(Mutex::new(Vec::new()));
         let sink = published.clone();
         let on_order: Vec<OnServerOrder> = vec![Box::new(move |order| sink.lock().unwrap().push(order))];
+        let following = following();
         for event in [
             KnownCGSEvent::WindowReordered,
             KnownCGSEvent::WindowHidden,
             KnownCGSEvent::WindowUnhidden,
             KnownCGSEvent::WindowClosed,
         ] {
-            publish_order(&on_order, CGSEventType::Known(event), Some(56));
+            publish_order(&following, &on_order, CGSEventType::Known(event), Some(56));
         }
-        publish_order(&on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), None);
-        publish_order(&on_order, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
+        publish_order(&following, &on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), None);
+        publish_order(&following, &on_order, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
         let window = WindowServerId::new(56);
         assert_eq!(*published.lock().unwrap(), vec![
             ServerOrder { window, change: OrderChange::Reordered },
@@ -366,6 +393,29 @@ mod tests {
             ServerOrder { window, change: OrderChange::Unhidden },
             ServerOrder { window, change: OrderChange::Closed },
         ]);
+    }
+
+    /// Nothing follows the window server's frames and orders while no window wears a band: a move
+    /// queues no frame read and an order reaches no callback, until the switch is on again.
+    #[test]
+    fn nothing_is_read_or_handed_on_while_nothing_follows() {
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let sink = published.clone();
+        let on_order: Vec<OnServerOrder> = vec![Box::new(move |order| sink.lock().unwrap().push(order))];
+        let (moved, moved_rx) = mpsc::channel();
+        let off = Following::default();
+        assert!(!off.on(), "off until turned on");
+        publish_order(&off, &on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
+        note_move(&off, &moved, Some(56));
+        assert!(published.lock().unwrap().is_empty());
+        assert_eq!(moved_rx.try_iter().count(), 0, "no frame queued to be read");
+        let on = off.clone();
+        on.set(true);
+        assert!(off.on(), "one switch");
+        publish_order(&off, &on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
+        note_move(&off, &moved, Some(56));
+        assert_eq!(published.lock().unwrap().len(), 1);
+        assert_eq!(moved_rx.try_iter().collect::<Vec<_>>(), vec![56]);
     }
 
     static READS: AtomicUsize = AtomicUsize::new(0);

@@ -2,7 +2,8 @@
 //! above each window whose bands show, drawing the bands a tile draws (`layers::Bands`). A
 //! main-thread actor: the reactor tells it what each window wears, the window server where each
 //! window is and when it was reordered, hidden or unhidden, and the renderer when its overlay goes up
-//! and when it lifts.
+//! and when it lifts. While no window can wear a band the reactor turns it off: every rest window is
+//! closed, and it does nothing until the next model.
 //! The rules are `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is "At
 //! rest" in `src/decorations/docs/README.md`.
 
@@ -45,6 +46,8 @@ pub enum Event {
     /// The overlay has lifted and wants a turn of the actor's: the pool owes rest windows the model
     /// wants, made now that it is down, or a park waits for its patience.
     Lifted,
+    /// No window can wear a band: every rest window is closed, and nothing is taken until a model.
+    Off,
 }
 
 define_class!(
@@ -88,7 +91,7 @@ fn collection_behaviour() -> NSWindowCollectionBehavior {
         | NSWindowCollectionBehavior::FullScreenNone
 }
 
-/// One rest window, kept for the life of the process once made.
+/// One rest window, kept until the rest windows are turned off, and closed as it is dropped.
 struct Panel {
     window: Retained<RestPanel>,
     root: Retained<CALayer>,
@@ -124,6 +127,8 @@ impl Panel {
         window.setHidesOnDeactivate(false);
         window.setCanHide(false);
         window.setCollectionBehavior(collection_behaviour());
+        // SAFETY: retained here, so AppKit must not release it again when `Drop` closes it.
+        unsafe { window.setReleasedWhenClosed(false) };
         window.setAlphaValue(0.0);
         // SAFETY: a fresh view, initialised as AppKit's designated initializer requires.
         let view: Retained<RestView> = unsafe { msg_send![RestView::alloc(mtm), initWithFrame: frame] };
@@ -199,6 +204,10 @@ impl Panel {
     }
 }
 
+impl Drop for Panel {
+    fn drop(&mut self) { self.window.close(); }
+}
+
 /// Every rest window, and what it is drawn from.
 pub struct RestBorders {
     mtm: MainThreadMarker,
@@ -215,20 +224,28 @@ impl RestBorders {
 
     /// Every event queued, taken as one turn: the latest model, every window's latest frame, and each
     /// rest window ordered again at most once. Under the overlay it draws, reads and makes nothing
-    /// (`Rest::turn`).
+    /// (`Rest::turn`). Turned off by the latest word, it closes every rest window; off, it takes
+    /// nothing until a model.
     fn take(&mut self, events: Vec<Event>, now: Instant) {
         let mut orders = Vec::new();
         let mut moved: Vec<ServerFrame> = Vec::new();
-        let mut model = None;
+        let mut word = None;
         let mut grow = false;
         for event in events {
             match event {
-                Event::Model(next) => model = Some(next),
+                Event::Model(next) => word = Some(Some(next)),
+                Event::Off => word = Some(None),
                 Event::Frames(frames) => moved.extend(frames),
                 Event::Order(order) => orders.push(order),
                 Event::Lifted => grow = true,
             }
         }
+        if word.as_ref().is_some_and(Option::is_none) {
+            self.rest.off();
+            self.panels.clear();
+            return;
+        }
+        let model = word.flatten();
         grow |= model.is_some();
         let moved: Vec<(WindowServerId, ScreenRect)> =
             moved.iter().map(|frame| (frame.window, ScreenRect::from_cg(frame.frame))).collect();
@@ -252,6 +269,9 @@ impl RestBorders {
         let panels = &self.panels;
         let drawn = |window| panels.iter().any(|panel| panel.target == Some(window));
         let Lifted { draw, reread } = self.rest.lift(display, now, read_server, drawn);
+        if !self.rest.on() {
+            return false;
+        }
         for window in reread {
             self.rest.reread(window, window_server::server_frame(window).map(ScreenRect::from_cg));
         }

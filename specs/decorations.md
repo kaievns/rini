@@ -131,6 +131,26 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 - niri's `is-active-in-column` MUST be refused: a rini column keeps no window of its own that focus
   lands on, since focus entering a column lands on the row it came from.
 
+## Off
+
+- While no window can wear a band, `layout › focus-ring` and `layout › border` both off and no window
+  rule turning either on for any window, the ring and the border MUST do no work, not merely draw
+  nothing: rini MUST keep no window of its own for them, closing those it made rather than hiding
+  them; MUST NOT read or hand to its main thread the window server's moves, resizes, reorders, hides,
+  unhides and closes for them; MUST run no turn of them on a frame, an order, a focus change or a
+  lift; and MUST give no tile a layer for either band. The hairline and the shadow are drawn as
+  `animation.md` requires.
+- A config reload that turns the ring or the border on, in `layout` or in a window rule for any
+  window, MUST start all of it again, and one that leaves no band on MUST stop it. A rule turning a
+  band on for some windows keeps it running, and a tile whose window wears neither band MUST carry
+  no layer for one either way.
+
+> **Reported 2026-10-08.** Kai: "can you disable the outline for a second for me?", then, with
+> `focus-ring { off; }` set: "and i mean, not make it transparrent, i mean disable the feature".
+> With the ring off and the border off by default, rini still kept 4 rest windows at level 0 and
+> alpha 0, two of them window-sized, in the window list, followed every 806, 807 and 808 for them,
+> ran their turns, and gave every tile the ring's and the border's layers.
+
 ## Through a flight
 
 - Each tile MUST wear the ring and the border its window wears, drawn in front of the tile's
@@ -205,8 +225,10 @@ wearing either is drawn by one rest window holding both.
 
 The ring's and the border's settings are `src/decorations/settings.rs`, decoded from `layout ›
 focus-ring` and `layout › border` in `src/app/config/kdl/layout.rs` and
-`src/app/config/kdl/apply.rs`. Who wears the ring and the paint of each by focus are
-`src/decorations/domain/style.rs`; their colours and gradients, and the axis and stops each gradient
+`src/app/config/kdl/apply.rs`; whether any window can wear a band, which turns all of it on or off,
+is `DecorationSettings::draws_bands` there, and the switch the window server's frames and orders
+are dropped by while it is off is `Following` in `src/displays/event.rs`. Who wears the ring and
+the paint of each by focus are `src/decorations/domain/style.rs`; their colours and gradients, and the axis and stops each gradient
 is drawn with, `src/decorations/domain/paint.rs`; what the window rules give each window,
 `src/decorations/domain/rules.rs`, matched through `src/windows/domain/rules.rs` and decoded with
 each `window-rule` in `src/app/config/kdl/window_rule.rs` and `apply.rs`; each band, its width and

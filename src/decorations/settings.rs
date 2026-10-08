@@ -57,6 +57,8 @@ impl Default for DecorationSettings {
 
 impl DecorationSettings {
     /// Whether any window can wear a band: the ring or the border is on, or a rule turns one on.
+    /// While none can, the feature does no work: no rest window is kept, the window server's frames
+    /// and orders go unfollowed, and no ring is read.
     pub fn draws_bands(&self) -> bool {
         self.focus_ring.on
             || self.border.on
@@ -99,5 +101,30 @@ mod tests {
         let settings = DecorationSettings { focus_ring: off, rules: vec![rule], ..DecorationSettings::default() };
         assert!(settings.draws_bands());
         assert!(!DecorationSettings { rules: Vec::new(), ..settings }.draws_bands());
+    }
+
+    /// Kai, 2026-10-08: "not make it transparrent, i mean disable the feature". Nothing is decorated
+    /// while the ring and the border are off and no rule turns either on for any window; one rule
+    /// turning one window's ring on, or the border on alone, keeps the feature running.
+    #[test]
+    fn nothing_is_decorated_until_the_layout_or_a_rule_turns_a_band_on() {
+        use crate::windows::domain::rules::RuleMatch;
+        let defaults = DecorationSettings::default();
+        let off = DecorationSettings { focus_ring: BandSetting { on: false, ..defaults.focus_ring }, ..defaults.clone() };
+        assert!(!off.draws_bands(), "ring off, border off by default");
+        let border = DecorationSettings { border: BandSetting { on: true, ..off.border }, ..off.clone() };
+        assert!(border.draws_bands(), "the border alone");
+        let ghostty = vec![RuleMatch::app("com.mitchellh.ghostty")];
+        let ring_on = DecorationRule { matches: ghostty.clone(), focus_ring: BandRule { on: Some(true), ..BandRule::default() }, ..DecorationRule::default() };
+        assert!(DecorationSettings { rules: vec![ring_on], ..off.clone() }.draws_bands(), "a rule turning one window's ring on");
+        let red = Paint::Solid(Colour::rgb(0xff0000));
+        let painted = DecorationRule {
+            matches: ghostty,
+            focus_ring: BandRule { width: Some(6.0), active: Some(red), ..BandRule::default() },
+            border: BandRule { on: Some(false), ..BandRule::default() },
+            corner_radius: Some(8.0),
+            ..DecorationRule::default()
+        };
+        assert!(!DecorationSettings { rules: vec![painted], ..off }.draws_bands(), "a rule that paints, widens or turns off");
     }
 }
