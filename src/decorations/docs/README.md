@@ -351,7 +351,8 @@ frame of each window drawn there, a read the sample did not catch waiting on it.
 has landed the renderer places the rest windows, still covered: the coordinator gives `PlaceRest`
 at the first tick from a frame before its clock runs out that reads the real windows where they
 were written, or with the lift when no tick did, and the renderer plays it before the transaction
-of the drain carrying it. The model that waited is taken, every park on that display that waited
+of the drain carrying it. Off, the reactor tells the flight engine so with the display, and no
+flight places anything or reads its windows a tick early ("Off"). The model that waited is taken, every park on that display that waited
 taken, every rest window on it put at its window's frame as the window server has it, each one
 whose window was reordered since the flight's begin or that focus came to ordered above its window
 again, and every one drawn as it is then where its look changed (`Rest::place`). That work had sat
@@ -387,9 +388,12 @@ turning either on (`DecorationSettings::draws_bands`), nothing of either runs. T
 rest windows `Event::Off` once, after the batch that turned the last band off, and nothing after
 that; the actor closes every rest window (`Panel`'s `Drop`, so none is left at alpha 0 in the
 window list) and, off, takes no frame, order, place, lift or park (`Rest::off`, `Rest::turn`, `Rest::place`, `Rest::lift`,
-`Rest::settle`, `Rest::pool_size` 0). The renderer still calls `Handover` at each show, place and
-lift: the show records which display the overlay covers, so a model turning the feature on during a
-flight waits for the place, and the place and the lift draw and read nothing. The reactor tells it of no flight
+`Rest::settle`, `Rest::pool_size` 0). The reactor's `SetDisplay`, sent ahead of every flight, tells
+the flight engine there is nothing at rest (`rests`), so the coordinator gives no `PlaceRest` and no
+tick reads the windows' landing before the clock is done: no place drain runs, and no lift waits
+behind one. The renderer still calls `Handover` at each show and lift: the show records which
+display the overlay covers, so a model turning the feature on during a flight waits for the lift,
+and the lift draws and reads nothing. The reactor tells it of no flight
 (`publish_rest`), and a flight begun before the feature went off keeps its cover and its patience. The reactor turns `Following` off at the
 same batch, so the window-notify actor drops each 806, 807, 808, 815, 816 and 804 for the rest
 windows where it arrives: no frame is read and nothing is sent to the main thread for them

@@ -47,7 +47,7 @@ until it has a mark.
 | `Event::Begin(stage)` | `begin` | `kind`, `coalesced` (the stage waits for the reactor's follow-up passes), `tiles`, `awaiting`, `repainting`, `focus`, `losing_focus`, `key`, `duration_ms` |
 | `Event::Merge { stage, moved }` | `merge` | `kind`, `moved`, `tiles`, `awaiting`, `repainting`, `focus`, `focused_look`, `duration_ms` |
 | `Event::Extend(d)` / `Abandon` / `Quiet(g)` | `extend` / `abandon` / `quiet` | `ms` / none / `of` |
-| `Event::Tick { settled, landed }`, from `FRAME_INTERVAL` before the clock runs out | `at_rest`, `landed`: each once a generation, at its first `true` | |
+| `Event::Tick { settled, landed }`, from `FRAME_INTERVAL` before the clock runs out, or from its end with nothing drawn at rest | `at_rest`, `landed`: each once a generation, at its first `true` | |
 | `Event::Lost { generation, window }` | `lost` | `of`, `window` |
 | `Event::LooksTurned(windows)` | `looks_turned`, one for each window | `window` |
 | `Event::Picture`, `Event::FrameZero` | none: the delivery's marks are the record | |
@@ -89,8 +89,8 @@ How to read them:
   (`journal.py probe`, below).
 - **`at_rest` and `landed` are the lift's condition, not when each window landed.** The engine reads
   where the tiles are drawn and where the windows are only from `FRAME_INTERVAL` before the clock
-  runs out (`Coordinator::wants_landing`) and tells the coordinator `false` before, so a tick before
-  then marks nothing. A `landed` a tick before the lift comes with the `place_rest` it gave; a
+  runs out, or from its end with nothing drawn at rest (`Coordinator::wants_landing`), and tells the
+  coordinator `false` before, so a tick before then marks nothing. A `landed` a tick before the lift comes with the `place_rest` it gave; a
   `place_rest` beside the `lift` says no tick saw the windows land sooner.
 - **A command's mark says the coordinator gave it,** stamped with its drive's `now`. Carrying it out
   is not timed, but for what the renderer draws: the `drawn` covering the batch a command's render

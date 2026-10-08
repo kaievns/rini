@@ -56,7 +56,8 @@ draws the focus ring and the border at rest on the flight's display draws nothin
 from the flight's begin, which the reactor tells it of, until the renderer places it; after a
 show's alpha 1 the renderer covers it (`Handover`, which the decorations' rest windows own). The
 coordinator gives `PlaceRest` once a flight end, at the first tick from `FRAME_INTERVAL` before it
-that reads the real windows landed, or with the lift when none did, and the renderer plays it
+that reads the real windows landed, or with the lift when none did, and never with nothing drawn
+at rest, and the renderer plays it
 before the transaction of the drain carrying it: every band on the display put where its window
 is, still covered, so a lift's drain only tells the rest windows what came since and brings the
 overlay down (`steps`, pinned by

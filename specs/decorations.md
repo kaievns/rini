@@ -138,7 +138,9 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   nothing: rini MUST keep no window of its own for them, closing those it made rather than hiding
   them; MUST NOT read or hand to its main thread the window server's moves, resizes, reorders, hides,
   unhides and closes for them; MUST run no turn of them on a frame, an order, a focus change, a
-  place ahead of a lift or a lift; and MUST give no tile a layer for either band. The hairline and the shadow are drawn as
+  place ahead of a lift or a lift; MUST NOT have a flight place them ahead of its lift, read its
+  windows' landing a frame early for them or hold its lift behind a drain of theirs; and MUST give
+  no tile a layer for either band. The hairline and the shadow are drawn as
   `animation.md` requires.
 - A config reload that turns the ring or the border on, in `layout` or in a window rule for any
   window, MUST start all of it again, and one that leaves no band on MUST stop it. A rule turning a
@@ -284,7 +286,8 @@ ordered again are
 begin (`Reactor::send_flight` in `src/app/reactor/mod.rs`, `publish_rest` in
 `src/app/reactor/decorations.rs`) and the renderer (`src/animation/platform/renderer.rs`) covers as
 its overlay goes up, places as the coordinator's `PlaceRest` says the flight has landed
-(`src/transitions/domain/lifecycle.rs`) and calls before each lift. Its windows follow the window
+(`src/transitions/domain/lifecycle.rs`; none while off, as the reactor's `SetDisplay` says,
+`publish_animation_display_for` in `src/app/reactor/mod.rs`) and calls before each lift. Its windows follow the window
 server's frames, orders, levels and introductions, all read on the frames thread
 (`src/displays/platform/window_notify.rs`), and are ordered with the level and sub-level calls in
 `src/windows/platform/window_server.rs`; no listing of windows names

@@ -4315,6 +4315,7 @@ impl Reactor {
                 frame,
                 scale: screen.scale,
                 top_band: self.config.settings.top_band(),
+                rests: self.config.settings.decorations.draws_bands(),
             });
         }
         if let Some(pictures) = &self.communication_manager.pictures {

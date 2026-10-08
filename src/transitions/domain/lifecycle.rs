@@ -138,6 +138,9 @@ pub struct StageSummary {
     /// The bounds of the display the overlay covers, the menu bar's band included: what its holes and
     /// snaps are drawn against.
     pub display: ScreenRect,
+    /// Whether anything is drawn at rest on the display: placed a tick ahead of the lift when it
+    /// is, and nothing placed nor the landing read ahead of the clock's end when it is not.
+    pub rests: bool,
     /// Windows nothing shows through: measured opaque, no material.
     pub opaque: Vec<WindowId>,
 }
@@ -327,7 +330,8 @@ pub enum Command {
     Focus { window: WindowId, focused: bool },
     /// What is drawn at rest on the overlay's display put where its windows are, under the overlay:
     /// once a flight end, at the first tick from `FRAME_INTERVAL` before it with the real windows
-    /// landed, or with the lift when none came sooner.
+    /// landed, or with the lift when none came sooner. Never while nothing is drawn at rest
+    /// (`StageSummary::rests`).
     PlaceRest,
     /// Overlay down. The quiet that follows ends with `Event::Quiet(generation)`.
     Lift { generation: Generation },
@@ -592,10 +596,12 @@ impl Coordinator {
     }
 
     /// Whether a tick at `now` reads where the tiles are drawn and where the windows are: from a
-    /// tick before the clock is done, when the rest windows are placed once the windows have landed,
-    /// and for the lift after it.
+    /// tick before the clock is done when something is drawn at rest, which is placed once the
+    /// windows have landed, else once it is done, and for the lift after it.
     pub fn wants_landing(&self, now: Instant) -> bool {
-        self.remaining(now).is_some_and(|left| left <= FRAME_INTERVAL)
+        let State::Flying(f) = &self.state else { return false };
+        let ahead = if f.stage.rests { FRAME_INTERVAL } else { Duration::ZERO };
+        self.remaining(now).is_some_and(|left| left <= ahead)
     }
 
     pub fn on(&mut self, event: Event, now: Instant) -> Vec<Command> {
@@ -896,7 +902,7 @@ impl Coordinator {
                     }
                 }
                 let lifts = now >= end && ((settled && landed) || now >= end + LIFT_GRACE);
-                if f.placed != Some(end) && (lifts || (landed && now + FRAME_INTERVAL >= end)) {
+                if f.stage.rests && f.placed != Some(end) && (lifts || (landed && now + FRAME_INTERVAL >= end)) {
                     f.placed = Some(end);
                     out.push(Command::PlaceRest);
                 }
@@ -2326,6 +2332,24 @@ mod tests {
         c.on(Event::Merge { stage: pan(), moved: false }, end - ms(2));
         let out = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
         assert!(lifts(&out) && places(&out) == 0, "a merge writing nothing keeps the place");
+    }
+
+    /// With nothing drawn at rest no tick places it, and none reads the landing before the clock is
+    /// done, as none did before the rest windows were placed ahead of the lift.
+    #[test]
+    fn with_nothing_drawn_at_rest_nothing_is_placed_nor_the_landing_read_a_tick_ahead() {
+        let now = Instant::now();
+        let ms = Duration::from_millis;
+        let end = now + PLAYS;
+        let mut c = running(StageSummary { rests: false, ..pan() }, now);
+        assert!(!c.wants_landing(end - ms(5)) && c.wants_landing(end));
+        let ahead = c.on(Event::Tick { settled: false, landed: true }, end - ms(5));
+        let lifted = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
+        assert!(places(&ahead) == 0 && places(&lifted) == 0, "{ahead:?} {lifted:?}");
+        assert!(lifts(&lifted));
+        let mut c = running(pan(), now);
+        c.on(Event::Merge { stage: StageSummary { rests: false, ..pan() }, moved: false }, now + ms(5));
+        assert!(!c.wants_landing(end - ms(5)), "turned off by a merge");
     }
 
     /// A flight whose windows land only at or after the end of its clock places the rest windows at

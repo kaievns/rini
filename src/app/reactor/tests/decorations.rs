@@ -509,7 +509,8 @@ fn told(rest: &mut Receiver) -> Vec<(&'static str, Option<ScreenRect>)> {
 
 /// Kai, 2026-10-08: "all the animations are _significantly_ slower with the rings". A press that
 /// flies tells the rest windows the display its overlay covers before the model the press changed,
-/// so that model waits for the lift instead of being drawn while the show waits; off, nothing.
+/// so that model waits for the lift instead of being drawn while the show waits, and tells the
+/// engine there is something to place ahead of the lift; off, nothing, and nothing to place.
 #[test]
 fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
     use crate::transitions::platform::engine::Event as Engine;
@@ -535,7 +536,7 @@ fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
         let mut flights = 0;
         while let Ok((_, event)) = rx.try_recv() {
             match event {
-                Engine::SetDisplay { frame, .. } => display = Some(frame),
+                Engine::SetDisplay { frame, rests, .. } => display = Some((frame, rests)),
                 Engine::Animate { .. } | Engine::AnimateSurface { .. } => flights += 1,
                 _ => {}
             }
@@ -546,11 +547,15 @@ fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
     press(&mut reactor, Direction::Right);
     let (flights, display) = flown(&mut transitions_rx);
     assert!(flights > 0, "the press flies");
-    assert_eq!(told(&mut rest), vec![("flight", display), ("model", None)], "the flight first, at the overlay's display");
+    let (display, rests) = display.expect("the overlay's display");
+    assert!(rests, "the rest windows placed ahead of the lift");
+    assert_eq!(told(&mut rest), vec![("flight", Some(display)), ("model", None)], "the flight first, at the overlay's display");
 
     reload_config(&mut reactor, |decorations| decorations.focus_ring.on = false);
     assert_eq!(told(&mut rest), vec![("off", None)]);
     press(&mut reactor, Direction::Left);
-    assert!(flown(&mut transitions_rx).0 > 0, "the press still flies");
+    let (flights, display) = flown(&mut transitions_rx);
+    assert!(flights > 0, "the press still flies");
+    assert_eq!(display.map(|(_, rests)| rests), Some(false), "nothing to place ahead of the lift");
     assert!(told(&mut rest).is_empty(), "off, the rest windows are told nothing");
 }

@@ -94,6 +94,9 @@ pub enum Event {
         scale: f64,
         /// Points to leave clear at the top for the bar; the overlay window starts below it.
         top_band: f64,
+        /// Whether anything is drawn at rest on it, which a landed flight places under the overlay a
+        /// tick ahead of its lift.
+        rests: bool,
     },
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
@@ -395,7 +398,7 @@ fn summary(
     focused_look: Option<WindowId>,
     key: Option<WindowId>,
     shape: Shape,
-    display: ScreenRect,
+    (display, rests): (ScreenRect, bool),
     opaque: &dyn Fn(WindowId) -> bool,
 ) -> StageSummary {
     let opaque = tiles.iter().map(|t| t.window).filter(|w| opaque(*w)).collect();
@@ -412,6 +415,7 @@ fn summary(
         start: shape.start,
         duration: shape.duration,
         display,
+        rests,
         opaque,
     }
 }
@@ -435,7 +439,7 @@ impl RunningAnimation {
     }
 
     /// The flight as composed, for the coordinator.
-    fn stage(&self, shape: Shape, display: ScreenRect, opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
+    fn stage(&self, shape: Shape, (display, rests): (ScreenRect, bool), opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
         summary(
             self.tile_summaries(display),
             self.final_frames.clone(),
@@ -444,7 +448,7 @@ impl RunningAnimation {
             self.focused_look,
             self.key,
             shape,
-            display,
+            (display, rests),
             opaque,
         )
     }
@@ -805,6 +809,8 @@ pub struct FlightEngine {
     /// while its coordinates stay the full display's, so a captured desktop and the tiles keep their
     /// registration. Zero with the bar off.
     top_band: f64,
+    /// Whether anything is drawn at rest on the display, as the last `SetDisplay` said.
+    rests: bool,
     /// When everything happens, and the journal of it.
     flights: Journalled,
     /// What the reactor last said of the journal; `None` until it has.
@@ -851,6 +857,7 @@ impl FlightEngine {
             display: None,
             display_id: None,
             top_band: 0.0,
+            rests: false,
             flights: Journalled::default(),
             journal: None,
             writer: None,
@@ -885,7 +892,11 @@ impl FlightEngine {
                 frame,
                 scale,
                 top_band,
-            } => self.set_display(id, frame, scale, top_band),
+                rests,
+            } => {
+                self.rests = rests;
+                self.set_display(id, frame, scale, top_band)
+            }
             Event::Animate { windows, focus, focused_before, key, duration, look, cause } => {
                 self.take_request(cause);
                 self.start(windows, (focus, focused_before), key, duration, look)
@@ -1355,7 +1366,7 @@ impl FlightEngine {
             None,
             key,
             shape,
-            display,
+            (display, self.rests),
             &|window| self.pictures.knowledge(WindowServerId::from(window)).is_opaque(),
         );
         self.quiet = None;
@@ -1385,7 +1396,7 @@ impl FlightEngine {
     /// What the flight composed, told to the coordinator.
     fn stage(&self, shape: Shape) -> Option<StageSummary> {
         let (running, (display, _)) = (self.running.as_ref()?, self.display?);
-        Some(running.stage(shape, display, &|window| {
+        Some(running.stage(shape, (display, self.rests), &|window| {
             self.pictures.knowledge(WindowServerId::from(window)).is_opaque()
         }))
     }
@@ -2576,7 +2587,7 @@ mod tests {
             running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            let stage = running.stage(layout(vec![wid(2)]), display, &|window| window == wid(1));
+            let stage = running.stage(layout(vec![wid(2)]), (display, true), &|window| window == wid(1));
             assert_eq!(
                 stage.tiles[0],
                 TileSummary {
@@ -2601,7 +2612,7 @@ mod tests {
             assert_eq!(stage.opaque, vec![wid(1)]);
             assert_eq!((stage.awaiting, stage.display), (vec![wid(2)], display));
             running.shown_focus = Some(wid(2));
-            assert_eq!(running.stage(layout(Vec::new()), display, &|_| false).losing_focus, None, "handed over");
+            assert_eq!(running.stage(layout(Vec::new()), (display, true), &|_| false).losing_focus, None, "handed over");
         }
     }
 
@@ -3819,7 +3830,7 @@ mod tests {
                     }),
                 });
                 let mut harness = Harness { engine, outbox, now, placing, per_read, media, worn: Worn::default() };
-                let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
+                let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND, rests: true });
                 let committed = harness.committed(only_batch(&display).seq, None);
                 harness.step(committed);
                 harness
@@ -4558,7 +4569,7 @@ mod tests {
                 h.step(Event::LiftPatience)
             };
             let moved = |h: &mut Harness| {
-                h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0 })
+                h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0, rests: true })
             };
             let hearings: [(&str, &dyn Fn(&mut Harness) -> Vec<Sent>); 3] =
                 [("its picture", &taken), ("the patience", &patience), ("the overlay moving", &moved)];
@@ -4710,7 +4721,7 @@ mod tests {
             let (_, shown) = h.shown();
             h.commit(shown);
             let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
-            let mut tick = |h: &mut Harness, by: Duration| {
+            let tick = |h: &mut Harness, by: Duration| {
                 h.advance(by);
                 let sent = h.step(Event::Tick);
                 if let Some(seq) = batches(&sent).iter().map(|batch| batch.seq).max() {
@@ -4724,6 +4735,25 @@ mod tests {
             let sent = tick(&mut h, FRAME_INTERVAL);
             let lift = lift_batch(&sent).expect("lifted");
             assert!(!kinds(lift).contains(&"place_rest"), "{:?}", kinds(lift));
+        }
+
+        /// With nothing drawn at rest no place is sent, so the lift waits behind no batch of its own,
+        /// and no tick reads the windows' landing a frame before the clock runs out.
+        #[test]
+        fn with_nothing_drawn_at_rest_no_place_is_sent_and_the_lift_waits_for_none() {
+            let mut h = Harness::new();
+            let display = h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND, rests: false });
+            h.commit(only_batch(&display).seq);
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+            h.advance(left - Duration::from_millis(5));
+            assert!(!h.engine.flights.coordinator().wants_landing(h.at()), "the landing read only at the end");
+            assert!(batches(&h.step(Event::Tick)).is_empty(), "no place a tick ahead");
+            h.advance(FRAME_INTERVAL);
+            let sent = h.step(Event::Tick);
+            let lift = lift_batch(&sent).expect("lifted, with no place to wait for");
+            assert!(batches(&sent).iter().all(|batch| !kinds(batch).contains(&"place_rest")), "{:?}", kinds(lift));
         }
 
         #[test]
