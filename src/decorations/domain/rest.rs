@@ -1,7 +1,8 @@
 //! A decoration at rest, drawn by a window of rini's own directly above the window it decorates:
 //! which windows show a band and when, what each turn of the rest windows makes of the reactor's
-//! word and the window server's, which of rini's rest windows draws each, and which are ordered above
-//! their windows again. See "At rest" in `src/decorations/docs/README.md`.
+//! word and the window server's, what waits for the lift while the overlay is up, which of rini's
+//! rest windows draws each, and which are ordered above their windows again. See "At rest" in
+//! `src/decorations/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
@@ -143,15 +144,73 @@ pub struct Tracked {
     pub ordered_out: bool,
 }
 
+/// What a turn draws: every rest window placed and painted, and those whose window the window server
+/// reordered or ordered back in (`orders`, `to_reorder`) and the one whose window focus came to
+/// ordered above their windows again.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Draw {
+    pub orders: Vec<ServerOrder>,
+    pub focus: Option<WindowServerId>,
+}
+
+/// What a lift draws, and the windows whose frame is read again from the window server first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Lifted {
+    pub draw: Draw,
+    pub reread: Vec<WindowServerId>,
+}
+
+/// What waits for the lift while the overlay is up: the reactor's latest word and the window server's
+/// orders.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Covered {
+    model: Option<RestModel>,
+    orders: Vec<ServerOrder>,
+}
+
 /// What the rest windows draw from: the reactor's latest model, and what is known of each window it
 /// names. Each turn takes what queued: the model, the window server's frames and orders, a lift.
+/// From the overlay's show to its lift a turn draws nothing and reads nothing (`cover`): every rest
+/// window is under the overlay, and the lift draws what came.
 #[derive(Clone, Debug, Default)]
 pub struct Rest {
     pub model: RestModel,
     pub windows: HashMap<WindowServerId, Tracked>,
+    covered: Option<Covered>,
 }
 
 impl Rest {
+    /// The overlay is up: until it lifts, a turn draws nothing.
+    pub fn cover(&mut self) { self.covered.get_or_insert_with(Covered::default); }
+
+    pub fn covered(&self) -> bool { self.covered.is_some() }
+
+    /// One turn at `now`: the reactor's word if one came, the window server's frames, each latest
+    /// last, and its orders. Uncovered, the turn draws them (`take_model` reading a window new to the
+    /// model with `read`). Covered, the frames and the orders are taken, so a park is taken with its
+    /// window's move and a hide from its order, but the word and the orders' reordering wait for the
+    /// lift, and nothing is read or drawn.
+    pub fn turn(
+        &mut self,
+        model: Option<RestModel>,
+        frames: &[(WindowServerId, ScreenRect)],
+        orders: Vec<ServerOrder>,
+        now: Instant,
+        read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
+    ) -> Option<Draw> {
+        let focus = match &mut self.covered {
+            Some(covered) => {
+                covered.model = model.or(covered.model.take());
+                covered.orders.extend(&orders);
+                None
+            }
+            None => Some(model.and_then(|model| self.take_model(model, now, read))),
+        };
+        self.take_frames(frames, now);
+        self.take_orders(&orders);
+        focus.map(|focus| Draw { orders, focus })
+    }
+
     /// The reactor's word at `now`: a window new to it is read off the window server (`read`, its
     /// frame and whether it is ordered out), each park waits for its window's move, and the window
     /// focus came to is named, when it changed, so its rest window is ordered again.
@@ -195,13 +254,22 @@ impl Rest {
         }
     }
 
-    /// The overlay lifts off `display` at `now`: every park waiting on a window there is taken. The
-    /// windows whose frame is read again from the window server before the bands are drawn: each one
-    /// there brought back, and each one there a rest window draws (`drawn`).
-    pub fn lift(&mut self, display: ScreenRect, now: Instant, drawn: impl Fn(WindowServerId) -> bool) -> Vec<WindowServerId> {
+    /// The overlay lifts at `now` off `display`, the one it was laid out on if any: what waited under
+    /// it is taken, the reactor's word with `take_model` and `read`, and every park waiting on a window
+    /// there. It draws what waited, after reading again from the window server the frame of each
+    /// window there brought back and each one there a rest window draws (`drawn`).
+    pub fn lift(
+        &mut self,
+        display: Option<ScreenRect>,
+        now: Instant,
+        read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
+        drawn: impl Fn(WindowServerId) -> bool,
+    ) -> Lifted {
+        let Covered { model, orders } = self.covered.take().unwrap_or_default();
+        let focus = model.and_then(|model| self.take_model(model, now, read));
         let mut reread = Vec::new();
         for (window, tracked) in self.windows.iter_mut() {
-            let there = tracked.frame.is_some_and(|frame| frame.intersects(&display));
+            let there = display.is_some_and(|display| tracked.frame.is_some_and(|frame| frame.intersects(&display)));
             let parked = tracked.parking.parked;
             tracked.parking.settle(false, there, now);
             let brought_back = parked && !tracked.parking.parked;
@@ -209,7 +277,7 @@ impl Rest {
                 reread.push(*window);
             }
         }
-        reread
+        Lifted { draw: Draw { orders, focus }, reread }
     }
 
     /// `window`'s frame as the window server has it now, kept as it was if it has none.
@@ -219,11 +287,13 @@ impl Rest {
         }
     }
 
-    /// Parks whose patience ran out at `now`, taken.
-    pub fn settle(&mut self, now: Instant) {
+    /// Parks whose patience ran out at `now`, taken; whether the turn draws them, which it does
+    /// unless the overlay is up.
+    pub fn settle(&mut self, now: Instant) -> bool {
         for tracked in self.windows.values_mut() {
             tracked.parking.settle(false, false, now);
         }
+        !self.covered()
     }
 
     /// When the next waiting park takes effect.
@@ -512,15 +582,67 @@ mod tests {
         };
         rest.take_model(model(vec![at(1, true, false), at(2, false, false), at(3, false, true)]), now, frames);
         rest.take_model(model(vec![at(1, true, true), at(2, false, true), at(3, false, false)]), now, |_| (None, false));
-        let mut reread = rest.lift(display()[0].bounds, now, |window| window == ws(1));
+        let mut reread = rest.lift(Some(display()[0].bounds), now, |_| panic!("no word waited"), |window| window == ws(1)).reread;
         reread.sort_by_key(|window| window.as_u32());
         assert_eq!(reread, vec![ws(1), ws(3)], "drawn there, and brought back there");
         assert!(rest.windows[&ws(1)].parking.parked && !rest.windows[&ws(3)].parking.parked);
         assert!(!rest.windows[&ws(2)].parking.parked, "a park on another display waits for its own move");
-        assert_eq!(rest.lift(other, now, |_| false), Vec::new(), "parked, drawn by none");
+        assert_eq!(rest.lift(Some(other), now, |_| (None, false), |_| false).reread, Vec::new(), "parked, drawn by none");
         assert!(rest.windows[&ws(2)].parking.parked, "its own display's lift");
         rest.reread(ws(1), None);
         assert_eq!(rest.windows[&ws(1)].frame, Some(SLOT), "no frame read keeps the one known");
+    }
+
+    fn reorder(id: u32) -> ServerOrder { ServerOrder { window: ws(id), change: OrderChange::Reordered } }
+
+    /// The frames rini's writes make, the 808s of a raise and the key window's turn come under the
+    /// overlay: no turn draws or reads, and the lift draws what came, once.
+    #[test]
+    fn a_flight_under_the_overlay_draws_nothing_until_its_lift_draws_it_once() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.cover();
+        let elsewhere = rect(868.0, 35.0, 859.0, 1079.0);
+        let turns = [
+            rest.turn(None, &[(ws(1), elsewhere)], Vec::new(), now, |_| panic!("read under the overlay")),
+            rest.turn(None, &[(ws(2), SLOT), (ws(1), elsewhere)], vec![reorder(1), reorder(2)], now, |_| panic!("read")),
+            rest.turn(Some(model(vec![at(1, false, false), at(2, true, false), at(3, false, false)])), &[], vec![reorder(2)], now, |_| panic!("read")),
+        ];
+        assert_eq!(turns, [None, None, None], "no turn under the overlay draws");
+        assert!(!rest.settle(now + PARK_PATIENCE), "nor does a park's patience");
+        assert_eq!(rest.windows[&ws(1)].frame, Some(elsewhere), "the frames are taken as they come");
+        assert!(rest.model.windows[0].focused && !rest.windows.contains_key(&ws(3)), "the word waits for the lift");
+        let lifted = rest.lift(Some(display()[0].bounds), now, |_| (Some(SLOT), false), |_| false);
+        assert_eq!(lifted.draw, Draw { orders: vec![reorder(1), reorder(2), reorder(2)], focus: Some(ws(2)) });
+        assert!(rest.model.windows[1].focused && rest.windows.contains_key(&ws(3)), "taken at the lift, the new window read");
+        assert!(!rest.covered());
+        let after = rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("known"));
+        assert_eq!(after, Some(Draw { orders: vec![reorder(1)], focus: None }), "after the lift a turn draws again");
+    }
+
+    /// A park is taken with its window's move under the overlay too, and a hide from its order, so
+    /// the lift draws neither band.
+    #[test]
+    fn under_the_overlay_a_park_is_taken_with_its_move_and_a_hide_with_its_order() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.take_model(model(vec![at(1, true, true), at(2, false, false)]), now, |_| (None, false));
+        rest.cover();
+        let hidden = ServerOrder { window: ws(2), change: OrderChange::Hidden };
+        rest.turn(None, &[(ws(1), rect(1676.0, 35.0, 1148.0, 1079.0))], vec![hidden], now, |_| panic!("read"));
+        assert!(rest.wanted().is_empty());
+        let other = rect(1728.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(rest.lift(Some(other), now, |_| panic!("no word waited"), |_| false).draw.orders, vec![hidden]);
+    }
+
+    #[test]
+    fn a_turn_draws_at_once_while_nothing_covers_it() {
+        let now = Instant::now();
+        let mut rest = Rest::default();
+        let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], vec![reorder(1)], now, |_| (Some(SLOT), false));
+        assert_eq!(drawn, Some(Draw { orders: vec![reorder(1)], focus: Some(ws(1)) }));
+        assert!(rest.settle(now));
+        assert_eq!(rest.lift(None, now, |_| panic!("no word waited"), |_| true), Lifted::default(), "laid out on no display, a lift takes no park");
     }
 
     #[test]

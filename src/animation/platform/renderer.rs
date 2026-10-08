@@ -18,7 +18,7 @@ use crate::animation::domain::motion::score::{Edit, MediaClock, Score};
 use crate::animation::event::Event;
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
 use crate::decorations::domain::style::Ring;
-use crate::decorations::platform::rest::OnLift;
+use crate::decorations::platform::rest::Handover;
 use crate::pictures::platform::picture::Picture;
 
 /// Everything the engine asks of the overlay, each one of its calls. Nothing asks for anything back.
@@ -124,13 +124,16 @@ enum Step {
     Play,
     Background,
     Show,
+    /// What is drawn at rest told it is under the overlay, so it draws nothing until the lift.
+    CoverRest,
 }
 
 /// A drain's steps: one that lifts the overlay places what is drawn at rest first and then hides
-/// it, all before its commands; one that shows it puts it up last.
+/// it, all before its commands; one that shows it puts it up last and then covers what is drawn at
+/// rest.
 fn steps(shown: Option<bool>) -> Vec<Step> {
     let lifts = (shown == Some(false)).then_some([Step::PlaceRest, Step::Hide]).into_iter().flatten();
-    let shows = (shown == Some(true)).then_some(Step::Show);
+    let shows = (shown == Some(true)).then_some([Step::Show, Step::CoverRest]).into_iter().flatten();
     lifts.chain([Step::Play, Step::Background]).chain(shows).collect()
 }
 
@@ -144,7 +147,7 @@ pub struct Renderer {
     display: Option<(ScreenRect, f64, f64)>,
     /// Tells the engine what each drain came to.
     report: Box<dyn Fn(Event)>,
-    before_lift: OnLift,
+    rest: Handover,
     mtm: MainThreadMarker,
 }
 
@@ -152,10 +155,10 @@ impl Renderer {
     pub fn new(
         rx: Receiver<Batch>,
         report: Box<dyn Fn(Event)>,
-        before_lift: OnLift,
+        rest: Handover,
         mtm: MainThreadMarker,
     ) -> Self {
-        Self { rx, overlay: None, display: None, report, before_lift, mtm }
+        Self { rx, overlay: None, display: None, report, rest, mtm }
     }
 
     /// Each time a batch comes, it and every batch queued behind it are played as one drain, and
@@ -174,7 +177,8 @@ impl Renderer {
 
     /// Plays a drain in one transaction, flushed, in its `steps`: when the drain lifts the overlay,
     /// what is drawn at rest on its display placed and the overlay brought down before it; put up after
-    /// when the drain shows it; and the window's background set once the holes' mask is committed.
+    /// when the drain shows it, and what is drawn at rest covered; and the window's background set
+    /// once the holes' mask is committed.
     /// Without an overlay every command but `Display` does nothing; a drain that dressed or posed a
     /// flight on none is `Unavailable`. A commit says when the drain began and when it was flushed.
     fn play(&mut self, drained: Drained) -> Event {
@@ -185,10 +189,8 @@ impl Renderer {
         for step in steps(shown) {
             match step {
                 Step::PlaceRest => {
-                    if self.overlay.is_some()
-                        && let Some((frame, _, _)) = self.display
-                    {
-                        (self.before_lift)(frame);
+                    if self.overlay.is_some() {
+                        (self.rest.lift)(self.display.map(|(frame, _, _)| frame));
                     }
                 }
                 Step::Hide => self.overlay.as_mut().into_iter().for_each(TileOverlay::hide),
@@ -204,6 +206,11 @@ impl Renderer {
                 }
                 Step::Background => self.overlay.as_mut().into_iter().for_each(TileOverlay::paint_background),
                 Step::Show => self.overlay.as_mut().into_iter().for_each(TileOverlay::show),
+                Step::CoverRest => {
+                    if self.overlay.is_some() {
+                        (self.rest.cover)();
+                    }
+                }
             }
         }
         let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
@@ -303,10 +310,12 @@ mod tests {
         assert_eq!(shown(batch(1, at, 0, vec![Render::Lift, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
     }
 
+    /// What is drawn at rest draws nothing from the overlay's show to its lift, and the lift places
+    /// every band before the overlay hides.
     #[test]
-    fn the_lift_places_every_rest_border_before_it_hides_the_overlay() {
+    fn the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay() {
         assert_eq!(steps(Some(false)), [Step::PlaceRest, Step::Hide, Step::Play, Step::Background]);
-        assert_eq!(steps(Some(true)), [Step::Play, Step::Background, Step::Show]);
+        assert_eq!(steps(Some(true)), [Step::Play, Step::Background, Step::Show, Step::CoverRest]);
         assert_eq!(steps(None), [Step::Play, Step::Background], "neither: nothing at rest is touched");
     }
 
