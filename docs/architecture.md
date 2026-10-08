@@ -107,7 +107,10 @@ permission, builds every actor and joins them.
    `decorations` reads `windows` (the window server's levels, sub-levels, radii, frames and
    whether a window is ordered in, and the window rules' matcher) and `displays` (`ServerFrame`, `ServerOrder` and the frames'
    order), and draws at rest by itself. `animation` draws with it, and `transitions` names
-   `decorations::domain::style` to carry each window's `Worn` from the reactor to its tile unread.
+   `decorations::domain::style` to carry each window's `Worn` from the reactor to its tile,
+   `decorations::domain::shape::outset` for how far its bands reach when it holes the overlay, and
+   decides from `Worn`'s `wore_ring` and `wears_ring` which ring a tile shows until its turn
+   (`transitions::domain::lifecycle::drawn_ringed`).
    `layout` takes the border each tiled window wears as plain widths the application hands it, so it
    names `decorations` no more than anything else.
    `pictures` reads the window server through `windows` and is upstream of `animation`, `transitions`, `switcher` and `bar`:

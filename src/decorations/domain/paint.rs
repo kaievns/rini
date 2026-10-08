@@ -466,8 +466,6 @@ mod tests {
         assert!(most <= 128, "{most} stops at most");
     }
 
-    /// The spec's `srgb_needs_no_extra_stops` assumed Core Animation interpolates in sRGB's values;
-    /// it does not, so an sRGB gradient takes stops as every other does.
     #[test]
     fn two_stops_alone_miss_by_more_than_a_level() {
         for gradient in [gradient(RED, BLUE, ColourSpace::Srgb), gradient(BLACK, WHITE, ColourSpace::SrgbLinear)] {

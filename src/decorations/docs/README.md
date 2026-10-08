@@ -8,7 +8,8 @@ who wears the ring, how deep each sits against the picture, the layers each tile
 the windows that draw the bands at rest. It reads `windows` (levels, sub-levels, radii, frames,
 whether a window is ordered in, which applications ask for attention) and `displays` (the window
 server's frames and orders). `animation` draws its decorations on each tile, `transitions` carries
-what each window wears to its tile unread, and the application decides it, fills the ring's and the
+what each window wears to its tile, reads from it which ring a tile shows until its turn and holes
+the overlay as far as its bands reach (`shape::outset`), and the application decides it, fills the ring's and the
 border's settings and the window rules from the config, folds the rules for each window, hands the
 layout the width each tiled window gives up to its border, and wires the rest windows.
 
@@ -220,7 +221,7 @@ from the 808, was back on top 7.4-25.4ms after it: 8 of 10 within 16.7ms, p90 25
 another app raises its window, that window sits above its own bands: the window covers none of
 them, which lie outside it, but its shadow does, and so does any window it rose past that overlaps
 them. A rest window is ordered again when the window server reorders its window or orders it
-back in (808, 816), when it is given a window, and when focus comes to its window, each once a turn
+back in (808, 815), when it is given a window, and when focus comes to its window, each once a turn
 (`rest::to_reorder`).
 
 **A click-through band is never hit.** Probe P5 drew a click-through band around a window and found
@@ -378,5 +379,5 @@ Animation's own curve, read the same `edge_in` and `edge_out` as the `path` rows
 
 ## Reading order
 
-`domain/shape.rs` → `domain/paint.rs` → `domain/style.rs` → `domain/stack.rs` → `domain/rest.rs` →
-`settings.rs` → `platform/layers.rs` → `platform/rest.rs`.
+`domain/shape.rs` → `domain/paint.rs` → `domain/style.rs` → `domain/rules.rs` → `domain/stack.rs` →
+`domain/rest.rs` → `settings.rs` → `platform/layers.rs` → `platform/rest.rs`.

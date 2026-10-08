@@ -141,7 +141,7 @@ enum ExecuteCommands {
     },
     /// Print layout tree debugging output in the running rini instance
     Debug,
-    /// Picture every window on screen that rini does not manage, such as a border tracing a window
+    /// Picture every window on screen that rini does not manage
     ///
     /// Background work only. Nothing is drawn and no window is moved. A window rini manages is
     /// pictured under its own id already, and a parked one is never pictured through its sliver.

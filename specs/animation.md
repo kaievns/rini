@@ -585,9 +585,10 @@ depth bands, the edge bounce and the nudge. The looks
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
-`src/decorations/domain/` is what each tile wears: the hairline's, the shadow's and the focus ring's
-shape, style and depth, which the overlay draws on the layers in `src/decorations/platform/layers.rs`. A window's
-corner radius is read in `src/windows/platform/window_server.rs`, decoded in
+`src/decorations/domain/` is what each tile wears: the hairline's, the shadow's, the focus ring's and
+the border's shape, style and depth, which the overlay draws on the layers in
+`src/decorations/platform/layers.rs`. A window's corner radius is read in
+`src/windows/platform/window_server.rs`, decoded in
 `src/windows/domain/info.rs` and resolved, with the fallback and the clamp, in
 `src/decorations/domain/shape.rs`. When each step happens is `src/transitions/`:
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`

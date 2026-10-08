@@ -69,7 +69,8 @@ pub struct Settings {
     /// measured, which holds a lift's hide for the overlay's own picture.
     pub journal: crate::transitions::settings::JournalSettings,
     pub window_snapping: WindowSnappingSettings,
-    /// `layout › focus-ring`: the ring rini draws around each workspace's active window.
+    /// `layout › focus-ring`, `layout › border` and what each `window-rule` says of them: the ring
+    /// and the border rini draws around windows.
     pub decorations: crate::decorations::settings::DecorationSettings,
     pub run_on_start: Vec<StartupCommand>,
     /// Mark every bar while the config file cannot be used, until it can.

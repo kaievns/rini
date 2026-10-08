@@ -52,9 +52,9 @@ pub type OnServerFrames = Box<dyn Fn(&[ServerFrame]) + Send>;
 pub enum OrderChange {
     /// 808: it was ordered against the others.
     Reordered,
-    /// 815: it was ordered out, minimised or its app hidden.
+    /// 816: it was ordered out, minimised or its app hidden.
     Hidden,
-    /// 816: it was ordered back in.
+    /// 815: it was ordered back in.
     Unhidden,
 }
 

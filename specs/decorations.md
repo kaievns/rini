@@ -160,8 +160,9 @@ wearing either is drawn by one rest window holding both.
 - The ring MUST NOT be drawn around a window rini has parked, judged by rini's layout rather than
   the window's frame: macOS leaves up to 52pt of a parked window on screen, and a ring around that
   sliver would draw a stripe at the display's edge. rini parks a window and brings one back by
-  moving it, so the ring goes or comes with that move, or at the lift that ends the flight, and never
-  before it.
+  moving it, so the ring goes or comes with that move, at the lift on its display that ends the
+  flight, or 250ms after rini parked it or brought it back if neither has come by then, and never
+  earlier.
 - The ring MUST NOT be drawn while Mission Control is up, around a window in native fullscreen or
   entering or leaving it, around a window the window server has ordered out (minimised, its
   application hidden), or around a window on a Space its display is not showing.
