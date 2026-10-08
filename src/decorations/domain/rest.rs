@@ -16,7 +16,8 @@ use crate::displays::event::{OrderChange, ServerOrder};
 /// How long a change of `parked` waits for its window to move before it takes effect anyway.
 pub const PARK_PATIENCE: Duration = Duration::from_millis(250);
 
-/// Why a window shows no band wherever it is, as rini's own stores have it.
+/// Why a window shows no band wherever it is, as rini's own stores have it. A window on a Space its
+/// display is not showing is not sent at all.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Held {
     /// rini has it off screen: its workspace is not the one its display shows, or its strip has it
@@ -26,8 +27,6 @@ pub struct Held {
     pub mission_control: bool,
     /// In native fullscreen, or entering or leaving it.
     pub fullscreen: bool,
-    /// On a Space its display is not showing.
-    pub space_hidden: bool,
 }
 
 /// One window that wears a decoration rini draws at rest, as the reactor sends it.
@@ -85,9 +84,9 @@ pub fn shown(
     frame: Option<ScreenRect>,
     displays: &[RestDisplay],
 ) -> bool {
-    let Held { parked: _, mission_control, fullscreen, space_hidden } = window.held;
+    let Held { parked: _, mission_control, fullscreen } = window.held;
     let on_a_display = frame.and_then(|frame| display_of(frame, displays)).is_some();
-    window.wears_a_band() && !(parked || mission_control || fullscreen || space_hidden || ordered_out) && on_a_display
+    window.wears_a_band() && !(parked || mission_control || fullscreen || ordered_out) && on_a_display
 }
 
 /// Whether a window is ordered out after `orders`, ordered out before them if `was`: its last hide
@@ -236,8 +235,8 @@ impl Rest {
     /// the ring moving with focus makes none.
     pub fn pool_size(&self) -> usize {
         let could_show = self.model.windows.iter().filter(|window| {
-            let Held { parked: _, mission_control, fullscreen, space_hidden } = window.held;
-            window.wears_a_band() && !(mission_control || fullscreen || space_hidden)
+            let Held { parked: _, mission_control, fullscreen } = window.held;
+            window.wears_a_band() && !(mission_control || fullscreen)
         });
         could_show.count().max(self.model.displays.len())
     }
@@ -386,12 +385,6 @@ mod tests {
     #[test]
     fn a_window_in_native_fullscreen_shows_no_band() {
         let window = ringed(Held { fullscreen: true, ..Held::default() });
-        assert!(!shown(&window, false, false, Some(SLOT), &display()));
-    }
-
-    #[test]
-    fn a_window_on_a_space_its_display_is_not_showing_shows_no_band() {
-        let window = ringed(Held { space_hidden: true, ..Held::default() });
         assert!(!shown(&window, false, false, Some(SLOT), &display()));
     }
 

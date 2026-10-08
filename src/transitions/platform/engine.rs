@@ -3758,6 +3758,8 @@ mod tests {
             /// How far the clock moves each time the engine reads it: not at all unless a test says.
             per_read: Arc<Mutex<Duration>>,
             media: MediaClock,
+            /// What `wid(1)` wears through a pan: nothing unless a test says.
+            worn: Worn,
         }
 
         impl Harness {
@@ -3796,7 +3798,7 @@ mod tests {
                         }
                     }),
                 });
-                let mut harness = Harness { engine, outbox, now, placing, per_read, media };
+                let mut harness = Harness { engine, outbox, now, placing, per_read, media, worn: Worn::default() };
                 let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
                 let committed = harness.committed(only_batch(&display).seq, None);
                 harness.step(committed);
@@ -3862,7 +3864,7 @@ mod tests {
             fn strip_pan(&self, from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
                 let frame = rect(867.0, 0.0, 859.0, 1081.0);
                 let window = SurfaceWindow {
-                    worn: Default::default(),
+                    worn: self.worn,
                     window: wid(1),
                     server_id: WindowServerId::new(1),
                     frame,
@@ -4475,6 +4477,54 @@ mod tests {
             assert!(h.engine.quiet.is_none(), "not armed at the lift's call");
             h.commit(lift);
             assert_eq!(h.engine.quiet.as_ref().map(|(generation, _)| *generation), Some(Generation(1)));
+        }
+
+        /// `wid(1)` wearing a 1.3pt ring where the flight ends, 1.5pt at 2x.
+        fn ringed() -> Worn {
+            use crate::decorations::domain::paint::{Colour, Paint};
+            let solid = Paint::Solid(Colour::rgb(0x7fc8ff));
+            let ring = crate::decorations::domain::style::Band { width: 1.3, active: solid, inactive: solid, urgent: solid };
+            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), ..Default::default() };
+            Worn { decoration, wore_ring: true, wears_ring: true }
+        }
+
+        fn holes(sent: &[Sent]) -> Vec<f64> {
+            let commands = batches(sent).into_iter().flat_map(|batch| &batch.commands);
+            commands
+                .filter_map(|command| if let Render::Holes(holes) = command { Some(holes) } else { None })
+                .flat_map(|holes| holes.iter().map(|(_, outset)| *outset))
+                .collect()
+        }
+
+        /// The overlay is holed over a ringed window's band too, as wide as the band is drawn on the
+        /// display; with no display laid out it knows no scale, and holes the window alone.
+        #[test]
+        fn the_overlay_is_holed_over_a_band_at_its_displays_scale_and_over_the_window_alone_without_one() {
+            for (displayed, outset) in [(true, 1.5), (false, 0.0)] {
+                let mut h = Harness::new();
+                h.worn = ringed();
+                let pan = h.pan();
+                h.step(pan);
+                if !displayed {
+                    h.engine.display = None;
+                }
+                h.advance(Duration::from_millis(5));
+                let frame_zero = h.frame_zero();
+                assert_eq!(holes(&h.step(frame_zero)), [outset], "displayed {displayed}");
+            }
+        }
+
+        /// measure-handover measures past a window's edge as far as the band it wears where the flight
+        /// ends reaches, in whole device pixels.
+        #[test]
+        fn a_measured_lift_hands_each_window_the_band_it_wears() {
+            let mut h = Harness::measuring();
+            h.worn = ringed();
+            let check = h.lifted().into_iter().find_map(|sent| match sent {
+                Sent::Asked(Asked::CheckHandover(check)) => Some(check),
+                _ => None,
+            });
+            assert_eq!(check.expect("measured").windows, [(wid(1), end(), 1.5)]);
         }
 
         #[test]

@@ -201,7 +201,6 @@ impl Reactor {
                         parked: !shown_workspace || off_strip,
                         mission_control,
                         fullscreen: affinity.is_known_fullscreen_window(server_id),
-                        space_hidden: screen.is_none(),
                     },
                 })
             })

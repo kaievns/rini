@@ -12,6 +12,7 @@ use crate::decorations::domain::rest::{RestModel, RestWindow};
 use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
 use crate::windows::domain::attention::Attention;
+use crate::windows::domain::catalogue::NativeFullscreenTransition;
 use crate::windows::domain::rules::RuleMatch;
 use crate::windows::platform::window_server::set_space_window_list_for_space_override;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
@@ -149,6 +150,53 @@ fn a_column_the_strip_parks_is_sent_to_the_rest_actor_as_parked() {
     }
     assert!(model.windows.iter().any(|window| window.held.parked), "four 0.7-wide columns: the last is off screen");
     assert!(model.windows.iter().any(|window| !window.held.parked));
+}
+
+#[test]
+fn no_band_is_sent_to_show_while_mission_control_is_up() {
+    let mut desk = desk();
+    let left = desk.left;
+    focus(&mut desk, left_ghostty(), left);
+    desk.reactor.handle_test_batch(vec![Event::MissionControlNativeEntered]);
+    let model = models(&mut desk.rest).pop().expect("sent");
+    assert!(!model.windows.is_empty() && model.windows.iter().all(|window| window.held.mission_control));
+    desk.reactor.handle_test_batch(vec![Event::MissionControlNativeExited]);
+    let model = models(&mut desk.rest).pop().expect("sent");
+    assert!(model.windows.iter().all(|window| !window.held.mission_control));
+}
+
+#[test]
+fn a_window_macos_takes_into_native_fullscreen_is_sent_held() {
+    let mut desk = desk();
+    let left = desk.left;
+    focus(&mut desk, left_ghostty(), left);
+    let _ = desk.reactor.state.windows.suspend_window_to_native_fullscreen(
+        left_ghostty(),
+        Some(WindowServerId::new(901)),
+        Some(left),
+        SpaceId::new(0x400000001),
+        NativeFullscreenTransition::Suspended,
+    );
+    desk.reactor.handle_test_batch(Vec::new());
+    let model = models(&mut desk.rest).pop().expect("sent");
+    assert!(sent(&model, 901).held.fullscreen);
+    assert!(!sent(&model, 902).held.fullscreen && !sent(&model, 903).held.fullscreen, "only that window");
+}
+
+/// A Space a display stops showing is no longer active, so its windows are sent no band at all.
+#[test]
+fn a_window_on_a_space_its_display_is_not_showing_is_sent_no_band() {
+    let mut desk = desk();
+    let left = desk.left;
+    focus(&mut desk, left_ghostty(), left);
+    let left_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let right_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let other = SpaceId::new(3);
+    set_space_membership(&[(left, &[901, 902]), (other, &[])]);
+    desk.reactor.handle_test_batch(vec![space_state_event(vec![left_frame, right_frame], vec![Some(left), Some(other)])]);
+    let model = models(&mut desk.rest).pop().expect("sent");
+    let sent_ids: Vec<u32> = model.windows.iter().map(|window| window.window.as_u32()).collect();
+    assert!(sent_ids.contains(&901) && !sent_ids.contains(&903) && !sent_ids.contains(&904), "{sent_ids:?}");
 }
 
 /// A tiled window gives its border out of its slot as its own display draws it, in whole device
