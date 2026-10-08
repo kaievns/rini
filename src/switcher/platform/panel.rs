@@ -33,6 +33,7 @@ use objc2_quartz_core::{
     CALayer, CALayerContentsGravity, CAMediaTimingFunction, CATextLayer, CATransaction,
     kCAMediaTimingFunctionEaseOut,
 };
+use rini_runloop::turns;
 use tracing::{debug, warn};
 
 use crate::bar::domain::palette;
@@ -401,6 +402,7 @@ impl SwitcherPanel {
         let showing = self.visible.then_some(self.tiles.len());
 
         self.window.setFrame_display(cocoa, false);
+        turns::changed("switcher.frame");
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), strip.panel.size);
         self.backing.setFrame(bounds);
         self.view.setFrame(bounds);
@@ -432,6 +434,7 @@ impl SwitcherPanel {
 
         if !self.visible {
             self.window.orderFrontRegardless();
+            turns::changed("switcher.show");
             self.visible = true;
         }
     }
@@ -463,6 +466,7 @@ impl SwitcherPanel {
             return;
         }
         self.window.orderOut(None);
+        turns::changed("switcher.hide");
         self.visible = false;
         self.view.ivars().hits.take();
     }

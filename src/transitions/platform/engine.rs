@@ -94,6 +94,9 @@ pub enum Event {
         scale: f64,
         /// Points to leave clear at the top for the bar; the overlay window starts below it.
         top_band: f64,
+        /// Whether anything is drawn at rest on it, which a landed flight places under the overlay a
+        /// tick ahead of its lift.
+        rests: bool,
     },
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
@@ -161,6 +164,21 @@ pub enum Event {
     Journal(JournalSettings),
     /// What the renderer made of the batches it drew last. Posted by its report.
     Rendered(crate::animation::event::Event),
+    /// A turn of the main thread over a frame, for the journal. Sent by its run loop's observer.
+    MainTurn(rini_runloop::turns::MainTurn),
+}
+
+impl Event {
+    /// When the event a flight request answers was taken: none for anything but a request.
+    pub fn pressed(&self) -> Option<Instant> {
+        match self {
+            Event::Animate { cause, .. }
+            | Event::AnimateSurface { cause, .. }
+            | Event::Bounce { cause, .. }
+            | Event::DebugSlide { cause, .. } => Some(cause.at),
+            _ => None,
+        }
+    }
 }
 
 /// Hands the renderer a batch of render commands, which it answers as `Event::Rendered`.
@@ -393,7 +411,7 @@ fn summary(
     focused_look: Option<WindowId>,
     key: Option<WindowId>,
     shape: Shape,
-    display: ScreenRect,
+    (display, rests): (ScreenRect, bool),
     opaque: &dyn Fn(WindowId) -> bool,
 ) -> StageSummary {
     let opaque = tiles.iter().map(|t| t.window).filter(|w| opaque(*w)).collect();
@@ -410,6 +428,7 @@ fn summary(
         start: shape.start,
         duration: shape.duration,
         display,
+        rests,
         opaque,
     }
 }
@@ -433,7 +452,7 @@ impl RunningAnimation {
     }
 
     /// The flight as composed, for the coordinator.
-    fn stage(&self, shape: Shape, display: ScreenRect, opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
+    fn stage(&self, shape: Shape, (display, rests): (ScreenRect, bool), opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
         summary(
             self.tile_summaries(display),
             self.final_frames.clone(),
@@ -442,7 +461,7 @@ impl RunningAnimation {
             self.focused_look,
             self.key,
             shape,
-            display,
+            (display, rests),
             opaque,
         )
     }
@@ -803,6 +822,11 @@ pub struct FlightEngine {
     /// while its coordinates stay the full display's, so a captured desktop and the tiles keep their
     /// registration. Zero with the bar off.
     top_band: f64,
+    /// Whether anything is drawn at rest on the display, as the last `SetDisplay` said.
+    rests: bool,
+    /// The latest press a request carried: a place or a lift given before a later one's is not that
+    /// press's flight, which what is drawn at rest tells apart.
+    took: Option<Instant>,
     /// When everything happens, and the journal of it.
     flights: Journalled,
     /// What the reactor last said of the journal; `None` until it has.
@@ -849,6 +873,8 @@ impl FlightEngine {
             display: None,
             display_id: None,
             top_band: 0.0,
+            rests: false,
+            took: None,
             flights: Journalled::default(),
             journal: None,
             writer: None,
@@ -883,7 +909,11 @@ impl FlightEngine {
                 frame,
                 scale,
                 top_band,
-            } => self.set_display(id, frame, scale, top_band),
+                rests,
+            } => {
+                self.rests = rests;
+                self.set_display(id, frame, scale, top_band)
+            }
             Event::Animate { windows, focus, focused_before, key, duration, look, cause } => {
                 self.take_request(cause);
                 self.start(windows, (focus, focused_before), key, duration, look)
@@ -944,6 +974,9 @@ impl FlightEngine {
             Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
             Event::Journal(settings) => self.set_journal(settings),
             Event::Rendered(answer) => self.rendered(answer),
+            Event::MainTurn(turn) => {
+                self.flights.main_turn(turn.began, turn.busy, &turn.actors, turn.outside, &turn.changes)
+            }
         }
         self.keep_held();
         self.send_batch();
@@ -955,6 +988,7 @@ impl FlightEngine {
     /// A request: a press never waits on a measurement.
     fn take_request(&mut self, cause: Cause) {
         self.lift_heard(Heard::Request);
+        self.took = self.took.max(Some(cause.at));
         self.flights.pressed(cause);
     }
 
@@ -1027,6 +1061,9 @@ impl FlightEngine {
                 let ring = self.running.as_mut().and_then(|running| running.draw_focused(window, focused));
                 let ring = ring.unwrap_or(if focused { Ring::Active } else { Ring::None });
                 self.render(Render::Focus { window, focused, ring });
+            }
+            Command::PlaceRest => {
+                self.render(Render::PlaceRest { through: self.took });
             }
             Command::Lift { generation } => self.lift(generation, now),
             Command::Warm(windows) => {
@@ -1106,8 +1143,8 @@ impl FlightEngine {
     /// sent since draws nothing either.
     fn rendered(&mut self, answer: crate::animation::event::Event) {
         match answer {
-            crate::animation::event::Event::Committed { seq, overlay, shown, sent, began, flushed } => {
-                self.flights.drawn(self.now(), seq, shown, sent, began, flushed);
+            crate::animation::event::Event::Committed { seq, overlay, shown, places, sent, began, flushed } => {
+                self.flights.drawn(self.now(), seq, (shown, places), (sent, began, flushed));
                 if overlay.is_some() {
                     self.overlay = overlay;
                 }
@@ -1216,7 +1253,7 @@ impl FlightEngine {
         let server_id = WindowServerId::from(window);
         let clipped = picture.source.clips();
         let Some(running) = self.running.as_mut() else { return };
-        let radius = || crate::windows::platform::window_server::corner_radii(&[server_id]).get(&server_id).copied();
+        let radius = || crate::windows::platform::window_server::corner_radius(server_id);
         let took = running.take_picture(window, &picture, clipped, radius);
         let flown = running.flown;
         if matches!(took, Took::Nothing) {
@@ -1347,7 +1384,7 @@ impl FlightEngine {
             None,
             key,
             shape,
-            display,
+            (display, self.rests),
             &|window| self.pictures.knowledge(WindowServerId::from(window)).is_opaque(),
         );
         self.quiet = None;
@@ -1377,7 +1414,7 @@ impl FlightEngine {
     /// What the flight composed, told to the coordinator.
     fn stage(&self, shape: Shape) -> Option<StageSummary> {
         let (running, (display, _)) = (self.running.as_ref()?, self.display?);
-        Some(running.stage(shape, display, &|window| {
+        Some(running.stage(shape, (display, self.rests), &|window| {
             self.pictures.knowledge(WindowServerId::from(window)).is_opaque()
         }))
     }
@@ -2115,8 +2152,9 @@ impl FlightEngine {
         self.drive(lifecycle::Event::Extend(remaining));
     }
 
-    /// One frame of the clock: where the tiles are drawn and where the windows are, read only once
-    /// the clock is done; the tiles are where they end only once every batch is committed. It draws
+    /// One frame of the clock: where the tiles are drawn and where the windows are, read only from a
+    /// tick before the clock is done, for the rest windows' place and the lift; the tiles are where
+    /// they end only once every batch is committed, the place's among them. It draws
     /// only the trace of where each container is presented, and that only while its target is on.
     fn tick(&mut self) {
         if self.flights.coordinator().is_flying() {
@@ -2209,7 +2247,7 @@ impl FlightEngine {
 
     /// The overlay down, and its tiles let go; `owed` waits for that to be drawn.
     fn hide(&mut self, owed: Vec<Owed>) {
-        self.lifted = self.render(Render::Lift);
+        self.lifted = self.render(Render::Lift { through: self.took });
         for owed in owed {
             self.owe(self.lifted, owed);
         }
@@ -2567,7 +2605,7 @@ mod tests {
             running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            let stage = running.stage(layout(vec![wid(2)]), display, &|window| window == wid(1));
+            let stage = running.stage(layout(vec![wid(2)]), (display, true), &|window| window == wid(1));
             assert_eq!(
                 stage.tiles[0],
                 TileSummary {
@@ -2592,7 +2630,7 @@ mod tests {
             assert_eq!(stage.opaque, vec![wid(1)]);
             assert_eq!((stage.awaiting, stage.display), (vec![wid(2)], display));
             running.shown_focus = Some(wid(2));
-            assert_eq!(running.stage(layout(Vec::new()), display, &|_| false).losing_focus, None, "handed over");
+            assert_eq!(running.stage(layout(Vec::new()), (display, true), &|_| false).losing_focus, None, "handed over");
         }
     }
 
@@ -3810,7 +3848,7 @@ mod tests {
                     }),
                 });
                 let mut harness = Harness { engine, outbox, now, placing, per_read, media, worn: Worn::default() };
-                let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
+                let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND, rests: true });
                 let committed = harness.committed(only_batch(&display).seq, None);
                 harness.step(committed);
                 harness
@@ -3855,7 +3893,7 @@ mod tests {
             /// The renderer's answer that every batch up to `seq` is committed, at once.
             fn committed(&self, seq: u64, overlay: Option<WindowServerId>) -> Event {
                 let now = self.at();
-                Event::Rendered(Committed { seq, overlay, shown: None, sent: now, began: now, flushed: now })
+                Event::Rendered(Committed { seq, overlay, shown: None, places: false, sent: now, began: now, flushed: now })
             }
 
             /// The renderer committed every batch up to `seq`.
@@ -3977,7 +4015,8 @@ mod tests {
                 Render::Focus { .. } => "focus",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
-                Render::Lift => "lift",
+                Render::PlaceRest { .. } => "place_rest",
+                Render::Lift { .. } => "lift",
                 Render::Trace => "trace",
             }
         }
@@ -4548,7 +4587,7 @@ mod tests {
                 h.step(Event::LiftPatience)
             };
             let moved = |h: &mut Harness| {
-                h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0 })
+                h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0, rests: true })
             };
             let hearings: [(&str, &dyn Fn(&mut Harness) -> Vec<Sent>); 3] =
                 [("its picture", &taken), ("the patience", &patience), ("the overlay moving", &moved)];
@@ -4607,8 +4646,13 @@ mod tests {
             let (begun, shown) = h.shown();
             h.commit(begun);
             h.advance(Duration::from_millis(400));
-            assert!(lift_batch(&h.step(Event::Tick)).is_none(), "the show's batch is not drawn");
+            let sent = h.step(Event::Tick);
+            assert!(lift_batch(&sent).is_none(), "the show's batch is not drawn");
+            let placed = only_batch(&sent).seq;
             h.commit(shown);
+            h.advance(FRAME_INTERVAL);
+            assert!(lift_batch(&h.step(Event::Tick)).is_none(), "nor the rest windows' place");
+            h.commit(placed);
             h.advance(FRAME_INTERVAL);
             assert!(lift_batch(&h.step(Event::Tick)).is_some());
         }
@@ -4680,11 +4724,91 @@ mod tests {
                 let pan = h.pan();
                 sent.extend(h.step(pan));
                 let commands: Vec<&Render> = batches(&sent).into_iter().flat_map(|batch| &batch.commands).collect();
-                let lift = commands.iter().rposition(|command| matches!(command, Render::Lift)).expect("lifted");
+                let lift = commands.iter().rposition(|command| matches!(command, Render::Lift { .. })).expect("lifted");
                 let dress = commands.iter().rposition(|command| matches!(command, Render::Dress { .. })).expect("dressed");
                 assert!(lift < dress, "dressed after the lift");
                 assert!(matches!(commands[dress], Render::Dress { desktop: Some(_), .. }), "with the desktop held");
             }
+        }
+
+        /// The tick that sees the windows landed a frame before the clock runs out sends the rest
+        /// windows' place in a batch of its own, so the lift's batch only hides.
+        #[test]
+        fn a_landed_flight_places_the_rest_a_tick_before_it_lifts() {
+            let mut h = Harness::new();
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+            let tick = |h: &mut Harness, by: Duration| {
+                h.advance(by);
+                let sent = h.step(Event::Tick);
+                if let Some(seq) = batches(&sent).iter().map(|batch| batch.seq).max() {
+                    h.commit(seq);
+                }
+                sent
+            };
+            assert!(!batches(&tick(&mut h, left - Duration::from_millis(120))).iter().any(|batch| kinds(batch).contains(&"place_rest")));
+            let sent = tick(&mut h, Duration::from_millis(115));
+            assert_eq!(kinds(only_batch(&sent)), ["place_rest"], "a tick ahead");
+            let sent = tick(&mut h, FRAME_INTERVAL);
+            let lift = lift_batch(&sent).expect("lifted");
+            assert!(!kinds(lift).contains(&"place_rest"), "{:?}", kinds(lift));
+        }
+
+        /// A place and a lift carry the latest press the engine had taken as it gave them, so what is
+        /// drawn at rest tells a press after them, a flight of its own, from one merged into theirs;
+        /// a lift held for the overlay's picture and hidden by the next press carries the press before.
+        #[test]
+        fn a_place_and_a_lift_carry_the_latest_press_taken_before_them() {
+            let through = |sent: &[Sent]| -> Vec<(&'static str, Option<Instant>)> {
+                batches(sent)
+                    .into_iter()
+                    .flat_map(|batch| &batch.commands)
+                    .filter_map(|command| match command {
+                        Render::PlaceRest { through } => Some(("place_rest", *through)),
+                        Render::Lift { through } => Some(("lift", *through)),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let mut h = Harness::new();
+            let pressed = Some(h.at());
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+            h.advance(left - Duration::from_millis(5));
+            let placed = h.step(Event::Tick);
+            h.commit(only_batch(&placed).seq);
+            h.advance(FRAME_INTERVAL);
+            let lifted = h.step(Event::Tick);
+            assert_eq!([through(&placed), through(&lifted)].concat(), [("place_rest", pressed), ("lift", pressed)]);
+
+            let mut h = Harness::measuring();
+            let pressed = Some(h.at());
+            h.lifted();
+            h.advance(Duration::from_millis(10));
+            let pan = h.pan();
+            let hidden = h.step(pan);
+            assert_eq!(through(&hidden), [("lift", pressed)], "the held lift's press, not the one hiding it");
+        }
+
+        /// With nothing drawn at rest no place is sent, so the lift waits behind no batch of its own,
+        /// and no tick reads the windows' landing a frame before the clock runs out.
+        #[test]
+        fn with_nothing_drawn_at_rest_no_place_is_sent_and_the_lift_waits_for_none() {
+            let mut h = Harness::new();
+            let display = h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND, rests: false });
+            h.commit(only_batch(&display).seq);
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+            h.advance(left - Duration::from_millis(5));
+            assert!(!h.engine.flights.coordinator().wants_landing(h.at()), "the landing read only at the end");
+            assert!(batches(&h.step(Event::Tick)).is_empty(), "no place a tick ahead");
+            h.advance(FRAME_INTERVAL);
+            let sent = h.step(Event::Tick);
+            let lift = lift_batch(&sent).expect("lifted, with no place to wait for");
+            assert!(batches(&sent).iter().all(|batch| !kinds(batch).contains(&"place_rest")), "{:?}", kinds(lift));
         }
 
         #[test]
@@ -4764,7 +4888,7 @@ mod tests {
             h.advance(Duration::from_micros(1_500));
             let heard = h.at();
             let at = |us| handed + Duration::from_micros(us);
-            let answer = Committed { seq: shown, overlay: Some(OVERLAY), shown: Some(true), sent: handed, began: at(400), flushed: at(700) };
+            let answer = Committed { seq: shown, overlay: Some(OVERLAY), shown: Some(true), places: false, sent: handed, began: at(400), flushed: at(700) };
             assert_eq!(placed(&h.step(Event::Rendered(answer))), [vec![(wid(1), end())]]);
             assert_eq!(h.at(), heard + Duration::from_millis(3), "the writes took their time");
 
@@ -4776,8 +4900,43 @@ mod tests {
             let drawn: Vec<_> = burst.marks.iter().filter(|stamped| matches!(stamped.mark, Mark::Drawn { seq, .. } if seq == shown)).collect();
             assert_eq!(drawn.len(), 1, "{:?}", burst.marks);
             assert_eq!(drawn[0].at, heard, "before the writes it released");
-            let mark = Mark::Drawn { seq: shown, shown: Some(true), queued_us: 400, applied_us: 300, flushed_before_us: 800 };
+            let mark = Mark::Drawn { seq: shown, shown: Some(true), places: false, queued_us: 400, applied_us: 300, flushed_before_us: 800 };
             assert_eq!(drawn[0].mark, mark);
+        }
+
+        /// A slow main-thread turn the observer sends is journalled with the flight it falls in, and draws
+        /// nothing.
+        #[test]
+        fn a_main_turn_is_journalled_and_draws_nothing() {
+            let mut h = Harness::new();
+            let bursts = h.writing();
+            let pan = h.pan();
+            h.step(pan);
+            let began = h.at();
+            let ms = Duration::from_millis;
+            let turn = rini_runloop::turns::MainTurn {
+                began,
+                busy: ms(260),
+                actors: vec![("renderer", ms(2))],
+                outside: ms(258),
+                changes: vec![("overlay.show", began - ms(4))],
+            };
+            assert!(batches(&h.step(Event::MainTurn(turn))).is_empty());
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            h.advance(Duration::from_millis(400));
+            let lift = lift_batch(&h.step(Event::Tick)).expect("lifted").seq;
+            h.commit(lift);
+            h.step(Event::Quiet(Generation(h.generation())));
+            let burst = bursts.try_recv().expect("the settled burst");
+            let at = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. })).expect("marked");
+            let marks: Vec<_> = burst.marks[at..at + 3].iter().map(|stamped| (stamped.at, stamped.mark)).collect();
+            assert_eq!(marks, [
+                Mark::MainTurn { busy_us: 260_000, outside_us: 258_000, actors: 1, changes: 1 },
+                Mark::TurnActor { actor: "renderer", us: 2_000 },
+                Mark::TurnChange { what: "overlay.show", before_us: 4_000 },
+            ].map(|mark| (began, mark)));
         }
 
         /// Every picture a tile takes is journalled with its route, its blur and its age: the cache's as

@@ -61,7 +61,7 @@ sends none, so a tick is no transaction. The renderer (`Renderer::run`) wakes on
 every batch queued behind it, plays them in order as one drain in one `CATransaction`, flushed, and
 answers once, with the highest number (`Event::Rendered`): a busy main thread costs one late commit,
 never a backlog of them. The answer is `Committed`, with the overlay's window number once the window
-server has numbered it and the drain's times, which the journal marks (`drawn` in `journal.md`)
+server has numbered it, whether it showed, lifted or placed, and the drain's times, which the journal marks (`drawn` in `journal.md`)
 before what the commit releases goes out, or `Unavailable` when the drain dressed or posed a flight
 and there is no overlay to draw it on. Nothing in that drain will ever be drawn, so what it covers
 releases what waited for it all the same: a lift that went out before the answer still writes its
@@ -95,8 +95,8 @@ on every begin was rejected: it costs every press 8-16ms.
 
 The frame clock is the engine's own `RepeatingTimer`, at `FRAME_INTERVAL` from a transition's begin
 to its lift, on the `transitions` loop. A tick paces decisions only: frame zero's patience, the
-coalesce, the hold, the final ask, and the `settled` and `landed` checks with the overdue lift
-(`LIFT_GRACE`). Core Animation draws every frame on the render server from the tracks' begin times,
+coalesce, the hold, the final ask, the rest windows' place, and the `settled` and `landed` checks
+with the overdue lift (`LIFT_GRACE`). Core Animation draws every frame on the render server from the tracks' begin times,
 so aligning ticks to the display buys no frame; the 60Hz timer that "dropped drawn frames" ("The
 overlay engine" in `src/animation/docs/animation-smoothness.md`) drew on its ticks, which nothing
 does now. `CADisplayLink` is rejected: it is made from main-thread objects, and scheduled on main a
@@ -171,6 +171,20 @@ service's cache already holds them.
 The lift waits for the clock, the tiles presented where they end and the real windows where they were
 written, or for `LIFT_GRACE` past the clock ("Real windows land before lift"). What follows it is
 "Capture work in flight".
+
+The rest windows that draw the focus ring and the border are placed ahead of it (`PlaceRest`),
+once a flight end: at the first tick from `FRAME_INTERVAL` before the clock runs out that reads the
+real windows landed, so their work is a drain of its own a tick before the lift's, or with the lift
+when no tick saw them land sooner. The engine reads where the windows are from that tick on
+(`Coordinator::wants_landing`), one read more a flight than the lift alone took. A merge that moves
+the clock or writes frames places them again before its lift; one that writes nothing keeps the
+place. The lift's drain then only tells the rest windows what came since and hides the overlay
+("One transaction a drain, flushed" in `src/animation/docs/README.md`), and since the lift waits for
+every batch to be committed, it waits for the place's too. The engine gives the place and the lift
+the latest press it had taken (`through`), so the rest windows tell a flight begun after the lift
+was given, which must wait for its own, from a press merged into the one lifting. With nothing drawn at rest, as the
+reactor says with each `SetDisplay` and each flight carries (`StageSummary::rests`), no place is
+given and the landing is read only once the clock is done, as before the place existed.
 
 ## Layout changes and strip movements
 

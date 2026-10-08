@@ -1,21 +1,28 @@
 //! A decoration at rest, drawn by a window of rini's own directly above the window it decorates:
 //! which windows show a band and when, what each turn of the rest windows makes of the reactor's
-//! word and the window server's, what waits for the lift while the overlay is up, which of rini's
-//! rest windows draws each, which are ordered above their windows again, and that none is kept and
-//! nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
+//! word and the window server's, which windows are asked of the window server as they are first
+//! named, what waits from a flight's begin for its place ahead of the lift, how many rest windows
+//! rini keeps, by the fullest workspace on each display, which of them draws each and what each
+//! changes to draw it, which are ordered above their windows again and when one takes its window's
+//! level, and that none is kept and nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
-use rini_core::ids::WindowServerId;
-use rini_geometry::space::ScreenRect;
+use rini_core::ids::{SpaceId, WindowServerId};
+use rini_geometry::space::{Respace, ScreenRect, ScreenVector, TileSize};
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::decorations::domain::shape;
 use crate::decorations::domain::style::{Decoration, Ring, Style};
-use crate::displays::event::{OrderChange, ServerOrder};
+use crate::displays::event::{OrderChange, ServerOrder, StackLevel};
 
 /// How long a change of `parked` waits for its window to move before it takes effect anyway.
 pub const PARK_PATIENCE: Duration = Duration::from_millis(250);
+
+/// How long a flight that has not shown holds the rest windows before they let go and draw what
+/// waited: past the engine's wait for frame zero and the slowest show measured ("The handover" in
+/// `src/decorations/docs/README.md`).
+pub const FLIGHT_PATIENCE: Duration = Duration::from_millis(250);
 
 /// Why a window shows no band wherever it is, as rini's own stores have it. A window on a Space its
 /// display is not showing is not sent at all.
@@ -30,10 +37,19 @@ pub struct Held {
     pub fullscreen: bool,
 }
 
+/// The workspace a window is on, as plain numbers: the Space it is on, which one display shows, and
+/// the workspace's own, of which that display shows one at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Group {
+    pub space: SpaceId,
+    pub workspace: u64,
+}
+
 /// One window that wears a decoration rini draws at rest, as the reactor sends it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RestWindow {
     pub window: WindowServerId,
+    pub group: Group,
     pub decoration: Decoration,
     /// The managed window macOS has focused.
     pub focused: bool,
@@ -136,50 +152,93 @@ impl Parking {
     pub fn due(&self) -> Option<Instant> { self.waiting.map(|(_, since)| since + PARK_PATIENCE) }
 }
 
-/// What is known of each decorated window between the reactor's words.
+/// A window as the window server has it when first asked, off the main thread: its frame, whether
+/// it is ordered out, its corner radius and its level and sub-level.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Introduction {
+    pub frame: Option<ScreenRect>,
+    pub ordered_out: bool,
+    pub radius: Option<f64>,
+    pub level: StackLevel,
+}
+
+/// What is known of each decorated window between the reactor's words. `radius` is the corner the
+/// window server reports, which a window rule's goes ahead of, and `level` its place in the stack as
+/// last read, at its introduction or its last reorder or unhide.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tracked {
     pub frame: Option<ScreenRect>,
     pub parking: Parking,
     pub ordered_out: bool,
+    pub radius: Option<f64>,
+    pub level: StackLevel,
 }
 
-/// What a turn draws: every rest window placed and painted, and those whose window the window server
-/// reordered or ordered back in (`orders`, `to_reorder`) and the one whose window focus came to
-/// ordered above their windows again.
+/// The level and sub-level a rest window that `took` one takes to go above a window at `level`:
+/// none when it holds that one already, since each take is two window-server calls.
+pub fn stack_change(took: Option<StackLevel>, level: StackLevel) -> Option<StackLevel> {
+    (took != Some(level)).then_some(level)
+}
+
+/// What a turn draws: each rest window's look where it changed (`delta`), and those whose window
+/// the window server reordered or ordered back in (`orders`, `to_reorder`) and the one whose window
+/// focus came to ordered above their windows again.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Draw {
     pub orders: Vec<ServerOrder>,
     pub focus: Option<WindowServerId>,
 }
 
-/// What a lift draws, and the windows whose frame is read again from the window server first.
+/// What a place draws, and the windows whose frame is read again from the window server first.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Lifted {
+pub struct Placed {
     pub draw: Draw,
     pub reread: Vec<WindowServerId>,
 }
 
-/// What waits for the lift while the overlay is up over `display`: the reactor's latest word and the
-/// window server's orders.
+/// A flight the reactor handed the engine: the display its overlay covers, the press it answers, and
+/// when the rest windows heard of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Begun {
+    display: ScreenRect,
+    pressed: Instant,
+    at: Instant,
+}
+
+/// What waits for the lift from a flight's begin over `display`: the reactor's latest word and the
+/// window server's orders. `until` is when a flight whose overlay has not shown lets go; none once
+/// it shows, when only its lift does. `begun` is the latest flight begun, so a lift that the engine
+/// gave before that flight's press came hands the cover on to it.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Covered {
     display: Option<ScreenRect>,
+    until: Option<Instant>,
     model: Option<RestModel>,
     orders: Vec<ServerOrder>,
+    begun: Option<Begun>,
 }
 
 /// What the rest windows draw from: the reactor's latest model, and what is known of each window it
-/// names. Each turn takes what queued: the model, the window server's frames and orders, a lift.
-/// From the overlay's show to its lift a turn draws nothing and reads nothing (`cover`) unless a
-/// window on another display moved, was reordered or settled its park: the rest windows on the
-/// overlay's display are under it, and the lift draws what came. Off, as it starts and once the
-/// reactor turns it off, it holds no model and no window, wants no rest window, and a turn, a lift
+/// names. A window is known once the window server's introduction of it comes back (`ask`,
+/// `introduce`), and is drawn from then. Each turn takes what queued: the model, the window server's
+/// introductions, frames and orders, a lift.
+/// From a flight's begin to its lift a turn draws nothing (`fly`, `cover`) unless a window on
+/// another display was introduced, moved, was reordered or settled its park: the rest windows on the
+/// flight's display are under its overlay or show what was there before the press, as its frame
+/// zero does. Once the flight has landed, a tick before its lift or with it, the place draws what
+/// came, still covered (`place`), and the lift what came since (`lift`). A place or a lift the
+/// engine gave before the press of a flight begun since leaves what waited for that flight, and the
+/// lift hands it the cover, as a flight beginning with no overlay up. A flight whose overlay
+/// never shows lets go `FLIGHT_PATIENCE` after it began (`settle`). Off, as it starts and once the reactor turns it
+/// off, it holds no model and no window, wants no rest window, and a flight, a turn, a place, a lift
 /// and a park's patience draw nothing; the reactor's next model turns it on.
 #[derive(Clone, Debug, Default)]
 pub struct Rest {
     pub model: RestModel,
     pub windows: HashMap<WindowServerId, Tracked>,
+    /// Each window asked of the window server and not yet known: none until its introduction comes
+    /// back, then it, with each frame and order since, until the model naming it is taken.
+    introducing: HashMap<WindowServerId, Option<Introduction>>,
     covered: Option<Covered>,
     on: bool,
 }
@@ -188,40 +247,66 @@ impl Rest {
     /// Whether a model has come since it started or was last turned off.
     pub fn on(&self) -> bool { self.on }
 
-    /// No window can wear a band: the model, every window known and every word and order waiting
-    /// for the lift are dropped, and nothing is taken until the next model. Whether the overlay is up
-    /// is kept, so a model that turns it on under the overlay waits for the lift.
+    /// No window can wear a band: the model, every window known or asked and every word and order
+    /// waiting for the lift are dropped, and nothing is taken until the next model. Whether a flight or the
+    /// overlay covers them is kept, so a model that turns it on under the overlay waits for the lift.
     pub fn off(&mut self) {
         self.on = false;
         self.model = RestModel::default();
         self.windows.clear();
+        self.introducing.clear();
         if let Some(covered) = self.covered.as_mut() {
-            *covered = Covered { display: covered.display, ..Covered::default() };
+            *covered = Covered { display: covered.display, until: covered.until, begun: covered.begun, ..Covered::default() };
         }
+    }
+
+    /// A flight over `display` for the press at `pressed` began at `now`: until its lift, or
+    /// `FLIGHT_PATIENCE` if its overlay has not shown by then, a turn draws nothing unless a window on
+    /// another display moved. A flight beginning under an overlay already up is that overlay's to
+    /// lift, unless the engine gave that lift before its press (`lift`). Off, it takes nothing.
+    pub fn fly(&mut self, display: ScreenRect, pressed: Instant, now: Instant) {
+        if !self.on {
+            return;
+        }
+        let up = self.covered.as_ref().is_some_and(|covered| covered.until.is_none());
+        let covered = self.covered.get_or_insert_with(Covered::default);
+        covered.begun = Some(Begun { display, pressed, at: now });
+        if !up {
+            covered.display = Some(display);
+            covered.until = Some(now + FLIGHT_PATIENCE);
+        }
+    }
+
+    /// The flight begun after the press a place or a lift the engine gave is `through`: the engine
+    /// had given it before that press came, so that flight is not the one landing.
+    fn begun_after(&self, through: Option<Instant>) -> Option<Begun> {
+        self.covered.as_ref()?.begun.filter(|begun| Some(begun.pressed) > through)
     }
 
     /// The overlay is up over `display`, the one it was laid out on: until it lifts, a turn draws
     /// nothing unless a window on another display moved.
     pub fn cover(&mut self, display: Option<ScreenRect>) {
-        self.covered.get_or_insert_with(Covered::default).display = display;
+        let covered = self.covered.get_or_insert_with(Covered::default);
+        covered.display = display;
+        covered.until = None;
     }
 
     pub fn covered(&self) -> bool { self.covered.is_some() }
 
-    /// One turn at `now`: the reactor's word if one came, the window server's frames, each latest
-    /// last, and its orders. Uncovered, the turn draws them (`take_model` reading a window new to the
-    /// model with `read`). Covered, the frames and the orders are taken, so a park is taken with its
-    /// window's move and a hide from its order, but the word and the orders' reordering wait for the
-    /// lift, and nothing is read or drawn. A frame or an order of a window on a display the overlay
+    /// One turn at `now`: the reactor's word if one came, the window server's introductions, its
+    /// frames, each latest last, and its orders. Uncovered, the turn draws them. Covered, the
+    /// introductions, the frames and the orders are taken, so a park is taken with its window's move
+    /// and a hide from its order, but the word and the orders' reordering wait for the lift, and
+    /// nothing is drawn. An introduction, a frame or an order of a window on a display the overlay
     /// is not over draws the turn as uncovered, with everything that waited. Off, a turn without a
     /// model takes nothing and draws nothing.
     pub fn turn(
         &mut self,
         mut model: Option<RestModel>,
+        intros: &[(WindowServerId, Introduction)],
         frames: &[(WindowServerId, ScreenRect)],
         mut orders: Vec<ServerOrder>,
         now: Instant,
-        read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
     ) -> Option<Draw> {
         if !self.on && model.is_none() {
             return None;
@@ -230,7 +315,8 @@ impl Rest {
         let tracked = |window: WindowServerId| self.windows.get(&window).and_then(|tracked| tracked.frame);
         let seen = self.covered.as_ref().is_some_and(|covered| {
             let seen = |frame| elsewhere(frame, displays, covered.display);
-            frames.iter().any(|(window, frame)| seen(Some(*frame)) || seen(tracked(*window)))
+            intros.iter().any(|(_, intro)| seen(intro.frame))
+                || frames.iter().any(|(window, frame)| seen(Some(*frame)) || seen(tracked(*window)))
                 || orders.iter().any(|order| seen(tracked(order.window)))
         });
         if seen && let Some(covered) = self.covered.as_mut() {
@@ -243,33 +329,69 @@ impl Rest {
                 covered.orders.extend(&orders);
                 None
             }
-            _ => Some(model.and_then(|model| self.take_model(model, now, read))),
+            _ => Some(model.and_then(|model| self.take_model(model, now))),
         };
+        self.introduce(intros);
         self.take_frames(frames, now);
         self.take_orders(&orders);
         focus.map(|focus| Draw { orders, focus })
     }
 
-    /// The reactor's word at `now`: a window new to it is read off the window server (`read`, its
-    /// frame and whether it is ordered out), each park waits for its window's move, and the window
-    /// focus came to is named, when it changed, so its rest window is ordered again.
-    pub fn take_model(
-        &mut self,
-        model: RestModel,
-        now: Instant,
-        read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
-    ) -> Option<WindowServerId> {
+    /// The windows `model` names that are neither known nor asked yet, each now asked: the
+    /// platform has the window server read each off the main thread and hands back its
+    /// introduction. Asked as a model arrives, covered or not, so one first named under the overlay
+    /// is known by its lift.
+    pub fn ask(&mut self, model: &RestModel) -> Vec<WindowServerId> {
+        let mut asked = Vec::new();
+        for window in &model.windows {
+            if !self.windows.contains_key(&window.window) && !self.introducing.contains_key(&window.window) {
+                self.introducing.insert(window.window, None);
+                asked.push(window.window);
+            }
+        }
+        asked
+    }
+
+    /// The window server's introductions of windows asked: each the model names is known from now,
+    /// and one whose model waits under the overlay is kept for it. One not asked, or no longer
+    /// named by the model taken since it was asked, is dropped.
+    pub fn introduce(&mut self, intros: &[(WindowServerId, Introduction)]) {
+        for (window, intro) in intros {
+            if let Some(waiting) = self.introducing.get_mut(window) {
+                *waiting = Some(*intro);
+            }
+        }
+        self.adopt();
+    }
+
+    /// Each window the model names whose introduction came, known from now.
+    fn adopt(&mut self) {
+        for window in &self.model.windows {
+            let came = self.introducing.get(&window.window).copied().flatten();
+            let Some(intro) = came.filter(|_| !self.windows.contains_key(&window.window)) else { continue };
+            self.introducing.remove(&window.window);
+            let Introduction { frame, ordered_out, radius, level } = intro;
+            let parking = Parking::new(window.held.parked);
+            self.windows.insert(window.window, Tracked { frame, parking, ordered_out, radius, level });
+        }
+    }
+
+    /// The reactor's word at `now`: a window it no longer names is forgotten, one whose introduction
+    /// came is known, each park waits for its window's move, and the window focus came to is named,
+    /// when it changed, so its rest window is ordered again.
+    pub fn take_model(&mut self, model: RestModel, now: Instant) -> Option<WindowServerId> {
         let focus_before = self.focus();
         self.on = true;
-        self.windows.retain(|window, _| model.windows.iter().any(|w| w.window == *window));
+        let named = |window: &WindowServerId| model.windows.iter().any(|w| w.window == *window);
+        self.windows.retain(|window, _| named(window));
+        self.introducing.retain(|window, _| named(window));
         for window in &model.windows {
-            let tracked = self.windows.entry(window.window).or_insert_with(|| {
-                let (frame, ordered_out) = read(window.window);
-                Tracked { frame, parking: Parking::new(window.held.parked), ordered_out }
-            });
-            tracked.parking.want(window.held.parked, now);
+            if let Some(tracked) = self.windows.get_mut(&window.window) {
+                tracked.parking.want(window.held.parked, now);
+            }
         }
         self.model = model;
+        self.adopt();
         self.focus().filter(|focus| Some(*focus) != focus_before)
     }
 
@@ -278,50 +400,107 @@ impl Rest {
     }
 
     /// Where the window server has windows that moved, each latest last: a waiting park is taken
-    /// with its window's move.
+    /// with its window's move, and an introduction waiting for its model takes the frame.
     pub fn take_frames(&mut self, frames: &[(WindowServerId, ScreenRect)], now: Instant) {
         for (window, frame) in frames {
             if let Some(tracked) = self.windows.get_mut(window) {
                 tracked.frame = Some(*frame);
                 tracked.parking.settle(true, false, now);
+            } else if let Some(Some(intro)) = self.introducing.get_mut(window) {
+                intro.frame = Some(*frame);
             }
         }
     }
 
+    /// The window server's orders, in the order they came: whether each window is ordered out, and
+    /// its level as read after its last reorder or unhide, known or introduced and waiting for its
+    /// model.
     pub fn take_orders(&mut self, orders: &[ServerOrder]) {
         for (window, tracked) in self.windows.iter_mut() {
             tracked.ordered_out = ordered_out(tracked.ordered_out, *window, orders);
         }
+        for (window, intro) in self.introducing.iter_mut().filter_map(|(window, intro)| Some((window, intro.as_mut()?))) {
+            intro.ordered_out = ordered_out(intro.ordered_out, *window, orders);
+        }
+        for order in orders {
+            let Some(level) = order.level else { continue };
+            if let Some(tracked) = self.windows.get_mut(&order.window) {
+                tracked.level = level;
+            } else if let Some(Some(intro)) = self.introducing.get_mut(&order.window) {
+                intro.level = level;
+            }
+        }
     }
 
-    /// The overlay lifts at `now` off `display`, the one it was laid out on if any: what waited under
-    /// it is taken, the reactor's word with `take_model` and `read`, and every park waiting on a window
-    /// there. It draws what waited, after reading again from the window server the frame of each
-    /// window there brought back and each one there a rest window draws (`drawn`). Off, with no
-    /// model waiting, it draws nothing and reads nothing.
-    pub fn lift(
+    /// The flight over `display`, the one the overlay was laid out on if any, through the press at
+    /// `through`, has landed at `now`, a tick before its lift or with it: what waited is taken, the
+    /// reactor's word with `take_model`, and every park waiting on a window there; the word and the
+    /// orders wait on for a flight begun after `through`. It draws what waited, still covered,
+    /// after reading again from the window server the frame of each window there brought back and
+    /// each one there a rest window draws (`drawn`). Off, with no model waiting, it draws nothing and
+    /// reads nothing.
+    pub fn place(
         &mut self,
         display: Option<ScreenRect>,
+        through: Option<Instant>,
         now: Instant,
-        read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool),
         drawn: impl Fn(WindowServerId) -> bool,
-    ) -> Lifted {
-        let Covered { model, orders, .. } = self.covered.take().unwrap_or_default();
-        let focus = model.and_then(|model| self.take_model(model, now, read));
+    ) -> Placed {
+        let next = self.begun_after(through);
+        let (model, orders) = self
+            .covered
+            .as_mut()
+            .filter(|_| next.is_none())
+            .map(|covered| (covered.model.take(), std::mem::take(&mut covered.orders)))
+            .unwrap_or_default();
+        let focus = model.and_then(|model| self.take_model(model, now));
         if !self.on {
-            return Lifted::default();
+            return Placed::default();
         }
-        let mut reread = Vec::new();
+        let landed = self.land(display, now).into_iter();
+        let reread = landed.filter(|(window, back)| *back || drawn(*window)).map(|(window, _)| window).collect();
+        Placed { draw: Draw { orders, focus }, reread }
+    }
+
+    /// The overlay of the flight through the press at `through` lifts at `now` off `display`: what
+    /// came since the place is taken, and every park on a window there that waited, and it draws
+    /// what came, reading nothing, as the place before it read what it draws and a covered turn takes
+    /// each frame since. A flight begun after `through` takes the cover on, with the word and the
+    /// orders that waited, until its own lift or its patience from its begin. Off, with no model
+    /// waiting, it draws nothing.
+    pub fn lift(&mut self, display: Option<ScreenRect>, through: Option<Instant>, now: Instant) -> Draw {
+        let next = self.begun_after(through);
+        let Covered { model, orders, .. } = self.covered.take().unwrap_or_default();
+        if let Some(begun) = next {
+            let until = Some(begun.at + FLIGHT_PATIENCE);
+            self.covered = Some(Covered { display: Some(begun.display), until, model, orders, begun: next });
+            if self.on {
+                self.land(display, now);
+            }
+            return Draw::default();
+        }
+        let focus = model.and_then(|model| self.take_model(model, now));
+        if !self.on {
+            return Draw::default();
+        }
+        self.land(display, now);
+        Draw { orders, focus }
+    }
+
+    /// Every park waiting on a window on `display` taken at `now`: each window there, and each one a
+    /// park brought back, with whether it was brought back.
+    fn land(&mut self, display: Option<ScreenRect>, now: Instant) -> Vec<(WindowServerId, bool)> {
+        let mut landed = Vec::new();
         for (window, tracked) in self.windows.iter_mut() {
             let there = display.is_some_and(|display| tracked.frame.is_some_and(|frame| frame.intersects(&display)));
             let parked = tracked.parking.parked;
             tracked.parking.settle(false, there, now);
             let brought_back = parked && !tracked.parking.parked;
-            if brought_back || (there && drawn(*window)) {
-                reread.push(*window);
+            if brought_back || there {
+                landed.push((*window, brought_back));
             }
         }
-        Lifted { draw: Draw { orders, focus }, reread }
+        landed
     }
 
     /// `window`'s frame as the window server has it now, kept as it was if it has none.
@@ -331,11 +510,18 @@ impl Rest {
         }
     }
 
-    /// Parks whose patience ran out at `now`, taken; whether the turn draws them, which it does
-    /// unless the overlay is up and every one taken is on its display.
-    pub fn settle(&mut self, now: Instant) -> bool {
+    /// What ran out of patience at `now`, taken: a flight that has not shown lets go, with the
+    /// reactor's word that waited taken with `take_model` and the orders that waited, and each park
+    /// whose patience ran out. What the turn draws, which it does unless something still covers it
+    /// and every park taken is on its display; none while off.
+    pub fn settle(&mut self, now: Instant) -> Option<Draw> {
+        let spent = self.covered.as_ref().and_then(|covered| covered.until).is_some_and(|until| now >= until);
+        let let_go = spent.then(|| self.covered.take()).flatten().map(|Covered { model, orders, .. }| {
+            let focus = model.and_then(|model| self.take_model(model, now));
+            Draw { orders, focus }
+        });
         if !self.on {
-            return false;
+            return None;
         }
         let over = self.covered.as_ref().map(|covered| covered.display);
         let mut seen = false;
@@ -344,30 +530,44 @@ impl Rest {
             tracked.parking.settle(false, false, now);
             seen |= tracked.parking != before && elsewhere(tracked.frame, &self.model.displays, over.flatten());
         }
-        over.is_none() || seen
+        let_go.or_else(|| (over.is_none() || seen).then(Draw::default))
     }
 
-    /// When the next waiting park takes effect.
-    pub fn due(&self) -> Option<Instant> { self.windows.values().filter_map(|tracked| tracked.parking.due()).min() }
+    /// When the next waiting park takes effect, or a flight that has not shown lets go.
+    pub fn due(&self) -> Option<Instant> {
+        let flight = self.covered.as_ref().and_then(|covered| covered.until);
+        self.windows.values().filter_map(|tracked| tracked.parking.due()).chain(flight).min()
+    }
 
     /// Whether, after a lift, the rest windows want a turn of their own with `pool` rest windows: the
     /// pool is short, or a park the lift took no move for waits for its patience, whose timer only
     /// such a turn sets.
     pub fn wants_turn(&self, pool: usize) -> bool { pool < self.pool_size() || self.due().is_some() }
 
-    /// How many rest windows the pool holds for this model: one for every window that wears a band
-    /// and could show it, held by no more than a park, so a park or a return through a flight takes
-    /// a rest window from the pool and none is made inside a flight; and one per display at least, so
-    /// the ring moving with focus makes none. None at all while off.
+    /// How many rest windows the pool holds for this model: for each display, the most windows one of
+    /// its workspaces has that wear a band and could show it, held by no more than a park, and one
+    /// spare. A display shows one workspace at a time, and a flight's place takes the parks on its
+    /// display before it draws, so a flown switch wants only the arriving workspace's; the spare lets
+    /// the ring moving with focus, and the leaving and arriving ring of a switch no flight covers,
+    /// show together. With the border on such a switch can be short until the leaving parks take
+    /// effect. None at all while off.
     pub fn pool_size(&self) -> usize {
         if !self.on {
             return 0;
         }
-        let could_show = self.model.windows.iter().filter(|window| {
+        let mut bands: HashMap<Group, usize> = HashMap::default();
+        for window in self.model.windows.iter().filter(|window| {
             let Held { parked: _, mission_control, fullscreen } = window.held;
             window.wears_a_band() && !(mission_control || fullscreen)
-        });
-        could_show.count().max(self.model.displays.len())
+        }) {
+            *bands.entry(window.group).or_default() += 1;
+        }
+        let mut most: HashMap<SpaceId, usize> = HashMap::default();
+        for (group, count) in bands {
+            let space = most.entry(group.space).or_default();
+            *space = (*space).max(count);
+        }
+        most.values().sum::<usize>() + self.model.displays.len()
     }
 
     /// Every window whose bands show now, in the model's order.
@@ -431,6 +631,70 @@ pub fn afresh(pool: &[(Option<WindowServerId>, bool)], given: &[usize], wanted: 
         .collect()
 }
 
+/// What a rest window draws: its bands' layers, its frame on screen, and whether it shows. Each keeps
+/// the look it last drew, and a turn changes only what differs from it (`delta`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub layers: Layers,
+    /// The band's outer rect cut to its display (`shape::rest_frame`).
+    pub outer: ScreenRect,
+    pub shown: bool,
+}
+
+/// What a rest window's layers are laid from: what its window wears and in which paints, the
+/// window's size and corner, the display's scale, and where the window sits in the rest window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layers {
+    pub decoration: Decoration,
+    pub style: Style,
+    pub size: TileSize,
+    pub corner: f64,
+    pub scale: f64,
+    pub inside: ScreenVector,
+}
+
+impl Look {
+    /// `window`'s bands, shown, around its window at `frame` on `display`, its corner `radius` as the
+    /// window server reports it and a window rule's ahead of it; none when no band of it is on the
+    /// display.
+    pub fn of(window: &RestWindow, frame: ScreenRect, radius: Option<f64>, display: RestDisplay) -> Option<Look> {
+        let outer = shape::rest_frame(frame, window.outset(display.scale), display.bounds)?;
+        let size = frame.size.respace();
+        let corner = shape::radius(window.decoration.corner(|| radius), size);
+        let layers = Layers {
+            decoration: window.decoration,
+            style: window.style(),
+            size,
+            corner,
+            scale: display.scale,
+            inside: frame.origin - outer.origin,
+        };
+        Some(Look { layers, outer, shown: true })
+    }
+
+    /// The same, at alpha 0: its layers and its frame stay as they were.
+    pub fn hidden(self) -> Look { Look { shown: false, ..self } }
+}
+
+/// What a rest window changes to draw a look: its layers laid again, its frame, its alpha.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Delta {
+    pub layers: bool,
+    pub frame: bool,
+    pub alpha: bool,
+}
+
+/// What a rest window that drew `was`, none since it was made at alpha 0, changes to draw `now`.
+/// One going to alpha 0 changes its alpha alone, so a window shown again keeps the layers and frame
+/// it hid with and lays only what changed meanwhile.
+pub fn delta(was: Option<Look>, now: Look) -> Delta {
+    Delta {
+        layers: now.shown && was.is_none_or(|was| was.layers != now.layers),
+        frame: now.shown && was.is_none_or(|was| was.outer != now.outer),
+        alpha: was.is_some_and(|was| was.shown) != now.shown,
+    }
+}
+
 /// The rest windows to order above their windows again this turn, each once: those whose window the
 /// window server reordered or ordered back in, and those in `also`, a rest window just given a window
 /// or the one whose window focus came to. `targets` is the pool, each one's window if any.
@@ -465,9 +729,12 @@ mod tests {
 
     fn display() -> Vec<RestDisplay> { vec![RestDisplay { bounds: rect(0.0, 0.0, 1728.0, 1117.0), scale: 2.0 }] }
 
+    fn group(workspace: u64) -> Group { Group { space: SpaceId::new(1), workspace } }
+
     fn ringed(held: Held) -> RestWindow {
         RestWindow {
             window: ws(56),
+            group: group(1),
             decoration: Decoration { ring: Some(BAND), ..Decoration::default() },
             focused: true,
             ring: Ring::Active,
@@ -528,8 +795,8 @@ mod tests {
     /// until the window is ordered back in.
     #[test]
     fn a_window_the_window_server_orders_out_shows_no_band_until_it_is_unhidden() {
-        let order = |change| ServerOrder { window: ws(56), change };
-        let other = ServerOrder { window: ws(57), change: OrderChange::Unhidden };
+        let order = |change| ServerOrder { window: ws(56), change, level: None };
+        let other = ServerOrder { window: ws(57), change: OrderChange::Unhidden, level: None };
         let out = ordered_out(false, ws(56), &[order(OrderChange::Reordered), order(OrderChange::Hidden), other]);
         assert!(out);
         assert!(!shown(&ringed(Held::default()), false, out, Some(SLOT), &display()));
@@ -560,13 +827,27 @@ mod tests {
 
     fn model(windows: Vec<RestWindow>) -> RestModel { RestModel { displays: display(), windows } }
 
+    /// Window `id`, ringed, the active window of a workspace of its own on the first display.
     fn at(id: u32, focused: bool, parked: bool) -> RestWindow {
-        RestWindow { window: ws(id), focused, held: Held { parked, ..Held::default() }, ..ringed_window() }
+        RestWindow { window: ws(id), group: group(id.into()), focused, held: Held { parked, ..Held::default() }, ..ringed_window() }
+    }
+
+    const LEVEL: StackLevel = StackLevel { level: Some(0), sub_level: 0 };
+
+    fn intro(frame: ScreenRect) -> Introduction { Introduction { frame: Some(frame), ordered_out: false, radius: None, level: LEVEL } }
+
+    /// `model` taken, each window it names new to `rest` asked and introduced at the frame `frames`
+    /// gives it, as its introduction comes back after the model.
+    fn take_known(rest: &mut Rest, model: RestModel, now: Instant, frames: impl Fn(WindowServerId) -> ScreenRect) -> Option<WindowServerId> {
+        let asked = rest.ask(&model);
+        let focus = rest.take_model(model, now);
+        rest.introduce(&asked.into_iter().map(|window| (window, intro(frames(window)))).collect::<Vec<_>>());
+        focus
     }
 
     fn rest_with(windows: Vec<RestWindow>, frame: ScreenRect, now: Instant) -> Rest {
         let mut rest = Rest::default();
-        rest.take_model(model(windows), now, |_| (Some(frame), false));
+        take_known(&mut rest, model(windows), now, |_| frame);
         rest
     }
 
@@ -574,20 +855,53 @@ mod tests {
     fn the_window_focus_comes_to_is_named_and_a_model_with_focus_where_it_was_names_none() {
         let now = Instant::now();
         let mut rest = Rest::default();
-        assert_eq!(rest.take_model(model(vec![at(1, true, false), at(2, false, false)]), now, |_| (Some(SLOT), false)), Some(ws(1)));
-        assert_eq!(rest.take_model(model(vec![at(1, true, false), at(2, false, true)]), now, |_| (None, false)), None, "focus unchanged");
-        assert_eq!(rest.take_model(model(vec![at(1, false, false), at(2, true, false)]), now, |_| (None, false)), Some(ws(2)));
-        assert_eq!(rest.take_model(model(vec![at(1, false, false)]), now, |_| (None, false)), None, "no window focused");
+        assert_eq!(take_known(&mut rest, model(vec![at(1, true, false), at(2, false, false)]), now, |_| SLOT), Some(ws(1)));
+        assert_eq!(rest.take_model(model(vec![at(1, true, false), at(2, false, true)]), now), None, "focus unchanged");
+        assert_eq!(rest.take_model(model(vec![at(1, false, false), at(2, true, false)]), now), Some(ws(2)));
+        assert_eq!(rest.take_model(model(vec![at(1, false, false)]), now), None, "no window focused");
         assert_eq!(rest.windows.len(), 1, "a window the reactor no longer names is forgotten");
     }
 
+    /// A window first named is asked of the window server once, read off the main thread, and drawn
+    /// from when its introduction comes back; one the model let go of meanwhile is not.
     #[test]
-    fn a_window_new_to_the_rest_windows_is_read_off_the_window_server_once() {
+    fn a_window_new_to_the_model_is_drawn_once_introduced() {
         let now = Instant::now();
         let mut rest = Rest::default();
-        rest.take_model(model(vec![at(1, true, false)]), now, |_| (Some(SLOT), true));
-        assert_eq!(rest.windows[&ws(1)], Tracked { frame: Some(SLOT), parking: Parking::new(false), ordered_out: true });
-        rest.take_model(model(vec![at(1, true, false)]), now, |_| panic!("read again"));
+        let first = model(vec![at(1, true, false), at(2, false, false)]);
+        assert_eq!(rest.ask(&first), vec![ws(1), ws(2)]);
+        assert_eq!(rest.ask(&first), Vec::new(), "asked once");
+        let drawn = rest.turn(Some(first.clone()), &[], &[(ws(1), SLOT)], Vec::new(), now);
+        assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }));
+        assert!(rest.wanted().is_empty() && rest.windows.is_empty(), "not drawn before it is known");
+        let level = StackLevel { level: Some(3), sub_level: 1 };
+        let read = Introduction { frame: Some(SLOT), ordered_out: true, radius: Some(16.0), level };
+        assert!(rest.turn(None, &[(ws(1), read), (ws(9), intro(SLOT))], &[], Vec::new(), now).is_some());
+        assert_eq!(rest.windows[&ws(1)], Tracked { frame: Some(SLOT), parking: Parking::new(false), ordered_out: true, radius: Some(16.0), level });
+        assert!(!rest.windows.contains_key(&ws(9)), "never asked");
+        rest.turn(None, &[(ws(1), intro(SLOT))], &[], vec![ServerOrder { window: ws(1), change: OrderChange::Unhidden, level: None }], now);
+        assert_eq!(rest.wanted(), vec![ws(1)], "known, ordered back in");
+        assert_eq!(rest.windows[&ws(1)].radius, Some(16.0), "an introduction not asked again is dropped");
+        rest.take_model(model(vec![at(1, true, false)]), now);
+        rest.introduce(&[(ws(2), intro(SLOT))]);
+        assert!(!rest.windows.contains_key(&ws(2)), "let go of before its introduction came");
+        assert_eq!(rest.ask(&first), vec![ws(2)], "asked again once named again");
+    }
+
+    /// A rest window takes its window's level and sub-level as last read, at the introduction or
+    /// after a reorder or an unhide, and takes it again only when it changed.
+    #[test]
+    fn a_rest_window_takes_its_windows_level_only_when_it_changed() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        assert_eq!(rest.windows[&ws(1)].level, LEVEL);
+        let raised = StackLevel { level: Some(3), sub_level: 1 };
+        let order = |change, level| ServerOrder { window: ws(1), change, level };
+        rest.turn(None, &[], &[], vec![order(OrderChange::Reordered, Some(raised)), order(OrderChange::Hidden, None)], now);
+        assert_eq!(rest.windows[&ws(1)].level, raised, "a hide reads no level");
+        assert_eq!(stack_change(None, LEVEL), Some(LEVEL), "a rest window that took none");
+        assert_eq!(stack_change(Some(LEVEL), LEVEL), None, "the one it took");
+        assert_eq!(stack_change(Some(LEVEL), raised), Some(raised));
     }
 
     #[test]
@@ -607,7 +921,7 @@ mod tests {
     fn a_park_is_taken_with_its_windows_move() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
-        rest.take_model(model(vec![at(1, true, true)]), now, |_| (None, false));
+        rest.take_model(model(vec![at(1, true, true)]), now);
         assert_eq!(rest.wanted(), vec![ws(1)], "until its window moves");
         rest.take_frames(&[(ws(2), rect(1676.0, 35.0, 1148.0, 1079.0))], now);
         assert_eq!(rest.wanted(), vec![ws(1)], "another window's move");
@@ -619,9 +933,9 @@ mod tests {
     fn a_window_the_window_server_hides_is_wanted_again_once_it_is_unhidden() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
-        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Hidden }]);
+        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Hidden, level: None }]);
         assert!(rest.wanted().is_empty());
-        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Unhidden }]);
+        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Unhidden, level: None }]);
         assert_eq!(rest.wanted(), vec![ws(1)]);
     }
 
@@ -630,60 +944,242 @@ mod tests {
     fn a_window_the_window_server_closes_shows_no_band_from_its_close() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
-        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Closed }]);
+        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Closed, level: None }]);
         assert!(rest.wanted().is_empty());
         let targets = [Some(ws(1))];
-        assert_eq!(to_reorder(&[ServerOrder { window: ws(1), change: OrderChange::Closed }], &targets, &[]), Vec::<usize>::new());
+        assert_eq!(to_reorder(&[ServerOrder { window: ws(1), change: OrderChange::Closed, level: None }], &targets, &[]), Vec::<usize>::new());
     }
 
-    /// A pass that changes two displays parks a window on each; a lift ends the flight on one.
+    /// A pass that changes two displays parks a window on each; a flight landing on one places it.
     #[test]
-    fn a_lift_takes_the_parks_on_its_display_alone_and_reads_again_what_it_draws_there() {
+    fn a_place_takes_the_parks_on_its_display_alone_and_reads_again_what_it_draws_there() {
         let now = Instant::now();
         let other = rect(1728.0, 0.0, 1920.0, 1080.0);
         let mut rest = Rest::default();
         let frames = |window: WindowServerId| match window.as_u32() {
-            1 | 3 => (Some(SLOT), false),
-            _ => (Some(rect(1731.0, 35.0, 859.0, 1079.0)), false),
+            1 | 3 => SLOT,
+            _ => rect(1731.0, 35.0, 859.0, 1079.0),
         };
-        rest.take_model(model(vec![at(1, true, false), at(2, false, false), at(3, false, true)]), now, frames);
-        rest.take_model(model(vec![at(1, true, true), at(2, false, true), at(3, false, false)]), now, |_| (None, false));
-        let mut reread = rest.lift(Some(display()[0].bounds), now, |_| panic!("no word waited"), |window| window == ws(1)).reread;
+        take_known(&mut rest, model(vec![at(1, true, false), at(2, false, false), at(3, false, true)]), now, frames);
+        rest.take_model(model(vec![at(1, true, true), at(2, false, true), at(3, false, false)]), now);
+        let mut reread = rest.place(Some(display()[0].bounds), Some(now), now, |window| window == ws(1)).reread;
         reread.sort_by_key(|window| window.as_u32());
         assert_eq!(reread, vec![ws(1), ws(3)], "drawn there, and brought back there");
         assert!(rest.windows[&ws(1)].parking.parked && !rest.windows[&ws(3)].parking.parked);
         assert!(!rest.windows[&ws(2)].parking.parked, "a park on another display waits for its own move");
-        assert_eq!(rest.lift(Some(other), now, |_| (None, false), |_| false).reread, Vec::new(), "parked, drawn by none");
-        assert!(rest.windows[&ws(2)].parking.parked, "its own display's lift");
+        assert_eq!(rest.place(Some(other), Some(now), now, |_| false).reread, Vec::new(), "parked, drawn by none");
+        assert!(rest.windows[&ws(2)].parking.parked, "its own display's place");
         rest.reread(ws(1), None);
         assert_eq!(rest.windows[&ws(1)].frame, Some(SLOT), "no frame read keeps the one known");
     }
 
-    fn reorder(id: u32) -> ServerOrder { ServerOrder { window: ws(id), change: OrderChange::Reordered } }
+    /// An abandoned flight lifts with no place, and a model can come between the place and the
+    /// lift: either way the lift takes each park waiting on its display.
+    #[test]
+    fn a_lift_takes_the_parks_waiting_on_its_display() {
+        let now = Instant::now();
+        for placed in [false, true] {
+            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            rest.cover(Some(display()[0].bounds));
+            if placed {
+                rest.place(Some(display()[0].bounds), Some(now), now, |_| true);
+            }
+            assert_eq!(rest.turn(Some(model(vec![at(1, true, false), at(2, false, true)])), &[], &[], Vec::new(), now + ms(5)), None);
+            assert!(!rest.windows[&ws(2)].parking.parked, "placed first: {placed}, under the cover with no move");
+            rest.lift(Some(display()[0].bounds), Some(now + ms(10)), now + ms(10));
+            assert!(rest.windows[&ws(2)].parking.parked, "placed first: {placed}");
+            assert_eq!(rest.due(), None, "placed first: {placed}");
+        }
+    }
 
-    /// The frames rini's writes make, the 808s of a raise and the key window's turn come under the
-    /// overlay: no turn draws or reads, and the lift draws what came, once.
+    fn reorder(id: u32) -> ServerOrder { ServerOrder { window: ws(id), change: OrderChange::Reordered, level: Some(LEVEL) } }
+
+    /// The frames rini's writes make, the 808s of a raise, the key window's turn and a new window's
+    /// introduction come under the overlay: no turn draws, and the lift draws what came, once.
     #[test]
     fn a_flight_under_the_overlay_draws_nothing_until_its_lift_draws_it_once() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
         rest.cover(Some(display()[0].bounds));
         let elsewhere = rect(868.0, 35.0, 859.0, 1079.0);
+        let opened = model(vec![at(1, false, false), at(2, true, false), at(3, false, false)]);
+        assert_eq!(rest.ask(&opened), vec![ws(3)], "asked as its model comes, covered");
         let turns = [
-            rest.turn(None, &[(ws(1), elsewhere)], Vec::new(), now, |_| panic!("read under the overlay")),
-            rest.turn(None, &[(ws(2), SLOT), (ws(1), elsewhere)], vec![reorder(1), reorder(2)], now, |_| panic!("read")),
-            rest.turn(Some(model(vec![at(1, false, false), at(2, true, false), at(3, false, false)])), &[], vec![reorder(2)], now, |_| panic!("read")),
+            rest.turn(None, &[], &[(ws(1), elsewhere)], Vec::new(), now),
+            rest.turn(None, &[], &[(ws(2), SLOT), (ws(1), elsewhere)], vec![reorder(1), reorder(2)], now),
+            rest.turn(Some(opened), &[], &[], vec![reorder(2)], now),
+            rest.turn(None, &[(ws(3), intro(SLOT))], &[], Vec::new(), now),
         ];
-        assert_eq!(turns, [None, None, None], "no turn under the overlay draws");
-        assert!(!rest.settle(now + PARK_PATIENCE), "nor does a park's patience");
+        assert_eq!(turns, [None, None, None, None], "no turn under the overlay draws");
+        assert_eq!(rest.settle(now + PARK_PATIENCE), None, "nor does a park's patience");
         assert_eq!(rest.windows[&ws(1)].frame, Some(elsewhere), "the frames are taken as they come");
         assert!(rest.model.windows[0].focused && !rest.windows.contains_key(&ws(3)), "the word waits for the lift");
-        let lifted = rest.lift(Some(display()[0].bounds), now, |_| (Some(SLOT), false), |_| false);
-        assert_eq!(lifted.draw, Draw { orders: vec![reorder(1), reorder(2), reorder(2)], focus: Some(ws(2)) });
-        assert!(rest.model.windows[1].focused && rest.windows.contains_key(&ws(3)), "taken at the lift, the new window read");
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now), now);
+        assert_eq!(lifted, Draw { orders: vec![reorder(1), reorder(2), reorder(2)], focus: Some(ws(2)) });
+        assert!(rest.model.windows[1].focused && rest.windows.contains_key(&ws(3)), "taken at the lift, the new window known");
         assert!(!rest.covered());
-        let after = rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("known"));
+        let after = rest.turn(None, &[], &[(ws(1), SLOT)], vec![reorder(1)], now);
         assert_eq!(after, Some(Draw { orders: vec![reorder(1)], focus: None }), "after the lift a turn draws again");
+    }
+
+    /// A window first named by a flight's model is introduced before the flight writes its frame:
+    /// the write's move and a hide that come under the cover are kept with its introduction, and the
+    /// place draws it where the window server has it last.
+    #[test]
+    fn a_window_introduced_under_the_overlay_takes_the_frames_and_orders_that_came_after() {
+        let now = Instant::now();
+        let written = rect(868.0, 35.0, 859.0, 1079.0);
+        for (orders, out) in [(Vec::new(), false), (vec![ServerOrder { window: ws(3), change: OrderChange::Hidden, level: None }], true)] {
+            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            rest.cover(Some(display()[0].bounds));
+            let opened = model(vec![at(1, false, false), at(2, false, false), at(3, true, false)]);
+            assert_eq!(rest.ask(&opened), vec![ws(3)]);
+            assert_eq!(rest.turn(Some(opened), &[(ws(3), intro(SLOT))], &[], Vec::new(), now), None);
+            let raised = StackLevel { level: Some(3), sub_level: 1 };
+            let reordered = ServerOrder { window: ws(3), change: OrderChange::Reordered, level: Some(raised) };
+            let came = [vec![reordered], orders].concat();
+            assert_eq!(rest.turn(None, &[], &[(ws(3), written)], came, now + ms(40)), None);
+            rest.place(Some(display()[0].bounds), Some(now + ms(300)), now + ms(300), |_| false);
+            let Tracked { frame, ordered_out, level, .. } = rest.windows[&ws(3)];
+            assert_eq!((frame, ordered_out, level), (Some(written), out, raised), "hidden: {out}");
+            assert_eq!(rest.wanted().contains(&ws(3)), !out);
+        }
+    }
+
+    fn ms(ms: u64) -> Duration { Duration::from_millis(ms) }
+
+    /// The press's own model and the key window's report come before its overlay is up: from the
+    /// flight's begin they wait, as frame zero shows the windows before the press, and its lift draws
+    /// them.
+    #[test]
+    fn a_flight_handed_over_holds_the_press_model_until_its_lift() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.fly(display()[0].bounds, now, now);
+        assert!(rest.covered());
+        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        assert_eq!(rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)), None, "the press's model");
+        assert_eq!(rest.turn(None, &[], &[(ws(1), SLOT)], Vec::new(), now + ms(20)), None, "a frame there");
+        rest.cover(Some(display()[0].bounds));
+        assert!(rest.model.windows[0].focused, "the band shows the focus before the press");
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now + ms(400)), now + ms(400));
+        assert_eq!(lifted, Draw { orders: vec![reorder(2)], focus: Some(ws(2)) });
+        assert!(!rest.covered() && rest.model.windows[1].focused);
+    }
+
+    /// A flight the engine declines or merges elsewhere shows no overlay and sends no lift: what it
+    /// held is drawn once its patience is spent.
+    #[test]
+    fn a_flight_that_never_shows_lets_go_after_its_patience() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.fly(display()[0].bounds, now, now);
+        let pressed = model(vec![at(1, false, false), at(2, true, false), at(3, false, false)]);
+        rest.ask(&pressed);
+        assert_eq!(rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)), None);
+        assert_eq!(rest.turn(None, &[(ws(3), intro(SLOT))], &[], Vec::new(), now + ms(2)), None);
+        assert_eq!(rest.due(), Some(now + FLIGHT_PATIENCE));
+        assert_eq!(rest.settle(now + FLIGHT_PATIENCE - ms(1)), None, "patient yet");
+        let drawn = rest.settle(now + FLIGHT_PATIENCE);
+        assert_eq!(drawn, Some(Draw { orders: vec![reorder(2)], focus: Some(ws(2)) }), "drawn with what waited");
+        assert!(!rest.covered() && rest.windows.contains_key(&ws(3)) && rest.due().is_none());
+
+        rest.fly(display()[0].bounds, now, now);
+        rest.off();
+        assert_eq!(rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now), None, "turned on under the flight");
+        let drawn = rest.settle(now + FLIGHT_PATIENCE);
+        assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }), "its patience kept through off");
+        let mut off = Rest::default();
+        off.fly(display()[0].bounds, now, now);
+        assert!(!off.covered() && off.due().is_none(), "off, a flight takes nothing");
+    }
+
+    /// A show later than the patience is rare; one that comes in time holds the rest windows to its
+    /// lift, as does a flight merged into it.
+    #[test]
+    fn a_show_after_the_flight_began_keeps_it_covered_past_the_patience() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.fly(display()[0].bounds, now, now);
+        rest.cover(Some(display()[0].bounds));
+        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        assert_eq!(rest.turn(Some(pressed), &[], &[], Vec::new(), now + ms(100)), None);
+        rest.fly(display()[0].bounds, now + ms(200), now + ms(200));
+        assert_eq!(rest.due(), None, "the show's lift ends it");
+        assert_eq!(rest.settle(now + FLIGHT_PATIENCE * 2), None);
+        assert!(rest.covered() && rest.model.windows[0].focused);
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now + ms(600)), now + ms(600));
+        assert_eq!(lifted.focus, Some(ws(2)));
+    }
+
+    /// Once the flight has landed, a tick before its lift, the place draws what waited, reading
+    /// again what it draws there, and the rest windows stay covered until the lift.
+    #[test]
+    fn a_place_ahead_of_the_lift_draws_what_waited_and_stays_covered() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.fly(display()[0].bounds, now, now);
+        rest.cover(Some(display()[0].bounds));
+        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        assert_eq!(rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)), None);
+        let mut placed = rest.place(Some(display()[0].bounds), Some(now + ms(380)), now + ms(380), |window| window == ws(2));
+        placed.reread.sort_by_key(|window| window.as_u32());
+        assert_eq!(placed, Placed { draw: Draw { orders: vec![reorder(2)], focus: Some(ws(2)) }, reread: vec![ws(2)] });
+        assert!(rest.covered() && rest.model.windows[1].focused, "placed, still under the overlay");
+        let moved = rect(868.0, 35.0, 859.0, 1079.0);
+        assert_eq!(rest.turn(None, &[], &[(ws(2), moved)], vec![reorder(1)], now + ms(390)), None, "a turn after it waits for the lift");
+        assert_eq!(rest.settle(now + ms(390) + PARK_PATIENCE), None);
+    }
+
+    /// A press as a flight lifts can begin a flight of its own after the engine gave that lift, and
+    /// be heard first: the lift, and a place in its drain, leave that press's model waiting and hand
+    /// the cover to its flight, which its own show and lift, or its patience from its begin, end.
+    #[test]
+    fn a_lift_given_before_a_flight_began_hands_the_cover_to_that_flight() {
+        let now = Instant::now();
+        let bounds = display()[0].bounds;
+        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        for placed_ahead in [true, false] {
+            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            rest.fly(bounds, now, now);
+            rest.cover(Some(bounds));
+            if placed_ahead {
+                rest.place(Some(bounds), Some(now), now + ms(380), |_| true);
+            }
+            let next = now + ms(395);
+            rest.fly(bounds, next, next + ms(1));
+            assert_eq!(rest.turn(Some(pressed.clone()), &[], &[], vec![reorder(2)], next + ms(1)), None);
+            if !placed_ahead {
+                let placed = rest.place(Some(bounds), Some(now), next + ms(5), |_| true);
+                assert_eq!(placed.draw, Draw::default(), "placed in the lift's drain, the next press waits");
+            }
+            assert_eq!(rest.lift(Some(bounds), Some(now), next + ms(5)), Draw::default(), "{placed_ahead}");
+            assert!(rest.covered() && rest.model.windows[0].focused, "the band shows the focus before the next press");
+            assert_eq!(rest.due(), Some(next + ms(1) + FLIGHT_PATIENCE), "the next flight's patience");
+            rest.cover(Some(bounds));
+            assert_eq!(rest.due(), None, "its show");
+            let lifted = rest.lift(Some(bounds), Some(next), next + ms(400));
+            assert_eq!(lifted, Draw { orders: vec![reorder(2)], focus: Some(ws(2)) }, "its lift");
+            assert!(!rest.covered());
+        }
+    }
+
+    /// The lift after a place reads nothing: the place read what it draws, and each frame since came
+    /// to a covered turn. It draws only what came since the place.
+    #[test]
+    fn a_lift_after_a_place_reads_nothing_again() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.cover(Some(display()[0].bounds));
+        rest.turn(Some(model(vec![at(1, false, false), at(2, true, false)])), &[], &[], vec![reorder(2)], now);
+        rest.place(Some(display()[0].bounds), Some(now), now, |_| true);
+        let moved = rect(868.0, 35.0, 859.0, 1079.0);
+        let back = model(vec![at(1, true, false), at(2, false, false)]);
+        assert_eq!(rest.turn(Some(back), &[], &[(ws(2), moved)], vec![reorder(1)], now + ms(16)), None);
+        let lifted: Draw = rest.lift(Some(display()[0].bounds), Some(now + ms(17)), now + ms(17));
+        assert_eq!(lifted, Draw { orders: vec![reorder(1)], focus: Some(ws(1)) }, "what came since the place");
+        assert_eq!(rest.windows[&ws(2)].frame, Some(moved), "the frame a covered turn took");
+        assert!(!rest.covered());
     }
 
     /// A park is taken with its window's move under the overlay too, and a hide from its order, so
@@ -692,13 +1188,13 @@ mod tests {
     fn under_the_overlay_a_park_is_taken_with_its_move_and_a_hide_with_its_order() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
-        rest.take_model(model(vec![at(1, true, true), at(2, false, false)]), now, |_| (None, false));
+        rest.take_model(model(vec![at(1, true, true), at(2, false, false)]), now);
         rest.cover(Some(display()[0].bounds));
-        let hidden = ServerOrder { window: ws(2), change: OrderChange::Hidden };
-        rest.turn(None, &[(ws(1), rect(1676.0, 35.0, 1148.0, 1079.0))], vec![hidden], now, |_| panic!("read"));
+        let hidden = ServerOrder { window: ws(2), change: OrderChange::Hidden, level: None };
+        rest.turn(None, &[], &[(ws(1), rect(1676.0, 35.0, 1148.0, 1079.0))], vec![hidden], now);
         assert!(rest.wanted().is_empty());
         let other = rect(1728.0, 0.0, 1920.0, 1080.0);
-        assert_eq!(rest.lift(Some(other), now, |_| panic!("no word waited"), |_| false).draw.orders, vec![hidden]);
+        assert_eq!(rest.lift(Some(other), Some(now), now).orders, vec![hidden]);
     }
 
     const OTHER: ScreenRect = ScreenRect::new(Point::new(1728.0, 0.0), Size::new(1920.0, 1080.0));
@@ -709,9 +1205,9 @@ mod tests {
         let displays = vec![display()[0], RestDisplay { bounds: OTHER, scale: 1.0 }];
         let there = rect(1800.0, 35.0, 800.0, 1000.0);
         let mut rest = Rest::default();
-        let frames = |window: WindowServerId| (Some(if window == ws(2) { there } else { SLOT }), false);
-        rest.take_model(RestModel { displays: displays.clone(), windows: vec![at(1, true, false), at(2, false, false)] }, now, frames);
-        rest.take_model(RestModel { displays, windows: vec![at(1, true, held[0]), at(2, false, held[1])] }, now, frames);
+        let frames = |window: WindowServerId| if window == ws(2) { there } else { SLOT };
+        take_known(&mut rest, RestModel { displays: displays.clone(), windows: vec![at(1, true, false), at(2, false, false)] }, now, frames);
+        rest.take_model(RestModel { displays, windows: vec![at(1, true, held[0]), at(2, false, held[1])] }, now);
         rest.cover(Some(display()[0].bounds));
         rest
     }
@@ -722,17 +1218,17 @@ mod tests {
     fn a_window_on_another_display_is_drawn_while_the_overlay_covers_the_first() {
         let now = Instant::now();
         let mut rest = two_displays(now, [false, false]);
-        assert_eq!(rest.turn(None, &[(ws(1), rect(868.0, 35.0, 859.0, 1079.0))], vec![reorder(1)], now, |_| panic!("read")), None);
+        assert_eq!(rest.turn(None, &[], &[(ws(1), rect(868.0, 35.0, 859.0, 1079.0))], vec![reorder(1)], now), None);
         let refocused = RestModel { windows: vec![at(1, false, false), at(2, true, false)], ..rest.model.clone() };
-        assert_eq!(rest.turn(Some(refocused), &[], Vec::new(), now, |_| panic!("read")), None, "the word waits");
-        let drawn = rest.turn(None, &[(ws(2), rect(1900.0, 35.0, 800.0, 1000.0))], vec![reorder(2)], now, |_| panic!("known"));
+        assert_eq!(rest.turn(Some(refocused), &[], &[], Vec::new(), now), None, "the word waits");
+        let drawn = rest.turn(None, &[], &[(ws(2), rect(1900.0, 35.0, 800.0, 1000.0))], vec![reorder(2)], now);
         assert_eq!(drawn, Some(Draw { orders: vec![reorder(1), reorder(2)], focus: Some(ws(2)) }), "drawn with what waited");
         assert!(rest.covered(), "still under the overlay on its own display");
-        let closed = ServerOrder { window: ws(2), change: OrderChange::Closed };
-        assert!(rest.turn(None, &[], vec![closed], now, |_| panic!("known")).is_some(), "a close there");
+        let closed = ServerOrder { window: ws(2), change: OrderChange::Closed, level: None };
+        assert!(rest.turn(None, &[], &[], vec![closed], now).is_some(), "a close there");
 
-        assert!(!two_displays(now, [true, false]).settle(now + PARK_PATIENCE), "a park on the overlay's display settles unseen");
-        assert!(two_displays(now, [false, true]).settle(now + PARK_PATIENCE), "one on the other display is drawn");
+        assert_eq!(two_displays(now, [true, false]).settle(now + PARK_PATIENCE), None, "a park on the overlay's display settles unseen");
+        assert!(two_displays(now, [false, true]).settle(now + PARK_PATIENCE).is_some(), "one on the other display is drawn");
     }
 
     /// A park that came under the overlay for a window off its display waits for its patience past
@@ -742,9 +1238,9 @@ mod tests {
         let now = Instant::now();
         let mut rest = two_displays(now, [false, false]);
         let parks = RestModel { windows: vec![at(1, true, false), at(2, false, true)], ..rest.model.clone() };
-        assert_eq!(rest.turn(Some(parks), &[], Vec::new(), now, |_| panic!("read")), None);
+        assert_eq!(rest.turn(Some(parks), &[], &[], Vec::new(), now), None);
         let pool = rest.pool_size();
-        rest.lift(Some(display()[0].bounds), now, |_| panic!("known"), |_| true);
+        rest.lift(Some(display()[0].bounds), Some(now), now);
         assert!(rest.windows[&ws(2)].parking.due().is_some());
         assert!(rest.wants_turn(pool), "a full pool, and a park to time");
         rest.settle(now + PARK_PATIENCE);
@@ -756,33 +1252,34 @@ mod tests {
     fn a_turn_draws_at_once_while_nothing_covers_it() {
         let now = Instant::now();
         let mut rest = Rest::default();
-        let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], vec![reorder(1)], now, |_| (Some(SLOT), false));
+        let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], vec![reorder(1)], now);
         assert_eq!(drawn, Some(Draw { orders: vec![reorder(1)], focus: Some(ws(1)) }));
-        assert!(rest.settle(now));
-        assert_eq!(rest.lift(None, now, |_| panic!("no word waited"), |_| true), Lifted::default(), "laid out on no display, a lift takes no park");
+        assert_eq!(rest.settle(now), Some(Draw::default()));
+        assert_eq!(rest.lift(None, Some(now), now), Draw::default(), "laid out on no display, a lift takes no park");
     }
 
     /// With the ring and the border off nothing is decorated: the rest windows want no window of
-    /// their own, and take no frame, order, lift or park until a model turns them on again.
+    /// their own, and take no frame, order, place, lift or park until a model turns them on again.
     #[test]
     fn off_it_wants_no_rest_window_and_takes_nothing_until_a_model_comes() {
         let now = Instant::now();
         let mut rest = Rest::default();
         assert!(!rest.on() && rest.pool_size() == 0, "off as it starts");
-        assert_eq!(rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("read while off")), None);
+        assert_eq!(rest.turn(None, &[], &[(ws(1), SLOT)], vec![reorder(1)], now), None);
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, true)], SLOT, now);
         assert!(rest.on() && rest.pool_size() == 2);
         rest.off();
         assert_eq!((rest.on(), rest.pool_size(), rest.windows.len()), (false, 0, 0), "every rest window let go");
         assert_eq!(rest.model, RestModel::default());
-        assert_eq!(rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("read while off")), None, "a frame and a reorder");
+        assert_eq!(rest.turn(None, &[], &[(ws(1), SLOT)], vec![reorder(1)], now), None, "a frame and a reorder");
         assert!(rest.windows.is_empty(), "the frame not taken");
-        assert!(!rest.settle(now + PARK_PATIENCE) && rest.due().is_none());
-        assert_eq!(rest.lift(Some(display()[0].bounds), now, |_| panic!("read while off"), |_| true), Lifted::default());
+        assert!(rest.settle(now + PARK_PATIENCE).is_none() && rest.due().is_none());
+        assert_eq!(rest.lift(Some(display()[0].bounds), Some(now), now), Draw::default());
+        assert_eq!(rest.place(Some(display()[0].bounds), Some(now), now, |_| true), Placed::default());
         assert!(!rest.wants_turn(0), "a lift asks no turn");
-        let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], Vec::new(), now, |_| (Some(SLOT), false));
+        let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now);
         assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }), "a model turns it on again");
-        assert_eq!(rest.pool_size(), 1);
+        assert_eq!(rest.pool_size(), 2, "its band and the spare");
     }
 
     /// Turned on by a config reload during a flight, the rest windows wait for the lift to draw.
@@ -791,14 +1288,14 @@ mod tests {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
         rest.cover(Some(display()[0].bounds));
-        rest.turn(None, &[], vec![reorder(1)], now, |_| panic!("read"));
+        rest.turn(None, &[], &[], vec![reorder(1)], now);
         rest.off();
         assert!(rest.covered(), "the overlay is still up");
-        assert_eq!(rest.turn(Some(model(vec![at(1, true, false)])), &[], Vec::new(), now, |_| panic!("read")), None);
+        assert_eq!(rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now), None);
         assert!(!rest.on() && rest.pool_size() == 0, "nothing made under the overlay");
-        let lifted = rest.lift(Some(display()[0].bounds), now, |_| (Some(SLOT), false), |_| false);
-        assert_eq!(lifted.draw, Draw { orders: Vec::new(), focus: Some(ws(1)) }, "the reorder from before it went off dropped");
-        assert!(rest.on() && rest.pool_size() == 1);
+        let lifted = rest.lift(Some(display()[0].bounds), Some(now), now);
+        assert_eq!(lifted, Draw { orders: Vec::new(), focus: Some(ws(1)) }, "the reorder from before it went off dropped");
+        assert!(rest.on() && rest.pool_size() == 2);
     }
 
     #[test]
@@ -808,21 +1305,48 @@ mod tests {
         assert_eq!(focus_moved, Assignment { retargeted: vec![(0, ws(3))], released: vec![] });
     }
 
-    /// The pool holds a rest window for every window that could show its band, so a workspace
-    /// switch's leaving and arriving windows, shown together for a moment, both have one.
+    /// With the ring alone a workspace shows one band, so its rest window and the spare let a
+    /// workspace switch's leaving and arriving windows, shown together for a moment, both have one.
     #[test]
     fn a_workspace_switch_finds_a_rest_window_for_every_band_in_the_pool() {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false), at(2, false, true)], SLOT, now);
         assert_eq!(rest.pool_size(), 2);
-        rest.take_model(model(vec![at(1, false, true), at(2, true, false)]), now, |_| (None, false));
+        rest.take_model(model(vec![at(1, false, true), at(2, true, false)]), now);
         rest.take_frames(&[(ws(2), SLOT)], now);
         assert_eq!(rest.wanted(), vec![ws(1), ws(2)], "the arriving window's return before the leaving one's park");
         let pool = vec![None; rest.pool_size()];
         assert_eq!(assign(&pool, &rest.wanted()).retargeted.len(), 2);
         let held = Held { mission_control: true, ..Held::default() };
-        rest.take_model(model(vec![RestWindow { held, ..at(1, true, false) }]), now, |_| (None, false));
-        assert_eq!(rest.pool_size(), 1, "one per display while nothing could show");
+        rest.take_model(model(vec![RestWindow { held, ..at(1, true, false) }]), now);
+        assert_eq!(rest.pool_size(), 1, "the spare alone while nothing could show");
+    }
+
+    /// The pool is the bands the fullest workspace on each display shows, held by no more than a
+    /// park, and one spare per display: a display shows one workspace at a time.
+    #[test]
+    fn the_pool_holds_the_most_bands_one_workspace_shows_and_a_spare_per_display() {
+        let now = Instant::now();
+        let ring_alone: Vec<RestWindow> = (1..=6).map(|id| at(id, id == 1, id != 1)).collect();
+        assert_eq!(rest_with(ring_alone.clone(), SLOT, now).pool_size(), 2, "six workspaces, a ring on each");
+
+        let bordered = |id: u32, workspace: u64| RestWindow {
+            decoration: Decoration { border: Some(BORDER), ..Decoration::default() },
+            ring: Ring::None,
+            group: group(workspace),
+            ..at(id, false, workspace != 1)
+        };
+        let fullscreen = RestWindow { held: Held { fullscreen: true, ..Held::default() }, ..bordered(7, 2) };
+        let borders: Vec<RestWindow> =
+            (1..=4).map(|id| bordered(id, 1)).chain([bordered(5, 2), bordered(6, 2), fullscreen]).collect();
+        assert_eq!(rest_with(borders, SLOT, now).pool_size(), 5, "borders on four windows and on two");
+
+        let mut rest = Rest::default();
+        let elsewhere = |id: u32, workspace: u64| RestWindow { group: Group { space: SpaceId::new(2), workspace }, ..at(id, false, workspace != 7) };
+        let windows = ring_alone.into_iter().chain([elsewhere(7, 7), elsewhere(8, 8)]).collect();
+        let displays = vec![display()[0], RestDisplay { bounds: OTHER, scale: 1.0 }];
+        take_known(&mut rest, RestModel { displays, windows }, now, |_| SLOT);
+        assert_eq!(rest.pool_size(), 4, "two displays, the ring alone");
     }
 
     #[test]
@@ -848,10 +1372,72 @@ mod tests {
         assert_eq!(afresh(&pool, &[3], &[ws(1)]), Vec::<usize>::new(), "given a window that shows nothing");
     }
 
+    const CLEAR: ScreenRect = ScreenRect::new(Point::new(100.0, 100.0), Size::new(800.0, 600.0));
+
+    fn look_at(window: &RestWindow, frame: ScreenRect) -> Look {
+        Look::of(window, frame, Some(16.0), display()[0]).expect("on the display")
+    }
+
+    /// A turn whose window neither moved nor changed what it wears, a reorder's or a focus report's
+    /// for another window, draws nothing: each change is main-thread and window-server time.
+    #[test]
+    fn an_unchanged_window_changes_nothing() {
+        let look = look_at(&ringed_window(), CLEAR);
+        assert_eq!(delta(Some(look), look_at(&ringed_window(), CLEAR)), Delta::default());
+        assert_eq!(delta(Some(look.hidden()), look.hidden()), Delta::default(), "hidden, and hidden still");
+        assert_eq!(Look::of(&ringed_window(), rect(4000.0, 100.0, 800.0, 600.0), None, display()[0]), None, "off its display");
+    }
+
+    #[test]
+    fn a_moved_window_changes_only_its_frame() {
+        let look = look_at(&ringed_window(), CLEAR);
+        let moved = look_at(&ringed_window(), rect(400.0, 300.0, 800.0, 600.0));
+        assert_eq!(delta(Some(look), moved), Delta { frame: true, ..Delta::default() });
+        let cut = look_at(&ringed_window(), rect(2.0, 100.0, 800.0, 600.0));
+        assert_eq!(
+            delta(Some(look), cut),
+            Delta { layers: true, frame: true, alpha: false },
+            "at the display's edge the band is cut, and the window sits elsewhere in its rest window"
+        );
+    }
+
+    #[test]
+    fn a_resize_a_paint_or_a_scale_lays_its_layers_again() {
+        let window = ringed_window();
+        let look = look_at(&window, CLEAR);
+        let resized = look_at(&window, rect(100.0, 100.0, 900.0, 600.0));
+        assert_eq!(delta(Some(look), resized), Delta { layers: true, frame: true, alpha: false }, "resized");
+        let layers = Delta { layers: true, ..Delta::default() };
+        let inactive = RestWindow { focused: false, ring: Ring::Inactive, ..window };
+        assert_eq!(delta(Some(look), look_at(&inactive, CLEAR)), layers, "focus left it");
+        let bordered = RestWindow { decoration: Decoration { border: Some(BORDER), ..window.decoration }, ..window };
+        assert_eq!(delta(Some(look), look_at(&bordered, CLEAR)), Delta { layers: true, frame: true, alpha: false }, "a border on");
+        let rounded = Look::of(&window, CLEAR, Some(10.0), display()[0]).expect("on the display");
+        assert_eq!(delta(Some(look), rounded), layers, "another corner");
+        let single = RestDisplay { scale: 1.0, ..display()[0] };
+        let scaled = Look::of(&window, CLEAR, Some(16.0), single).expect("on the display");
+        assert_eq!(delta(Some(look), scaled), layers, "another scale");
+    }
+
+    /// A rest window keeps its layers and its frame at alpha 0: shown again, it takes its alpha, and
+    /// lays and moves only for what changed while it was hidden.
+    #[test]
+    fn a_window_shown_again_lays_only_what_changed_while_it_was_hidden() {
+        let window = ringed_window();
+        let look = look_at(&window, CLEAR);
+        let alpha = Delta { alpha: true, ..Delta::default() };
+        assert_eq!(delta(Some(look), look.hidden()), alpha, "hidden");
+        assert_eq!(delta(Some(look.hidden()), look), alpha, "shown again as it was");
+        let elsewhere = look_at(&RestWindow { ring: Ring::Inactive, ..window }, rect(400.0, 100.0, 900.0, 600.0));
+        let all = Delta { layers: true, frame: true, alpha: true };
+        assert_eq!(delta(Some(look.hidden()), elsewhere), all, "resized, moved and repainted meanwhile");
+        assert_eq!(delta(None, look), all, "a rest window just made");
+    }
+
     #[test]
     fn a_reorder_and_a_focus_change_reorder_their_panel_once_per_turn() {
         let targets = [Some(ws(1)), Some(ws(2)), None];
-        let order = |id, change| ServerOrder { window: ws(id), change };
+        let order = |id, change| ServerOrder { window: ws(id), change, level: None };
         let orders = [
             order(1, OrderChange::Reordered),
             order(1, OrderChange::Reordered),

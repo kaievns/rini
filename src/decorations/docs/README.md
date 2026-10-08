@@ -5,9 +5,11 @@ The overlay draws both over every tile, so a flying window wears what it wears o
 also draws niri's focus ring and border, which macOS has no form of: on the tiles through a flight,
 and at rest in windows of its own. This feature is their shape, their paint by focus and attention,
 who wears the ring, how deep each sits against the picture, the layers each tile wears them on, and
-the windows that draw the bands at rest. It reads `windows` (levels, sub-levels, radii, frames,
-whether a window is ordered in, which applications ask for attention) and `displays` (the window
-server's frames and orders). `animation` draws its decorations on each tile, `transitions` carries
+the windows that draw the bands at rest. It reads `windows` (a place's frames, the calls a rest
+window takes a level and sub-level with, the window rules' matcher, and which applications ask for
+attention) and `displays` (what its frames thread reads, `ServerRead`: frames, orders with their
+levels, and introductions with radius and ordered-in, in the order asked, and `Following` to ask
+it). `animation` draws its decorations on each tile, `transitions` carries
 what each window wears to its tile, reads from it which ring a tile shows until its turn and holes
 the overlay as far as its bands reach (`shape::outset`), and the application decides it, fills the ring's and the
 border's settings and the window rules from the config, folds the rules for each window, hands the
@@ -21,11 +23,11 @@ layout the width each tiled window gives up to its border, and wires the rest wi
 | `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its three paints, and which one it is drawn in (`Band`, `paint`); what a window wears that rini draws, its ring, its border, its rule's corner, which the bands round to ahead of the window server's, and whether it is drawn urgent (`Decoration`, `corner`), and through a pass, with the ring it wore and wears (`Worn`); the ring a window wears and in which paint (`Ring`); and `Style::of`, the white line's alpha, the shadow, the ring's paint for a window urgent, else the one its `Ring` names, and the border's for a window urgent, focused or neither. Who wears the ring: each workspace's active window, the focused window on its own, active on the display holding focus; and who is drawn urgent: every window of an application asking for attention while no window of it holds focus (`Rings`) |
 | `domain/paint.rs` | `Colour`, sRGB with its alpha, as the config writes a colour; `Paint`, a band's fill, a colour or a `Gradient`, niri's: two colours along an angle, mixed in a `ColourSpace` (with its `Hue` for `oklch`) as niri's shader mixes them (`colour_at`); its `Axis` over a band of a size, the start and end points Core Animation takes (`axis`), and whether that moves with the size (`follows_size`); and the `Stop`s Core Animation draws it through (`stops`, to `TOLERANCE` at `SAMPLES` steps) |
 | `domain/rules.rs` | What a `window-rule` says a window wears (`DecorationRule`, a `BandRule` for the ring and one for the border, and `geometry-corner-radius`), matched through the open-time rules' matcher (`windows::domain::rules::applies`); the layout's settings with every rule that applies laid over them in file order (`fold`); a window's decoration either side of focus, its active paint as the rules give it while it holds focus and the rest as they give it while it does not, urgent or not (`decoration`); the border a tiled window gives out of its slot, in whole device pixels of its display (`border_width`), and whether a rule can give any other than the layout's (`shape_borders`) |
-| `domain/rest.rs` | The bands at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with what `Held` it, its bands' paint and how far they reach), whether its bands show (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), what each turn makes of the model, the window server's frames and orders and a lift, what waits for the lift while the overlay is up, and which windows show then (`Rest`, a `Tracked` per window: the window focus came to, the turn a `Draw` draws, `cover` and what a lift draws, `Lifted`, and whether the actor wants a turn of its own after it, `wants_turn`, the parks a lift on its display takes, the frames read again), how many rest windows the pool holds (`Rest::pool_size`), which rest window draws each window (`assign`), and which are ordered above their windows again this turn (`to_reorder`); and that, off as it starts and once the reactor turns it off, it holds no window, wants no rest window and takes no frame, order, lift or park until a model comes (`Rest::off`, `Rest::on`) |
+| `domain/rest.rs` | The bands at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with the workspace it is on, `Group`, what `Held` it, its bands' paint and how far they reach), whether its bands show (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), what each turn makes of the model, the window server's introductions, frames and orders and a lift, what waits for the place ahead of the lift while the overlay is up, and which windows show then (`Rest`, a `Tracked` per window with its corner radius and level as the window server reported them, each known from its `Introduction`, asked once as the model first names it, `ask`, `introduce`: the window focus came to, the turn a `Draw` draws, `cover`, what a landed flight's place draws, `Placed`, with the parks on its display it takes and the frames read again, what the lift after it draws, and whether the actor wants a turn of its own after that, `wants_turn`), how many rest windows the pool holds (`Rest::pool_size`), which rest window draws each window (`assign`), which show theirs afresh (`afresh`), what each changes of the look it last drew to draw the one it wants (`Look`, its `Layers`, `delta`), which are ordered above their windows again this turn (`to_reorder`), and when one takes its window's level and sub-level (`stack_change`); and that, off as it starts and once the reactor turns it off, it holds no window, wants no rest window and takes no frame, order, place, lift or park until a model comes (`Rest::off`, `Rest::on`) |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
 | `settings.rs` | `DecorationSettings`: `layout › focus-ring` and `layout › border`, each on or off and its `Band`, niri's by default but for the ring's width, and the window rules' `DecorationRule`s in file order; `draws_bands`, whether any window can wear a band, which decides whether anything of the ring and the border runs ("Off") |
-| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the bands (`hairline`, `outline`, `bands`), the bands made only as a decoration with a ring or a border is worn and taken away as one with neither is. `Bands`, the ring and the border in front of it, worn, laid, painted and carried through a resize together, on a tile and at rest alike; `Band`, one band's layer: a `CAGradientLayer` drawing a colour as its border on the continuous curve, or a gradient masked to a border of the same shape, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize, its mask and a gradient's axis with it; each gradient's stops as Core Animation takes them, the last 16 kept (`drawn`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's bands (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
-| `platform/rest.rs` | The rest windows: borderless, click-through, non-activating panels, pooled, each holding one `Bands` and ordered directly above the window it decorates (`RestBorders`); the main-thread actor that takes the reactor's model, the window server's frames and orders, a turn at a time (`RestActor`), closing every rest window when the reactor turns it off (`Event::Off`), and what the renderer calls as its overlay goes up and before each lift (`Handover`) |
+| `platform/layers.rs` | `DecorationLayers`, the Core Animation layers one tile wears: the caster with its even-odd mask (`shadow`, `shadow_mask`), and the hairline holding the outline and the bands (`hairline`, `outline`, `bands`), each band made only as a decoration with it is worn and taken away as one without it is. `Bands`, the ring and the border in front of it, each made while its window wears it and none otherwise, worn, laid, painted and carried through a resize together, on a tile and at rest alike; `Band`, one band's layer: a `CAGradientLayer` drawing a colour as its border on the continuous curve, or a gradient masked to a border of the same shape, laid around a window of a size at its corner (`place`), painted or hidden (`paint`), and carried through a resize, a gradient's mask and axis with it; each colour's `CGColor` and each gradient's stops as Core Animation takes them, the last 16 of each kept (`solid`, `drawn`). It makes them (`new`), names the two that ride the tile's frame (`frame_layers`), stacks them against the picture (`stack`), shapes them for a size at one corner (`corner_at`, `place`), paints them by focus (`show`), draws them at a display's scale with a decoration's bands (`wear`), and installs and takes away what a resize animates on them, each under a key of its own (`install_resize`, `remove_resize`); the silhouette's and the mask's paths at a size and corner (`silhouette_path`, `shadow_mask_path`); `add_under` and `remove_under`, an animation under a key and its removal, which the overlay uses for every key of its own; `round_continuous`, a layer's corner on the window's curve, which the hairline and every picture wear |
+| `platform/rest.rs` | The rest windows: borderless, click-through, non-activating panels, pooled, each holding one `Bands` and ordered directly above the window it decorates (`RestBorders`); the main-thread actor that takes the reactor's model, asks the window server of each window it first names through `Following`, and takes what the frames thread read, introductions, frames and orders, a turn at a time (`RestActor`), closing every rest window when the reactor turns it off (`Event::Off`), and what the renderer calls as its overlay goes up, as its flight has landed and before each lift (`Handover`) |
 | `platform/layers.rs`: `Resize` | A tile's resize as Core Animation plays it: an animation of a key path through each value a closure maps from the sizes the tile passes through (`point`, `rect`, `number`, `path`), and whether a value changes on the way (`changes`). The overlay fills it from the tile's track, so `decorations` never names the score. A platform trait, not a port: it speaks Core Animation |
 
 Its `domain/` speaks rini-geometry's spaces (`crates/rini-geometry/docs/README.md`): what a window
@@ -95,7 +97,8 @@ holding focus, as niri paints every workspace's active window on the focused mon
 (`niri:src/layout/monitor.rs:1095-1100`), and `inactive` on the others (`style::Ring`). So the
 workspace a switch leaves keeps its window's ring active as it slides away. On a tile it is the `ring` layer, a `Band`, the hairline's child after the
 outline, so it is drawn in front of the picture, the hairline and the outline, and rides the
-hairline through every move. In a colour it is the layer's border, `width` wide, and in a gradient
+hairline through every move. A tile carries it only while its window's decoration has a ring
+(`Bands::wear`), so a window wearing the ring alone carries one band's layer. In a colour it is the layer's border, `width` wide, and in a gradient
 the layer's gradient masked to a border of the same shape ("Gradients"), round on the continuous
 curve at the window's corner plus its width (`shape::band`), so its inner edge is the window's own
 corner, on the curve every other piece takes; a border's inner edge is its outer one `width` in. The
@@ -108,7 +111,8 @@ the window's corner less its width, holds. Its paint turns with the hairline (`S
 it.
 
 niri's border is the `border` layer, a second `Band`, the hairline's last child, so it is drawn in
-front of the ring, as niri draws it (`niri:src/layout/tile.rs:1279-1341`). Every window its
+front of the ring, as niri draws it (`niri:src/layout/tile.rs:1279-1341`); a ring made after it is
+put under it. A tile carries it only while its window's decoration has a border. Every window its
 decoration has one for wears it, in `urgent` paint while it is drawn urgent, `active` while it holds
 focus and `inactive` otherwise (`Style::of`), so it turns with the hairline as focus moves, on its
 own focus alone. Its inner edge is the window's corner and its outer one that corner grown by its
@@ -142,8 +146,11 @@ A band's paint is a colour or niri's gradient (`paint::Paint`): `active-gradient
 niri's `merge_color_gradient` has it. A gradient is drawn by the band's own layer, a
 `CAGradientLayer`, masked to a `CALayer` border of the band's width, corner and continuous curve:
 the same contour a colour draws, with no path and no bitmap. A colour stays the layer's border, with
-no gradient and no mask. A mask makes Core Animation draw the band offscreen first; what that costs
-per frame is not measured.
+no gradient and no mask, and its `CGColor` is made once a colour (`layers::solid`), as a gradient's
+stops are. A mask makes Core Animation draw the band offscreen first; what that costs per frame is
+not measured. The mask rides a resize only while it masks: a band in a colour animates its own
+bounds and corner alone, a mask taken off carries no animation, and one a gradient attaches
+mid-resize takes the resize its band plays (`a_mask_attached_mid_resize_rides_its_bands_resize`).
 
 **The axis.** niri lays a gradient over the band's own outer rect, the line through its centre at
 `angle` long enough that the corners lie on the lines across its ends, every line across at right
@@ -204,15 +211,22 @@ inferred from a repro outside rini, where a window's frame change did; rini read
 connection of its own (`src/windows/docs/window-server-reads.md`). Each holds a flipped view whose
 layer holds the band at its window's frame. A rest window's frame is the band's outer rect cut to its
 window's display (`shape::rest_frame`), so a ring at the display's edge draws nothing onto the next
-one. Rest windows are made as a model arrives, never from a frame, a lift or under the overlay: a
-model that comes under the overlay waits for the lift, and a pool the lift leaves short is made in
-the actor's next turn, once the overlay is down (`Event::Lifted`). The pool holds one for
-every window that wears a band and could show it, held by no more than a park, and one per display
-at least (`Rest::pool_size`), and each window whose band shows takes one from it (`rest::assign`).
-So the ring moving with focus and a workspace switch, whose leaving and arriving windows show
-together for a moment, make none; the windows rini manages as it launches are pooled then, and a
-window opened later is pooled as the model naming it arrives, at the press of its flight. The
-overlay's first show cost 112ms against 14ms to order it in; what making a 1pt rest window costs is
+one. Rest windows are made as a model arrives, never from a frame, a place, a lift or between a
+flight's begin and its lift: a model that comes then waits for the place ahead of the lift, and a
+pool the lift leaves short is made in the actor's next turn, once the overlay is down
+(`Event::Lifted`). The pool holds, for each display, the most windows any one of its workspaces
+has that wear a band and could show it, held by no more than a park, and one spare
+(`Rest::pool_size`, from the workspace the reactor sends with each window, `rest::Group`), and each
+window whose band shows takes one from it (`rest::assign`). A display shows one workspace at a
+time, and a flight's place takes the parks on its display before it draws, so a flown switch wants
+rest windows for the arriving bands alone. With the ring alone that is 2 a display however many
+workspaces it has: the ring moving with focus, and a switch no flight covers, whose leaving and
+arriving ring show together until the leaving park takes effect, make none. With the border on such
+a switch can be short min(leaving, arriving) − 1 rest windows until each leaving park takes effect,
+at its window's move or 250ms at most, so an arriving band can come that much late; on 4cddd692 the
+pool held one for every window that could show a band: with the ring alone, one window-sized panel
+per workspace with windows. The windows rini manages as it launches are pooled then, and a window
+opened later is pooled in the actor's turn after its flight's lift. The overlay's first show cost 112ms against 14ms to order it in; what making a 1pt rest window costs is
 not measured. A window that shows nothing keeps its rest window at alpha 0 for the next, and the
 pool never shrinks while any window can wear a band; once none can, every rest window is closed
 ("Off").
@@ -222,10 +236,25 @@ median, against 0.36ms and 0.34ms for an alpha change ("Toggle alpha, do not ord
 and out" in `src/animation/docs/capture-overlay-research.md`). So a rest window is ordered in once,
 as it is made, and every hide after is its alpha. AppKit sends a frame and an alpha to the window
 server at once, and the layers go at the transaction's commit, by another path. So a rest window
-given a window, or shown again, goes to alpha 0 first, its new layers are committed and flushed, and
-only then does it take its frame, its place above its window and alpha 1 (`rest::afresh`); in the
-other order one frame could show the old window's band, clipped, in the new one's place. That the
-window server takes the two in the order rini sends them is inferred, not measured.
+given a window, or shown again, goes to alpha 0 first, its new layers, if any, are committed and
+flushed, and only then does it take its frame, its place above its window and alpha 1
+(`rest::afresh`); in the other order one frame could show the old window's band, clipped, in the
+new one's place. That the window server takes the two in the order rini sends them is inferred, not
+measured.
+
+**What a turn draws.** Each rest window keeps the look it last drew (`rest::Look`): its layers,
+laid from what its window wears and in which paints, the window's size and corner, the display's
+scale and where the window sits in the rest window; its frame; and whether it shows. A turn works
+out each one's look and changes only what differs (`rest::delta`): a move sets the frame alone, a
+resize, a paint, a corner, a scale or a band cut at the display's edge lays the layers again, and a
+hide or a show again is the alpha alone, the layers and the frame kept at alpha 0. A turn that lays
+no layer opens, commits and flushes no transaction, so a reorder, a focus report for a window whose
+look stays, or a frame that did not move changes nothing but the order it asks for. On 4cddd692 a
+turn laid every rest window with a target, and committed and flushed, whatever came; with the ring
+on, the lift's drain played to its flush in 3.98-4.45ms at the median against 1.66-1.91ms with it
+off (the 2026-10-08 timing battery, 3 runs each way), part of which was that draw (inferred: no
+sample split the lift). That AppKit leaves a layer-backed view's root layer as rini set it between
+turns, its contents scale included, is inferred, not seen.
 
 **Ordering a rest window.** Probe P1 (2026-10-06, an idle machine,
 [`docs/data/2026-10-06-drags/p1-order.jsonl`](../../../docs/data/2026-10-06-drags/p1-order.jsonl))
@@ -234,18 +263,22 @@ ordered a 1pt panel against another process's window and read the window list af
 `SLSOrderWindow` against it did nothing, and is no longer declared. Against a window at sub-level 1,
 the panel stayed below until it took that window's level and sub-level too (the `level_copy` row:
 one place below before the copy, above after). So a rest window takes its window's level and
-sub-level as `StackPlace::of` reads them, through `SLSSetWindowLevel` and `SLSSetWindowSubLevel`,
-which act only on the caller's own windows (`window_server::take_stack_place`), and then AppKit
-orders it above. The sub-level is read by the Mach port rini already reads other apps' windows with,
+sub-level, read on the frames thread when the window is introduced and after each reorder or unhide
+(`ServerIntro`, `ServerOrder.level`), through `SLSSetWindowLevel` and `SLSSetWindowSubLevel`, which
+act only on the caller's own windows (`window_server::take_stack_place`), and only when they differ
+from the ones it took last (`rest::stack_change`), and then AppKit orders it above. The sub-level is read by the Mach port rini already reads other apps' windows with,
 not by `SLSGetWindowSubLevel` as P1 read it; that the two answer alike is inferred. After each of 10
 raises of the other window, its 808 came 9.4-18.0ms after the raise, and the panel, ordered again
 from the 808, was back on top 7.4-25.4ms after it: 8 of 10 within 16.7ms, p90 25.4ms. The call took
-0.57-6.02ms, about 1.4ms typical. P1 ran against a scratch helper only. So for 1-2 frames after
+0.57-6.02ms, about 1.4ms typical. P1 ran against a scratch helper only. The 808 now reaches the
+main thread after the frames thread has read the window's level, on the read connection, which
+waits for no commit of rini's, so a raise puts the band back later than that by the time that read
+takes (inferred, not measured). So for 1-2 frames after
 another app raises its window, that window sits above its own bands: the window covers none of
 them, which lie outside it, but its shadow does, and so does any window it rose past that overlaps
 them. A rest window is ordered again when the window server reorders its window or orders it
 back in (808, 815), when it is given a window, and when focus comes to its window, each once a turn
-(`rest::to_reorder`), and for what came under the overlay, at its lift.
+(`rest::to_reorder`), and for what came between a flight's begin and its lift, at its place or its lift.
 
 **A click-through band is never hit.** Probe P5 drew a click-through band around a window and found
 `SLSFindWindowAndOwner` 2pt inside to 4pt outside its right edge returning the window with the band
@@ -265,9 +298,16 @@ edge `width` in, so the outer corner is `corner + width` (`shape::band`).
 **Following.** A rest window takes its window's frame from the window server's frames
 (`src/displays/docs/live-frames.md`), followed only while the feature is on ("Off"): 806 and 807 saw every frame a 1ms poll saw during Kai's
 drags, n=1165, p90 0.08ms behind it, in Ghostty only. The actor takes what queued each turn, the
-latest frame of each window. Under the overlay the rest windows follow no window on its display:
-the frames and orders are taken as they come, so a park is taken with its window's move and a hide
-with its order, but nothing is drawn, read or ordered until the lift ("The handover"). A frame or
+latest frame of each window. A window the model first names is asked of the window server as the
+model arrives, covered or not, through `Following`'s queue, and the frames thread reads it whole:
+its frame, whether it is ordered in, its corner radius, and its level and sub-level (`ServerIntro`).
+It is drawn from when that comes back (`Rest::ask`, `Rest::introduce`), one hop on an idle thread
+(inferred, not measured), and its corner is the one read then. An introduction back before the
+model naming it is taken, as one under a flight is, takes each frame and order that comes after it,
+so a window a flight opens is drawn where the flight's write put it. From a flight's begin to its lift
+the rest windows follow no window on its display: the introductions, frames and orders are taken
+as they come, so a park is taken with its window's move and a hide with its order, but nothing is
+drawn or ordered until the place ahead of the lift ("The handover"). A frame or
 an order of a window on another display, or a park there taking effect, draws the turn as if
 nothing covered it, with everything that waited: the overlay covers only its own display. None is
 hidden for a flight.
@@ -280,44 +320,76 @@ not seen.
 shows, past the 40pt `is_off_screen` allows (`PARK_CLAMP_PX` in `crates/rini-geometry/src/lib.rs`), so
 a band read off the window's frame would be drawn around the sliver. The reactor sends a window as
 parked when its workspace is not the one its display shows or its strip has it off the viewport. A
-park, and a window brought back, takes effect at the window's next frame, at a lift on its display,
-or 250ms after the reactor said so (`rest::Parking`, `Rest::lift`): rini parks a window by moving it,
+park, and a window brought back, takes effect at the window's next frame, at a landed flight's
+place or a lift on its display, or 250ms after the reactor said so (`rest::Parking`, `Rest::place`,
+`Rest::lift`): rini parks a window by moving it,
 after the overlay is up, and a band that went at the press would leave its window bare before the
 overlay covered it.
 
 **The handover.** The overlay covers its display at level 18, so a rest window under it is unseen
 once it is up, as its window is. A press's own model reaches the rest windows before the overlay is
-up and is drawn as it comes (read from the code, not seen). From the show, which covers them
+up. Drawn as it came, a full draw of every rest window sat on the main thread ahead of the show:
+on 4cddd692's timing battery (2026-10-08, 3 runs each way) the show's drain waited for the main
+thread 4.9-18.7ms at p90 with the ring on, against 0.03-0.04ms with it off. So the reactor tells the
+rest windows of each flight it hands the engine, with the display its overlay covers, before that
+batch's model (`Event::Flight`, sent by `publish_rest` for what `Reactor::send_flight` noted), and
+from that begin (`Rest::fly`) to the lift a turn draws and makes nothing unless a window on
+another display changed: what came waits (`Rest::turn`). Until the overlay is up the rest windows
+show the windows as they were before the press, which is what frame zero shows; the show covers them
 (`Rest::cover`, after the overlay's alpha 1 in `Renderer::play`'s steps, with the display it is
-laid out on), to the lift, a turn draws, reads and makes nothing unless a window on another display
-changed: what came waits (`Rest::turn`). Each such turn had been main-thread time
-the flight's drains waited behind: the frames of every window rini's writes moved, the 808s of a
+laid out on). A flight that never shows sends no lift: one the engine declines with no display yet
+or with an empty pass, or merges elsewhere. So a flight not shown `FLIGHT_PATIENCE`, 250ms, after
+its begin lets go, and what waited is drawn (`Rest::settle`, on the timer `Rest::due` sets). Before
+the bands, the journal's begin to show took at most 249ms over 1726 flights: a show after the
+patience is rare, and the rest windows then draw once uncovered before it covers them again. An
+abandoned flight sends its lift, which ends the cover as any lift does. A press as a flight lifts
+can begin a flight of its own after the engine gave that lift and still be heard by the rest
+windows before the renderer plays it: the begin goes to them from the reactor, the lift from the
+engine through the renderer, and nothing orders the two. So `Event::Flight` carries the press it
+answers, the engine gives each place and lift the latest press it had taken (`Render::PlaceRest`,
+`Render::Lift`, `through`), and a place or a lift given before the press of the flight begun last
+leaves what waited for that flight; the lift hands it the cover, with its patience from its begin
+(`Rest::place`, `Rest::lift`). A press merged into the flight came before its lift was given, so
+that lift draws it. Each turn under the cover
+had been main-thread time the flight's drains waited behind: the frames of every window rini's writes moved, the 808s of a
 raise, the key window's turn and each park's patience, each a full draw of every rest window with
-its window-server reads and orders. A 10s sample of rini at rest on 2026-10-08, while Kai typed and
+its window-server reads and orders, where a turn now draws only what changed ("What a turn draws"). A 10s sample of rini at rest on 2026-10-08, while Kai typed and
 no flight ran, held 13 of 7216 main-thread samples in `RestBorders::take`, 9 of them in
 `SLSWindowQueryWindows` waiting on `SLSConnectionSynchronizeSLSCATransaction`'s lock, the read
-`StackPlace::of` and `corner_radii` make, and 3 in the turn's commit. That lock was the main
-connection's, which those reads then shared with the rest windows' own commits; they now go on
-rini's read connection, whose lock no commit of rini's takes ("Reads go on a connection of their
-own" in `src/windows/docs/README.md`). The frames were symbolised
-against a rebuild of the same commit, so their names are inferred
+the level and the corner radius were then made with on the main thread, and 3 in the turn's
+commit. That lock was the main connection's, which those reads then shared with the rest windows'
+own commits. The frames were symbolised against a rebuild of the same commit, so their names are
+inferred
 ([`docs/data/2026-10-08-smoothness/`](../../../docs/data/2026-10-08-smoothness/), with the journal's
-drains split by where in their flight they fall). At the lift the renderer calls
-the rest windows before it hides the overlay, and the model that waited is taken, every park on that
-display that waited taken, every rest window on it put at its window's frame as the window server
-has it, each one whose window was reordered under the overlay or that focus came to ordered above
-its window again, and every one drawn as it is then, in the same main-thread turn as the hide
-(`Rest::lift`). A park the lift takes no move for, on another display, still waits for its
+drains split by where in their flight they fall). Those reads are the frames thread's now, on
+rini's read connection, whose lock no commit of rini's takes ("Reads go on a connection of their
+own" in `src/windows/docs/README.md`); the main thread reads the window server at a place alone,
+the frame of each window drawn there, through `SLSGetWindowBounds`, which waits on nothing for
+another application's window (`src/windows/docs/window-server-reads.md`). Once the flight
+has landed the renderer places the rest windows, still covered: the coordinator gives `PlaceRest`
+at the first tick from a frame before its clock runs out that reads the real windows where they
+were written, or with the lift when no tick did, and the renderer plays it before the transaction
+of the drain carrying it. Off, the reactor tells the flight engine so with the display, and no
+flight places anything or reads its windows a tick early ("Off"). The model that waited is taken, every park on that display that waited
+taken, every rest window on it put at its window's frame as the window server has it, each one
+whose window was reordered since the flight's begin or that focus came to ordered above its window
+again, and every one drawn as it is then where its look changed (`Rest::place`). That work had sat
+in the lift's drain, between the flight's end and the overlay coming down ("What a turn draws").
+The lift, in the same main-thread turn as the hide, reads nothing: the place read what it draws,
+and a covered turn took every frame since, so it takes what came after the place and draws only
+that, usually nothing (`Rest::lift`). Between the two a band shows only through its hole, where
+its tile draws the same pixels. A merge that moves the flight's clock or writes frames after the
+place places again before its lift. A park the lift takes no move for, on another display, still waits for its
 patience, and only the actor's own turn sets that timer, so the lift asks for one
 (`Rest::wants_turn`, `Event::Lifted`), as it does when the pool is short. That no frame shows a band
 out of place is inferred, not measured. The overlay is
 holed over each band as over each window ("Holes" in `src/animation/docs/animation-smoothness.md`),
 so the rest window keeps painting under it, inferred as needed; a rest window whose window moves
-under the overlay stays where it was until the lift, so the band's hole at the window's end shows
+under the overlay stays where it was until the place, so the band's hole at the window's end shows
 whatever is below it there, not seen on screen.
 
 Not measured: what a rest window costs the window server in memory and the main thread in time, per
-window and under an 808 burst as a strip raise makes one, and what a lift costs drawing what waited
+window and under an 808 burst as a strip raise makes one, and what a place costs drawing what waited
 under the overlay, its reorders included (probe P13, which needs an idle machine
 and was not run); whether a full-size clear panel allocates a full-size backing, which would want
 its shape cut to its band instead; whether a re-order brings a `.moveToActiveSpace` window onto the
@@ -333,22 +405,25 @@ While no window can wear a band, the ring and the border off in `layout` and no 
 turning either on (`DecorationSettings::draws_bands`), nothing of either runs. The reactor sends the
 rest windows `Event::Off` once, after the batch that turned the last band off, and nothing after
 that; the actor closes every rest window (`Panel`'s `Drop`, so none is left at alpha 0 in the
-window list) and, off, takes no frame, order, lift or park (`Rest::off`, `Rest::turn`, `Rest::lift`,
-`Rest::settle`, `Rest::pool_size` 0). The renderer still calls `Handover` at each show and lift: the
-show records which display the overlay covers, so a model turning the feature on during a flight
-waits for the lift, and the lift draws and reads nothing. The reactor turns `Following` off at the
+window list) and, off, takes no frame, order, place, lift or park (`Rest::off`, `Rest::turn`, `Rest::place`, `Rest::lift`,
+`Rest::settle`, `Rest::pool_size` 0). The reactor's `SetDisplay`, sent ahead of every flight, tells
+the flight engine there is nothing at rest (`rests`), so the coordinator gives no `PlaceRest` and no
+tick reads the windows' landing before the clock is done: no place drain runs, and no lift waits
+behind one. The renderer still calls `Handover` at each show and lift: the show records which
+display the overlay covers, so a model turning the feature on during a flight waits for the lift,
+and the lift draws and reads nothing. The reactor tells it of no flight
+(`publish_rest`), and a flight begun before the feature went off keeps its cover and its patience. The reactor turns `Following` off at the
 same batch, so the window-notify actor drops each 806, 807, 808, 815, 816 and 804 for the rest
 windows where it arrives: no frame is read and nothing is sent to the main thread for them
 (`src/displays/docs/live-frames.md`). 808 and 815 still wake the focus resolver, which is not the
 rest windows'. No ring is read (`Reactor::rings_with`), and a tile whose decoration has neither band
-carries no layer for one: `DecorationLayers::wear` makes `Bands` for a decoration with a ring or a
-border and takes them off the hairline for one with neither, so a pooled tile moving between
-windows a rule decorates and windows it does not makes and drops two layers and their masks at its
-dressing. The hairline and the shadow are drawn as ever.
+carries no layer for one: `DecorationLayers::wear` makes each band's layer for a decoration with
+it and takes it off the hairline for one without it, so a tile dressed again after a rule turns a
+band on or off makes or drops the layer of that band and its mask, and no other. The hairline and the shadow are drawn as ever.
 
 A config reload that turns either band on, in `layout` or in a rule for any window, sends the next
 model, which turns `Following` on, makes the pool and draws; the window server's frames are read
-again for every window the model names as it comes (`Rest::take_model`).
+again for every window the model names, each asked of the window server as it comes (`Rest::ask`).
 
 ## The corner, measured
 

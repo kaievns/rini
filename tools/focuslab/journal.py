@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Reads rini's transitions journal: where each flight's time goes, each probe press joined to the
-flight it began, each measured lift's handover, and the picture each tile took.
+flight it began, each measured lift's handover, the picture each tile took, and each slow turn of the
+main thread.
 
     journal.py summary [--kind KIND] [--csv OUT] [JOURNAL ...]
     journal.py probe PROBE [JOURNAL ...]
     journal.py handover [JOURNAL ...]
     journal.py pictures [--target] [JOURNAL ...]
+    journal.py turns [JOURNAL ...]
 
 JOURNAL is ~/Library/Logs/rini/transitions.1.jsonl, then transitions.jsonl, unless named. PROBE is
 the JSON lines `focuslab.swift` or `overlay.swift` wrote. What every row measures is defined in
@@ -99,12 +101,13 @@ def read(paths):
 
 def flights(bursts):
     """Every flight in `bursts`, in order. A mark before a burst's first flight is in none."""
-    found = []
-    for header, marks in bursts:
-        starts = [opening(marks, at) for at, mark in enumerate(marks) if mark["mark"] == "hold"]
-        for start, end in zip(starts, starts[1:] + [len(marks)]):
-            found.append(Flight(header, marks[start:end]))
-    return found
+    return [Flight(header, marks[start:end]) for header, marks in bursts for start, end in spans(marks)]
+
+
+def spans(marks):
+    """Where each flight in a burst's `marks` starts and ends, in order."""
+    starts = [opening(marks, at) for at, mark in enumerate(marks) if mark["mark"] == "hold"]
+    return list(zip(starts, starts[1:] + [len(marks)]))
 
 
 def opening(marks, hold):
@@ -502,6 +505,63 @@ def pictures(found, target=False):
     return "\n".join(lines)
 
 
+def main_turns(marks):
+    """Each `main_turn` in `marks`, where it is, its actors' polls in ms by name, and its window changes,
+    each with how long before the turn began in ms, from the marks after it."""
+    found = []
+    current = None
+    for at, mark in enumerate(marks):
+        if mark["mark"] == "main_turn":
+            current = (at, mark, {}, [])
+            found.append(current)
+        elif mark["mark"] == "turn_actor" and current is not None:
+            current[2][mark["actor"]] = mark["us"] / 1000
+        elif mark["mark"] == "turn_change" and current is not None:
+            current[3].append((mark["what"], mark["before_us"] / 1000))
+        else:
+            current = None
+    return found
+
+
+def turns(bursts):
+    """Every slow turn of the main thread: the flight it fell in, its generation and kind and the ms
+    from its first mark (its press, or its begin) to the turn, all None for a turn at rest; how long the
+    turn ran and the time outside its actors' polls, in ms; its actors and its window changes."""
+    rows = []
+    for header, marks in bursts:
+        within = spans(marks)
+        for at, mark, actors, changes in main_turns(marks):
+            span = next(((start, end) for start, end in within if start <= at < end), None)
+            flight = Flight(header, marks[span[0]:span[1]]) if span else None
+            rows.append({
+                "g": flight.g if flight else None,
+                "kind": flight.kind() if flight else None,
+                "after": ms(mark["t"], flight.marks[0]["t"]) if flight else None,
+                "busy": mark["busy_us"] / 1000,
+                "outside": mark["outside_us"] / 1000,
+                "actors": actors,
+                "changes": changes,
+            })
+    return rows
+
+
+def turn_listing(bursts):
+    rows = turns(bursts)
+    lines = [f"{'g':>6s}  {'kind':12s} {'after ms':>9s} {'busy ms':>8s} {'outside':>8s}  "
+             "actors at 0.1ms or more; window changes, ms before the turn"]
+    for row in rows:
+        g = f"{row['g']:>6d}" if row["g"] is not None else f"{'rest':>6s}"
+        after = f"{row['after']:9.1f}" if row["after"] is not None else f"{'-':>9s}"
+        ranked = sorted(row["actors"].items(), key=lambda item: -item[1])
+        actors = ", ".join(f"{name} {took:.1f}" for name, took in ranked if took >= 0.1) or "-"
+        changes = ", ".join(f"{what} {before:.1f}" for what, before in row["changes"]) or "-"
+        lines.append(f"{g}  {row['kind'] or '-':12s} {after} {row['busy']:8.1f} {row['outside']:8.1f}  {actors}; {changes}")
+    in_flights = sum(1 for row in rows if row["g"] is not None)
+    lines += ["", f"{len(rows)} main-thread turns over 8ms, {in_flights} in flights"]
+    lines += table("turns (ms)", rows, [("busy", "busy"), ("outside", "outside the actors")])
+    return "\n".join(lines)
+
+
 def journals(named):
     if named:
         return named
@@ -524,6 +584,8 @@ def main(argv):
     picturing = commands.add_parser("pictures")
     picturing.add_argument("--target", action="store_true")
     picturing.add_argument("journal", nargs="*")
+    turning = commands.add_parser("turns")
+    turning.add_argument("journal", nargs="*")
     args = parser.parse_args(argv)
     bursts = read(journals(args.journal))
     found = flights(bursts)
@@ -531,6 +593,8 @@ def main(argv):
         print(handover(bursts))
     elif args.command == "pictures":
         print(pictures(found, args.target))
+    elif args.command == "turns":
+        print(turn_listing(bursts))
     elif args.command == "summary":
         if args.kind:
             found = [flight for flight in found if flight.kind() == args.kind]

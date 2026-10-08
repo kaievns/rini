@@ -28,6 +28,7 @@ use objc2_quartz_core::{
     CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, kCAFillModeBackwards,
     kCAGravityLeft, kCAMediaTimingFunctionEaseInEaseOut, kCAMediaTimingFunctionEaseOut,
 };
+use rini_runloop::turns;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::info;
 
@@ -276,10 +277,14 @@ impl BarPanel {
         let frame = self.window.frame();
         match placement::reframe(display, self.strip, converter, frame) {
             Reframe::Stay => {}
-            Reframe::Follow(to) => self.window.setFrame_display(to, false),
+            Reframe::Follow(to) => {
+                self.window.setFrame_display(to, false);
+                turns::changed("bar.frame");
+            }
             Reframe::Restore(to) => {
                 info!(from = ?frame, ?to, "a bar's window was moved off its display; put back");
                 self.window.setFrame_display(to, false);
+                turns::changed("bar.frame");
             }
         }
         let strip = placement::strip(display);
@@ -305,6 +310,7 @@ impl BarPanel {
     pub fn show(&mut self) {
         if !self.visible {
             self.window.orderFrontRegardless();
+            turns::changed("bar.show");
             self.visible = true;
         }
     }
@@ -312,6 +318,7 @@ impl BarPanel {
     pub fn hide(&mut self) {
         if self.visible {
             self.window.orderOut(None);
+            turns::changed("bar.hide");
             self.visible = false;
             self.view.ivars().scene.take();
         }

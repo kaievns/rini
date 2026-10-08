@@ -227,21 +227,19 @@ impl AnimationManager {
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {
-            reactor.publish_animation_display_for(Some(space));
-            if let Some(tx) = &reactor.communication_manager.transitions_tx {
-                let duration = std::time::Duration::from_secs_f64(
-                    reactor.config.settings.animation_duration.max(0.0),
-                );
-                let count = overlay_requests.len();
-                _ = tx.send(crate::transitions::platform::engine::Event::Animate {
-                    windows: overlay_requests,
-                    focus: reactor.layout_manager.layout_engine.focused_window(),
-                    focused_before: reactor.focused_as_event_began,
-                    key: reactor.main_window_tracker.key_window(),
-                    duration,
-                    look: crate::animation::domain::choreography::Look::default(),
-                    cause: reactor.cause,
-                });
+            let duration =
+                std::time::Duration::from_secs_f64(reactor.config.settings.animation_duration.max(0.0));
+            let count = overlay_requests.len();
+            let flight = crate::transitions::platform::engine::Event::Animate {
+                windows: overlay_requests,
+                focus: reactor.layout_manager.layout_engine.focused_window(),
+                focused_before: reactor.focused_as_event_began,
+                key: reactor.main_window_tracker.key_window(),
+                duration,
+                look: crate::animation::domain::choreography::Look::default(),
+                cause: reactor.cause,
+            };
+            if reactor.send_flight(Some(space), flight) {
                 trace!(count, "handed the layout to the overlay animation engine");
             }
         }

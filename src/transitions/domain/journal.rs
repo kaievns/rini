@@ -1,12 +1,13 @@
 //! The transitions journal: the press each request answers, every command the lifecycle gives and
 //! every event it takes but a picture and frame zero, which their delivery marks, a tick only by the
 //! first `at_rest` and `landed` it reads in a generation; every delivery of pictures to it, each
-//! drain of render commands the renderer committed, and each held lift's hide and handover. Each is a
-//! mark in a ring kept with the coordinator, and a burst of marks is written as JSON lines. While the
-//! handover is measured, it also says which lifts are held for the overlay's own picture
-//! ([`measures`]) and when one hides. Pure: the engine drives the lifecycle, tells it each request's
-//! press, each delivery, each commit, each lift it holds, what that lift hears and each handover
-//! through [`Journalled`], and hands each burst it gives to the writer
+//! drain of render commands the renderer committed, each held lift's hide and handover, and each turn
+//! of the main thread over a frame. Each is a mark in a ring kept with the coordinator, and a burst of
+//! marks is written as JSON lines. While the handover is measured, it also says which lifts are held
+//! for the overlay's own picture ([`measures`]) and when one hides. Pure: the engine drives the
+//! lifecycle, tells it each request's press, each delivery, each commit, each lift it holds, what that
+//! lift hears, each handover and each slow main-thread turn through [`Journalled`], and hands each
+//! burst it gives to the writer
 //! (`crate::transitions::platform::journal`). The marks, the clock and when a burst is given:
 //! `src/transitions/docs/journal.md`.
 
@@ -173,6 +174,7 @@ pub enum Mark {
         window: WindowId,
         focused: bool,
     },
+    PlaceRest,
     /// What the tick that lifted it read: either false, `LIFT_GRACE` ran out.
     Lift {
         at_rest: bool,
@@ -186,12 +188,13 @@ pub enum Mark {
         waited_us: u32,
     },
     /// A drain of render commands the renderer committed, as the engine heard it: the highest batch
-    /// in it, whether it put the overlay up or down (`None`: neither), how long its oldest batch
-    /// waited for the renderer, how long playing it took to its flush, and how long before this mark
-    /// it was flushed.
+    /// in it, whether it put the overlay up or down (`None`: neither), whether it placed what is drawn
+    /// at rest, how long its oldest batch waited for the renderer, how long playing it took to its
+    /// flush, and how long before this mark it was flushed.
     Drawn {
         seq: u64,
         shown: Option<bool>,
+        places: bool,
         queued_us: u32,
         applied_us: u32,
         flushed_before_us: u32,
@@ -211,6 +214,25 @@ pub enum Mark {
     },
     ReportUp,
     ReportSettled,
+    /// A turn of the main thread's run loop over a frame at 120Hz, stamped when it began: how long it
+    /// ran, the time no actor's poll covers, and how many `turn_actor` and `turn_change` marks follow.
+    MainTurn {
+        busy_us: u32,
+        outside_us: u32,
+        actors: u16,
+        changes: u16,
+    },
+    /// An actor polled in the turn marked before it, and how long its polls took.
+    TurnActor {
+        actor: &'static str,
+        us: u32,
+    },
+    /// A window change made from 50ms before the turn marked before it began, and how long before it
+    /// began: negative, made in it.
+    TurnChange {
+        what: &'static str,
+        before_us: i32,
+    },
 }
 
 /// When a tile took the picture a `wears` mark records.
@@ -324,6 +346,14 @@ fn millis(span: Duration) -> u32 {
 
 fn micros(span: Duration) -> u32 {
     u32::try_from(span.as_micros()).unwrap_or(u32::MAX)
+}
+
+/// `later - earlier` in microseconds, either way round.
+fn signed_micros(earlier: Instant, later: Instant) -> i32 {
+    match later.checked_duration_since(earlier) {
+        Some(span) => i32::try_from(span.as_micros()).unwrap_or(i32::MAX),
+        None => i32::try_from((earlier - later).as_micros()).map_or(i32::MIN, |us| -us),
+    }
 }
 
 fn count(n: usize) -> u16 {
@@ -467,6 +497,7 @@ impl Journal {
                 Mark::KeepFocusedLook { of: *generation, window: *window }
             }
             Command::Focus { window, focused } => Mark::Focus { window: *window, focused: *focused },
+            Command::PlaceRest => Mark::PlaceRest,
             Command::Lift { .. } => Mark::Lift { at_rest, landed },
             Command::Warm(windows) => Mark::Warm { windows: count(windows.len()) },
             Command::Refresh(windows) => Mark::Refresh { windows: count(windows.len()) },
@@ -536,7 +567,8 @@ impl Journal {
 /// The lifecycle with its journal, driven as one: the press each request answers, every command the
 /// coordinator gives, every event it takes but a picture and frame zero, a tick only by the first
 /// `at_rest` and `landed` it reads in a generation, every delivery of pictures the engine hears and
-/// every commit the renderer reports is marked, and while the journal is written a burst is given
+/// every commit the renderer reports and every slow turn of the main thread is marked, and while the
+/// journal is written a burst is given
 /// once it settles. While the handover is measured, it decides when the lift the engine holds hides,
 /// and marks its hide and its handover.
 #[derive(Default)]
@@ -611,16 +643,52 @@ impl Journalled {
 
     /// The renderer committed the drain up to batch `seq`, heard `now`, before what it releases is
     /// carried out: `sent` when its oldest batch was sent, `began` when the renderer began playing it,
-    /// `flushed` when it was flushed, and `shown` whether it put the overlay up or down.
-    pub fn drawn(&mut self, now: Instant, seq: u64, shown: Option<bool>, sent: Instant, began: Instant, flushed: Instant) {
+    /// `flushed` when it was flushed, `shown` whether it put the overlay up or down, and `places`
+    /// whether it placed what is drawn at rest.
+    pub fn drawn(
+        &mut self,
+        now: Instant,
+        seq: u64,
+        (shown, places): (Option<bool>, bool),
+        (sent, began, flushed): (Instant, Instant, Instant),
+    ) {
         let mark = Mark::Drawn {
             seq,
             shown,
+            places,
             queued_us: micros(began.saturating_duration_since(sent)),
             applied_us: micros(flushed.saturating_duration_since(began)),
             flushed_before_us: micros(now.saturating_duration_since(flushed)),
         };
         self.journal.push(now, self.coordinator.generation(), mark);
+    }
+
+    /// A turn of the main thread over a frame, from `began` for `busy`: each actor polled in it with
+    /// the time its polls took, the time outside them, and each window change from 50ms before it
+    /// began, with when. Stamped when it began, in the generation the coordinator is in, so it is
+    /// written with the burst it falls in.
+    pub fn main_turn(
+        &mut self,
+        began: Instant,
+        busy: Duration,
+        actors: &[(&'static str, Duration)],
+        outside: Duration,
+        changes: &[(&'static str, Instant)],
+    ) {
+        let generation = self.coordinator.generation();
+        let turn = Mark::MainTurn {
+            busy_us: micros(busy),
+            outside_us: micros(outside),
+            actors: count(actors.len()),
+            changes: count(changes.len()),
+        };
+        self.journal.push(began, generation, turn);
+        for &(actor, took) in actors {
+            self.journal.push(began, generation, Mark::TurnActor { actor, us: micros(took) });
+        }
+        for &(what, at) in changes {
+            self.journal.push(began, generation, Mark::TurnChange { what, before_us: signed_micros(at, began) });
+        }
     }
 
     /// The engine holds `generation`'s lift, from `now`, for the overlay's own picture.
@@ -810,6 +878,7 @@ mod tests {
             (Command::Snap { window: w(1), frame: snap }, "snap"),
             (Command::KeepFocusedLook { generation: g, window: w(1) }, "keep_focused_look"),
             (Command::Focus { window: w(1), focused: false }, "focus"),
+            (Command::PlaceRest, "place_rest"),
             (Command::Lift { generation: g }, "lift"),
             (Command::Warm(frames.clone()), "warm"),
             (Command::Refresh(frames), "refresh"),
@@ -868,7 +937,7 @@ mod tests {
         flights.drive(Event::Tick { settled: true, landed: false }, end + Duration::from_millis(16));
         flights.drive(Event::Tick { settled: true, landed: true }, end + Duration::from_millis(32));
         let marks = held(&flights);
-        assert_eq!(names(&marks[before..]), ["at_rest", "landed", "stop_watches", "lift", "settle"]);
+        assert_eq!(names(&marks[before..]), ["at_rest", "landed", "place_rest", "stop_watches", "lift", "settle"]);
         assert_eq!(marks[before].at, end, "stamped with the tick that first read it");
     }
 
@@ -973,9 +1042,47 @@ mod tests {
         let sent = now + Duration::from_micros(200);
         let at = |us| sent + Duration::from_micros(us);
         let before = held(&flights).len();
-        flights.drawn(at(2_000), 4, Some(true), sent, at(1_300), at(1_700));
-        let mark = Mark::Drawn { seq: 4, shown: Some(true), queued_us: 1_300, applied_us: 400, flushed_before_us: 300 };
+        flights.drawn(at(2_000), 4, (Some(true), false), (sent, at(1_300), at(1_700)));
+        let mark = Mark::Drawn { seq: 4, shown: Some(true), places: false, queued_us: 1_300, applied_us: 400, flushed_before_us: 300 };
         assert_eq!(held(&flights)[before..], [Stamped { at: at(2_000), generation: g, mark }], "stamped when the engine heard it");
+    }
+
+    #[test]
+    fn a_main_turn_is_marked_in_the_burst_it_falls_in() {
+        let now = Instant::now();
+        let ms = Duration::from_millis;
+        let mut flights = Journalled::default();
+        flights.set_writing(true);
+        flights.drive(Event::Begin(pan()), now);
+        let g = flights.coordinator().generation();
+        flights.drive(Event::FrameZero(g), now);
+        let began = now + ms(20);
+        let actors = [("renderer", Duration::from_micros(2_500)), ("rest", ms(1))];
+        let changes = [("overlay.show", began - ms(12)), ("rest.frame", began + Duration::from_micros(300))];
+        flights.main_turn(began, ms(262), &actors, Duration::from_micros(258_500), &changes);
+        flights.drive(Event::Tick { settled: true, landed: true }, now + PLAYS);
+        let burst = flights.drive(Event::Quiet(g), now + PLAYS + SETTLE_BEFORE_CAPTURES).1.expect("settled");
+        let at = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. })).expect("marked");
+        assert_eq!(burst.marks[at..at + 5], [
+            Mark::MainTurn { busy_us: 262_000, outside_us: 258_500, actors: 2, changes: 2 },
+            Mark::TurnActor { actor: "renderer", us: 2_500 },
+            Mark::TurnActor { actor: "rest", us: 1_000 },
+            Mark::TurnChange { what: "overlay.show", before_us: 12_000 },
+            Mark::TurnChange { what: "rest.frame", before_us: -300 },
+        ].map(|mark| Stamped { at: began, generation: g, mark }));
+
+        let rest = now + ms(900);
+        flights.main_turn(rest, ms(9), &actors, ms(6), &[]);
+        let next = rest + ms(100);
+        assert!(flights.drive(Event::Begin(pan()), next).1.is_none());
+        let g = flights.coordinator().generation();
+        flights.drive(Event::FrameZero(g), next);
+        flights.drive(Event::Tick { settled: true, landed: true }, next + PLAYS);
+        let burst = flights.drive(Event::Quiet(g), next + PLAYS + SETTLE_BEFORE_CAPTURES).1.expect("settled");
+        let turn = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. }));
+        let begin = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::Begin { .. }));
+        assert!(turn < begin && turn.is_some(), "a turn at rest goes with the next burst, ahead of its flight");
+        assert_eq!(burst.marks[turn.unwrap()].at, rest);
     }
 
     #[test]
@@ -1455,14 +1562,24 @@ mod tests {
         }
 
         /// The renderer's commit of the drain up to `seq`, heard at `us`.
-        fn drawn(&mut self, us: i64, seq: u64, shown: Option<bool>, (sent, began, flushed): (i64, i64, i64)) {
+        fn drawn(&mut self, us: i64, seq: u64, (shown, places): (Option<bool>, bool), (sent, began, flushed): (i64, i64, i64)) {
             let (sent, began, flushed) = (self.at(sent), self.at(began), self.at(flushed));
-            self.flights.drawn(self.at(us), seq, shown, sent, began, flushed);
+            self.flights.drawn(self.at(us), seq, (shown, places), (sent, began, flushed));
         }
 
         /// The picture `window`'s tile took `at` that moment, heard at `us`, its capture started at `taken`.
         fn wears(&mut self, us: i64, window: WindowId, at: Wearing, route: Route, blur: bool, taken: i64) {
             self.flights.wears(self.at(us), window, at, route, blur, self.at(taken));
+        }
+
+        /// A turn of the main thread from `us` for `busy`, its actors' polls and its window changes,
+        /// each at its `us`.
+        fn turn(&mut self, us: i64, busy: u64, actors: &[(&'static str, u64)], changes: &[(&'static str, i64)]) {
+            let actors: Vec<_> = actors.iter().map(|&(actor, took)| (actor, Duration::from_micros(took))).collect();
+            let changes: Vec<_> = changes.iter().map(|&(what, at)| (what, self.at(at))).collect();
+            let polled: u64 = actors.iter().map(|(_, took)| took.as_micros() as u64).sum();
+            let outside = Duration::from_micros(busy - polled);
+            self.flights.main_turn(self.at(us), Duration::from_micros(busy), &actors, outside, &changes);
         }
 
         /// A delivery and the pictures the engine offers the coordinator from it, 0.1ms later.
@@ -1480,7 +1597,8 @@ mod tests {
     /// focus showed no turn of its own, its lift measured; then one whose frame zero comes
     /// after the patience, a second press merged into it, a stale delivery, a window lost and an
     /// overdue lift, which hid unmeasured. The renderer's commits of each show and each hide are
-    /// marked, and of the first press's composed flight before its show.
+    /// marked, and of the first press's composed flight before its show; a slow turn of the main thread
+    /// just after the first show, and one at rest before the second press.
     #[test]
     fn the_sample_the_tools_read_is_what_the_journal_writes() {
         let mut script = Script { flights: Journalled::default(), base: Instant::now(), bursts: Vec::new() };
@@ -1497,14 +1615,18 @@ mod tests {
         script.wears(6_000, w(9), Wearing::Compose, Route::SkyLight, false, -1_600_000);
         script.drive(6_100, Event::Merge { stage: pan(), moved: false });
         script.flights.answered();
-        script.drawn(7_000, 2, None, (6_200, 6_400, 6_800));
+        script.drawn(7_000, 2, (None, false), (6_200, 6_400, 6_800));
         let g = script.flights.coordinator().generation();
         script.deliver(33_200, g, Why::FrameZero, 31_000, &[(w(1), starts, 1_300), (w(9), floating, 16_500)]);
         script.wears(33_300, w(1), Wearing::FrameZero, Route::Baked, true, 1_300);
         script.wears(33_300, w(9), Wearing::FrameZero, Route::SkyLight, false, 16_500);
         script.drive(33_600, Event::FrameZero(g));
         script.drive(34_500, Event::Extend(Duration::from_millis(349)));
-        script.drawn(35_500, 3, Some(true), (34_600, 34_900, 35_200));
+        script.drawn(35_500, 3, (Some(true), false), (34_600, 34_900, 35_200));
+        script.turn(36_000, 11_800, &[("renderer", 400), ("rest", 3_100), ("window_notify", 0)], &[
+            ("overlay.show", 35_100),
+            ("rest.frame", 36_500),
+        ]);
         script.offer(95_000, g, Why::Landed, 93_100, &[(w(2), target, 88_400)]);
         script.wears(95_100, w(2), Wearing::Swap, Route::Baked, true, 88_400);
         script.offer(112_000, g, Why::Landed, 110_200, &[(w(1), left, 104_000)]);
@@ -1514,14 +1636,17 @@ mod tests {
         script.offer(160_000, g, Why::Background, 158_400, &[(w(9), floating, 152_000)]);
         script.drive(273_600, Event::Tick { settled: false, landed: false });
         script.offer(312_000, g, Why::Final, 309_500, &[(w(1), left, 280_200)]);
+        script.drive(370_000, Event::Tick { settled: false, landed: true });
+        script.drawn(372_000, 8, (None, true), (370_200, 370_400, 371_700));
         script.drive(383_700, Event::Tick { settled: true, landed: true });
         script.lifted(383_700, g);
         script.heard(415_100, Heard::OverlayTaken { generation: g, taken: true });
-        script.drawn(416_000, 9, Some(false), (415_200, 415_400, 415_700));
+        script.drawn(416_000, 9, (Some(false), false), (415_200, 415_400, 415_700));
         let diff = |interior, interior_over, edge_in, edge_out, band| HandoverDiff { interior, interior_over, edge_in, edge_out, band };
         let measured = [(w(2), diff(0.26, 0.0012, 0.37, 1.56, None)), (w(1), diff(0.79, 0.004, 1.08, 2.26, Some(0.42)))];
         script.handover(480_300, g, &measured);
         script.drive(783_700, Event::Quiet(g));
+        script.turn(1_500_000, 9_200, &[("bar", 8_700)], &[("bar.frame", 1_492_000)]);
 
         let wider = r(866.0, 35.0, 600.0, 1079.0);
         let mut resized = pan();
@@ -1537,7 +1662,7 @@ mod tests {
         let first = script.flights.coordinator().generation();
         script.drive(3_080_000, Event::Tick { settled: false, landed: false });
         script.drive(3_080_900, Event::Extend(Duration::from_millis(349)));
-        script.drawn(3_082_300, 12, Some(true), (3_081_000, 3_081_400, 3_081_900));
+        script.drawn(3_082_300, 12, (Some(true), false), (3_081_000, 3_081_400, 3_081_900));
         let late = [(w(1), starts, 3_002_000), (w(9), floating, 3_002_000)];
         script.offer(3_096_000, first, Why::FrameZero, 3_093_500, &late);
         script.wears(3_096_100, w(1), Wearing::Swap, Route::Baked, true, 3_002_000);
@@ -1554,7 +1679,7 @@ mod tests {
         script.drive(3_850_000, Event::Tick { settled: true, landed: false });
         script.lifted(3_850_000, merged);
         script.heard(3_910_000, Heard::Patience);
-        script.drawn(3_911_000, 17, Some(false), (3_910_100, 3_910_300, 3_910_700));
+        script.drawn(3_911_000, 17, (Some(false), false), (3_910_100, 3_910_300, 3_910_700));
         script.drive(4_250_000, Event::Quiet(merged));
 
         let anchor = |at: Instant| Anchor { at, uptime_ns: 81_234_560_000_000 + nanos(at - script.base) };

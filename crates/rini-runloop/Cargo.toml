@@ -2,7 +2,7 @@
 name = "rini-runloop"
 version = "0.1.0"
 edition = "2024"
-description = "The CFRunLoop executor, timers and span-carrying channel every rini actor runs on."
+description = "The CFRunLoop executor, timers and span-carrying channel every rini actor runs on, and the timing of its turns."
 license = "Apache-2.0"
 publish = false
 

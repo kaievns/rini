@@ -27,14 +27,7 @@ impl Reactor {
     /// The display is published first because the actor silently declines to animate before it knows
     /// the geometry, which reads as "the debug command did nothing".
     fn ask_flight_engine(&mut self, event: engine::Event, sent: String) -> EventOutcome {
-        self.publish_animation_display();
-        let line = match &self.communication_manager.transitions_tx {
-            Some(tx) => {
-                _ = tx.send(event);
-                sent
-            }
-            None => "the flight engine is not running".to_string(),
-        };
+        let line = if self.send_flight(None, event) { sent } else { "the flight engine is not running".to_string() };
         EventOutcome::no_change().with_stdout_line(line)
     }
 

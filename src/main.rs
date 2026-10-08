@@ -93,8 +93,10 @@ enum Commands {
 /// this is okay because there is no recovery mechanism for actors
 /// so we want to immediately exit (and most likely restart since
 /// rini runs as a service most of the time)
+///
+/// Each poll is timed into the main thread's turn under `name`, for the journal's `main_turn`.
 async fn supervise(name: &'static str, fut: impl Future<Output = ()>) {
-    fut.await;
+    rini_runloop::turns::timed(name, fut).await;
     panic!("{name} exited");
 }
 
@@ -251,9 +253,10 @@ fn main() {
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
     let (bar_tx, bar_rx) = rini::app::channels::channel();
     let (rest_tx, rest_rx) = rini::app::channels::channel();
-    // Whether the window server's frames and orders are followed for the rest windows: the reactor
-    // turns it on while any window can wear a band.
-    let following = rini::displays::event::Following::default();
+    // Whether the window server's frames and orders are followed for the rest windows, and the
+    // frames thread's queue they and the window notifications ask it through: the reactor turns it
+    // on while any window can wear a band.
+    let (following, server_reads) = rini::displays::event::Following::new();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
 
     // Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
@@ -397,16 +400,14 @@ fn main() {
             CGSEventType::Known(KnownCGSEvent::WindowResized),
         ],
         // The rest windows follow every decorated window the window server moves, go back above the
-        // ones it reorders, and hide with the ones it hides or closes, while `following` is on.
+        // ones it reorders, hide with the ones it hides or closes, and learn each one they first
+        // meet, all read on the frames thread, while `following` is on.
         vec![Box::new({
             let rest_tx = rest_tx.clone();
-            move |frames: &[_]| rest_tx.send(rini::decorations::platform::rest::Event::Frames(frames.to_vec()))
+            move |read| rest_tx.send(rini::decorations::platform::rest::Event::Server(read))
         })],
-        vec![Box::new({
-            let rest_tx = rest_tx.clone();
-            move |order| rest_tx.send(rini::decorations::platform::rest::Event::Order(order))
-        })],
-        following,
+        following.clone(),
+        server_reads,
     );
 
     let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
@@ -447,11 +448,11 @@ fn main() {
     // run on the loop that makes them. Both stay idle until the reactor sends display geometry and
     // something to animate.
     // The decorations drawn at rest, on the main thread for AppKit: a rest window above each window
-    // whose band shows, told what each wears by the reactor. Under the overlay they draw nothing, and
-    // the renderer places them before each lift hides it, so the lift shows each band where its tile
-    // had it.
+    // whose band shows, told what each wears and when each flight begins by the reactor. From a
+    // flight's begin they draw nothing until the renderer places them, a tick before the lift once
+    // the flight has landed or in the lift's drain, so the lift shows each band where its tile had it.
     let (rest_actor, rest_handover) =
-        rini::decorations::platform::rest::RestActor::new(rest_rx, rest_tx.clone(), mtm);
+        rini::decorations::platform::rest::RestActor::new(rest_rx, rest_tx.clone(), following, mtm);
     let (render_tx, render_rx) = rini::app::channels::channel();
     let renderer = rini::animation::platform::renderer::Renderer::new(
         render_rx,
@@ -544,6 +545,12 @@ fn main() {
             panic!("input thread exited");
         })
         .expect("failed to spawn input thread");
+
+    // Every main-thread turn over a frame goes to the flight engine's journal.
+    let _turns = rini_runloop::run_loop::TurnObserver::install({
+        let transitions_tx = transitions_tx.clone();
+        move |turn| transitions_tx.send(rini::transitions::platform::engine::Event::MainTurn(turn))
+    });
 
     Executor::run_main(mtm, async move {
         join!(

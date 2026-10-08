@@ -57,7 +57,9 @@ class Summary(unittest.TestCase):
         self.assertAlmostEqual(self.clean["press_to_up"], self.clean["overlay_up"], places=6)
 
     def test_the_overlay_is_up_once_the_first_drain_showing_it_after_the_show_is_flushed(self):
-        self.assertEqual(self.flights[0].count("drawn", lambda mark: mark["shown"] is None), 1, "a drain before the show")
+        in_flight = lambda mark: mark["shown"] is None and not mark["places"]
+        self.assertEqual(self.flights[0].count("drawn", in_flight), 1, "a drain before the show")
+        self.assertEqual(self.flights[0].count("drawn", lambda mark: mark["places"]), 1, "the place ahead of the lift")
         marks = [mark for mark in self.flights[0].marks if not (mark["mark"] == "drawn" and mark["shown"])]
         never_up = journal.Flight(self.flights[0].header, marks).times()
         self.assertIsNone(never_up["overlay_up"], "drained, never shown")
@@ -126,7 +128,7 @@ class Summary(unittest.TestCase):
     def test_each_drain_drawn_is_its_wait_for_the_renderer_its_commit_and_the_way_back(self):
         rows = journal.drains(self.flights)
         self.assertEqual([(row["queued"], row["applied"], row["heard"]) for row in rows], [
-            (0.2, 0.4, 0.2), (0.3, 0.3, 0.3), (0.2, 0.3, 0.3), (0.4, 0.5, 0.4), (0.2, 0.4, 0.3),
+            (0.2, 0.4, 0.2), (0.3, 0.3, 0.3), (0.2, 1.3, 0.3), (0.2, 0.3, 0.3), (0.4, 0.5, 0.4), (0.2, 0.4, 0.3),
         ])
 
     def test_nearest_rank_percentiles(self):
@@ -202,6 +204,32 @@ class Pictures(unittest.TestCase):
         _, found = sample()
         listed = journal.pictures(found, target=True).splitlines()
         self.assertEqual(sum(1 for line in listed if "*" in line and line[:6].strip().isdigit()), 3)
+
+
+class Turns(unittest.TestCase):
+    def setUp(self):
+        self.bursts, _ = sample()
+        self.rows = journal.turns(self.bursts)
+
+    def test_each_slow_turn_with_the_flight_it_fell_in_its_actors_and_its_window_changes(self):
+        self.assertEqual(len(self.rows), 2)
+        shown = self.rows[0]
+        self.assertEqual((shown["g"], shown["kind"]), (1, "pan"))
+        self.assertAlmostEqual(shown["after"], 38.4, places=6, msg="ms after the press")
+        self.assertEqual((shown["busy"], shown["outside"]), (11.8, 8.3))
+        self.assertEqual(shown["actors"], {"renderer": 0.4, "rest": 3.1, "window_notify": 0.0})
+        self.assertEqual(shown["changes"], [("overlay.show", 0.9), ("rest.frame", -0.5)])
+
+    def test_a_turn_before_a_bursts_first_flight_is_at_rest(self):
+        rest = self.rows[1]
+        self.assertEqual((rest["g"], rest["kind"], rest["after"]), (None, None, None))
+        self.assertEqual((rest["actors"], rest["changes"]), ({"bar": 8.7}, [("bar.frame", 8.0)]))
+
+    def test_the_listing_names_where_each_turn_fell_and_what_held_it(self):
+        text = journal.turn_listing(self.bursts)
+        self.assertIn("rest 3.1, renderer 0.4; overlay.show 0.9, rest.frame -0.5", text)
+        self.assertIn("2 main-thread turns over 8ms, 1 in flights", text)
+        self.assertNotIn("window_notify", text, "an actor under 0.1ms is left out")
 
 
 class Probe(unittest.TestCase):

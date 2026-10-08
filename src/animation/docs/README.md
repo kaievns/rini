@@ -25,7 +25,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
 | `platform/overlay.rs` | `TileOverlay`, the window the renderer draws on: it poses frame zero and plays a score's edits, every animation installed from a track, and commits nothing itself; each tile wears its picture and `decorations::platform::layers`, which it fills a resize for from the tile's track (`Resize`); its `Tree` (the `CALayer` tree, the desktop behind it included, and the replica it reads only to install) hangs off any root layer, so it is tested without a window; `server_id()` is its window's number, which a handover check pictures alone; `window_origin` is where the window over a display starts on screen, which that picture is read from, and `same_layout` whether a display lays the window out again; at the lift it lets go of the tiles and of the desktop behind them (`release`), which the pictures service still holds for the next flight's dressing |
 | `platform/renderer.rs` | `Renderer`, the main thread's actor: it owns the overlay, makes it on the first flight it dresses or poses, and plays the flight engine's `Batch`es of `Render` commands, each one of the overlay's calls; the batches queued when it wakes are one drain (`in_order`), played in one `CATransaction` with the window's alpha and background set around it and answered once (`run`), not drawn only when it dressed or posed a flight (`needs_overlay`) and there is no overlay (`answer`); `media_clock`, Core Animation's media clock read against `Instant`, which the engine begins every track on |
-| `event.rs` | What the renderer answers each drain with: `Committed`, with the overlay's window number once the window server has numbered it, whether the drain put the overlay up or down, and when its oldest batch was sent, when the renderer began playing it and when it was flushed; or `Unavailable`, a flight dressed or posed with no overlay to draw it on |
+| `event.rs` | What the renderer answers each drain with: `Committed`, with the overlay's window number once the window server has numbered it, whether the drain put the overlay up or down, whether it placed what is drawn at rest, and when its oldest batch was sent, when the renderer began playing it and when it was flushed; or `Unavailable`, a flight dressed or posed with no overlay to draw it on |
 
 Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
 a layout pass's requests in `Screen`, tiles, container positions, travels and accents in `Overlay`,
@@ -51,12 +51,21 @@ nested in the run loop's implicit transaction is otherwise sent only as that pas
 thread's loop ends, after whatever else runs in it. Sent late, a flight skipped its first frames.
 The window's alpha and background are the window's, not the layers', so they are set around the
 transaction: alpha 0 before a drain that lifts the overlay, and after the flush the background its
-holes need and alpha 1 for a drain that shows it, which puts frame zero up holed and moving. After
-a show's alpha 1 the renderer covers what draws the focus ring and the border at rest on its display,
-which then draws nothing on the main thread until the lift, and before a lift's alpha 0 it calls it again
-(`Handover`, which the decorations' rest windows own), so every band on the display is where its
-window is as the overlay goes (`steps`, pinned by
-`the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay`).
+holes need and alpha 1 for a drain that shows it, which puts frame zero up holed and moving. What
+draws the focus ring and the border at rest on the flight's display draws nothing on the main thread
+from the flight's begin, which the reactor tells it of, until the renderer places it; after a
+show's alpha 1 the renderer covers it (`Handover`, which the decorations' rest windows own). The
+coordinator gives `PlaceRest` once a flight end, at the first tick from `FRAME_INTERVAL` before it
+that reads the real windows landed, or with the lift when none did, and never with nothing drawn
+at rest, and the renderer plays it
+before the transaction of the drain carrying it: every band on the display put where its window
+is, still covered (the place and the lift each pass on the latest press the engine had taken as it
+gave them, so a press heard after them waits for its own flight), so a lift's drain only tells the rest windows what came since and brings the
+overlay down (`steps`, pinned by
+`a_drain_carrying_place_rest_places_what_rests_before_its_commands` and
+`the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay`). Between the place
+and the hide, one tick when the windows landed in time, a band shows only through its hole ("Holes"
+in [`animation-smoothness.md`](animation-smoothness.md)).
 
 **`tokio::time` panics here.** There is no tokio reactor; see
 [`crates/rini-runloop/docs/run-loop-executor.md`](../../../crates/rini-runloop/docs/run-loop-executor.md).

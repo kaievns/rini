@@ -4,10 +4,15 @@ use std::ffi::c_void;
 use std::mem;
 use std::time::Duration;
 
+use std::time::Instant;
+
 use objc2_core_foundation::{
-    CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopSource,
-    CFRunLoopSourceContext, CFRunLoopTimer, CFRunLoopTimerContext, kCFRunLoopCommonModes,
+    CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopActivity, CFRunLoopObserver,
+    CFRunLoopObserverContext, CFRunLoopSource, CFRunLoopSourceContext, CFRunLoopTimer,
+    CFRunLoopTimerContext, kCFRunLoopCommonModes,
 };
+
+use crate::turns::{self, MainTurn};
 
 /// A core foundation run loop source.
 ///
@@ -179,5 +184,104 @@ impl Drop for RepeatingTimer {
             drop(unsafe { Box::from_raw(self.handler) });
             self.handler = std::ptr::null_mut();
         }
+    }
+}
+
+/// Times every turn of the current thread's run loop, in all common modes, from waking to going back
+/// to sleep, and hands each one over `turns::SLOW` to its handler. Removed on drop.
+///
+/// The turn opens before any other after-waiting observer and closes after every before-waiting one,
+/// so it holds the work the loop woke for and Core Animation's commit at the end of it (CA's observer
+/// order, 2000000, is inferred, not verified).
+pub struct TurnObserver {
+    woke: CFRetained<CFRunLoopObserver>,
+    sleeps: CFRetained<CFRunLoopObserver>,
+    run_loop: CFRetained<CFRunLoop>,
+    handler: *mut Box<dyn Fn(MainTurn)>,
+}
+
+impl TurnObserver {
+    pub fn install<F: Fn(MainTurn) + 'static>(handler: F) -> Option<Self> {
+        unsafe extern "C-unwind" fn woke(_: *mut CFRunLoopObserver, _: CFRunLoopActivity, _: *mut c_void) {
+            turns::woke(Instant::now());
+        }
+        unsafe extern "C-unwind" fn sleeps(_: *mut CFRunLoopObserver, _: CFRunLoopActivity, info: *mut c_void) {
+            let Some(turn) = turns::sleeps(Instant::now()) else { return };
+            // SAFETY: `info` is the handler `install` boxed, freed only after `Drop` invalidated
+            // this observer, which is what stops it being called.
+            let handler = unsafe { &*(info as *const Box<dyn Fn(MainTurn)>) };
+            handler(turn);
+        }
+
+        let handler: Box<dyn Fn(MainTurn)> = Box::new(handler);
+        let handler_ptr = Box::into_raw(Box::new(handler));
+        let observer = |activity: CFRunLoopActivity, order, callout: unsafe extern "C-unwind" fn(_, _, _), info| {
+            let mut context =
+                CFRunLoopObserverContext { version: 0, info, retain: None, release: None, copyDescription: None };
+            // SAFETY: the callout matches CFRunLoopObserverCallBack and the context outlives the call,
+            // which copies it.
+            unsafe { CFRunLoopObserver::new(None, activity.0, true, order, Some(callout), &mut context) }
+        };
+        let observers = (
+            observer(CFRunLoopActivity::AfterWaiting, CFIndex::MIN, woke, std::ptr::null_mut()),
+            observer(CFRunLoopActivity::BeforeWaiting, CFIndex::MAX, sleeps, handler_ptr as *mut c_void),
+            CFRunLoop::current(),
+        );
+        let (Some(woke), Some(sleeps), Some(run_loop)) = observers else {
+            // SAFETY: no observer was added, so nothing can reference the handler.
+            drop(unsafe { Box::from_raw(handler_ptr) });
+            return None;
+        };
+        let modes = unsafe { kCFRunLoopCommonModes };
+        run_loop.add_observer(Some(&woke), modes);
+        run_loop.add_observer(Some(&sleeps), modes);
+        Some(Self { woke, sleeps, run_loop, handler: handler_ptr })
+    }
+}
+
+impl Drop for TurnObserver {
+    fn drop(&mut self) {
+        let modes = unsafe { kCFRunLoopCommonModes };
+        for observer in [&self.woke, &self.sleeps] {
+            observer.invalidate();
+            self.run_loop.remove_observer(Some(observer), modes);
+        }
+        // SAFETY: both observers are invalidated and removed, so the callout cannot run again, and
+        // nothing else holds this pointer.
+        drop(unsafe { Box::from_raw(self.handler) });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::thread;
+
+    use super::*;
+    use crate::executor::{Executor, sleep};
+
+    #[test]
+    fn a_turn_over_a_frame_is_handed_over_with_the_actor_that_held_it() {
+        let turns = thread::spawn(|| {
+            let seen = Rc::new(RefCell::new(Vec::new()));
+            let observer = TurnObserver::install({
+                let seen = seen.clone();
+                move |turn| seen.borrow_mut().push(turn)
+            });
+            Executor::run(turns::timed("busy", async {
+                sleep(Duration::from_millis(5)).await;
+                thread::sleep(Duration::from_millis(12));
+                sleep(Duration::from_millis(5)).await;
+            }));
+            drop(observer);
+            seen.take().into_iter().map(|turn| (turn.busy, turn.actors)).collect::<Vec<_>>()
+        });
+        let turns = turns.join().unwrap();
+        assert_eq!(turns.len(), 1, "{turns:?}");
+        let (busy, actors) = &turns[0];
+        assert!(*busy >= Duration::from_millis(12), "{busy:?}");
+        assert_eq!(actors.iter().map(|(actor, _)| *actor).collect::<Vec<_>>(), ["busy"]);
+        assert!(actors[0].1 >= Duration::from_millis(12));
     }
 }

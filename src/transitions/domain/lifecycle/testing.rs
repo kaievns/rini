@@ -50,6 +50,7 @@ pub(in crate::transitions) fn pan() -> StageSummary {
         start: Start::Immediate,
         duration: PLAYS,
         display: DISPLAY,
+        rests: true,
         opaque: Vec::new(),
     }
 }

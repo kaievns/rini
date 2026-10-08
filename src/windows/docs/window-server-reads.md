@@ -65,7 +65,7 @@ to the read connection changes nothing.
 
 | call | the wait | rini's reads through it |
 |---|---|---|
-| `SLSWindowQueryWindows`, `SLSWindowQueryRun` | `run_query`: `CGSConnectionByID(cid)`, then the sync | `WindowIterator`: `get_windows`, `get_window`, `existing_windows`, `window_parent`, `window_level` (so `StackPlace::of`), `corner_radii`, `app_window_suitability`, `window_ordered_in`, `key_focused_window`, `space_window_list_for_connection`, and the listings' details |
+| `SLSWindowQueryWindows`, `SLSWindowQueryRun` | `run_query`: `CGSConnectionByID(cid)`, then the sync | `WindowIterator`: `get_windows`, `get_window`, `existing_windows`, `window_parent`, `window_level` (so `stack_level` and `StackPlace::of`), `corner_radii` (so `corner_radius`), `app_window_suitability`, `window_ordered_in`, `key_focused_window`, `space_window_list_for_connection`, and the listings' details |
 | `SLSHWCaptureWindowList` | `hw_capture_window_list_common`: the main connection only for a cid of 0 | every SkyLight composite in `src/pictures/platform/skylight.rs` |
 | `SLSCaptureWindowsContentsToRectWithOptions` | the main connection only for a cid of 0 | `capture_rect`: the bar's menu-extras capture and its ground, the framed spawn capture and its composite with what is below, a handover check's picture of the screen |
 
@@ -83,7 +83,8 @@ answer another way (`nosync.txt`, `nosync-2.txt`, two runs on an `SLSNewConnecti
 of these is named in `src/` or `crates/`.
 
 **Waits only for a window of rini's own:** `SLSGetWindowBounds` (`server_frame`: the
-`window-frames` thread, `src/displays/docs/live-frames.md`, and the pictures watches) looks the window
+`window-frames` thread, `src/displays/docs/live-frames.md`, the rest windows' place on the main
+thread, `src/decorations/docs/README.md`, and the pictures watches) looks the window
 up among the process's own first, and waits on that window's connection only if it is one; for
 another application's window it waits on nothing. It is asked on the read connection all the same.
 

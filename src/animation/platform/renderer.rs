@@ -43,8 +43,12 @@ pub enum Render {
     Holes(Vec<(OverlayRect, f64)>),
     /// The overlay up.
     Show,
-    /// The overlay down, its holes filled, and its tiles and the desktop behind them let go.
-    Lift,
+    /// What is drawn at rest on the display put where its windows are, under the overlay, ahead of
+    /// the lift, given `through` the latest press the engine had taken.
+    PlaceRest { through: Option<Instant> },
+    /// The overlay down, its holes filled, and its tiles and the desktop behind them let go, given
+    /// `through` the latest press the engine had taken.
+    Lift { through: Option<Instant> },
     /// Where each container is presented, logged; sent only while `TRACE_TARGET` is on at trace level.
     Trace,
 }
@@ -57,13 +61,16 @@ pub struct Batch {
 }
 
 /// The batches queued, played as one: their commands in order, the highest number, when the oldest
-/// was sent, and whether the overlay ends the drain up (`Some(true)`), down (`Some(false)`) or as it
-/// was.
+/// was sent, whether the overlay ends the drain up (`Some(true)`), down (`Some(false)`) or as it
+/// was, whether it places what is drawn at rest, and the press the last place or lift in it was
+/// given through.
 pub struct Drained {
     pub commands: Vec<Render>,
     pub seq: u64,
     pub sent: Instant,
     pub shown: Option<bool>,
+    pub places: bool,
+    pub through: Option<Instant>,
 }
 
 /// The batch the renderer woke on and the ones queued behind it, as one drain: whether the overlay
@@ -77,10 +84,15 @@ pub fn in_order(woke: Batch, mut queued: Vec<Batch>) -> Drained {
     let commands: Vec<Render> = queued.into_iter().flat_map(|batch| batch.commands).collect();
     let shown = commands.iter().rev().find_map(|command| match command {
         Render::Show => Some(true),
-        Render::Lift => Some(false),
+        Render::Lift { .. } => Some(false),
         _ => None,
     });
-    Drained { commands, seq, sent, shown }
+    let places = commands.iter().any(|command| matches!(command, Render::PlaceRest { .. }));
+    let through = commands.iter().rev().find_map(|command| match command {
+        Render::PlaceRest { through } | Render::Lift { through } => Some(*through),
+        _ => None,
+    });
+    Drained { commands, seq, sent, shown, places, through: through.flatten() }
 }
 
 /// Whether `command` makes the overlay when there is none: it dresses or poses a flight.
@@ -88,17 +100,18 @@ fn needs_overlay(command: &Render) -> bool { matches!(command, Render::Dress { .
 
 /// What a drain comes to, given the overlay after it and its window's number: not drawn when it
 /// `needed` the overlay and there is none, else committed, any drain with no overlay included, with
-/// the window's number once the window server has numbered it.
+/// the window's number once the window server has numbered it, whether it showed or lifted the
+/// overlay and whether it placed what is drawn at rest.
 fn answer(
     seq: u64,
     needed: bool,
     overlay: Option<Option<WindowServerId>>,
-    shown: Option<bool>,
+    (shown, places): (Option<bool>, bool),
     (sent, began, flushed): (Instant, Instant, Instant),
 ) -> Event {
     match overlay {
         None if needed => Event::Unavailable { seq },
-        overlay => Event::Committed { seq, overlay: overlay.flatten(), shown, sent, began, flushed },
+        overlay => Event::Committed { seq, overlay: overlay.flatten(), shown, places, sent, began, flushed },
     }
 }
 
@@ -116,25 +129,29 @@ pub fn media_clock() -> MediaClock {
 /// What a drain does around its transaction, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
-    /// Every window drawn at rest on the display put where its window is, so the lift that follows
-    /// shows each band where the overlay's tile had it.
+    /// Every window drawn at rest on the display put where its window is, still under the overlay,
+    /// so the lift shows each band where the overlay's tile had it.
     PlaceRest,
+    /// What is drawn at rest told the overlay lifts: what came since its place is drawn, and from
+    /// here it draws as it comes.
+    LiftRest,
     Hide,
     /// The commands, in one transaction, flushed.
     Play,
     Background,
     Show,
-    /// What is drawn at rest told it is under the overlay, so it draws nothing until the lift.
+    /// What is drawn at rest told it is under the overlay, so it draws nothing until it is placed.
     CoverRest,
 }
 
-/// A drain's steps: one that lifts the overlay places what is drawn at rest first and then hides
-/// it, all before its commands; one that shows it puts it up last and then covers what is drawn at
-/// rest.
-fn steps(shown: Option<bool>) -> Vec<Step> {
-    let lifts = (shown == Some(false)).then_some([Step::PlaceRest, Step::Hide]).into_iter().flatten();
+/// A drain's steps: one that `places` puts what is drawn at rest where its windows are first; one
+/// that lifts the overlay then tells what is drawn at rest and hides it, all before its commands;
+/// one that shows it puts it up last and then covers what is drawn at rest.
+fn steps(shown: Option<bool>, places: bool) -> Vec<Step> {
+    let place = places.then_some(Step::PlaceRest);
+    let lifts = (shown == Some(false)).then_some([Step::LiftRest, Step::Hide]).into_iter().flatten();
     let shows = (shown == Some(true)).then_some([Step::Show, Step::CoverRest]).into_iter().flatten();
-    lifts.chain([Step::Play, Step::Background]).chain(shows).collect()
+    place.into_iter().chain(lifts).chain([Step::Play, Step::Background]).chain(shows).collect()
 }
 
 pub struct Renderer {
@@ -175,22 +192,29 @@ impl Renderer {
         }
     }
 
-    /// Plays a drain in one transaction, flushed, in its `steps`: when the drain lifts the overlay,
-    /// what is drawn at rest on its display placed and the overlay brought down before it; put up after
-    /// when the drain shows it, and what is drawn at rest covered; and the window's background set
-    /// once the holes' mask is committed.
+    /// Plays a drain in one transaction, flushed, in its `steps`: before it, what is drawn at rest on
+    /// its display placed when the drain carries `PlaceRest`, and when the drain lifts the overlay,
+    /// what is drawn at rest told and the overlay brought down; put up after when the drain shows
+    /// it, and what is drawn at rest covered; and the window's background set once the holes' mask
+    /// is committed.
     /// Without an overlay every command but `Display` does nothing; a drain that dressed or posed a
     /// flight on none is `Unavailable`. A commit says when the drain began and when it was flushed.
     fn play(&mut self, drained: Drained) -> Event {
         let began = Instant::now();
-        let Drained { mut commands, seq, sent, shown } = drained;
+        let Drained { mut commands, seq, sent, shown, places, through } = drained;
         let needed = commands.iter().any(needs_overlay);
         let mut flushed = began;
-        for step in steps(shown) {
+        let display = self.display.map(|(frame, _, _)| frame);
+        for step in steps(shown, places) {
             match step {
                 Step::PlaceRest => {
                     if self.overlay.is_some() {
-                        (self.rest.lift)(self.display.map(|(frame, _, _)| frame));
+                        (self.rest.place)(display, through);
+                    }
+                }
+                Step::LiftRest => {
+                    if self.overlay.is_some() {
+                        (self.rest.lift)(display, through);
                     }
                 }
                 Step::Hide => self.overlay.as_mut().into_iter().for_each(TileOverlay::hide),
@@ -208,13 +232,13 @@ impl Renderer {
                 Step::Show => self.overlay.as_mut().into_iter().for_each(TileOverlay::show),
                 Step::CoverRest => {
                     if self.overlay.is_some() {
-                        (self.rest.cover)(self.display.map(|(frame, _, _)| frame));
+                        (self.rest.cover)(display);
                     }
                 }
             }
         }
         let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
-        answer(seq, needed, overlay, shown, (sent, began, flushed))
+        answer(seq, needed, overlay, (shown, places), (sent, began, flushed))
     }
 
     fn apply(&mut self, command: Render) {
@@ -238,9 +262,9 @@ impl Renderer {
                 overlay.set_tile_focused(window, focused, ring)
             }
             Render::Holes(ends) => overlay.set_holes(&ends),
-            // Its alpha goes up after the flush.
-            Render::Show => {}
-            Render::Lift => {
+            // Its alpha goes up after the flush; the rest windows are placed before the transaction.
+            Render::Show | Render::PlaceRest { .. } => {}
+            Render::Lift { .. } => {
                 overlay.clear_holes();
                 overlay.release();
             }
@@ -268,6 +292,9 @@ mod tests {
 
     use super::*;
     use crate::pictures::platform::picture::test_picture;
+
+    const LIFT: Render = Render::Lift { through: None };
+    const PLACE: Render = Render::PlaceRest { through: None };
 
     fn holes(x: f64) -> Render {
         Render::Holes(vec![(OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0)), 0.0)])
@@ -306,17 +333,36 @@ mod tests {
         let at = Instant::now();
         let shown = |woke: Batch, queued: Vec<Batch>| in_order(woke, queued).shown;
         assert_eq!(shown(batch(1, at, 0, vec![holes(1.0), Render::Show, holes(2.0)]), Vec::new()), Some(true));
-        assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![Render::Lift])]), Some(false), "never shown");
-        assert_eq!(shown(batch(1, at, 0, vec![Render::Lift, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
+        assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![LIFT])]), Some(false), "never shown");
+        assert_eq!(shown(batch(1, at, 0, vec![LIFT, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
     }
 
-    /// What is drawn at rest draws nothing from the overlay's show to its lift, and the lift places
-    /// every band before the overlay hides.
+    /// The show covers what is drawn at rest, so it draws nothing until it is placed, and the lift
+    /// draws what came since the place before the overlay hides.
     #[test]
     fn the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay() {
-        assert_eq!(steps(Some(false)), [Step::PlaceRest, Step::Hide, Step::Play, Step::Background]);
-        assert_eq!(steps(Some(true)), [Step::Play, Step::Background, Step::Show, Step::CoverRest]);
-        assert_eq!(steps(None), [Step::Play, Step::Background], "neither: nothing at rest is touched");
+        assert_eq!(steps(Some(false), false), [Step::LiftRest, Step::Hide, Step::Play, Step::Background]);
+        assert_eq!(steps(Some(true), false), [Step::Play, Step::Background, Step::Show, Step::CoverRest]);
+        assert_eq!(steps(None, false), [Step::Play, Step::Background], "neither: nothing at rest is touched");
+    }
+
+    /// A drain carrying `PlaceRest`, a tick ahead of the lift or in the lift's own, puts what is drawn
+    /// at rest where its windows are before anything else it does.
+    #[test]
+    fn a_drain_carrying_place_rest_places_what_rests_before_its_commands() {
+        let at = Instant::now();
+        let ahead = in_order(batch(7, at, 0, vec![holes(1.0), PLACE]), Vec::new());
+        assert!(ahead.places && ahead.shown.is_none());
+        assert_eq!(steps(ahead.shown, ahead.places), [Step::PlaceRest, Step::Play, Step::Background]);
+        let pressed = Some(at + std::time::Duration::from_millis(5));
+        let with_the_lift =
+            in_order(batch(9, at, 1, vec![Render::Lift { through: pressed }]), vec![batch(8, at, 0, vec![PLACE])]);
+        assert_eq!(
+            steps(with_the_lift.shown, with_the_lift.places),
+            [Step::PlaceRest, Step::LiftRest, Step::Hide, Step::Play, Step::Background]
+        );
+        assert_eq!(with_the_lift.through, pressed, "both through the press the lift was given after");
+        assert!(!in_order(batch(1, at, 0, vec![holes(1.0)]), Vec::new()).places);
     }
 
     #[test]
@@ -332,7 +378,8 @@ mod tests {
             ("focus", Render::Focus { window, focused: true, ring: Ring::Active }),
             ("holes", holes(1.0)),
             ("show", Render::Show),
-            ("lift", Render::Lift),
+            ("place_rest", PLACE),
+            ("lift", LIFT),
             ("trace", Render::Trace),
         ];
         let making: Vec<&str> =
@@ -343,7 +390,7 @@ mod tests {
     #[test]
     fn a_drain_that_needed_the_overlay_and_has_none_is_not_drawn() {
         let at = Instant::now();
-        assert_eq!(answer(3, true, None, Some(true), (at, at, at)), Event::Unavailable { seq: 3 });
+        assert_eq!(answer(3, true, None, (Some(true), false), (at, at, at)), Event::Unavailable { seq: 3 });
     }
 
     #[test]
@@ -351,12 +398,14 @@ mod tests {
         let at = Instant::now();
         let times = (at, at + std::time::Duration::from_millis(1), at + std::time::Duration::from_millis(2));
         let (sent, began, flushed) = times;
-        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, sent, began, flushed };
+        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, places: false, sent, began, flushed };
         let numbered = WindowServerId(4_242);
-        assert_eq!(answer(3, false, None, None, times), committed(None), "a display or holes, no overlay");
-        assert_eq!(answer(3, true, Some(None), None, times), committed(None), "made, not numbered yet");
-        assert_eq!(answer(3, true, Some(Some(numbered)), None, times), committed(Some(numbered)));
-        assert_eq!(answer(3, false, Some(Some(numbered)), None, times), committed(Some(numbered)), "every drain");
+        assert_eq!(answer(3, false, None, (None, false), times), committed(None), "a display or holes, no overlay");
+        assert_eq!(answer(3, true, Some(None), (None, false), times), committed(None), "made, not numbered yet");
+        assert_eq!(answer(3, true, Some(Some(numbered)), (None, false), times), committed(Some(numbered)));
+        assert_eq!(answer(3, false, Some(Some(numbered)), (None, false), times), committed(Some(numbered)), "every drain");
+        let placed = Event::Committed { seq: 3, overlay: Some(numbered), shown: None, places: true, sent, began, flushed };
+        assert_eq!(answer(3, false, Some(Some(numbered)), (None, true), times), placed, "a place, told apart from a drain in flight");
     }
 
     #[test]

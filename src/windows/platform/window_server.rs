@@ -763,6 +763,9 @@ pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
     TEST_FRONT_TO_BACK_OVERRIDE.with(|current| *current.borrow_mut() = order.unwrap_or_default());
 }
 
+/// The corner radius the window server reports for one window, if it reports one.
+pub fn corner_radius(id: WindowServerId) -> Option<f64> { corner_radii(&[id]).get(&id).copied() }
+
 /// The corner radius the window server reports for each of `ids` that it reports one for, in one
 /// query, parked and off-screen windows included. Measured in "The corner, measured" in
 /// `src/decorations/docs/README.md`.
@@ -1168,9 +1171,17 @@ pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> 
 #[cfg(test)]
 mod tests {
     use super::{
-        WindowServerId, app_window_suitability, set_window_ordered_in_override,
-        space_window_list_for_connection, window_ordered_in, window_spaces,
+        WindowServerId, app_window_suitability, corner_radius, set_corner_radii_override,
+        set_window_ordered_in_override, space_window_list_for_connection, window_ordered_in, window_spaces,
     };
+
+    #[test]
+    fn one_windows_corner_radius_is_the_one_its_query_reports() {
+        let (reported, silent) = (WindowServerId::new(10041), WindowServerId::new(10042));
+        set_corner_radii_override(reported, Some(vec![12.0; 4]));
+        assert_eq!((corner_radius(reported), corner_radius(silent)), (Some(12.0), None));
+        set_corner_radii_override(reported, None);
+    }
 
     /// A query with no override must answer "unknown", never the truth about the developer's screen.
     ///
@@ -1264,24 +1275,27 @@ pub struct StackPlace {
 
 impl StackPlace {
     pub fn of(wsid: WindowServerId, frame: CGRect) -> Self {
-        let id = wsid.as_u32();
-        Self {
-            frame,
-            level: window_level(id),
-            sub_level: window_sub_level(id),
-        }
+        let (level, sub_level) = stack_level(wsid);
+        Self { frame, level, sub_level }
     }
 }
 
-/// Puts `own`, a window of rini's own connection, at `place`'s level and sub-level: the window server
-/// levels only a connection's own windows, and AppKit orders one directly above another process's
-/// window only once the two share both ("Ordering a rest window" in `src/decorations/docs/README.md`).
-pub fn take_stack_place(own: WindowServerId, place: &StackPlace) {
-    let level = place.level.unwrap_or(NSNormalWindowLevel) as c_int;
+/// A window's level, none when the window server reports none, and its sub-level.
+pub fn stack_level(wsid: WindowServerId) -> (Option<NSWindowLevel>, c_int) {
+    let id = wsid.as_u32();
+    (window_level(id), window_sub_level(id))
+}
+
+/// Puts `own`, a window of rini's own connection, at another window's `level` and `sub_level`, the
+/// normal level when it has none: the window server levels only a connection's own windows, and
+/// AppKit orders one directly above another process's window only once the two share both
+/// ("Ordering a rest window" in `src/decorations/docs/README.md`).
+pub fn take_stack_place(own: WindowServerId, level: Option<NSWindowLevel>, sub_level: c_int) {
+    let level = level.unwrap_or(NSNormalWindowLevel) as c_int;
     // SAFETY: plain calls on rini's own connection and one of its own windows.
     unsafe {
         SLSSetWindowLevel(*G_CONNECTION, own.as_u32(), level);
-        SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), place.sub_level);
+        SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), sub_level);
     }
 }
 
