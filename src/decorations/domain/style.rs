@@ -95,13 +95,22 @@ impl Ring {
     pub fn worn(self) -> bool { self != Ring::None }
 }
 
-/// What a window wears through a pass: its decoration, and the ring it wears before the pass
-/// (`wore_ring`) and where the pass ends (`wears_ring`).
+/// What a window wears through a pass: its decoration, and where the pass ends the ring it wears
+/// (`wears_ring`) and whether it holds focus (`holds_focus`), which paints its border.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Worn {
     pub decoration: Decoration,
-    pub wore_ring: Ring,
     pub wears_ring: Ring,
+    pub holds_focus: bool,
+}
+
+impl Worn {
+    /// How a tile wearing this is painted, drawn `focused` or not: its white line and shadow as
+    /// drawn, which turn with its picture, and its ring and border as where the pass ends, from the
+    /// flight's show to its lift.
+    pub fn style(&self, focused: bool) -> Style {
+        Style { light_alpha: light_alpha(focused), shadow: shadow(focused), ..Style::of(self.holds_focus, self.wears_ring, &self.decoration) }
+    }
 }
 
 /// How a window's decorations are painted: the alpha of the white line, the shadow, and the ring's
@@ -123,11 +132,18 @@ impl Style {
     pub fn of(focused: bool, ring: Ring, decoration: &Decoration) -> Style {
         let urgent = decoration.urgent;
         let ring_paint = decoration.ring.filter(|_| ring.worn()).map(|band| band.paint(ring == Ring::Active, urgent));
-        let (light_alpha, shadow) =
-            if focused { (0.20, FOCUSED_SHADOW) } else { (0.18, UNFOCUSED_SHADOW) };
-        Style { light_alpha, shadow, ring: ring_paint, border: decoration.border.map(|band| band.paint(focused, urgent)) }
+        Style {
+            light_alpha: light_alpha(focused),
+            shadow: shadow(focused),
+            ring: ring_paint,
+            border: decoration.border.map(|band| band.paint(focused, urgent)),
+        }
     }
 }
+
+fn light_alpha(focused: bool) -> f64 { if focused { 0.20 } else { 0.18 } }
+
+fn shadow(focused: bool) -> ShadowStyle { if focused { FOCUSED_SHADOW } else { UNFOCUSED_SHADOW } }
 
 /// Who wears the ring and in which paint, as niri has it (`niri:src/layout/scrolling.rs:2992-2995`,
 /// `niri:src/layout/monitor.rs:1095-1100`): each workspace's active window, on every display, and
@@ -271,6 +287,29 @@ mod tests {
             assert_eq!(Style::of(false, ring, &bordered).border, Some(BORDER.inactive), "{ring:?}");
         }
         assert_eq!(Style::of(true, Ring::Active, &ringed()).border, None, "borders off");
+    }
+
+    /// Focus moves from window 1 to window 2: from the show, each tile's ring and border are what
+    /// its window wears where the flight ends, drawn focused or not, and only its white line and
+    /// shadow are what it is drawn. On one workspace the ring leaves window 1 and comes to window 2;
+    /// to another workspace on the display, each is its workspace's active window and wears the
+    /// active ring; across displays, window 1 keeps the inactive one.
+    #[test]
+    fn a_tile_wears_its_bands_as_where_the_flight_ends_whatever_its_picture_shows() {
+        let bordered = Decoration { border: Some(BORDER), ..ringed() };
+        let worn = |wears_ring, holds_focus| Worn { decoration: bordered, wears_ring, holds_focus };
+        let bands = |style: Style| (style.ring, style.border);
+        for focused in [true, false] {
+            assert_eq!(bands(worn(Ring::None, false).style(focused)), (None, Some(BORDER.inactive)), "losing, one workspace");
+            assert_eq!(bands(worn(Ring::Active, false).style(focused)), (Some(RING.active), Some(BORDER.inactive)), "losing, a switch");
+            assert_eq!(bands(worn(Ring::Inactive, false).style(focused)), (Some(RING.inactive), Some(BORDER.inactive)), "losing to another display");
+            assert_eq!(bands(worn(Ring::Active, true).style(focused)), (Some(RING.active), Some(BORDER.active)), "gaining");
+        }
+        let losing = worn(Ring::None, false).style(true);
+        assert_eq!((losing.light_alpha, losing.shadow), (0.20, FOCUSED_SHADOW), "drawn focused until its turn");
+        let gaining = worn(Ring::Active, true).style(false);
+        assert_eq!((gaining.light_alpha, gaining.shadow), (0.18, UNFOCUSED_SHADOW), "drawn unfocused until its turn");
+        assert_eq!(Worn::default().style(true), Style::of(true, Ring::None, &Decoration::default()), "bands off");
     }
 
     #[test]

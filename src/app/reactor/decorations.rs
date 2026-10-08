@@ -146,12 +146,12 @@ impl Reactor {
         self.rings_with(self.layout_manager.layout_engine.focused_window())
     }
 
-    /// What `window` wears through a pass ending with `rings`, against the rings the last batch left.
+    /// What `window` wears through a pass ending with `rings`.
     pub(super) fn worn(&self, window: WindowId, rings: &Rings) -> Worn {
         Worn {
             decoration: self.decoration_of(window, rings),
-            wore_ring: self.rings_drawn.ring(window),
             wears_ring: rings.ring(window),
+            holds_focus: rings.focused(window),
         }
     }
 }

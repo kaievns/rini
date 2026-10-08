@@ -379,10 +379,14 @@ anyway; two in one round swap old, then new. The watch reports the old window `L
 with no change, out of tries, refused or found clipped, and the target's picture waits no longer. A
 merge's retarget that carries it on reports it again under the new tag: the coordinator drops a report
 under the generation before. The target's changed picture is kept as its focused look,
-and its tile is drawn focused: focus hands over. Each tile's hairline, shadow, focus ring and
-border turn with its own picture (`TileOverlay::set_tile_focused`, the ring as `lifecycle::drawn_ringed` has
-it); Kai, 2026-10-05: "i'd like them to be orchestrated independently
-whenever blur or focus are done switching." A window losing focus whose turn has not shown when the
+and its tile is drawn focused: focus hands over. Each tile's hairline and shadow turn with its own
+picture (`TileOverlay::set_tile_focused`); Kai, 2026-10-05: "i'd like them to be orchestrated
+independently whenever blur or focus are done switching." Its focus ring and border do not: each
+tile wears them as its window does where the flight ends from frame zero (`Worn::style`), so the
+coordinator decides nothing about them. Kai, 2026-10-09: "can you try to move it at the beginning of
+the transition? when the overlay animation starts". A merge that changes where a tile ends wears it
+again at once (`Render::Wear`): the overlay is up, and the merge's drain is the first frame of its
+end. A window losing focus whose turn has not shown when the
 target's does, one clipped, parked, never watched or out of tries, is drawn unfocused just before the
 target is drawn focused. One ending clipped by the display's edge keeps its frame-zero picture to the
 lift, only its hairline and shadow turning, and its look turns at rest, pictured again at the quiet,
