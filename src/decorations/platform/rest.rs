@@ -148,17 +148,19 @@ impl Panel {
 
     /// Draws `window`'s bands around its window at `frame` on `display`, or none.
     fn place(&mut self, window: &RestWindow, frame: ScreenRect, display: RestDisplay, showing: bool) {
+        if let Some(outer) = self.lay(window, frame, display, showing) {
+            self.reveal(outer);
+        }
+    }
+
+    /// Lays its layers for `window`'s bands around its window at `frame`, and the rest window's frame
+    /// they want; hides it when none shows.
+    fn lay(&mut self, window: &RestWindow, frame: ScreenRect, display: RestDisplay, showing: bool) -> Option<ScreenRect> {
         let outset = window.outset(display.scale);
         let Some(outer) = shape::rest_frame(frame, outset, display.bounds).filter(|_| showing) else {
             self.hide();
-            return;
+            return None;
         };
-        if self.placed.is_none_or(|(at, _)| at != outer) {
-            let converter = CoordinateConverter::from_height(primary_display_height());
-            if let Some(cocoa) = converter.reframe(outer.to_cg(), self.window.frame()) {
-                self.window.setFrame_display(cocoa, false);
-            }
-        }
         let inside = frame.origin - outer.origin;
         self.holder.setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), frame.size.to_cg()));
         self.root.setContentsScale(display.scale);
@@ -166,11 +168,24 @@ impl Panel {
         self.bands.wear(&window.decoration, display.scale);
         self.bands.place(size, shape::radius(window.decoration.corner(|| self.radius), size));
         self.bands.paint(&window.style());
+        Some(outer)
+    }
+
+    /// At `outer`, shown.
+    fn reveal(&mut self, outer: ScreenRect) {
+        if self.placed.is_none_or(|(at, _)| at != outer) {
+            let converter = CoordinateConverter::from_height(primary_display_height());
+            if let Some(cocoa) = converter.reframe(outer.to_cg(), self.window.frame()) {
+                self.window.setFrame_display(cocoa, false);
+            }
+        }
         if self.placed.is_none_or(|(_, shown)| !shown) {
             self.window.setAlphaValue(1.0);
         }
         self.placed = Some((outer, true));
     }
+
+    fn shown(&self) -> bool { self.placed.is_some_and(|(_, shown)| shown) }
 
     fn hide(&mut self) {
         if self.placed.is_none_or(|(_, shown)| shown) {
@@ -246,44 +261,70 @@ impl RestBorders {
 
     /// One rest window for each window whose band shows: those `orders` and `also` name, and those
     /// just given a window, ordered above their windows, then every one placed and painted in one
-    /// transaction.
+    /// transaction. One showing a window afresh (`rest::afresh`) is hidden first, and takes its frame,
+    /// its place in the stack and alpha 1 only once its layers are committed.
     fn draw(&mut self, orders: &[ServerOrder], mut also: Vec<usize>) {
         let displays = self.rest.model.displays.clone();
         let wanted = self.rest.wanted();
         let pool: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.target).collect();
         let assignment = rest::assign(&pool, &wanted);
+        let mut given = Vec::new();
         for (at, window) in assignment.retargeted {
             let panel = &mut self.panels[at];
             panel.target = Some(window);
             panel.radius = window_server::corner_radii(&[window]).get(&window).copied();
-            also.push(at);
+            given.push(at);
         }
-        let targets: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.target).collect();
-        for at in rest::to_reorder(orders, &targets, &also) {
-            let panel = &self.panels[at];
-            let target = panel.target.and_then(|target| Some((target, self.rest.windows.get(&target)?.frame?)));
-            if let Some((target, frame)) = target {
-                panel.order_above(target, frame);
-            }
+        also.extend(&given);
+        let before: Vec<(Option<WindowServerId>, bool)> =
+            self.panels.iter().map(|panel| (panel.target, panel.shown())).collect();
+        let afresh = rest::afresh(&before, &given, &wanted);
+        let targets: Vec<Option<WindowServerId>> = before.iter().map(|(target, _)| *target).collect();
+        let reorder = rest::to_reorder(orders, &targets, &also);
+        for at in reorder.iter().filter(|at| !afresh.contains(at)) {
+            self.order_above_its_window(*at);
         }
+        for at in &afresh {
+            self.panels[*at].hide();
+        }
+        let mut revealed = Vec::new();
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for at in assignment.released {
             self.panels[at].target = None;
             self.panels[at].hide();
         }
-        for panel in self.panels.iter_mut() {
+        for (at, panel) in self.panels.iter_mut().enumerate() {
             let Some(target) = panel.target else { continue };
             let window = self.rest.model.windows.iter().find(|w| w.window == target);
             let frame = self.rest.windows.get(&target).and_then(|tracked| tracked.frame);
-            match (window, frame, frame.and_then(|frame| display_of(frame, &displays))) {
-                (Some(window), Some(frame), Some(display)) => {
-                    panel.place(window, frame, display, wanted.contains(&target))
-                }
-                _ => panel.hide(),
+            let Some((window, frame, display)) =
+                window.zip(frame).and_then(|(window, frame)| Some((window, frame, display_of(frame, &displays)?)))
+            else {
+                panel.hide();
+                continue;
+            };
+            let showing = wanted.contains(&target);
+            if afresh.contains(&at) {
+                revealed.extend(panel.lay(window, frame, display, showing).map(|outer| (at, outer)));
+            } else {
+                panel.place(window, frame, display, showing);
             }
         }
         CATransaction::commit();
+        CATransaction::flush();
+        for (at, outer) in revealed {
+            self.panels[at].reveal(outer);
+            self.order_above_its_window(at);
+        }
+    }
+
+    fn order_above_its_window(&self, at: usize) {
+        let panel = &self.panels[at];
+        let target = panel.target.and_then(|target| Some((target, self.rest.windows.get(&target)?.frame?)));
+        if let Some((target, frame)) = target {
+            panel.order_above(target, frame);
+        }
     }
 
     /// One more rest window in the pool; false when AppKit could not make one.

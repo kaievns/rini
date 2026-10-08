@@ -210,7 +210,12 @@ pool never shrinks.
 **Shown by alpha, never ordered out.** Ordering a window in costs 13.94ms and out 13.07ms at the
 median, against 0.36ms and 0.34ms for an alpha change ("Toggle alpha, do not order the window in
 and out" in `src/animation/docs/capture-overlay-research.md`). So a rest window is ordered in once,
-as it is made, and every hide after is its alpha.
+as it is made, and every hide after is its alpha. AppKit sends a frame and an alpha to the window
+server at once, and the layers go at the transaction's commit, by another path. So a rest window
+given a window, or shown again, goes to alpha 0 first, its new layers are committed and flushed, and
+only then does it take its frame, its place above its window and alpha 1 (`rest::afresh`); in the
+other order one frame could show the old window's band, clipped, in the new one's place. That the
+window server takes the two in the order rini sends them is inferred, not measured.
 
 **Ordering a rest window.** Probe P1 (2026-10-06, an idle machine,
 [`docs/data/2026-10-06-drags/p1-order.jsonl`](../../../docs/data/2026-10-06-drags/p1-order.jsonl))
@@ -281,7 +286,8 @@ its shape cut to its band instead; whether a re-order brings a `.moveToActiveSpa
 Space shown; how a rest window moves through macOS's own Space animation, which slides a window
 that is not `.stationary`; and that Mission Control, App Exposé and Show Desktop hide every rest
 window, the shown ones and those at alpha 0, from the start of their animation, which `.transient`
-is documented to give and was not seen on screen.
+is documented to give and was not seen on screen; and that focus moving between two windows of
+different sizes, and a rest window shown again, show no frame of the old band in the new place.
 
 ## The corner, measured
 

@@ -283,6 +283,19 @@ pub fn assign(pool: &[Option<WindowServerId>], wanted: &[WindowServerId]) -> Ass
 }
 
 
+/// The rest windows that show a window afresh this turn: each one of `pool`, its window and whether
+/// it was shown before the turn, whose window shows now (`wanted`) and that was `given` it this turn
+/// or was not shown. Each goes to alpha 0 until its new layers are committed and only then takes its
+/// frame and alpha 1, so it never shows one window's band in another's place.
+pub fn afresh(pool: &[(Option<WindowServerId>, bool)], given: &[usize], wanted: &[WindowServerId]) -> Vec<usize> {
+    let shows = |target: &Option<WindowServerId>| target.is_some_and(|target| wanted.contains(&target));
+    pool.iter()
+        .enumerate()
+        .filter(|(at, (target, shown))| shows(target) && (given.contains(at) || !shown))
+        .map(|(at, _)| at)
+        .collect()
+}
+
 /// The rest windows to order above their windows again this turn, each once: those whose window the
 /// window server reordered or ordered back in, and those in `also`, a rest window just given a window
 /// or the one whose window focus came to. `targets` is the pool, each one's window if any.
@@ -553,6 +566,15 @@ mod tests {
     fn a_window_that_shows_nothing_returns_its_panel_at_alpha_zero() {
         let pool = [Some(ws(1)), Some(ws(2)), None];
         assert_eq!(assign(&pool, &[ws(2)]), Assignment { retargeted: vec![], released: vec![0] });
+    }
+
+    /// The ring moving with focus retargets the one rest window shown: it shows the window focus came
+    /// to afresh, as does a rest window shown again, and one that keeps its window moves with it.
+    #[test]
+    fn a_rest_window_given_a_window_or_shown_again_shows_it_afresh() {
+        let pool = [(Some(ws(3)), true), (Some(ws(2)), false), (Some(ws(1)), true), (Some(ws(4)), false), (None, true)];
+        assert_eq!(afresh(&pool, &[0], &[ws(1), ws(2), ws(3)]), vec![0, 1], "retargeted, and shown again");
+        assert_eq!(afresh(&pool, &[3], &[ws(1)]), Vec::<usize>::new(), "given a window that shows nothing");
     }
 
     #[test]
