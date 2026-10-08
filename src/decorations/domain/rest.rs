@@ -224,7 +224,7 @@ pub struct Rest {
     pub model: RestModel,
     pub windows: HashMap<WindowServerId, Tracked>,
     /// Each window asked of the window server and not yet known: none until its introduction comes
-    /// back, then it until the model naming it is taken.
+    /// back, then it, with each frame and order since, until the model naming it is taken.
     introducing: HashMap<WindowServerId, Option<Introduction>>,
     covered: Option<Covered>,
     on: bool,
@@ -376,25 +376,34 @@ impl Rest {
     }
 
     /// Where the window server has windows that moved, each latest last: a waiting park is taken
-    /// with its window's move.
+    /// with its window's move, and an introduction waiting for its model takes the frame.
     pub fn take_frames(&mut self, frames: &[(WindowServerId, ScreenRect)], now: Instant) {
         for (window, frame) in frames {
             if let Some(tracked) = self.windows.get_mut(window) {
                 tracked.frame = Some(*frame);
                 tracked.parking.settle(true, false, now);
+            } else if let Some(Some(intro)) = self.introducing.get_mut(window) {
+                intro.frame = Some(*frame);
             }
         }
     }
 
     /// The window server's orders, in the order they came: whether each window is ordered out, and
-    /// its level as read after its last reorder or unhide.
+    /// its level as read after its last reorder or unhide, known or introduced and waiting for its
+    /// model.
     pub fn take_orders(&mut self, orders: &[ServerOrder]) {
         for (window, tracked) in self.windows.iter_mut() {
             tracked.ordered_out = ordered_out(tracked.ordered_out, *window, orders);
         }
+        for (window, intro) in self.introducing.iter_mut().filter_map(|(window, intro)| Some((window, intro.as_mut()?))) {
+            intro.ordered_out = ordered_out(intro.ordered_out, *window, orders);
+        }
         for order in orders {
-            if let Some((tracked, level)) = self.windows.get_mut(&order.window).zip(order.level) {
+            let Some(level) = order.level else { continue };
+            if let Some(tracked) = self.windows.get_mut(&order.window) {
                 tracked.level = level;
+            } else if let Some(Some(intro)) = self.introducing.get_mut(&order.window) {
+                intro.level = level;
             }
         }
     }
@@ -948,6 +957,30 @@ mod tests {
         assert!(!rest.covered());
         let after = rest.turn(None, &[], &[(ws(1), SLOT)], vec![reorder(1)], now);
         assert_eq!(after, Some(Draw { orders: vec![reorder(1)], focus: None }), "after the lift a turn draws again");
+    }
+
+    /// A window first named by a flight's model is introduced before the flight writes its frame:
+    /// the write's move and a hide that come under the cover are kept with its introduction, and the
+    /// place draws it where the window server has it last.
+    #[test]
+    fn a_window_introduced_under_the_overlay_takes_the_frames_and_orders_that_came_after() {
+        let now = Instant::now();
+        let written = rect(868.0, 35.0, 859.0, 1079.0);
+        for (orders, out) in [(Vec::new(), false), (vec![ServerOrder { window: ws(3), change: OrderChange::Hidden, level: None }], true)] {
+            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            rest.cover(Some(display()[0].bounds));
+            let opened = model(vec![at(1, false, false), at(2, false, false), at(3, true, false)]);
+            assert_eq!(rest.ask(&opened), vec![ws(3)]);
+            assert_eq!(rest.turn(Some(opened), &[(ws(3), intro(SLOT))], &[], Vec::new(), now), None);
+            let raised = StackLevel { level: Some(3), sub_level: 1 };
+            let reordered = ServerOrder { window: ws(3), change: OrderChange::Reordered, level: Some(raised) };
+            let came = [vec![reordered], orders].concat();
+            assert_eq!(rest.turn(None, &[], &[(ws(3), written)], came, now + ms(40)), None);
+            rest.place(Some(display()[0].bounds), now + ms(300), |_| false);
+            let Tracked { frame, ordered_out, level, .. } = rest.windows[&ws(3)];
+            assert_eq!((frame, ordered_out, level), (Some(written), out, raised), "hidden: {out}");
+            assert_eq!(rest.wanted().contains(&ws(3)), !out);
+        }
     }
 
     fn ms(ms: u64) -> Duration { Duration::from_millis(ms) }

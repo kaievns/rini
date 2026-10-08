@@ -296,7 +296,9 @@ latest frame of each window. A window the model first names is asked of the wind
 model arrives, covered or not, through `Following`'s queue, and the frames thread reads it whole:
 its frame, whether it is ordered in, its corner radius, and its level and sub-level (`ServerIntro`).
 It is drawn from when that comes back (`Rest::ask`, `Rest::introduce`), one hop on an idle thread
-(inferred, not measured), and its corner is the one read then. From a flight's begin to its lift
+(inferred, not measured), and its corner is the one read then. An introduction back before the
+model naming it is taken, as one under a flight is, takes each frame and order that comes after it,
+so a window a flight opens is drawn where the flight's write put it. From a flight's begin to its lift
 the rest windows follow no window on its display: the introductions, frames and orders are taken
 as they come, so a park is taken with its window's move and a hide with its order, but nothing is
 drawn or ordered until the place ahead of the lift ("The handover"). A frame or
