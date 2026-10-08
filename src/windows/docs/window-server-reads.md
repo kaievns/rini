@@ -3,8 +3,12 @@
 Every read of windows that waits on its connection's Core Animation transactions is made on
 `READ_CONNECTION` (`src/windows/platform/window_server.rs`), a connection rini opens with
 `SLSNewConnection` and that no window of rini's belongs to. Writes to rini's own windows, and the
-reads that wait on nothing, stay on the main connection (`SLSMainConnectionID`). If
-`SLSNewConnection` fails, rini logs a warning and reads on the main connection. No window list or
+reads that wait on nothing, stay on the main connection (`SLSMainConnectionID`). The first
+`SLSNewConnection` in a process becomes its main connection (`order.m`, `order.txt`: asked first,
+its id and `SLSMainConnectionID`'s were the same), so rini opens the read
+connection in `prepare_process`, after AppKit's `finishLaunching` and after asking for the main
+connection's id. If `SLSNewConnection` fails, or answers the main connection's id, rini logs a
+warning and reads on the main connection. No window list or
 picture is read through `CGWindowList`, which takes no connection and waits on the main one.
 `a_read_that_waits_on_core_animation_is_made_on_the_read_connection` in `tests/architecture.rs`
 fails if a call that waits is passed anything but `*READ_CONNECTION`, and

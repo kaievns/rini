@@ -31,11 +31,13 @@ static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 /// A connection of rini's own that no window of rini's belongs to, for every read that waits on the
 /// connection's last Core Animation transaction. On the main one such a read deadlocks with the main
 /// thread's commit for 500ms ("Reads go on a connection of their own" in `src/windows/docs/README.md`).
+/// The main connection is made first: the first `SLSNewConnection` in a process becomes the main one.
 pub static READ_CONNECTION: Lazy<i32> = Lazy::new(|| {
+    let main = *G_CONNECTION;
     let mut cid = 0;
     let err = unsafe { SLSNewConnection(0, &mut cid) };
-    let read = opened_or(err, cid, *G_CONNECTION);
-    if read == *G_CONNECTION {
+    let read = opened_or(err, cid, main);
+    if read == main {
         tracing::warn!(
             ?err,
             cid,
@@ -45,9 +47,10 @@ pub static READ_CONNECTION: Lazy<i32> = Lazy::new(|| {
     read
 });
 
-/// The connection `SLSNewConnection` answered `err` and `cid` for, or `main` when it opened none.
+/// The connection `SLSNewConnection` answered `err` and `cid` for, or `main` when it opened none of
+/// rini's own: an error, no id, or the main connection's id.
 fn opened_or(err: CGError, cid: i32, main: i32) -> i32 {
-    if err == CGError::Success && cid != 0 {
+    if err == CGError::Success && cid != 0 && cid != main {
         cid
     } else {
         main
@@ -1400,6 +1403,11 @@ mod stack_tests {
         assert_eq!(opened_or(CGError::Success, 42, 7), 42);
         assert_eq!(opened_or(CGError::Failure, 42, 7), 7);
         assert_eq!(opened_or(CGError::Success, 0, 7), 7);
+        assert_eq!(
+            opened_or(CGError::Success, 7, 7),
+            7,
+            "the main connection is none of rini's own"
+        );
     }
 
     #[test]

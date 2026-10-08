@@ -122,6 +122,8 @@ fn prepare_process() -> MainThreadMarker {
         app.finishLaunching();
         NSApplication::load();
     }
+    // Opened now, after the main connection, rather than by the first read on whichever thread.
+    once_cell::sync::Lazy::force(&rini::windows::platform::window_server::READ_CONNECTION);
 
     unsafe { SLSWindowManagementBridgeSetDelegate(std::ptr::null_mut()) };
     mtm
