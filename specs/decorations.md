@@ -166,7 +166,8 @@ wearing either is drawn by one rest window holding both.
   earlier.
 - The ring MUST NOT be drawn while Mission Control is up, around a window in native fullscreen or
   entering or leaving it, around a window the window server has ordered out (minimised, its
-  application hidden), or around a window on a Space its display is not showing.
+  application hidden) or closed, from the moment it does, or around a window on a Space its display
+  is not showing.
 - At rest the window holding focus is the one macOS has made key, so the ring turns when macOS
   repaints its windows' focus, not when rini decides to move it. A change that moves no key window
   turns it at once: a selection on a display not holding focus, a config reload.

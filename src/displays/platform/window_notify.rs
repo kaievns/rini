@@ -216,6 +216,9 @@ impl WindowNotify {
                         focus_wake.notify();
                         publish_order(&on_order, event, evt.window_id);
                     }
+                    CGSEventType::Known(KnownCGSEvent::WindowClosed) => {
+                        publish_order(&on_order, event, evt.window_id)
+                    }
                     CGSEventType::Known(
                         KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged,
                     )
@@ -283,12 +286,13 @@ impl WindowNotify {
     }
 }
 
-/// Hands a reorder, hide or unhide of `window` to every `OnServerOrder`.
+/// Hands a reorder, hide, unhide or close of `window` to every `OnServerOrder`.
 fn publish_order(on_order: &[OnServerOrder], event: CGSEventType, window: Option<u32>) {
     let change = match event {
         CGSEventType::Known(KnownCGSEvent::WindowReordered) => OrderChange::Reordered,
         CGSEventType::Known(KnownCGSEvent::WindowHidden) => OrderChange::Hidden,
         CGSEventType::Known(KnownCGSEvent::WindowUnhidden) => OrderChange::Unhidden,
+        CGSEventType::Known(KnownCGSEvent::WindowClosed) => OrderChange::Closed,
         _ => return,
     };
     let Some(window) = window else { return };
@@ -341,11 +345,16 @@ mod tests {
     use crate::displays::event::{OnServerOrder, OrderChange, ServerFrame, ServerOrder};
 
     #[test]
-    fn a_reorder_a_hide_and_an_unhide_publish_their_window() {
+    fn a_reorder_a_hide_an_unhide_and_a_close_publish_their_window() {
         let published = Arc::new(Mutex::new(Vec::new()));
         let sink = published.clone();
         let on_order: Vec<OnServerOrder> = vec![Box::new(move |order| sink.lock().unwrap().push(order))];
-        for event in [KnownCGSEvent::WindowReordered, KnownCGSEvent::WindowHidden, KnownCGSEvent::WindowUnhidden] {
+        for event in [
+            KnownCGSEvent::WindowReordered,
+            KnownCGSEvent::WindowHidden,
+            KnownCGSEvent::WindowUnhidden,
+            KnownCGSEvent::WindowClosed,
+        ] {
             publish_order(&on_order, CGSEventType::Known(event), Some(56));
         }
         publish_order(&on_order, CGSEventType::Known(KnownCGSEvent::WindowReordered), None);
@@ -355,6 +364,7 @@ mod tests {
             ServerOrder { window, change: OrderChange::Reordered },
             ServerOrder { window, change: OrderChange::Hidden },
             ServerOrder { window, change: OrderChange::Unhidden },
+            ServerOrder { window, change: OrderChange::Closed },
         ]);
     }
 

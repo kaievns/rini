@@ -91,10 +91,10 @@ pub fn shown(
 }
 
 /// Whether a window is ordered out after `orders`, ordered out before them if `was`: its last hide
-/// or unhide among them decides.
+/// or unhide among them decides, and a close orders it out for good.
 pub fn ordered_out(was: bool, window: WindowServerId, orders: &[ServerOrder]) -> bool {
     orders.iter().filter(|order| order.window == window).fold(was, |out, order| match order.change {
-        OrderChange::Hidden => true,
+        OrderChange::Hidden | OrderChange::Closed => true,
         OrderChange::Unhidden => false,
         OrderChange::Reordered => out,
     })
@@ -289,7 +289,7 @@ pub fn assign(pool: &[Option<WindowServerId>], wanted: &[WindowServerId]) -> Ass
 pub fn to_reorder(orders: &[ServerOrder], targets: &[Option<WindowServerId>], also: &[usize]) -> Vec<usize> {
     let moved = orders
         .iter()
-        .filter(|order| order.change != OrderChange::Hidden)
+        .filter(|order| matches!(order.change, OrderChange::Reordered | OrderChange::Unhidden))
         .filter_map(|order| targets.iter().position(|target| *target == Some(order.window)));
     let mut reorder: Vec<usize> = Vec::new();
     for at in also.iter().copied().chain(moved) {
@@ -481,6 +481,17 @@ mod tests {
         assert!(rest.wanted().is_empty());
         rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Unhidden }]);
         assert_eq!(rest.wanted(), vec![ws(1)]);
+    }
+
+    /// A window leaves the screen as it closes, before the reactor hears of it: its band goes then.
+    #[test]
+    fn a_window_the_window_server_closes_shows_no_band_from_its_close() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        rest.take_orders(&[ServerOrder { window: ws(1), change: OrderChange::Closed }]);
+        assert!(rest.wanted().is_empty());
+        let targets = [Some(ws(1))];
+        assert_eq!(to_reorder(&[ServerOrder { window: ws(1), change: OrderChange::Closed }], &targets, &[]), Vec::<usize>::new());
     }
 
     /// A pass that changes two displays parks a window on each; a lift ends the flight on one.

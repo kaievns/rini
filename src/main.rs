@@ -383,6 +383,7 @@ fn main() {
             CGSEventType::Known(KnownCGSEvent::WindowReordered),
             CGSEventType::Known(KnownCGSEvent::WindowUnhidden),
             CGSEventType::Known(KnownCGSEvent::WindowHidden),
+            CGSEventType::Known(KnownCGSEvent::WindowClosed),
             CGSEventType::Known(KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged),
             CGSEventType::Known(KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged),
             CGSEventType::Known(KnownCGSEvent::SpaceCreated),
@@ -390,8 +391,8 @@ fn main() {
             CGSEventType::Known(KnownCGSEvent::WindowMoved),
             CGSEventType::Known(KnownCGSEvent::WindowResized),
         ],
-        // The rest windows follow every decorated window the window server moves, and go back above
-        // the ones it reorders.
+        // The rest windows follow every decorated window the window server moves, go back above the
+        // ones it reorders, and hide with the ones it hides or closes.
         vec![Box::new({
             let rest_tx = rest_tx.clone();
             move |frames: &[_]| rest_tx.send(rini::decorations::platform::rest::Event::Frames(frames.to_vec()))

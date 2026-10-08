@@ -251,7 +251,10 @@ edge `width` in, so the outer corner is `corner + width` (`shape::band`).
 (`src/displays/docs/live-frames.md`): 806 and 807 saw every frame a 1ms poll saw during Kai's
 drags, n=1165, p90 0.08ms behind it, in Ghostty only. The actor takes what queued each turn, the
 latest frame of each window. Under the overlay the rest windows keep following; none is hidden for a
-flight.
+flight. A window the window server closes (804) shows no band from its close on (`rest::ordered_out`),
+before the reactor hears of it and drops the window from its model; that 804 reaches rini for every
+window it asks the window server's notifications of is inferred, as JankyBorders listens to it, and
+not seen.
 
 **Parked comes from rini's layout.** macOS clamps a parked Chrome or Finder window so 52pt of it
 shows, past the 40pt `is_off_screen` allows (`PARK_CLAMP_PX` in `crates/rini-geometry/src/lib.rs`), so

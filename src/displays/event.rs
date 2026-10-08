@@ -56,9 +56,11 @@ pub enum OrderChange {
     Hidden,
     /// 815: it was ordered back in.
     Unhidden,
+    /// 804: it was closed.
+    Closed,
 }
 
-/// A window the window server reordered, hid or unhid, as its own notifications name it.
+/// A window the window server reordered, hid, unhid or closed, as its own notifications name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerOrder {
     pub window: WindowServerId,
