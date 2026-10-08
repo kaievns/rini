@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Reads rini's transitions journal: where each flight's time goes, each probe press joined to the
-flight it began, and each measured lift's handover.
+flight it began, each measured lift's handover, and the picture each tile took.
 
     journal.py summary [--kind KIND] [--csv OUT] [JOURNAL ...]
     journal.py probe PROBE [JOURNAL ...]
     journal.py handover [JOURNAL ...]
+    journal.py pictures [--target] [JOURNAL ...]
 
 JOURNAL is ~/Library/Logs/rini/transitions.1.jsonl, then transitions.jsonl, unless named. PROBE is
 the JSON lines `focuslab.swift` or `overlay.swift` wrote. What every row measures is defined in
@@ -470,6 +471,37 @@ def handover(bursts):
     return "\n".join(lines)
 
 
+def wears(found):
+    """Every picture a tile took, flight by flight, as its `wears` mark says: the flight's generation,
+    kind and focus target, when the tile took it, its route, whether it carries its window's blur, and
+    its age in ms."""
+    return [{
+        "g": mark["g"],
+        "kind": flight.kind(),
+        "window": tuple(mark["window"]),
+        "target": tuple(mark["window"]) == flight.target,
+        "at": mark["at"],
+        "route": mark["route"],
+        "blur": mark["blur"],
+        "age": mark["taken_before_us"] / 1000,
+    } for flight in found for mark in flight.marks if mark["mark"] == "wears"]
+
+
+def pictures(found, target=False):
+    rows = [row for row in wears(found) if row["target"] or not target]
+    lines = [f"{'g':>6s}  {'kind':12s} {'window':14s} {'at':13s} {'route':17s} blur  {'age ms':>9s}"]
+    for row in rows:
+        window = f"{row['window'][0]},{row['window'][1]}" + ("*" if row["target"] else "")
+        lines.append(f"{row['g']:>6d}  {row['kind'] or '-':12s} {window:14s} {row['at']:13s} {row['route']:17s} "
+                     f"{'yes ' if row['blur'] else 'no  '}  {row['age']:9.1f}")
+    counts = defaultdict(int)
+    for row in rows:
+        counts[(row["at"], row["route"], row["blur"])] += 1
+    lines += ["", f"{len(rows)} pictures worn, * the flight's focus target"]
+    lines += [f"  {at:13s} {route:17s} {'blur' if blur else 'no blur':8s} {n}" for (at, route, blur), n in sorted(counts.items())]
+    return "\n".join(lines)
+
+
 def journals(named):
     if named:
         return named
@@ -489,11 +521,16 @@ def main(argv):
     joining.add_argument("journal", nargs="*")
     measuring = commands.add_parser("handover")
     measuring.add_argument("journal", nargs="*")
+    picturing = commands.add_parser("pictures")
+    picturing.add_argument("--target", action="store_true")
+    picturing.add_argument("journal", nargs="*")
     args = parser.parse_args(argv)
     bursts = read(journals(args.journal))
     found = flights(bursts)
     if args.command == "handover":
         print(handover(bursts))
+    elif args.command == "pictures":
+        print(pictures(found, args.target))
     elif args.command == "summary":
         if args.kind:
             found = [flight for flight in found if flight.kind() == args.kind]

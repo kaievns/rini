@@ -252,8 +252,10 @@ the clip stays clamped to the tile as it is ("The corner, measured" in
 never clipped (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`).
 The decision is in `docs/pictures-motion-transitions.md`. The pictures service
 bakes them (`capture_on_screen`). The flight engine marks each tile
-`OverlayTile::clipped` as it builds it and as a picture comes onto it (`clips`):
-the stand-in, or a SkyLight picture of a window the service bakes. The overlay
+`OverlayTile::clipped` as it builds it and as a picture comes onto it, by the
+picture's own route (`Route::clips`): the stand-in, or a picture from SkyLight's
+baked call. What the service knows of the window now does not decide it: a
+window first seen inactive is baked once and then pictured alone. The overlay
 applies it at every dressing and swap, so a tile riding into a moving flight is
 clipped too (`a_tile_ridden_in_clipped_wears_its_corners`).
 

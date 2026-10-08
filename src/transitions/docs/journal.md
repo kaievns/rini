@@ -8,7 +8,7 @@ moving around can be read back afterwards. Kai's ask, and what rini must do abou
 
 ## Where a mark comes from
 
-`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at four
+`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at five
 seams. Its one call into the lifecycle, `FlightEngine::drive`, goes through `Journalled::drive`: it
 reads the event's own marks, the coordinator takes the event, and then those marks and one for each
 command it gave are pushed, every one stamped with the drive's `now` and the generation the drive
@@ -24,7 +24,11 @@ the coordinator is in. The same inbox hands a measured lift's handover to `Journ
 down (below). Its inbox hands each commit the renderer reports (`Rendered(Committed)`) to
 `Journalled::drawn` before what that commit releases is carried out: a `drawn` mark, stamped with
 when the engine heard it, so the real frames, the bar's picture and the quiet a commit releases go
-out at its `t`. No mark call sits anywhere else, and the engine never reads the journal back: of
+out at its `t`. And each picture a tile takes goes to `Journalled::wears` as the engine puts it on
+(`FlightEngine::journal_wears`): every tile a pass composes, a later pass's only for the windows it
+brings, with the cache's picture or the stand-in; frame zero's, worn before the show; the focused look a
+parked focus target flies; and each picture swapped onto a tile or an entrance joining with its first.
+A `wears` mark each, stamped when the engine put it on. No mark call sits anywhere else, and the engine never reads the journal back: of
 what a drive returns, it carries out the commands and sends the writer the burst, if one is due, and
 of `heard` it reads whether the held lift hides now.
 
@@ -51,6 +55,7 @@ until it has a mark.
 | `AskFinal` | `ask_final` | `windows`, `behind` (counts) |
 | `Swap` / `KeepFocusedLook` | `swap` / `keep_focused_look` | `of`, `window` |
 | `Snap { window, frame }` | `snap` | `window`, `frame` (overlay points) |
+| a picture a tile takes, after the marks of the drive or delivery it came with | `wears` | `window`, `at` (`compose`, `frame_zero`, `focused_look` or `swap`), `route` (`skylight`, the window alone; `baked`, SkyLight's baked call; `screencapturekit`; `stand_in`), `blur` (it carries its window's blur), `taken_before_us` |
 | `Focus { window, focused }` | `focus` | `window`, `focused` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
@@ -322,6 +327,12 @@ target. It prints the lifts measured against every lift held for the overlay's p
 `hide`), how long each held, and interior, edge in and edge out by kind, focused window and other.
 The headline is edge in p99 of the focused window on `pan` flights, the row to read against "The
 handover, measured" in `src/animation/docs/capture-overlay-research.md`.
+
+`pictures` lists every `wears` mark, flight by flight: the flight's generation and kind, the window,
+starred when it is the flight's focus target (the `begin`'s `focus`), when its tile took the picture,
+its route, its blur and its age in ms (`taken_before_us`), then how many of each `at`, route and blur.
+`--target` keeps the focus targets alone: a window flown in grey shows here as a `skylight` or
+`screencapturekit` picture with no blur where a `baked` one with blur was due.
 
 ## What it does not record yet
 

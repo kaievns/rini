@@ -929,6 +929,20 @@ fn space_window_list_from_window_server(
     windows
 }
 
+/// The process holding the keys, per the window server: the one whose key window is drawn active.
+#[cfg(not(test))]
+pub fn key_focus_pid() -> Option<pid_t> {
+    let mut psn = ProcessSerialNumber::default();
+    let mut fallback = 0u8;
+    cg_ok(unsafe { SLPSGetKeyFocusProcess(&mut psn, &mut fallback) }).ok()?;
+    crate::windows::platform::process::pid_for_psn(&psn)
+}
+
+/// See "A unit test must not read the live window server" in `docs/testing.md`: no process holds the
+/// keys.
+#[cfg(test)]
+pub fn key_focus_pid() -> Option<pid_t> { None }
+
 /// The key window on `space` per the window server. The key-focus process can briefly differ from
 /// the frontmost one, and this does not wait on the app's `AXMainWindow`.
 pub fn key_focused_window(space: SpaceId) -> Option<WindowId> {

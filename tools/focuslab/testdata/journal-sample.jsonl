@@ -4,11 +4,16 @@
 {"t":81234560000000,"g":1,"mark":"hold"}
 {"t":81234560000000,"g":1,"mark":"ask_frame_zero","strip":1,"background":1,"behind":1}
 {"t":81234560000000,"g":1,"mark":"report_up"}
+{"t":81234566000000,"g":1,"mark":"wears","window":[1,1],"at":"compose","route":"baked","blur":true,"taken_before_us":2106000}
+{"t":81234566000000,"g":1,"mark":"wears","window":[1,2],"at":"compose","route":"screencapturekit","blur":false,"taken_before_us":906000}
+{"t":81234566000000,"g":1,"mark":"wears","window":[1,9],"at":"compose","route":"skylight","blur":false,"taken_before_us":1606000}
 {"t":81234566100000,"g":1,"mark":"merge","kind":"pan","moved":false,"tiles":3,"awaiting":0,"repainting":0,"focus":[1,2],"focused_look":null,"duration_ms":350}
 {"t":81234567000000,"g":1,"mark":"drawn","seq":2,"shown":null,"queued_us":200,"applied_us":400,"flushed_before_us":200}
 {"t":81234593200000,"g":1,"mark":"delivery","of":1,"why":"frame_zero","pictures":2,"sent_before_us":2200}
 {"t":81234593200000,"g":1,"mark":"delivered","window":[1,1],"frame":[3.0,35.0,860.0,1079.0],"taken_before_us":31900}
 {"t":81234593200000,"g":1,"mark":"delivered","window":[1,9],"frame":[224.0,95.0,600.0,400.0],"taken_before_us":16700}
+{"t":81234593300000,"g":1,"mark":"wears","window":[1,1],"at":"frame_zero","route":"baked","blur":true,"taken_before_us":32000}
+{"t":81234593300000,"g":1,"mark":"wears","window":[1,9],"at":"frame_zero","route":"skylight","blur":false,"taken_before_us":16800}
 {"t":81234593600000,"g":1,"mark":"keep_focused_look","of":1,"window":[1,1]}
 {"t":81234593600000,"g":1,"mark":"show"}
 {"t":81234593600000,"g":1,"mark":"write","windows":2}
@@ -21,9 +26,11 @@
 {"t":81234655000000,"g":1,"mark":"delivered","window":[1,2],"frame":[3.0,35.0,861.0,1079.0],"taken_before_us":6600}
 {"t":81234655100000,"g":1,"mark":"swap","of":1,"window":[1,2]}
 {"t":81234655100000,"g":1,"mark":"snap","window":[1,2],"frame":[3.0,35.0,861.0,1079.0]}
+{"t":81234655100000,"g":1,"mark":"wears","window":[1,2],"at":"swap","route":"baked","blur":true,"taken_before_us":6700}
 {"t":81234672000000,"g":1,"mark":"delivery","of":1,"why":"landed","pictures":1,"sent_before_us":1800}
 {"t":81234672000000,"g":1,"mark":"delivered","window":[1,1],"frame":[866.0,35.0,860.0,1079.0],"taken_before_us":8000}
 {"t":81234672100000,"g":1,"mark":"swap","of":1,"window":[1,1]}
+{"t":81234672100000,"g":1,"mark":"wears","window":[1,1],"at":"swap","route":"baked","blur":true,"taken_before_us":8100}
 {"t":81234701000000,"g":1,"mark":"delivery","of":1,"why":"focus_changed","pictures":1,"sent_before_us":2000}
 {"t":81234701000000,"g":1,"mark":"delivered","window":[1,2],"frame":[3.0,35.0,861.0,1079.0],"taken_before_us":9500}
 {"t":81234716100000,"g":1,"mark":"focus","window":[1,1],"focused":false}
@@ -56,6 +63,9 @@
 {"t":81237560000000,"g":2,"mark":"hold"}
 {"t":81237560000000,"g":2,"mark":"ask_frame_zero","strip":1,"background":1,"behind":1}
 {"t":81237560000000,"g":2,"mark":"report_up"}
+{"t":81237564900000,"g":2,"mark":"wears","window":[1,1],"at":"compose","route":"baked","blur":true,"taken_before_us":2002900}
+{"t":81237564900000,"g":2,"mark":"wears","window":[1,2],"at":"focused_look","route":"baked","blur":true,"taken_before_us":900900}
+{"t":81237564900000,"g":2,"mark":"wears","window":[1,9],"at":"compose","route":"stand_in","blur":false,"taken_before_us":0}
 {"t":81237565000000,"g":2,"mark":"merge","kind":"pan","moved":false,"tiles":3,"awaiting":0,"repainting":0,"focus":[1,2],"focused_look":null,"duration_ms":350}
 {"t":81237640000000,"g":2,"mark":"show"}
 {"t":81237640000000,"g":2,"mark":"write","windows":2}
@@ -70,6 +80,7 @@
 {"t":81237656100000,"g":2,"mark":"swap","of":2,"window":[1,1]}
 {"t":81237656100000,"g":2,"mark":"keep_focused_look","of":2,"window":[1,1]}
 {"t":81237656100000,"g":2,"mark":"swap","of":2,"window":[1,9]}
+{"t":81237656100000,"g":2,"mark":"wears","window":[1,1],"at":"swap","route":"baked","blur":true,"taken_before_us":94100}
 {"t":81237708700000,"g":3,"mark":"press","what":"cycle_preset_column_width"}
 {"t":81237710000000,"g":3,"mark":"merge","kind":"pan","moved":true,"tiles":3,"awaiting":0,"repainting":0,"focus":[1,2],"focused_look":null,"duration_ms":350}
 {"t":81237710000000,"g":3,"mark":"write","windows":1}

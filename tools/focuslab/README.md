@@ -54,6 +54,9 @@ given:
   against the screen after it, by kind, focused window and other, the rows of "The handover, measured"
   in `src/animation/docs/capture-overlay-research.md`, and the band outside the outline where a
   window wore one at rest.
+- `journal.py pictures [--target]`: every picture a tile took, flight by flight, as the flight
+  composed it, from frame zero, as a focused look or swapped in: its route, whether it carries its
+  window's blur, and its age; `--target` keeps the focus targets alone.
 
 What each row measures is defined once, in `src/transitions/docs/journal.md` ("Reading it"). The
 tests read `testdata/journal-sample.jsonl`, which rini's own test pins to what the journal writes, and

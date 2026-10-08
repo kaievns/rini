@@ -54,8 +54,17 @@ pub fn psn_for_pid(pid: pid_t) -> Result<ProcessSerialNumber, CGError> {
     Ok(psn)
 }
 
+/// The pid of the process `psn` names, if it names one.
+pub fn pid_for_psn(psn: &ProcessSerialNumber) -> Option<pid_t> {
+    let mut pid: pid_t = 0;
+    (unsafe { GetProcessPID(psn, &mut pid) } == 0 && pid != 0).then_some(pid)
+}
+
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
+    // Deprecated in macOS 10.9.
+    fn GetProcessPID(psn: *const ProcessSerialNumber, pid: *mut pid_t) -> i32;
+
     // Deprecated in macOS 10.9.
     fn GetProcessForPID(pid: pid_t, psn: *mut ProcessSerialNumber) -> CGError;
 

@@ -314,6 +314,12 @@ destination for a window already moving.
   found to have none flies grey for as long as it lives. Not yet met: a material only within the
   outer tenth of the window each way, such as a toolbar along its top, is left out of the test with
   the corners.
+- A window MUST be found to have no material only while it is active: macOS draws an inactive
+  window's material flat, the same alone as over what is behind it. Seen with none while inactive,
+  a window is pictured alone, which is what the screen shows of it then, and its material is
+  measured again the first time it is pictured active, 200ms or more after the window server
+  reports it focused, while its application holds the keys. Until then a flight that brings it in
+  focused flies the flat picture, its landing included when it lands sooner than that.
 - A picture MUST NOT be built from a capture of the window's rect taken while the window was somewhere
   else. The rect then holds whatever the window was covering, and merging that in replaces the window
   with another one — found on the first live run, and far worse than grey.
@@ -333,6 +339,19 @@ destination for a window already moving.
 > learned, so Outlook as the window and this as the cause are inferred. The borders change touched
 > neither the test nor the capture. Part of a window changed by its material now counts, not only
 > the whole window's average (`docs/data/2026-10-08-materials`).
+
+> **Reported 2026-10-08.** "outlook and messanger, still grey", with the share rule deployed. Rini
+> learned Outlook's material at its start, 16:34, with Outlook on screen and another application in
+> front: inactive, Outlook's folder pane reads 0.00 levels baked against alone, and active 1.96 with
+> 9% of samples changed, so it was learned to have none, pictured alone, and flew grey. Reproduced
+> outside rini, 17:32-17:35, by turning Outlook inactive in place; that rini's own first reading was
+> inactive is inferred from the journal, whose first flight after the start had no focus. With its
+> pictures carrying no blur, nothing kept the focused look Outlook flew in with: kept as it lost
+> focus, it was gone by the next flight to it, from 17:22 on (the journal; why it went is inferred
+> from the code, a capture at rest showing a different body). Messages reads 0.00 alone against the
+> screen active and inactive, and ScreenCaptureKit's capture of it equals SkyLight's over its
+> sidebar, so no route loses anything of it; what flew grey of it is not established. Readings in
+> `docs/data/2026-10-08-materials`.
 
 ## The window's hairline
 
@@ -550,7 +569,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - rini MUST record every step of a transition: the press that began it, as rini took it, each thing
   its lifecycle hears and decides, a frame's tick only when it first finds the transition at rest or
   landed, each delivery of pictures to it with when the pictures service sent it and when each
-  picture's capture started, and each commit of what it draws, all with when, so a glitch seen while
+  picture's capture started, each picture a tile takes with which way it was taken, whether it
+  carries its window's blur and how old it is, and each commit of what it draws, all with when, so a
+  glitch seen while
   moving around can be read back afterwards, and the time from a press to the overlay up, counted to
   the commit that puts the overlay on screen, split between rini's work on the press, the captures,
   the time the transition waited to hear of them, the wait for the thread that draws it, and that
