@@ -9,7 +9,8 @@
 //! macOS repaints its window's focus, not at rini's decision; after every batch the rest windows are
 //! sent what each managed window wears and what holds its band, when that changed. Each window is
 //! folded afresh whenever what it wears is asked for, so a rule follows focus, floating and the
-//! title as they change.
+//! title as they change. A window is drawn urgent while its application asks for attention and no
+//! window of it holds focus, read against the same focus as the ring.
 
 use rini_core::ids::{SpaceId, WindowId};
 use rini_geometry::is_off_screen;
@@ -35,7 +36,8 @@ pub(super) struct RestFeed {
 
 impl Reactor {
     /// What `window`'s rules match against: its application and its own attributes, and whether it
-    /// floats. Whether it holds focus is the fold's to try both ways (`rules::decoration`).
+    /// floats. Whether it holds focus is the fold's to try both ways (`rules::decoration`), and whether
+    /// it is urgent `decoration_of`'s to say.
     fn rule_context(&self, window: WindowId) -> WindowRuleContext<'_> {
         let app = self.app_manager.apps.get(&window.pid).map(|app| &app.info);
         let info = self.state.windows.window(window).map(|state| &state.info);
@@ -46,13 +48,19 @@ impl Reactor {
             ax_role: info.and_then(|info| info.ax_role.as_deref()),
             ax_subrole: info.and_then(|info| info.ax_subrole.as_deref()),
             is_modal: info.is_some_and(|info| info.is_modal),
-            state: RuleState { focused: false, floating: self.layout_manager.layout_engine.is_window_floating(window) },
+            state: RuleState {
+                floating: self.layout_manager.layout_engine.is_window_floating(window),
+                ..RuleState::default()
+            },
         }
     }
 
-    /// What `window` wears now.
-    pub(super) fn decoration_of(&self, window: WindowId) -> Decoration {
-        rules::decoration(&self.config.settings.decorations, self.rule_context(window))
+    /// What `window` wears now, with `rings` naming the window holding focus, so whether it is
+    /// drawn urgent.
+    pub(super) fn decoration_of(&self, window: WindowId, rings: &Rings) -> Decoration {
+        let mut context = self.rule_context(window);
+        context.state.urgent = rings.urgent(window, &self.attention);
+        rules::decoration(&self.config.settings.decorations, context)
     }
 
     /// The border each tiled window gives out of its slot: `layout › border`'s, but for the windows a
@@ -115,7 +123,7 @@ impl Reactor {
     /// What `window` wears through a pass ending with `rings`, against the rings the last batch left.
     pub(super) fn worn(&self, window: WindowId, rings: &Rings) -> Worn {
         Worn {
-            decoration: self.decoration_of(window),
+            decoration: self.decoration_of(window, rings),
             wore_ring: self.rings_drawn.ringed(window),
             wears_ring: rings.ringed(window),
         }
@@ -172,7 +180,7 @@ impl Reactor {
                     );
                 Some(RestWindow {
                     window: server_id,
-                    decoration: self.decoration_of(window),
+                    decoration: self.decoration_of(window, &rings),
                     focused: rings.focused(window),
                     ringed: rings.ringed(window),
                     held: Held {

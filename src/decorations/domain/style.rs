@@ -1,11 +1,12 @@
 //! How a window's decorations are painted: the hairline's white line and outline, the shadow and
 //! the border, each by whether the window holds focus; the focus ring, by whether the window wears
-//! it; and who wears it.
+//! it; who wears it, and who is drawn urgent.
 
 use rini_core::ids::WindowId;
 use serde::Serialize;
 
 use crate::decorations::domain::paint::Paint;
+use crate::windows::domain::attention::Attention;
 
 /// The white line's width in points: two device pixels at 2x.
 pub const LIGHT_PT: f64 = 1.0;
@@ -36,22 +37,40 @@ const FOCUSED_SHADOW: ShadowStyle = ShadowStyle {
 };
 
 /// A band rini draws outside a window, as niri's focus ring and border are: its width in points, and
-/// its paint, a colour or a gradient, on the window holding focus and on the others that wear it.
+/// its paint, a colour or a gradient, on the window holding focus, on a window drawn urgent and on
+/// the others that wear it.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
 pub struct Band {
     pub width: f64,
     pub active: Paint,
     pub inactive: Paint,
+    pub urgent: Paint,
+}
+
+impl Band {
+    /// Its paint on a window drawn urgent, else holding focus, else neither, as niri picks it
+    /// (`niri:src/layout/focus_ring.rs:73-98`).
+    pub fn paint(&self, focused: bool, urgent: bool) -> Paint {
+        if urgent {
+            self.urgent
+        } else if focused {
+            self.active
+        } else {
+            self.inactive
+        }
+    }
 }
 
 /// What a window wears that rini draws rather than macOS: its focus ring and its border, each while
-/// it is on for the window, and the corner a window rule gives the two.
+/// it is on for the window, the corner a window rule gives the two, and whether it is drawn urgent.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Decoration {
     pub ring: Option<Band>,
     pub border: Option<Band>,
     /// `geometry-corner-radius`, in points.
     pub radius: Option<f64>,
+    /// Its application asks for attention and is not the one holding focus (`Rings::urgent`).
+    pub urgent: bool,
 }
 
 impl Decoration {
@@ -82,11 +101,12 @@ pub struct Style {
 
 impl Style {
     /// A focused window's: the brighter white line and the deeper shadow. A window that wears the
-    /// ring (`ringed`) wears its decoration's, in the active paint while it is focused and the
-    /// inactive one otherwise; any other wears none. The border is worn by every window its
-    /// decoration has one for, painted by focus alone, as niri paints it.
+    /// ring (`ringed`) wears its decoration's, in the urgent paint while it is drawn urgent, the
+    /// active one while it is focused and the inactive one otherwise; any other wears none. The
+    /// border is worn by every window its decoration has one for, painted the same way, as niri
+    /// paints it.
     pub fn of(focused: bool, ringed: bool, decoration: &Decoration) -> Style {
-        let paint = |band: Band| if focused { band.active } else { band.inactive };
+        let paint = |band: Band| band.paint(focused, decoration.urgent);
         let ring = decoration.ring.filter(|_| ringed).map(paint);
         let (light_alpha, shadow) =
             if focused { (0.20, FOCUSED_SHADOW) } else { (0.18, UNFOCUSED_SHADOW) };
@@ -124,6 +144,13 @@ impl Rings {
 
     /// Whether `window` holds focus, so wears the active paint.
     pub fn focused(&self, window: WindowId) -> bool { self.focus == Some(window) }
+
+    /// Whether `window` is drawn urgent: its application asks for attention, and every window of
+    /// it is, but while one of its windows holds focus. macOS asks per application, and activating
+    /// the application ends the ask, as focusing a window ends niri's.
+    pub fn urgent(&self, window: WindowId, attention: &Attention) -> bool {
+        attention.asks(window.pid) && self.focus.is_none_or(|focus| focus.pid != window.pid)
+    }
 }
 
 #[cfg(test)]
@@ -136,12 +163,14 @@ mod tests {
         width: 4.0,
         active: Paint::Solid(Colour::rgb(0x7fc8ff)),
         inactive: Paint::Solid(Colour::rgb(0x505050)),
+        urgent: Paint::Solid(Colour::rgb(0x9b0000)),
     };
 
     const BORDER: Band = Band {
         width: 4.0,
         active: Paint::Solid(Colour::rgb(0xffc87f)),
         inactive: Paint::Solid(Colour::rgb(0x505050)),
+        urgent: Paint::Solid(Colour::rgb(0x9b0000)),
     };
 
     fn ringed() -> Decoration { Decoration { ring: Some(RING), ..Decoration::default() } }
@@ -202,6 +231,38 @@ mod tests {
             assert_eq!(Style::of(false, ringed, &bordered).border, Some(BORDER.inactive), "ringed {ringed}");
         }
         assert_eq!(Style::of(true, true, &ringed()).border, None, "borders off");
+    }
+
+    #[test]
+    fn an_app_wanting_attention_draws_each_unfocused_window_urgent() {
+        let (editor, other) = (|idx| WindowId::new(7, idx), |idx| WindowId::new(9, idx));
+        let attention = Attention::of([7]);
+        let rings = Rings::of(&[("left", Some(editor(1))), ("right", Some(other(1)))], Some(("right", other(1))));
+        for window in [editor(1), editor(2)] {
+            assert!(rings.urgent(window, &attention), "{window:?}: ringed or not, every window of the app");
+        }
+        assert!(!rings.urgent(other(2), &attention), "an app that does not ask");
+        assert!(Rings::default().urgent(editor(1), &attention), "with nothing focused too");
+    }
+
+    #[test]
+    fn focusing_the_app_clears_its_urgency() {
+        let attention = Attention::of([7]);
+        let rings = Rings::of(&[("left", Some(WindowId::new(7, 1)))], Some(("left", WindowId::new(7, 1))));
+        assert!(!rings.urgent(WindowId::new(7, 1), &attention), "the window holding focus");
+        assert!(!rings.urgent(WindowId::new(7, 2), &attention), "and every other window of its app");
+    }
+
+    #[test]
+    fn urgent_beats_active_beats_inactive() {
+        let urgent = Decoration { border: Some(BORDER), urgent: true, ..ringed() };
+        for focused in [true, false] {
+            let style = Style::of(focused, true, &urgent);
+            assert_eq!((style.ring, style.border), (Some(RING.urgent), Some(BORDER.urgent)), "focused {focused}");
+        }
+        assert_eq!(Style::of(false, false, &urgent).ring, None, "urgent wears the ring only where it wears it");
+        assert_eq!(RING.paint(true, false), RING.active);
+        assert_eq!(RING.paint(false, false), RING.inactive);
     }
 
     #[test]

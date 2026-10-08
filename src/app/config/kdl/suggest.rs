@@ -117,10 +117,19 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
 ];
 
 const SIDES: [&str; 4] = ["left", "right", "top", "bottom"];
-const BAND: [&str; 7] = ["on", "off", "width", "active-color", "inactive-color", "active-gradient", "inactive-gradient"];
+const BAND: [&str; 9] = [
+    "on",
+    "off",
+    "width",
+    "active-color",
+    "inactive-color",
+    "urgent-color",
+    "active-gradient",
+    "inactive-gradient",
+    "urgent-gradient",
+];
 
 const NOT_IN_RINI: &str = "niri has this and rini does not";
-const NOT_YET: &str = "not supported yet";
 const MACOS_DISPLAYS: &str = "macOS owns the display's mode, scale and arrangement; an `output` \
                               here only overrides `layout`'s gaps and struts";
 const MACOS_DEVICES: &str = "macOS owns the keyboard and pointing devices; see System Settings";
@@ -196,10 +205,6 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ),
     ("layout", "preset-window-heights", NOT_IN_RINI),
     ("layout", "shadow", "macOS draws window shadows"),
-    ("layout/focus-ring", "urgent-color", NOT_YET),
-    ("layout/focus-ring", "urgent-gradient", NOT_YET),
-    ("layout/border", "urgent-color", NOT_YET),
-    ("layout/border", "urgent-gradient", NOT_YET),
     ("layout", "tab-indicator", "rini has no tabbed columns"),
     ("layout", "insert-hint", NOT_IN_RINI),
     (
@@ -313,10 +318,6 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ),
     ("window-rule", "scroll-factor", NOT_IN_RINI),
     ("window-rule", "pinch-sensitivity", NOT_IN_RINI),
-    ("window-rule/focus-ring", "urgent-color", NOT_YET),
-    ("window-rule/focus-ring", "urgent-gradient", NOT_YET),
-    ("window-rule/border", "urgent-color", NOT_YET),
-    ("window-rule/border", "urgent-gradient", NOT_YET),
     ("window-rule", "shadow", "macOS draws window shadows"),
     ("window-rule", "tab-indicator", "rini has no tabbed columns"),
     ("window-rule", "clip-to-geometry", "macOS draws the windows"),

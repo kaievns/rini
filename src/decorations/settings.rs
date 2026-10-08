@@ -29,7 +29,7 @@ pub struct DecorationSettings {
 
 impl Default for DecorationSettings {
     /// niri's focus ring, on, but 2pt wide where niri's is 4 (Kai's decision D1,
-    /// `specs/decorations.md`); and niri's border, off.
+    /// `specs/decorations.md`); and niri's border, off. Both urgent in niri's `#9b0000`.
     fn default() -> Self {
         Self {
             focus_ring: BandSetting {
@@ -38,6 +38,7 @@ impl Default for DecorationSettings {
                     width: 2.0,
                     active: Paint::Solid(Colour::rgb(0x7fc8ff)),
                     inactive: Paint::Solid(Colour::rgb(0x505050)),
+                    urgent: Paint::Solid(Colour::rgb(0x9b0000)),
                 },
             },
             border: BandSetting {
@@ -46,6 +47,7 @@ impl Default for DecorationSettings {
                     width: 4.0,
                     active: Paint::Solid(Colour::rgb(0xffc87f)),
                     inactive: Paint::Solid(Colour::rgb(0x505050)),
+                    urgent: Paint::Solid(Colour::rgb(0x9b0000)),
                 },
             },
             rules: Vec::new(),
@@ -90,7 +92,7 @@ mod tests {
         let settings = DecorationSettings::default();
         assert_eq!(worn(&settings).border, None);
         let solid = |rgb| Paint::Solid(Colour::rgb(rgb));
-        assert_eq!(settings.border.band, Band { width: 4.0, active: solid(0xffc87f), inactive: solid(0x505050) });
+        assert_eq!(settings.border.band, Band { width: 4.0, active: solid(0xffc87f), inactive: solid(0x505050), urgent: solid(0x9b0000) });
         let on = DecorationSettings { border: BandSetting { on: true, ..settings.border }, ..settings.clone() };
         assert_eq!(worn(&on).border, Some(settings.border.band));
         assert_eq!((settings.border_width(), on.border_width()), (0.0, 4.0), "the slot gives up nothing while it is off");

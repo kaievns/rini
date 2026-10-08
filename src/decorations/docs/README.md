@@ -3,23 +3,23 @@
 macOS composites a hairline around every window and casts its shadow, and no capture carries either.
 The overlay draws both over every tile, so a flying window wears what it wears on the desktop. rini
 also draws niri's focus ring and border, which macOS has no form of: on the tiles through a flight,
-and at rest in windows of its own. This feature is their shape, their paint by focus, who wears the
-ring, how deep each sits against the picture, the layers each tile wears them on, and the windows
-that draw the bands at rest. It reads `windows` (levels, sub-levels, radii, frames, whether a window is ordered
-in) and `displays` (the window server's frames and orders). `animation` draws its decorations on
-each tile, `transitions` carries what each window wears to its tile unread, and the application
-decides it, fills the ring's and the border's settings and the window rules from the config, folds
-the rules for each window, hands the layout the width each tiled window gives up to its border, and
-wires the rest windows.
+and at rest in windows of its own. This feature is their shape, their paint by focus and attention,
+who wears the ring, how deep each sits against the picture, the layers each tile wears them on, and
+the windows that draw the bands at rest. It reads `windows` (levels, sub-levels, radii, frames,
+whether a window is ordered in, which applications ask for attention) and `displays` (the window
+server's frames and orders). `animation` draws its decorations on each tile, `transitions` carries
+what each window wears to its tile unread, and the application decides it, fills the ring's and the
+border's settings and the window rules from the config, folds the rules for each window, hands the
+layout the width each tiled window gives up to its border, and wires the rest windows.
 
 ## What it owns
 
 | | |
 |---|---|
 | `domain/shape.rs` | A band outside the window, the ring's or the border's: its outer rect and corner (`band`), a width in device pixels (`device_width`), the width each band a decoration has is laid at, the ring reaching in under the border (`widths`), how far a window's bands reach outside it (`outset`), and the window that draws them at rest, cut to its display (`rest_frame`). The corner radius a tile is drawn with (`radius`: its window's, as the window server reports it, else `FALLBACK_RADIUS`, clamped to half the shorter side); the hairline's outline rect (`outline`); a rect with continuous corners as path segments (`rounded_rect`), each reaching `CONTINUOUS_REACH` radii along its sides; the shadow's silhouette (`silhouette`), the mask it is cut to (`shadow_mask_frame`, `SHADOW_REACH`) and the mask's hole (`shadow_mask`), each at the corner it is given |
-| `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its two paints (`Band`); what a window wears that rini draws, its ring, its border and its rule's corner, which the bands round to ahead of the window server's (`Decoration`, `corner`), and through a pass, with whether it wore and wears the ring (`Worn`); and `Style::of`, the white line's alpha, the shadow, the ring's paint for a window focused or not, wearing the ring or not, and the border's by focus alone. Who wears the ring: each workspace's active window, the focused window on its own (`Rings`) |
+| `domain/style.rs` | The hairline's paint: the white line's width (`LIGHT_PT`), the outline's stroke and black (`OUTLINE_PT`, `OUTLINE_ALPHA`); the shadow's `ShadowStyle`; a band's width and its three paints, and which one it is drawn in (`Band`, `paint`); what a window wears that rini draws, its ring, its border, its rule's corner, which the bands round to ahead of the window server's, and whether it is drawn urgent (`Decoration`, `corner`), and through a pass, with whether it wore and wears the ring (`Worn`); and `Style::of`, the white line's alpha, the shadow, the ring's paint for a window urgent, focused or neither, wearing the ring or not, and the border's the same way. Who wears the ring: each workspace's active window, the focused window on its own; and who is drawn urgent: every window of an application asking for attention while no window of it holds focus (`Rings`) |
 | `domain/paint.rs` | `Colour`, sRGB with its alpha, as the config writes a colour; `Paint`, a band's fill, a colour or a `Gradient`, niri's: two colours along an angle, mixed in a `ColourSpace` (with its `Hue` for `oklch`) as niri's shader mixes them (`colour_at`); its `Axis` over a band of a size, the start and end points Core Animation takes (`axis`), and whether that moves with the size (`follows_size`); and the `Stop`s Core Animation draws it through (`stops`, to `TOLERANCE` at `SAMPLES` steps) |
-| `domain/rules.rs` | What a `window-rule` says a window wears (`DecorationRule`, a `BandRule` for the ring and one for the border, and `geometry-corner-radius`), matched through the open-time rules' matcher (`windows::domain::rules::applies`); the layout's settings with every rule that applies laid over them in file order (`fold`); a window's decoration either side of focus, its active paint as the rules give it while it holds focus and the rest as they give it while it does not (`decoration`); the border a tiled window gives out of its slot (`border_width`), and whether a rule can give any other than the layout's (`shape_borders`) |
+| `domain/rules.rs` | What a `window-rule` says a window wears (`DecorationRule`, a `BandRule` for the ring and one for the border, and `geometry-corner-radius`), matched through the open-time rules' matcher (`windows::domain::rules::applies`); the layout's settings with every rule that applies laid over them in file order (`fold`); a window's decoration either side of focus, its active paint as the rules give it while it holds focus and the rest as they give it while it does not, urgent or not (`decoration`); the border a tiled window gives out of its slot (`border_width`), and whether a rule can give any other than the layout's (`shape_borders`) |
 | `domain/rest.rs` | The bands at rest: what the reactor sends (`RestModel`, a `RestWindow` per managed window with what `Held` it, its bands' paint and how far they reach), whether its bands show (`shown`), whether the window server has a window ordered out (`ordered_out`), when a park takes effect (`Parking`), which rest window draws each window (`assign`, `spare`), and which are ordered above their windows again this turn (`to_reorder`) |
 | `domain/stack.rs` | How deep each decoration sits against its picture: the shadow caster behind it (`SHADOW_Z`), the hairline in front of it (`HAIRLINE_Z`) |
 | `settings.rs` | `DecorationSettings`: `layout › focus-ring` and `layout › border`, each on or off and its `Band`, niri's by default but for the ring's width, and the window rules' `DecorationRule`s in file order; `border_width`, what a tiled window gives up to `layout › border` on each side; `draws_bands`, whether any window can wear a band |
@@ -89,36 +89,46 @@ covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
 ## The focus ring and the border, as drawn
 
 niri's ring is a band outside the window, worn by each workspace's active window (`Rings`, in
-`domain::style`): in `active` paint on the window holding focus, `inactive` on the others. On a tile
-it is the `ring` layer, a `Band`, the hairline's child after the outline, so it is drawn in front of
-the picture, the hairline and the outline, and rides the hairline through every move. In a colour it
-is the layer's border, `width` wide, and in a gradient the layer's gradient masked to a border of
-the same shape ("Gradients"), round on the continuous curve at the window's corner plus its width
-(`shape::band`), so its inner edge is the window's own corner, on the curve every other piece takes;
-a border's inner edge is its outer one `width` in. The corner is clamped to half the band's shorter
-side, and a square window keeps a square band, as niri's `expanded_by` keeps 0 at 0. Its width is
-whole device pixels of the display, never below one (`shape::device_width`, niri's rounding), laid as
-the tile is dressed (`DecorationLayers::wear`). A resize carries its bounds on the tile's own track,
-and its corner while it changes; its position, the window's corner less its width, holds. Its paint
-turns with the hairline (`Style::of`, `TileOverlay::set_tile_focused`), at the turn
-`transitions::domain::lifecycle::drawn_ringed` gives it.
+`domain::style`): in `urgent` paint on a window drawn urgent, `active` on the window holding focus,
+`inactive` on the others. On a tile it is the `ring` layer, a `Band`, the hairline's child after the
+outline, so it is drawn in front of the picture, the hairline and the outline, and rides the
+hairline through every move. In a colour it is the layer's border, `width` wide, and in a gradient
+the layer's gradient masked to a border of the same shape ("Gradients"), round on the continuous
+curve at the window's corner plus its width (`shape::band`), so its inner edge is the window's own
+corner, on the curve every other piece takes; a border's inner edge is its outer one `width` in. The
+corner is clamped to half the band's shorter side, and a square window keeps a square band, as
+niri's `expanded_by` keeps 0 at 0. Its width is whole device pixels of the display, never below one
+(`shape::device_width`, niri's rounding), laid as the tile is dressed (`DecorationLayers::wear`). A
+resize carries its bounds on the tile's own track, and its corner while it changes; its position,
+the window's corner less its width, holds. Its paint turns with the hairline (`Style::of`,
+`TileOverlay::set_tile_focused`), at the turn `transitions::domain::lifecycle::drawn_ringed` gives
+it.
 
 niri's border is the `border` layer, a second `Band`, the hairline's last child, so it is drawn in
 front of the ring, as niri draws it (`niri:src/layout/tile.rs:1279-1341`). Every window its
-decoration has one for wears it, in `active` paint while it holds focus and `inactive` otherwise
-(`Style::of`), so it turns with the hairline as focus moves, on its own focus alone. Its inner edge is
-the window's corner and its outer one that corner grown by its width, as the ring's. With both on,
-the ring lies outside the border: its outer rect is the window grown by both widths, and its layer
-reaches in under the border to the window's edge (`shape::widths`), so ring and border share no
-seam, the corner seam with the window is the border's alone, and the ring shows past the border by
-its own width. A border colour with alpha shows the ring through it there; niri's ring stops at the
-border instead. A tiled window gives the border its width out of its slot, so the band fills the
-window's place in the strip and the strip is laid out the same with borders on or off
-(`layout::domain::tile`, "A border takes its width out of the window" in `src/layout/docs/strip.md`).
-The layout takes the width as the config writes it and the band draws it in whole device pixels,
-which agree for any width of whole device pixels; a width between them leaves the band up to half a
-device pixel past or short of the slot. A floating window keeps its frame and wears the border
-outside it, where niri grows the tile instead.
+decoration has one for wears it, in `urgent` paint while it is drawn urgent, `active` while it holds
+focus and `inactive` otherwise (`Style::of`), so it turns with the hairline as focus moves, on its
+own focus alone. Its inner edge is the window's corner and its outer one that corner grown by its
+width, as the ring's. With both on, the ring lies outside the border: its outer rect is the window
+grown by both widths, and its layer reaches in under the border to the window's edge
+(`shape::widths`), so ring and border share no seam, the corner seam with the window is the border's
+alone, and the ring shows past the border by its own width. A border colour with alpha shows the
+ring through it there; niri's ring stops at the border instead. A tiled window gives the border its
+width out of its slot, so the band fills the window's place in the strip and the strip is laid out
+the same with borders on or off (`layout::domain::tile`, "A border takes its width out of the
+window" in `src/layout/docs/strip.md`). The layout takes the width as the config writes it and the
+band draws it in whole device pixels, which agree for any width of whole device pixels; a width
+between them leaves the band up to half a device pixel past or short of the slot. A floating window
+keeps its frame and wears the border outside it, where niri grows the tile instead.
+
+A window is drawn urgent while its application asks for attention and no window of that application
+holds focus (`Rings::urgent`, against the focus the ring is read against: the key window at rest,
+the focus a pass ends with on a tile). macOS asks per application, so every window of it is urgent,
+where niri marks one window. The `windows` attention reader hears the ask at most a second late
+(`src/windows/docs/attention.md`); the application taking focus clears it at once. Urgent beats
+active beats inactive, as niri picks the paint (`Band::paint`), and since no window of the
+application holding focus is urgent, the focused window always wears `active`. A tile keeps the
+urgency its pass gave it: an ask that starts or ends during a flight shows at the lift.
 
 ## Gradients
 

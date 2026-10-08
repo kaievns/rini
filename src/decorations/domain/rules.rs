@@ -1,7 +1,8 @@
 //! Window rules for what a window wears: a `window-rule`'s `focus-ring`, `border` and
-//! `geometry-corner-radius`, folded over the layout's settings for one window as it is now. They
-//! match through the matcher the open-time rules use (`windows::domain::rules::applies`) and apply
-//! continuously, as niri's do: each window is folded afresh whenever what it wears is asked for.
+//! `geometry-corner-radius`, folded over the layout's settings for one window as it is now, urgent
+//! or not. They match through the matcher the open-time rules use
+//! (`windows::domain::rules::applies`) and apply continuously, as niri's do: each window is folded
+//! afresh whenever what it wears is asked for.
 
 use serde::Serialize;
 
@@ -19,6 +20,7 @@ pub struct BandRule {
     pub width: Option<f64>,
     pub active: Option<Paint>,
     pub inactive: Option<Paint>,
+    pub urgent: Option<Paint>,
 }
 
 impl BandRule {
@@ -29,6 +31,7 @@ impl BandRule {
         setting.band.width = self.width.unwrap_or(setting.band.width);
         setting.band.active = self.active.unwrap_or(setting.band.active);
         setting.band.inactive = self.inactive.unwrap_or(setting.band.inactive);
+        setting.band.urgent = self.urgent.unwrap_or(setting.band.urgent);
     }
 
     /// Whether it says whether the band is drawn or how wide, rather than only how it is painted.
@@ -52,8 +55,10 @@ impl DecorationRule {
         *self != DecorationRule { matches: self.matches.clone(), excludes: self.excludes.clone(), ..DecorationRule::default() }
     }
 
-    /// Whether it applies to a window by whether the window holds focus.
-    pub fn follows_focus(&self) -> bool { self.matches.iter().chain(&self.excludes).any(RuleMatch::follows_focus) }
+    /// Whether it applies to a window by whether the window holds focus or is drawn urgent.
+    pub fn follows_focus_or_attention(&self) -> bool {
+        self.matches.iter().chain(&self.excludes).any(RuleMatch::follows_focus_or_attention)
+    }
 }
 
 /// What `context`'s window wears in the state `context` gives it: the layout's bands with every rule
@@ -65,13 +70,14 @@ pub fn fold(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> De
         rule.border.over(&mut border);
         radius = rule.corner_radius.or(radius);
     }
-    Decoration { ring: ring.worn(), border: border.worn(), radius }
+    Decoration { ring: ring.worn(), border: border.worn(), radius, urgent: context.state.urgent }
 }
 
 /// What `context`'s window wears whether it holds focus or not: each band's active paint as the
-/// rules give it while the window holds focus, and everything else as they give it while it does not.
-/// A rule that follows focus sets paints alone (the config refuses the rest), so this one value is
-/// painted right on either side of a focus turn (`Style::of`).
+/// rules give it while the window holds focus, and everything else as they give it while it does not,
+/// urgent as `context` has it. A rule that follows focus or attention sets paints alone (the config
+/// refuses the rest), so this one value is painted right on either side of a focus turn
+/// (`Style::of`).
 pub fn decoration(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> Decoration {
     let at = |focused| fold(settings, WindowRuleContext { state: RuleState { focused, ..context.state }, ..context });
     let (resting, holding) = (at(false), at(true));
@@ -81,14 +87,14 @@ pub fn decoration(settings: &DecorationSettings, context: WindowRuleContext<'_>)
     Decoration {
         ring: active(resting.ring, holding.ring),
         border: active(resting.border, holding.border),
-        radius: resting.radius,
+        ..resting
     }
 }
 
 /// The width `context`'s window gives its border out of its slot while it is tiled, 0 while it wears
-/// none. No rule that follows focus sets it, so it holds as focus moves.
+/// none. No rule that follows focus or attention sets it, so it holds as either turns.
 pub fn border_width(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> f64 {
-    let tiled = WindowRuleContext { state: RuleState { focused: false, floating: false }, ..context };
+    let tiled = WindowRuleContext { state: RuleState::default(), ..context };
     fold(settings, tiled).border.map_or(0.0, |band| band.width)
 }
 
@@ -198,7 +204,7 @@ mod tests {
                 ..rule(RuleMatch { is_floating: Some(true), ..RuleMatch::default() })
             },
         ]);
-        let floating = WindowRuleContext { state: RuleState { floating: true, focused: false }, ..window("com.example.Editor") };
+        let floating = WindowRuleContext { state: RuleState { floating: true, ..RuleState::default() }, ..window("com.example.Editor") };
         assert_eq!(border_width(&settings, floating), 2.0);
         assert_eq!(fold(&settings, floating).border.map(|band| band.width), Some(9.0), "drawn at the floating rule's");
         assert_eq!(border_width(&settings, window("com.example.Other")), 0.0, "borders off for the rest");
@@ -225,10 +231,29 @@ mod tests {
     #[test]
     fn a_rule_that_only_colours_by_focus_follows_focus_and_decorates() {
         let focused = rule(RuleMatch { is_focused: Some(false), ..RuleMatch::default() });
-        assert!(focused.follows_focus() && !focused.decorates());
+        assert!(focused.follows_focus_or_attention() && !focused.decorates());
         let excluded = DecorationRule { excludes: vec![RuleMatch { is_active: Some(true), ..RuleMatch::default() }], ..DecorationRule::default() };
-        assert!(excluded.follows_focus(), "an exclude line turns with focus too");
+        assert!(excluded.follows_focus_or_attention(), "an exclude line turns with focus too");
+        assert!(rule(RuleMatch { is_urgent: Some(true), ..RuleMatch::default() }).follows_focus_or_attention(), "and with attention");
         assert!(DecorationRule { corner_radius: Some(4.0), ..rule(app("x")) }.decorates());
-        assert!(!rule(RuleMatch { is_floating: Some(true), ..RuleMatch::default() }).follows_focus());
+        assert!(!rule(RuleMatch { is_floating: Some(true), ..RuleMatch::default() }).follows_focus_or_attention());
+    }
+
+    /// niri's `match is-urgent=true` recolours a window while it is drawn urgent, in the urgent
+    /// paint it is drawn in then.
+    #[test]
+    fn is_urgent_matches_an_app_wanting_attention() {
+        let mut settings = with(vec![DecorationRule {
+            border: BandRule { urgent: Some(RED), ..BandRule::default() },
+            ..rule(RuleMatch { is_urgent: Some(true), ..RuleMatch::default() })
+        }]);
+        settings.border.on = true;
+        let urgent = WindowRuleContext { state: RuleState { urgent: true, ..RuleState::default() }, ..window("x") };
+        let drawn = decoration(&settings, urgent);
+        assert!(drawn.urgent);
+        assert_eq!(crate::decorations::domain::style::Style::of(false, false, &drawn).border, Some(RED));
+        let calm = decoration(&settings, window("x"));
+        assert!(!calm.urgent);
+        assert_eq!(calm.border.map(|band| band.urgent), Some(settings.border.band.urgent), "the layout's while it does not ask");
     }
 }

@@ -31,7 +31,7 @@ pub struct LayoutPart {
 }
 
 /// niri's `focus-ring` and `border`: `on` or `off`, its width, and its colour or gradient on the
-/// window holding focus and on the others.
+/// window holding focus, on a window drawn urgent and on the others.
 #[derive(knus::Decode, Debug, Default)]
 #[knus(span_type = Span)]
 pub struct BandPart {
@@ -51,6 +51,10 @@ pub struct BandPart {
     pub active_gradient: Option<GradientPart>,
     #[knus(child)]
     pub inactive_gradient: Option<GradientPart>,
+    #[knus(child, unwrap(argument))]
+    pub urgent_color: Option<ColourValue>,
+    #[knus(child)]
+    pub urgent_gradient: Option<GradientPart>,
 }
 
 /// niri's `active-gradient from="#80c8ff" to="#bbddff" angle=45 relative-to="window" in="oklch

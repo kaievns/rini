@@ -1,0 +1,40 @@
+2026-10-08T01:33:17Z
+26.7.1
+_LSASNCreateWithPid true
+_LSCopyApplicationInformationItem true
+_LSCopyApplicationInformation true
+_kLSWantsAttentionKey false
+_LSScheduleNotificationOnQueueWithBlock true
+_LSModifyNotification true
+_LSUnscheduleNotificationFunction true
+_LSCopyApplicationArrayInFrontToBackOrder true
+_LSGetCurrentApplicationASN true
+regular apps 12
+one sweep ms 0.671
+sweep ms p50 0.451875 max 0.525459 per app us 37.65625
+pid item information
+3078 nil nil
+3086 nil nil
+3087 nil nil
+3089 nil nil
+3090 nil nil
+3094 nil nil
+3095 0 0
+3097 nil nil
+3101 nil nil
+12408 nil nil
+22383 0 0
+47464 nil nil
+second argument 0 lists 12
+second argument 1 lists 12
+second argument 2 lists 12
+second argument 3 lists 12
+second argument 4 lists 12
+second argument 8 lists 12
+second argument 2147483648 lists 12
+second argument 4294967295 lists 12
+lsappinfo, the same pids:
+3095 "LSWantsAttention"=false
+22383 "LSWantsAttention"=false
+3078 "LSWantsAttention"=[ NULL ] 
+3086 "LSWantsAttention"=[ NULL ] 

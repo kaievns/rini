@@ -68,7 +68,6 @@ pub struct MatchPart {
     /// niri's, refused with its reason.
     #[knus(property)]
     pub is_active_in_column: Option<bool>,
-    /// niri's, refused with its reason.
     #[knus(property)]
     pub is_urgent: Option<bool>,
 }

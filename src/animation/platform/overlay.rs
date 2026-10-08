@@ -2924,7 +2924,7 @@ mod tests {
             let drawn = typed(4.0, 32.0, 859.0, 1081.0);
             let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
             let (active, inactive) = (Colour::rgb(0x7fc8ff), Colour::rgb(0x505050));
-            let band = Band { width: 4.0, active: Paint::Solid(active), inactive: Paint::Solid(inactive) };
+            let band = Band { width: 4.0, active: Paint::Solid(active), inactive: Paint::Solid(inactive), urgent: Paint::Solid(inactive) };
             let mut tile = overlay_tile(window, drawn, drawn, false);
             tile.worn = Worn { decoration: Decoration { ring: Some(band), ..Decoration::default() }, wore_ring: true, wears_ring: true };
             tile.ringed = true;

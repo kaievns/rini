@@ -749,12 +749,14 @@ mod tests {
         width: 4.0,
         active: Paint::Solid(Colour { r: 0.5, g: 0.78, b: 1.0, a: 1.0 }),
         inactive: Paint::Solid(Colour { r: 0.31, g: 0.31, b: 0.31, a: 1.0 }),
+        urgent: Paint::Solid(Colour { r: 0.61, g: 0.0, b: 0.0, a: 1.0 }),
     };
 
     const BORDER: crate::decorations::domain::style::Band = crate::decorations::domain::style::Band {
         width: 4.0,
         active: Paint::Solid(Colour { r: 1.0, g: 0.78, b: 0.5, a: 1.0 }),
         inactive: Paint::Solid(Colour { r: 0.31, g: 0.31, b: 0.31, a: 1.0 }),
+        urgent: Paint::Solid(Colour { r: 0.61, g: 0.0, b: 0.0, a: 1.0 }),
     };
 
     fn ringed() -> Decoration { Decoration { ring: Some(RING), ..Decoration::default() } }
@@ -850,11 +852,11 @@ mod tests {
         let mut layers = DecorationLayers::new(&CALayer::layer());
         layers.radius = Some(16.0);
         let border = crate::decorations::domain::style::Band { width: 4.0, ..RING };
-        layers.wear(&Decoration { ring: Some(RING), border: Some(border), radius: Some(8.0) }, 2.0);
+        layers.wear(&Decoration { ring: Some(RING), border: Some(border), radius: Some(8.0), urgent: false }, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
         assert_eq!(layers.hairline.cornerRadius(), 16.0, "the window server's");
         assert_eq!(layers.bands.border.layer.cornerRadius(), 12.0, "the rule's, out by the border");
-        layers.wear(&Decoration { ring: Some(RING), border: Some(border), radius: None }, 2.0);
+        layers.wear(&Decoration { ring: Some(RING), border: Some(border), ..Decoration::default() }, 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
         assert_eq!(layers.bands.border.layer.cornerRadius(), 20.0, "a pooled tile worn with no rule's: the server's");
     }

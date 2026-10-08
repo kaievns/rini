@@ -404,6 +404,9 @@ fn main() {
 
     let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
 
+    // Which applications ask for attention, read from LaunchServices on a thread of its own.
+    rini::windows::platform::attention::spawn(Box::new(events_tx.clone()));
+
     let process_actor = ProcessActor::new({
         let sender = wm_controller_sender.clone();
         move |event| sender.send(event.into())

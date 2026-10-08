@@ -335,6 +335,9 @@ pub enum Event {
         requests_seen: u64,
     },
 
+    /// The applications asking for attention changed.
+    AttentionChanged(crate::windows::domain::attention::Attention),
+
     #[serde(skip)]
     Query(query::QueryRequest),
 
@@ -431,6 +434,7 @@ impl From<crate::windows::event::Event> for Event {
             }
             W::RaiseTimeout { sequence_id } => Event::RaiseTimeout { sequence_id },
             W::RaisesIdle { requests_seen } => Event::RaisesIdle { requests_seen },
+            W::AttentionChanged(attention) => Event::AttentionChanged(attention),
         }
     }
 }
@@ -503,6 +507,8 @@ pub struct Reactor {
     /// The rings as rini's layout had them when the last batch of events ended: what each window wore
     /// before a pass this batch makes.
     rings_drawn: crate::decorations::domain::style::Rings,
+    /// The applications asking for attention, whose windows are drawn urgent.
+    attention: crate::windows::domain::attention::Attention,
     rest: decorations::RestFeed,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
@@ -649,6 +655,7 @@ impl Reactor {
             switcher_tx: None,
             bar: bar::BarFeed::default(),
             rings_drawn: Default::default(),
+            attention: Default::default(),
             rest: decorations::RestFeed::default(),
             config: config.clone(),
             one_space,
@@ -1557,6 +1564,10 @@ impl Reactor {
             }
             Event::RaisesIdle { requests_seen } => {
                 self.raise_echo.idle(requests_seen, std::time::Instant::now());
+                return Ok(EventOutcome::no_change());
+            }
+            Event::AttentionChanged(attention) => {
+                self.attention = attention;
                 return Ok(EventOutcome::no_change());
             }
             Event::ConfigUpdated(new_cfg) => {

@@ -2,6 +2,7 @@
 
 pub mod admissible;
 pub mod app_threads;
+pub mod attention;
 pub mod ax_events;
 pub mod catalogue;
 pub mod focus;

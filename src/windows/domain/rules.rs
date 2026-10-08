@@ -65,6 +65,8 @@ pub struct RuleMatch {
     /// Whether the window holds focus.
     pub is_focused: Option<bool>,
     pub is_floating: Option<bool>,
+    /// Whether the window is drawn urgent: its application asks for attention and holds no focus.
+    pub is_urgent: Option<bool>,
 }
 
 impl RuleMatch {
@@ -79,10 +81,13 @@ impl RuleMatch {
             && self.is_active.is_none_or(|active| active == state.focused)
             && self.is_focused.is_none_or(|focused| focused == state.focused)
             && self.is_floating.is_none_or(|floating| floating == state.floating)
+            && self.is_urgent.is_none_or(|urgent| urgent == state.urgent)
     }
 
-    /// Whether it names a matcher that turns as focus moves.
-    pub fn follows_focus(&self) -> bool { self.is_active.is_some() || self.is_focused.is_some() }
+    /// Whether it names a matcher that turns as focus moves or an application asks for attention.
+    pub fn follows_focus_or_attention(&self) -> bool {
+        self.is_active.is_some() || self.is_focused.is_some() || self.is_urgent.is_some()
+    }
 }
 
 /// Whether a rule with these lines applies to `context`'s window: it matches one of `matches`, or
@@ -219,12 +224,13 @@ pub struct WindowRuleContext<'a> {
 }
 
 /// What the matchers that change while a window is open read. `Default` is a window as it opens:
-/// not focused and not floating, as niri reads one, so a rule that asks for either sets nothing at
-/// open.
+/// not focused, not floating and not urgent, as niri reads one, so a rule that asks for any of them
+/// sets nothing at open.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct RuleState {
     pub focused: bool,
     pub floating: bool,
+    pub urgent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -521,12 +527,13 @@ mod tests {
             RuleMatch { is_active: Some(true), ..RuleMatch::default() },
             RuleMatch { is_focused: Some(true), ..RuleMatch::default() },
             RuleMatch { is_floating: Some(true), ..RuleMatch::default() },
+            RuleMatch { is_urgent: Some(true), ..RuleMatch::default() },
         ] {
             assert_eq!(rule(line.clone()).evaluate(opening), AppRuleDecision::NoMatch, "{line:?}");
         }
         let unfocused = RuleMatch { is_focused: Some(false), is_floating: Some(false), ..RuleMatch::default() };
         assert_ne!(rule(unfocused.clone()).evaluate(opening), AppRuleDecision::NoMatch);
-        let focused = WindowRuleContext { state: RuleState { focused: true, floating: false }, ..opening };
+        let focused = WindowRuleContext { state: RuleState { focused: true, ..RuleState::default() }, ..opening };
         assert!(!applies(&[unfocused], &[], focused), "the same line, once the window holds focus");
     }
 }

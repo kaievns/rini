@@ -57,6 +57,22 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   niri stacks them; the ring is drawn under the border in to the window's edge, so the two meet at
   no seam.
 
+## Urgent
+
+- While an application asks for attention, its Dock icon bouncing, every window rini manages of it
+  MUST be drawn urgent unless a window of it holds focus: its border, and its ring where it wears
+  one, in `urgent-color` or `urgent-gradient`, which beat the active and the inactive paint, as
+  niri picks them. Both bands MUST default to niri's `#9b0000`.
+- macOS asks per application, never per window, so every window of the application is urgent, where
+  niri marks the one window that asked. Activating the application ends the ask, as focusing a
+  window ends niri's, so no window of the application holding focus MUST be drawn urgent, at rest
+  from the moment macOS makes one of its windows key, on a tile for a pass that ends focused on one.
+- An ask MUST show within a second of the application making it, and go within a second of its
+  ending. Neither SkyLight, `NSWorkspace` nor a distributed notification reports it; LaunchServices
+  holds it as the application's `LSWantsAttention` (`src/windows/docs/attention.md`).
+- Not yet met: a tile keeps the urgency its pass gave it, so an ask that starts or ends during a
+  flight turns the band at the lift.
+
 ## Gradients
 
 - A band's `active-gradient` and `inactive-gradient` MUST be drawn as niri draws them, in place of
@@ -87,11 +103,12 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   `is-active` or `is-focused` recolours the window focus moves to and the one it left, each at the
   time its hairline turns. rini paints one window active, the one holding focus, so `is-active` and
   `is-focused` match the same window.
-- Under `is-active` or `is-focused`, on a `match` or an `exclude` line, a rule MUST set paints only,
-  colours and gradients. A border's `on`, `off` or `width` there MUST be refused: a tiled window
-  gives its border's width out of its place in the strip, so a border that changed with focus would
-  lay the strip out again on every focus change, at 2-60ms a size write plus a flight
-  (`windows.md`). A ring's `on`, `off` or `width` and `geometry-corner-radius` there are refused as
+- `is-urgent` MUST match a window while it is drawn urgent ("Urgent").
+- Under `is-active`, `is-focused` or `is-urgent`, on a `match` or an `exclude` line, a rule MUST set
+  paints only, colours and gradients. A border's `on`, `off` or `width` there MUST be refused: a
+  tiled window gives its border's width out of its place in the strip, so a border that changed with
+  focus or attention would lay the strip out again every time either changed, at 2-60ms a size write
+  plus a flight (`windows.md`). A ring's `on`, `off` or `width` and `geometry-corner-radius` there are refused as
   not yet supported: the tile's bands and corner are laid when it is staged, and only its paint
   turns during a flight.
 - A rule that gives a tiled window another border width MUST lay the strip out again as soon as it
@@ -104,13 +121,12 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   no window with unequal corners.
 - A rule that says only what a window wears MUST NOT change what the window opens with: with no
   other rule applying, a new window still opens where its application's windows last were.
-- At open a window holds no focus and does not float, as niri reads it, so a rule matching either
-  sets nothing the window opens with.
+- At open a window holds no focus, does not float and is not urgent, as niri reads it, so a rule
+  matching any of them sets nothing the window opens with.
 - `draw-border-with-background false` MUST be accepted, since rini draws the bands hollow;
   `true` is refused as not yet supported, since it needs a fill under another application's window.
 - niri's `is-active-in-column` MUST be refused: a rini column keeps no window of its own that focus
-  lands on, since focus entering a column lands on the row it came from. `is-urgent` is refused as
-  not yet supported until rini reads an application asking for attention.
+  lands on, since focus entering a column lands on the row it came from.
 
 ## Through a flight
 
@@ -163,26 +179,29 @@ wearing either is drawn by one rest window holding both.
 
 ## Where it lives
 
-The ring's and the border's settings are `src/decorations/settings.rs`, decoded from
-`layout › focus-ring` and `layout › border` in `src/app/config/kdl/layout.rs` and
+The ring's and the border's settings are `src/decorations/settings.rs`, decoded from `layout ›
+focus-ring` and `layout › border` in `src/app/config/kdl/layout.rs` and
 `src/app/config/kdl/apply.rs`. Who wears the ring and the paint of each by focus are
 `src/decorations/domain/style.rs`; their colours and gradients, and the axis and stops each gradient
-is drawn with, `src/decorations/domain/paint.rs`; what the window rules give
-each window, `src/decorations/domain/rules.rs`, matched through `src/windows/domain/rules.rs` and
-decoded with each `window-rule` in `src/app/config/kdl/window_rule.rs` and `apply.rs`; each band, its width and
+is drawn with, `src/decorations/domain/paint.rs`; what the window rules give each window,
+`src/decorations/domain/rules.rs`, matched through `src/windows/domain/rules.rs` and decoded with
+each `window-rule` in `src/app/config/kdl/window_rule.rs` and `apply.rs`; each band, its width and
 corner, how far the two reach, and their rest window's frame, `src/decorations/domain/shape.rs`; the
 layers they are drawn on, `src/decorations/platform/layers.rs`. A tiled window inside its place in
 the strip, the border's width in, is `src/layout/domain/tile.rs`, read by
 `src/layout/domain/scrolling.rs` with each window's width, which the reactor hands
-`src/workspaces/engine.rs` before every pass and after any batch of events that changed one. The reactor decides each window's ring and what
-holds its band at rest in `src/app/reactor/decorations.rs`, from each workspace's active window
-(`src/workspaces/engine.rs`). When a tile's ring turns is `src/transitions/domain/lifecycle.rs`,
-carried out by `src/transitions/platform/engine.rs` on the overlay
-(`src/animation/platform/overlay.rs`), which is holed over each band
-(`src/animation/domain/motion/holes.rs`). At rest, which windows show a band, which rest window draws
-each and which are ordered again are `src/decorations/domain/rest.rs`, carried out by the main-thread
-actor in `src/decorations/platform/rest.rs`, which the renderer
-(`src/animation/platform/renderer.rs`) calls before each lift. Its windows follow the window server's
-frames and orders (`src/displays/platform/window_notify.rs`), and are ordered with the level and
-sub-level calls in `src/windows/platform/window_server.rs`; no listing of windows names them
-(`src/windows/domain/listing.rs`). What was measured is "At rest" in `src/decorations/docs/README.md`.
+`src/workspaces/engine.rs` before every pass and after any batch of events that changed one. The
+reactor decides each window's ring and what holds its band at rest in
+`src/app/reactor/decorations.rs`, from each workspace's active window (`src/workspaces/engine.rs`),
+and which applications ask for attention, read by `src/windows/platform/attention.rs` into
+`src/windows/domain/attention.rs`. When a tile's ring turns is
+`src/transitions/domain/lifecycle.rs`, carried out by `src/transitions/platform/engine.rs` on the
+overlay (`src/animation/platform/overlay.rs`), which is holed over each band
+(`src/animation/domain/motion/holes.rs`). At rest, which windows show a band, which rest window
+draws each and which are ordered again are `src/decorations/domain/rest.rs`, carried out by the
+main-thread actor in `src/decorations/platform/rest.rs`, which the renderer
+(`src/animation/platform/renderer.rs`) calls before each lift. Its windows follow the window
+server's frames and orders (`src/displays/platform/window_notify.rs`), and are ordered with the
+level and sub-level calls in `src/windows/platform/window_server.rs`; no listing of windows names
+them (`src/windows/domain/listing.rs`). What was measured is "At rest" in
+`src/decorations/docs/README.md`.

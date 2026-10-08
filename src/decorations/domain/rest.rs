@@ -191,8 +191,8 @@ mod tests {
     use crate::decorations::domain::paint::{Colour, Paint};
     use crate::decorations::domain::style::Band;
 
-    const BAND: Band = Band { width: 4.0, active: Paint::Solid(Colour::rgb(0x7fc8ff)), inactive: Paint::Solid(Colour::rgb(0x505050)) };
-    const BORDER: Band = Band { width: 4.0, active: Paint::Solid(Colour::rgb(0xffc87f)), inactive: Paint::Solid(Colour::rgb(0x505050)) };
+    const BAND: Band = Band { width: 4.0, active: Paint::Solid(Colour::rgb(0x7fc8ff)), inactive: Paint::Solid(Colour::rgb(0x505050)), urgent: Paint::Solid(Colour::rgb(0x9b0000)) };
+    const BORDER: Band = Band { width: 4.0, active: Paint::Solid(Colour::rgb(0xffc87f)), inactive: Paint::Solid(Colour::rgb(0x505050)), urgent: Paint::Solid(Colour::rgb(0x9b0000)) };
 
     fn ws(id: u32) -> WindowServerId { WindowServerId::new(id) }
 

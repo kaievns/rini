@@ -270,6 +270,9 @@ fn apply_band(part: BandPart, setting: &mut BandSetting, problems: &mut Vec<Prob
     if let Some(paint) = paint(part.inactive_color, part.inactive_gradient, problems) {
         setting.band.inactive = paint;
     }
+    if let Some(paint) = paint(part.urgent_color, part.urgent_gradient, problems) {
+        setting.band.urgent = paint;
+    }
 }
 
 /// A band's paint for one state as one block writes it: its gradient, drawn instead of its colour
@@ -460,13 +463,10 @@ fn window_rule(
                     .help("a rule with no `match` line already applies to every window"),
             );
         }
-        let not_yet = [
-            (part.is_active_in_column, "is-active-in-column", "a column keeps no window of its own to focus: focus lands on the row it comes from"),
-            (part.is_urgent, "is-urgent", "rini does not read an application asking for attention yet"),
-        ];
-        for (_, name, why) in not_yet.into_iter().filter(|(written, _, _)| written.is_some()) {
+        if part.is_active_in_column.is_some() {
             problems.push(
-                Problem::at(&part.span, format!("`{name}` is not supported yet"), "here").help(why),
+                Problem::at(&part.span, "`is-active-in-column` is not supported yet", "here")
+                    .help("a column keeps no window of its own to focus: focus lands on the row it comes from"),
             );
         }
         RuleMatch {
@@ -479,6 +479,7 @@ fn window_rule(
             is_active: part.is_active,
             is_focused: part.is_focused,
             is_floating: part.is_floating,
+            is_urgent: part.is_urgent,
         }
     };
     let matches: Vec<RuleMatch> = part.matches.into_iter().map(|m| line(m, problems)).collect();
@@ -529,7 +530,7 @@ fn window_rule(
         border: band_rule(part.border, problems),
         corner_radius: part.geometry_corner_radius.and_then(|radius| corner_radius(radius, problems)),
     };
-    let decorating = held_by_focus(decorating, &part.span, problems);
+    let decorating = paints_only(decorating, &part.span, problems);
     let opening = WindowRule {
         matches,
         excludes,
@@ -560,6 +561,7 @@ fn band_rule(part: Option<BandPart>, problems: &mut Vec<Problem>) -> BandRule {
         width: part.width.map(Number::get),
         active: paint(part.active_color, part.active_gradient, problems),
         inactive: paint(part.inactive_color, part.inactive_gradient, problems),
+        urgent: paint(part.urgent_color, part.urgent_gradient, problems),
     }
 }
 
@@ -584,32 +586,32 @@ fn corner_radius(part: RadiusPart, problems: &mut Vec<Problem>) -> Option<f64> {
     }
 }
 
-/// A rule that applies by whether a window holds focus may set paints alone: what else it writes is
-/// refused and left out.
-fn held_by_focus(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>) -> DecorationRule {
-    if !rule.follows_focus() {
+/// A rule that applies by whether a window holds focus or is drawn urgent may set paints alone: what
+/// else it writes is refused and left out.
+fn paints_only(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>) -> DecorationRule {
+    if !rule.follows_focus_or_attention() {
         return rule;
     }
     let mut refuse = |what: &str, why: &str| {
         problems.push(
-            Problem::at(span, format!("{what} under `is-active` or `is-focused` is not supported"), "in this rule")
+            Problem::at(span, format!("{what} under `is-active`, `is-focused` or `is-urgent` is not supported"), "in this rule")
                 .help(why.to_owned()),
         );
     };
     if rule.border.shapes() {
         refuse(
             "a `border`'s `on`, `off` or `width`",
-            "a border that changes with focus lays the strip out again on every focus change; its colours and gradients may follow focus",
+            "a border that changes with focus or attention lays the strip out again every time either changes; its colours and gradients may follow them",
         );
     }
     if rule.focus_ring.shapes() {
         refuse(
             "a `focus-ring`'s `on`, `off` or `width`",
-            "not supported yet: a ring drawn or sized by focus; its colours and gradients may follow focus",
+            "not supported yet: a ring drawn or sized by focus or attention; its colours and gradients may follow them",
         );
     }
     if rule.corner_radius.is_some() {
-        refuse("`geometry-corner-radius`", "not supported yet: a corner that changes with focus");
+        refuse("`geometry-corner-radius`", "not supported yet: a corner that changes with focus or attention");
     }
     let colours = |band: BandRule| BandRule { on: None, width: None, ..band };
     DecorationRule {

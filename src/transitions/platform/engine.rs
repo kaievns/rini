@@ -2769,6 +2769,7 @@ mod tests {
                 width: 1.3,
                 active: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x7fc8ff)),
                 inactive: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x505050)),
+                urgent: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x9b0000)),
             };
             let decoration = crate::decorations::domain::style::Decoration { ring: Some(band), ..Default::default() };
             running.tiles[0].worn = Worn { decoration, wore_ring: false, wears_ring: true };
@@ -4400,6 +4401,7 @@ mod tests {
                 width: 4.0,
                 active: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x7fc8ff)),
                 inactive: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x505050)),
+                urgent: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x9b0000)),
             };
             let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), ..Default::default() };
             let worn = |wore_ring, wears_ring| Worn { decoration, wore_ring, wears_ring };

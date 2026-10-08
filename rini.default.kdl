@@ -72,27 +72,31 @@ layout {
     }
 
     // niri's focus ring, drawn around each workspace's active window, the one focus lands on there:
-    // in `active-color` on the display holding focus and `inactive-color` on the others. It lies
-    // outside the window and takes no space, so it covers `width` of whatever is beside it, less the
-    // gap: with `gaps 3`, nothing. `off` turns it off. A colour is any CSS form. niri's gradient,
-    // `active-gradient from="#80c8ff" to="#bbddff" angle=45 in="oklch longer hue"`, is drawn instead
-    // of the colour beside it, here and in `border`.
+    // in `active-color` on the display holding focus and `inactive-color` on the others, and in
+    // `urgent-color` while the window's application asks for attention. It lies outside the
+    // window and takes no space, so it covers `width` of whatever is beside it, less the gap: with
+    // `gaps 3`, nothing. `off` turns it off. A colour is any CSS form. niri's gradient,
+    // `active-gradient from="#80c8ff" to="#bbddff" angle=45 in="oklch longer hue"`, is drawn
+    // instead of the colour beside it, here and in `border`.
     focus-ring {
         width 2
         active-color "#7fc8ff"
         inactive-color "#505050"
+        urgent-color "#9b0000"
     }
 
-    // niri's border, drawn around every window, in `active-color` on the window holding focus and
-    // `inactive-color` on the others, with the focus ring outside it. A tiled window gives up `width`
-    // on each side to it, so the border fills the window's place in the strip and covers nothing; a
-    // floating window keeps its size and wears it outside. Writing `border` turns it on unless the
-    // block says `off`, as in niri.
+    // niri's border, drawn around every window, in `active-color` on the window holding focus,
+    // `urgent-color` on every window of an application asking for attention, which macOS asks per
+    // application, and `inactive-color` on the others, with the focus ring outside it. A tiled
+    // window gives up `width` on each side to it, so the border fills the window's place in the
+    // strip and covers nothing; a floating window keeps its size and wears it outside. Writing
+    // `border` turns it on unless the block says `off`, as in niri.
     border {
         off
         width 4
         active-color "#ffc87f"
         inactive-color "#505050"
+        urgent-color "#9b0000"
     }
 
     // A new column's width, as a fraction of the display's tiling width.
@@ -263,6 +267,8 @@ workspace "Utilities"
 // - is-focused, is-active: whether the window holds focus. rini paints one window active, the one
 //   holding focus, so the two match the same window. is-floating: whether it floats. A window
 //   opens holding no focus and not floating, so a rule matching either sets nothing it opens with.
+// - is-urgent: whether the window's application asks for attention, its Dock icon bouncing, and
+//   none of its windows holds focus. A window opens calm.
 // Regular expressions are case-sensitive and match anywhere in the text: anchor them with ^ and $,
 // or start them with (?i) to ignore case. Raw strings save escaping: r"^com\.apple\.finder$".
 // An invalid one is an error naming the line.
@@ -282,14 +288,15 @@ workspace "Utilities"
 // - open-on-output "internal"|"external": keep the window on that display.
 // - focus-ring { … } and border { … }: as in `layout`, laid over it for the windows the rule
 //   applies to, `on` turning a band on and `off` off; a later rule beats an earlier one. Under
-//   is-focused or is-active only the colours may be set: a border that changed width with focus
-//   would lay the strip out again on every focus change.
+//   is-focused, is-active or is-urgent only the colours may be set: a border that changed width
+//   with focus or attention would lay the strip out again every time either changed.
 // - geometry-corner-radius 12: the corner the focus ring and the border round to, ahead of the
 //   window's own as macOS reports it.
 // - draw-border-with-background false: what rini draws anyway, the ring and the border hollow.
 //
-//   These follow the window while it is open: a change of focus, of floating or of title changes
-//   what it wears. A rule that says only these leaves where the window opens alone.
+//   These follow the window while it is open: a change of focus, of floating, of title or of
+//   attention changes what it wears. A rule that says only these leaves where the window opens
+//   alone.
 //
 //   A ROLE, not a display. The external monitor at home and the one at the office have different
 //   UUIDs, so a rule naming one would be silently inert at the other desk. "internal" is the

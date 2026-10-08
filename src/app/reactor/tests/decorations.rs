@@ -11,6 +11,7 @@ use crate::decorations::domain::paint::{Colour, Paint};
 use crate::decorations::domain::rest::{RestModel, RestWindow};
 use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
+use crate::windows::domain::attention::Attention;
 use crate::windows::domain::rules::RuleMatch;
 use crate::windows::platform::window_server::set_space_window_list_for_space_override;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
@@ -284,6 +285,43 @@ fn a_rule_radius_reaches_the_tile_and_the_rest_panel() {
     let rings = desk.reactor.layout_rings();
     assert_eq!(desk.reactor.worn(left_ghostty(), &rings).decoration.radius, Some(9.0), "carried to its tile");
     assert_eq!(desk.reactor.worn(left_zen(), &rings).decoration.radius, None);
+}
+
+/// macOS asks per application: while Zen asks, each of its windows is sent urgent, on both displays
+/// and ringed or not, until one of its windows holds focus, before LaunchServices says it stopped.
+#[test]
+fn an_application_asking_for_attention_is_sent_urgent_until_one_of_its_windows_holds_focus() {
+    let mut desk = desk();
+    let left = desk.left;
+    focus(&mut desk, left_ghostty(), left);
+    desk.reactor.handle_test_batch(vec![Event::AttentionChanged(Attention::of([ZEN]))]);
+    let model = models(&mut desk.rest).pop().expect("the ask is sent");
+    let urgent = |model: &RestModel| [901, 902, 903, 904].map(|wsid| sent(model, wsid).decoration.urgent);
+    assert_eq!(urgent(&model), [false, true, true, false]);
+    let ring = desk.reactor.config.settings.decorations.focus_ring.band;
+    assert_eq!(sent(&model, 903).style().ring, Some(ring.urgent), "the other display's ring");
+    let model = focus(&mut desk, left_zen(), left);
+    assert_eq!(urgent(&model), [false; 4]);
+    assert_eq!(sent(&model, 902).style().ring, Some(ring.active));
+    desk.reactor.handle_test_batch(vec![Event::AttentionChanged(Attention::default())]);
+    assert!(models(&mut desk.rest).is_empty(), "nothing left to turn");
+}
+
+/// A pass ends with its focus, so a pass that focuses a window of an asking application carries
+/// every window of it calm, as the rest windows will have them once macOS makes it key.
+#[test]
+fn a_pass_focusing_an_asking_application_carries_its_windows_calm() {
+    let mut desk = desk();
+    let left = desk.left;
+    focus(&mut desk, left_ghostty(), left);
+    desk.reactor.handle_test_batch(vec![Event::AttentionChanged(Attention::of([ZEN]))]);
+    let rings = desk.reactor.layout_rings();
+    assert!(desk.reactor.worn(left_zen(), &rings).decoration.urgent);
+    desk.reactor.send_layout_event(LayoutEvent::WindowFocused(left, left_zen()));
+    let rings = desk.reactor.layout_rings();
+    for window in [left_zen(), WindowId::new(ZEN, 2)] {
+        assert!(!desk.reactor.worn(window, &rings).decoration.urgent, "{window:?}");
+    }
 }
 
 fn frame_of(layout: &[(WindowId, CGRect)], window: WindowId) -> CGRect {

@@ -424,14 +424,52 @@ fn a_focus_ring_in_an_output_is_refused_with_its_reason() {
 }
 
 #[test]
-fn the_urgent_colour_and_gradient_are_refused_as_not_yet_supported() {
-    for name in ["urgent-color \"#9b0000\"", "urgent-gradient from=\"#800\" to=\"#a33\""] {
-        let report = refused(&format!("layout {{\n    focus-ring {{\n        {name}\n    }}\n}}\n"));
-        assert!(report.contains("not supported yet"), "{name}: {report}");
-    }
-    assert!(refused("window-rule {\n    focus-ring {\n        urgent-color \"#9b0000\"\n    }\n}\n").contains("not supported yet"));
+fn the_urgent_colour_and_gradient_decode_as_niri_writes_them() {
+    let config = parse(concat!(
+        "layout {\n",
+        "    focus-ring {\n        urgent-color \"#ff0000\"\n    }\n",
+        "    border {\n        urgent-color \"#ff0000\"\n        urgent-gradient from=\"#800\" to=\"#a33\"\n    }\n",
+        "}\n",
+    ));
+    let decorations = &config.settings.decorations;
+    assert_eq!(decorations.focus_ring.band.urgent, Paint::Solid(Colour::rgb(0xff0000)));
+    let Paint::Gradient(gradient) = decorations.border.band.urgent else { panic!("the gradient, ahead of the colour") };
+    assert_eq!((gradient.from, gradient.to), (Colour::rgb(0x880000), Colour::rgb(0xaa3333)));
+    let ruled = parse("window-rule {\n    focus-ring {\n        urgent-color \"#00ff00\"\n    }\n}\n");
+    assert_eq!(decoration_rule(&ruled).focus_ring.urgent, Some(Paint::Solid(Colour::rgb(0x00ff00))));
+    let unset = parse("").settings.decorations;
+    assert_eq!((unset.focus_ring.band.urgent, unset.border.band.urgent), (Paint::Solid(Colour::rgb(0x9b0000)), Paint::Solid(Colour::rgb(0x9b0000))), "niri's");
 }
 
+/// The `focus-ring` and `border` blocks of niri's own default config, pasted whole
+/// (`niri:resources/default-config.kdl:158-214`), comments and all.
+#[test]
+fn niris_shipped_border_block_loads() {
+    let config = parse(concat!(
+        "layout {\n",
+        "    focus-ring {\n",
+        "        // off\n",
+        "        width 4\n",
+        "        active-color \"#7fc8ff\"\n",
+        "        inactive-color \"#505050\"\n",
+        "        // active-gradient from=\"#80c8ff\" to=\"#c7ff7f\" angle=45\n",
+        "        // inactive-gradient from=\"#505050\" to=\"#808080\" angle=45 relative-to=\"workspace-view\"\n",
+        "    }\n",
+        "    border {\n",
+        "        off\n",
+        "        width 4\n",
+        "        active-color \"#ffc87f\"\n",
+        "        inactive-color \"#505050\"\n",
+        "        urgent-color \"#9b0000\"\n",
+        "        // active-gradient from=\"#e5989b\" to=\"#ffb4a2\" angle=45 relative-to=\"workspace-view\" in=\"oklch longer hue\"\n",
+        "        // inactive-gradient from=\"#505050\" to=\"#808080\" angle=45 relative-to=\"workspace-view\"\n",
+        "    }\n",
+        "}\n",
+    ));
+    let decorations = &config.settings.decorations;
+    assert!(decorations.focus_ring.on && !decorations.border.on);
+    assert_eq!(decorations.border.band, crate::decorations::settings::DecorationSettings::default().border.band);
+}
 /// niri's own default config led its users to write `border {}` to turn the border on, so a block
 /// with neither `on` nor `off` means on there, and here.
 #[test]
@@ -462,10 +500,6 @@ fn border_off_stays_off() {
 fn a_border_in_an_output_is_refused_with_its_reason() {
     let report = refused("output \"D\" {\n    layout {\n        border {\n            width 2\n        }\n    }\n}\n");
     assert!(report.contains("the border is the whole file's, in `layout`"), "{report}");
-    for name in ["urgent-color \"#9b0000\"", "urgent-gradient from=\"#ffbb66\" to=\"#ffc880\""] {
-        let report = refused(&format!("layout {{\n    border {{\n        {name}\n    }}\n}}\n"));
-        assert!(report.contains("not supported yet"), "{name}: {report}");
-    }
 }
 
 fn ring_paints(text: &str) -> (Paint, Paint) {
@@ -703,10 +737,8 @@ fn rule_shapes_rini_cannot_honour_are_refused() {
         refused("window-rule {\n    default-column-width { proportion 0.5; }\n}\n")
             .contains("sizes in pixels")
     );
-    for (matcher, why) in [("is-active-in-column", "a column keeps no window of its own"), ("is-urgent", "asking for attention")] {
-        let report = refused(&format!("window-rule {{\n    match {matcher}=true\n}}\n"));
-        assert!(report.contains(&format!("`{matcher}` is not supported yet")) && report.contains(why), "{report}");
-    }
+    let report = refused("window-rule {\n    match is-active-in-column=true\n}\n");
+    assert!(report.contains("`is-active-in-column` is not supported yet") && report.contains("a column keeps no window of its own"), "{report}");
 }
 
 fn decoration_rule(config: &Config) -> &crate::decorations::domain::rules::DecorationRule {
@@ -753,7 +785,7 @@ fn a_rule_that_only_decorates_leaves_the_open_time_decision_alone() {
 fn a_border_width_under_a_focus_matcher_is_refused_with_its_reason() {
     for (line, body) in [("match is-active=true", "width 8"), ("exclude is-focused=true", "off"), ("match is-focused=false", "on")] {
         let report = refused(&format!("window-rule {{\n    {line}\n    border {{\n        {body}\n    }}\n}}\n"));
-        assert!(report.contains("lays the strip out again on every focus change"), "{line} {body}: {report}");
+        assert!(report.contains("lays the strip out again every time either changes"), "{line} {body}: {report}");
     }
     let floating = parse("window-rule {\n    match is-floating=true\n    border {\n        width 8\n    }\n}\n");
     assert_eq!(decoration_rule(&floating).border.width, Some(8.0), "floating is not focus");
@@ -765,6 +797,18 @@ fn a_ring_width_or_a_corner_under_a_focus_matcher_is_refused_as_not_yet_supporte
         let report = refused(&format!("window-rule {{\n    match is-active=false\n    {body}\n}}\n"));
         assert!(report.contains("not supported yet"), "{body}: {report}");
     }
+}
+
+/// An application asks for attention at rest, so a border sized by it would lay the strip out again
+/// each time it asked, as one sized by focus would; its paints may follow it.
+#[test]
+fn under_is_urgent_only_the_paints_are_taken() {
+    let report = refused("window-rule {\n    match is-urgent=true\n    border {\n        width 8\n    }\n}\n");
+    assert!(report.contains("under `is-active`, `is-focused` or `is-urgent`") && report.contains("lays the strip out again"), "{report}");
+    let config = parse("window-rule {\n    match is-urgent=true\n    border {\n        urgent-color \"#ff0000\"\n    }\n}\n");
+    let rule = decoration_rule(&config);
+    assert_eq!(rule.matches[0].is_urgent, Some(true));
+    assert_eq!(rule.border.urgent, Some(Paint::Solid(Colour::rgb(0xff0000))));
 }
 
 #[test]

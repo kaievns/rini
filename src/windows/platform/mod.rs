@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod app_actor;
+pub mod attention;
 pub mod ax;
 pub mod carbon;
 pub mod lifecycle;
