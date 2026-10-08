@@ -78,6 +78,16 @@ define_class!(
     }
 );
 
+/// On the active Space, out of the window cycle and fullscreen, and hidden by Mission Control, App
+/// Exposé and Show Desktop rather than laid out as a window of its own. Never `.stationary`: Exposé
+/// leaves a stationary window where it is, over the thumbnails.
+fn collection_behaviour() -> NSWindowCollectionBehavior {
+    NSWindowCollectionBehavior::MoveToActiveSpace
+        | NSWindowCollectionBehavior::Transient
+        | NSWindowCollectionBehavior::IgnoresCycle
+        | NSWindowCollectionBehavior::FullScreenNone
+}
+
 /// One rest window, kept for the life of the process once made.
 struct Panel {
     window: Retained<RestPanel>,
@@ -113,11 +123,7 @@ impl Panel {
         window.setBecomesKeyOnlyIfNeeded(true);
         window.setHidesOnDeactivate(false);
         window.setCanHide(false);
-        window.setCollectionBehavior(
-            NSWindowCollectionBehavior::MoveToActiveSpace
-                | NSWindowCollectionBehavior::IgnoresCycle
-                | NSWindowCollectionBehavior::FullScreenNone,
-        );
+        window.setCollectionBehavior(collection_behaviour());
         window.setAlphaValue(0.0);
         // SAFETY: a fresh view, initialised as AppKit's designated initializer requires.
         let view: Retained<RestView> = unsafe { msg_send![RestView::alloc(mtm), initWithFrame: frame] };
@@ -395,5 +401,17 @@ impl RestActor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rest_window_follows_the_active_space_and_takes_no_place_in_expose() {
+        let behaviour = collection_behaviour();
+        assert!(behaviour.contains(NSWindowCollectionBehavior::MoveToActiveSpace | NSWindowCollectionBehavior::Transient));
+        assert!(!behaviour.intersects(NSWindowCollectionBehavior::Stationary | NSWindowCollectionBehavior::Managed));
     }
 }

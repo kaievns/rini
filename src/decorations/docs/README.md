@@ -191,10 +191,13 @@ that wear them in windows of its own, one above each, holding `Bands` laid exact
 (`a_tile_wears_its_ring_as_dressed_and_as_focus_turns`, `every_band_rounds_on_the_continuous_curve_at_its_outset`).
 
 **The windows.** Borderless, non-activating `NSPanel`s on rini's main connection, click-through,
-clear, with no shadow, collection `[.moveToActiveSpace, .ignoresCycle, .fullScreenNone]`, each
-holding a flipped view whose layer holds the band at its window's frame. A rest window's frame is the
-band's outer rect cut to its window's display (`shape::rest_frame`), so a ring at the display's edge
-draws nothing onto the next one. Made one per display as the first model arrives (`rest::spare`),
+clear, with no shadow, collection `[.moveToActiveSpace, .transient, .ignoresCycle,
+.fullScreenNone]`: `.transient` has Mission Control, App Exposé and Show Desktop hide a rest window
+before the reactor's alpha 0 reaches it, where a managed one would be laid out as a window of its
+own, and `.stationary` would leave it over the thumbnails. Each holds a flipped view whose layer
+holds the band at its window's frame. A rest window's frame is the band's outer rect cut to its
+window's display (`shape::rest_frame`), so a ring at the display's edge draws nothing onto the next
+one. Made one per display as the first model arrives (`rest::spare`),
 re-targeted from the pool (`rest::assign`), and made only when the pool is out: a window's first
 show costs 112ms against 14ms to order one in. A window that shows nothing keeps its rest window at
 alpha 0 for the next.
@@ -266,8 +269,10 @@ Not measured: what a rest window costs the window server in memory and the main 
 window and under an 808 burst as a strip raise makes one (probe P13, which needs an idle machine
 and was not run); whether a full-size clear panel allocates a full-size backing, which would want
 its shape cut to its band instead; whether a re-order brings a `.moveToActiveSpace` window onto the
-Space shown; and how a rest window moves through macOS's own Space animation, which slides a window
-that is not `.stationary`.
+Space shown; how a rest window moves through macOS's own Space animation, which slides a window
+that is not `.stationary`; and that Mission Control, App Exposé and Show Desktop hide every rest
+window, the shown ones and those at alpha 0, from the start of their animation, which `.transient`
+is documented to give and was not seen on screen.
 
 ## The corner, measured
 
