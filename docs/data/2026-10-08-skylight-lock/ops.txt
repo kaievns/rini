@@ -1,0 +1,6 @@
+ops=1 mode=main queries=19615 worst_query=18.8ms slow_queries=0 turns=5811 worst_turn_gap=54.6ms slow_turns=1
+ops=2 mode=main queries=3542 worst_query=18.4ms slow_queries=0 turns=5845 worst_turn_gap=78.9ms slow_turns=1
+ops=4 mode=main queries=18790 worst_query=17.6ms slow_queries=0 turns=6221 worst_turn_gap=64.9ms slow_turns=1
+ops=1 mode=main queries=20869 worst_query=17.3ms slow_queries=0 turns=6058 worst_turn_gap=73.0ms slow_turns=1
+ops=2 mode=main queries=14505 worst_query=500.6ms slow_queries=5 turns=5489 worst_turn_gap=501.3ms slow_turns=6
+ops=4 mode=main queries=19136 worst_query=21.4ms slow_queries=0 turns=6225 worst_turn_gap=54.4ms slow_turns=1

@@ -17,7 +17,7 @@ use objc2_core_graphics::{
     kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber,
     kCGWindowOwnerName,
 };
-use rini_skylight_sys::{G_CONNECTION, SLSCaptureWindowsContentsToRectWithOptions};
+use rini_skylight_sys::SLSCaptureWindowsContentsToRectWithOptions;
 use tracing::debug;
 
 use crate::bar::domain::extras::{self, Command, Composite, Kind, Schedule, Stamp, StatusWindow};
@@ -26,7 +26,7 @@ use crate::bar::platform::ground::{Ground, picture_ground};
 use crate::displays::screen::active_menu_bar_display_id;
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::windows::platform::window_server::{
-    bounds_from_dict, get_num, get_string, get_windows_raw,
+    READ_CONNECTION, bounds_from_dict, get_num, get_string, get_windows_raw,
 };
 
 /// What sketchybar passes. `1 << 11` would crop each picture to its opaque bounds and lose where the
@@ -267,7 +267,7 @@ pub(super) fn capture(ids: &[u32], rect: CGRect) -> Option<CFRetained<CGImage>> 
     // SAFETY: `ids` outlives the call and holds `ids.len()` window ids; the image comes back retained.
     let err = unsafe {
         SLSCaptureWindowsContentsToRectWithOptions(
-            *G_CONNECTION,
+            *READ_CONNECTION,
             ids.as_ptr(),
             ids.len() as i32,
             rect,

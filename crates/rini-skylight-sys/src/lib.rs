@@ -382,6 +382,8 @@ unsafe extern "C" {
     pub safe fn CGEnableEventStateCombining(enable: bool);
 
     pub fn SLSMainConnectionID() -> cid_t;
+    /// A further connection of this process's own, written to `cid`. Pass 0 for `zero`.
+    pub fn SLSNewConnection(zero: c_int, cid: *mut cid_t) -> CGError;
     pub fn SLSServerPort(zero: *mut c_void) -> u32;
     pub fn SLSWindowManagementBridgeSetDelegate(delegate: *mut c_void) -> CGError;
     pub safe fn SLSDisableUpdate(cid: cid_t) -> i32;

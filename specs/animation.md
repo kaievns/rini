@@ -613,6 +613,27 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > been written unless turned off, as the record of everything above asked; it is now off unless
 > `animations { journal; }` asks for it, and the ring is kept either way.
 
+## Reading the window server
+
+- A read of windows MUST NOT wait on a Core Animation commit of rini's own windows, on any thread.
+  rini's own windows moving, as the focus ring's and the border's do whenever a window they follow
+  moves, MUST NOT slow a flight, a press or the main thread. A read that shares the connection those
+  windows belong to waits for their last commit while holding the connection's lock, and the main
+  thread's commit waits for that lock: both stopped 500ms, until macOS timed the wait out.
+- Not yet met: the window lists and pictures macOS offers with no choice of connection still wait
+  on rini's own commits: the stacking order a flight reads as it starts, the picture of a window
+  that has just opened, the strip regroup's stacking order, the warm's, the desktop's and the menu
+  extras' listings, and the handover measure's picture of the screen.
+
+> **Reported 2026-10-08.** Kai: "all the animations are _significantly_ slower with the rings". A
+> 3s sample of rini held the main thread 528ms in its Core Animation commit,
+> waiting for the lock the reactor held in a window query that waited for that same commit, and the
+> flight engine's handover query queued behind them. That a rest window's frame change left the
+> commit pending is inferred: outside rini, a window of the reader's process moving every 4ms
+> stalled queries on the same connection 23 times in 6 runs, each run's worst 500.0 to 503.6ms,
+> its frame changing alone stalled them and its alpha or order alone did not; on a connection of
+> the reader's own, none stalled in 6, the worst 29.1ms.
+
 ## Where it lives
 
 `src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
@@ -638,6 +659,9 @@ which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
 what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.
 A measured lift's handover is compared in `src/pictures/domain/handover.rs`.
+Every read of windows that waits on Core Animation is made on the read connection in
+`src/windows/platform/window_server.rs`; which reads wait, and the measurements, are in
+`src/windows/docs/window-server-reads.md`.
 The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
 stand-in, the blur, and the schedule that holds background capture off while a flight runs in
 `src/pictures/domain/`, which id a window is pictured under, which windows rini does not manage are

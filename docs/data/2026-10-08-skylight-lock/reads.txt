@@ -1,0 +1,53 @@
+main 1435875 new 1390571 (err 0)
+18595 agree
+  main  bounds=0:1,33,1726x1083 ordered=0:1 constraints=0:0x0-0x0 radii=0,0,0,0 hw=3452x2166:5db026e0b44fbe2b rect=0:3452x2166:102f3ef64e4c6043
+245 live
+  main  bounds=0:3,35,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=3444x2158:aaf734679b0e233e rect=0:3444x2158:aaf734679b0e233e
+  new   bounds=0:3,35,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=3444x2158:9f95279876a4b90e rect=0:3444x2158:9f95279876a4b90e
+  main2 bounds=0:3,35,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=3444x2158:9f95279876a4b90e rect=0:3444x2158:9f95279876a4b90e
+73 agree
+  main  bounds=0:1727,1065,860x1079 ordered=0:1 constraints=0:0x0-0x0 radii=26,26,26,26 hw=2x104:5abb55996337dad5 rect=0:1720x2158:235fc154c8fb96ab
+67 agree
+  main  bounds=0:1727,1051,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=26,26,26,26 hw=2x132:b9c4fd124b25e98b rect=0:3444x2158:246b8f9bd4bfe88
+60 agree
+  main  bounds=0:1727,1089,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=12,12,12,12 hw=2x56:f319d562c508674f rect=0:3444x2158:9bce181db157c843
+2534 agree
+  main  bounds=0:1727,1085,1148x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:286f17f6bf3f6fba rect=0:2296x2158:444a3204a3756610
+18598 agree
+  main  bounds=0:0,1116,1x1 ordered=0:1 constraints=0:0x0-0x0 radii=0,0,0,0 hw=2x2:a31e272015f12c43 rect=0:2x2:a31e272015f12c43
+18597 agree
+  main  bounds=0:0,1116,1x1 ordered=0:1 constraints=0:0x0-0x0 radii=0,0,0,0 hw=2x2:a31e272015f12c43 rect=0:2x2:a31e272015f12c43
+18596 agree
+  main  bounds=0:0,1116,1x1 ordered=0:1 constraints=0:0x0-0x0 radii=0,0,0,0 hw=2x2:a31e272015f12c43 rect=0:2x2:a31e272015f12c43
+16842 agree
+  main  bounds=0:1727,1085,860x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:286f17f6bf3f6fba rect=0:1720x2158:b6c8532cf9d12d2a
+3085 agree
+  main  bounds=0:1727,1085,1148x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:286f17f6bf3f6fba rect=0:2296x2158:b9cfa1b0af87f2b2
+53 agree
+  main  bounds=0:1727,1085,1148x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:286f17f6bf3f6fba rect=0:2296x2158:e33475fb8ecff5c2
+15610 agree
+  main  bounds=0:1727,1076,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=20,20,20,20 hw=2x82:2da9a5bda518c7db rect=0:3444x2158:2fea8cada0e127b1
+97 agree
+  main  bounds=0:1727,1076,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=20,20,20,20 hw=2x82:2da9a5bda518c7db rect=0:3444x2158:cf0577605a14d271
+70 live
+  main  bounds=0:1727,1076,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=20,20,20,20 hw=2x82:2da9a5bda518c7db rect=0:3444x2158:b6754961a4c91193
+  new   bounds=0:1727,1076,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=20,20,20,20 hw=2x82:2da9a5bda518c7db rect=0:3444x2158:57c308475bec3153
+  main2 bounds=0:1727,1076,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=20,20,20,20 hw=2x82:2da9a5bda518c7db rect=0:3444x2158:b6eee924e69c3b07
+15190 agree
+  main  bounds=0:1727,1076,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=20,20,20,20 hw=2x82:2da9a5bda518c7db rect=0:3444x2158:c69d2e9356a6d244
+4312 agree
+  main  bounds=0:1727,1085,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:3067b983e8ebf853 rect=0:3444x2158:e373f6322215b431
+55 agree
+  main  bounds=0:1727,1085,860x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:286f17f6bf3f6fba rect=0:1720x2158:f009bd37cfe378f4
+12314 agree
+  main  bounds=0:1727,1085,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:264f85139d918fb4 rect=0:3444x2158:6cbf6de8d4d7466d
+78 agree
+  main  bounds=0:1727,1085,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:ed1a9ea382a8e479 rect=0:3444x2158:5583222804c9ea5
+75 agree
+  main  bounds=0:1727,1085,1722x1079 ordered=0:1 constraints=0:0x0-0x0 radii=16,16,16,16 hw=2x64:a8e63b81e0925ae7 rect=0:3444x2158:1aeb76a529701860
+3851 agree
+  main  bounds=0:1727,1065,1280x960 ordered=0:1 constraints=0:0x0-0x0 radii=12,12,12,12 hw=2x104:d1d52f56ce84a7fa rect=0:2560x1920:e68f17090bc94afe
+66 agree
+  main  bounds=0:1727,1089,860x1079 ordered=0:1 constraints=0:0x0-0x0 radii=12,12,12,12 hw=2x56:c137776ee1c1b49d rect=0:1720x2158:f74cce8d5ec61f0a
+space 1 windows main [2247,19059,19058,38,16029,12315,8238,3843,110,107,71,35,37,39,36,4303,18465,18470,18595,245,73,67,60,2534,18598,18597,18596,16842,3085,53,15610,97,70,15190,4312,55,12314,78,75,3851,66,43,42,41,46] new [2247,19059,19058,38,16029,12315,8238,3843,110,107,71,35,37,39,36,4303,18465,18470,18595,245,73,67,60,2534,18598,18597,18596,16842,3085,53,15610,97,70,15190,4312,55,12314,78,75,3851,66,43,42,41,46] agree
+windows=23 agree=21 differ=0 live=2

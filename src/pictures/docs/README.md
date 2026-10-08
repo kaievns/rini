@@ -190,7 +190,9 @@ background and is never waited on. A refresh takes whichever its window's place 
 
 **One SkyLight call, two ways of making it.** `SLSHWCaptureWindowList` with several ids returns one
 composite of them, the first listed in front, covering what each has on its display, and calls are
-served one at a time (27ms for one, 122ms for four at once). A batch of windows on screen, none
+served one at a time (27ms for one, 122ms for four at once). It is made on rini's read connection,
+where it costs what it does on the main one and waits on no commit of rini's own windows
+(`src/windows/docs/window-server-reads.md`). A batch of windows on screen, none
 overlapping another, is captured in up to two calls (`capture_on_screen`):
 
 | call | lists | takes | why |

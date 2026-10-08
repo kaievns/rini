@@ -13,7 +13,7 @@ use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGImage, CGWindowListOption};
 use rini_core::ids::{WindowId, WindowServerId, pid_t};
 use rini_geometry::space::{FromCg, PixelRect, ScreenPoint, ScreenRect, ScreenSize, ToCg};
-use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
+use rini_skylight_sys::SLSHWCaptureWindowList;
 
 use crate::pictures::domain::coverage::Coverage;
 use crate::pictures::domain::knowledge::{Call, Learned};
@@ -23,6 +23,7 @@ use crate::pictures::platform::desktop::DesktopBackdrop;
 use crate::pictures::platform::measure::{first_sight, shows_material};
 use crate::pictures::domain::route::Route;
 use crate::pictures::platform::picture::{Picture, Pixels, image_size};
+use crate::windows::platform::window_server::READ_CONNECTION;
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
 /// actually does" in `src/animation/docs/capture-overlay-research.md`.
@@ -35,10 +36,15 @@ fn composite(windows: &[WindowServerId]) -> Option<CFRetained<CGImage>> {
     if windows.is_empty() {
         return None;
     }
-    let cid = unsafe { SLSMainConnectionID() };
     let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
-    let array: *mut CFArray<CGImage> =
-        unsafe { SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS) };
+    let array: *mut CFArray<CGImage> = unsafe {
+        SLSHWCaptureWindowList(
+            *READ_CONNECTION,
+            ids.as_ptr(),
+            ids.len() as c_int,
+            CAPTURE_OPTIONS,
+        )
+    };
     // SAFETY: SLSHWCaptureWindowList returns a +1 CFArray of CGImage, so ownership transfers here.
     let array = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(array)?) };
     array.iter().next()

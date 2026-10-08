@@ -33,6 +33,31 @@ use crate::windows::platform::process::ProcessSerialNumber;
 use crate::windows::platform::sub_level::window_sub_level;
 
 static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
+/// A connection of rini's own that no window of rini's belongs to, for every read that waits on the
+/// connection's last Core Animation transaction. On the main one such a read deadlocks with the main
+/// thread's commit for 500ms ("Reads go on a connection of their own" in `src/windows/docs/README.md`).
+pub static READ_CONNECTION: Lazy<i32> = Lazy::new(|| {
+    let mut cid = 0;
+    let err = unsafe { SLSNewConnection(0, &mut cid) };
+    let read = opened_or(err, cid, *G_CONNECTION);
+    if read == *G_CONNECTION {
+        tracing::warn!(
+            ?err,
+            cid,
+            "no SkyLight connection of rini's own; window reads share the main one"
+        );
+    }
+    read
+});
+
+/// The connection `SLSNewConnection` answered `err` and `cid` for, or `main` when it opened none.
+fn opened_or(err: CGError, cid: i32, main: i32) -> i32 {
+    if err == CGError::Success && cid != 0 {
+        cid
+    } else {
+        main
+    }
+}
 static LAST_WINDOWSERVER_ACTIVITY_US: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 thread_local! {
@@ -123,7 +148,7 @@ impl WindowIterator {
 
     /// `flags` controls optional result decoding; bit 0 requests window titles.
     fn new_from_cfarray(cf_numbers: *mut CFArray<CFNumber>, flags: c_int) -> Option<Self> {
-        let query = unsafe { SLSWindowQueryWindows(*G_CONNECTION, cf_numbers, flags) };
+        let query = unsafe { SLSWindowQueryWindows(*READ_CONNECTION, cf_numbers, flags) };
         if query.is_null() {
             return None;
         }
@@ -347,7 +372,7 @@ fn window_query_run(filter: &WindowQueryFilter<'_>) -> Option<WindowIterator> {
         }
     }
 
-    let result = unsafe { SLSWindowQueryRun(*G_CONNECTION, query, filter.query_flags) };
+    let result = unsafe { SLSWindowQueryRun(*READ_CONNECTION, query, filter.query_flags) };
     let iterator = if result.is_null() {
         std::ptr::null_mut()
     } else {
@@ -443,7 +468,8 @@ pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
 #[cfg(not(test))]
 pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
     let mut ordered: u8 = 0;
-    if let Ok(_) = cg_ok(unsafe { SLSWindowIsOrderedIn(*G_CONNECTION, id.as_u32(), &mut ordered) })
+    if let Ok(_) =
+        cg_ok(unsafe { SLSWindowIsOrderedIn(*READ_CONNECTION, id.as_u32(), &mut ordered) })
     {
         return Some(ordered != 0);
     }
@@ -586,7 +612,7 @@ pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
 /// `src/animation/docs/capture-overlay-research.md`).
 pub fn server_frame(id: WindowServerId) -> Option<CGRect> {
     let mut frame = CGRect::default();
-    let read = unsafe { SLSGetWindowBounds(*G_CONNECTION, id.as_u32(), &mut frame) };
+    let read = unsafe { SLSGetWindowBounds(*READ_CONNECTION, id.as_u32(), &mut frame) };
     (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
 }
 
@@ -888,7 +914,7 @@ fn space_window_list_from_window_server(
 
     let window_list_ref = unsafe {
         SLSCopyWindowsWithOptionsAndTags(
-            *G_CONNECTION,
+            *READ_CONNECTION,
             owner,
             CFRetained::as_ptr(&cf_space_array).as_ptr(),
             options,
@@ -1270,6 +1296,13 @@ mod stack_tests {
             looks_gone(&info(0, 1.0, 600.0), None, None),
             "a sliver is not a window"
         );
+    }
+
+    #[test]
+    fn reads_fall_back_to_the_main_connection_only_when_none_of_their_own_opens() {
+        assert_eq!(opened_or(CGError::Success, 42, 7), 42);
+        assert_eq!(opened_or(CGError::Failure, 42, 7), 7);
+        assert_eq!(opened_or(CGError::Success, 0, 7), 7);
     }
 
     #[test]

@@ -1,0 +1,4 @@
+mode=cg queries=839 worst_query=504.3ms slow_queries=9 turns=1105 worst_turn_gap=501.0ms slow_turns=10
+mode=cg queries=1528 worst_query=501.7ms slow_queries=7 turns=1539 worst_turn_gap=500.8ms slow_turns=8
+mode=cg queries=599 worst_query=504.0ms slow_queries=12 turns=829 worst_turn_gap=504.1ms slow_turns=13
+mode=cg queries=502 worst_query=503.5ms slow_queries=13 turns=671 worst_turn_gap=502.9ms slow_turns=14

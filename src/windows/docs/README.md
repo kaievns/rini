@@ -57,6 +57,15 @@ server has it, so `admissible::has_visible_peer` treats "no server id yet" as vi
 rather than absent. The reverse — an id the server does not report — means the window
 is not on screen.
 
+**Reads go on a connection of their own.** A window-server read that waits on its connection's
+last Core Animation transaction (a window query, a frame, whether a window is ordered in, a space's
+window list, a SkyLight capture) is made on `READ_CONNECTION`, which no window of rini's belongs to.
+On the main connection it took the connection's lock and waited for the commit of rini's own
+windows that the main thread, waiting for the same lock, was making: both stopped 500ms, until
+SkyLight timed the wait out. Writes to rini's own windows stay on the main connection, which owns
+them. Each call, which connection it takes and why, the measurements and the reads with no
+connection to choose that still wait: `window-server-reads.md`.
+
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
 stacking it produces. `domain/raise_order.rs` exists because that order kept being
 thrown away: the batching step grouped the list through a hash map, which handed the
@@ -77,6 +86,8 @@ was raised first instead of last and ended up behind the strip.
   application launches, measured, and how to read a launch back out of the unified log
 - [`attention.md`](attention.md) — what shows an application asking for attention, measured, and
   what the attention reader reads and costs
+- [`window-server-reads.md`](window-server-reads.md) — which window-server reads wait on Core
+  Animation, the 500ms lock that made them stall, and the connection each read takes
 
 Cross-feature detail is at the top of the tree: [`docs/architecture.md`](../../../docs/architecture.md),
 [`docs/testing.md`](../../../docs/testing.md).
