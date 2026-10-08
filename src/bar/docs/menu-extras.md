@@ -19,6 +19,10 @@ median, and 15 to 72ms the first time. rini lists them on its read connection in
 (`SLSGetWindowList`, each window's title, its owner's application name), which found the same 14 windows,
 with the same owners, names and bounds, in two runs ("The read connection answers as the main one
 does" in `src/windows/docs/window-server-reads.md`); what that listing costs is not measured.
+Each owner's name is looked up once while its process has a status window and kept across ticks
+(`OwnerNames`), each lookup in an autorelease pool of its own: the `bar-extras` thread has none, and
+without one every lookup left its application object and its name behind, 7.2MB over 20000 lookups
+(measured by a review probe on 2026-10-08).
 
 The window's title (`kCGWindowName`) is the module for Apple's own (`Clock`, `BentoBox-0`, `Sound`, `WiFi`, `Battery`,
 `AudioVideoModule`), and for third-party extras either a bundle id or the anonymous `Item-0`. On the

@@ -597,13 +597,17 @@ pub fn every_window(titles: bool) -> Vec<Listed> {
 }
 
 /// The name a window's owner goes by, as the window server's own window list names it: the
-/// application's, or its process's when it is none.
+/// application's, or its process's when it is none. In a pool of its own: the threads that ask have
+/// none, and the application and its name are autoreleased.
 pub fn owner_name(pid: pid_t) -> String {
     use crate::windows::platform::app::NSRunningApplicationExt;
-    if let Some(name) = objc2_app_kit::NSRunningApplication::with_process_id(pid)
-        .and_then(|app| app.localized_name())
-    {
-        return name.to_string();
+    let named = objc2::rc::autoreleasepool(|_| {
+        objc2_app_kit::NSRunningApplication::with_process_id(pid)
+            .and_then(|app| app.localized_name())
+            .map(|name| name.to_string())
+    });
+    if let Some(name) = named {
+        return name;
     }
     let mut name = [0u8; 256];
     let len = unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
