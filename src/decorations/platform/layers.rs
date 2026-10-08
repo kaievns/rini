@@ -988,9 +988,18 @@ mod tests {
         assert_eq!(border(&layers).layer.cornerRadius(), 20.0, "a tile worn again with no rule's: the server's");
     }
 
+    /// Banded, each band in a gradient, so its mask rides a resize too.
+    fn graded() -> DecorationLayers {
+        let layers = banded();
+        for band in [ring(&layers), border(&layers)] {
+            band.paint(Some(sunset(45.0)));
+        }
+        layers
+    }
+
     #[test]
     fn taking_every_animation_away_clears_every_decoration_layer() {
-        let layers = banded();
+        let layers = graded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
@@ -998,6 +1007,7 @@ mod tests {
         for layer in layers.frame_layers() {
             add_under(layer, &bare("position"), "rini.tile.move");
         }
+        assert!(!installed(&ring(&layers).mask).is_empty() && !installed(&border(&layers).mask).is_empty(), "graded, the masks ride it");
         layers.remove_animations();
         for layer in [
             &*layers.shadow,
@@ -1068,7 +1078,7 @@ mod tests {
     /// Only the resize's own keys go: what the overlay installs on the frame layers stays.
     #[test]
     fn taking_a_resize_away_leaves_no_decoration_animation() {
-        let layers = banded();
+        let layers = graded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
@@ -1076,6 +1086,7 @@ mod tests {
         for layer in layers.frame_layers() {
             add_under(layer, &bare("position"), "rini.tile.move");
         }
+        assert!(!installed(&ring(&layers).mask).is_empty() && !installed(&border(&layers).mask).is_empty(), "graded, the masks ride it");
         layers.remove_resize();
         for layer in layers.frame_layers() {
             assert_eq!(installed(layer), pairs([("rini.tile.move", "position")]));

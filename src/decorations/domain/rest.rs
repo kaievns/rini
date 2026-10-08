@@ -929,6 +929,25 @@ mod tests {
         assert_eq!(rest.windows[&ws(1)].frame, Some(SLOT), "no frame read keeps the one known");
     }
 
+    /// An abandoned flight lifts with no place, and a model can come between the place and the
+    /// lift: either way the lift takes each park waiting on its display.
+    #[test]
+    fn a_lift_takes_the_parks_waiting_on_its_display() {
+        let now = Instant::now();
+        for placed in [false, true] {
+            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            rest.cover(Some(display()[0].bounds));
+            if placed {
+                rest.place(Some(display()[0].bounds), now, |_| true);
+            }
+            assert_eq!(rest.turn(Some(model(vec![at(1, true, false), at(2, false, true)])), &[], &[], Vec::new(), now + ms(5)), None);
+            assert!(!rest.windows[&ws(2)].parking.parked, "placed first: {placed}, under the cover with no move");
+            rest.lift(Some(display()[0].bounds), now + ms(10));
+            assert!(rest.windows[&ws(2)].parking.parked, "placed first: {placed}");
+            assert_eq!(rest.due(), None, "placed first: {placed}");
+        }
+    }
+
     fn reorder(id: u32) -> ServerOrder { ServerOrder { window: ws(id), change: OrderChange::Reordered, level: Some(LEVEL) } }
 
     /// The frames rini's writes make, the 808s of a raise, the key window's turn and a new window's
