@@ -57,7 +57,7 @@ pub const MAX_WIDTH: f64 = 300.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusWindow {
     pub owner: String,
-    /// `kCGWindowName`: the module, a bundle id, or `Item-0`.
+    /// The window's title: the module, a bundle id, or `Item-0`.
     pub name: String,
     /// Left edge on the menu bar, which is the order the extras are drawn in.
     pub x: f64,

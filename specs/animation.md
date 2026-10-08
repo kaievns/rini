@@ -620,10 +620,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   moves, MUST NOT slow a flight, a press or the main thread. A read that shares the connection those
   windows belong to waits for their last commit while holding the connection's lock, and the main
   thread's commit waits for that lock: both stopped 500ms, until macOS timed the wait out.
-- Not yet met: the window lists and pictures macOS offers with no choice of connection still wait
-  on rini's own commits: the stacking order a flight reads as it starts, the picture of a window
-  that has just opened, the strip regroup's stacking order, the warm's, the desktop's and the menu
-  extras' listings, and the handover measure's picture of the screen.
+- A list of the windows on screen or a picture of them MUST be read so it does not wait either,
+  however macOS offers it: the stacking order a flight reads as it starts, the picture of a window
+  that has just opened, the desktop's and the bar's windows, the menu extras and the screen a
+  handover measure pictures. macOS's own window list and window picture wait on rini's commits and
+  take no choice of connection, so rini MUST NOT read through them.
 
 > **Reported 2026-10-08.** Kai: "all the animations are _significantly_ slower with the rings". A
 > 3s sample of rini held the main thread 528ms in its Core Animation commit,
@@ -632,7 +633,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > commit pending is inferred: outside rini, a window of the reader's process moving every 4ms
 > stalled queries on the same connection 23 times in 6 runs, each run's worst 500.0 to 503.6ms,
 > its frame changing alone stalled them and its alpha or order alone did not; on a connection of
-> the reader's own, none stalled in 6, the worst 29.1ms.
+> the reader's own, none stalled in 6, the worst 29.1ms. macOS's own window list, read the same way,
+> stalled 41 times in 4 runs of 10s, the worst 501.7 to 504.3ms.
 
 ## Where it lives
 

@@ -221,8 +221,8 @@ It is off unless asked for, and `journal false` turns it off with the writing.
   (the number the renderer's `Committed` gives names it, and `window_origin` of
   the display the engine last laid the overlay out for says where it starts on screen), and
   it tells the engine `OverlayTaken` at once. `AFTER_LIFT` (45ms) after that picture, as the research
-  waited after its hide, it takes the screen through `CGWindowListCreateImage` on its own thread. The
-  research hid as its picture returned; here the hide waits for the hop to the `transitions` thread and
+  waited after its hide, it takes the screen, one SkyLight capture of every window on the display,
+  on its own thread. The research hid as its picture returned; here the hide waits for the hop to the `transitions` thread and
   its hop on to the main thread, so the screen comes that much less after it. A thread of the check's
   own, `handover`, draws the two whole
   and compares them over each window
@@ -238,9 +238,9 @@ It is off unless asked for, and `journal false` turns it off with the writing.
   overlay, and asks its frame zero of the same thread.
 - **What it costs.** Each held lift's hide comes up to 60ms later, and the bar's picture and the quiet
   with it: its `hide`'s `waited_us` says how much. A press that lands while the pictures thread takes the overlay's picture or the screen waits
-  for that one call, a SkyLight call or a `CGWindowListCreateImage` of the display, before its frame
-  zero is taken. The screen capture goes through ScreenCaptureKit's delivery queue while the transition
-  settles, the one capture besides a clipped focus end's that the hold lets through. The two pictures,
+  for that one call, a SkyLight call of the overlay or of the display, before its frame
+  zero is taken. The screen capture is made while the transition settles, the one capture besides a
+  clipped focus end's that the hold lets through. The two pictures,
   a display's worth each, are drawn and compared on `handover`, off the pictures thread, and dropped
   once compared.
 

@@ -79,8 +79,9 @@ delivery, and a client takes its own by the tag's client.
 
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels
 out and post them back. No capture call is made there: `CGWindowListCreateImage` is proxied through the
-same delivery queue and deadlocks. A handover check's screen is the one `CGWindowListCreateImage` of a
-whole display, made on the thread while a transition settles: it goes through that queue too. Its two
+same delivery queue and deadlocks, and whether a SkyLight capture is is not known. A handover check's
+screen is one SkyLight capture of every window on a whole display, made on the thread while a
+transition settles. Its two
 pictures, a display's worth each, are drawn and compared on a thread of their own, `handover`, which
 posts the result back like a completion: a press asks its frame zero of the service's thread.
 

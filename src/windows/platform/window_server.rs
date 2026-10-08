@@ -9,14 +9,9 @@ use libc::{RTLD_DEFAULT, dlsym};
 use objc2_app_kit::{NSNormalWindowLevel, NSWindowLevel};
 use objc2_application_services::AXError;
 use objc2_core_foundation::{
-    CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, Type,
+    CFArray, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, Type,
 };
-#[cfg(not(test))]
-use objc2_core_graphics::CGWindowListCopyWindowInfo;
-use objc2_core_graphics::{
-    CGError, CGWindowID, CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
-    kCGWindowNumber, kCGWindowOwnerPID,
-};
+use objc2_core_graphics::CGError;
 use once_cell::sync::Lazy;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::CGRectExt;
@@ -208,6 +203,12 @@ impl WindowIterator {
     #[inline]
     pub fn bounds(&self) -> CGRect {
         unsafe { SLSWindowIteratorGetBounds(self.iter) }
+    }
+
+    /// The current window's title, from a query asked with flag bit 0.
+    pub fn title(&self) -> Option<String> {
+        let title = NonNull::new(unsafe { SLSWindowIteratorCopyTitle(self.iter) })?;
+        Some(unsafe { CFRetained::from_raw(title) }.to_string())
     }
 
     #[inline]
@@ -481,38 +482,129 @@ pub fn window_is_ordered_in(id: WindowServerId) -> bool {
     window_ordered_in(id).unwrap_or(false)
 }
 
-/// A test lists no windows: every listing the desktop, the bar, the menu extras, the warm and the
-/// debug slide are read from answers none. See "A unit test must not read the live window server" in
-/// `docs/testing.md`.
-#[cfg(test)]
-pub fn get_windows_raw<T: Type>(
-    _options: CGWindowListOption,
-    _relative_to_window: CGWindowID,
-) -> CFRetained<CFArray<T>> {
-    CFArray::empty()
+/// A window as a listing of the window server names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listed {
+    pub id: WindowServerId,
+    pub level: i32,
+    pub pid: pid_t,
+    pub bounds: CGRect,
+    /// Its title, when the listing asked for titles and the window has one.
+    pub title: Option<String>,
 }
 
+/// `kCGDesktopIconWindowLevel`, the Finder's desktop icons: a window at it or below is a desktop
+/// element, which a list of every window on screen keeps ("The read connection answers as the main
+/// one does" in `src/windows/docs/window-server-reads.md`).
+const DESKTOP_ICON_LEVEL: i32 = -2147483603;
+
+/// Whether a window at `level` is part of the desktop: its icons, the wallpaper, the backstop.
+pub fn is_desktop_element(level: i32) -> bool {
+    level <= DESKTOP_ICON_LEVEL
+}
+
+/// `described`, in the order `ids` lists the windows, and only those `ids` lists.
+fn in_listed_order(ids: &[u32], described: Vec<Listed>) -> Vec<Listed> {
+    let position: std::collections::HashMap<u32, usize> =
+        ids.iter().enumerate().map(|(at, id)| (*id, at)).collect();
+    let mut listed: Vec<(usize, Listed)> = described
+        .into_iter()
+        .filter_map(|window| Some((*position.get(&window.id.as_u32())?, window)))
+        .collect();
+    listed.sort_by_key(|(at, _)| *at);
+    listed.into_iter().map(|(_, window)| window).collect()
+}
+
+/// The ids of every window on screen or, not `on_screen`, of every window, front to back. Asked again
+/// with more room while the list fills what it is given.
 #[cfg(not(test))]
-pub fn get_windows_raw<T: Type>(
-    options: CGWindowListOption,
-    relative_to_window: CGWindowID,
-) -> CFRetained<CFArray<T>> {
-    unsafe {
-        // TODO: cgwindowlistcopywindowinfo does not appear to order windows properly
-        // SAFETY: this will almost always return (pre objc2 was not a result and just a cfarray)
-        if let Some(windows) = CGWindowListCopyWindowInfo(options, relative_to_window) {
-            CFRetained::cast_unchecked(windows)
-        } else {
-            CFArray::empty()
+fn window_list(on_screen: bool) -> Vec<u32> {
+    let mut room = 512usize;
+    loop {
+        let mut ids = vec![0u32; room];
+        let (list, mut count) = (ids.as_mut_ptr(), 0 as c_int);
+        let err = unsafe {
+            if on_screen {
+                SLSGetOnScreenWindowList(*READ_CONNECTION, 0, room as c_int, list, &mut count)
+            } else {
+                SLSGetWindowList(*READ_CONNECTION, 0, room as c_int, list, &mut count)
+            }
+        };
+        if cg_ok(err).is_err() {
+            return Vec::new();
         }
+        let count = count.max(0) as usize;
+        if count < room || room >= 1 << 16 {
+            ids.truncate(count.min(room));
+            return ids;
+        }
+        room *= 2;
     }
 }
 
-pub fn get_visible_windows_raw<T: Type>() -> CFRetained<CFArray<T>> {
-    get_windows_raw(
-        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements,
-        kCGNullWindowID,
-    )
+/// `ids` described in one query, in the order given; with `titles`, each window's title as well.
+#[cfg(not(test))]
+fn describe(ids: &[u32], titles: bool) -> Vec<Listed> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let cf_numbers = cf_array_from_u64s(&ids.iter().map(|&id| id as u64).collect::<Vec<_>>());
+    let Some(query) =
+        WindowIterator::new_from_cfarray(CFRetained::as_ptr(&cf_numbers).as_ptr(), titles as c_int)
+    else {
+        return Vec::new();
+    };
+    let mut described = Vec::with_capacity(ids.len());
+    while query.advance().is_some() {
+        described.push(Listed {
+            id: WindowServerId::new(query.window_id()),
+            level: query.level(),
+            pid: query.pid(),
+            bounds: query.bounds(),
+            title: titles.then(|| query.title()).flatten(),
+        });
+    }
+    in_listed_order(ids, described)
+}
+
+/// Every window on screen, front to back, the desktop's included.
+///
+/// A test lists no windows: every listing the desktop, the bar, the menu extras, the warm and the
+/// debug slide are read from answers none. See "A unit test must not read the live window server" in
+/// `docs/testing.md`.
+pub fn on_screen_windows(titles: bool) -> Vec<Listed> {
+    #[cfg(test)]
+    {
+        let _ = titles;
+        Vec::new()
+    }
+    #[cfg(not(test))]
+    describe(&window_list(true), titles)
+}
+
+/// Every window the window server has, on screen or not. None in a test, as for `on_screen_windows`.
+pub fn every_window(titles: bool) -> Vec<Listed> {
+    #[cfg(test)]
+    {
+        let _ = titles;
+        Vec::new()
+    }
+    #[cfg(not(test))]
+    describe(&window_list(false), titles)
+}
+
+/// The name a window's owner goes by, as the window server's own window list names it: the
+/// application's, or its process's when it is none.
+pub fn owner_name(pid: pid_t) -> String {
+    use crate::windows::platform::app::NSRunningApplicationExt;
+    if let Some(name) = objc2_app_kit::NSRunningApplication::with_process_id(pid)
+        .and_then(|app| app.localized_name())
+    {
+        return name.to_string();
+    }
+    let mut name = [0u8; 256];
+    let len = unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+    String::from_utf8_lossy(&name[..len.max(0) as usize]).into_owned()
 }
 
 /// Every window at the origin, 800x600, unless a test sets its frame with
@@ -616,44 +708,15 @@ pub fn server_frame(id: WindowServerId) -> Option<CGRect> {
     (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
 }
 
-pub fn get_num(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<i64> {
-    dict.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
-}
-
-pub fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
-    Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
-}
-
-/// Reads a `kCGWindowBounds` dictionary, whose keys are the plain strings X, Y, Width and Height.
-///
-/// Parsed by hand because the geometry helper that would do this is not exposed by the bindings in
-/// use. Returns `None` if any component is missing, since a partially read frame would place a
-/// window somewhere arbitrary rather than fail visibly.
-pub fn bounds_from_dict(dict: CFRetained<CFDictionary>) -> Option<CGRect> {
-    // The untyped CFDictionary carries no key or value types, so retype it the same way
-    // get_windows_raw does before reading it.
-    // SAFETY: a kCGWindowBounds dictionary has CFString keys and CFNumber values.
-    let dict: CFRetained<CFDictionary<CFString, CFType>> =
-        unsafe { CFRetained::cast_unchecked(dict) };
-    let component = |name: &str| -> Option<f64> {
-        let key = CFString::from_str(name);
-        dict.get(&key)?.downcast::<CFNumber>().ok()?.as_f64()
-    };
-    Some(CGRect::new(
-        CGPoint::new(component("X")?, component("Y")?),
-        CGSize::new(component("Width")?, component("Height")?),
-    ))
-}
-
-/// Front-to-back position of every on-screen window, 0 being frontmost.
-/// `CGWindowListCopyWindowInfo` lists on-screen windows front to back, so the index is the depth.
+/// Front-to-back position of every on-screen window but the desktop's, 0 being frontmost: the list is
+/// front to back, so the index is the depth.
 #[cfg(not(test))]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
-    get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
-        .iter()
-        .filter_map(|window| get_num(&window, unsafe { kCGWindowNumber }).map(|id| id as u32))
+    on_screen_windows(false)
+        .into_iter()
+        .filter(|window| !is_desktop_element(window.level))
         .enumerate()
-        .map(|(depth, id)| (id, depth))
+        .map(|(depth, window)| (window.id.as_u32(), depth))
         .collect()
 }
 
@@ -712,19 +775,18 @@ pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) 
 /// The windows on screen a listing names as on `display` (`listing::listed`), with their frames.
 pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRect)> {
     let own = std::process::id() as pid_t;
-    get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
-        .iter()
-        .filter_map(|window| {
-            let id = get_num(&window, unsafe { kCGWindowNumber })? as u32;
-            let bounds = window
-                .get(unsafe { kCGWindowBounds })?
-                .downcast::<CFDictionary>()
-                .ok()
-                .and_then(bounds_from_dict)?;
-            let layer = get_num(&window, unsafe { kCGWindowLayer });
-            let owner = get_num(&window, unsafe { kCGWindowOwnerPID }).map(|pid| pid as pid_t);
-            listed(layer, owner, own, bounds, display).then(|| (WindowServerId::new(id), bounds))
+    on_screen_windows(false)
+        .into_iter()
+        .filter(|window| {
+            listed(
+                Some(window.level as i64),
+                Some(window.pid),
+                own,
+                window.bounds,
+                display,
+            )
         })
+        .map(|window| (window.id, window.bounds))
         .collect()
 }
 
@@ -1296,6 +1358,41 @@ mod stack_tests {
             looks_gone(&info(0, 1.0, 600.0), None, None),
             "a sliver is not a window"
         );
+    }
+
+    fn listed(id: u32, level: i32) -> Listed {
+        Listed {
+            id: WindowServerId::new(id),
+            level,
+            pid: 1,
+            bounds: CGRect::default(),
+            title: None,
+        }
+    }
+
+    #[test]
+    fn a_description_is_put_back_in_the_order_the_list_gave() {
+        let described = vec![listed(5, 0), listed(9, 3), listed(7, 0), listed(4, 0)];
+        let ordered: Vec<u32> =
+            in_listed_order(&[9, 7, 5], described).iter().map(|w| w.id.as_u32()).collect();
+        assert_eq!(
+            ordered,
+            vec![9, 7, 5],
+            "front to back as listed; one never listed is dropped"
+        );
+    }
+
+    #[test]
+    fn the_desktop_is_the_icons_and_everything_below_them() {
+        assert!(is_desktop_element(-2147483603), "the Finder's desktop icons");
+        assert!(is_desktop_element(-2147483624), "the Dock's wallpaper");
+        assert!(is_desktop_element(-2147483626), "the display's backstop");
+        assert!(
+            !is_desktop_element(-2147483601),
+            "Notification Center's widgets are not"
+        );
+        assert!(!is_desktop_element(-20), "nor is a bar below the windows");
+        assert!(!is_desktop_element(0));
     }
 
     #[test]

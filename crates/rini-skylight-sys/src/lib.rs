@@ -452,6 +452,23 @@ unsafe extern "C" {
     pub fn SLSWindowQuerySetValue(query: *mut CFType, key: *mut CFString, value: *mut CFType);
     pub fn SLSWindowQueryRun(cid: c_int, query: *mut CFType, flags: c_int) -> *mut CFType;
     pub fn SLSWindowQueryResultCopyWindows(query: *mut CFType) -> *mut CFType;
+    /// Every window on screen, front to back, of `target_cid`'s or, with 0, of every connection; up
+    /// to `count` written to `list` and how many to `out_count`.
+    pub fn SLSGetOnScreenWindowList(
+        cid: cid_t,
+        target_cid: cid_t,
+        count: c_int,
+        list: *mut u32,
+        out_count: *mut c_int,
+    ) -> CGError;
+    /// Every window, on screen or not, as `SLSGetOnScreenWindowList` lists them.
+    pub fn SLSGetWindowList(
+        cid: cid_t,
+        target_cid: cid_t,
+        count: c_int,
+        list: *mut u32,
+        out_count: *mut c_int,
+    ) -> CGError;
 
     pub fn SLSWindowIteratorAdvance(iterator: *mut CFType) -> bool;
     pub fn SLSWindowIteratorGetParentID(iterator: *mut CFType) -> u32;
@@ -463,6 +480,8 @@ unsafe extern "C" {
     pub fn SLSWindowIteratorGetPID(iterator: *mut CFType) -> c_int;
     pub fn SLSWindowIteratorGetBounds(iterator: *mut CFType) -> CGRect;
     pub fn SLSWindowIteratorGetAlpha(iterator: *mut CFType) -> f32;
+    /// The current window's title, +1, or null; only from a query asked with flag bit 0.
+    pub fn SLSWindowIteratorCopyTitle(iterator: *mut CFType) -> *mut CFString;
     pub fn SLSWindowIteratorGetConstraints(
         iterator: *mut CFType,
         min: *mut CGSize,

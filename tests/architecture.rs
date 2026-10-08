@@ -437,9 +437,10 @@ fn no_accessibility_element_is_ever_logged() {
 
 /// The SkyLight reads that wait on their connection's last Core Animation transaction, found by
 /// disassembly (`docs/data/2026-10-08-skylight-lock/callgraph.txt`).
-const WAITS_ON_CORE_ANIMATION: [&str; 7] = [
+const WAITS_ON_CORE_ANIMATION: [&str; 8] = [
     "SLSWindowQueryWindows",
     "SLSWindowQueryRun",
+    "SLSGetOnScreenWindowList",
     "SLSGetWindowBounds",
     "SLSWindowIsOrderedIn",
     "SLSCopyWindowsWithOptionsAndTags",
@@ -505,6 +506,38 @@ fn a_read_that_waits_on_core_animation_is_made_on_the_read_connection() {
         "these wait on the connection's last Core Animation transaction, so on rini's main connection \
          they deadlock with the main thread's commit for 500ms. Pass `*READ_CONNECTION` itself, not a \
          copy of it. See \"Reads go on a connection of their own\" in src/windows/docs/README.md:\n{}",
+        broken.join("\n")
+    );
+}
+
+/// `CGWindowList`'s reads, which take no connection: each waits on the main connection's last Core
+/// Animation transaction (`docs/data/2026-10-08-skylight-lock/callgraph.txt`, as `SLWindowList*`).
+const CG_WINDOW_LIST: [&str; 2] = ["CGWindowListCopyWindowInfo", "CGWindowListCreateImage"];
+
+/// No window list or picture is read through `CGWindowList`.
+///
+/// It cannot be asked on the read connection, so it stalls with the main thread's commit for 500ms
+/// as a read on the main connection does. Every read it made has a SkyLight one on the read connection
+/// that answers the same; see "The read connection answers as the main one does" in
+/// `src/windows/docs/window-server-reads.md`.
+#[test]
+fn no_window_list_or_picture_is_read_through_cg_window_list() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src")) {
+        for (line, code) in code_lines(&path) {
+            for name in CG_WINDOW_LIST {
+                if code.contains(name) {
+                    broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "these read through CGWindowList, which waits on the main connection's last Core Animation \
+         transaction. Read on `READ_CONNECTION` instead (`on_screen_windows`, `every_window`, \
+         `capture_rect`). See \"The read connection answers as the main one does\" in \
+         src/windows/docs/window-server-reads.md:\n{}",
         broken.join("\n")
     );
 }

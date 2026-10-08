@@ -59,12 +59,12 @@ is not on screen.
 
 **Reads go on a connection of their own.** A window-server read that waits on its connection's
 last Core Animation transaction (a window query, a frame, whether a window is ordered in, a space's
-window list, a SkyLight capture) is made on `READ_CONNECTION`, which no window of rini's belongs to.
-On the main connection it took the connection's lock and waited for the commit of rini's own
-windows that the main thread, waiting for the same lock, was making: both stopped 500ms, until
-SkyLight timed the wait out. Writes to rini's own windows stay on the main connection, which owns
-them. Each call, which connection it takes and why, the measurements and the reads with no
-connection to choose that still wait: `window-server-reads.md`.
+window list, the windows on screen, a SkyLight capture) is made on `READ_CONNECTION`, which no window
+of rini's belongs to. On the main connection it took the connection's lock and waited for the commit
+of rini's own windows that the main thread, waiting for the same lock, was making: both stopped
+500ms, until SkyLight timed the wait out. `CGWindowList`, which can only read on the main
+connection, is not called. Writes to rini's own windows stay on the main connection, which owns
+them. Each call, which connection it takes and why, and the measurements: `window-server-reads.md`.
 
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
 stacking it produces. `domain/raise_order.rs` exists because that order kept being

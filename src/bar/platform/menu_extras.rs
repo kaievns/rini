@@ -10,14 +10,12 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use objc2_app_kit::NSStatusWindowLevel;
-use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGContext, CGDisplayBounds, CGError,
-    CGEventSource, CGEventSourceStateID, CGEventType, CGImage, CGMainDisplayID, CGWindowListOption,
-    kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber,
-    kCGWindowOwnerName,
+    CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGContext, CGDisplayBounds,
+    CGEventSource, CGEventSourceStateID, CGEventType, CGImage, CGMainDisplayID,
 };
-use rini_skylight_sys::SLSCaptureWindowsContentsToRectWithOptions;
+use rini_core::ids::pid_t;
 use tracing::debug;
 
 use crate::bar::domain::extras::{self, Command, Composite, Kind, Schedule, Stamp, StatusWindow};
@@ -25,9 +23,8 @@ use crate::bar::domain::ground::Timer;
 use crate::bar::platform::ground::{Ground, picture_ground};
 use crate::displays::screen::active_menu_bar_display_id;
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
-use crate::windows::platform::window_server::{
-    READ_CONNECTION, bounds_from_dict, get_num, get_string, get_windows_raw,
-};
+use crate::pictures::platform::skylight::capture_rect;
+use crate::windows::platform::window_server::{every_window, owner_name};
 
 /// What sketchybar passes. `1 << 11` would crop each picture to its opaque bounds and lose where the
 /// icon sits.
@@ -234,24 +231,21 @@ fn picture(may_capture: impl FnOnce() -> bool) -> Option<(Extras, Vec<Stamp>)> {
 /// menu bar is active cannot be read.
 fn status_windows() -> (Vec<StatusWindow>, Vec<Placed>) {
     let display = CGDisplayBounds(active_menu_bar_display_id().unwrap_or_else(|| CGMainDisplayID()));
-    get_windows_raw::<CFDictionary<CFString, CFType>>(CGWindowListOption::OptionAll, kCGNullWindowID)
-        .iter()
-        .filter(|window| get_num(window, unsafe { kCGWindowLayer }) == Some(NSStatusWindowLevel as i64))
-        .filter_map(|window| {
-            let id = get_num(&window, unsafe { kCGWindowNumber })? as u32;
-            let bounds = window
-                .get(unsafe { kCGWindowBounds })
-                .and_then(|bounds| bounds.downcast::<CFDictionary>().ok())
-                .and_then(bounds_from_dict)?;
+    let mut owners: HashMap<pid_t, String> = HashMap::new();
+    every_window(true)
+        .into_iter()
+        .filter(|window| window.level as isize == NSStatusWindowLevel)
+        .map(|window| {
+            let bounds = window.bounds;
             let status = StatusWindow {
-                owner: get_string(&window, unsafe { kCGWindowOwnerName }).unwrap_or_default(),
-                name: get_string(&window, unsafe { kCGWindowName }).unwrap_or_default(),
+                owner: owners.entry(window.pid).or_insert_with(|| owner_name(window.pid)).clone(),
+                name: window.title.unwrap_or_default(),
                 x: bounds.origin.x,
                 y: bounds.origin.y,
                 width: bounds.size.width,
                 height: bounds.size.height,
             };
-            Some((status, Placed { window: id, bounds }))
+            (status, Placed { window: window.id.as_u32(), bounds })
         })
         .filter(|(status, _)| extras::on_display(status, display))
         .unzip()
@@ -263,25 +257,10 @@ const NULL_RECT: CGRect = CGRect::new(CGPoint::new(f64::INFINITY, f64::INFINITY)
 /// One picture of every window in `ids`, over `rect` in global coordinates or, with `NULL_RECT`, the
 /// union of their bounds.
 pub(super) fn capture(ids: &[u32], rect: CGRect) -> Option<CFRetained<CGImage>> {
-    let mut image: *mut CGImage = std::ptr::null_mut();
-    // SAFETY: `ids` outlives the call and holds `ids.len()` window ids; the image comes back retained.
-    let err = unsafe {
-        SLSCaptureWindowsContentsToRectWithOptions(
-            *READ_CONNECTION,
-            ids.as_ptr(),
-            ids.len() as i32,
-            rect,
-            CAPTURE_OPTIONS,
-            &mut image,
-        )
-    };
-    // SAFETY: a non-null image is ours to release.
-    let image = std::ptr::NonNull::new(image).map(|image| unsafe { CFRetained::from_raw(image) });
-    if err != CGError::Success {
+    capture_rect(ids, rect, CAPTURE_OPTIONS).unwrap_or_else(|err| {
         debug!("bar-extras: capture of {} windows failed: {err:?}", ids.len());
-        return None;
-    }
-    image
+        None
+    })
 }
 
 /// Each chosen window's picture cut out of the capture, measured and fingerprinted. An extra with no
