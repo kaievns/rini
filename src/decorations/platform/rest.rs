@@ -1,9 +1,9 @@
 //! The decorations at rest: a borderless, click-through, non-activating panel of rini's own directly
 //! above each window whose bands show, drawing the bands a tile draws (`layers::Bands`). A
-//! main-thread actor: the reactor tells it what each window wears, the window server where each
-//! window is and when it was reordered, hidden or unhidden, and the renderer when its overlay goes up
-//! and when it lifts. While no window can wear a band the reactor turns it off: every rest window is
-//! closed, and it does nothing until the next model.
+//! main-thread actor: the reactor tells it what each window wears and when a flight begins, the
+//! window server where each window is and when it was reordered, hidden or unhidden, and the renderer
+//! when its overlay goes up and when it lifts. While no window can wear a band the reactor turns it
+//! off: every rest window is closed, and it does nothing until the next model.
 //! The rules are `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is "At
 //! rest" in `src/decorations/docs/README.md`.
 
@@ -26,7 +26,7 @@ use rini_runloop::executor::sleep;
 use rini_runloop::turns;
 use tracing::warn;
 
-use crate::decorations::domain::rest::{self, Lifted, Rest, RestDisplay, RestModel, RestWindow, display_of};
+use crate::decorations::domain::rest::{self, Draw, Lifted, Rest, RestDisplay, RestModel, RestWindow, display_of};
 use crate::decorations::domain::shape;
 use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
@@ -38,6 +38,10 @@ pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
 
 pub enum Event {
+    /// A flight over this display, its whole bounds, was handed to the flight engine: sent before
+    /// the model of the batch that began it, so the rest windows hold that model and what follows
+    /// from the begin to its lift (`Rest::fly`).
+    Flight(ScreenRect),
     /// What every decorated window wears and what holds its band, sent when it changed.
     Model(RestModel),
     /// Where the window server has windows that moved or resized.
@@ -231,17 +235,19 @@ impl RestBorders {
         RestBorders { mtm, rest: Rest::default(), panels: Vec::new(), warned: false }
     }
 
-    /// Every event queued, taken as one turn: the latest model, every window's latest frame, and each
-    /// rest window ordered again at most once. Under the overlay it draws, reads and makes nothing
-    /// (`Rest::turn`). Turned off by the latest word, it closes every rest window; off, it takes
-    /// nothing until a model.
+    /// Every event queued, taken as one turn: a flight's begin first, the latest model, every
+    /// window's latest frame, and each rest window ordered again at most once. From a flight's begin
+    /// to its lift it draws, reads and makes nothing (`Rest::turn`). Turned off by the latest word,
+    /// it closes every rest window; off, it takes nothing until a model.
     fn take(&mut self, events: Vec<Event>, now: Instant) {
         let mut orders = Vec::new();
         let mut moved: Vec<ServerFrame> = Vec::new();
         let mut word = None;
+        let mut flight = None;
         let mut grow = false;
         for event in events {
             match event {
+                Event::Flight(display) => flight = Some(display),
                 Event::Model(next) => word = Some(Some(next)),
                 Event::Off => word = Some(None),
                 Event::Frames(frames) => moved.extend(frames),
@@ -254,18 +260,31 @@ impl RestBorders {
             self.panels.clear();
             return;
         }
+        if let Some(display) = flight {
+            self.rest.fly(display, now);
+        }
         let model = word.flatten();
         grow |= model.is_some();
         let moved: Vec<(WindowServerId, ScreenRect)> =
             moved.iter().map(|frame| (frame.window, ScreenRect::from_cg(frame.frame))).collect();
         let Some(draw) = self.rest.turn(model, &moved, orders, now, read_server) else { return };
         if grow {
-            for _ in self.panels.len()..self.rest.pool_size() {
-                if !self.make_panel() {
-                    break;
-                }
+            self.grow();
+        }
+        self.draw_turn(&draw);
+    }
+
+    /// Rest windows made until the pool holds what the model wants, or AppKit makes none.
+    fn grow(&mut self) {
+        for _ in self.panels.len()..self.rest.pool_size() {
+            if !self.make_panel() {
+                break;
             }
         }
+    }
+
+    /// `draw`'s orders, and the rest window of the window focus came to ordered above it again.
+    fn draw_turn(&mut self, draw: &Draw) {
         let also = draw.focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
         self.draw(&draw.orders, also.into_iter().collect());
     }
@@ -284,14 +303,16 @@ impl RestBorders {
         for window in reread {
             self.rest.reread(window, window_server::server_frame(window).map(ScreenRect::from_cg));
         }
-        let also = draw.focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
-        self.draw(&draw.orders, also.into_iter().collect());
+        self.draw_turn(&draw);
         self.rest.wants_turn(self.panels.len())
     }
 
+    /// What ran out of patience: a flight that never showed lets go, the model that waited takes the
+    /// rest windows it wants, now uncovered, and what waited is drawn; or a park takes effect.
     fn settle(&mut self, now: Instant) {
-        if self.rest.settle(now) {
-            self.draw(&[], Vec::new());
+        if let Some(draw) = self.rest.settle(now, read_server) {
+            self.grow();
+            self.draw_turn(&draw);
         }
     }
 

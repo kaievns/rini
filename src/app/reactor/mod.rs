@@ -3811,9 +3811,9 @@ impl Reactor {
         standing: &[crate::transitions::domain::request::AnimationRequest],
         laid_out: &[(WindowId, CGRect)],
     ) -> bool {
-        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
+        if self.communication_manager.transitions_tx.is_none() {
             return false;
-        };
+        }
         let Some((screen, gaps)) = self.strip_screen(space) else {
             return false;
         };
@@ -3890,8 +3890,7 @@ impl Reactor {
             look,
         );
 
-        self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::transitions::platform::engine::Event::AnimateSurface {
+        self.send_flight(Some(space), crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -3956,9 +3955,9 @@ impl Reactor {
         {
             return;
         }
-        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
+        if self.communication_manager.transitions_tx.is_none() {
             return;
-        };
+        }
         let Some(screen) = self
             .space_state
             .screens
@@ -3997,8 +3996,7 @@ impl Reactor {
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         tracing::debug!(?direction, windows = windows.len(), "edge bounce");
-        self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::transitions::platform::engine::Event::Bounce {
+        self.send_flight(Some(space), crate::transitions::platform::engine::Event::Bounce {
             windows,
             overshoot,
             final_frames: layout
@@ -4033,9 +4031,9 @@ impl Reactor {
             return false;
         }
         tracing::debug!(from_index, to_index, "strip switch requested");
-        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
+        if self.communication_manager.transitions_tx.is_none() {
             return false;
-        };
+        }
         let Some((screen, gaps)) = self.strip_screen(space) else {
             return false;
         };
@@ -4168,8 +4166,7 @@ impl Reactor {
             );
         }
 
-        self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::transitions::platform::engine::Event::AnimateSurface {
+        self.send_flight(Some(space), crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -4266,6 +4263,22 @@ impl Reactor {
         self.publish_animation_display_for(None);
     }
 
+    /// Hands the flight engine `event`, a flight over the display holding `space` (`None` for no
+    /// particular one), told first which display that is, and notes the display for the rest
+    /// windows, which hold what the flight changes from now (`publish_rest`). Whether the engine
+    /// runs to take it.
+    pub(super) fn send_flight(
+        &mut self,
+        space: Option<SpaceId>,
+        event: crate::transitions::platform::engine::Event,
+    ) -> bool {
+        let display = self.publish_animation_display_for(space);
+        let Some(tx) = &self.communication_manager.transitions_tx else { return false };
+        _ = tx.send(event);
+        self.rest.flight = display.or(self.rest.flight);
+        true
+    }
+
     /// The transitions engine the reactor drives, told at once whether to write its journal and
     /// measure each lift's handover: it writes nothing until it hears.
     fn connect_transitions(&mut self, transitions_tx: Option<crate::transitions::platform::engine::Sender>) {
@@ -4286,18 +4299,15 @@ impl Reactor {
     /// ACTIVE display instead put a built-in workspace switch on the external screen whenever the cursor
     /// was over there: the external showed the built-in's windows sliding while the built-in's own windows
     /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
-    /// have no particular display in mind.
-    pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) {
+    /// have no particular display in mind. The display's bounds, as the overlay covers them.
+    pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) -> Option<ScreenRect> {
         let wanted = space.or_else(|| self.active_display_space());
-        let Some(screen) = self
+        let screen = self
             .space_state
             .screens
             .iter()
             .find(|screen| screen.space == wanted)
-            .or_else(|| self.space_state.screens.first())
-        else {
-            return;
-        };
+            .or_else(|| self.space_state.screens.first())?;
         let frame = ScreenRect::from_cg(objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
         if let Some(tx) = &self.communication_manager.transitions_tx {
             _ = tx.send(crate::transitions::platform::engine::Event::SetDisplay {
@@ -4317,6 +4327,7 @@ impl Reactor {
                 !self.config.settings.bar.enabled,
             );
         }
+        Some(frame)
     }
 
     pub fn warp_mouse(&mut self, point: CGPoint) {

@@ -201,14 +201,14 @@ before the reactor's alpha 0 reaches it, where a managed one would be laid out a
 own, and `.stationary` would leave it over the thumbnails. Each holds a flipped view whose layer
 holds the band at its window's frame. A rest window's frame is the band's outer rect cut to its
 window's display (`shape::rest_frame`), so a ring at the display's edge draws nothing onto the next
-one. Rest windows are made as a model arrives, never from a frame, a lift or under the overlay: a
-model that comes under the overlay waits for the lift, and a pool the lift leaves short is made in
-the actor's next turn, once the overlay is down (`Event::Lifted`). The pool holds one for
+one. Rest windows are made as a model arrives, never from a frame, a lift or between a flight's
+begin and its lift: a model that comes then waits for the lift, and a pool the lift leaves short is
+made in the actor's next turn, once the overlay is down (`Event::Lifted`). The pool holds one for
 every window that wears a band and could show it, held by no more than a park, and one per display
 at least (`Rest::pool_size`), and each window whose band shows takes one from it (`rest::assign`).
 So the ring moving with focus and a workspace switch, whose leaving and arriving windows show
 together for a moment, make none; the windows rini manages as it launches are pooled then, and a
-window opened later is pooled as the model naming it arrives, at the press of its flight. The
+window opened later is pooled once the model naming it is taken, after the lift of its flight. The
 overlay's first show cost 112ms against 14ms to order it in; what making a 1pt rest window costs is
 not measured. A window that shows nothing keeps its rest window at alpha 0 for the next, and the
 pool never shrinks while any window can wear a band; once none can, every rest window is closed
@@ -242,7 +242,7 @@ another app raises its window, that window sits above its own bands: the window 
 them, which lie outside it, but its shadow does, and so does any window it rose past that overlaps
 them. A rest window is ordered again when the window server reorders its window or orders it
 back in (808, 815), when it is given a window, and when focus comes to its window, each once a turn
-(`rest::to_reorder`), and for what came under the overlay, at its lift.
+(`rest::to_reorder`), and for what came between a flight's begin and its lift, at the lift.
 
 **A click-through band is never hit.** Probe P5 drew a click-through band around a window and found
 `SLSFindWindowAndOwner` 2pt inside to 4pt outside its right edge returning the window with the band
@@ -262,8 +262,8 @@ edge `width` in, so the outer corner is `corner + width` (`shape::band`).
 **Following.** A rest window takes its window's frame from the window server's frames
 (`src/displays/docs/live-frames.md`), followed only while the feature is on ("Off"): 806 and 807 saw every frame a 1ms poll saw during Kai's
 drags, n=1165, p90 0.08ms behind it, in Ghostty only. The actor takes what queued each turn, the
-latest frame of each window. Under the overlay the rest windows follow no window on its display:
-the frames and orders are taken as they come, so a park is taken with its window's move and a hide
+latest frame of each window. From a flight's begin to its lift the rest windows follow no window
+on its display: the frames and orders are taken as they come, so a park is taken with its window's move and a hide
 with its order, but nothing is drawn, read or ordered until the lift ("The handover"). A frame or
 an order of a window on another display, or a park there taking effect, draws the turn as if
 nothing covered it, with everything that waited: the overlay covers only its own display. None is
@@ -284,11 +284,22 @@ overlay covered it.
 
 **The handover.** The overlay covers its display at level 18, so a rest window under it is unseen
 once it is up, as its window is. A press's own model reaches the rest windows before the overlay is
-up and is drawn as it comes (read from the code, not seen). From the show, which covers them
+up. Drawn as it came, a full draw of every rest window sat on the main thread ahead of the show:
+on 4cddd692's timing battery (2026-10-08, 3 runs each way) the show's drain waited for the main
+thread 4.9-18.7ms at p90 with the ring on, against 0.03-0.04ms with it off. So the reactor tells the
+rest windows of each flight it hands the engine, with the display its overlay covers, before that
+batch's model (`Event::Flight`, sent by `publish_rest` for what `Reactor::send_flight` noted), and
+from that begin (`Rest::fly`) to the lift a turn draws, reads and makes nothing unless a window on
+another display changed: what came waits (`Rest::turn`). Until the overlay is up the rest windows
+show the windows as they were before the press, which is what frame zero shows; the show covers them
 (`Rest::cover`, after the overlay's alpha 1 in `Renderer::play`'s steps, with the display it is
-laid out on), to the lift, a turn draws, reads and makes nothing unless a window on another display
-changed: what came waits (`Rest::turn`). Each such turn had been main-thread time
-the flight's drains waited behind: the frames of every window rini's writes moved, the 808s of a
+laid out on). A flight that never shows sends no lift: one the engine declines with no display yet
+or with an empty pass, or merges elsewhere. So a flight not shown `FLIGHT_PATIENCE`, 250ms, after
+its begin lets go, and what waited is drawn (`Rest::settle`, on the timer `Rest::due` sets). Before
+the bands, the journal's begin to show took at most 249ms over 1726 flights: a show after the
+patience is rare, and the rest windows then draw once uncovered before it covers them again. An
+abandoned flight sends its lift, which ends the cover as any lift does. Each turn under the cover
+had been main-thread time the flight's drains waited behind: the frames of every window rini's writes moved, the 808s of a
 raise, the key window's turn and each park's patience, each a full draw of every rest window with
 its window-server reads and orders. A 10s sample of rini at rest on 2026-10-08, while Kai typed and
 no flight ran, held 13 of 7216 main-thread samples in `RestBorders::take`, 9 of them in
@@ -299,7 +310,7 @@ against a rebuild of the same commit, so their names are inferred
 drains split by where in their flight they fall). At the lift the renderer calls
 the rest windows before it hides the overlay, and the model that waited is taken, every park on that
 display that waited taken, every rest window on it put at its window's frame as the window server
-has it, each one whose window was reordered under the overlay or that focus came to ordered above
+has it, each one whose window was reordered since the flight's begin or that focus came to ordered above
 its window again, and every one drawn as it is then, in the same main-thread turn as the hide
 (`Rest::lift`). A park the lift takes no move for, on another display, still waits for its
 patience, and only the actor's own turn sets that timer, so the lift asks for one
@@ -330,7 +341,8 @@ that; the actor closes every rest window (`Panel`'s `Drop`, so none is left at a
 window list) and, off, takes no frame, order, lift or park (`Rest::off`, `Rest::turn`, `Rest::lift`,
 `Rest::settle`, `Rest::pool_size` 0). The renderer still calls `Handover` at each show and lift: the
 show records which display the overlay covers, so a model turning the feature on during a flight
-waits for the lift, and the lift draws and reads nothing. The reactor turns `Following` off at the
+waits for the lift, and the lift draws and reads nothing. The reactor tells it of no flight
+(`publish_rest`), and a flight begun before the feature went off keeps its cover and its patience. The reactor turns `Following` off at the
 same batch, so the window-notify actor drops each 806, 807, 808, 815, 816 and 804 for the rest
 windows where it arrives: no frame is read and nothing is sent to the main thread for them
 (`src/displays/docs/live-frames.md`). 808 and 815 still wake the focus resolver, which is not the

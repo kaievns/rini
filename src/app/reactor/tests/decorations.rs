@@ -2,6 +2,7 @@
 //! with the key window holding focus, and what holds its bands.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
+use rini_geometry::space::ScreenRect;
 use test_log::test;
 
 use super::fixtures::*;
@@ -16,7 +17,7 @@ use crate::windows::domain::attention::Attention;
 use crate::windows::domain::catalogue::NativeFullscreenTransition;
 use crate::windows::domain::rules::RuleMatch;
 use crate::windows::platform::window_server::set_space_window_list_for_space_override;
-use crate::workspaces::{LayoutCommand, LayoutEvent};
+use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 const GHOSTTY: i32 = 1;
 const ZEN: i32 = 2;
@@ -417,9 +418,13 @@ fn words(rest: &mut Receiver) -> Vec<Option<RestModel>> {
 
 /// Reloads the config with the decorations `change` leaves.
 fn reload(desk: &mut Desk, change: impl FnOnce(&mut crate::decorations::settings::DecorationSettings)) {
-    let mut config = desk.reactor.config.clone();
+    reload_config(&mut desk.reactor, change);
+}
+
+fn reload_config(reactor: &mut Reactor, change: impl FnOnce(&mut crate::decorations::settings::DecorationSettings)) {
+    let mut config = reactor.config.clone();
     change(&mut config.settings.decorations);
-    desk.reactor.handle_test_batch(vec![Event::ConfigUpdated(config)]);
+    reactor.handle_test_batch(vec![Event::ConfigUpdated(config)]);
 }
 
 /// Kai, 2026-10-08: "not make it transparrent, i mean disable the feature". With the ring and the
@@ -473,4 +478,66 @@ fn a_rule_turning_one_windows_ring_on_keeps_the_rest_windows_on() {
 
 fn frame_of(layout: &[(WindowId, CGRect)], window: WindowId) -> CGRect {
     layout.iter().find(|(w, _)| *w == window).map(|(_, frame)| *frame).expect("laid out")
+}
+
+/// What the rest windows have been told since the last look, by kind, with a flight's display.
+fn told(rest: &mut Receiver) -> Vec<(&'static str, Option<ScreenRect>)> {
+    let mut out = Vec::new();
+    while let Ok((_, event)) = rest.try_recv() {
+        out.push(match event {
+            RestEvent::Flight(display) => ("flight", Some(display)),
+            RestEvent::Model(_) => ("model", None),
+            RestEvent::Off => ("off", None),
+            _ => continue,
+        });
+    }
+    out
+}
+
+/// Kai, 2026-10-08: "all the animations are _significantly_ slower with the rings". A press that
+/// flies tells the rest windows the display its overlay covers before the model the press changed,
+/// so that model waits for the lift instead of being drawn while the show waits; off, nothing.
+#[test]
+fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
+    use crate::transitions::platform::engine::Event as Engine;
+    let (mut apps, mut reactor) = test_context();
+    let mut rest = reactor.connect_test_rest();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(4));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
+    apps.simulate_until_quiet(&mut reactor);
+    reactor.config.settings.animate = true;
+    let (transitions_tx, mut transitions_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(transitions_tx);
+    reactor.handle_test_batch(Vec::new());
+    told(&mut rest);
+    let press = |reactor: &mut Reactor, direction| {
+        let command = crate::app::reactor::state::Command::Layout(LayoutCommand::MoveFocus(direction));
+        reactor.handle_test_batch(vec![Event::Command(command)]);
+    };
+    let flown = |rx: &mut channels::Receiver<Engine>| {
+        let mut display = None;
+        let mut flights = 0;
+        while let Ok((_, event)) = rx.try_recv() {
+            match event {
+                Engine::SetDisplay { frame, .. } => display = Some(frame),
+                Engine::Animate { .. } | Engine::AnimateSurface { .. } => flights += 1,
+                _ => {}
+            }
+        }
+        (flights, display)
+    };
+
+    press(&mut reactor, Direction::Right);
+    let (flights, display) = flown(&mut transitions_rx);
+    assert!(flights > 0, "the press flies");
+    assert_eq!(told(&mut rest), vec![("flight", display), ("model", None)], "the flight first, at the overlay's display");
+
+    reload_config(&mut reactor, |decorations| decorations.focus_ring.on = false);
+    assert_eq!(told(&mut rest), vec![("off", None)]);
+    press(&mut reactor, Direction::Left);
+    assert!(flown(&mut transitions_rx).0 > 0, "the press still flies");
+    assert!(told(&mut rest).is_empty(), "off, the rest windows are told nothing");
 }

@@ -165,6 +165,18 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   turns at each one's time: the window losing focus to the inactive, the one gaining it to the
   active. Each tile's border turns its paint at the same time as its hairline, by its own focus
   alone.
+- A flight MUST be as fast and as smooth with the ring or the border on as with both off: on the
+  timing battery, every measure with them on within the spread of the same build with both off, and
+  every blurred window flying with its blur.
+
+> **Reported 2026-10-08.** Kai: "what i can tell you with 100% certainty is that all the animations
+> are _significantly_ slower with the rings, which makes no sense because it's just a bunch more
+> pixels on the overlay. i need you to redo your implementation. take animation/transition
+> measurements before and after and make sure that whatever you do you're not eroding the
+> transitions performance and causing issues with blured windows again." Measured on 4cddd692
+> against 3 runs with the ring off, 42 of 87 measures with it on fell past the ring-off spread: the
+> overlay was seen up 10ms and gone 15ms later at the median, and 10 of 386 ring-on flights stalled
+> about 260ms.
 
 ## At rest
 
@@ -181,15 +193,18 @@ wearing either is drawn by one rest window holding both.
 - Drawing or moving it MUST NOT change which application is in front or which window is key.
 - The ring MUST follow its window wherever the window server moves it, whoever moves it: a title-bar
   drag, an edge drag, an application resizing itself, and rini's own writes, and MUST NOT be hidden
-  while it does. Under the overlay it follows its window at the lift (below).
-- From the overlay's show to its lift, rini's windows that draw the ring at rest MUST draw nothing,
-  ask the window server nothing and be made none while nothing changes on another display: each
-  window moved, reordered, hidden or parked under the overlay, focus turning and a window rini
-  starts managing all wait for the lift, which draws them before the overlay hides. The overlay
-  covers its display, so nothing drawn there is seen, and each of those draws had been main-thread
-  and window-server time the flight's own frames waited behind. A window on another display that
-  moves, is reordered, hidden or closed, or whose park takes effect, MUST be drawn as it does, with
-  everything that waited: the overlay does not cover it.
+  while it does. Through a flight it follows its window at the lift (below).
+- From the flight's begin to its lift, rini's windows that draw the ring at rest MUST draw nothing,
+  ask the window server nothing and be made none while nothing changes on another display: the
+  press's own change, each window moved, reordered, hidden or parked under the overlay, focus
+  turning and a window rini starts managing all wait for the lift, which draws them before the
+  overlay hides. Until the overlay shows, the rings on its display show the windows as they were
+  before the press, as the flight's frame zero does; once it shows it covers its display, so nothing
+  drawn there is seen. Each of those draws had been main-thread and window-server time the flight's
+  show and frames waited behind. A flight whose overlay has not shown 250ms after its begin, one
+  that was declined or merged elsewhere, MUST let go then and draw what waited. A window on another
+  display that moves, is reordered, hidden or closed, or whose park takes effect, MUST be drawn as it
+  does, with everything that waited: the overlay does not cover it.
 
 > **Reported 2026-10-08.** Kai, after the borders shipped: "the animations smoothenes seem to have
 > degraded". Against the build before them, over 114 flights since the deploy and 133 before it,
@@ -211,7 +226,8 @@ wearing either is drawn by one rest window holding both.
   is not showing.
 - At rest the window holding focus is the one macOS has made key, so the ring turns when macOS
   repaints its windows' focus, not when rini decides to move it. A change that moves no key window
-  turns it at once: a selection on a display not holding focus, a config reload.
+  turns it at once, or at the lift of a flight between its begin and its lift: a selection on a
+  display not holding focus, a config reload.
 - A lift MUST show no change in the ring: the ring at rest is drawn by the same layers as the one
   on the tile, and every rest window on the display is put where its window is, in the look it has
   then, before the overlay hides. A border drawn differently on the two sides of the handover
@@ -245,8 +261,10 @@ and which applications ask for attention, read by `src/windows/platform/attentio
 overlay (`src/animation/platform/overlay.rs`), which is holed over each band
 (`src/animation/domain/motion/holes.rs`). At rest, which windows show a band, which rest window
 draws each and which are ordered again are `src/decorations/domain/rest.rs`, carried out by the
-main-thread actor in `src/decorations/platform/rest.rs`, which the renderer
-(`src/animation/platform/renderer.rs`) covers as its overlay goes up and calls before each lift. Its windows follow the window
+main-thread actor in `src/decorations/platform/rest.rs`, which the reactor tells of each flight's
+begin (`Reactor::send_flight` in `src/app/reactor/mod.rs`, `publish_rest` in
+`src/app/reactor/decorations.rs`) and the renderer (`src/animation/platform/renderer.rs`) covers as
+its overlay goes up and calls before each lift. Its windows follow the window
 server's frames and orders (`src/displays/platform/window_notify.rs`), and are ordered with the
 level and sub-level calls in `src/windows/platform/window_server.rs`; no listing of windows names
 them (`src/windows/domain/listing.rs`). What was measured is "At rest" in

@@ -7,9 +7,10 @@
 //! batch of events left are kept, so a pass can say whether each window wore the ring before it.
 //! At rest the window holding focus is the key window as macOS reports it, so a band turns when
 //! macOS repaints its window's focus, not at rini's decision; after every batch the rest windows are
-//! sent what each managed window wears and what holds its band, when that changed, and while no
-//! window can wear a band they are turned off and the window server's frames and orders go
-//! unfollowed (`DecorationSettings::draws_bands`). Each window is
+//! told the display of a flight it handed the engine, so they hold that batch's model and what
+//! follows until its lift, then sent what each managed window wears and what holds its band, when
+//! that changed, and while no window can wear a band they are turned off, told of no flight, and the
+//! window server's frames and orders go unfollowed (`DecorationSettings::draws_bands`). Each window is
 //! folded afresh whenever what it wears is asked for, so a rule follows focus, floating and the
 //! title as they change. A window is drawn urgent while its application asks for attention and no
 //! window of it holds focus, read against the same focus as the ring.
@@ -30,12 +31,14 @@ use crate::workspaces::VirtualWorkspaceId;
 use super::Reactor;
 
 /// Where the rest windows are drawn, whether the window server's frames and orders are followed for
-/// them, and the model they were last sent: `None` while they are off, as they start.
+/// them, the display of the last flight this batch handed the engine, and the model they were last
+/// sent: `None` while they are off, as they start.
 #[derive(Default)]
 pub(super) struct RestFeed {
     /// `None` until the main thread's rest windows are wired in, and in tests that do not look.
     pub(super) tx: Option<Sender>,
     pub(super) following: Following,
+    pub(super) flight: Option<ScreenRect>,
     sent: Option<RestModel>,
 }
 
@@ -151,13 +154,18 @@ impl Reactor {
 }
 
 impl Reactor {
-    /// Sends the rest windows their model if it changed since the last one sent, or turns them off
-    /// once no window can wear a band, and follows the window server's frames and orders for them
-    /// while they are on. Once per batch.
+    /// Tells the rest windows a flight began, when the batch handed the engine one, and sends them
+    /// their model if it changed since the last one sent, or turns them off once no window can wear a
+    /// band, and follows the window server's frames and orders for them while they are on. Once per
+    /// batch; the flight first, so its batch's model waits for its lift. Nothing while off.
     pub(super) fn publish_rest(&mut self) {
+        let flight = self.rest.flight.take();
         let Some(tx) = &self.rest.tx else { return };
         let model = self.config.settings.decorations.draws_bands().then(|| self.rest_model());
         self.rest.following.set(model.is_some());
+        if let Some(display) = flight.filter(|_| model.is_some()) {
+            tx.send(RestEvent::Flight(display));
+        }
         if self.rest.sent == model {
             return;
         }

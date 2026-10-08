@@ -1,6 +1,6 @@
 //! A decoration at rest, drawn by a window of rini's own directly above the window it decorates:
 //! which windows show a band and when, what each turn of the rest windows makes of the reactor's
-//! word and the window server's, what waits for the lift while the overlay is up, which of rini's
+//! word and the window server's, what waits for the lift from a flight's begin, which of rini's
 //! rest windows draws each, which are ordered above their windows again, and that none is kept and
 //! nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
 
@@ -16,6 +16,11 @@ use crate::displays::event::{OrderChange, ServerOrder};
 
 /// How long a change of `parked` waits for its window to move before it takes effect anyway.
 pub const PARK_PATIENCE: Duration = Duration::from_millis(250);
+
+/// How long a flight that has not shown holds the rest windows before they let go and draw what
+/// waited: past the 80ms the engine waits for frame zero, and the 249ms its show took at most
+/// after its begin over 1726 flights before the bands.
+pub const FLIGHT_PATIENCE: Duration = Duration::from_millis(250);
 
 /// Why a window shows no band wherever it is, as rini's own stores have it. A window on a Space its
 /// display is not showing is not sent at all.
@@ -160,22 +165,26 @@ pub struct Lifted {
     pub reread: Vec<WindowServerId>,
 }
 
-/// What waits for the lift while the overlay is up over `display`: the reactor's latest word and the
-/// window server's orders.
+/// What waits for the lift from a flight's begin over `display`: the reactor's latest word and the
+/// window server's orders. `until` is when a flight whose overlay has not shown lets go; none once
+/// it shows, when only its lift does.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Covered {
     display: Option<ScreenRect>,
+    until: Option<Instant>,
     model: Option<RestModel>,
     orders: Vec<ServerOrder>,
 }
 
 /// What the rest windows draw from: the reactor's latest model, and what is known of each window it
 /// names. Each turn takes what queued: the model, the window server's frames and orders, a lift.
-/// From the overlay's show to its lift a turn draws nothing and reads nothing (`cover`) unless a
-/// window on another display moved, was reordered or settled its park: the rest windows on the
-/// overlay's display are under it, and the lift draws what came. Off, as it starts and once the
-/// reactor turns it off, it holds no model and no window, wants no rest window, and a turn, a lift
-/// and a park's patience draw nothing; the reactor's next model turns it on.
+/// From a flight's begin to its lift a turn draws nothing and reads nothing (`fly`, `cover`) unless
+/// a window on another display moved, was reordered or settled its park: the rest windows on the
+/// flight's display are under its overlay or show what was there before the press, as its frame
+/// zero does, and the lift draws what came. A flight whose overlay never shows lets go
+/// `FLIGHT_PATIENCE` after it began (`settle`). Off, as it starts and once the reactor turns it
+/// off, it holds no model and no window, wants no rest window, and a flight, a turn, a lift and a
+/// park's patience draw nothing; the reactor's next model turns it on.
 #[derive(Clone, Debug, Default)]
 pub struct Rest {
     pub model: RestModel,
@@ -189,21 +198,35 @@ impl Rest {
     pub fn on(&self) -> bool { self.on }
 
     /// No window can wear a band: the model, every window known and every word and order waiting
-    /// for the lift are dropped, and nothing is taken until the next model. Whether the overlay is up
-    /// is kept, so a model that turns it on under the overlay waits for the lift.
+    /// for the lift are dropped, and nothing is taken until the next model. Whether a flight or the
+    /// overlay covers them is kept, so a model that turns it on under the overlay waits for the lift.
     pub fn off(&mut self) {
         self.on = false;
         self.model = RestModel::default();
         self.windows.clear();
         if let Some(covered) = self.covered.as_mut() {
-            *covered = Covered { display: covered.display, ..Covered::default() };
+            *covered = Covered { display: covered.display, until: covered.until, ..Covered::default() };
         }
+    }
+
+    /// A flight over `display` began at `now`: until its lift, or `FLIGHT_PATIENCE` if its overlay
+    /// has not shown by then, a turn draws nothing unless a window on another display moved. A
+    /// flight beginning under an overlay already up is that overlay's to lift. Off, it takes nothing.
+    pub fn fly(&mut self, display: ScreenRect, now: Instant) {
+        if !self.on || self.covered.as_ref().is_some_and(|covered| covered.until.is_none()) {
+            return;
+        }
+        let covered = self.covered.get_or_insert_with(Covered::default);
+        covered.display = Some(display);
+        covered.until = Some(now + FLIGHT_PATIENCE);
     }
 
     /// The overlay is up over `display`, the one it was laid out on: until it lifts, a turn draws
     /// nothing unless a window on another display moved.
     pub fn cover(&mut self, display: Option<ScreenRect>) {
-        self.covered.get_or_insert_with(Covered::default).display = display;
+        let covered = self.covered.get_or_insert_with(Covered::default);
+        covered.display = display;
+        covered.until = None;
     }
 
     pub fn covered(&self) -> bool { self.covered.is_some() }
@@ -331,11 +354,18 @@ impl Rest {
         }
     }
 
-    /// Parks whose patience ran out at `now`, taken; whether the turn draws them, which it does
-    /// unless the overlay is up and every one taken is on its display.
-    pub fn settle(&mut self, now: Instant) -> bool {
+    /// What ran out of patience at `now`, taken: a flight that has not shown lets go, with the
+    /// reactor's word that waited taken with `take_model` and `read` and the orders that waited, and
+    /// each park whose patience ran out. What the turn draws, which it does unless something still
+    /// covers it and every park taken is on its display; none while off.
+    pub fn settle(&mut self, now: Instant, read: impl Fn(WindowServerId) -> (Option<ScreenRect>, bool)) -> Option<Draw> {
+        let spent = self.covered.as_ref().and_then(|covered| covered.until).is_some_and(|until| now >= until);
+        let let_go = spent.then(|| self.covered.take()).flatten().map(|Covered { model, orders, .. }| {
+            let focus = model.and_then(|model| self.take_model(model, now, read));
+            Draw { orders, focus }
+        });
         if !self.on {
-            return false;
+            return None;
         }
         let over = self.covered.as_ref().map(|covered| covered.display);
         let mut seen = false;
@@ -344,11 +374,14 @@ impl Rest {
             tracked.parking.settle(false, false, now);
             seen |= tracked.parking != before && elsewhere(tracked.frame, &self.model.displays, over.flatten());
         }
-        over.is_none() || seen
+        let_go.or_else(|| (over.is_none() || seen).then(Draw::default))
     }
 
-    /// When the next waiting park takes effect.
-    pub fn due(&self) -> Option<Instant> { self.windows.values().filter_map(|tracked| tracked.parking.due()).min() }
+    /// When the next waiting park takes effect, or a flight that has not shown lets go.
+    pub fn due(&self) -> Option<Instant> {
+        let flight = self.covered.as_ref().and_then(|covered| covered.until);
+        self.windows.values().filter_map(|tracked| tracked.parking.due()).chain(flight).min()
+    }
 
     /// Whether, after a lift, the rest windows want a turn of their own with `pool` rest windows: the
     /// pool is short, or a park the lift took no move for waits for its patience, whose timer only
@@ -675,7 +708,7 @@ mod tests {
             rest.turn(Some(model(vec![at(1, false, false), at(2, true, false), at(3, false, false)])), &[], vec![reorder(2)], now, |_| panic!("read")),
         ];
         assert_eq!(turns, [None, None, None], "no turn under the overlay draws");
-        assert!(!rest.settle(now + PARK_PATIENCE), "nor does a park's patience");
+        assert_eq!(rest.settle(now + PARK_PATIENCE, |_| panic!("read")), None, "nor does a park's patience");
         assert_eq!(rest.windows[&ws(1)].frame, Some(elsewhere), "the frames are taken as they come");
         assert!(rest.model.windows[0].focused && !rest.windows.contains_key(&ws(3)), "the word waits for the lift");
         let lifted = rest.lift(Some(display()[0].bounds), now, |_| (Some(SLOT), false), |_| false);
@@ -684,6 +717,70 @@ mod tests {
         assert!(!rest.covered());
         let after = rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("known"));
         assert_eq!(after, Some(Draw { orders: vec![reorder(1)], focus: None }), "after the lift a turn draws again");
+    }
+
+    fn ms(ms: u64) -> Duration { Duration::from_millis(ms) }
+
+    /// The press's own model and the key window's report come before its overlay is up: from the
+    /// flight's begin they wait, as frame zero shows the windows before the press, and its lift draws
+    /// them.
+    #[test]
+    fn a_flight_handed_over_holds_the_press_model_until_its_lift() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.fly(display()[0].bounds, now);
+        assert!(rest.covered());
+        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        assert_eq!(rest.turn(Some(pressed), &[], vec![reorder(2)], now + ms(1), |_| panic!("read")), None, "the press's model");
+        assert_eq!(rest.turn(None, &[(ws(1), SLOT)], Vec::new(), now + ms(20), |_| panic!("read")), None, "a frame there");
+        rest.cover(Some(display()[0].bounds));
+        assert!(rest.model.windows[0].focused, "the band shows the focus before the press");
+        let lifted = rest.lift(Some(display()[0].bounds), now + ms(400), |_| panic!("known"), |_| false);
+        assert_eq!(lifted.draw, Draw { orders: vec![reorder(2)], focus: Some(ws(2)) });
+        assert!(!rest.covered() && rest.model.windows[1].focused);
+    }
+
+    /// A flight the engine declines or merges elsewhere shows no overlay and sends no lift: what it
+    /// held is drawn once its patience is spent.
+    #[test]
+    fn a_flight_that_never_shows_lets_go_after_its_patience() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.fly(display()[0].bounds, now);
+        let pressed = model(vec![at(1, false, false), at(2, true, false), at(3, false, false)]);
+        assert_eq!(rest.turn(Some(pressed), &[], vec![reorder(2)], now + ms(1), |_| panic!("read")), None);
+        assert_eq!(rest.due(), Some(now + FLIGHT_PATIENCE));
+        assert_eq!(rest.settle(now + FLIGHT_PATIENCE - ms(1), |_| panic!("read")), None, "patient yet");
+        let drawn = rest.settle(now + FLIGHT_PATIENCE, |_| (Some(SLOT), false));
+        assert_eq!(drawn, Some(Draw { orders: vec![reorder(2)], focus: Some(ws(2)) }), "drawn with what waited");
+        assert!(!rest.covered() && rest.windows.contains_key(&ws(3)) && rest.due().is_none());
+
+        rest.fly(display()[0].bounds, now);
+        rest.off();
+        assert_eq!(rest.turn(Some(model(vec![at(1, true, false)])), &[], Vec::new(), now, |_| panic!("read")), None, "turned on under the flight");
+        let drawn = rest.settle(now + FLIGHT_PATIENCE, |_| (Some(SLOT), false));
+        assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }), "its patience kept through off");
+        let mut off = Rest::default();
+        off.fly(display()[0].bounds, now);
+        assert!(!off.covered() && off.due().is_none(), "off, a flight takes nothing");
+    }
+
+    /// A show later than the patience is rare; one that comes in time holds the rest windows to its
+    /// lift, as does a flight merged into it.
+    #[test]
+    fn a_show_after_the_flight_began_keeps_it_covered_past_the_patience() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        rest.fly(display()[0].bounds, now);
+        rest.cover(Some(display()[0].bounds));
+        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        assert_eq!(rest.turn(Some(pressed), &[], Vec::new(), now + ms(100), |_| panic!("read")), None);
+        rest.fly(display()[0].bounds, now + ms(200));
+        assert_eq!(rest.due(), None, "the show's lift ends it");
+        assert_eq!(rest.settle(now + FLIGHT_PATIENCE * 2, |_| panic!("read")), None);
+        assert!(rest.covered() && rest.model.windows[0].focused);
+        let lifted = rest.lift(Some(display()[0].bounds), now + ms(600), |_| panic!("known"), |_| false);
+        assert_eq!(lifted.draw.focus, Some(ws(2)));
     }
 
     /// A park is taken with its window's move under the overlay too, and a hide from its order, so
@@ -731,8 +828,8 @@ mod tests {
         let closed = ServerOrder { window: ws(2), change: OrderChange::Closed };
         assert!(rest.turn(None, &[], vec![closed], now, |_| panic!("known")).is_some(), "a close there");
 
-        assert!(!two_displays(now, [true, false]).settle(now + PARK_PATIENCE), "a park on the overlay's display settles unseen");
-        assert!(two_displays(now, [false, true]).settle(now + PARK_PATIENCE), "one on the other display is drawn");
+        assert_eq!(two_displays(now, [true, false]).settle(now + PARK_PATIENCE, |_| panic!("read")), None, "a park on the overlay's display settles unseen");
+        assert!(two_displays(now, [false, true]).settle(now + PARK_PATIENCE, |_| panic!("read")).is_some(), "one on the other display is drawn");
     }
 
     /// A park that came under the overlay for a window off its display waits for its patience past
@@ -747,7 +844,7 @@ mod tests {
         rest.lift(Some(display()[0].bounds), now, |_| panic!("known"), |_| true);
         assert!(rest.windows[&ws(2)].parking.due().is_some());
         assert!(rest.wants_turn(pool), "a full pool, and a park to time");
-        rest.settle(now + PARK_PATIENCE);
+        rest.settle(now + PARK_PATIENCE, |_| panic!("read"));
         assert!(!rest.wants_turn(pool));
         assert!(rest.wants_turn(pool - 1), "a pool short");
     }
@@ -758,7 +855,7 @@ mod tests {
         let mut rest = Rest::default();
         let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], vec![reorder(1)], now, |_| (Some(SLOT), false));
         assert_eq!(drawn, Some(Draw { orders: vec![reorder(1)], focus: Some(ws(1)) }));
-        assert!(rest.settle(now));
+        assert_eq!(rest.settle(now, |_| panic!("read")), Some(Draw::default()));
         assert_eq!(rest.lift(None, now, |_| panic!("no word waited"), |_| true), Lifted::default(), "laid out on no display, a lift takes no park");
     }
 
@@ -777,7 +874,7 @@ mod tests {
         assert_eq!(rest.model, RestModel::default());
         assert_eq!(rest.turn(None, &[(ws(1), SLOT)], vec![reorder(1)], now, |_| panic!("read while off")), None, "a frame and a reorder");
         assert!(rest.windows.is_empty(), "the frame not taken");
-        assert!(!rest.settle(now + PARK_PATIENCE) && rest.due().is_none());
+        assert!(rest.settle(now + PARK_PATIENCE, |_| panic!("read while off")).is_none() && rest.due().is_none());
         assert_eq!(rest.lift(Some(display()[0].bounds), now, |_| panic!("read while off"), |_| true), Lifted::default());
         assert!(!rest.wants_turn(0), "a lift asks no turn");
         let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], Vec::new(), now, |_| (Some(SLOT), false));
