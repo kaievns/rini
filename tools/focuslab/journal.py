@@ -352,22 +352,34 @@ def write_csv(path, found):
             out.writerow(head + [row[key] for key in keys])
 
 
+def presses(found):
+    """Every press in `found`, in time order: (its time, whether it began its flight, the flight)."""
+    return sorted(((mark["t"], mark is flight.press, flight)
+                   for flight in found for mark in flight.marks if mark["mark"] == "press"),
+                  key=lambda press: press[0])
+
+
+def press_after(post, pressed):
+    """The press a post at `post` caused: the first of `pressed` within 250ms after it, or None."""
+    nearest = bisect.bisect_left(pressed, post, key=lambda press: press[0])
+    if nearest == len(pressed) or pressed[nearest][0] - post > JOIN_NS:
+        return None
+    return pressed[nearest]
+
+
 def join(trials, found):
-    """Each trial, its label, and the press it caused, found as the first press within 250ms after
-    the probe posted: (label, how it joined, the trial's row)."""
-    presses = [(mark["t"], mark is flight.press, flight)
-               for flight in found for mark in flight.marks if mark["mark"] == "press"]
-    presses.sort(key=lambda press: press[0])
-    times = [press[0] for press in presses]
+    """Each trial, its label, and the press it caused (`press_after`): (label, how it joined, the
+    trial's row)."""
+    pressed = presses(found)
     joined = []
     for trial in trials:
         post = trial["t0_ns"]
-        nearest = bisect.bisect_left(times, post)
-        if nearest == len(times) or times[nearest] - post > JOIN_NS:
+        press = press_after(post, pressed)
+        if press is None:
             joined.append((trial["label"], "unmatched", {}))
             continue
-        pressed, began, flight = presses[nearest]
-        row = {"post_to_press": ms(pressed, post)}
+        pressed_at, began, flight = press
+        row = {"post_to_press": ms(pressed_at, post)}
         if not began:
             joined.append((trial["label"], "joined", row))
             continue
