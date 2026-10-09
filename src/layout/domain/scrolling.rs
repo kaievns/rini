@@ -305,18 +305,15 @@ impl LayoutState {
 
     /// Put `wid` back beside the neighbour it was pulled away from.
     ///
-    /// `false` when the anchor is gone, in which case the window stays the column it became: there
+    /// Nothing moves when the anchor is gone: the window stays the column it became, because there
     /// is no stack left to rejoin, and inventing one would put it somewhere the user never had it.
-    fn restore_into_stack(&mut self, wid: WindowId, origin: StackOrigin) -> bool {
-        let Some((anchor_col, _)) = self.locate(origin.anchor) else {
-            return false;
-        };
-        let Some((col_idx, row_idx)) = self.locate(wid) else {
-            return false;
-        };
-        if col_idx == anchor_col {
-            return false;
+    fn restore_into_stack(&mut self, wid: WindowId, origin: StackOrigin) {
+        if self.locate(origin.anchor).is_none() {
+            return;
         }
+        let Some((col_idx, row_idx)) = self.locate(wid) else {
+            return;
+        };
         self.columns[col_idx].ensure_height_weights();
         self.columns[col_idx].windows.remove(row_idx);
         let weight = self.columns[col_idx].height_weights.remove(row_idx);
@@ -325,7 +322,7 @@ impl LayoutState {
         }
         // Located again: removing the column above may have shifted the anchor's own index.
         let Some((anchor_col, anchor_row)) = self.locate(origin.anchor) else {
-            return false;
+            return;
         };
         let at = if origin.below {
             anchor_row + 1
@@ -344,7 +341,6 @@ impl LayoutState {
             column.equalise_heights();
         }
         self.keep_full_width_alone(anchor_col);
-        true
     }
 
     /// The width `wid`'s column is actually at, as a ratio of the viewport.
@@ -2056,9 +2052,7 @@ impl ScrollingLayoutSystem {
                 state.locate(origin.anchor).is_some_and(|(anchor_col, _)| anchor_col == target)
             });
             match origin {
-                Some(origin) => {
-                    state.restore_into_stack(selected, origin);
-                }
+                Some(origin) => state.restore_into_stack(selected, origin),
                 None => state.move_window_to_column_end(selected, target),
             }
         }
