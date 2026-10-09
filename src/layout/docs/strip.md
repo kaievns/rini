@@ -155,19 +155,21 @@ is borrowed.
   came back flush left whatever x it had left, and a centred column lost its
   centring to the reveal: Kai's thirds on 2026-10-09 had A at x=578, back at
   x=3 with 575pt empty on the right. Under `"never"`, entering full width keeps
-  how the last pass showed the column (`View`): centred, or its start against
-  the scroll offset, read from `last_selected_rel_px` only when that pass had the
-  window selected (`last_selected_rel_of`), because a title-bar zoom can name a
-  window that was not. For a window pulled out of a stack that is the stack's
-  column. The way back restores the centre override, or pins the start
-  (`Pin::Start`), which the next pass applies where it applies a kept right edge
-  (see "Mouse resize"). A start rather than a scroll offset, so the column keeps
+  how the last pass showed the column (`View`, in a `KeptView` naming the
+  toggle that took it, as a fold-out does; see "Joining"): centred, or its
+  start against the scroll offset, read from `last_selected_rel_px` only when
+  that pass had the window selected (`last_selected_rel_of`), because a
+  title-bar zoom can name a window that was not. For a window pulled out of a
+  stack that is the stack's column. The way back restores the centre override,
+  or pins the start (`Pin::Start`), which the next pass applies where it applies
+  a kept right edge (see "Mouse resize"). A start rather than a scroll offset, so the column keeps
   its x through a width change elsewhere in the strip that scrolls nothing. Any
   scroll drops it (`LayoutState::unpin`): the four scroll requests, a strip
   scroll or snap, a window closing, a width given. Refocusing the window keeps
   it, as the app's own resize while full width does by returning before any
-  request. Only the toggle keeps a view: `ctrl-R` reaching full width, the
-  startup restore and a drag across the viewport come back by the reveal.
+  request. Only the toggle keeps a view for full width: `ctrl-R` reaching full
+  width, the startup restore and a drag across the viewport come back by the
+  reveal.
 
 ## Navigation
 
@@ -225,6 +227,15 @@ mechanisms:
   inverse of itself, not of the other one.
 - **Folding IN prefers the row it was folded out of** (`StackOrigin`) over
   appending to the end, so the rows keep their order as well as the columns.
+
+**The same key twice puts the view back too.** From a right stack the fold-out
+lands right of the stack and the reveal scrolls one column, 0 to 862.5 on Kai's
+halves. The fold back revealed from there, so A1 stayed at x=-860 with half the
+viewport empty. Under `"never"` the fold-out keeps the stack's view as the
+full-width toggle does (`KeptView`, by `Toggle::Fold` with the key's side, read
+before the fold's own reveal), and only the fold-in of that window by the same
+key spends it. The other key, or any scroll in between, drops it, and the fold
+back reveals as before.
 
 There is no falling back to the other side at the ends of the strip. With both
 keys bound, that would make them agree in the first and last columns, which is
@@ -337,8 +348,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   event ahead of its passes. After a resize it names the session's window, not the hit test's: the
   cursor lets go on the edge, where the column behind can answer. `select_window` on the window
   already selected issues no scroll request while a pin names it, as it keeps a centre override and
-  the view full width returns to; the request would have cleared the pin before the only pass that
-  reads it.
+  the view a toggle back returns to; the request would have cleared the pin before the only pass
+  that reads it.
 - **A centred column takes twice the travel.** Centring moves both edges by half of any change, so
   the column takes the start width plus twice the dragged edge's travel (`edge_drag::dragged_width`)
   and the dragged edge ends under the cursor. niri doubles the delta the same way while it centres

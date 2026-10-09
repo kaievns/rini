@@ -37,17 +37,33 @@ struct StackOrigin {
 enum Pin {
     /// Its right edge at that x, in display coordinates: a left-edge drag keeps the right one.
     RightEdge,
-    /// Its start that far right of the scroll offset: where the full-width toggle found the column.
+    /// Its start that far right of the scroll offset: where a toggle found the column.
     Start,
 }
 
-/// How the strip showed a column when the full-width toggle took its window, for the toggle back.
+/// How the strip showed a column when a toggle took its window, for the toggle back.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum View {
     /// Centred by a centre override.
     Centred,
     /// Its start this far right of the scroll offset.
     StartingAt(f64),
+}
+
+/// The toggle whose way back returns to a kept view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Toggle {
+    FullWidth,
+    /// The fold key for this side.
+    Fold(Direction),
+}
+
+/// The view `window`'s column had before `by` took it, kept until any other scroll.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct KeptView {
+    window: WindowId,
+    by: Toggle,
+    view: View,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -158,9 +174,8 @@ struct LayoutState {
     pending_pin: AtomicU64,
     #[serde(skip)]
     pending_pin_of: Option<(WindowId, Pin)>,
-    /// The view the full-width toggle took its window from, kept until any other scroll.
     #[serde(skip)]
-    view_before_full_width: Option<(WindowId, View)>,
+    kept_view: Option<KeptView>,
     center_override_window: Option<WindowId>,
     #[serde(skip, default = "default_atomic")]
     last_screen_width: AtomicU64,
@@ -201,7 +216,7 @@ impl LayoutState {
             pending_reveal_direction: AtomicI8::new(0),
             pending_pin: default_atomic_unset(),
             pending_pin_of: None,
-            view_before_full_width: None,
+            kept_view: None,
             center_override_window: None,
             last_screen_width: AtomicU64::new(0.0f64.to_bits()),
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
@@ -475,15 +490,15 @@ impl LayoutState {
     fn unpin(&mut self) {
         self.pending_pin.store(f64::NAN.to_bits(), Ordering::Relaxed);
         self.pending_pin_of = None;
-        self.view_before_full_width = None;
+        self.kept_view = None;
     }
 
     /// Whether a scroll request for `wid` would drop something held for it: its centring, a pin, or
-    /// the view its full width returns to.
+    /// the view a toggle back returns to.
     fn holds_scroll_for(&self, wid: WindowId) -> bool {
         self.center_override_window == Some(wid)
             || self.pending_pin_of.is_some_and(|(of, _)| of == wid)
-            || self.view_before_full_width.is_some_and(|(of, _)| of == wid)
+            || self.kept_view.is_some_and(|kept| kept.window == wid)
     }
 
     /// How the last pass showed `wid`'s column, if `wid` was its selection.
@@ -496,6 +511,22 @@ impl LayoutState {
         }
         let rel = f64::from_bits(self.last_selected_rel_px.load(Ordering::Relaxed));
         rel.is_finite().then_some(View::StartingAt(rel))
+    }
+
+    /// The view `by`'s way back returns `wid` to, if it kept one. Any other kept view goes too.
+    fn take_kept_view(&mut self, wid: WindowId, by: Toggle) -> Option<View> {
+        let kept = self.kept_view.take()?;
+        (kept.window == wid && kept.by == by).then_some(kept.view)
+    }
+
+    /// Rescroll so a toggled column stays visible, as the resize path does, unless it is going back
+    /// to a view nothing has scrolled away from since.
+    fn rescroll_after_toggle(&mut self, wid: WindowId, back_to: Option<View>, reveals_only: bool) {
+        match back_to {
+            Some(view) => self.return_to_view(wid, view),
+            None if reveals_only => self.reveal_selected_without_direction(),
+            None => self.align_scroll_to_selected(),
+        }
     }
 
     /// Show the selected `wid`'s column the way `view` says the strip showed it.
@@ -661,7 +692,7 @@ impl Clone for LayoutState {
             ),
             pending_pin: AtomicU64::new(self.pending_pin.load(Ordering::Relaxed)),
             pending_pin_of: self.pending_pin_of,
-            view_before_full_width: self.view_before_full_width,
+            kept_view: self.kept_view,
             center_override_window: self.center_override_window,
             last_screen_width: AtomicU64::new(self.last_screen_width.load(Ordering::Relaxed)),
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
@@ -1539,10 +1570,10 @@ impl ScrollingLayoutSystem {
             if state.center_override_window == Some(from) {
                 state.center_override_window = Some(to);
             }
-            if let Some((window, _)) = &mut state.view_before_full_width
-                && *window == from
+            if let Some(kept) = &mut state.kept_view
+                && kept.window == from
             {
-                *window = to;
+                kept.window = to;
             }
             if state.fullscreen_within_gaps.remove(&from) {
                 state.fullscreen_within_gaps.insert(to);
@@ -1904,7 +1935,9 @@ impl ScrollingLayoutSystem {
     /// Pressing the same key twice puts the window back, which takes two different mechanisms.
     /// Folding OUT lands the new column on the side AWAY from `side`, because that is where the
     /// window was before it folded into that column. Folding IN prefers the row it was folded out
-    /// of (`StackOrigin`) over appending to the end, so the rows keep their order too.
+    /// of (`StackOrigin`) over appending to the end, so the rows keep their order too. Under
+    /// `"never"` the fold back by the same key also puts the strip back, unless any other scroll
+    /// came in between.
     pub fn toggle_fold_of_selection(&mut self, layout: LayoutId, side: Direction) -> Vec<WindowId> {
         let away = match side {
             Direction::Left => Direction::Right,
@@ -1923,8 +1956,11 @@ impl ScrollingLayoutSystem {
             return Vec::new();
         };
         let selected = state.columns[col_idx].windows[row_idx];
+        let folding_out = state.columns[col_idx].windows.len() > 1;
+        let view_before =
+            (folding_out && reveals_only).then(|| state.laid_out_view_of(selected)).flatten();
 
-        if state.columns[col_idx].windows.len() > 1 {
+        if folding_out {
             if let Some(origin) = state.split_out(selected, away) {
                 state.stack_origins.insert(selected, origin);
             }
@@ -1945,11 +1981,12 @@ impl ScrollingLayoutSystem {
             }
         }
 
+        let by = Toggle::Fold(side);
+        let back_to = state.take_kept_view(selected, by).filter(|_| !folding_out);
         state.selected = Some(selected);
-        if reveals_only {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
+        state.rescroll_after_toggle(selected, back_to, reveals_only);
+        if let Some(view) = view_before {
+            state.kept_view = Some(KeptView { window: selected, by, view });
         }
         vec![selected]
     }
@@ -1972,26 +2009,16 @@ impl ScrollingLayoutSystem {
         let entering = !state.fullscreen_within_gaps.contains(&wid);
         // Read before this toggle's own scroll request, which drops the centre override.
         let view_before = (entering && reveals_only).then(|| state.laid_out_view_of(wid)).flatten();
-        let returning_to = state
-            .view_before_full_width
-            .take()
-            .filter(|&(of, _)| !entering && of == wid);
+        let back_to = state.take_kept_view(wid, Toggle::FullWidth).filter(|_| !entering);
         if entering {
             state.enter_full_width(wid);
         } else {
             state.leave_full_width_restoring(wid);
         }
         state.selected = Some(wid);
-
-        // Rescroll so the resized column stays visible, as the resize path does, unless it is
-        // going back to a view nothing has scrolled away from since.
-        match returning_to {
-            Some((_, view)) => state.return_to_view(wid, view),
-            None if reveals_only => state.reveal_selected_without_direction(),
-            None => state.align_scroll_to_selected(),
-        }
+        state.rescroll_after_toggle(wid, back_to, reveals_only);
         if let Some(view) = view_before {
-            state.view_before_full_width = Some((wid, view));
+            state.kept_view = Some(KeptView { window: wid, by: Toggle::FullWidth, view });
         }
         true
     }
@@ -5164,6 +5191,144 @@ mod tests {
         maximize_and_restore(&mut system, layout, w[2]);
 
         assert_eq!(laid_out_xw(&system, layout, w[2]), (3.0, 572.0));
+    }
+
+    // ── the view a fold returns to ──────────────────────────────────────────
+
+    /// [A1][B1..] on Kai's display, two halves with the stack on the right, the strip at 0 with the
+    /// stack at x=866.
+    fn a_stack_on_the_right(rows: u32) -> (ScrollingLayoutSystem, LayoutId, WindowId, Vec<WindowId>) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let a = wid(1, 1);
+        let b: Vec<WindowId> = (2..2 + rows).map(|idx| wid(1, idx)).collect();
+        for &window in std::iter::once(&a).chain(&b) {
+            system.add_window_after_selection(layout, window);
+        }
+        for &window in &b[1..] {
+            assert!(system.select_window(layout, window));
+            system.toggle_fold_of_selection(layout, Direction::Left);
+        }
+        assert!(system.select_window(layout, a));
+        kai_s_frames(&system, layout);
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+        (system, layout, a, b)
+    }
+
+    /// One fold key on the selected `window` twice, with the pass after each.
+    fn fold_out_and_back(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        window: WindowId,
+        side: Direction,
+    ) {
+        assert_eq!(system.toggle_fold_of_selection(layout, side), vec![window]);
+        kai_s_frames(system, layout);
+        assert_eq!(system.toggle_fold_of_selection(layout, side), vec![window]);
+    }
+
+    /// `ctrl-,` from a right stack lands the window right of it and scrolls one column: the fold
+    /// back used to leave A1 at x=-860 with half the screen empty.
+    #[test]
+    fn a_fold_round_trip_puts_the_strip_back_where_it_was() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                for side in [Direction::Left, Direction::Right] {
+                    let (mut system, layout, a, b) = a_stack_on_the_right(rows);
+                    assert!(system.select_window(layout, b[row]));
+                    let before = kai_s_frames(&system, layout);
+                    let shape_before = shape(&system, layout);
+
+                    fold_out_and_back(&mut system, layout, b[row], side);
+
+                    let case = format!("row {row} of {rows}, {side:?}");
+                    assert_eq!(shape(&system, layout), shape_before, "{case}");
+                    assert_same_frames(&kai_s_frames(&system, layout), &before);
+                    assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0), "{case}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_fold_out_of_a_right_stack_scrolls_the_strip() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+
+        assert_near(scroll_offset(&system, layout), 862.5, "offset");
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (866.0, 860.0));
+    }
+
+    #[test]
+    fn a_centred_stack_comes_back_centred_from_a_fold() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        system.add_window_after_selection(layout, wid(1, 9));
+        assert!(system.select_window(layout, b[1]));
+        system.center_selected_column(layout);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(laid_out_xw(&system, layout, b[1]).0, 434.0);
+
+        fold_out_and_back(&mut system, layout, b[1], Direction::Left);
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    #[test]
+    fn refocusing_the_folded_out_window_keeps_the_view_it_returns_to() {
+        let (mut system, layout, a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        let before = kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+        assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0));
+    }
+
+    #[test]
+    fn a_strip_scroll_between_the_folds_folds_back_by_the_reveal() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        system.scroll_by_delta(layout, -0.5);
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (435.0, 860.0));
+    }
+
+    /// Out by `ctrl-,`, in by `ctrl-.`: the second key undoes nothing the first did, so the strip
+    /// only scrolls as far as it must.
+    #[test]
+    fn folding_back_with_the_other_key_folds_back_by_the_reveal() {
+        let (mut system, layout, a, b) = a_stack_on_the_right(2);
+        let c = wid(1, 9);
+        assert!(system.select_window(layout, b[1]));
+        system.add_window_after_selection(layout, c);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone(), vec![c]]);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Right);
+
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone(), vec![c]]);
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0));
     }
 
     /// A border inside each tiled window's slot: the strip is laid out from the slots as with no

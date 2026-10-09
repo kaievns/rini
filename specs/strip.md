@@ -216,6 +216,10 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   the RIGHT. The two MUST be symmetric.
 - Folding MUST act on the focused window. It MUST NOT switch focus to another window and fold that one
   instead.
+- **A fold out and back in with the same key MUST put the strip back too**: the column at the screen
+  x it left, and a centred column centred again. Anything else that scrolls the strip in between
+  wins, as for full width, and so does folding back with the other key. The strip then scrolls only
+  as far as it must to show the column.
 - A folded window MUST NOT be squashed to its title bar. A column's stored heights are either
   deliberate pixel heights from a vertical resize or the equal ratios a freshly folded column starts
   at, and the two MUST NOT be conflated.
