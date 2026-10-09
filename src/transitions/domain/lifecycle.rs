@@ -129,11 +129,12 @@ pub struct StageSummary {
     pub awaiting: Vec<WindowId>,
     /// Windows this pass resizes, or opens to fly from where macOS first showed them, not painted at
     /// their new frames yet: watched until they repaint where they end, and pictured there only once
-    /// they have, the shrinks in `kept` never. Of them, only the grows are held for, in `awaiting` as
-    /// well.
+    /// they have, the shrinks in `kept` frame zero pictured never. Of them, only the grows are held
+    /// for, in `awaiting` as well.
     pub repainting: Vec<WindowId>,
-    /// Of `repainting`, the windows this pass only shrinks: their tiles keep the picture they have to
-    /// the lift, which covers every frame, and no picture of them where they end is drawn.
+    /// Of `repainting`, the windows this pass only shrinks: the tiles of those frame zero pictures keep
+    /// that picture to the lift, which covers every frame, and no picture of them where they end is
+    /// drawn.
     pub kept: Vec<WindowId>,
     pub start: Start,
     /// The motion's length: the press's own, and for a merge the score's when that is longer. A merge
@@ -421,13 +422,13 @@ struct Flight {
     /// repaints.
     awaiting: Vec<WindowId>,
     /// Of `awaiting`, the windows resized or flying from where macOS showed them, pictured where they
-    /// end only once they have repainted there, those in `kept` never.
+    /// end only once they have repainted there, those whose tiles keep their pictures (`keeps`) never.
     repainting: Vec<WindowId>,
-    /// Of `awaiting`, the windows a pass grew or drew with no picture of their own: what the overlay
-    /// holds for before the motion starts.
+    /// Of `awaiting`, the windows the latest pass to resize them grew, and those a pass drew with no
+    /// picture of their own: what the overlay holds for before the motion starts.
     holds_for: Vec<WindowId>,
-    /// Of `repainting`, the windows the latest pass to resize them shrank: no picture of them where
-    /// they end is swapped onto their tiles, nor asked for by the last capture.
+    /// Of `repainting`, the windows the latest pass to resize them shrank: those frame zero pictured
+    /// keep that picture (`keeps`).
     kept: Vec<WindowId>,
     /// The awaited windows the overlay still holds for before the motion starts.
     held: Vec<WindowId>,
@@ -511,14 +512,22 @@ impl Flight {
 
     /// The end windows the last capture before the lift pictures: never one resized or opened that
     /// has not been pictured repainted where it ends, which a capture then would show half painted,
-    /// nor one kept, which keeps the picture it has. The lift shows either as it is.
+    /// nor one whose tile keeps its picture. The lift shows either as it is.
     fn final_windows(&self) -> Vec<(WindowId, ScreenRect)> {
         let pictured = |window: &WindowId| self.landed.iter().any(|(w, _)| w == window);
         self.stage
             .end_windows()
             .into_iter()
-            .filter(|(w, _)| !self.kept.contains(w) && (!self.repainting.contains(w) || pictured(w)))
+            .filter(|(w, _)| !self.keeps(*w) && (!self.repainting.contains(w) || pictured(w)))
             .collect()
+    }
+
+    /// Whether `window`'s tile flies its picture from the press to the lift, no picture of it where it
+    /// ends swapped on: kept, and asked of frame zero, so that picture is the press's and covers every
+    /// frame of its shrink. One frame zero never asked for flies the cache's picture, which its
+    /// repaint replaces as it lands.
+    fn keeps(&self, window: WindowId) -> bool {
+        self.kept.contains(&window) && self.asked.iter().any(|(w, _)| *w == window)
     }
 
     /// Snaps `window`'s tile onto `frame` once per generation, once the motion has started: until
@@ -755,8 +764,10 @@ impl Coordinator {
         extend_latest(&mut f.animated, stage.ends());
         extend_unique(&mut f.awaiting, stage.awaiting.iter().chain(&stage.repainting).copied());
         extend_unique(&mut f.repainting, stage.repainting.iter().copied());
+        let resized = |w: &WindowId| stage.awaiting.contains(w) || stage.repainting.contains(w);
+        f.holds_for.retain(|w| !resized(w));
         extend_unique(&mut f.holds_for, stage.awaiting.iter().copied());
-        f.kept.retain(|w| !stage.awaiting.contains(w) && !stage.repainting.contains(w));
+        f.kept.retain(|w| !resized(w));
         extend_unique(&mut f.kept, stage.kept.iter().copied());
         let changed = changed_frames(&f.stage.final_frames, &stage.final_frames);
         let focus_moved = f.stage.focus != stage.focus;
@@ -817,10 +828,12 @@ impl Coordinator {
         let Some(tile) = f.stage.tile(window) else { return };
         if why == Why::FrameZero {
             // Taken at the press: the cache's picture it replaces is older, wherever the tile ends
-            // now, and a landing it would replace is newer.
-            let landed = f.landed.iter().any(|(w, _)| *w == window);
-            if generation == f.began && !matches!(f.phase, Phase::Preparing { .. }) && near(frame, tile.start, END_SLACK) && !landed {
-                out.push(Command::Swap { generation, window });
+            // now, and a landing swapped on is newer.
+            if generation == f.began && !matches!(f.phase, Phase::Preparing { .. }) && near(frame, tile.start, END_SLACK) {
+                let landed = f.landed.iter().any(|(w, _)| *w == window);
+                if !landed || f.keeps(window) {
+                    out.push(Command::Swap { generation, window });
+                }
                 if frame_zero_look(f.stage.losing_focus, f.stage.key) == Some(window) {
                     out.push(Command::KeepFocusedLook { generation, window });
                 }
@@ -833,7 +846,7 @@ impl Coordinator {
         let target = f.stage.focus == Some(window);
         // A kept tile's picture stays: its landing snaps it and hands focus over, its hairline and
         // shadow turning, and its own look turns with the lift.
-        let kept = f.kept.contains(&window);
+        let kept = f.keeps(window);
         // The focus target's look changing is the handover; one resized or opened shows it repainted;
         // and the last capture before the lift shows it as it lands, if its change watch ran out first.
         let handover = target
@@ -2115,13 +2128,14 @@ mod tests {
         assert!(has(&out, |c| *c == Command::StartMoving));
     }
 
-    /// A layout pass growing window 2 across the display: held for and repainting, as
+    /// A layout pass growing window 2, on screen, across the display: held for and repainting, as
     /// `EndPicture::Held` sorts it.
     fn grow() -> (StageSummary, ScreenRect) {
         let mut stage = pan();
         stage.kind = Kind::LayoutPass;
         stage.start = Start::Coalesced;
         let grown = r(3.0, 35.0, 1723.0, 1079.0);
+        stage.tiles[1].start = r(3.0, 35.0, 860.0, 1079.0);
         stage.tiles[1].end = grown;
         stage.final_frames[1].1 = grown;
         stage.awaiting = vec![w(2)];
@@ -2182,13 +2196,14 @@ mod tests {
         assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "and once in, pictured");
     }
 
-    /// A layout pass shrinking window 2: watched until it repaints, never held for, and kept, as
-    /// `EndPicture::Kept` sorts it.
+    /// A layout pass shrinking window 2, on screen, so frame zero pictures it: watched until it
+    /// repaints, never held for, and kept, as `EndPicture::Kept` sorts it.
     fn shrink() -> (StageSummary, ScreenRect) {
         let mut stage = pan();
         stage.kind = Kind::LayoutPass;
         stage.start = Start::Coalesced;
         let shrunk = r(3.0, 35.0, 860.0, 537.0);
+        stage.tiles[1].start = r(3.0, 35.0, 860.0, 1079.0);
         stage.tiles[1].end = shrunk;
         stage.final_frames[1].1 = shrunk;
         stage.repainting = vec![w(2)];
@@ -2244,6 +2259,80 @@ mod tests {
         assert!(swapped(shrinking.clone(), growing.clone(), grown), "shrunk, then grown");
         assert!(!swapped(growing, shrinking.clone(), shrunk), "grown, then shrunk");
         assert!(!swapped(shrinking, moving, shrunk), "shrunk, then moved");
+    }
+
+    /// Shrunk by a pass merged before the motion starts, a window grown first is held for no longer:
+    /// the motion starts with the merge, while holding, or with the coalesce, before the show.
+    #[test]
+    fn a_window_shrunk_by_a_merge_before_the_motion_is_held_for_no_longer() {
+        let now = Instant::now();
+        let ((growing, _), (shrinking, shrunk)) = (grow(), shrink());
+        let tick = Event::Tick { settled: false, landed: false };
+        let mut holding = running(growing.clone(), now);
+        assert!(holding.on(tick.clone(), now + COALESCE_WINDOW).is_empty(), "held for the grow");
+        let merged = now + Duration::from_millis(60);
+        let out = holding.on(Event::Merge { stage: shrinking.clone(), moved: true }, merged);
+        assert!(has(&out, |c| *c == Command::StartMoving), "while holding: {out:?}");
+        let landed = Event::Picture { generation: holding.generation(), window: w(2), frame: shrunk, why: Why::Landed };
+        let out = holding.on(landed, merged + Duration::from_millis(100));
+        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "kept: {out:?}");
+
+        let mut preparing = Coordinator::default();
+        preparing.on(Event::Begin(growing), now);
+        preparing.on(Event::Merge { stage: shrinking, moved: true }, now);
+        assert!(!has(&preparing.on(Event::FrameZero(preparing.generation()), now), |c| *c == Command::StartMoving));
+        assert_eq!(preparing.on(tick, now + COALESCE_WINDOW), vec![Command::StartMoving], "before the show");
+    }
+
+    /// A shrinking window frame zero never pictured, one starting off the display, flies the cache's
+    /// picture: its repainted landing is swapped in mid-run, and the last capture pictures it once in.
+    #[test]
+    fn a_shrink_frame_zero_never_pictured_has_its_repaint_swapped_in() {
+        let now = Instant::now();
+        let (mut stage, shrunk) = shrink();
+        stage.tiles[1].start = r(-860.0, 35.0, 860.0, 1079.0);
+        let mut c = running(stage.clone(), now);
+        let tick = Event::Tick { settled: false, landed: false };
+        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving]);
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: shrunk, why: Why::Landed }, now + Duration::from_millis(150));
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
+        assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "pictured");
+    }
+
+    /// Frame zero coming after a kept window's landing, which was not swapped on, replaces the cache's
+    /// picture its tile flew since the show.
+    #[test]
+    fn a_late_frame_zero_picture_still_goes_onto_a_kept_tile() {
+        let now = Instant::now();
+        let (stage, shrunk) = shrink();
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage.clone()), now);
+        let g = c.generation();
+        assert!(has(&c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE), |c| *c == Command::Show));
+        let at = now + FRAME_ZERO_PATIENCE + Duration::from_millis(60);
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: shrunk, why: Why::Landed }, at);
+        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "kept: {out:?}");
+        let late = Event::Picture { generation: g, window: w(2), frame: stage.tiles[1].start, why: Why::FrameZero };
+        assert_eq!(c.on(late, at), vec![Command::Swap { generation: g, window: w(2) }]);
+    }
+
+    /// Frame zero of the key window losing focus, coming after its landing, is not swapped over it, but
+    /// is still its focused look: taken at the press, while it was focused.
+    #[test]
+    fn a_late_frame_zero_picture_after_a_landing_is_kept_as_the_focused_look_alone() {
+        let now = Instant::now();
+        let stage = pan();
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage.clone()), now);
+        let g = c.generation();
+        assert!(has(&c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE), |c| *c == Command::Show));
+        let at = now + FRAME_ZERO_PATIENCE + Duration::from_millis(60);
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].end, why: Why::Landed }, at);
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(1) }), "{out:?}");
+        let late = Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].start, why: Why::FrameZero };
+        assert_eq!(c.on(late, at), vec![Command::KeepFocusedLook { generation: g, window: w(1) }]);
     }
 
     /// Frame zero delivered after its window's landing would put the picture from the press back over

@@ -238,8 +238,10 @@ destination for a window already moving.
   edges as the old one, with the window's ground wherever it does not cover the frame still to come.
   A window a resize only shrinks MUST fly its picture from the press, clipped, to the lift: that
   picture covers every frame of the movement, so there is no ground to cut from, and its repainted
-  picture and the last capture before the lift MUST NOT be drawn on it. Where passes merge, the
-  latest one resizing a window decides whether it grows or only shrinks. A picture taken at its
+  picture and the last capture before the lift MUST NOT be drawn on it. One starting clipped or off
+  the display has no picture from the press, and its repainted picture MUST replace the one it flies
+  as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
+  shrinks, and so whether the motion still waits for it. A picture taken at its
   new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
   one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
   keeps the look its picture from the press shows, the title bar and controls macOS draws focused or

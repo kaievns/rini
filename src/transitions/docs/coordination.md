@@ -144,10 +144,13 @@ through.
 
 Frame zero's pictures that come after the overlay went up are swapped onto their tiles where they are
 (`Why::FrameZero`), and frame zero is never installed again, which under a flight that moves would jump
-the strip back. They were taken at the press, so each replaces only the cache's: one coming after its
-window's landing is not swapped, since it would put the press back over that landing, a grow's
-repaint the motion starts with included. Dropped, they would be lost for the flight: the service has started the client's
-prints from them, so a landing that looks the same is not delivered.
+the strip back. They were taken at the press, so each replaces only the cache's: one coming after a
+landing swapped onto its tile is not swapped, since it would put the press back over that landing, a
+grow's repaint the motion starts with included, while one coming after a kept shrink's landing, which
+was never swapped on, still is. The window losing focus keeps its own as its focused look either way,
+pictured while it was focused (`a_late_frame_zero_picture_after_a_landing_is_kept_as_the_focused_look_alone`).
+Dropped, they would be lost for the flight: the service has started the client's prints from them, so
+a landing that looks the same is not delivered.
 
 The end state is four watches, kept and retargeted from one generation to the next (`EndWatches` in the
 engine): every end window, captured as soon as it is where it ends (`Settle::AsSoonAsThere`, watched for
@@ -803,15 +806,21 @@ so the flight starts with it on the crop grid on the leg's anchors and the movin
 content from its first frame. On the build that flew grows at once (journal n1, 2026-10-09, 6 flights)
 the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
 after the show: held, the motion starts about 160-225ms after the press. A window the pass only
-shrinks is `EndPicture::Kept`, in `StageSummary::kept` as well: never held for, it moves once the
-follow-ups are in, and its tile flies its picture from the press to the lift. Crop-drawn on the
-leg's anchors, that picture covers every frame of a shrink, so there is no ground to cut from, and
-neither its repainted landing nor the last capture is swapped onto it (`Flight::kept`); on n1 each of
-5 shrinks had its repaint cut in 171-269ms after the press, and 2 flights cut the last capture in
-again at 325-350ms. Its landing still snaps the tile and hands focus over, its hairline and shadow
-turning; its macOS-drawn look turns with the lift. The latest pass to resize a window decides: a
-merged pass growing a kept window takes it out of `kept`, its landing swapped as a grow's with the
-motion already running, one shrinking it puts it in, and one only moving it leaves it as it was.
+shrinks is `EndPicture::Kept`, in `StageSummary::kept` as well: never held for itself, it moves
+when its flight does, once the follow-ups are in when the pass grows no window, and with the held
+grows when it does. Its tile flies its picture from the press to the lift. Crop-drawn on the leg's
+anchors, that picture covers every frame of a shrink, so there is no ground to cut from, and neither
+its repainted landing nor the last capture is swapped onto it (`Flight::keeps`); on n1 each of 5
+shrinks had its repaint cut in 171-269ms after the press, and 2 flights cut the last capture in again
+at 325-350ms. Its landing still snaps the tile and hands focus over, its hairline and shadow turning;
+its macOS-drawn look turns with the lift. Only a window frame zero was asked for flies a picture from
+the press: one starting clipped or off the display flies the cache's, whatever its age and size, so
+it keeps nothing, and its repainted landing is swapped in as it lands, as a travelling entrance's
+(`a_shrink_frame_zero_never_pictured_has_its_repaint_swapped_in`). The latest pass to resize a window
+decides, for the hold as for the picture: a merged pass growing a kept window takes it out of `kept`,
+its landing swapped as a grow's, held for if the motion has not started; one shrinking a held grow
+takes it out of `Flight::holds_for`, so the motion stops waiting for it, and puts it in `kept`; one
+only moving it leaves it as it was.
 
 Until its repainted picture lands, a tile flies the picture it has, crop-drawn on the leg's anchors,
 all of it 1:1, with the window's own ground where it does not cover the frame ("Resizes through the
@@ -828,10 +837,11 @@ length and curve, while it plays (a plain move's track too, so a crop-drawn tile
 same way): the frame keeps its curve and only the pixels cut
 (`a_swap_re_keys_a_crop_grid_on_its_tiles_track`). A tile with no track of its own rides its container
 and has nothing to re-key. Re-keying from the presented frame over the remaining duration restarted
-the ease-out and the tile lurched at every swap. The flight keeps the windows its passes held for
-(`Flight::holds_for`), and holds only for those a watch can see (`Flight::holdable`); a grow that
-missed the cap is still repainting, so it is not pictured by the last capture until it has landed
-(`Flight::final_windows`), a kept shrink never is, and one not repainted by the lift is not drawn:
+the ease-out and the tile lurched at every swap. The flight keeps the windows the latest pass to
+resize each held for (`Flight::holds_for`), and holds only for those a watch can see
+(`Flight::holdable`); a grow that missed the cap is still repainting, so it is not pictured by the
+last capture until it has landed (`Flight::final_windows`), a kept shrink never is, and one not
+repainted by the lift is not drawn:
 the lift shows the real window.
 
 The watch reads the window's server frame every 1ms until it is within 20pt of where it ends, a cheap
