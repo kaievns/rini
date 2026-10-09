@@ -130,7 +130,8 @@ are written then and never before, for every kind; a 1pt hole is cut over every 
 on screen, so the window server counts it visible and its app keeps painting, and another over the
 border and focus ring rini draws around it at rest when it wears either where it ends; and the end
 state is watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the
-windows it grows or opens to repaint (up to `HOLD_CAP`, and no longer for one whose picture the
+windows it grows or opens to repaint where their tiles end wholly on screen (`awaited_ends`; up to
+`HOLD_CAP`, and no longer for one whose picture the
 pictures service reports will not come, `Lost`, or one a merged pass sends where no watch can see it
 repaint); a strip movement moves at once.
 
@@ -781,8 +782,14 @@ Every fill for the not-yet-rendered region
 of a grow was tried and rejected by eye: `contentsRect` past the picture's
 edge extends its outermost pixels (a hole to the backdrop on a translucent
 window), and stretching the lead reads as stretching, because it is. So the
-truthful pixels are made to exist first. A pass whose destination outgrows
-its picture (`outgrows`) is held for: its frames are written as the overlay
+truthful pixels are made to exist first. A window whose destination outgrows
+its picture (`outgrows`) is held for when its tile ends wholly on screen
+(`awaited_ends`). One a pass parks outgrows its picture too, as the stack a
+maximize leaves is evened out over its column, but its tile ends off screen,
+where no watch sees it repaint, so it is not held for: given an on-screen
+end by a neighbour's vector, the sibling a maximize of the top of a right
+stack leaves was held for and lost at the cap (journal g665, g670). A held window's
+frames are written as the overlay
 goes up, so the app rerenders at its new size behind a still frame, and the
 pictures service watches it (`Settle::Repainted`). It reads the window's
 server frame every 1ms until it is within 20pt of where it ends, a cheap
