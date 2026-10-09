@@ -376,10 +376,10 @@ struct Shape {
     kind: Kind,
     start: Start,
     duration: Duration,
-    /// Held for and watched until they repaint: stand-ins and reserved entrances.
+    /// Held for and watched until they repaint: grows, stand-ins and reserved entrances.
     awaiting: Vec<WindowId>,
-    /// Watched until they repaint and never held for: windows resized, and windows flying from where
-    /// they opened.
+    /// Watched until they repaint and pictured where they end only once they have: windows resized,
+    /// held for if they grow, and windows flying from where they opened.
     repainting: Vec<WindowId>,
 }
 
@@ -1489,10 +1489,13 @@ impl FlightEngine {
         let mut entrances: Vec<PendingEntrance> = Vec::new();
         let mut awaiting: Vec<WindowId> = Vec::new();
         let mut repainting: Vec<WindowId> = Vec::new();
-        let mut waits = |window, end: EndPicture| match end {
-            EndPicture::Awaited => awaiting.push(window),
-            EndPicture::Repainting => repainting.push(window),
-            EndPicture::Lands => {}
+        let mut waits = |window, end: EndPicture| {
+            if end.holds() {
+                awaiting.push(window);
+            }
+            if end.repaints() {
+                repainting.push(window);
+            }
         };
         // Newly opened windows travelling from their spawn frame.
         let mut spawn_entrances: Vec<(WindowId, GroupRect, GroupRect)> = Vec::new();

@@ -29,6 +29,12 @@ pub fn within_stretch<U>(from: Size<U>, to: Size<U>) -> bool {
 /// `src/animation/docs/capture-overlay-research.md`.
 pub fn is_a_resize<U>(from: Size<U>, to: Size<U>) -> bool { !within_stretch(from, to) }
 
+/// Whether going from `from` to `to` grows on either axis beyond the tolerance: a resize the picture
+/// taken at `from` cannot cover at `to`, whatever the other axis does.
+pub fn grows<U>(from: Size<U>, to: Size<U>) -> bool {
+    from.width / to.width < MIN_STRETCH || from.height / to.height < MIN_STRETCH
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +86,27 @@ mod tests {
             ScreenSize::new(401.0, 400.0)
         ));
         assert!(is_a_resize(ScreenSize::new(40.0, 400.0), ScreenSize::new(41.0, 400.0)));
+    }
+
+    /// A grow on either axis grows, one shrinking on the other included; a shrink and a point of
+    /// rounding do not, and every grow is a resize.
+    #[test]
+    fn a_grow_on_either_axis_grows_and_a_shrink_or_rounding_does_not() {
+        let size = ScreenSize::new;
+        let column = size(859.0, 1081.0);
+        for (case, from, to) in [
+            ("wider", column, size(1720.0, 1081.0)),
+            ("taller", column, size(859.0, 1300.0)),
+            ("wider and shorter", column, size(1148.0, 538.0)),
+            ("from nothing", size(0.0, 0.0), column),
+        ] {
+            assert!(grows(from, to), "{case}");
+            assert!(is_a_resize(from, to), "{case}");
+        }
+        assert!(!grows(column, size(859.0, 535.0)), "a shrink");
+        assert!(!grows(column, column), "a move");
+        assert!(!grows(column, size(863.0, 1081.0)), "rounding");
+        assert!(!grows(column, size(0.0, 1081.0)), "onto an empty size");
     }
 
     #[test]

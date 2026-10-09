@@ -129,11 +129,12 @@ once those pictures arrive, each put on its tile, or 80ms pass (`FRAME_ZERO_PATI
 are written then and never before, for every kind; a 1pt hole is cut over every window that ends wholly
 on screen, so the window server counts it visible and its app keeps painting, and another over the
 border and focus ring rini draws around it at rest when it wears either where it ends; and the end
-state is watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the
-windows it draws with no picture of their own, a reserved entrance or a stand-in, to repaint (up to
-`HOLD_CAP`, and no longer for one whose picture the pictures service reports will not come, `Lost`, or
-one a merged pass sends where no watch can see it repaint); a window it resizes flies the picture it
-has at once ("A resize flies at once, then reveals"); a strip movement moves at once.
+state is watched. A layout pass then waits for the reactor's follow-up passes (25ms); one that grows a
+window, or draws one with no picture of its own, a reserved entrance or a stand-in, waits instead for
+that window to repaint (up to `HOLD_CAP`, and no longer for one whose picture the pictures service
+reports will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a window
+it only shrinks flies the picture it has at once ("A grow waits for its repaint"); a strip movement
+moves at once.
 
 The coordinator hears every tile and frame in the window server's points (`Screen`), and says its
 holes and snaps in the overlay's (`Overlay`), converted over `StageSummary.display`: the bounds of the
@@ -142,8 +143,9 @@ through.
 
 Frame zero's pictures that come after the overlay went up are swapped onto their tiles where they are
 (`Why::FrameZero`), and frame zero is never installed again, which under a flight that moves would jump
-the strip back. They were taken at the press and come before any picture of the end, so each replaces
-only the cache's. Dropped, they would be lost for the flight: the service has started the client's
+the strip back. They were taken at the press, so each replaces only the cache's: one coming after its
+window's landing is not swapped, since it would put the press back over that landing, a grow's
+repaint the motion starts with included. Dropped, they would be lost for the flight: the service has started the client's
 prints from them, so a landing that looks the same is not delivered.
 
 The end state is four watches, kept and retargeted from one generation to the next (`EndWatches` in the
@@ -784,33 +786,48 @@ element can be replaced while the window lives. The gap between the
 window vanishing and the survivors moving is AX latency plus the
 coalesce window, and is accepted.
 
-## A resize flies at once, then reveals
+## A grow waits for its repaint
 
 A resize runs a navigation's sequence (Kai, 2026-10-09; `specs/animation.md` "Resizing"): frame
-zero's SkyLight pictures at the press, the overlay up with them, and the motion as soon as the
-reactor's follow-up passes are in; the real frames are written as the overlay goes up, so the app
-repaints at its new size behind it, and each resized window is watched until it has repainted where
-it ends (`EndPicture::of_window`, `StageSummary::repainting`, `Settle::Repainted`) and never held for.
-Until then its tile flies the picture it has, crop-drawn on the leg's anchors, all of it 1:1, with the
-window's own ground where it does not cover the frame, a grow's growth ("Resizes through the overlay"
-in `src/animation/docs/animation-smoothness.md`). The repainted picture is a landing like a
-navigation's, hard-cut onto the crop grid as it is mid-run, for a grow, a shrink and a resize growing
-on one axis and shrinking on the other alike: its content stands against the edges that move less,
-and where it does not cover the frame still to come, as a shrink's before the end, the ground fills
-the span by the moving edge
-(`a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge`). `TileOverlay::swap`
-re-installs the tile's own track from the overlay's replica, the SAME begin, length and curve, while
-it plays (a plain move's track too, so a crop-drawn tile on a move re-keys the same way): the frame
-keeps its curve and only the pixels cut (`a_swap_re_keys_a_crop_grid_on_its_tiles_track`). A tile
-with no track of its own rides its container and has nothing to re-key. Re-keying from the presented
-frame over the remaining duration restarted the ease-out and the tile lurched at every swap. A window
-not repainted by the last capture is not pictured then (`Flight::final_windows`), and one not
-repainted by the lift is not drawn: the lift shows the real window.
+zero's SkyLight pictures at the press, the overlay up with them, and the real frames written as the
+overlay goes up, so the app repaints at its new size behind it. Each resized window is watched until
+it has repainted where it ends (`EndPicture::of_window`, `StageSummary::repainting`,
+`Settle::Repainted`). A window the pass grows on either axis, judged on the request's own sizes
+(`stretch::grows`), a fold widening a window as it shortens it included, is `EndPicture::Held`: in
+`StageSummary::awaiting` as well, so the overlay stands still at frame zero, in place of the 25ms
+coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show. That picture goes onto
+the tile before the motion starts, `FlightEngine::swap` posing frame zero again with it (`reinstall`),
+so the flight starts with it on the crop grid on the leg's anchors and the moving edge reveals real
+content from its first frame. On the build that flew grows at once (journal n1, 2026-10-09, 6 flights)
+the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
+after the show: held, the motion starts about 160-225ms after the press. A window the pass only
+shrinks is `Repainting`: never held for, it moves once the follow-ups are in.
+
+Until its repainted picture lands, a tile flies the picture it has, crop-drawn on the leg's anchors,
+all of it 1:1, with the window's own ground where it does not cover the frame ("Resizes through the
+overlay" in `src/animation/docs/animation-smoothness.md`): a shrink until its repaint lands mid-run,
+and a grow only once its hold ran out, its growth the ground. A repainted picture landing in motion is
+a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its content stands
+against the edges that move less, and where it does not cover the frame still to come, as a shrink's
+before the end, the ground fills the span by the moving edge
+(`a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge`). On a grow that cut, from
+the ground to content, is what Kai saw as a flicker ("i'd rather take a lag of waiting for actual new
+window content than see a flicker", 2026-10-09): the hold leaves it to a grow that misses the cap.
+`TileOverlay::swap` re-installs the tile's own track from the overlay's replica, the SAME begin,
+length and curve, while it plays (a plain move's track too, so a crop-drawn tile on a move re-keys the
+same way): the frame keeps its curve and only the pixels cut
+(`a_swap_re_keys_a_crop_grid_on_its_tiles_track`). A tile with no track of its own rides its container
+and has nothing to re-key. Re-keying from the presented frame over the remaining duration restarted
+the ease-out and the tile lurched at every swap. The flight keeps the windows its passes held for
+(`Flight::holds_for`), and holds only for those a watch can see (`Flight::holdable`); a grow that
+missed the cap is still repainting, so it is not pictured by the last capture until it has landed
+(`Flight::final_windows`), and one not repainted by the lift is not drawn: the lift shows the real
+window.
 
 The watch reads the window's server frame every 1ms until it is within 20pt of where it ends, a cheap
 window-server read, and reports it lost if it is not there `HOLD_CAP` (300ms) from the show. Once
 there, it captures it every 8ms, 125 times at most, about a second, until a capture settles or the
-lift stops the watch: `HOLD_CAP` does not bound the captures. The frame resizes instantly while the app's pixels lag behind, and a
+lift stops the watch: `HOLD_CAP` bounds the hold for a grow, not the captures. The frame resizes instantly while the app's pixels lag behind, and a
 capture taken between the two is a half-painted surface: delivering one flew the whole reveal with
 garbage. So a capture counts only when settled (`repaint_settled`): it matches the previous print
 (`renderings_match` on 32x32 RGBA thumbprints, a sample differing when any channel moves by more than
@@ -819,7 +836,8 @@ cached before the resize once counted too, and settled nearly every resize on it
 a thumbprint samples any size down to 32x32, so a surface at a new size differs from the old one
 however little of it is painted, and an unfolded Ghostty flew its old rows at the top of a blank
 surface the whole flight (2026-10-09). A window repainting without pause at its new size, streaming
-output, never settles, and flies its picture from before with the ground until the lift. *Whether a
+output, never settles: held to the cap if it grows, it flies its picture from before with the ground
+until the lift. *Whether a
 half-painted surface can hold still for 8ms and pass, and what the watch's captures cost the motion
 they now run beside, are not measured yet.*
 
@@ -828,12 +846,17 @@ rejected by eye: `contentsRect` past the picture's edge extends its outermost pi
 backdrop on a translucent window), stretching the lead reads as stretching, a top-left crop showing
 the backdrop in the growth read as a hole (recording of 2026-09-15 3:28:10), and the old picture
 stretched over the tile read as the window squashing (Kai's report of 2026-10-09). The window's own
-ground is neither. Before Kai's direction of 2026-10-09 a grow its picture could not cover held the
-overlay still for its repaint, up to `HOLD_CAP`, before any motion: the old chase held 235ms median
-(min 173, max 299) with 22 of about 45 holds out at 300ms, and 4 of 21 maximize holds hit the cap on
-2026-10-09. `HOLD_CAP` now bounds only how long that watch waits for its window to arrive, and the hold for a
-window with no picture of its own ("The reservation fallback"); a 150ms cap was tried for it and raised back to 300ms, since a watch
-waits for the real frame to reach its end before it captures. *How often 300ms is enough is not
+ground is neither. Before Kai's direction of 2026-10-09 a grow its picture could not cover, judged on
+the picture's own size, held the overlay still for its repaint, up to `HOLD_CAP`: the old chase held
+235ms median (min 173, max 299) with 22 of about 45 holds out at 300ms, and 4 of 21 maximize holds hit
+the cap on 2026-10-09, when a capture differing from the picture before still counted as a repaint.
+That direction flew every resize at once, and the cut from the ground to content on a grow was the
+flicker Kai reported the same day. The hold came back for a grow judged on the window's own sizes, so a
+move flying a cached picture smaller than its window stays a navigation, crop-drawn with its ground.
+`HOLD_CAP` bounds the hold for a grow, the hold for a window with no picture of its own ("The
+reservation fallback"), and how long a repaint watch waits for its window to arrive; a 150ms cap was
+tried and raised back to 300ms, since a watch waits for the real frame to reach its end before it
+captures. *How often 300ms is enough is not
 measured yet.*
 
 ## Structural findings

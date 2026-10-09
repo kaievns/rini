@@ -496,10 +496,12 @@ changes is how the picture maps onto it (`content_mode` in
   (`a_crop_drawn_tile_is_grounded_where_its_picture_ends`). The ground
   covers only what the picture does not, a column and the row either side of
   it meeting without overlap, since a fill under the whole tile would darken a
-  translucent window. A resize flies its before picture, a grow with the
-  ground in the growth, until its repainted picture lands mid-run, cut onto
-  the grid on the leg's anchors, a shrink's grounded by the moving edge until
-  the frame reaches it ("A resize flies at once, then reveals" in
+  translucent window. A grow is held for its repainted picture and flies it
+  from frame zero; one whose hold ran out flies its before picture with the
+  ground in the growth until the repainted one lands mid-run, cut onto the
+  grid on the leg's anchors. A shrink flies its before picture until its
+  repainted one lands mid-run, grounded by the moving edge until the frame
+  reaches it ("A grow waits for its repaint" in
   `src/transitions/docs/coordination.md`); an entrance flies its spawn picture
   until its slot picture lands. The stretch it replaced, the middle and the
   whole tile stretched past the picture, read as the window squashing, Kai's

@@ -34,7 +34,7 @@ pub const LANDING_POLL: Duration = Duration::from_millis(1);
 pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
 /// How often, and how many times at most, a window that has to repaint is captured once it is where
-/// it ends: about a second. See "A resize flies at once, then reveals" in
+/// it ends: about a second. See "A grow waits for its repaint" in
 /// `src/transitions/docs/coordination.md`.
 const REPAINT_EVERY: Duration = Duration::from_millis(8);
 const REPAINT_TRIES: usize = 125;
@@ -2541,7 +2541,7 @@ mod tests {
         );
     }
 
-    /// See "A resize flies at once, then reveals" in `src/transitions/docs/coordination.md`.
+    /// See "A grow waits for its repaint" in `src/transitions/docs/coordination.md`.
     #[test]
     fn a_window_that_has_to_repaint_is_captured_every_8ms_for_a_second() {
         assert_eq!(REPAINT_EVERY, Duration::from_millis(8));

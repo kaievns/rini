@@ -221,15 +221,22 @@ destination for a window already moving.
   ground, its background colour with its alpha, never the desktop behind it and never the picture's
   edge pixels drawn on. Only a picture the size of its frame at both ends of a movement, and the
   dark stand-in of a window with no picture, MAY be scaled.
-- A resize MUST fly as a strip movement does: from pictures taken at the press, the overlay up with
-  them, the windows written their new frames as it covers them, and the motion starting as soon as
-  the layout's follow-up passes are in. It MUST NOT wait for a resized window to repaint at its new
-  size. A window that has just opened keeps its own entrance, and a flight MAY wait for the first
-  picture of a window it has none of.
-- Each resized window MUST be pictured at its new size once it has repainted there, and that picture
-  MUST replace its old one mid-flight, for a grow, a shrink, and a window growing on one axis while
-  it shrinks on the other alike: laid against the same edges as the old one, with the window's ground
-  wherever it does not cover the frame still to come. A picture taken at its new size MUST NOT be
+- A resize MUST start as a strip movement does: from pictures taken at the press, the overlay up
+  with them, and the windows written their new frames as it covers them. A resize that grows a
+  window on either axis, one shrinking it on the other included, MUST then hold the motion, the
+  overlay standing still, until that window has repainted at its new size, up to 300ms from the
+  overlay going up, and that window MUST fly its repainted picture from the motion's first frame, so
+  its growth shows its content and never a fill cut to content mid-flight. A resize growing no window
+  MUST move as soon as the layout's follow-up passes are in, and MUST NOT wait for a resized window
+  to repaint. The press's sequence stays a navigation's, the overlay first and the frames written at
+  once; the only addition is the wait, and only for a window that grows. A window that has just
+  opened keeps its own entrance, and a flight MAY wait for the first picture of a window it has none
+  of.
+- Each resized window MUST be pictured at its new size once it has repainted there. A grow whose
+  repaint missed the 300ms flies its picture from the press, with the window's ground in its growth,
+  and its repainted picture MUST replace that one mid-flight once it comes; a shrink's repainted
+  picture MUST replace its old one mid-flight. Either is laid against the same edges as the old one,
+  with the window's ground wherever it does not cover the frame still to come. A picture taken at its new size MUST NOT be
   drawn before the window has repainted there, not even to show its focus turn; one that has not by
   the lift is never drawn, and the lift shows the window. Until then the tile keeps the look its
   picture from the press shows, the title bar and controls macOS draws focused or not, while its
@@ -260,6 +267,13 @@ destination for a window already moving.
 > to repaint before anything moved, 4 of 21 maximizes that day to the limit; a shrink had its new
 > picture cut in as soon as the window was there, however it was painted; and a window unfolded out of
 > a stack flew a half-painted picture, its old rows at the top of a blank surface, the whole flight.
+>
+> **Reported 2026-10-09**, after trying the change the report above led to. Kai: "this is a massive
+> improvement. thank you. one bug i can see straight away though is a flicker between blank fill
+> from a smaller window to actual enlarged window. i'd rather take a lag of waiting for actual new
+> window content than see a flicker." On that build (journal n1, 6 flights) the motion started
+> 56-73ms after the press, and each of 5 grows flew its growth as the window's flat ground until its
+> repainted picture was cut in 162-224ms after the press: that cut was the flicker.
 
 ## Correctness the user can see
 
@@ -556,7 +570,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   flight next pictures it on screen: ScreenCaptureKit's capture of it has no blur, and SkyLight's
   covers only what is on that display ("Known debt" in `src/pictures/docs/README.md`).
 - Once the overlay is up, a tile MUST change its picture only for one the flight took: frame zero's
-  coming after the overlay went up without it, as its window lands, as the window gaining focus
+  coming after the overlay went up without it, before any later picture of its window, as its window
+  lands, as the window gaining focus
   changes its look, as a floating window behind the strip is refreshed, or just before the lift. A
   capture made for anything else shows the window as it was, and cut in after the flight's own it
   would cut the tile back.

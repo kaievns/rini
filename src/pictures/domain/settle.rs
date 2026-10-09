@@ -1,5 +1,5 @@
-//! When a window has finished painting: two consecutive thumbprints agree. See "A resize flies at
-//! once, then reveals" in `src/transitions/docs/coordination.md`.
+//! When a window has finished painting: two consecutive thumbprints agree. See "A grow waits for its
+//! repaint" in `src/transitions/docs/coordination.md`.
 
 /// Share of samples that may differ and still count as the same rendering: forgives a blinking
 /// cursor, not a half-painted surface.

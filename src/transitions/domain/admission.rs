@@ -6,7 +6,7 @@
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayRect, ScreenRect, ScreenSize};
-use rini_geometry::stretch::is_a_resize;
+use rini_geometry::stretch::{grows, is_a_resize};
 use rini_geometry::{SameAs, to_overlay_space};
 
 use crate::decorations::domain::style::Worn;
@@ -78,30 +78,48 @@ pub(in crate::transitions) enum EntranceDecision {
     Reserve(&'static str),
 }
 
-/// How a window's picture where it ends is waited for. See "A resize flies at once, then reveals" and
-/// "A window that opens" in `src/transitions/docs/coordination.md`.
+/// How a window's picture where it ends is waited for. See "A grow waits for its repaint" and "A
+/// window that opens" in `src/transitions/docs/coordination.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::transitions) enum EndPicture {
-    /// Held for, overlay up, and watched until it has repainted where it ends.
+    /// No picture of the window: held for, overlay up, and watched until it has repainted where it
+    /// ends.
     Awaited,
-    /// Watched until it has repainted where it ends, and never held for.
+    /// A grow: held for, overlay up, watched until it has repainted where it ends, and pictured
+    /// there only once it has.
+    Held,
+    /// Watched until it has repainted where it ends, never held for, and pictured there only once it
+    /// has.
     Repainting,
     /// Captured once it is where it ends.
     Lands,
 }
 
 impl EndPicture {
-    /// A window going from `from` to `to`, drawn from a picture taken `source`: a resize flies the
-    /// picture it has at once and repaints where it ends, a move lands, and a stand-in, which is no
-    /// picture of the window, is awaited.
+    /// A window going from `from` to `to`, drawn from a picture taken `source`: a stand-in, which is
+    /// no picture of the window, is awaited; a resize growing on either axis is held for its repaint;
+    /// one that only shrinks flies the picture it has at once and repaints where it ends; a move
+    /// lands.
     pub(in crate::transitions) fn of_window(source: Route, from: ScreenSize, to: ScreenSize) -> Self {
         if source == Route::StandIn {
             Self::Awaited
+        } else if grows(from, to) {
+            Self::Held
         } else if is_a_resize(from, to) {
             Self::Repainting
         } else {
             Self::Lands
         }
+    }
+
+    /// Whether the overlay holds the motion for it.
+    pub(in crate::transitions) fn holds(self) -> bool {
+        matches!(self, Self::Awaited | Self::Held)
+    }
+
+    /// Whether it is pictured where it ends only once it has repainted there.
+    pub(in crate::transitions) fn repaints(self) -> bool {
+        matches!(self, Self::Held | Self::Repainting)
     }
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
@@ -330,27 +348,46 @@ mod tests {
 
 
 
-    /// A resize, grow, shrink or both at once, flies at once and repaints where it ends; a move, a
-    /// point of rounding included, lands; a stand-in is held for, whatever it does.
+    const COLUMN: ScreenSize = ScreenSize::new(859.0, 1081.0);
+
+    fn end(from: ScreenSize, to: ScreenSize) -> EndPicture { EndPicture::of_window(Route::SkyLight, from, to) }
+
+    /// A grow is held for its repaint, a fold that widens a window as it shortens it included.
     #[test]
-    fn a_resize_repaints_unheld_a_move_lands_and_a_stand_in_is_awaited() {
-        let size = ScreenSize::new;
-        let column = size(859.0, 1081.0);
-        let of = |from, to| EndPicture::of_window(Route::SkyLight, from, to);
-        for (case, to) in [
-            ("a grow", size(1720.0, 1081.0)),
-            ("a shrink", size(859.0, 535.0)),
-            ("wider and shorter", size(1148.0, 538.0)),
-        ] {
-            assert_eq!(of(column, to), EndPicture::Repainting, "{case}");
-            assert_eq!(of(to, column), EndPicture::Repainting, "{case}, back");
+    fn a_grow_is_held_for_its_repaint() {
+        assert_eq!(end(COLUMN, ScreenSize::new(1720.0, 1081.0)), EndPicture::Held, "a grow");
+        assert_eq!(end(COLUMN, ScreenSize::new(1148.0, 538.0)), EndPicture::Held, "a fold");
+    }
+
+    #[test]
+    fn a_shrink_repaints_unheld() {
+        assert_eq!(end(COLUMN, ScreenSize::new(859.0, 535.0)), EndPicture::Repainting);
+        assert_eq!(end(ScreenSize::new(1720.0, 1081.0), COLUMN), EndPicture::Repainting);
+    }
+
+    #[test]
+    fn a_move_lands_a_point_of_rounding_included() {
+        assert_eq!(end(COLUMN, COLUMN), EndPicture::Lands, "a move");
+        assert_eq!(end(COLUMN, ScreenSize::new(860.0, 1081.0)), EndPicture::Lands, "rounding");
+        assert_eq!(EndPicture::of_window(Route::Baked, COLUMN, COLUMN), EndPicture::Lands);
+    }
+
+    #[test]
+    fn a_stand_in_is_awaited_whatever_it_does() {
+        for to in [COLUMN, ScreenSize::new(1720.0, 1081.0), ScreenSize::new(859.0, 535.0)] {
+            assert_eq!(EndPicture::of_window(Route::StandIn, COLUMN, to), EndPicture::Awaited);
         }
-        assert_eq!(of(column, column), EndPicture::Lands, "a move");
-        assert_eq!(of(column, size(860.0, 1081.0)), EndPicture::Lands, "rounding");
-        assert_eq!(EndPicture::of_window(Route::Baked, column, column), EndPicture::Lands);
-        for to in [column, size(1720.0, 1081.0)] {
-            assert_eq!(EndPicture::of_window(Route::StandIn, column, to), EndPicture::Awaited);
-        }
+    }
+
+    /// Held for: a window with no picture and a grow. Pictured only once repainted: a grow and a
+    /// window that repaints unheld.
+    #[test]
+    fn a_grow_is_both_held_for_and_pictured_only_once_repainted() {
+        use EndPicture::*;
+        let held: Vec<_> = [Awaited, Held, Repainting, Lands].into_iter().filter(|e| e.holds()).collect();
+        let repaints: Vec<_> = [Awaited, Held, Repainting, Lands].into_iter().filter(|e| e.repaints()).collect();
+        assert_eq!(held, [Awaited, Held]);
+        assert_eq!(repaints, [Held, Repainting]);
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one
