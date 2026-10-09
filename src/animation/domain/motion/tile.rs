@@ -7,47 +7,39 @@ use rini_geometry::space::{
     ContentsRect, OverlayPoint, OverlayRect, Point, PointSpace, Rect, ScreenRect, ScreenSize, Size,
     TileRect, TileSize,
 };
-use rini_geometry::stretch::is_a_resize;
 
 use super::plan::group_relative;
 use super::score::{Channel, Edit, Node, Score, Value};
-use crate::pictures::domain::coverage::{fits_frame, outgrows};
+use crate::pictures::domain::coverage::fits_frame;
+use crate::pictures::domain::route::Route;
 use crate::pictures::domain::watch::{END_SLACK, near};
 
 /// How a tile's picture is fitted to the frame it is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ContentMode {
-    /// Scaled to fill the frame. Right for a movement whose picture matches the frame's shape.
+    /// Scaled to fill the frame. Right only where scaling is exact: a picture matching the frame at
+    /// both ends of a movement, and the stand-in's one flat pixel.
     Stretch,
-    /// Cropped or revealed: the picture draws at native 1:1 scale, and the size change is absorbed
-    /// by a seam a band in from the trailing edges — content never stretches, the moving edge
-    /// swallows or reveals it, which is how a real resize reads. The trailing band, carrying the
-    /// window's rounded corners and border, rides the moving edge intact. See "Resizes through the
-    /// overlay" in `src/animation/docs/animation-smoothness.md`.
+    /// Cropped or revealed: the picture draws at native 1:1 scale against the edge of each axis
+    /// that moves less (`Anchors`), and the size change is absorbed by a seam a band in from the
+    /// moving edge, so the moving edge swallows or reveals content, which is how a real resize
+    /// reads; where the picture ends, the window's ground. The band on the moving edge, carrying
+    /// the window's rounded corners and border, rides it intact. See "Resizes through the overlay"
+    /// in `src/animation/docs/animation-smoothness.md`.
     Crop,
 }
 
-/// Crop for a resize, and for any picture that no longer matches the frame it starts in; stretched
-/// only when picture and frames agree, where stretching is exact.
+/// Stretched only where stretching is exact: a picture fitting the frame it starts in and the one
+/// it ends in, and the stand-in, whose one flat pixel claims to cover nothing; cropped otherwise,
+/// a resize, a picture lagging one and a grow whose repainted picture has not landed alike, so
+/// content is never stretched.
 pub fn content_mode<U: PointSpace>(
     covered: ScreenSize,
+    source: Route,
     from: Size<U>,
     to: Size<U>,
 ) -> ContentMode {
-    if is_a_resize(from, to) || !fits_frame(covered, from) {
-        stand_in_mode(covered, to)
-    } else {
-        ContentMode::Stretch
-    }
-}
-
-/// How a tile fits a picture that may not cover its destination: the ordinary crop when it can,
-/// stretched when it cannot. The stretch is the stand-in of a grow whose reveal has not landed;
-/// every mode fills the whole frame, so a stand-in never shows the backdrop. A top-left crop
-/// that left the growth undrawn was tried and read as a hole (see "A grow holds, then reveals"
-/// in `src/transitions/docs/coordination.md`).
-pub fn stand_in_mode<U: PointSpace>(covered: ScreenSize, to: Size<U>) -> ContentMode {
-    if outgrows(covered, to) {
+    if source == Route::StandIn || fits_frame(covered, from) && fits_frame(covered, to) {
         ContentMode::Stretch
     } else {
         ContentMode::Crop
@@ -67,66 +59,126 @@ fn crop_band(frame: TileSize) -> f64 {
     EDGE_BAND.min(0.45 * frame.width.min(frame.height)).max(0.0)
 }
 
+/// The edge of one axis a cropped picture stands still against: the start (top, left) or the end
+/// (bottom, right).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Anchor {
+    #[default]
+    Start,
+    End,
+}
+
+/// The edge each axis of a crop-drawn tile stands still against over one leg.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Anchors {
+    pub x: Anchor,
+    pub y: Anchor,
+}
+
+impl Anchors {
+    /// Per axis, the edge that moves less from `from` to `to`, the start on a tie: a top row
+    /// growing down stands against its top, a bottom row growing up against its bottom, a window
+    /// widening leftwards against its right. A pure move ties, and either anchor rides the tile.
+    pub fn of_leg<U>(from: Rect<U>, to: Rect<U>) -> Anchors {
+        let anchor = |start: f64, end: f64, start_to: f64, end_to: f64| {
+            if (end_to - end).abs() + 1e-6 < (start_to - start).abs() {
+                Anchor::End
+            } else {
+                Anchor::Start
+            }
+        };
+        Anchors {
+            x: anchor(from.min_x(), from.max_x(), to.min_x(), to.max_x()),
+            y: anchor(from.min_y(), from.max_y(), to.min_y(), to.max_y()),
+        }
+    }
+}
+
 /// One piece of a crop-drawn tile: where it sits in the tile, and which part of the picture it
 /// shows.
-///
-/// Every mapping is 1:1 — a piece's frame is exactly as large as the picture region it shows — so
-/// nothing ever stretches. A region reaching past the picture's edge is deliberate: Core Animation
-/// extends the edge pixels outward, which paints a grow with window-coloured pixels instead of a
-/// hole.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CropPiece {
     pub frame: TileRect,
     pub contents: ContentsRect,
 }
 
-/// The 2x2 crop grid for a picture drawn into `frame`, split one `crop_band` in from the RIGHT
-/// edge and one down from the TOP.
+/// A crop-drawn tile laid out for one frame: the nine pieces of its picture, row by row from the
+/// top-left, and the three spans of the tile its ground fills where the picture ends, a column
+/// the tile's height and the row across either side of it, each empty where the picture covers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Crop {
+    pub pieces: [CropPiece; 9],
+    pub ground: [TileRect; 3],
+}
+
+/// One axis of a crop grid, in points: where a piece sits along the tile and how long it is, and
+/// where its part of the picture starts and how long that is.
+#[derive(Debug, Clone, Copy)]
+struct Span {
+    at: f64,
+    len: f64,
+    from: f64,
+    shows: f64,
+}
+
+/// The near band, the middle and the far band of one axis, and the span of it the ground fills.
+/// The bands show the picture's own edges; the middle shows the picture from the anchored band on,
+/// as much as the frame has room for, and the seam it ends at sits a band in from the edge that
+/// moves. Past the picture the middle shows all of it, and the ground fills from the middle to the
+/// moving edge's band.
+fn spans(picture: f64, frame: f64, band: f64, anchor: Anchor) -> ([Span; 3], (f64, f64)) {
+    let room = (frame - 2.0 * band).max(0.0);
+    let shows = room.min(picture - 2.0 * band);
+    let gap = room - shows;
+    let (middle, from, ground) = match anchor {
+        Anchor::Start => (band, band, band + shows),
+        Anchor::End => (band + gap, picture - band - shows, band),
+    };
+    let spans = [
+        Span { at: 0.0, len: band, from: 0.0, shows: band },
+        Span { at: middle, len: shows, from, shows },
+        Span { at: band + room, len: band, from: picture - band, shows: band },
+    ];
+    (spans, (ground, gap))
+}
+
+/// The 3x3 crop grid for a picture drawn into `frame` and its ground: four corner pieces a
+/// `crop_band` square, four edge pieces and the middle.
 ///
-/// The anchoring follows how each axis of a real resize reads:
-/// - Horizontally, content anchors LEFT and the right edge swallows or reveals it — the right
-///   band, carrying the window's right border and corners, rides the moving edge intact.
-/// - Vertically, the TITLE BAR stays put and content anchors to the BOTTOM — the prompt of a
-///   terminal rides the bottom edge — so the seam sits just below the title-bar band, and the
-///   bottom-anchored body slides into or out of it.
+/// On each axis the content stands still against the anchored edge (`Anchors::of_leg`), the band
+/// on the other edge rides the moving edge, and the reveal or the swallow happens at the seam one
+/// band in from it. All four rounded corners are corner pieces, so they survive any frame.
 ///
-/// The window's top corners live in the top band at 1:1, its bottom corners in the bottom-anchored
-/// body, so all four rounded corners survive any frame the animation passes through.
-///
-/// Piece frames and contents are LINEAR in `frame` while the band is constant, which is what lets
-/// a resize ride plain Core Animation interpolation between the endpoint grids. Every piece maps
-/// 1:1 while the frame fits inside the picture. Growing PAST the picture, the seam region
-/// stretches the picture's own content instead of reaching beyond its edge: `contentsRect` past
-/// the edge extends the outermost pixels, near-transparent on a translucent window, so a grow
-/// painted a hole to the backdrop. A picture that cannot cover its destination is not drawn
-/// cropped at all (`stand_in_mode`), so this only covers the frames a fitting picture passes
-/// through.
-pub fn crop_pieces(picture: TileSize, frame: TileSize) -> [CropPiece; 4] {
+/// Every piece is 1:1, its frame exactly as large as the picture region it shows, so nothing is
+/// ever stretched. On an axis the picture does not cover, the gap between its middle and the moving
+/// edge's band is the window's ground, never the picture's edge pixels drawn on. Pieces and ground
+/// tile the frame without overlap, so a translucent window's ground is laid once wherever it shows.
+/// A grid 1:1 and seamless at both ends of a leg stays so at every frame Core Animation
+/// interpolates between them; with the picture at one end's size, as a resize flies, it is the grid
+/// of each frame drawn.
+pub fn crop(picture: TileSize, frame: TileSize, anchors: Anchors) -> Crop {
     let pw = picture.width.max(1.0);
     let ph = picture.height.max(1.0);
-    let band = crop_band(frame).min(pw).min(ph);
-    let (bodyw, bodyh) = ((frame.width - band).max(0.0), (frame.height - band).max(0.0));
-    // What the anchored regions may show of the picture: everything up to the seam, which
-    // belongs to the bands. Capping is what keeps the seam continuous — the body must never
-    // duplicate a band's content.
-    let leadw = bodyw.min(pw - band);
-    let tailh = bodyh.min(ph - band);
-    let piece = |x: f64, y: f64, w: f64, h: f64, cx: f64, cy: f64, cw: f64, ch: f64| CropPiece {
-        frame: Rect::new(Point::new(x, y), Size::new(w, h)),
-        contents: Rect::new(Point::new(cx / pw, cy / ph), Size::new(cw / pw, ch / ph)),
-    };
-    [
-        // Title-bar band: the picture's top edge, pinned to the frame's top.
-        piece(0.0, 0.0, bodyw, band, 0.0, 0.0, leadw, band),
-        // Top-right corner: pinned top and right.
-        piece(bodyw, 0.0, band, band, pw - band, 0.0, band, band),
-        // Body: left-anchored horizontally, BOTTOM-anchored vertically — the picture's bottom
-        // rows ride the moving bottom edge, and the seam below the title bar absorbs the change.
-        piece(0.0, band, bodyw, bodyh, 0.0, ph - tailh, leadw, tailh),
-        // Right band: the picture's right edge, riding the moving right edge, bottom-anchored to
-        // stay row-continuous with the body.
-        piece(bodyw, band, band, bodyh, pw - band, ph - tailh, band, tailh),
-    ]
+    let band = crop_band(frame).min(pw / 2.0).min(ph / 2.0);
+    let (columns, (gx, gw)) = spans(pw, frame.width, band, anchors.x);
+    let (rows, (gy, gh)) = spans(ph, frame.height, band, anchors.y);
+    let pieces = std::array::from_fn(|index| {
+        let (column, row) = (columns[index % 3], rows[index / 3]);
+        CropPiece {
+            frame: Rect::new(Point::new(column.at, row.at), Size::new(column.len, row.len)),
+            contents: Rect::new(
+                Point::new(column.from / pw, row.from / ph),
+                Size::new(column.shows / pw, row.shows / ph),
+            ),
+        }
+    });
+    let span = |x: f64, y: f64, w: f64, h: f64| Rect::new(Point::new(x, y), Size::new(w, h));
+    let ground = [
+        span(gx, 0.0, gw, frame.height),
+        span(0.0, gy, gx, gh),
+        span(gx + gw, gy, frame.width - gx - gw, gh),
+    ];
+    Crop { pieces, ground }
 }
 
 /// A tile this close to its window agrees with it: under a quarter point nothing shows at the lift.
@@ -178,7 +230,7 @@ pub fn lerp_rect<U>(from: Rect<U>, to: Rect<U>, t: f64) -> Rect<U> {
 
 #[cfg(test)]
 mod tests {
-    use rini_geometry::space::Overlay;
+    use rini_geometry::space::{Overlay, Respace};
 
     use super::*;
     use crate::pictures::domain::region::within;
@@ -230,175 +282,292 @@ mod tests {
         assert_eq!(got.origin.y, 32.0);
     }
 
+    /// A picture matching the frame at both ends stretches, exactly; anything else crops, a grow
+    /// past the picture and a stale picture included, so no content is stretched. The stand-in,
+    /// covering nothing, stretches its flat pixel over any frame.
     #[test]
-    fn a_matching_movement_stretches_and_everything_else_crops() {
+    fn only_a_picture_fitting_both_ends_and_the_stand_in_stretch() {
         let col = drawn(859.0, 1081.0);
         let picture = ScreenSize::new(859.0, 1081.0);
-        assert_eq!(content_mode(picture, col, col), ContentMode::Stretch);
+        let mode = |covered: ScreenSize, from, to| content_mode(covered, Route::SkyLight, from, to);
+        assert_eq!(mode(picture, col, col), ContentMode::Stretch);
+        let rounding = ScreenSize::new(918.0, 1081.0);
         assert_eq!(
-            content_mode(
-                ScreenSize::new(918.0, 1081.0),
-                drawn(918.0, 1081.0),
-                drawn(917.0, 1081.0)
-            ),
-            ContentMode::Stretch
+            mode(rounding, drawn(918.0, 1081.0), drawn(917.0, 1081.0)),
+            ContentMode::Stretch,
+            "a point of rounding is no resize"
         );
-        // A horizontal grow past the picture is the stand-in: it stretches until the reveal
-        // lands. A vertical shrink crops.
-        assert_eq!(
-            content_mode(picture, col, drawn(1720.0, 1081.0)),
-            ContentMode::Stretch
-        );
-        assert_eq!(
-            content_mode(picture, col, drawn(859.0, 540.0)),
-            ContentMode::Crop
-        );
-        // A stale narrow picture in a wider frame is the stand-in case too: the reveal fills it.
-        assert_eq!(content_mode(ScreenSize::new(572.0, 1081.0), col, col), ContentMode::Stretch);
-        assert_eq!(
-            content_mode(ScreenSize::new(918.0, 1081.0), col, col),
-            ContentMode::Crop,
-            "a wider one crops"
-        );
+        for (case, covered, from, to) in [
+            ("a grow past the picture", picture, col, drawn(1720.0, 1081.0)),
+            ("a shrink", picture, col, drawn(859.0, 540.0)),
+            ("a stale narrow picture", ScreenSize::new(572.0, 1081.0), col, col),
+            ("a stale wide picture", ScreenSize::new(918.0, 1081.0), col, col),
+            ("the end's picture", ScreenSize::new(1720.0, 1081.0), col, drawn(1720.0, 1081.0)),
+        ] {
+            assert_eq!(mode(covered, from, to), ContentMode::Crop, "{case}");
+        }
+        let stand_in = |from, to| content_mode(ScreenSize::zero(), Route::StandIn, from, to);
+        assert_eq!(stand_in(col, drawn(1720.0, 1081.0)), ContentMode::Stretch);
+        assert_eq!(stand_in(drawn(40.0, 300.0), col), ContentMode::Stretch);
     }
 
-    /// A picture that cannot cover its destination is stretched over it; one that covers it takes
-    /// the ordinary crop. Either way the whole frame is drawn.
+    /// The legs of a resize in Kai's geometry: a column at x=4, 859 wide, its 2-stack's rows at y=3
+    /// and 542, 535 tall, its 3-stack's at 3, 362 and 721, 355 tall, all 1074 tall maximized, and a
+    /// wider column's bottom row; the anchors each axis takes.
+    fn legs() -> [(&'static str, Rect<Overlay>, Rect<Overlay>, Anchors); 10] {
+        let (top, end) = (Anchor::Start, Anchor::End);
+        let leg = |case, from, to, x, y| (case, from, to, Anchors { x, y });
+        let (column, wide) = (rect(4.0, 3.0, 859.0, 1074.0), rect(4.0, 3.0, 1721.0, 1074.0));
+        let (upper, lower) = (rect(4.0, 3.0, 859.0, 535.0), rect(4.0, 542.0, 859.0, 535.0));
+        let middle = rect(4.0, 362.0, 859.0, 355.0);
+        let (parked, slot) = (rect(1726.0, 3.0, 859.0, 1074.0), rect(865.0, 3.0, 859.0, 1074.0));
+        [
+            leg("top row growing down", upper, column, top, top),
+            leg("top row shrinking up", column, upper, top, top),
+            leg("bottom row growing up", lower, column, top, end),
+            leg("bottom row shrinking down", column, lower, top, end),
+            leg("middle row, its bottom moving more", middle, lower, top, top),
+            leg("middle row, its top moving more", middle, upper, top, end),
+            leg("moving left as it widens", rect(866.0, 3.0, 859.0, 1074.0), wide, end, top),
+            leg("widening right", column, wide, top, top),
+            leg("widening as it shrinks up", column, rect(4.0, 542.0, 1148.0, 535.0), top, end),
+            leg("a pure move", parked, slot, top, top),
+        ]
+    }
+
     #[test]
-    fn a_stand_in_never_shows_backdrop() {
-        let picture = ScreenSize::new(859.0, 1081.0);
-        assert_eq!(
-            stand_in_mode(picture, drawn(1147.0, 1081.0)),
-            ContentMode::Stretch
-        );
-        assert_eq!(
-            stand_in_mode(picture, drawn(859.0, 1300.0)),
-            ContentMode::Stretch
-        );
-        assert_eq!(
-            stand_in_mode(picture, drawn(859.0, 1081.0)),
-            ContentMode::Crop
-        );
-        assert_eq!(
-            stand_in_mode(picture, drawn(572.0, 1081.0)),
-            ContentMode::Crop
-        );
-        // Both modes fill the frame: the match is exhaustive, so a mode that left part of the
-        // frame undrawn would have to be added here to compile.
-        for w in (1..=40).map(|i| i as f64 * 50.0) {
-            for h in (1..=30).map(|i| i as f64 * 50.0) {
-                let to = drawn(w, h);
-                match stand_in_mode(picture, to) {
-                    ContentMode::Stretch => {
-                        assert!(outgrows(picture, to), "{to:?}")
-                    }
-                    ContentMode::Crop => {
-                        assert!(!outgrows(picture, to), "{to:?}")
-                    }
+    fn each_axis_of_a_leg_anchors_to_the_edge_that_moves_less() {
+        for (case, from, to, anchors) in legs() {
+            assert_eq!(Anchors::of_leg(from, to), anchors, "{case}");
+        }
+    }
+
+    fn close<U>(a: Rect<U>, b: Rect<U>, eps: f64) -> bool {
+        [
+            a.origin.x - b.origin.x,
+            a.origin.y - b.origin.y,
+            a.size.width - b.size.width,
+            a.size.height - b.size.height,
+        ]
+        .iter()
+        .all(|d| d.abs() < eps)
+    }
+
+    /// Where the picture's point `at` along one axis is drawn, from the tile's edge, by the three
+    /// pieces of one row or column of a grid: `None` where no piece shows it.
+    fn drawn_at(pieces: [&CropPiece; 3], picture: f64, at: f64, vertical: bool) -> Option<f64> {
+        pieces.into_iter().find_map(|piece| {
+            let (frame, contents) = (piece.frame, piece.contents);
+            let (start, from, shows) = if vertical {
+                (frame.origin.y, contents.origin.y * picture, contents.size.height * picture)
+            } else {
+                (frame.origin.x, contents.origin.x * picture, contents.size.width * picture)
+            };
+            (from - 1e-9 <= at && at < from + shows).then_some(start + at - from)
+        })
+    }
+
+    /// Every piece 1:1, the nine and the ground tiling `frame` with no gap and no overlap, and the
+    /// four corners band-square pieces showing the picture's own corners.
+    fn assert_seamless(grid: &Crop, picture: TileSize, frame: TileSize, case: &str) {
+        let eps = 1e-6;
+        for (i, piece) in grid.pieces.iter().enumerate() {
+            let (f, c) = (piece.frame, piece.contents);
+            let across = c.size.width * picture.width - f.size.width;
+            let down = c.size.height * picture.height - f.size.height;
+            assert!(across.abs() < eps, "{case}: piece {i} stretches across");
+            assert!(down.abs() < eps, "{case}: piece {i} stretches down");
+        }
+        let laid: Vec<TileRect> =
+            grid.pieces.iter().map(|piece| piece.frame).chain(grid.ground).collect();
+        let mut area = 0.0;
+        for (i, f) in laid.iter().enumerate() {
+            assert!(f.size.width >= -eps && f.size.height >= -eps, "{case}: {i} is {f:?}");
+            area += f.size.width * f.size.height;
+            for o in &laid[i + 1..] {
+                let w = f.max_x().min(o.max_x()) - f.min_x().max(o.min_x());
+                let h = f.max_y().min(o.max_y()) - f.min_y().max(o.min_y());
+                assert!(w <= eps || h <= eps, "{case}: {f:?} overlaps {o:?}");
+            }
+        }
+        assert!((area - frame.width * frame.height).abs() < 1e-3, "{case}: a gap at {frame:?}");
+        let band = crop_band(frame).min(picture.width / 2.0).min(picture.height / 2.0);
+        let at = |far: bool, side: f64| if far { (side - band) / side } else { 0.0 };
+        let corners = [(0, false, false), (2, true, false), (6, false, true), (8, true, true)];
+        for (i, right, bottom) in corners {
+            let corner = grid.pieces[i];
+            assert_eq!(corner.frame.size, TileSize::new(band, band), "{case}: corner {i}");
+            let x = corner.contents.origin.x - at(right, picture.width);
+            let y = corner.contents.origin.y - at(bottom, picture.height);
+            let shows = corner.contents;
+            assert!(x.abs() < eps && y.abs() < eps, "{case}: corner {i} shows {shows:?}");
+        }
+    }
+
+    /// The area of `frame` the ground of `grid` fills.
+    fn grounded(grid: &Crop) -> f64 {
+        grid.ground.iter().map(|span| span.size.width * span.size.height).sum()
+    }
+
+    /// `picture` drawn over the leg `from` to `to` on `anchors`, at each quarter as Core Animation
+    /// interpolates the endpoint grids: the grid is the one of the frame drawn, seamless and 1:1,
+    /// the content stands still against the anchored edge of each axis, the band on the other edge
+    /// rides the moving edge, and the ground fills exactly what the picture does not cover.
+    fn assert_flies(picture: TileSize, from: Rect<Overlay>, to: Rect<Overlay>, anchors: Anchors) {
+        let case = format!("{picture:?} over {from:?} to {to:?}");
+        let grid = |frame: Rect<Overlay>| crop(picture, frame.size.respace(), anchors);
+        let (first, last) = (grid(from), grid(to));
+        for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let frame = lerp_rect(from, to, t);
+            let drawn = grid(frame);
+            for (i, piece) in drawn.pieces.iter().enumerate() {
+                let frame = lerp_rect(first.pieces[i].frame, last.pieces[i].frame, t);
+                let contents = lerp_rect(first.pieces[i].contents, last.pieces[i].contents, t);
+                assert!(
+                    close(piece.frame, frame, 1e-6) && close(piece.contents, contents, 1e-9),
+                    "{case} at {t}: piece {i} is not interpolated"
+                );
+            }
+            for (i, span) in drawn.ground.iter().enumerate() {
+                let between = lerp_rect(first.ground[i], last.ground[i], t);
+                assert!(close(*span, between, 1e-6), "{case} at {t}: ground {i} not interpolated");
+            }
+            assert_seamless(&drawn, picture, frame.size.respace(), &case);
+            let (w, h) = (frame.size.width, frame.size.height);
+            let bare = w * h - w.min(picture.width) * h.min(picture.height);
+            assert!((grounded(&drawn) - bare).abs() < 1e-3, "{case} at {t}: ground off the bare");
+            for (vertical, anchor, side, start, len) in [
+                (false, anchors.x, picture.width, frame.origin.x, frame.size.width),
+                (true, anchors.y, picture.height, frame.origin.y, frame.size.height),
+            ] {
+                let pieces = &drawn.pieces;
+                let line = if vertical {
+                    [&pieces[1], &pieces[4], &pieces[7]]
+                } else {
+                    [&pieces[3], &pieces[4], &pieces[5]]
+                };
+                let on_screen = |at: f64| {
+                    start + drawn_at(line, side, at, vertical).unwrap_or_else(|| {
+                        panic!("{case} at {t}: {at} not drawn")
+                    })
+                };
+                let from_start = |depth: f64| on_screen(depth) - start;
+                let from_end = |depth: f64| start + len - on_screen(side - depth);
+                type Depth<'a> = &'a dyn Fn(f64) -> f64;
+                let (anchored, moving): (Depth, Depth) = match anchor {
+                    Anchor::Start => (&from_start, &from_end),
+                    Anchor::End => (&from_end, &from_start),
+                };
+                for depth in [5.0, 50.0, 200.0] {
+                    let off = anchored(depth) - depth;
+                    assert!(off.abs() < 1e-6, "{case} at {t}: content {off} off its anchor");
+                }
+                let off = moving(5.0) - 5.0;
+                assert!(off.abs() < 1e-6, "{case} at {t}: the band {off} off the moving edge");
+            }
+        }
+    }
+
+    /// A resize drawn with a picture covering both its ends: no ground anywhere.
+    #[test]
+    fn a_resize_stands_still_against_the_edge_that_moves_less_and_clips_at_the_moving_one() {
+        for (_, from, to, anchors) in legs() {
+            let picture = TileSize::new(
+                from.size.width.max(to.size.width),
+                from.size.height.max(to.size.height),
+            );
+            assert_flies(picture, from, to, anchors);
+            assert_eq!(grounded(&crop(picture, from.size.respace(), anchors)), 0.0);
+        }
+    }
+
+    /// A resize flown with the picture of either end, as one is: where the picture covers the frame
+    /// the ground is empty, where it ends the ground fills the rest, and nothing stretches. A grow
+    /// flying its before picture grounds its growth; a shrink flying it, none.
+    #[test]
+    fn a_resize_flown_with_either_ends_picture_grounds_only_where_the_picture_ends() {
+        for (case, from, to, anchors) in legs() {
+            for picture in [from.size.respace(), to.size.respace()] {
+                assert_flies(picture, from, to, anchors);
+            }
+            let before = crop(from.size.respace(), to.size.respace(), anchors);
+            let grows = to.size.width > from.size.width || to.size.height > from.size.height;
+            assert_eq!(grounded(&before) > 0.0, grows, "{case}");
+        }
+    }
+
+    /// A frame narrower than two bands still tiles 1:1 whichever way it is anchored.
+    #[test]
+    fn a_frame_narrower_than_two_bands_still_tiles_one_to_one() {
+        let picture = TileSize::new(859.0, 1081.0);
+        let frame = TileSize::new(20.0, 1081.0);
+        for x in [Anchor::Start, Anchor::End] {
+            for y in [Anchor::Start, Anchor::End] {
+                let grid = crop(picture, frame, Anchors { x, y });
+                assert_seamless(&grid, picture, frame, "20pt wide");
+            }
+        }
+    }
+
+    /// A picture narrower than two bands on an axis, a small spawn picture or a dialog, is all corner
+    /// bands there, each half its side, with no middle, so no piece runs negative or overlaps.
+    #[test]
+    fn a_picture_narrower_than_two_bands_is_all_corners() {
+        let frame = TileSize::new(859.0, 1081.0);
+        for picture in [TileSize::new(60.0, 1081.0), TileSize::new(859.0, 60.0)] {
+            for x in [Anchor::Start, Anchor::End] {
+                for y in [Anchor::Start, Anchor::End] {
+                    let grid = crop(picture, frame, Anchors { x, y });
+                    assert_seamless(&grid, picture, frame, &format!("{picture:?} {x:?} {y:?}"));
+                    assert_eq!(grid.pieces[0].frame.size, TileSize::new(30.0, 30.0), "half its side");
                 }
             }
         }
     }
 
-    /// Every crop piece maps 1:1 while the frame fits inside the picture — its frame exactly as
-    /// large as the picture region it shows — and the four pieces always tile the frame with no
-    /// gap and no overlap. Any violation is a stretch or a seam, which is exactly what this mode
-    /// exists to rule out.
+    /// Growing past the picture, the middle shows all of the picture's own content 1:1 — never
+    /// stretched, never reaching past its edge, where a translucent window's near-transparent
+    /// pixels painted the grow as a hole — the ground fills between it and the moving edge's band,
+    /// and both bands stay 1:1 so the corners and hairline never distort.
     #[test]
-    fn crop_pieces_map_one_to_one_and_tile_the_frame() {
+    fn a_grow_past_the_picture_shows_all_of_it_and_grounds_the_rest() {
         let picture = TileSize::new(859.0, 1081.0);
-        let frames = [
-            TileSize::new(572.0, 1081.0), // shrink
-            TileSize::new(859.0, 540.0),  // vertical
-            TileSize::new(20.0, 1081.0),  // narrower than the band
-        ];
-        for frame in frames {
-            let mut area = 0.0;
-            for piece in crop_pieces(picture, frame) {
-                assert!(
-                    (piece.contents.size.width * picture.width - piece.frame.size.width).abs()
-                        < 1e-9,
-                    "a piece stretches horizontally at {frame:?}"
-                );
-                assert!(
-                    (piece.contents.size.height * picture.height - piece.frame.size.height).abs()
-                        < 1e-9,
-                    "a piece stretches vertically at {frame:?}"
-                );
-                area += piece.frame.size.width * piece.frame.size.height;
-            }
-            assert!(
-                (area - frame.width * frame.height).abs() < 1e-6,
-                "gap or overlap at {frame:?}"
-            );
+        let frame = TileSize::new(1720.0, 1081.0);
+        for (x, middle_at, ground_at) in [(Anchor::Start, 40.0, 819.0), (Anchor::End, 901.0, 40.0)]
+        {
+            let grid = crop(picture, frame, Anchors { x, y: Anchor::Start });
+            let middle = &grid.pieces[4];
+            assert!((middle.contents.origin.x * picture.width - 40.0).abs() < 1e-9);
+            assert!((middle.contents.size.width * picture.width - (859.0 - 80.0)).abs() < 1e-9);
+            assert_eq!(middle.frame.origin.x, middle_at, "{x:?}");
+            assert_eq!(middle.frame.size.width, 859.0 - 80.0, "1:1, not stretched");
+            let (left, right) = (&grid.pieces[3], &grid.pieces[5]);
+            assert!((left.contents.size.width * picture.width - 40.0).abs() < 1e-9);
+            assert_eq!(left.frame.size.width, 40.0);
+            assert!((right.contents.origin.x * picture.width - (859.0 - 40.0)).abs() < 1e-9);
+            assert!((right.contents.size.width * picture.width - 40.0).abs() < 1e-9);
+            assert_eq!((right.frame.origin.x, right.frame.size.width), (1680.0, 40.0));
+            let column = TileRect::new(Point::new(ground_at, 0.0), Size::new(861.0, 1081.0));
+            assert_eq!(grid.ground[0], column, "{x:?}: the ground, the frame's height");
+            assert_eq!(grounded(&grid), 861.0 * 1081.0, "{x:?}: no row grounded");
+            assert_seamless(&grid, picture, frame, "a grow past the picture");
         }
     }
 
-    /// Growing past the picture, the leading region stretches the picture's own content — never
-    /// reaches past its edge, where a translucent window's near-transparent pixels painted the
-    /// grow as a hole — and the trailing band stays 1:1 so the corners and hairline never distort.
+    /// A picture short of the frame on both axes, a missed hold maximizing from a stack: the ground
+    /// column and row meet without overlap, so a translucent ground is laid once everywhere.
     #[test]
-    fn a_grow_past_the_picture_stretches_the_lead_and_keeps_the_band_intact() {
-        let picture = TileSize::new(859.0, 1081.0);
-        let frame = TileSize::new(1720.0, 1081.0);
-        let pieces = crop_pieces(picture, frame);
-        let body = &pieces[0];
-        // The body shows everything up to the trailing band and no further.
-        assert!((body.contents.origin.x).abs() < 1e-9);
-        assert!((body.contents.size.width * picture.width - (859.0 - 40.0)).abs() < 1e-9);
-        assert_eq!(
-            body.frame.size.width,
-            1720.0 - 40.0,
-            "stretched across the grown lead"
-        );
-        // The trailing band is still the picture's own trailing 40pt at 1:1.
-        let band = &pieces[1];
-        assert!((band.contents.size.width * picture.width - 40.0).abs() < 1e-9);
-        assert_eq!(band.frame.size.width, 40.0);
-        // And the pieces still tile the frame exactly.
-        let area: f64 = pieces.iter().map(|p| p.frame.size.width * p.frame.size.height).sum();
-        assert!((area - frame.width * frame.height).abs() < 1e-6);
-    }
-
-    /// The right band shows the picture's own right edge pinned to the frame's moving right edge,
-    /// so the window's right border and corners ride it intact.
-    #[test]
-    fn crop_right_band_comes_from_the_pictures_right_edge() {
-        let picture = TileSize::new(859.0, 1081.0);
-        let pieces = crop_pieces(picture, TileSize::new(572.0, 1081.0));
-        let band = &pieces[3];
-        assert!((band.contents.origin.x * picture.width - (859.0 - 40.0)).abs() < 1e-9);
-        assert_eq!(band.frame.origin.x, 572.0 - 40.0);
-        assert_eq!(band.frame.size.width, 40.0);
-    }
-
-    /// A vertical resize anchors like the real thing: the title bar stays put at the top, the
-    /// bottom content rides the moving bottom edge, and the seam sits just below the title-bar
-    /// band. Cutting at the bottom instead read as the window sliding into a slot.
-    #[test]
-    fn a_vertical_resize_pins_the_title_bar_and_anchors_content_to_the_bottom() {
-        let picture = TileSize::new(859.0, 1081.0);
-        let frame = TileSize::new(859.0, 540.0);
-        let pieces = crop_pieces(picture, frame);
-        let title = &pieces[0];
-        assert_eq!(title.frame.origin.y, 0.0, "title band pinned to the top");
-        assert!(
-            (title.contents.origin.y).abs() < 1e-9,
-            "showing the picture's top"
-        );
-        assert_eq!(title.frame.size.height, 40.0);
-        let body = &pieces[2];
-        assert_eq!(
-            body.frame.origin.y, 40.0,
-            "body starts at the seam below the title"
-        );
-        // Bottom-anchored: the contents reach the picture's bottom edge exactly.
-        let content_bottom = (body.contents.origin.y + body.contents.size.height) * picture.height;
-        assert!(
-            (content_bottom - 1081.0).abs() < 1e-9,
-            "contents reach the picture's bottom"
-        );
-        assert_eq!(body.frame.size.height, 540.0 - 40.0);
+    fn a_picture_short_on_both_axes_is_grounded_once() {
+        let picture = TileSize::new(859.0, 535.0);
+        let frame = TileSize::new(1721.0, 1074.0);
+        for x in [Anchor::Start, Anchor::End] {
+            for y in [Anchor::Start, Anchor::End] {
+                let grid = crop(picture, frame, Anchors { x, y });
+                assert_seamless(&grid, picture, frame, "maximized from a stack");
+                let bare = 1721.0 * 1074.0 - 859.0 * 535.0;
+                assert!((grounded(&grid) - bare).abs() < 1e-6, "{x:?} {y:?}");
+            }
+        }
     }
 
     /// The band shrinks with the frame and vanishes at zero, so an entrance growing from nothing
@@ -422,7 +591,10 @@ mod tests {
             TileSize::new(856.0, 540.0),
             TileSize::new(1200.0, 1300.0),
         ] {
-            for piece in crop_pieces(picture, frame) {
+            let anchors = [Anchor::Start, Anchor::End]
+                .into_iter()
+                .flat_map(|x| [Anchor::Start, Anchor::End].map(|y| Anchors { x, y }));
+            for piece in anchors.flat_map(|anchors| crop(picture, frame, anchors).pieces) {
                 let whole = piece.contents;
                 let cut = within(region, whole);
                 let eps = 1e-12;

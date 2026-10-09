@@ -2,9 +2,11 @@
 //! for the flight overlay, the switcher's cards and the bar alike.
 
 use objc2_core_foundation::CFType;
+use objc2_core_graphics::{CGColor, CGColorSpace};
 use objc2_quartz_core::CALayer;
 use rini_geometry::space::ToCg;
 
+use crate::pictures::domain::ground::Ground;
 use crate::pictures::platform::picture::{Picture, Pixels};
 
 /// Hands a captured picture to a layer, whichever kind of pixels it holds: a region as its whole
@@ -28,6 +30,18 @@ pub fn set_contents(layer: &CALayer, picture: &CFType) {
     unsafe { layer.setContents(Some(picture.as_ref())) }
 }
 
+/// Fills `layer` with `picture`'s ground, in the device RGB its body samples were read in
+/// (`crate::pictures::platform::measure`), so the fill matches the pixels drawn beside it. The first
+/// fill of a picture reads its ground (`Picture::ground`).
+pub fn set_layer_ground(layer: &CALayer, picture: &Picture) {
+    let Ground { r, g, b, a } = picture.ground();
+    let space = CGColorSpace::new_device_rgb();
+    let components = [r, g, b, a];
+    // SAFETY: the four components an RGB space with alpha takes, read during the call.
+    let colour = unsafe { CGColor::new(space.as_deref(), components.as_ptr()) };
+    layer.setBackgroundColor(colour.as_deref());
+}
+
 /// Lets go of `layer`'s picture. A hidden layer keeps its contents, and the picture with them, until
 /// they are replaced.
 pub fn clear_contents(layer: &CALayer) {
@@ -44,7 +58,7 @@ mod tests {
     use super::*;
     use crate::pictures::domain::region::WHOLE;
     use crate::pictures::platform::bitmap::rgba_bitmap_context;
-    use crate::pictures::platform::picture::test_picture;
+    use crate::pictures::platform::picture::{LazyGround, test_picture};
 
     fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
@@ -67,6 +81,20 @@ mod tests {
     fn contents_address(layer: &CALayer) -> Option<usize> {
         // SAFETY: a read of the layer's own property.
         unsafe { layer.contents() }.map(|object| Retained::as_ptr(&object) as usize)
+    }
+
+    /// A layer filled with a picture's ground takes its colour and its alpha.
+    #[test]
+    fn a_layer_is_filled_with_its_pictures_ground() {
+        let layer = CALayer::layer();
+        let mut picture = test_picture(ScreenSize::new(1.0, 1.0));
+        picture.ground = LazyGround::known(Ground { r: 0.1, g: 0.2, b: 0.3, a: 0.95 });
+        set_layer_ground(&layer, &picture);
+        let colour = layer.backgroundColor().expect("filled");
+        assert_eq!(CGColor::number_of_components(Some(&colour)), 4);
+        // SAFETY: the colour's own four components, read while it is held.
+        let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
+        assert_eq!(got, [0.1, 0.2, 0.3, 0.95]);
     }
 
     /// Either kind of picture reaches the layer, under the debug assertions every test build has.

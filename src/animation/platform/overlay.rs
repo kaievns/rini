@@ -24,7 +24,7 @@ use objc2_quartz_core::{
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
     ContentsRect, FromCg, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenPoint, ScreenRect, TileSize,
-    ToCg,
+    TileRect, ToCg,
 };
 use rini_runloop::turns;
 
@@ -34,7 +34,7 @@ use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Form, Node, Score, Track, Value,
 };
-use crate::animation::domain::motion::tile::{ContentMode, content_mode, crop_pieces};
+use crate::animation::domain::motion::tile::{Anchors, ContentMode, content_mode, crop};
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::decorations::domain::style::Worn;
 use crate::decorations::platform::layers::{
@@ -43,7 +43,7 @@ use crate::decorations::platform::layers::{
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
-use crate::pictures::platform::layer::{clear_contents, set_layer_contents};
+use crate::pictures::platform::layer::{clear_contents, set_layer_contents, set_layer_ground};
 use crate::pictures::platform::picture::Picture;
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
@@ -415,37 +415,43 @@ fn remove_resize(tile: &Tile) {
     remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
     tile.decorations.remove_resize();
     if let Some(grid) = &tile.crop_grid {
-        for piece in &grid.pieces {
-            remove_under(piece, &[PIECE_MOVE_KEY, PIECE_SIZE_KEY, PIECE_CONTENTS_KEY]);
+        for layer in grid.layers() {
+            remove_under(layer, &[PIECE_MOVE_KEY, PIECE_SIZE_KEY, PIECE_CONTENTS_KEY]);
         }
     }
 }
 
-/// Carries a crop-drawn tile's pieces along `track`: at every key each piece is where the grid of
-/// that key's frame puts it, its contents composed with the tile's region.
+/// Carries a crop-drawn tile's pieces and its ground along `track`: at every key each is where the
+/// grid of that key's frame puts it, a piece's contents composed with the tile's region.
 fn install_crop_grid(tile: &Tile, track: &Track) {
     let (Some(grid), Some(picture)) = (&tile.crop_grid, tile.crop_of) else {
         return;
     };
-    let origin = CGPoint::new(0.0, 0.0);
+    let laid = |value: Value| crop(picture, as_frame(value).size.respace(), tile.anchors);
     for (index, layer) in grid.pieces.iter().enumerate() {
-        let piece = |value: Value| crop_pieces(picture, as_frame(value).size.respace())[index];
-        let position = animation(track, "position", |value| {
-            point_object(piece(value).frame.origin.to_cg())
-        });
-        add_under(layer, &position, PIECE_MOVE_KEY);
-        if changes(track, |value| piece(value).frame.size) {
-            let bounds = animation(track, "bounds", |value| {
-                rect_object(CGRect::new(origin, piece(value).frame.size.to_cg()))
-            });
-            add_under(layer, &bounds, PIECE_SIZE_KEY);
-        } else {
-            remove_under(layer, &[PIECE_SIZE_KEY]);
-        }
+        install_frame(layer, track, |value| laid(value).pieces[index].frame);
         let contents = animation(track, "contentsRect", |value| {
-            rect_object(within(tile.region, piece(value).contents).to_cg())
+            rect_object(within(tile.region, laid(value).pieces[index].contents).to_cg())
         });
         add_under(layer, &contents, PIECE_CONTENTS_KEY);
+    }
+    for (index, layer) in grid.ground.iter().enumerate() {
+        install_frame(layer, track, |value| laid(value).ground[index]);
+    }
+}
+
+/// Carries one layer of a crop grid along `track` to where `frame` lays it at every key.
+fn install_frame(layer: &CALayer, track: &Track, frame: impl Fn(Value) -> TileRect) {
+    let origin = CGPoint::new(0.0, 0.0);
+    let position = animation(track, "position", |value| point_object(frame(value).origin.to_cg()));
+    add_under(layer, &position, PIECE_MOVE_KEY);
+    if changes(track, |value| frame(value).size) {
+        let bounds = animation(track, "bounds", |value| {
+            rect_object(CGRect::new(origin, frame(value).size.to_cg()))
+        });
+        add_under(layer, &bounds, PIECE_SIZE_KEY);
+    } else {
+        remove_under(layer, &[PIECE_SIZE_KEY]);
     }
 }
 
@@ -461,18 +467,29 @@ struct Tile {
     worn: Worn,
     /// Whether it is drawn focused, as last dressed or turned since.
     focused: bool,
-    /// The four crop pieces, created on first crop-drawn animation and pooled with the tile.
+    /// The nine crop pieces and the ground, created on first crop-drawn animation and pooled with
+    /// the tile.
     crop_grid: Option<CropGrid>,
     /// Size in points of the picture the crop pieces show; `None` when stretching.
     crop_of: Option<TileSize>,
+    /// The edges the crop pieces stand still against, picked for the tile's leg.
+    anchors: Anchors,
     /// The part of the contents image that is the tile's picture, which the crop pieces' contents
     /// are composed with: all of it unless the picture is a region of a composite.
     region: ContentsRect,
 }
 
-/// The four layers a crop-drawn tile is composed of, children of the tile's picture layer.
+/// The layers a crop-drawn tile is composed of, children of the tile's picture layer: the nine
+/// pieces of its picture, and the three its ground fills where the picture ends.
 struct CropGrid {
-    pieces: [Retained<CALayer>; 4],
+    pieces: [Retained<CALayer>; 9],
+    ground: [Retained<CALayer>; 3],
+}
+
+impl CropGrid {
+    fn layers(&self) -> impl Iterator<Item = &CALayer> {
+        self.pieces.iter().chain(&self.ground).map(|layer| &**layer)
+    }
 }
 
 /// What a flight is drawn with: the desktop behind it, the containers, the floating container's twin
@@ -1045,9 +1062,10 @@ impl Tree {
     }
 
     /// Installs `track` on the layers that draw its node. A container's movement begins every accent
-    /// riding it again from the replica; a tile's new leg first judges its content mode again against
-    /// its first and last key, and sets it only when it changes, while the leg it is on with its end
-    /// moved keeps the tile drawn as it was.
+    /// riding it again from the replica; a tile's new leg first picks its crop's anchors from its
+    /// first and last key, laying the grid at the tile's model again when they change, and judges
+    /// its content mode again against them, setting it only when it changes, while the leg it is on
+    /// with its end moved keeps the tile drawn as it was.
     fn install(&mut self, track: &Track, tiles: &[OverlayTile], new_leg: bool) {
         match track.node() {
             Node::Container(key) => {
@@ -1062,13 +1080,23 @@ impl Tree {
             Node::Tile(window) => {
                 assert_eq!(track.channel(), Channel::Base, "no accent rides a tile");
                 let scale = self.scale;
+                let model = self.replica.model(Node::Tile(window)).map(as_frame);
                 let Some(entry) = self.tile_layers.get_mut(&window) else {
                     return;
                 };
                 let keys = track.keys();
                 let (first, last) = (as_frame(keys[0].1), as_frame(keys[keys.len() - 1].1));
+                let anchors = Anchors::of_leg(first, last);
+                if new_leg && anchors != entry.anchors {
+                    entry.anchors = anchors;
+                    if let Some(model) = model {
+                        layout_crop_grid(entry, model.size.respace());
+                    }
+                }
                 if new_leg && let Some(tile) = tiles.iter().find(|tile| tile.window == window) {
-                    let mode = content_mode(tile.snapshot.coverage.covered, first.size, last.size);
+                    let snapshot = &tile.snapshot;
+                    let (covered, source) = (snapshot.coverage.covered, snapshot.source);
+                    let mode = content_mode(covered, source, first.size, last.size);
                     if (mode == ContentMode::Crop) != entry.crop_of.is_some() {
                         set_tile_content(entry, &tile.snapshot, mode, last.size.respace(), scale);
                     }
@@ -1183,7 +1211,7 @@ impl Tree {
         let playing =
             self.replica.track(node, Channel::Base).filter(|track| track.at(at).is_some());
         clip_corners(&entry.picture, clipped);
-        swap_onto(entry, picture, frame.size.respace(), playing);
+        swap_onto(entry, picture, frame.size.respace(), playing, self.scale);
     }
 
     /// The desktop drawn behind the tiles, at its own covered size so it stays in register with the
@@ -1222,8 +1250,9 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
     entry.picture.setContentsScale(scale);
     entry.decorations.wear(&entry.worn.decoration, scale);
     clip_corners(&entry.picture, tile.clipped);
-    let covered = tile.snapshot.coverage.covered;
-    let mode = content_mode(covered, tile.from.size, tile.to.size);
+    let (covered, source) = (tile.snapshot.coverage.covered, tile.snapshot.source);
+    let mode = content_mode(covered, source, tile.from.size, tile.to.size);
+    entry.anchors = Anchors::of_leg(tile.from, tile.to);
     set_tile_content(entry, &tile.snapshot, mode, tile.from.size.respace(), scale);
     entry.decorations.show(tile.worn.style(tile.focused));
     entry.picture.setHidden(false);
@@ -1233,21 +1262,41 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) {
 /// pulses a translucent window's net opacity (see "Mid-flight passes" in
 /// `src/transitions/docs/coordination.md`). A crop-drawn tile's grid is laid again for `size`, its
 /// model, and re-keyed along `playing`, its own track while it plays, so the frame keeps its curve
-/// and only the pixels cut. Callers hold the transaction.
-fn swap_onto(entry: &mut Tile, snapshot: &Picture, size: TileSize, playing: Option<&Track>) {
+/// and only the pixels cut. A stretched tile stays stretched where `snapshot` fits both ends of
+/// `playing`, or `size` with none, and is cut onto the crop grid otherwise, as a stand-in's real
+/// picture landing on a resize is. Callers hold the transaction.
+fn swap_onto(
+    entry: &mut Tile,
+    snapshot: &Picture,
+    size: TileSize,
+    playing: Option<&Track>,
+    scale: f64,
+) {
     if entry.crop_of.is_none() {
-        set_layer_contents(&entry.picture, snapshot);
-        return;
-    }
-    // The new picture is the window at its new size; the grid built against the old one would
-    // draw it squashed.
-    if let Some(grid) = &entry.crop_grid {
-        for piece in &grid.pieces {
-            set_layer_contents(piece, snapshot);
+        let (from, to) = playing.map_or((size, size), |track| {
+            let keys = track.keys();
+            let end = |at: usize| -> TileSize { as_frame(keys[at].1).size.respace() };
+            (end(0), end(keys.len() - 1))
+        });
+        let mode = content_mode(snapshot.coverage.covered, snapshot.source, from, to);
+        set_tile_content(entry, snapshot, mode, size, scale);
+        if mode == ContentMode::Stretch {
+            return;
         }
+    } else {
+        // The new picture is the window at its new size; the grid built against the old one would
+        // draw it squashed.
+        if let Some(grid) = &entry.crop_grid {
+            for piece in &grid.pieces {
+                set_layer_contents(piece, snapshot);
+            }
+            for ground in &grid.ground {
+                set_layer_ground(ground, snapshot);
+            }
+        }
+        crop_to(entry, snapshot);
+        layout_crop_grid(entry, size);
     }
-    crop_to(entry, snapshot);
-    layout_crop_grid(entry, size);
     if let Some(track) = playing {
         install_tile_track(entry, track);
     }
@@ -1280,6 +1329,7 @@ fn new_tile(container: &CALayer) -> Tile {
         focused: false,
         crop_grid: None,
         crop_of: None,
+        anchors: Anchors::default(),
         region: WHOLE,
     }
 }
@@ -1309,8 +1359,8 @@ impl Tile {
         self.picture.removeAllAnimations();
         self.decorations.remove_animations();
         if let Some(grid) = &self.crop_grid {
-            for piece in &grid.pieces {
-                piece.removeAllAnimations();
+            for layer in grid.layers() {
+                layer.removeAllAnimations();
             }
         }
     }
@@ -1362,8 +1412,13 @@ fn set_tile_content(
             let grid = entry.crop_grid.get_or_insert_with(|| new_crop_grid(&entry.picture));
             for piece in &grid.pieces {
                 piece.setContentsScale(scale);
-                piece.setHidden(false);
                 set_layer_contents(piece, snapshot);
+            }
+            for ground in &grid.ground {
+                set_layer_ground(ground, snapshot);
+            }
+            for layer in grid.layers() {
+                layer.setHidden(false);
             }
             crop_to(entry, snapshot);
             layout_crop_grid(entry, frame);
@@ -1371,8 +1426,8 @@ fn set_tile_content(
         ContentMode::Stretch => {
             entry.crop_of = None;
             if let Some(grid) = &entry.crop_grid {
-                for piece in &grid.pieces {
-                    piece.setHidden(true);
+                for layer in grid.layers() {
+                    layer.setHidden(true);
                 }
             }
             set_layer_contents(&entry.picture, snapshot);
@@ -1392,26 +1447,34 @@ fn layout_crop_grid(entry: &Tile, frame: TileSize) {
     let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) else {
         return;
     };
-    for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+    let laid = crop(picture, frame, entry.anchors);
+    for (layer, piece) in grid.pieces.iter().zip(laid.pieces) {
         layer.setFrame(piece.frame.to_cg());
         layer.setContentsRect(within(entry.region, piece.contents).to_cg());
     }
+    for (layer, span) in grid.ground.iter().zip(laid.ground) {
+        layer.setFrame(span.to_cg());
+    }
 }
 
-/// Creates the four crop pieces under a tile's picture layer.
+/// Creates the nine crop pieces and the three ground layers under a tile's picture layer.
 fn new_crop_grid(container: &CALayer) -> CropGrid {
-    let pieces = std::array::from_fn(|_| {
+    let layer = || {
         let layer = CALayer::layer();
         layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        // SAFETY: Core Animation's own filter-name constants.
-        unsafe {
-            layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
-            layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
-        }
         container.addSublayer(&layer);
         layer
+    };
+    let pieces = std::array::from_fn(|_| {
+        let piece = layer();
+        // SAFETY: Core Animation's own filter-name constants.
+        unsafe {
+            piece.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
+            piece.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
+        }
+        piece
     });
-    CropGrid { pieces }
+    CropGrid { pieces, ground: std::array::from_fn(|_| layer()) }
 }
 
 /// An empty container covering the overlay, under `root`.
@@ -1447,6 +1510,7 @@ mod tests {
     use crate::animation::domain::motion::glide::Leg;
     use crate::animation::domain::motion::nudge::nudge_track;
     use crate::animation::domain::motion::score::SAMPLE_STEP;
+    use crate::animation::domain::motion::tile::Anchor;
     use crate::decorations::domain::shape::{self, shadow_mask_frame};
     use crate::decorations::domain::stack::SHADOW_Z;
     use crate::decorations::platform::layers::{shadow_mask_path, silhouette_path};
@@ -1836,10 +1900,10 @@ mod tests {
 
     /// A tile's track rides every layer that draws the tile, on the track's begin, length and
     /// curve, each value mapped from the frame its key holds: a move only the picture, the caster
-    /// and the hairline, and a resize their bounds, the silhouette, the mask, the crop pieces, the
-    /// hairline's and the picture's corner and the outline's path as well, each piece at the tile's
-    /// corner. A move after a resize takes the resize's keys away, or they would go on drawing the
-    /// old sizes.
+    /// and the hairline, and a resize their bounds, the silhouette, the mask, the crop pieces and
+    /// the ground, the hairline's and the picture's corner and the outline's path as well, each
+    /// piece at the tile's corner. A move after a resize takes the resize's keys away, or they
+    /// would go on drawing the old sizes.
     #[test]
     fn a_tile_track_is_installed_on_every_layer_of_the_tile() {
         let origin = CGPoint::new(0.0, 0.0);
@@ -1865,6 +1929,7 @@ mod tests {
         tile.crop_grid = Some(new_crop_grid(&tile.picture));
         let picture = TileSize::new(1200.0, 1081.0);
         tile.crop_of = Some(picture);
+        tile.anchors = Anchors { x: Anchor::End, y: Anchor::End };
         let resizing = tile_track(
             typed(1726.0, 32.0, 1200.0, 1081.0),
             typed(865.0, 32.0, 20.0, 1081.0),
@@ -1903,7 +1968,7 @@ mod tests {
         );
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for (index, layer) in grid.pieces.iter().enumerate() {
-            let piece = |v: Value| crop_pieces(picture, size(v))[index];
+            let piece = |v: Value| crop(picture, size(v), tile.anchors).pieces[index];
             assert_eq!(
                 installed(layer, "rini.piece.move", point_in),
                 expected(&resizing, |v| piece(v).frame.origin.to_cg())
@@ -1911,6 +1976,13 @@ mod tests {
             assert_eq!(
                 installed(layer, "rini.piece.contents", rect_in),
                 expected(&resizing, |v| within(tile.region, piece(v).contents).to_cg())
+            );
+        }
+        for (index, layer) in grid.ground.iter().enumerate() {
+            let span = |v: Value| crop(picture, size(v), tile.anchors).ground[index];
+            assert_eq!(
+                installed(layer, "rini.piece.move", point_in),
+                expected(&resizing, |v| span(v).origin.to_cg())
             );
         }
         assert_eq!(
@@ -1940,7 +2012,7 @@ mod tests {
         }
         for layer in [&*tile.decorations.shadow_mask as &CALayer, &tile.decorations.outline]
             .into_iter()
-            .chain(grid.pieces.iter().map(|piece| &**piece))
+            .chain(grid.layers())
         {
             assert!(animation_keys(layer).is_empty());
         }
@@ -2266,10 +2338,11 @@ mod tests {
         let picture = TileSize::new(856.0, 1081.0);
         tile.crop_of = Some(picture);
         tile.region = typed(0.5, 0.0, 0.5, 1.0);
+        tile.anchors = Anchors { x: Anchor::End, y: Anchor::Start };
         let frame = TileSize::new(600.0, 1081.0);
         layout_crop_grid(&tile, frame);
         let grid = tile.crop_grid.as_ref().unwrap();
-        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+        for (layer, piece) in grid.pieces.iter().zip(crop(picture, frame, tile.anchors).pieces) {
             let shown = within(tile.region, piece.contents).to_cg();
             assert_eq!(layer.contentsRect(), shown);
             assert!(
@@ -2287,7 +2360,9 @@ mod tests {
             0.35,
         );
         install_crop_grid(&tile, &resize);
-        let ends = crop_pieces(picture, frame).into_iter().zip(crop_pieces(picture, to));
+        let ends = crop(picture, frame, tile.anchors).pieces
+            .into_iter()
+            .zip(crop(picture, to, tile.anchors).pieces);
         for (layer, (a, b)) in grid.pieces.iter().zip(ends) {
             let contents = installed(layer, "rini.piece.contents", rect_in);
             assert_eq!(contents.form, Form::Between, "a basic animation");
@@ -2298,7 +2373,7 @@ mod tests {
         tile.region = WHOLE;
         layout_crop_grid(&tile, frame);
         let grid = tile.crop_grid.as_ref().unwrap();
-        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+        for (layer, piece) in grid.pieces.iter().zip(crop(picture, frame, tile.anchors).pieces) {
             assert_eq!(
                 layer.contentsRect(),
                 piece.contents.to_cg(),
@@ -2320,7 +2395,7 @@ mod tests {
         assert_eq!(tile.region, region.image.unit_rect());
         assert_eq!(tile.region.to_cg(), rect(0.5, 0.0, 0.5, 1.0));
         let grid = tile.crop_grid.as_ref().unwrap();
-        for (layer, piece) in grid.pieces.iter().zip(crop_pieces(frame, frame)) {
+        for (layer, piece) in grid.pieces.iter().zip(crop(frame, frame, tile.anchors).pieces) {
             let shown = within(tile.region, piece.contents).to_cg();
             assert_eq!(layer.contentsRect(), shown);
         }
@@ -2329,39 +2404,187 @@ mod tests {
     }
 
     /// A picture landing on a crop-drawn tile on a track of its own is cut in, its grid laid for
-    /// the tile's model and the new picture, and the pieces re-keyed on the track's own begin and
-    /// curve, so only the pixels cut. A tile riding its container has no track to re-key along.
+    /// the tile's model and the new picture with the leg's anchors, and the pieces re-keyed on the
+    /// track's own begin and curve, so only the pixels cut. A tile riding its container has no
+    /// track to re-key along.
     #[test]
     fn a_swap_re_keys_a_crop_grid_on_its_tiles_track() {
         use crate::pictures::platform::picture::test_picture;
         let (from, to): (GroupRect, GroupRect) =
-            (typed(4.0, 32.0, 600.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
+            (typed(263.0, 32.0, 600.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
         let stale = test_picture(from.size);
         let landed = TileSize::new(859.0, 1081.0);
         let mut tile = strip_tile(to);
+        tile.anchors = Anchors::of_leg(from, to);
+        assert_eq!(tile.anchors.x, Anchor::End, "widening leftwards");
         set_tile_content(&mut tile, &stale, ContentMode::Crop, from.size.respace(), 2.0);
         let track = tile_track(from, to, 100.0, 0.35);
         install_tile_track(&tile, &track);
-        swap_onto(&mut tile, &test_picture(landed), to.size.respace(), Some(&track));
+        swap_onto(&mut tile, &test_picture(landed), to.size.respace(), Some(&track), 2.0);
         assert_eq!(tile.crop_of, Some(landed), "the grid cuts the new picture");
+        assert_eq!(tile.anchors, Anchors::of_leg(from, to), "on the leg's anchors");
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for (index, layer) in grid.pieces.iter().enumerate() {
-            let piece = |v: Value| crop_pieces(landed, as_frame(v).size.respace())[index];
+            let piece =
+                |v: Value| crop(landed, as_frame(v).size.respace(), tile.anchors).pieces[index];
             assert_eq!(
                 installed(layer, "rini.piece.contents", rect_in),
                 expected(&track, |v| within(tile.region, piece(v).contents).to_cg())
             );
-            let laid = crop_pieces(landed, to.size.respace())[index].frame;
+            let laid = crop(landed, to.size.respace(), tile.anchors).pieces[index].frame;
             assert_eq!(layer.frame(), laid.to_cg());
+        }
+        for (index, layer) in grid.ground.iter().enumerate() {
+            let span =
+                |v: Value| crop(landed, as_frame(v).size.respace(), tile.anchors).ground[index];
+            assert_eq!(
+                installed(layer, "rini.piece.move", point_in),
+                expected(&track, |v| span(v).origin.to_cg())
+            );
+            assert_eq!(layer.frame(), span(Value::Rect(to)).to_cg(), "none where it covers");
         }
 
         let mut riding = strip_tile(to);
         set_tile_content(&mut riding, &stale, ContentMode::Crop, to.size.respace(), 2.0);
-        swap_onto(&mut riding, &test_picture(landed), to.size.respace(), None);
+        swap_onto(&mut riding, &test_picture(landed), to.size.respace(), None, 2.0);
         let grid = riding.crop_grid.as_ref().expect("a grid");
-        for layer in riding.layers().into_iter().chain(grid.pieces.iter().map(|piece| &**piece)) {
+        for layer in riding.layers().into_iter().chain(grid.layers()) {
             assert!(animation_keys(layer).is_empty(), "nothing to re-key");
         }
+    }
+
+    /// A shrink's landing, and that of a resize growing on one axis and shrinking on the other, is
+    /// smaller than the frame still to come: it is cut onto the crop grid on the leg's anchors and
+    /// re-keyed on the tile's track, and the window's ground fills the span between its content and
+    /// the moving edge's band until the frame reaches its size.
+    #[test]
+    fn a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge() {
+        use crate::pictures::platform::picture::test_picture;
+        let column: GroupRect = typed(4.0, 3.0, 859.0, 1074.0);
+        for (case, to, anchored_top) in [
+            ("a top row shrinking up", typed(4.0, 3.0, 859.0, 535.0), true),
+            ("a bottom row widening as it shrinks", typed(4.0, 542.0, 1148.0, 535.0), false),
+        ] {
+            let mut tile = strip_tile(to);
+            tile.anchors = Anchors::of_leg(column, to);
+            let before = test_picture(column.size);
+            set_tile_content(&mut tile, &before, ContentMode::Crop, column.size.respace(), 2.0);
+            let track = tile_track(column, to, 100.0, 0.35);
+            install_tile_track(&tile, &track);
+            let landed: TileSize = to.size.respace();
+            swap_onto(&mut tile, &test_picture(landed), landed, Some(&track), 2.0);
+            assert_eq!(tile.crop_of, Some(landed), "{case}");
+            assert_eq!(tile.anchors, Anchors::of_leg(column, to), "{case}: the leg's anchors");
+            let laid = |v: Value| crop(landed, as_frame(v).size.respace(), tile.anchors);
+            let grid = tile.crop_grid.as_ref().expect("a grid");
+            for (index, layer) in grid.pieces.iter().enumerate() {
+                assert_eq!(
+                    installed(layer, "rini.piece.move", point_in),
+                    expected(&track, |v| laid(v).pieces[index].frame.origin.to_cg()),
+                    "{case}: piece {index}"
+                );
+            }
+            for (index, layer) in grid.ground.iter().enumerate() {
+                assert_eq!(
+                    installed(layer, "rini.piece.move", point_in),
+                    expected(&track, |v| laid(v).ground[index].origin.to_cg()),
+                    "{case}: ground {index}"
+                );
+            }
+            let start = laid(Value::Rect(column));
+            let band = start.pieces[0].frame.size.height;
+            let (tall, high) = (column.size.height, landed.height);
+            let (top, bottom) =
+                if anchored_top { (high - band, tall - band) } else { (band, tall - high + band) };
+            let bare: f64 = start.ground.iter().map(|g| g.size.width * g.size.height).sum();
+            assert!((bare - column.size.width * (tall - high)).abs() < 1e-6, "{case}: {bare}");
+            for span in start.ground.iter().filter(|g| g.size.width * g.size.height > 0.0) {
+                assert_eq!((span.min_y(), span.max_y()), (top, bottom), "{case}: by the moving edge");
+            }
+            let end = laid(Value::Rect(to));
+            assert!(end.ground.iter().all(|g| g.size.width * g.size.height == 0.0), "{case}: none at the end");
+        }
+    }
+
+    /// A stretched tile stays stretched for a picture fitting both ends of its leg, so a pan draws
+    /// as before, and a stand-in's real picture landing on a resize is cut onto the crop grid and
+    /// keyed along the leg rather than stretched over it.
+    #[test]
+    fn a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped() {
+        use crate::pictures::platform::picture::{stand_in_picture, test_bitmap, test_picture};
+        let (from, to): (GroupRect, GroupRect) =
+            (typed(4.0, 542.0, 859.0, 535.0), typed(4.0, 3.0, 859.0, 1074.0));
+        let mut tile = strip_tile(to);
+        tile.anchors = Anchors::of_leg(from, to);
+        let stand_in = stand_in_picture(to.size.respace(), test_bitmap());
+        set_tile_content(&mut tile, &stand_in, ContentMode::Stretch, from.size.respace(), 2.0);
+        let track = tile_track(from, to, 100.0, 0.35);
+        install_tile_track(&tile, &track);
+        let landed: TileSize = to.size.respace();
+        swap_onto(&mut tile, &test_picture(landed), landed, Some(&track), 2.0);
+        assert_eq!(tile.crop_of, Some(landed), "cropped");
+        let grid = tile.crop_grid.as_ref().expect("a grid");
+        for (index, layer) in grid.pieces.iter().enumerate() {
+            let piece =
+                |v: Value| crop(landed, as_frame(v).size.respace(), tile.anchors).pieces[index];
+            assert_eq!(
+                installed(layer, "rini.piece.move", point_in),
+                expected(&track, |v| piece(v).frame.origin.to_cg())
+            );
+            assert!(!layer.isHidden());
+        }
+
+        let (parked, slot): (GroupRect, GroupRect) =
+            (typed(1726.0, 3.0, 859.0, 1074.0), typed(865.0, 3.0, 859.0, 1074.0));
+        let mut panning = strip_tile(slot);
+        let picture = test_picture(slot.size);
+        set_tile_content(&mut panning, &picture, ContentMode::Stretch, slot.size.respace(), 2.0);
+        let pan = tile_track(parked, slot, 100.0, 0.35);
+        swap_onto(&mut panning, &test_picture(slot.size), slot.size.respace(), Some(&pan), 2.0);
+        assert_eq!(panning.crop_of, None, "a pan stays stretched");
+        assert!(panning.crop_grid.is_none(), "and never builds a grid");
+    }
+
+    /// A crop-drawn tile is filled with its picture's ground where the picture ends, in layers
+    /// under the picture layer, so its corner clip covers them; a picture landing on it colours
+    /// them again, and a stretched tile shows none of the grid.
+    #[test]
+    fn a_crop_drawn_tile_is_grounded_where_its_picture_ends() {
+        use crate::pictures::domain::ground::Ground;
+        use crate::pictures::platform::picture::{LazyGround, test_picture};
+        let fill = |layer: &CALayer| {
+            let colour = layer.backgroundColor().expect("filled");
+            // SAFETY: the colour's own four components, read while it is held.
+            let components = objc2_core_graphics::CGColor::components(Some(&colour));
+            unsafe { std::slice::from_raw_parts(components, 4) }.to_vec()
+        };
+        let mut before = test_picture(TileSize::new(859.0, 535.0));
+        before.ground = LazyGround::known(Ground { r: 0.1, g: 0.1, b: 0.12, a: 0.95 });
+        let frame = TileSize::new(859.0, 1074.0);
+        let mut tile = strip_tile(typed(4.0, 3.0, 859.0, 1074.0));
+        set_tile_content(&mut tile, &before, ContentMode::Crop, frame, 2.0);
+        let grid = tile.crop_grid.as_ref().expect("a grid");
+        let laid = crop(TileSize::new(859.0, 535.0), frame, tile.anchors);
+        for (layer, span) in grid.ground.iter().zip(laid.ground) {
+            assert_eq!(layer.superlayer().as_deref(), Some(&*tile.picture), "under the picture");
+            assert_eq!(layer.frame(), span.to_cg());
+            assert_eq!(fill(layer), [0.1, 0.1, 0.12, 0.95]);
+            assert!(!layer.isHidden());
+        }
+        assert_eq!(laid.ground[1].size.height, 1074.0 - 535.0, "the growth");
+
+        let mut after = test_picture(frame);
+        after.ground = LazyGround::known(Ground { r: 0.2, g: 0.2, b: 0.2, a: 1.0 });
+        swap_onto(&mut tile, &after, frame, None, 2.0);
+        let grid = tile.crop_grid.as_ref().expect("a grid");
+        for layer in &grid.ground {
+            assert_eq!(fill(layer), [0.2, 0.2, 0.2, 1.0], "coloured again");
+            assert_eq!(layer.frame().size.width * layer.frame().size.height, 0.0, "it covers");
+        }
+
+        set_tile_content(&mut tile, &after, ContentMode::Stretch, frame, 2.0);
+        let grid = tile.crop_grid.as_ref().expect("a grid");
+        assert!(grid.layers().all(|layer| layer.isHidden()), "stretched");
     }
 
     /// A clipped picture's corners are cut at its corner, and only the picture is: the shadow
@@ -2843,17 +3066,19 @@ mod tests {
             plays_exactly(&tree);
         }
 
-        /// A snap moves where a tile's own leg ends and keeps how the tile is drawn: a grow flying its
-        /// old picture stretched stays stretched when its repainted picture is cut in and the tile
-        /// snaps a point short of the plan. Judged again on the snapped leg, it went 1:1 mid-resize
-        /// with its seam. A new leg is judged again: a shrink then crops the picture it has.
+        /// A snap moves where a tile's own leg ends and keeps how the tile is drawn, even where
+        /// the snapped leg judged again would draw it otherwise, so it never turns mid-flight. A
+        /// resize of under a percent whose picture fits both ends stretches; snapped 4pt past the
+        /// plan, its picture no longer fits where it ends and it stays stretched. A new leg is
+        /// judged again: a shrink then crops the picture it has.
         #[test]
         fn a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again() {
             use crate::animation::domain::motion::tile;
             let window = wid(1);
             let (from, to): (ScreenRect, ScreenRect) =
-                (typed(4.0, 32.0, 860.0, 1081.0), typed(4.0, 32.0, 1200.0, 1081.0));
+                (typed(4.0, 32.0, 1000.0, 1081.0), typed(4.0, 32.0, 1008.0, 1081.0));
             let mut tiles = vec![overlay_tile(window, on(from), on(to), false)];
+            tiles[0].snapshot = test_picture(ScreenSize::new(1004.0, 1081.0));
             let plan = FlightPlan::from(reflow_plan(&[(window, from, to, false)], DISPLAY));
             let mut slide = Look::Slide.choreography();
             let stage = Stage {
@@ -2875,12 +3100,9 @@ mod tests {
             };
             play(&mut tree, &started, &tiles);
             let stretched = |tree: &Tree| tree.tile_layers[&window].crop_of.is_none();
-            assert!(stretched(&tree), "the old picture outgrows nothing");
+            assert!(stretched(&tree), "the picture fits both ends");
 
-            let repainted = test_picture(ScreenSize::new(1199.0, 1081.0));
-            tiles[0].snapshot = repainted.clone();
-            tree.swap(window, &repainted, false, 100.15);
-            let real = on(typed(4.0, 32.0, 1199.0, 1081.0));
+            let real = on(typed(4.0, 32.0, 1012.0, 1081.0));
             let snapped = tile::snap(&tree.replica, window, real, 100.15);
             assert!(snapped.iter().any(|edit| matches!(edit, Edit::Add(_))), "on its leg");
             play(&mut tree, &snapped, &tiles);
@@ -2897,6 +3119,78 @@ mod tests {
             );
             play(&mut tree, &[Edit::Add(shrink)], &tiles);
             assert!(!stretched(&tree), "a new leg crops the picture it has");
+        }
+
+        /// Every new leg picks its crop's anchors again, a crop-drawn tile staying crop-drawn
+        /// included, and lays its grid at the tile's model with them; a snap, the leg with only its
+        /// end moved, keeps them, even where judging the snapped leg again would turn them.
+        #[test]
+        fn a_new_leg_anchors_its_crop_again_and_a_snap_keeps_its_anchors() {
+            let window = wid(1);
+            let (whole, bottom): (GroupRect, GroupRect) =
+                (typed(4.0, 3.0, 859.0, 1074.0), typed(4.0, 542.0, 859.0, 535.0));
+            let tiles =
+                [overlay_tile(window, plan::on_overlay(whole), plan::on_overlay(bottom), false)];
+            let picture: TileSize = whole.size.respace();
+            let leg = |from: GroupRect, to: GroupRect, begin: f64| {
+                Track::between(
+                    Node::Tile(window),
+                    Channel::Base,
+                    Value::Rect(from),
+                    Value::Rect(to),
+                    begin,
+                    0.35,
+                    Curve::Bezier(MOTION_CURVE),
+                )
+            };
+            let laid = |tree: &Tree, at: GroupRect| {
+                let tile = &tree.tile_layers[&window];
+                assert_eq!(tile.crop_of, Some(picture), "crop-drawn");
+                let grid = tile.crop_grid.as_ref().expect("a grid");
+                let pieces = crop(picture, at.size.respace(), tile.anchors).pieces;
+                for (layer, piece) in grid.pieces.iter().zip(pieces) {
+                    assert_eq!(layer.frame(), piece.frame.to_cg());
+                    assert_eq!(layer.contentsRect(), piece.contents.to_cg());
+                }
+                tile.anchors
+            };
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.play(
+                &[
+                    Edit::Place(
+                        Node::Container(GroupKey::STILL),
+                        Value::Point(OverlayPoint::origin()),
+                    ),
+                    Edit::Ride(window, GroupKey::STILL),
+                    Edit::Place(Node::Tile(window), Value::Rect(bottom)),
+                    Edit::Add(leg(whole, bottom, 100.0)),
+                ],
+                &tiles,
+            );
+            let bottom_up = Anchors { x: Anchor::Start, y: Anchor::End };
+            assert_eq!(laid(&tree, bottom), bottom_up, "a bottom row shrinking down");
+
+            let shorter: GroupRect = typed(4.0, 552.0, 859.0, 500.0);
+            let shrinking = leg(bottom, shorter, 100.1);
+            tree.play(
+                &[
+                    Edit::Place(Node::Tile(window), Value::Rect(shorter)),
+                    Edit::Add(shrinking.clone()),
+                ],
+                &tiles,
+            );
+            assert_eq!(laid(&tree, shorter), Anchors::default(), "its bottom moving more");
+
+            let snapped: GroupRect = typed(4.0, 552.0, 859.0, 520.0);
+            assert_eq!(Anchors::of_leg(bottom, snapped), bottom_up, "judged again, it would turn");
+            tree.play(
+                &[
+                    Edit::Place(Node::Tile(window), Value::Rect(snapped)),
+                    Edit::Add(shrinking.ending_at(Value::Rect(snapped))),
+                ],
+                &tiles,
+            );
+            assert_eq!(laid(&tree, snapped), Anchors::default(), "a snap keeps them");
         }
 
         /// A tile riding into a flight is dressed as it rides: clipped, its picture is cut at the

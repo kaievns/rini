@@ -583,11 +583,6 @@ impl Pictures {
     fn lock(&self) -> MutexGuard<'_, Shared> { self.shared.lock().unwrap() }
 }
 
-/// The thumbprint of what the cache holds of `window`, which a repainting window settles against.
-fn held_print(cache: &PictureCache<Picture>, window: WindowId) -> Option<Vec<u8>> {
-    picture_thumbprint(cache.get(window)?)
-}
-
 /// A picture's thumbprint; `None` for a surface.
 fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> { thumbprint(&*picture.image.bitmap()?) }
 
@@ -685,14 +680,8 @@ impl Service {
             Command::Ask(ask) => shared.schedule.ask(ask, now),
             Command::AskOnScreen(ask) => shared.schedule.ask_on_screen(ask),
             Command::Refresh(targets) => shared.schedule.refresh(targets, now),
-            Command::Watch(id, watch) => {
-                let Shared { cache, schedule, .. } = &mut *shared;
-                schedule.watch(id, watch, now, &|window| held_print(cache, window));
-            }
-            Command::Retarget(id, watch) => {
-                let Shared { cache, schedule, .. } = &mut *shared;
-                schedule.retarget(id, watch, now, &|window| held_print(cache, window));
-            }
+            Command::Watch(id, watch) => shared.schedule.watch(id, watch, now),
+            Command::Retarget(id, watch) => shared.schedule.retarget(id, watch, now),
             Command::Stop(id) => shared.schedule.stop(id),
             Command::Hint(hint) => {
                 if let Hint::Focused(window) = hint {
@@ -812,7 +801,7 @@ impl Service {
             if self.looks_checked.insert(window, pair) == Some(pair) {
                 continue;
             }
-            let stale = match (body_samples(&look), body_samples(&newer)) {
+            let stale = match (body_samples(&look.image), body_samples(&newer.image)) {
                 (Some(look), Some(newer)) => bodies_differ(&look, &newer),
                 _ => true,
             };
@@ -1315,9 +1304,9 @@ mod tests {
         let mut delivered = Delivered::default();
         cache.insert(wid(1), blurred(0.5, now));
         cache.insert(wid(2), blurred(0.5, now));
-        schedule.watch(WatchId(1), landing_watch(&[1], Settle::Repainted), now, &|_| None);
+        schedule.watch(WatchId(1), landing_watch(&[1], Settle::Repainted), now);
         schedule.hint(Hint::Focused(wid(2)), now);
-        schedule.watch(WatchId(2), change_watch(2), now, &|_| None);
+        schedule.watch(WatchId(2), change_watch(2), now);
         let looks = sky(schedule.next(now, |_| None));
         let captured = with_prints(&looks, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.1, now))]);
         let events = round(&mut cache, &mut delivered, &mut schedule, now, found(&looks, Some(frame())), captured);
@@ -1673,10 +1662,17 @@ mod tests {
         assert!(matches!(shared.lock().unwrap().cache.focused(wid(1)).unwrap().image, Pixels::Bitmap(_)));
     }
 
-    /// One SkyLight round on the service: the looks the schedule hands out, every window found at
-    /// `frame()` and captured as `pictures` says.
-    fn service_round(service: &mut Service, shared: &Arc<Mutex<Shared>>, pictures: Vec<(WindowId, Picture)>) {
-        let looks = sky(shared.lock().unwrap().schedule.next(Instant::now(), |_| None));
+    /// One SkyLight round on the service at `at`: the looks the schedule hands out past the desktop and
+    /// the bar, due on their own, every window found at `frame()` and captured as `pictures` says.
+    fn service_round(service: &mut Service, shared: &Arc<Mutex<Shared>>, at: Instant, pictures: Vec<(WindowId, Picture)>) {
+        let looks = {
+            let schedule = &mut shared.lock().unwrap().schedule;
+            let mut next = schedule.next(at, |_| None);
+            while matches!(next, Next::Desktop(_) | Next::Bar(_)) {
+                next = schedule.next(at, |_| None);
+            }
+            sky(next)
+        };
         let captured = with_prints(&looks, pictures);
         service.put_round(Looking::Watches, found(&looks, Some(frame())), captured, None, false);
     }
@@ -1741,12 +1737,12 @@ mod tests {
         assert!(is_region(&shared), "refused: nothing taken");
     }
 
-    /// A watched landing that has to repaint settles against the picture the cache held when it was
-    /// watched: a first capture that differs from it is the window repainted, one that matches it is
-    /// not. A retarget keeps that picture for a window still landing, though the cache holds the
-    /// watch's own capture by then.
+    /// A watched landing that has to repaint is never settled by its first capture, however it
+    /// differs from the picture the cache holds: an unfolded window's first capture at its new size
+    /// differed from its old picture while half of it was blank. The capture after it, matching it,
+    /// is delivered.
     #[test]
-    fn a_repainting_landing_settles_against_the_picture_held_when_it_was_watched() {
+    fn a_repainting_landing_is_delivered_once_two_captures_match_and_never_for_differing_from_the_picture_held() {
         let now = Instant::now();
         let (mut service, shared) = detached_service();
         {
@@ -1756,14 +1752,13 @@ mod tests {
             shared.cache.insert(wid(2), flat(0.5, now));
         }
         service.apply(Command::Watch(WatchId(1), landing_watch(&[1, 2], Settle::Repainted)));
-        service_round(&mut service, &shared, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.5, now))]);
-        assert!(delivered_of(&shared, 1), "repainted");
-        assert!(!delivered_of(&shared, 2), "the picture held before");
-
-        service.apply(Command::Retarget(WatchId(1), landing_watch(&[1, 2], Settle::Repainted)));
-        shared.lock().unwrap().cache.insert(wid(2), flat(0.9, now));
-        service_round(&mut service, &shared, vec![(wid(2), flat(0.9, now))]);
-        assert!(delivered_of(&shared, 2), "differs from the picture held when it was first watched");
+        service_round(&mut service, &shared, Instant::now(), vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.5, now))]);
+        assert!(!delivered_of(&shared, 1), "differs from the picture held");
+        assert!(!delivered_of(&shared, 2), "matches the picture held");
+        let next = Instant::now() + Duration::from_millis(50);
+        service_round(&mut service, &shared, next, vec![(wid(1), flat(0.1, next)), (wid(2), flat(0.5, next))]);
+        assert!(delivered_of(&shared, 1), "two captures in a row match");
+        assert!(delivered_of(&shared, 2), "two captures in a row match");
     }
 
     /// The reported shape of a click at rest: the picture held of a window is old and its band differs

@@ -376,9 +376,10 @@ struct Shape {
     kind: Kind,
     start: Start,
     duration: Duration,
-    /// Held for and watched until they repaint: grows, stand-ins and reserved entrances.
+    /// Held for and watched until they repaint: stand-ins and reserved entrances.
     awaiting: Vec<WindowId>,
-    /// Watched until they repaint and never held for: windows flying from where they opened.
+    /// Watched until they repaint and never held for: windows resized, and windows flying from where
+    /// they opened.
     repainting: Vec<WindowId>,
 }
 
@@ -1539,8 +1540,8 @@ impl FlightEngine {
                 );
             }
             // A known window off this display with no picture flies with a stand-in instead of
-            // leaving a hole; see `stands_in`. It covers nothing, so the flight holds for it like
-            // any grow, and its picture replaces the stand-in once it has repainted where it ends.
+            // leaving a hole; see `stands_in`. The flight holds for it, and its picture replaces the
+            // stand-in once it has repainted where it ends.
             let snapshot = picture_or_stand_in(
                 snapshot,
                 || {
@@ -1552,7 +1553,7 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    waits(request.window, EndPicture::of_picture(snapshot.coverage.covered, request.to.size));
+                    waits(request.window, EndPicture::of_window(snapshot.source, request.from.size, request.to.size));
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -2003,8 +2004,9 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    // A wrong-shaped picture is stretched rather than dropped. See "A window that
-                    // was resized keeps a usable picture" in `src/pictures/docs/capture-research.md`.
+                    // A wrong-shaped picture is drawn rather than dropped, cropped with its window's
+                    // ground. See "A window that was resized keeps a usable picture" in
+                    // `src/pictures/docs/capture-research.md`.
                     if snapshot.source == Route::StandIn {
                         stand_ins += 1;
                     } else if !snapshot.fits(window.frame.size) {
@@ -2665,15 +2667,15 @@ mod tests {
             assert_eq!(running.tiles.len(), 2, "no second tile");
         }
 
-        /// A stand-in covers nothing, so its window is awaited like a grow; its real picture, once
-        /// swapped in, goes onto the same tile, which moves on as it was.
+        /// A stand-in's window is awaited; its real picture, once swapped in, goes onto the same
+        /// tile, which moves on as it was.
         #[test]
         fn a_stand_in_takes_its_real_picture_on_the_same_tile() {
             use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
             let park = rect(1727.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let stand_in = stand_in_picture(slot.size.respace(), stand_in_image().expect("drawn"));
-            assert_eq!(EndPicture::of_picture(stand_in.coverage.covered, slot.size.respace()), EndPicture::Awaited);
+            assert_eq!(EndPicture::of_window(stand_in.source, park.size.respace(), slot.size.respace()), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;

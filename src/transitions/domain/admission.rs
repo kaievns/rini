@@ -6,10 +6,11 @@
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayRect, ScreenRect, ScreenSize};
+use rini_geometry::stretch::is_a_resize;
 use rini_geometry::{SameAs, to_overlay_space};
 
 use crate::decorations::domain::style::Worn;
-use crate::pictures::domain::coverage::outgrows;
+use crate::pictures::domain::route::Route;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
@@ -77,8 +78,8 @@ pub(in crate::transitions) enum EntranceDecision {
     Reserve(&'static str),
 }
 
-/// How a window's picture where it ends is waited for. See "A grow holds, then reveals" and "A window
-/// that opens" in `src/transitions/docs/coordination.md`.
+/// How a window's picture where it ends is waited for. See "A resize flies at once, then reveals" and
+/// "A window that opens" in `src/transitions/docs/coordination.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::transitions) enum EndPicture {
     /// Held for, overlay up, and watched until it has repainted where it ends.
@@ -90,10 +91,17 @@ pub(in crate::transitions) enum EndPicture {
 }
 
 impl EndPicture {
-    /// A window drawn from a picture covering `covered`: a grow its picture cannot cover at `to`, or a
-    /// stand-in, which covers nothing, is awaited.
-    pub(in crate::transitions) fn of_picture(covered: ScreenSize, to: ScreenSize) -> Self {
-        if outgrows(covered, to) { Self::Awaited } else { Self::Lands }
+    /// A window going from `from` to `to`, drawn from a picture taken `source`: a resize flies the
+    /// picture it has at once and repaints where it ends, a move lands, and a stand-in, which is no
+    /// picture of the window, is awaited.
+    pub(in crate::transitions) fn of_window(source: Route, from: ScreenSize, to: ScreenSize) -> Self {
+        if source == Route::StandIn {
+            Self::Awaited
+        } else if is_a_resize(from, to) {
+            Self::Repainting
+        } else {
+            Self::Lands
+        }
     }
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
@@ -322,14 +330,27 @@ mod tests {
 
 
 
-    /// A grow its picture cannot cover and a stand-in are held for; a picture that covers lands.
+    /// A resize, grow, shrink or both at once, flies at once and repaints where it ends; a move, a
+    /// point of rounding included, lands; a stand-in is held for, whatever it does.
     #[test]
-    fn a_grow_and_a_stand_in_are_awaited_and_a_picture_that_covers_lands() {
-        let column = ScreenSize::new(859.0, 1081.0);
-        assert_eq!(EndPicture::of_picture(ScreenSize::new(859.0, 1081.0), ScreenSize::new(1720.0, 1081.0)), EndPicture::Awaited, "a grow");
-        assert_eq!(EndPicture::of_picture(ScreenSize::new(0.0, 0.0), column), EndPicture::Awaited, "a stand-in covers nothing");
-        assert_eq!(EndPicture::of_picture(ScreenSize::new(859.0, 1081.0), column), EndPicture::Lands);
-        assert_eq!(EndPicture::of_picture(ScreenSize::new(1720.0, 1081.0), column), EndPicture::Lands, "a shrink crops");
+    fn a_resize_repaints_unheld_a_move_lands_and_a_stand_in_is_awaited() {
+        let size = ScreenSize::new;
+        let column = size(859.0, 1081.0);
+        let of = |from, to| EndPicture::of_window(Route::SkyLight, from, to);
+        for (case, to) in [
+            ("a grow", size(1720.0, 1081.0)),
+            ("a shrink", size(859.0, 535.0)),
+            ("wider and shorter", size(1148.0, 538.0)),
+        ] {
+            assert_eq!(of(column, to), EndPicture::Repainting, "{case}");
+            assert_eq!(of(to, column), EndPicture::Repainting, "{case}, back");
+        }
+        assert_eq!(of(column, column), EndPicture::Lands, "a move");
+        assert_eq!(of(column, size(860.0, 1081.0)), EndPicture::Lands, "rounding");
+        assert_eq!(EndPicture::of_window(Route::Baked, column, column), EndPicture::Lands);
+        for to in [column, size(1720.0, 1081.0)] {
+            assert_eq!(EndPicture::of_window(Route::StandIn, column, to), EndPicture::Awaited);
+        }
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one

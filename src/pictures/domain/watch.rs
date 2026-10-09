@@ -34,7 +34,8 @@ pub const LANDING_POLL: Duration = Duration::from_millis(1);
 pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
 /// How often, and how many times at most, a window that has to repaint is captured once it is where
-/// it ends: about a second. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+/// it ends: about a second. See "A resize flies at once, then reveals" in
+/// `src/transitions/docs/coordination.md`.
 const REPAINT_EVERY: Duration = Duration::from_millis(8);
 const REPAINT_TRIES: usize = 125;
 /// The least time between two refreshes of the windows behind the strip.
@@ -107,8 +108,8 @@ pub enum Settle {
     /// The first capture once the window is there.
     AsSoonAsThere,
     /// The first capture whose rendering has settled, by `repaint_settled`: for a window a transition
-    /// holds its flight for, which grows or opens and is not painted at its new size yet. Captured every
-    /// `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there.
+    /// resizes or opens, or draws with no picture of its own, not painted at its new size yet. Captured
+    /// every `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there.
     Repainted,
 }
 
@@ -329,8 +330,6 @@ struct Landing {
 struct Lands {
     target: PictureTarget,
     end: ScreenRect,
-    /// The thumbprint of the picture held before the window changed, for `Settle::Repainted`.
-    before: Option<Vec<u8>>,
     state: Arrival,
 }
 
@@ -456,40 +455,24 @@ impl Watches {
         self.asks.push(ask)
     }
 
-    /// Starts `watch` as `id`. `before` is the thumbprint of the picture held of a window, which a
-    /// repainting landing settles against.
-    pub fn watch(
-        &mut self,
-        id: WatchId,
-        watch: Watch,
-        now: Instant,
-        before: &dyn Fn(WindowId) -> Option<Vec<u8>>,
-    ) {
+    /// Starts `watch` as `id`.
+    pub fn watch(&mut self, id: WatchId, watch: Watch, now: Instant) {
         self.watches.retain(|(held, _)| *held != id);
-        let watching = self.start(watch, now, before);
+        let watching = self.start(watch, now);
         self.watches.push((id, watching));
     }
 
     /// Replaces what `id` watches, keeping what it already knows: a window that landed where it still
-    /// ends stays landed, a repainting window that has not landed settles against the picture held
-    /// when the watch first named it, or on two captures in a row if none was, a focus report already
-    /// seen stays seen, a change watch at the same size keeps its baseline, its tries and whether it is
-    /// done, the window losing focus given up on reported lost again under the new tag, and the
-    /// background keeps its pace. A window that landed and is watched to land
-    /// somewhere new settles against the picture held now, the one it landed with. A window watched to
+    /// ends stays landed, a focus report already seen stays seen, a change watch at the same size
+    /// keeps its baseline, its tries and whether it is done, the window losing focus given up on
+    /// reported lost again under the new tag, and the background keeps its pace. A window watched to
     /// land somewhere new starts its print afresh: what the client was delivered of it was taken for
     /// the end before, which the client no longer draws.
-    pub fn retarget(
-        &mut self,
-        id: WatchId,
-        watch: Watch,
-        now: Instant,
-        before: &dyn Fn(WindowId) -> Option<Vec<u8>>,
-    ) {
+    pub fn retarget(&mut self, id: WatchId, watch: Watch, now: Instant) {
         let Some(at) = self.watches.iter().position(|(held, _)| *held == id) else {
-            return self.watch(id, watch, now, before);
+            return self.watch(id, watch, now);
         };
-        let fresh = self.start(watch, now, before);
+        let fresh = self.start(watch, now);
         let old = std::mem::replace(&mut self.watches[at].1, fresh);
         match (&mut self.watches[at].1, old) {
             (Watching::Landing(new), Watching::Landing(old)) => {
@@ -499,10 +482,6 @@ impl Watches {
                     else {
                         continue;
                     };
-                    // Not landed, the cache may hold the watch's own capture, not the picture before.
-                    if kept.state != Arrival::Arrived {
-                        lands.before = kept.before.clone();
-                    }
                     if kept.end != lands.end {
                         self.prints.remove(&(new.tag.client, lands.target.window));
                     } else if kept.state == Arrival::Arrived {
@@ -893,12 +872,7 @@ impl Watches {
         out
     }
 
-    fn start(
-        &self,
-        watch: Watch,
-        now: Instant,
-        before: &dyn Fn(WindowId) -> Option<Vec<u8>>,
-    ) -> Watching {
+    fn start(&self, watch: Watch, now: Instant) -> Watching {
         match watch {
             Watch::Landing {
                 tag,
@@ -918,9 +892,6 @@ impl Watches {
                     .map(|(target, end)| Lands {
                         target,
                         end,
-                        before: (settle == Settle::Repainted)
-                            .then(|| before(target.window))
-                            .flatten(),
                         state: Arrival::Pending,
                     })
                     .collect(),
@@ -1063,7 +1034,7 @@ fn land(
     let thumb = there.and_then(|(_, seen)| seen.thumb.clone());
     let settled = thumb
         .as_deref()
-        .is_some_and(|thumb| repaint_settled(last.as_deref(), thumb, lands.before.as_deref()));
+        .is_some_and(|thumb| repaint_settled(last.as_deref(), thumb));
     match there {
         Some((frame, seen)) if settled => {
             news(prints, tag.client, window, &seen.band);
@@ -1191,10 +1162,6 @@ mod tests {
     const RIGHT: ScreenRect = rect(865.0, 32.0, 859.0, 1081.0);
     /// Parked past the right edge.
     const PARKED: ScreenRect = rect(1727.0, 32.0, 859.0, 1081.0);
-
-    fn none(_: WindowId) -> Option<Vec<u8>> {
-        None
-    }
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
@@ -1404,7 +1371,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, now + ms(150)),
             now,
-            &none,
         );
         watches.ask(OnScreen {
             moment: Moment::Final,
@@ -1425,7 +1391,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
 
         let (_, outcome) = round(&mut watches, start, |_| Some(PARKED), |_| Some(7)).unwrap();
@@ -1460,7 +1425,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(7)).unwrap();
         assert!(outcome.deliveries.is_empty());
@@ -1477,7 +1441,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         round(&mut watches, start, |_| Some(LEFT), |_| Some(7)).unwrap();
         watches.stop(WatchId(1));
@@ -1488,7 +1451,6 @@ mod tests {
             WatchId(2),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(7)).unwrap();
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
@@ -1508,7 +1470,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
         let (_, outcome) = round(&mut watches, start, at, |_| Some(7)).unwrap();
@@ -1524,7 +1485,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         round(
             &mut watches,
@@ -1548,7 +1508,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         round(&mut watches, start + ms(10), |_| Some(PARKED), |_| Some(7)).unwrap();
         assert!(watches.next(start + ms(10)).is_none());
@@ -1571,7 +1530,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
             start,
-            &none,
         );
 
         let painting = std::cell::Cell::new(1u8);
@@ -1596,22 +1554,6 @@ mod tests {
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
     }
 
-    /// A grow's first capture that already differs from the picture held before it is settled: the
-    /// app has repainted.
-    #[test]
-    fn a_repainting_landing_that_differs_from_before_is_delivered_at_once() {
-        let start = Instant::now();
-        let mut watches = Watches::default();
-        watches.watch(
-            WatchId(1),
-            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
-            start,
-            &|_| Some(vec![50]),
-        );
-        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(2)).unwrap();
-        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
-    }
-
     /// One that never settles is given up on after `REPAINT_TRIES` captures.
     #[test]
     fn a_repainting_landing_that_never_settles_is_lost() {
@@ -1621,7 +1563,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
             start,
-            &none,
         );
         let counter = std::cell::Cell::new(0u8);
         let mut at = start;
@@ -1656,13 +1597,11 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         watches.watch(
             WatchId(2),
             landing(&[(2, RIGHT)], Settle::Repainted, start + ms(150)),
             start,
-            &none,
         );
         let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
         let (_, outcome) = round_of(&mut watches, start, at, |w| {
@@ -1688,7 +1627,7 @@ mod tests {
         let mut watches = Watches::default();
         watches.ask(frame_zero(&[(1, LEFT)], &[]));
         round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         assert!(watches.next(start + ms(100)).is_none(), "no focus report");
 
         watches.hint(Hint::Focused(wid(1)), start + ms(100));
@@ -1715,7 +1654,7 @@ mod tests {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         let mut at = start;
         let mut outcomes = Vec::new();
         while let Some((_, outcome)) = round(&mut watches, at, |_| Some(LEFT), |_| Some(1)) {
@@ -1740,8 +1679,8 @@ mod tests {
         watches.ask(frame_zero(&[(1, RIGHT)], &[]));
         round(&mut watches, start, |_| Some(RIGHT), |_| Some(1)).unwrap();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start, &none);
-        watches.watch(WatchId(2), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start);
+        watches.watch(WatchId(2), change(1, LEFT), start);
         let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(2)).unwrap();
         assert_eq!(
             delivered(&outcome),
@@ -1752,8 +1691,8 @@ mod tests {
         // delivered by the watch's first capture.
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start, &none);
-        watches.watch(WatchId(2), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start);
+        watches.watch(WatchId(2), change(1, LEFT), start);
         let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "one landing, delivered once");
         let (_, outcome) = round(&mut watches, start + CHANGE_EVERY, |_| Some(LEFT), |_| Some(2)).unwrap();
@@ -1767,12 +1706,12 @@ mod tests {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start + ms(900), &none);
+        watches.watch(WatchId(1), change(1, LEFT), start + ms(900));
         assert!(watches.next(start + ms(900)).is_some(), "900ms after the report");
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start + ms(1100), &none);
+        watches.watch(WatchId(1), change(1, LEFT), start + ms(1100));
         assert!(
             watches.next(start + ms(1100)).is_none(),
             "a report over a second old"
@@ -1780,7 +1719,7 @@ mod tests {
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         assert!(watches.next(start).is_none(), "another window's");
     }
 
@@ -1794,8 +1733,8 @@ mod tests {
         watches.ask(frame_zero(&[(1, LEFT)], &[]));
         round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
-        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
+        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start);
         let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
         let (_, outcome) = round(&mut watches, start, at, |_| Some(1)).unwrap();
         assert!(outcome.deliveries.is_empty(), "unchanged: a try spent");
@@ -1805,14 +1744,14 @@ mod tests {
         assert_eq!(looked(&sets), vec![vec![wid(1)]], "the background waits for it");
         assert!(outcome.deliveries.is_empty());
         assert_eq!(looked(&watches.next(next).unwrap()), vec![vec![wid(4)]], "done: the background now");
-        watches.retarget(WatchId(1), change(1, LEFT), next, &none);
+        watches.retarget(WatchId(1), change(1, LEFT), next);
         let later = next + CHANGE_EVERY;
         let (sets, _) = round(&mut watches, later, at, |_| Some(2)).unwrap();
         assert_eq!(looked(&sets), vec![vec![wid(4)]], "its look is never captured again");
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         let (_, outcome) = round_of(&mut watches, start, |_| Some(LEFT), |_| Capture::Refused).unwrap();
         assert!(outcome.deliveries.is_empty(), "not delivered as landed either");
         assert!(watches.next(start + CHANGE_EVERY).is_none());
@@ -1826,12 +1765,12 @@ mod tests {
         let wider = rect(4.0, 32.0, 1200.0, 1081.0);
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         round_of(&mut watches, start, |_| Some(LEFT), |_| Capture::Refused).unwrap();
         let later = start + ms(2000);
-        watches.retarget(WatchId(1), change(1, rect(14.0, 32.0, 859.0, 1081.0)), later, &none);
+        watches.retarget(WatchId(1), change(1, rect(14.0, 32.0, 859.0, 1081.0)), later);
         assert!(watches.next(later).is_none(), "the same size: still done");
-        watches.retarget(WatchId(1), change(1, wider), later, &none);
+        watches.retarget(WatchId(1), change(1, wider), later);
         assert_eq!(
             looked(&watches.next(later).unwrap()),
             vec![vec![wid(1)]],
@@ -1848,16 +1787,16 @@ mod tests {
         };
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         let at = start + CHANGE_EVERY * (CHANGE_TRIES - 1);
         let mut now = start;
         while now < at {
             round(&mut watches, now, |_| Some(LEFT), |_| Some(1)).unwrap();
             now += CHANGE_EVERY;
         }
-        watches.retarget(WatchId(1), change(1, LEFT), at, &none);
+        watches.retarget(WatchId(1), change(1, LEFT), at);
         assert_eq!(tries(&mut watches, at, LEFT), 1, "the same size: the one try left");
-        watches.retarget(WatchId(1), change(1, wider), at, &none);
+        watches.retarget(WatchId(1), change(1, wider), at);
         assert_eq!(tries(&mut watches, at, wider), CHANGE_TRIES, "another size: every try again");
     }
 
@@ -1867,7 +1806,7 @@ mod tests {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         let mut at = start;
         for _ in 0..20 {
             round(
@@ -1894,7 +1833,7 @@ mod tests {
         let end = rect(1300.0, 32.0, 859.0, 1081.0);
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, end), start, &none);
+        watches.watch(WatchId(1), change(1, end), start);
         let (_, outcome) = round(&mut watches, start, |_| Some(end), |_| Some(1)).unwrap();
         assert!(outcome.deliveries.is_empty());
         assert_eq!(outcome.clipped, vec![(tag(1), target(1), end)]);
@@ -1911,7 +1850,7 @@ mod tests {
         let started = |watches: &mut Watches| {
             watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
             round(watches, start, at, |w| Some(if w == wid(1) { 1 } else { 5 })).unwrap();
-            watches.watch(WatchId(1), changing(LEFT), start, &none);
+            watches.watch(WatchId(1), changing(LEFT), start);
         };
         let mut watches = Watches::default();
         started(&mut watches);
@@ -1949,7 +1888,7 @@ mod tests {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
         let landed_at = start + CHANGE_EVERY * 3;
         let mut at = start;
         let mut rounds = Vec::new();
@@ -1981,7 +1920,7 @@ mod tests {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
         let arrives = start + ms(5);
         let short = rect(700.0, 32.0, 859.0, 1081.0);
         let mut at = start;
@@ -2016,7 +1955,7 @@ mod tests {
         let cut = rect(1300.0, 32.0, 859.0, 1081.0);
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(cut), start, &none);
+        watches.watch(WatchId(1), changing(cut), start);
         let at = |w: WindowId| Some(if w == wid(1) { cut } else { RIGHT });
         let (_, outcome) = round(&mut watches, start, at, |_| Some(1)).unwrap();
         assert!(outcome.clipped.is_empty());
@@ -2026,14 +1965,14 @@ mod tests {
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
         let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
         let (_, outcome) = round_of(&mut watches, start, at, |w| if w == wid(1) { Capture::Refused } else { taken(1) }).unwrap();
         assert_eq!(outcome.lost, vec![(tag(1), wid(1))], "refused, nor will it");
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
         watches.forget(wid(1));
         assert_eq!(looked(&watches.next(start).unwrap()), vec![vec![wid(2)]]);
     }
@@ -2047,7 +1986,7 @@ mod tests {
         let missed = || {
             let mut watches = Watches::default();
             watches.hint(Hint::Focused(wid(2)), start);
-            watches.watch(WatchId(1), changing(LEFT), start, &none);
+            watches.watch(WatchId(1), changing(LEFT), start);
             round(&mut watches, start, |w| Some(if w == wid(1) { short } else { RIGHT }), |_| Some(1)).unwrap();
             assert_eq!(watches.wake(start), Some(start + LANDING_POLL), "the old window polled for");
             watches
@@ -2060,7 +1999,7 @@ mod tests {
         assert_eq!(watches.wake(later), Some(start + CHANGE_EVERY), "forgotten");
 
         let mut watches = missed();
-        watches.retarget(WatchId(1), changing(rect(4.0, 32.0, 860.0, 1081.0)), later, &none);
+        watches.retarget(WatchId(1), changing(rect(4.0, 32.0, 860.0, 1081.0)), later);
         assert!(watches.next(later).is_none());
         assert_eq!(watches.wake(later), Some(start + CHANGE_EVERY), "at another size");
     }
@@ -2080,14 +2019,14 @@ mod tests {
         };
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), under(1, cut), start, &none);
+        watches.watch(WatchId(1), under(1, cut), start);
         let at = |w: WindowId| Some(if w == wid(1) { cut } else { RIGHT });
         let (_, outcome) = round(&mut watches, start, at, |_| Some(1)).unwrap();
         assert_eq!(outcome.lost, vec![(tag(1), wid(1))]);
         let later = start + ms(2);
-        watches.retarget(WatchId(1), under(1, cut), later, &none);
+        watches.retarget(WatchId(1), under(1, cut), later);
         assert!(watches.expire(later).is_empty(), "the same tag");
-        watches.retarget(WatchId(1), under(2, cut), later, &none);
+        watches.retarget(WatchId(1), under(2, cut), later);
         assert_eq!(watches.wake(later), Some(later));
         assert_eq!(watches.expire(later), vec![(tag(2), wid(1))]);
         assert!(watches.expire(later).is_empty(), "once");
@@ -2096,10 +2035,10 @@ mod tests {
         watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
         round(&mut watches, start, |w| Some(if w == wid(1) { LEFT } else { RIGHT }), |_| Some(1)).unwrap();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), under(1, LEFT), start, &none);
+        watches.watch(WatchId(1), under(1, LEFT), start);
         round(&mut watches, start, |w| Some(if w == wid(1) { LEFT } else { RIGHT }), |w| Some(if w == wid(1) { 2 } else { 1 }))
             .unwrap();
-        watches.retarget(WatchId(1), under(2, LEFT), later, &none);
+        watches.retarget(WatchId(1), under(2, LEFT), later);
         assert!(watches.expire(later).is_empty(), "its look changed");
     }
 
@@ -2112,14 +2051,14 @@ mod tests {
         watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
         round(&mut watches, start, at, |_| Some(1)).unwrap();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
         let (_, outcome) = round(&mut watches, start, at, |w| Some(if w == wid(1) { 2 } else { 1 })).unwrap();
         assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(1)])]);
         let next = start + CHANGE_EVERY;
-        watches.retarget(WatchId(1), changing(rect(14.0, 32.0, 859.0, 1081.0)), next, &none);
+        watches.retarget(WatchId(1), changing(rect(14.0, 32.0, 859.0, 1081.0)), next);
         assert_eq!(looked(&watches.next(next).unwrap()), vec![vec![wid(2)]], "the same size: still done");
         let wider = rect(4.0, 32.0, 860.0, 1081.0);
-        watches.retarget(WatchId(1), changing(wider), next, &none);
+        watches.retarget(WatchId(1), changing(wider), next);
         let at = |w: WindowId| Some(if w == wid(1) { wider } else { RIGHT });
         let (sets, outcome) = round(&mut watches, next, at, |_| Some(2)).unwrap();
         assert_eq!(looked(&sets), vec![vec![wid(1), wid(2)]], "another size: watched afresh");
@@ -2134,7 +2073,7 @@ mod tests {
         let mut watches = Watches::default();
         watches.ask(frame_zero(&[], &[(4, LEFT)]));
         round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
-        watches.watch(WatchId(1), live(&[4], None, None), start, &none);
+        watches.watch(WatchId(1), live(&[4], None, None), start);
         let (sets, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
         assert!(sets[0].behind.is_empty());
         assert_eq!(
@@ -2160,9 +2099,8 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
-        watches.watch(WatchId(2), live(&[4], None, None), start, &none);
+        watches.watch(WatchId(2), live(&[4], None, None), start);
         let (sets, _) = round(
             &mut watches,
             start,
@@ -2194,8 +2132,8 @@ mod tests {
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
-        watches.watch(WatchId(2), live(&[4], None, None), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
+        watches.watch(WatchId(2), live(&[4], None, None), start);
         round(
             &mut watches,
             start,
@@ -2219,12 +2157,11 @@ mod tests {
         let mut watches = Watches::default();
         watches.ask(frame_zero(&[(1, LEFT)], &[]));
         round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         watches.watch(
             WatchId(2),
             live(&[4], Some(WatchId(1)), Some(start + ms(30))),
             start,
-            &none,
         );
         assert!(watches.next(start).is_none(), "the focus target first");
         assert_eq!(watches.wake(start), Some(start + ms(30)));
@@ -2260,8 +2197,8 @@ mod tests {
         watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
         round(&mut watches, start, at, |_| Some(1)).unwrap();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
-        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
+        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start);
         let (sets, _) = round(&mut watches, start, at, |_| Some(1)).unwrap();
         assert_eq!(looked(&sets), vec![vec![wid(1), wid(2)]]);
         let quiet = start + ms(9);
@@ -2283,8 +2220,8 @@ mod tests {
         watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
         round(&mut watches, start, |w| Some(if w == wid(1) { LEFT } else { RIGHT }), |_| Some(1)).unwrap();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
-        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
+        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start);
         let (_, outcome) = round(&mut watches, start, at, |w| Some(if w == wid(2) { 2 } else { 1 })).unwrap();
         assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(2)])]);
         let (mut now, mut background, mut polls) = (start, Vec::new(), 0);
@@ -2310,7 +2247,7 @@ mod tests {
         let short = rect(700.0, 32.0, 859.0, 1081.0);
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(2)), start);
-        watches.watch(WatchId(1), changing(LEFT), start, &none);
+        watches.watch(WatchId(1), changing(LEFT), start);
         round(&mut watches, start, |w| Some(if w == wid(1) { LEFT } else { short }), |_| Some(1)).unwrap();
         let polled = start + CHANGE_EVERY - Duration::from_micros(400);
         assert_eq!(looked(&watches.next(polled).unwrap()), vec![vec![wid(2)]], "the poll alone");
@@ -2330,7 +2267,7 @@ mod tests {
             watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
             round(&mut watches, start, at, |_| Some(1)).unwrap();
             watches.hint(Hint::Focused(wid(2)), start);
-            watches.watch(WatchId(1), changing(LEFT), start, &none);
+            watches.watch(WatchId(1), changing(LEFT), start);
             round(&mut watches, start, at, |w| Some(if done && w == wid(1) { 2 } else { 1 })).unwrap();
             let later = start + ms(2);
             assert!(watches.next(later).is_none());
@@ -2348,8 +2285,8 @@ mod tests {
     fn the_background_follows_a_change_watch_that_was_stopped() {
         let start = Instant::now();
         let mut watches = Watches::default();
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
-        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
+        watches.watch(WatchId(2), live(&[4], Some(WatchId(1)), None), start);
         assert!(watches.next(start).is_none());
         watches.stop(WatchId(1));
         assert!(watches.next(start).is_some());
@@ -2396,12 +2333,11 @@ mod tests {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
         watches.watch(
             WatchId(2),
             landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         watches.watch(
             WatchId(3),
@@ -2413,7 +2349,6 @@ mod tests {
                 start + ms(150),
             ),
             start,
-            &none,
         );
         let sets = watches.next(start).unwrap();
         assert_eq!(
@@ -2433,7 +2368,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         round(
             &mut watches,
@@ -2457,143 +2391,60 @@ mod tests {
                 start + ms(300),
             ),
             start + ms(50),
-            &none,
         );
         let sets = watches.next(start + ms(50)).unwrap();
         assert_eq!(looked(&sets), vec![vec![wid(2), wid(3)]]);
 
         let mut watches = Watches::default();
         watches.hint(Hint::Focused(wid(1)), start);
-        watches.watch(WatchId(1), change(1, LEFT), start, &none);
-        watches.retarget(WatchId(1), change(1, RIGHT), start + ms(2000), &none);
+        watches.watch(WatchId(1), change(1, LEFT), start);
+        watches.retarget(WatchId(1), change(1, RIGHT), start + ms(2000));
         assert!(
             watches.next(start + ms(2000)).is_some(),
             "armed still, long after the report"
         );
-        watches.retarget(WatchId(1), change(2, RIGHT), start + ms(2000), &none);
+        watches.retarget(WatchId(1), change(2, RIGHT), start + ms(2000));
         assert!(
             watches.next(start + ms(2000)).is_none(),
             "another window: not armed"
         );
     }
 
-    /// A repainting window still landing settles, through a retarget, against the picture held when
-    /// the watch first named it: by then the cache holds the watch's own captures. A window new to the
-    /// watch settles against the picture held now.
+    /// A window that landed and is retargeted to a new end settles there only on two captures in a
+    /// row that match: the server resizes the frame before the app repaints, so the first capture
+    /// there still shows the picture it landed with, and the next can be half-painted.
     #[test]
-    fn a_retarget_keeps_the_picture_a_repainting_window_settles_against() {
+    fn a_window_that_landed_and_is_retargeted_to_a_new_end_settles_there_on_two_captures_in_a_row() {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.watch(
             WatchId(1),
             landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
             start,
-            &|_| Some(vec![50]),
         );
-        watches.retarget(
-            WatchId(1),
-            landing(&[(1, LEFT), (2, RIGHT)], Settle::Repainted, start + ms(150)),
-            start,
-            &|_| Some(vec![100]),
-        );
-        let (_, outcome) = round(
-            &mut watches,
-            start,
-            |w| Some(if w == wid(1) { LEFT } else { RIGHT }),
-            |_| Some(2),
-        )
-        .unwrap();
-        assert_eq!(
-            delivered(&outcome),
-            vec![(Why::Landed, vec![wid(1)])],
-            "window 1 differs from the picture before; window 2 is what is held now"
-        );
-    }
-
-    /// A repainting window still landing keeps the picture it settles against through a retarget
-    /// that moves its end, though the cache holds its own capture by then.
-    #[test]
-    fn a_retarget_to_a_new_end_keeps_the_picture_a_window_still_landing_settles_against() {
-        let start = Instant::now();
-        let mut watches = Watches::default();
-        watches.watch(
-            WatchId(1),
-            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
-            start,
-            &|_| Some(vec![50]),
-        );
-        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
-        assert!(outcome.deliveries.is_empty(), "the picture before: still settling");
-        let moved = rect(4.0, 32.0, 1200.0, 1081.0);
-        watches.retarget(
-            WatchId(1),
-            landing(&[(1, moved)], Settle::Repainted, start + ms(150)),
-            start + ms(1),
-            &|_| Some(vec![100]),
-        );
-        let (_, outcome) = round(&mut watches, start + ms(1), |_| Some(moved), |_| Some(2)).unwrap();
-        assert_eq!(
-            delivered(&outcome),
-            vec![(Why::Landed, vec![wid(1)])],
-            "differs from the picture before the first change"
-        );
-    }
-
-    /// A window that landed and is retargeted to a new end settles against the picture it landed
-    /// with, which the cache holds now: the server resizes the frame before the app repaints, so the
-    /// first capture there still shows it.
-    #[test]
-    fn a_retarget_to_a_new_end_settles_a_window_that_landed_against_the_picture_it_landed_with() {
-        let start = Instant::now();
-        let mut watches = Watches::default();
-        watches.watch(
-            WatchId(1),
-            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
-            start,
-            &|_| Some(vec![50]),
-        );
-        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(2)).unwrap();
+        round(&mut watches, start, |_| Some(LEFT), |_| Some(2)).unwrap();
+        let (_, outcome) =
+            round(&mut watches, start + REPAINT_EVERY, |_| Some(LEFT), |_| Some(2)).unwrap();
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
         let moved = rect(4.0, 32.0, 1200.0, 1081.0);
+        let retargeted = start + REPAINT_EVERY + ms(1);
         watches.retarget(
             WatchId(1),
             landing(&[(1, moved)], Settle::Repainted, start + ms(150)),
-            start + ms(1),
-            &|_| Some(vec![100]),
+            retargeted,
         );
-        let (_, outcome) = round(&mut watches, start + ms(1), |_| Some(moved), |_| Some(2)).unwrap();
-        assert!(outcome.deliveries.is_empty(), "the picture it landed with: not repainted yet");
-        let at = start + ms(1) + REPAINT_EVERY;
-        let (_, outcome) = round(&mut watches, at, |_| Some(moved), |_| Some(3)).unwrap();
-        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "repainted");
-    }
-
-    /// A repainting window with no picture held when the watch first named it settles, through a
-    /// retarget, only on two captures in a row that match: the cache holds its own capture by then,
-    /// and differing from that is no repaint.
-    #[test]
-    fn a_retarget_never_takes_a_windows_own_capture_for_the_picture_before() {
-        let start = Instant::now();
-        let mut watches = Watches::default();
-        watches.watch(
-            WatchId(1),
-            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
-            start,
-            &none,
-        );
-        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
-        assert!(outcome.deliveries.is_empty());
-        watches.retarget(
-            WatchId(1),
-            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
-            start + ms(1),
-            &|_| Some(vec![50]),
-        );
-        let (_, outcome) = round(&mut watches, start + ms(1), |_| Some(LEFT), |_| Some(2)).unwrap();
-        assert!(outcome.deliveries.is_empty(), "differs from its own capture: not settled");
-        let at = start + ms(1) + REPAINT_EVERY;
-        let (_, outcome) = round(&mut watches, at, |_| Some(LEFT), |_| Some(2)).unwrap();
-        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "two in a row");
+        let mut at = retargeted;
+        for (band, why) in [
+            (2, "the picture it landed with"),
+            (3, "half-painted"),
+            (4, "painted, once"),
+        ] {
+            let (_, outcome) = round(&mut watches, at, |_| Some(moved), |_| Some(band)).unwrap();
+            assert!(outcome.deliveries.is_empty(), "{why}: not settled");
+            at += REPAINT_EVERY;
+        }
+        let (_, outcome) = round(&mut watches, at, |_| Some(moved), |_| Some(4)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "painted twice in a row");
     }
 
     /// A window's landing delivered at one end, and its watch retargeted to another: the client draws
@@ -2607,7 +2458,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
         round(&mut watches, start, at, |_| Some(1)).unwrap();
@@ -2622,7 +2472,6 @@ mod tests {
                 start + ms(300),
             ),
             start + ms(50),
-            &none,
         );
         let (sets, outcome) = round(&mut watches, start + ms(50), |_| Some(moved), |_| Some(1)).unwrap();
         assert_eq!(looked(&sets), vec![vec![wid(1)]]);
@@ -2638,7 +2487,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         watches.retarget(
             WatchId(1),
@@ -2650,7 +2498,6 @@ mod tests {
                 start + ms(150),
             ),
             start,
-            &none,
         );
         let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
         assert_eq!(outcome.deliveries[0].tag, tag(2));
@@ -2666,7 +2513,6 @@ mod tests {
             WatchId(1),
             landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
             start,
-            &none,
         );
         watches.ask(frame_zero(&[(1, LEFT)], &[]));
         watches.forget(wid(1));
@@ -2675,7 +2521,7 @@ mod tests {
         assert_eq!(delivered(&outcome), vec![(Why::FrameZero, vec![])]);
         assert_eq!(looked(&watches.next(start).unwrap()), vec![vec![wid(2)]]);
         watches.stop(WatchId(1));
-        watches.watch(WatchId(2), change(1, LEFT), start, &none);
+        watches.watch(WatchId(2), change(1, LEFT), start);
         assert!(watches.next(start).is_none(), "its focus report forgotten");
     }
 
@@ -2695,7 +2541,7 @@ mod tests {
         );
     }
 
-    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+    /// See "A resize flies at once, then reveals" in `src/transitions/docs/coordination.md`.
     #[test]
     fn a_window_that_has_to_repaint_is_captured_every_8ms_for_a_second() {
         assert_eq!(REPAINT_EVERY, Duration::from_millis(8));

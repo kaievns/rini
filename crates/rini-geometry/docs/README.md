@@ -59,7 +59,7 @@ Where each conversion between spaces lives:
 | `Surface` to `Overlay`: what the viewport at an offset shows | `animation::domain::motion::surface::viewport` |
 | `Overlay` to `Group` and back: a frame in a container at a position | `animation::domain::motion::plan::{group_relative, overlay_of}` |
 | `Overlay` to `Group` and back for a fresh plan, whose containers install at the overlay's origin: the same numbers | `animation::domain::motion::plan::{installed, on_overlay}` |
-| `Tile` to `Contents`: a crop piece over its picture's size | `animation::domain::motion::tile::crop_pieces` |
+| `Tile` to `Contents`: a crop piece over its picture's size | `animation::domain::motion::tile::crop` |
 | `Tile` to `Contents`: a gradient's axis over its band's size | `decorations::domain::paint::Gradient::axis` |
 | `Screen` to `Pixel`: a frame in a composite, at its scale | `pictures::domain::region::pixel_rect` |
 | `Pixel` to `Contents`: a pixel rect over its image's size | `pictures::domain::region::unit_rect` |

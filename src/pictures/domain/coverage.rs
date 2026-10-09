@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use rini_geometry::space::{PointSpace, Respace, ScreenSize, Size};
-use rini_geometry::stretch::{MAX_STRETCH, within_stretch};
+use rini_geometry::stretch::within_stretch;
 
 /// How much smaller than its real size a capture may be before it is not worth drawing.
 ///
@@ -64,17 +64,6 @@ const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
 /// `src/pictures/docs/capture-research.md`.
 pub fn fits_frame<U: PointSpace>(covered: ScreenSize, frame: Size<U>) -> bool {
     within_stretch(covered, frame.respace())
-}
-
-/// Whether `size` needs pixels this picture does not have: bigger than the capture in either
-/// axis, beyond the stretch tolerance.
-///
-/// The grow-vs-shrink asymmetry of the crop-drawn resize: a shrink crops the picture it has,
-/// which is truthful; a grow needs content that does not exist until the app renders at the new
-/// size, so it holds for a fresh capture (see "Resizes through the overlay" in
-/// `src/animation/docs/animation-smoothness.md`).
-pub fn outgrows<U: PointSpace>(covered: ScreenSize, size: Size<U>) -> bool {
-    size.width > covered.width * MAX_STRETCH || size.height > covered.height * MAX_STRETCH
 }
 
 /// Whether a window needs a fresh capture before it can be drawn at `size`.
@@ -171,20 +160,6 @@ mod tests {
     fn a_picture_goes_stale_by_age_alone() {
         assert!(!picture_is_stale(Duration::from_millis(500)));
         assert!(picture_is_stale(Duration::from_secs(3)));
-    }
-
-    /// A grow needs pixels the picture does not have; a shrink or a match never does. This is
-    /// what decides whether a resize animates immediately (crop) or holds for a fresh capture
-    /// (reveal).
-    #[test]
-    fn a_grow_outgrows_its_picture_and_a_shrink_does_not() {
-        let picture = size(859.0, 1081.0);
-        assert!(outgrows(picture, size(1147.0, 1081.0)), "wider");
-        assert!(outgrows(picture, size(859.0, 1300.0)), "taller");
-        assert!(!outgrows(picture, size(859.0, 1081.0)), "same");
-        assert!(!outgrows(picture, size(572.0, 1081.0)), "narrower");
-        // Rounding is not a grow, same tolerance as everything else here.
-        assert!(!outgrows(picture, size(861.0, 1081.0)));
     }
 
     #[test]

@@ -6,6 +6,8 @@
 //! the background (`screencapturekit`). Constraints and costs of both:
 //! `src/pictures/docs/capture-research.md`.
 
+use std::sync::{Arc, OnceLock};
+
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
@@ -15,9 +17,11 @@ use rini_geometry::space::{
 
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
+use crate::pictures::domain::ground::Ground;
 use crate::pictures::domain::region::{WHOLE, unit_rect};
 use crate::pictures::domain::route::Route;
 use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
+use crate::pictures::platform::measure::ground_of;
 
 /// A window's pixels, whichever API produced them. Core Animation accepts each form.
 #[derive(Clone, Debug)]
@@ -80,11 +84,32 @@ pub struct Picture {
     /// picture like this is not given up for a same-sized capture of the window alone, which would
     /// be flat grey exactly where the blur is. See [`crate::pictures::domain::translucency`].
     pub carries_blur: bool,
+    /// The colour its content sits on, which a crop-drawn tile fills where the picture ends: see
+    /// [`Picture::ground`].
+    pub ground: LazyGround,
+}
+
+/// A picture's ground, read once, on first ask, and shared by every copy of the picture.
+#[derive(Clone, Debug, Default)]
+pub struct LazyGround(Arc<OnceLock<Ground>>);
+
+impl LazyGround {
+    /// A ground known without reading the pixels.
+    pub fn known(ground: Ground) -> Self {
+        Self(Arc::new(OnceLock::from(ground)))
+    }
 }
 
 impl Picture {
     pub fn is_usable(&self) -> bool {
         self.coverage.is_usable()
+    }
+
+    /// The colour its content sits on: read off its body samples the first time it is asked for, on
+    /// the asking thread, the stand-in's when they cannot be read. Only a crop-drawn tile asks, so a
+    /// navigation's pictures are never read for it.
+    pub fn ground(&self) -> Ground {
+        *self.ground.0.get_or_init(|| ground_of(&self.image).unwrap_or(STAND_IN_GROUND))
     }
 
     /// This picture as one to keep: a region copied into an image of its own, so it no longer holds
@@ -107,15 +132,16 @@ impl Picture {
 }
 
 /// `--n3`, the raised plane of the Okibi dark theme: the same stand-in the switcher draws for a row
-/// with no picture.
-const STAND_IN_RGB: (f64, f64, f64) = (0.133, 0.145, 0.153);
+/// with no picture, and the ground of a picture none could be read off.
+pub const STAND_IN_GROUND: Ground = Ground { r: 0.133, g: 0.145, b: 0.153, a: 1.0 };
 
 /// The stand-in for a window of `window` size with no picture.
 ///
-/// Claims to cover NOTHING of the window, which is honest and is also what makes a layout pass treat
-/// it as a picture waiting for its reveal: the flight holds for the window and watches it until it has
-/// repainted where it ends. A strip movement, which never holds, captures it once it lands there.
-/// Either way its real picture replaces this one on the same tile.
+/// Claims to cover NOTHING of the window, which is honest. Its route, `Route::StandIn`, is what makes
+/// a layout pass hold the flight for the window and watch it until it has repainted where it ends
+/// (`EndPicture::of_window`), and what lets its one flat pixel stretch (`content_mode`). A strip
+/// movement, which never holds, captures it once it lands there. Either way its real picture replaces
+/// this one on the same tile.
 pub fn stand_in_picture(window: ScreenSize, image: CFRetained<CGImage>) -> Picture {
     Picture {
         image: Pixels::Bitmap(image),
@@ -126,17 +152,18 @@ pub fn stand_in_picture(window: ScreenSize, image: CFRetained<CGImage>) -> Pictu
         source: Route::StandIn,
         taken: std::time::Instant::now(),
         carries_blur: false,
+        ground: LazyGround::known(STAND_IN_GROUND),
     }
 }
 
-/// The stand-in's pixels: one pixel of `STAND_IN_RGB`, which the overlay stretches over the tile and
-/// clips to its window's corner. One pixel rather than the window's size: a full-size bitmap of one
-/// flat colour would be 30MB for a maximised window at 2x.
+/// The stand-in's pixels: one pixel of `STAND_IN_GROUND`, which the overlay stretches over the tile
+/// and clips to its window's corner. One pixel rather than the window's size: a full-size bitmap of
+/// one flat colour would be 30MB for a maximised window at 2x.
 pub fn stand_in_image() -> Option<CFRetained<CGImage>> {
     use objc2_core_graphics::CGContext;
     let ctx = rgba_bitmap_context(1, 1)?;
-    let (r, g, b) = STAND_IN_RGB;
-    CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, 1.0);
+    let Ground { r, g, b, a } = STAND_IN_GROUND;
+    CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, a);
     CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
     objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx))
 }
@@ -231,6 +258,7 @@ pub(crate) fn test_picture<U: PointSpace>(size: Size<U>) -> Picture {
         source: Route::ScreenCaptureKit,
         taken: std::time::Instant::now(),
         carries_blur: false,
+        ground: LazyGround::default(),
     }
 }
 
@@ -271,10 +299,44 @@ mod tests {
         let data = objc2_core_graphics::CGBitmapContextGetData(Some(&ctx)) as *const u8;
         // SAFETY: the context's own buffer, one RGBA pixel.
         let pixel = unsafe { std::slice::from_raw_parts(data, 4) };
-        let (r, g, b) = STAND_IN_RGB;
-        for (got, want) in pixel.iter().zip([r, g, b, 1.0]) {
+        let Ground { r, g, b, a } = STAND_IN_GROUND;
+        for (got, want) in pixel.iter().zip([r, g, b, a]) {
             assert!((*got as f64 - want * 255.0).abs() <= 1.0, "{pixel:?}");
         }
+    }
+
+    /// A picture's ground is read off its own pixels on first ask, a region's off its part of the
+    /// composite alone, and once read is shared by every copy; a stand-in's is its own colour, and one
+    /// whose pixels cannot be read takes it too.
+    #[test]
+    fn a_pictures_ground_is_read_off_its_own_pixels_once() {
+        use objc2_core_graphics::{CGBitmapContextCreateImage, CGContext};
+        let ctx = rgba_bitmap_context(80, 40).expect("a context");
+        CGContext::set_rgb_fill_color(Some(&ctx), 1.0, 0.0, 0.0, 1.0);
+        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(40.0, 40.0)));
+        CGContext::set_rgb_fill_color(Some(&ctx), 0.25, 0.25, 0.25, 1.0);
+        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(40.0, 0.0), CGSize::new(40.0, 40.0)));
+        let composite = CGBitmapContextCreateImage(Some(&ctx)).expect("an image");
+        let region = |x: f64| Picture {
+            image: Pixels::Region {
+                composite: composite.clone(),
+                rect: PixelRect::new(Point::new(x, 0.0), Size::new(40.0, 40.0)),
+            },
+            ..test_picture(ScreenSize::new(20.0, 20.0))
+        };
+
+        let grey = (0.25f64 * 255.0).round() / 255.0;
+        let right = region(40.0);
+        let copy = right.clone();
+        assert!(copy.ground.0.get().is_none(), "not read until asked");
+        let Ground { r, g, b, a } = right.ground();
+        assert!([r, g, b].iter().all(|c| (c - grey).abs() < 1e-9) && a == 1.0, "its own half: {r} {g} {b} {a}");
+        assert_eq!(copy.ground.0.get(), Some(&right.ground()), "read once for every copy");
+        assert_eq!(region(0.0).ground(), Ground { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, "the other half");
+
+        let stand_in = stand_in_picture(ScreenSize::new(859.0, 1081.0), test_bitmap());
+        assert_eq!(stand_in.ground.0.get(), Some(&STAND_IN_GROUND), "known, never read");
+        assert_eq!(region(400.0).ground(), STAND_IN_GROUND, "nothing to read");
     }
 
     /// A region is kept as a copy of its own pixels, stamped as it was; any other kind is kept as it is.
