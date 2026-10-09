@@ -368,7 +368,11 @@ what the engine was delivered of it as the watch started, frame zero's for a win
 press. It is judged from that, not from the latest delivery: the landing watch is looked at first in a
 round, and a window focused before it landed delivered its focused look as its landing, which the
 change watch then never saw change. The window losing focus is the watch's second end
-(`EndWatch::losing_focus`) when it ends wholly on screen and no pass resized or opened it: captured in
+(`EndWatch::losing_focus`) when it ends wholly on screen and no pass resized or opened it. Either end
+resized or opened is watched only to repaint: a `Change` capture at its new size would show it half
+painted, and a band print taken at another width never matches, so the first capture there would
+count as its turn. Its macOS-drawn look turns with its repainted picture, or with the lift when none settles. The
+window losing focus, when watched, is captured in
 the same rounds, in the same call as the target where their kinds and frames allow, and done at its
 own change from its own frame-zero picture, out of its own tries, or at a refusal; the watch is done
 when both are. An end not there yet is looked for alone every 1ms between the rounds, so the target
@@ -694,7 +698,8 @@ capture there (`capture_via_framed`, 16-24ms), at most
 picture and the window's ground in the growth until its picture at the slot is
 swapped in: the window is
 watched until it has repainted where it ends (`StageSummary::repainting`,
-`Settle::Repainted`) and never held for, and its slot is written with every
+`Settle::Repainted`) and never held for, left out of the last capture before the lift until it has
+(`Flight::final_windows`), so one not repainted by then flies its spawn picture to the lift, and its slot is written with every
 other frame as the overlay goes up. A frame off this display is not a spawn: a parked window
 with a cold cache took a 1s off-screen capture and flew in from the park.
 It used to take the reservation instead, which drew nothing in its slot

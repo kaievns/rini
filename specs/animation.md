@@ -178,6 +178,9 @@ destination for a window already moving.
 - Otherwise the flight holds a place for it and waits for its first picture. Each reason for holding
   MUST be recorded distinctly: "the window appeared without animating" has four causes and the log is
   the only way to tell them apart afterwards.
+- One that travels MUST be pictured at its slot only once it has repainted there. One that has not
+  by the last capture before the lift is not pictured then: it flies its first picture, with its
+  ground where that ends, to the lift, and the lift shows the window.
 
 ## The pictures a flight starts with
 
@@ -227,8 +230,11 @@ destination for a window already moving.
   MUST replace its old one mid-flight, for a grow, a shrink, and a window growing on one axis while
   it shrinks on the other alike: laid against the same edges as the old one, with the window's ground
   wherever it does not cover the frame still to come. A picture taken at its new size MUST NOT be
-  drawn before the window has repainted there; one that has not by the lift is never drawn, and the
-  lift shows the window. A window MUST count as repainted at its new size only once two captures in a
+  drawn before the window has repainted there, not even to show its focus turn; one that has not by
+  the lift is never drawn, and the lift shows the window. Until then the tile keeps the look its
+  picture from the press shows, the title bar and controls macOS draws focused or not, while its
+  hairline, shadow, ring and border turn as any window's: a window that never settles, as one
+  streaming output, turns its own look with the lift. A window MUST count as repainted at its new size only once two captures in a
   row show the same rendering, never because a capture differs from the picture it had before.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
@@ -451,7 +457,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - From the moment the window server reports the window gaining focus focused, it MUST be pictured
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or resized it: one a pass
-  opened or resized is pictured once it has repainted instead. A look a window already had when it landed
+  opened or resized is pictured once it has repainted instead, its own look coming only with that
+  picture (Resizing). A look a window already had when it landed
   counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
   shadow turning with it: the window losing focus unfocused, the window gaining focus focused. Its
   focus ring and its border wear where the flight ends from the show (`decorations.md`).
@@ -463,7 +470,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
   pass opened or resized, or one whose watch ran out, MUST be drawn unfocused just before the window
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
-  the same, old then new, while the flight still moves. Until its turn the window losing focus MUST be
+  the same, old then new, while the flight still moves, but for one a pass opened or resized that has
+  not repainted where it ends: it is not pictured then, only its hairline and its shadow turn, and
+  its own look turns with the lift. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
   keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its look turns at
   rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on

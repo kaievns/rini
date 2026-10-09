@@ -1615,8 +1615,8 @@ mod tests {
 
     /// The old window's turn given up on, clipped where it is, out of tries or refused, the target's
     /// held change waits for it no longer, and nothing more does; under a generation before, it was
-    /// given up on for another end. One a pass grew is watched to repaint instead, and drawn unfocused
-    /// just before the target.
+    /// given up on for another end. One a pass resized is watched to repaint instead, its look coming
+    /// only with its repainted picture, and drawn unfocused just before the target.
     #[test]
     fn the_targets_change_waits_no_longer_for_an_old_window_whose_turn_will_not_be_seen() {
         let now = Instant::now();
@@ -1645,10 +1645,10 @@ mod tests {
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(4));
         assert_eq!(focus(&out), handed_over(), "nothing to wait for");
 
-        let mut standing_in = pan();
-        standing_in.awaiting = vec![w(1)];
+        let mut resized = pan();
+        resized.repainting = vec![w(1)];
         let mut c = Coordinator::default();
-        c.on(Event::Begin(standing_in), now);
+        c.on(Event::Begin(resized), now);
         let g = c.generation();
         let watched = watch(&c.on(Event::FrameZero(g), now)).unwrap();
         assert_eq!(watched.losing_focus, None, "watched to repaint instead");
@@ -2028,7 +2028,9 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
-        assert_eq!(watch(&out).unwrap().awaiting, vec![(w(2), grown)], "watched until it repaints");
+        let watched = watch(&out).unwrap();
+        assert_eq!(watched.awaiting, vec![(w(2), grown)], "watched until it repaints");
+        assert_eq!(watched.focus, None, "its look comes with its repainted picture");
         let started = now + COALESCE_WINDOW;
         let out = c.on(Event::Tick { settled: false, landed: false }, started);
         assert_eq!(out, vec![Command::StartMoving], "no hold");
@@ -2046,6 +2048,32 @@ mod tests {
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed }, started + Duration::from_millis(100));
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "mid-run");
         assert_eq!(asked(c.on(tick, last)).expect("asked"), stage.final_frames, "and once in, pictured");
+    }
+
+    /// A window that opened and flies from where macOS showed it is left out of the last capture
+    /// before the lift until it has repainted at its slot, focus handing over all the same: the lift
+    /// shows it as it is.
+    #[test]
+    fn an_entrance_not_repainted_at_its_slot_is_left_out_of_the_last_capture() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.kind = Kind::LayoutPass;
+        stage.tiles[1].start = r(400.0, 300.0, 600.0, 400.0);
+        stage.repainting = vec![w(2)];
+        let mut c = running(stage.clone(), now);
+        assert!(c.is_moving(), "never held for");
+
+        let last = now + PLAYS - FINAL_BEFORE_END;
+        let tick = Event::Tick { settled: false, landed: false };
+        let out = c.clone().on(tick.clone(), last);
+        let windows = out.iter().find_map(|c| if let Command::AskFinal { windows, .. } = c { Some(windows.clone()) } else { None });
+        assert_eq!(windows, Some(vec![stage.final_frames[0]]), "not repainted at its slot yet");
+        assert_eq!(focus(&out), handed_over());
+
+        let g = c.generation();
+        c.on(Event::Picture { generation: g, window: w(2), frame: stage.final_frames[1].1, why: Why::Landed }, now + Duration::from_millis(100));
+        let out = c.on(tick, last);
+        assert!(has(&out, |c| matches!(c, Command::AskFinal { windows, .. } if *windows == stage.final_frames)), "once in, pictured");
     }
 
     #[test]
