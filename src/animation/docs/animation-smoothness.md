@@ -497,9 +497,11 @@ changes is how the picture maps onto it (`content_mode` in
   covers only what the picture does not, a column and the row either side of
   it meeting without overlap, since a fill under the whole tile would darken a
   translucent window. A grow is held for its repainted picture and flies it
-  from frame zero; one whose hold ran out flies its before picture with the
-  ground in the growth until the repainted one lands mid-run, cut onto the
-  grid on the leg's anchors. A shrink flies its before picture to the lift,
+  from frame zero, one shrinking on its other axis with the ground in the
+  span that picture leaves short there, swallowed by the moving edge; one
+  whose hold ran out flies its before picture with the ground in the growth
+  until the repainted one lands mid-run, cut onto the grid on the leg's
+  anchors. A shrink frame zero pictured flies that picture to the lift,
   clipped, with no ground and nothing swapped onto it ("A grow waits for its
   repaint" in `src/transitions/docs/coordination.md`); an entrance flies its spawn picture
   until its slot picture lands. The stretch it replaced, the middle and the

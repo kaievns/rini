@@ -226,7 +226,11 @@ destination for a window already moving.
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the
   overlay standing still, until that window has repainted at its new size, up to 300ms from the
   overlay going up, and that window MUST fly its repainted picture from the motion's first frame, so
-  its growth shows its content and never a fill cut to content mid-flight. A resize growing no window
+  its growth shows its content and never a fill cut to content mid-flight. A window growing on one
+  axis as it shrinks on the other, as a fold or an unfold, has no picture covering every frame: its
+  repainted picture, short of the start on the shrinking axis, shows the window's ground there, which
+  the moving edge swallows, and the cut onto it from the picture at the press comes as the motion
+  starts, never mid-flight. A resize growing no window
   MUST move as soon as the layout's follow-up passes are in, and MUST NOT wait for a resized window
   to repaint. The press's sequence stays a navigation's, the overlay first and the frames written at
   once; the only addition is the wait, and only for a window that grows. A window that has just
@@ -276,11 +280,10 @@ destination for a window already moving.
 > **Reported 2026-10-09**, after trying the change the report above led to. Kai: "this is a massive
 > improvement. thank you. one bug i can see straight away though is a flicker between blank fill
 > from a smaller window to actual enlarged window. i'd rather take a lag of waiting for actual new
-> window content than see a flicker." On that build (journal n1, 6 flights) the motion started
-> 56-73ms after the press, and each of 5 grows flew its growth as the window's flat ground until its
-> repainted picture was cut in 162-224ms after the press: that cut was the flicker. Each of 5 shrinks
-> had its repainted picture cut in 171-269ms after the press, and in 2 flights the last capture was
-> cut in again at 325-350ms, shrinks included.
+> window content than see a flicker." Each grow flew its growth as the window's flat ground until
+> its repainted picture was cut in mid-flight: that cut was the flicker, and each shrink had its
+> repainted picture cut in too. Measured in "A grow waits for its repaint"
+> (`src/transitions/docs/coordination.md`).
 
 ## Correctness the user can see
 

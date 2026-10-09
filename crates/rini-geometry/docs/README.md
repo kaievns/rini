@@ -12,7 +12,7 @@ interface speaks. Pure, and the only crate that tests without linking AppKit:
 ones alike, `centered_in` on CG, `is_off_screen` and `park_entry_frame` in any one
 space, and `to_overlay_space` and `from_overlay_space`, a window server rect on the
 overlay covering a display and back. `stretch`: the stretch tolerance (`MIN_STRETCH`,
-`MAX_STRETCH`), and `within_stretch` and `is_a_resize` over sizes in any one space.
+`MAX_STRETCH`), and `within_stretch`, `is_a_resize` and `grows` over sizes in any one space.
 `space`: the units, the typed `Rect`, `Point`, `Size` and `Vector` over them with one
 alias per unit and kind a feature uses, `Translation`, `PointSpace` and `Respace`, and
 `FromCg`/`ToCg`.
@@ -110,4 +110,6 @@ compares `f64` with `==` and no production code rounds by accident.
 
 **One stretch tolerance.** Half a percent either way. A picture fits a frame, and a size change
 is not a resize, by the same test (`within_stretch`), so `pictures` and `animation` cannot
-disagree about which moves need a fresh picture.
+disagree about which moves need a fresh picture. `grows` uses the same tolerance one-sided: true when
+either axis grows past it, whatever the other does, which is when a picture taken at the old size
+cannot cover the new one.

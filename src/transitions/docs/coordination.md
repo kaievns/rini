@@ -802,8 +802,14 @@ it has repainted where it ends (`EndPicture::of_window`, sorted into the stage's
 `StageSummary::awaiting` as well, so the overlay stands still at frame zero, in place of the 25ms
 coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show. That picture goes onto
 the tile before the motion starts, `FlightEngine::swap` posing frame zero again with it (`reinstall`),
-so the flight starts with it on the crop grid on the leg's anchors and the moving edge reveals real
-content from its first frame. On the build that flew grows at once (journal n1, 2026-10-09, 6 flights)
+so the flight starts with it on the crop grid on the leg's anchors and a grow's moving edge reveals
+real content from its first frame. A window growing on one axis as it shrinks on the other, a fold or
+an unfold (859x1081 to 1148x538 on n1), has no picture covering every frame: the repainted one falls
+short of the start frame on the shrinking axis, so posing it cuts that span from the press picture's
+content to the window's ground while the overlay still stands, and the moving edge then swallows the
+ground. Flying the press picture instead would keep the ground in the growth and, at a 0.5% stretch
+tolerance, cut it to content no earlier than the lift: the cut Kai reported. *Which of the two reads
+better on a fold is not seen yet.* On the build that flew grows at once (journal n1, 2026-10-09, 6 flights)
 the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
 after the show: held, the motion starts about 160-225ms after the press. A window the pass only
 shrinks is `EndPicture::Kept`, in `StageSummary::kept` as well: never held for itself, it moves
@@ -830,8 +836,8 @@ a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its
 against the edges that move less, and where it does not cover the frame still to come, as a
 mixed-axis grow's on its shrinking axis, the ground fills the span by the moving edge
 (`a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge`). On a grow that cut, from
-the ground to content, is what Kai saw as a flicker ("i'd rather take a lag of waiting for actual new
-window content than see a flicker", 2026-10-09): the hold leaves it to a grow that misses the cap.
+the ground to content, is the flicker Kai reported (the third Reported line of `specs/animation.md`
+"Resizing"): the hold leaves it to a grow that misses the cap.
 `TileOverlay::swap` re-installs the tile's own track from the overlay's replica, the SAME begin,
 length and curve, while it plays (a plain move's track too, so a crop-drawn tile on a move re-keys the
 same way): the frame keeps its curve and only the pixels cut
