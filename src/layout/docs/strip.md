@@ -362,8 +362,9 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   A bounded column's x and width are rounded each on its own, so a column flush with the viewport's
   right edge can stand a point past it, and the pin keeps that point. Checked as any reveal, the
   right edge was pulled back by it and the released window slid 1pt left. The point stands until the
-  next neutral reveal of that column, an app's own resize of it for one, which pulls the strip 1pt
-  left then.
+  next neutral reveal of that column, an app's own resize of it that changes its width for one,
+  which pulls the strip 1pt left then; an app answering rini's write is no reveal ("An app answering
+  rini's write changes nothing").
 - **The pin is spent by one pass and belongs to one window.** Every scroll clears it, a window
   closing included (`LayoutState::unpin`), and the pass applies it only while the window it names is
   still selected, so a selection moved without a scroll never drags the next column to the old right
@@ -435,13 +436,15 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   860pt half came back as 858.5, drawn at 859, a point narrower each time; the row's height became
   pixel weights with `height_overridden` set; and the report's scroll request dropped the centre
   override and the view a toggle back returns to. Now, with no drag, an axis within 1pt of the slot
-  the strip draws, rounded as drawn (`column_width` at the column's ratio, `Column::row_heights` for
-  a stacked row; a lone column's height is no row's), changes nothing, and a report that changes
-  neither returns before its scroll request. A width taken is read through
+  the last pass gave the window changes nothing (a lone column's height is no row's), and a report
+  that changes neither returns before its scroll request. The pass records that slot for its
+  selection as it wrote it, after the windows' own limits (`last_selected_width_px`,
+  `last_selected_height_px`, measured for `last_selected_rel_of`); a slot worked out again from the
+  column's ratio missed those limits, so a window held to a 900pt minimum in an 860pt half answered
+  900 and was taken as a width, which dropped a centring and a fold's way back each time. A report
+  from a window the last pass did not select is taken. A width taken is read through
   `constraints::ratio_of_column_width`, the inverse of `column_width`, so it is laid out as
-  reported: 982pt lands at 982, not 981. The windows' own limits are not counted in the slot, so a
-  window held to its minimum answers by its minimum, which is taken as its width, as before.
-  A drag is the user's, so it takes even a 1pt change. Not built: research suggested also ignoring
+  reported: 982pt lands at 982, not 981. A drag is the user's, so it takes even a 1pt change. Not built: research suggested also ignoring
   a report smaller than the slot by less than the window's own size step. rini reads no size step,
   and it would undo a terminal settling 3pt under a dragged width, which is taken today.
 - **Full width and a drag.** A drag on a full-width column's left or right edge ends full width at

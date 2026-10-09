@@ -107,6 +107,12 @@ impl Column {
         self.height_overridden = false;
     }
 
+    /// The height its rows share out of `height`, less the gaps between them.
+    fn available_height(&self, height: f64, gap: f64) -> f64 {
+        let total_gap = gap * (self.windows.len().saturating_sub(1) as f64);
+        (height - total_gap).max(0.0)
+    }
+
     /// Each row's height in points out of `available`, before the windows' own limits. A column
     /// nobody has resized divides evenly whatever its weights, as `calculate_layout` reads it.
     fn row_heights(&self, available: f64) -> Vec<f64> {
@@ -185,9 +191,15 @@ struct LayoutState {
     /// before the first. A change of gap re-spaces the strip around it, so the column stays put.
     #[serde(skip, default = "default_atomic_unset")]
     last_selected_rel_px: AtomicU64,
-    /// The selection `last_selected_rel_px` was measured for, `packed`.
+    /// The selection `last_selected_rel_px` and the slot below were measured for, `packed`.
     #[serde(skip)]
     last_selected_rel_of: AtomicU64,
+    /// The slot size the last layout gave that selection, after its own limits: what the app
+    /// answering rini's write reports back.
+    #[serde(skip, default = "default_atomic_unset")]
+    last_selected_width_px: AtomicU64,
+    #[serde(skip, default = "default_atomic_unset")]
+    last_selected_height_px: AtomicU64,
     /// Where the strip's first column started after the last layout, against the tiling area's left
     /// edge: the anchor less the scroll offset, or NaN before the first. See `strip_origin`.
     #[serde(skip, default = "default_atomic_unset")]
@@ -225,6 +237,8 @@ impl LayoutState {
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
             last_selected_rel_px: default_atomic_unset(),
             last_selected_rel_of: AtomicU64::new(packed(None)),
+            last_selected_width_px: default_atomic_unset(),
+            last_selected_height_px: default_atomic_unset(),
             last_strip_origin_px: default_atomic_unset(),
             last_step_px: AtomicU64::new(0.0f64.to_bits()),
             last_center_offset_delta_px: AtomicU64::new(0.0f64.to_bits()),
@@ -533,6 +547,16 @@ impl LayoutState {
         rel.is_finite().then_some(View::StartingAt(rel))
     }
 
+    /// The slot size the last pass gave `wid`, if `wid` was its selection.
+    fn laid_out_slot_of(&self, wid: WindowId) -> Option<CGSize> {
+        if unpacked(self.last_selected_rel_of.load(Ordering::Relaxed)) != Some(wid) {
+            return None;
+        }
+        let width = f64::from_bits(self.last_selected_width_px.load(Ordering::Relaxed));
+        let height = f64::from_bits(self.last_selected_height_px.load(Ordering::Relaxed));
+        (width.is_finite() && height.is_finite()).then(|| CGSize::new(width, height))
+    }
+
     /// The view `by`'s way back returns `wid` to, if it kept one. Any other kept view goes too.
     fn take_kept_view(&mut self, wid: WindowId, by: Toggle) -> Option<View> {
         let kept = self.kept_view.take()?;
@@ -721,6 +745,8 @@ impl Clone for LayoutState {
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
             last_selected_rel_px: AtomicU64::new(self.last_selected_rel_px.load(Ordering::Relaxed)),
             last_selected_rel_of: AtomicU64::new(self.last_selected_rel_of.load(Ordering::Relaxed)),
+            last_selected_width_px: AtomicU64::new(self.last_selected_width_px.load(Ordering::Relaxed)),
+            last_selected_height_px: AtomicU64::new(self.last_selected_height_px.load(Ordering::Relaxed)),
             last_strip_origin_px: AtomicU64::new(self.last_strip_origin_px.load(Ordering::Relaxed)),
             last_step_px: AtomicU64::new(self.last_step_px.load(Ordering::Relaxed)),
             last_center_offset_delta_px: AtomicU64::new(
@@ -1407,8 +1433,7 @@ impl ScrollingLayoutSystem {
             if col.windows.is_empty() {
                 continue;
             }
-            let total_gap = gap_y * (col.windows.len().saturating_sub(1) as f64);
-            let available_height = (tiling.size.height - total_gap).max(0.0);
+            let available_height = col.available_height(tiling.size.height, gap_y);
             let row_constraints: Vec<AxisConstraints> = col
                 .windows
                 .iter()
@@ -1484,6 +1509,11 @@ impl ScrollingLayoutSystem {
                 frame = tile::window_in(frame, borders.of(*wid));
                 if let Some(c) = constraints.get(wid).copied() {
                     frame.size = clamp_to_constraints(frame.size, c);
+                }
+                if measured_for == Some(*wid) {
+                    let slot = tile::slot_of(frame, borders.of(*wid)).size;
+                    state.last_selected_width_px.store(slot.width.to_bits(), Ordering::Relaxed);
+                    state.last_selected_height_px.store(slot.height.to_bits(), Ordering::Relaxed);
                 }
                 out.push((*wid, frame));
                 y_cursor += row_height;
@@ -1811,7 +1841,7 @@ impl ScrollingLayoutSystem {
     /// The window's own frame, read back as its slot under its `border` (`tile::slot_of`) and taken
     /// as its column's width and its row's height. `drag` is the mouse drag that resized it, `None`
     /// for any other resize: the app's own, or a window rule's size, and then an axis within a point
-    /// of the slot the strip gives the window is the app answering rini's write, which changes
+    /// of the slot the last pass gave the window is the app answering rini's write, which changes
     /// nothing. See "Mouse resize" in `src/layout/docs/strip.md`.
     pub fn on_window_resized(
         &mut self,
@@ -1853,24 +1883,13 @@ impl ScrollingLayoutSystem {
             // app settling its own size nor a drag that moves neither side gives it a width.
             return;
         }
-        let tiling_height = tiling.size.height;
-        let available_height = |col: &Column| {
-            let total_gap = gaps.inner * (col.windows.len().saturating_sub(1) as f64);
-            (tiling_height - total_gap).max(0.0)
-        };
-        let (width_kept, height_kept) = if drag.is_none() {
-            let col = &state.columns[col_idx];
-            let (kind, ratio) = Self::laid_out_ratio(state, col, min_ratio, max_ratio);
-            let slot_width =
-                column_width(kind, ratio, tiling.size.width, gaps.inner, column_limits([]));
-            let slot_height = (col.windows.len() > 1)
-                .then(|| col.row_heights(available_height(col))[row_idx]);
-            (
-                answers_slot(new_frame.size.width, slot_width),
-                slot_height.is_none_or(|height| answers_slot(new_frame.size.height, height)),
-            )
-        } else {
-            (false, false)
+        let stacked = state.columns[col_idx].windows.len() > 1;
+        let (width_kept, height_kept) = match state.laid_out_slot_of(wid).filter(|_| drag.is_none()) {
+            Some(slot) => (
+                answers_slot(new_frame.size.width, slot.width),
+                !stacked || answers_slot(new_frame.size.height, slot.height),
+            ),
+            None => (false, false),
         };
         if width_kept && height_kept {
             return;
@@ -1909,7 +1928,7 @@ impl ScrollingLayoutSystem {
         let col = &mut state.columns[col_idx];
         if col.windows.len() > 1 && tiling.size.height > 0.0 && !height_kept {
             col.ensure_height_weights();
-            let available_height = available_height(col);
+            let available_height = col.available_height(tiling.size.height, gaps.inner);
             if available_height > 0.0 {
                 let height = new_frame.size.height;
                 match drag {
@@ -5688,11 +5707,43 @@ mod tests {
     /// The app reporting `window`'s frame from the pass before, `short` narrower and lower, then a
     /// pass.
     fn answer(system: &mut ScrollingLayoutSystem, layout: LayoutId, window: WindowId, short: (f64, f64)) {
-        let frame = frame_for(&kai_s_frames(system, layout), window);
-        let size = CGSize::new(frame.size.width - short.0, frame.size.height - short.1);
+        answer_under(system, layout, window, short, &constraints_none());
+    }
+
+    /// `answer`, with every pass laid out under the windows' own `limits`, which the app holds its
+    /// answer to as well.
+    fn answer_under(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        window: WindowId,
+        short: (f64, f64),
+        limits: &HashMap<WindowId, WindowLayoutConstraints>,
+    ) {
+        let frame = frame_for(&kai_s_frames_under(system, layout, limits), window);
+        let own = limits.get(&window).copied().unwrap_or_default();
+        let size = CGSize::new(
+            (frame.size.width - short.0).max(own.min_width),
+            (frame.size.height - short.1).max(own.min_height),
+        );
         let report = CGRect::new(frame.origin, size);
         system.on_window_resized(layout, window, None, report, 0.0, KAI_SCREEN, &kai_s_gaps());
-        kai_s_frames(system, layout);
+        kai_s_frames_under(system, layout, limits);
+    }
+
+    fn kai_s_frames_under(
+        system: &ScrollingLayoutSystem,
+        layout: LayoutId,
+        limits: &HashMap<WindowId, WindowLayoutConstraints>,
+    ) -> Vec<(WindowId, CGRect)> {
+        system.calculate_layout(layout, KAI_SCREEN, limits, &tile::Borders::default(), &kai_s_gaps())
+    }
+
+    /// `window` at least 900pt wide, more than a half column's 860.
+    fn at_least_900_wide(window: WindowId) -> HashMap<WindowId, WindowLayoutConstraints> {
+        let mut limits = constraints_none();
+        let wide = WindowLayoutConstraints { is_resizable: true, min_width: 900.0, ..Default::default() };
+        limits.insert(window, wide);
+        limits
     }
 
     fn assert_no_size_given(system: &ScrollingLayoutSystem, layout: LayoutId) {
@@ -5778,6 +5829,57 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_width_taken_leaves_the_height_the_app_answered() {
+        let (mut system, layout) = a_strip(&[&[1, 2, 3]]);
+        assert!(system.select_window(layout, wid(1, 1)));
+        let rows = laid_out_yh(&system, layout, wid(1, 1));
+
+        answer(&mut system, layout, wid(1, 1), (50.0, 1.0));
+
+        let column = &system.layout_state(layout).expect("layout").columns[0];
+        assert!(column.width_overridden);
+        assert!(!column.height_overridden);
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 1)), (3.0, 810.0));
+        assert_eq!(laid_out_yh(&system, layout, wid(1, 1)), rows);
+    }
+
+    /// B of [A][B][C], centred and held to 900pt by its own minimum, given 899 and answering with
+    /// its 900: the slot was counted without the minimum, 860, so the answer was taken as a width
+    /// and its scroll request dropped the centring.
+    #[test]
+    fn a_window_held_to_its_minimum_answers_by_it_and_changes_nothing() {
+        let (mut system, layout) = a_strip(&[&[1], &[2], &[3]]);
+        let limits = at_least_900_wide(wid(1, 2));
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.center_selected_column(layout);
+        let before = kai_s_frames_under(&system, layout, &limits);
+        assert_eq!(frame_for(&before, wid(1, 2)).size.width, 899.0);
+
+        answer_under(&mut system, layout, wid(1, 2), (0.0, 0.0), &limits);
+
+        assert_same_frames(&kai_s_frames_under(&system, layout, &limits), &before);
+        assert_no_size_given(&system, layout);
+    }
+
+    /// [A][B1,B2] with B2 held to 900pt, folded out and back by `Mod+Comma`, answering each pass:
+    /// A1 came back at x=-860 rather than the -36 it left.
+    #[test]
+    fn a_fold_round_trip_of_a_window_held_to_its_minimum_puts_the_strip_back() {
+        let (mut system, layout, a, b) = a_stack_on_the_right(2);
+        let limits = at_least_900_wide(b[1]);
+        assert!(system.select_window(layout, b[1]));
+        let before = kai_s_frames_under(&system, layout, &limits);
+
+        for _ in 0..2 {
+            assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![b[1]]);
+            answer_under(&mut system, layout, b[1], (0.0, 0.0), &limits);
+        }
+
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
+        assert_same_frames(&kai_s_frames_under(&system, layout, &limits), &before);
     }
 
     /// B of [A][B][C] centred, maximized and restored, then the app's answer to the restore: the
