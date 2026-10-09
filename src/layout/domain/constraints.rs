@@ -107,6 +107,38 @@ pub fn column_width(
     if shrunk >= 1.0 { shrunk } else { width }
 }
 
+/// The ratio `column_width` lays a column of `kind` out `width` wide at, before its windows' limits:
+/// its inverse, so a width read back from a window is the ratio that drew it.
+///
+/// A bounded column's gap share depends on the ratio it comes out of, and is less than one gap, so
+/// the ratio lies between `width`'s and a gap wider's. The share is the one of the column count
+/// abreast, among those that range spans, whose ratio counts that many abreast. `column_width` grows
+/// with the ratio, so at most one does. A width none does, one inside a jump of the share, takes
+/// the fewest's.
+pub fn ratio_of_column_width(kind: ColumnKind, width: f64, viewport_width: f64, gap: f64) -> f64 {
+    let viewport_width = viewport_width.max(1.0);
+    let plain = width / viewport_width;
+    match kind {
+        ColumnKind::FullWidth => return 1.0,
+        ColumnKind::Dragged => return plain,
+        ColumnKind::Bounded if gap <= 0.0 || plain <= 0.0 => return plain,
+        ColumnKind::Bounded => {}
+    }
+    let abreast_at = |ratio: f64| (1.0 / ratio).round().max(1.0);
+    let ratio_abreast = |abreast: f64| (width + gap * (abreast - 1.0) / abreast) / viewport_width;
+    let fewest = abreast_at((width + gap) / viewport_width);
+    let most = abreast_at(plain);
+    let mut abreast = fewest;
+    while abreast <= most {
+        let ratio = ratio_abreast(abreast);
+        if abreast_at(ratio) == abreast {
+            return ratio;
+        }
+        abreast += 1.0;
+    }
+    ratio_abreast(fewest)
+}
+
 /// `size` reduced to what the window will actually accept, never grown.
 ///
 /// Applied to a maximized frame as well as an ordinary column slot. It used to apply only to the
@@ -507,7 +539,7 @@ mod clamp_tests {
 
 #[cfg(test)]
 mod column_tests {
-    use super::{AxisConstraints, ColumnKind, column_limits, column_width};
+    use super::{AxisConstraints, ColumnKind, column_limits, column_width, ratio_of_column_width};
     use crate::layout::WindowLayoutConstraints;
 
     fn window(min: f64, max: f64, locked: f64) -> WindowLayoutConstraints {
@@ -715,5 +747,32 @@ mod column_tests {
     fn a_gap_larger_than_the_column_is_not_taken() {
         let width = column_width(ColumnKind::Bounded, 0.5, 10., 1000., free());
         assert!(width >= 1.0);
+    }
+
+    /// Kai's half column is drawn 860pt wide in a 1722pt viewport with `gaps 3`. Read as
+    /// `860 / 1722`, that width was laid out at 858.5 and drawn at 859.
+    #[test]
+    fn a_width_reads_back_as_the_ratio_that_lays_it_out_that_wide() {
+        let ratio = ratio_of_column_width(ColumnKind::Bounded, 860., 1722., 3.);
+        assert!((column_width(ColumnKind::Bounded, ratio, 1722., 3., free()) - 860.).abs() < 1e-9);
+        assert_eq!(column_width(ColumnKind::Bounded, 860. / 1722., 1722., 3., free()), 858.5);
+    }
+
+    #[test]
+    fn every_bounded_width_reads_back_as_its_ratio() {
+        for step in 50..=1000 {
+            let ratio = f64::from(step) / 1000.;
+            for gap in [3., 20.] {
+                let width = column_width(ColumnKind::Bounded, ratio, 1722., gap, free());
+                let back = ratio_of_column_width(ColumnKind::Bounded, width, 1722., gap);
+                assert!((back - ratio).abs() < 1e-9, "{ratio} with gap {gap}: {width} read as {back}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_dragged_width_reads_back_whole() {
+        let back = ratio_of_column_width(ColumnKind::Dragged, 809., 1722., 3.);
+        assert_eq!(column_width(ColumnKind::Dragged, back, 1722., 3., free()), 809.0);
     }
 }

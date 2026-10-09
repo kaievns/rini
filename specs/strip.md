@@ -176,9 +176,18 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A drag that never moves the top or bottom edge MUST leave the column's heights as they were. A
   column nobody resized vertically then still divides evenly when a window joins or leaves it.
 - A stacked edge dragged back to where it started MUST give the window across it its height back.
-- A window that resizes itself MUST keep its column where it was: the app's new width is taken and
-  its origin is not. Its new height is taken from the other windows in its column, in their
-  proportions.
+- A window that resizes itself MUST keep its column where it was: the app's new width is taken, laid
+  out at the width the app reported, and its origin is not. Its new height is taken from the other
+  windows in its column, in their proportions. A report within 1pt of the place rini gave the window
+  on an axis is the app answering rini's own write: it MUST change nothing on that axis, and a report
+  that changes neither axis MUST NOT scroll the strip, so a centred column stays centred and a fold
+  or full width still comes back to the view it left.
+
+> **Found 2026-10-09, not reported.** An app answering rini's write 1pt off on one axis had the other
+> axis read again with it. A half column's 860pt was read back as 860/1722 of the viewport and laid
+> out at 858.5, drawn at 859, a point narrower with every such answer. A stack's even split became
+> fixed heights, and the answer's scroll dropped a centred column's centring and the view a fold
+> back returns to. Ghostty snapping to its cell grid is the likely sender; not measured.
 
 > **Reported 2026-10-06.** "the left edge is finicky. i can reduce the size ok. and i can extend it
 > but it extends to the right not to the left. and when the right edge reaches the screen edge it

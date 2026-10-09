@@ -325,7 +325,8 @@ decoration. Each window of a stack is inset by its own, inside slots laid out as
   each limit a window reports (`tile::slot_limits`); counted without it, a window's minimum would
   leave the slot 2·border short, and the window would be clamped below its own minimum.
 - **Reports come back once, as slots.** `on_window_resized` reads the report and the drag's start
-  as slots on entry (`tile::slot_of`), so the dragged side, the dragged width, the ratio, the heights
+  as slots on entry (`tile::slot_of`), so the dragged side, the dragged width, the ratio
+  (`constraints::ratio_of_column_width`, see "Mouse resize"), the heights
   a stacked edge trades and the right edge a left-edge drag keeps are all a slot's, and a dragged
   column keeps its slot width whole: the window lands where it was let go. The reactor's
   `DragSession::start_frame` stays the window's frame.
@@ -396,7 +397,7 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   moves the top or bottom edge leaves the heights and `height_overridden` alone. It used to mark the
   column as deliberately split, so a window folded back into it kept the 1.0 weight its own column
   held and ended 1pt high. An app's own height, with no drag, still comes out of the other rows in
-  proportion.
+  proportion, unless it answers the row's height ("An app answering rini's write changes nothing").
 - **Not taken from niri: the whole column sharing a stacked edge.** niri refuses only the topmost
   window's top edge (`niri:src/layout/scrolling.rs:3635-3650`). Every other top or bottom edge goes
   through `set_window_height` (`niri:src/layout/scrolling.rs:5045-5124`), which fixes the dragged
@@ -425,6 +426,22 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   clamp there would undo the drag. The mark is saved with the column and carried with the width
   (`ColumnWidth::Dragged`, which the file holds as an `Offset` with the drag beside it, as
   `src/workspaces/docs/launch-memory.md` says); a key or a preset clears it.
+- **An app answering rini's write changes nothing.** The reactor drops a report within 0.1pt of
+  rini's write before the layout sees it (`same_as`). A report off on one axis, a terminal snapping
+  its height to its cell grid for one, still carried the other, and both were taken: the width was
+  read as `width / viewport`, and `column_width` took the gap share out of that again, so Kai's
+  860pt half came back as 858.5, drawn at 859, a point narrower each time; the row's height became
+  pixel weights with `height_overridden` set; and the report's scroll request dropped the centre
+  override and the view a toggle back returns to. Now, with no drag, an axis within 1pt of the slot
+  the strip draws, rounded as drawn (`column_width` at the column's ratio, `Column::row_heights` for
+  a stacked row; a lone column's height is no row's), changes nothing, and a report that changes
+  neither returns before its scroll request. A width taken is read through
+  `constraints::ratio_of_column_width`, the inverse of `column_width`, so it is laid out as
+  reported: 982pt lands at 982, not 981. The windows' own limits are not counted in the slot, so a
+  window held to its minimum answers by its minimum, which is taken as its width, as before.
+  A drag is the user's, so it takes even a 1pt change. Not built: research suggested also ignoring
+  a report smaller than the slot by less than the window's own size step. rini reads no size step,
+  and it would undo a terminal settling 3pt under a dragged width, which is taken today.
 - **Full width and a drag.** A drag on a full-width column's left or right edge ends full width at
   the dragged width, through `leave_full_width_in_place`; anything else under full width, the app
   settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in

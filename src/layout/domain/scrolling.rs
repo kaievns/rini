@@ -7,7 +7,7 @@ use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
     AxisConstraints, ColumnKind, clamp_to_constraints, column_limits, column_ratio, column_width,
-    solve_axis_lengths,
+    ratio_of_column_width, solve_axis_lengths,
 };
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::domain::edge_drag::{Drag, End, Side, dragged_side, dragged_width, trade_height};
@@ -759,6 +759,12 @@ fn unpacked(bits: u64) -> Option<WindowId> {
     Some(WindowId { pid: (bits >> 32) as u32 as pid_t, idx })
 }
 
+/// Whether a reported length is the slot length the strip laid out, as drawn, to within the point a
+/// window's own rounding or its app's snapping takes off it.
+fn answers_slot(reported: f64, slot: f64) -> bool {
+    (reported - slot.round()).abs() <= 1.0
+}
+
 /// The scroll offset that keeps the selected column where it was on screen after the gap between
 /// columns changed. The offset is in strip points and every column start includes the gaps before
 /// it, so a wider gap slides the selected column right by one gap change per column ahead of it
@@ -853,6 +859,18 @@ impl ScrollingLayoutSystem {
         column_ratio(ColumnKind::Bounded, ratio, 0.0, min_ratio, max_ratio)
     }
 
+    /// What holds `col` and the ratio of the viewport it asks for, as the layout pass lays it out.
+    fn laid_out_ratio(
+        state: &LayoutState,
+        col: &Column,
+        min_ratio: f64,
+        max_ratio: f64,
+    ) -> (ColumnKind, f64) {
+        let kind = state.column_kind(col);
+        let base_ratio = Self::clamp_base_ratio(state.column_width_ratio, min_ratio, max_ratio);
+        (kind, column_ratio(kind, base_ratio, col.width_offset, min_ratio, max_ratio))
+    }
+
     fn column_widths_and_starts(
         state: &LayoutState,
         screen_width: f64,
@@ -860,19 +878,12 @@ impl ScrollingLayoutSystem {
         min_ratio: f64,
         max_ratio: f64,
     ) -> (Vec<f64>, Vec<f64>) {
-        let base_ratio = Self::clamp_base_ratio(state.column_width_ratio, min_ratio, max_ratio);
         let mut widths = Vec::with_capacity(state.columns.len());
         let mut starts = Vec::with_capacity(state.columns.len());
         let mut cursor = 0.0;
         for col in &state.columns {
             starts.push(cursor);
-            let ratio = column_ratio(
-                state.column_kind(col),
-                base_ratio,
-                col.width_offset,
-                min_ratio,
-                max_ratio,
-            );
+            let (_, ratio) = Self::laid_out_ratio(state, col, min_ratio, max_ratio);
             let width = (screen_width * ratio).max(1.0);
             widths.push(width);
             cursor += width + gap_x;
@@ -1245,11 +1256,9 @@ impl ScrollingLayoutSystem {
             //
             // A lone column keeps its width; expanding it tied a window's size to its neighbours.
             // See "Column width" in `src/layout/docs/strip.md`.
-            let kind = state.column_kind(col);
-            let ratio = column_ratio(
-                kind,
-                base_ratio,
-                col.width_offset,
+            let (kind, ratio) = Self::laid_out_ratio(
+                state,
+                col,
                 self.settings.min_column_width_ratio,
                 self.settings.max_column_width_ratio,
             );
@@ -1800,8 +1809,9 @@ impl ScrollingLayoutSystem {
 
     /// The window's own frame, read back as its slot under its `border` (`tile::slot_of`) and taken
     /// as its column's width and its row's height. `drag` is the mouse drag that resized it, `None`
-    /// for any other resize: the app's own, or a window rule's size. See "Mouse resize" in
-    /// `src/layout/docs/strip.md`.
+    /// for any other resize: the app's own, or a window rule's size, and then an axis within a point
+    /// of the slot the strip gives the window is the app answering rini's write, which changes
+    /// nothing. See "Mouse resize" in `src/layout/docs/strip.md`.
     pub fn on_window_resized(
         &mut self,
         layout: LayoutId,
@@ -1842,6 +1852,28 @@ impl ScrollingLayoutSystem {
             // app settling its own size nor a drag that moves neither side gives it a width.
             return;
         }
+        let tiling_height = tiling.size.height;
+        let available_height = |col: &Column| {
+            let total_gap = gaps.inner * (col.windows.len().saturating_sub(1) as f64);
+            (tiling_height - total_gap).max(0.0)
+        };
+        let (width_kept, height_kept) = if drag.is_none() {
+            let col = &state.columns[col_idx];
+            let (kind, ratio) = Self::laid_out_ratio(state, col, min_ratio, max_ratio);
+            let slot_width =
+                column_width(kind, ratio, tiling.size.width, gaps.inner, column_limits([]));
+            let slot_height = (col.windows.len() > 1)
+                .then(|| col.row_heights(available_height(col))[row_idx]);
+            (
+                answers_slot(new_frame.size.width, slot_width),
+                slot_height.is_none_or(|height| answers_slot(new_frame.size.height, height)),
+            )
+        } else {
+            (false, false)
+        };
+        if width_kept && height_kept {
+            return;
+        }
         if reveals_only {
             state.reveal_selected_without_direction();
         } else {
@@ -1857,7 +1889,8 @@ impl ScrollingLayoutSystem {
         } else {
             ColumnKind::Bounded
         };
-        let ratio = column_ratio(kind, width / tiling.size.width, 0.0, min_ratio, max_ratio);
+        let read_back = ratio_of_column_width(kind, width, tiling.size.width, gaps.inner);
+        let ratio = column_ratio(kind, read_back, 0.0, min_ratio, max_ratio);
         if let Some((start, _)) = side_drag
             && ratio >= 1.0
             && state.columns[col_idx].windows.len() == 1
@@ -1868,15 +1901,14 @@ impl ScrollingLayoutSystem {
                 state.columns[col_idx].give_width(offset, true);
                 state.enter_full_width(wid);
             }
-        } else {
+        } else if !width_kept {
             state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Dragged);
         }
 
         let col = &mut state.columns[col_idx];
-        if col.windows.len() > 1 && tiling.size.height > 0.0 {
+        if col.windows.len() > 1 && tiling.size.height > 0.0 && !height_kept {
             col.ensure_height_weights();
-            let total_gap = gaps.inner * (col.windows.len().saturating_sub(1) as f64);
-            let available_height = (tiling.size.height - total_gap).max(0.0);
+            let available_height = available_height(col);
             if available_height > 0.0 {
                 let height = new_frame.size.height;
                 match drag {
@@ -2249,7 +2281,7 @@ mod tests {
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::{Column, ScrollingLayoutSystem, rebased_offset};
+    use super::{Column, ScrollingLayoutSystem, answers_slot, rebased_offset};
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::Drag;
@@ -4510,8 +4542,8 @@ mod tests {
         for window in w {
             system.add_window_after_selection(layout, window);
         }
-        app_sizes(&mut system, layout, w[0], 596.0);
-        app_sizes(&mut system, layout, w[1], 883.5);
+        app_sizes(&mut system, layout, w[0], 594.0);
+        app_sizes(&mut system, layout, w[1], 882.0);
         assert_eq!(laid_out_xw(&system, layout, w[0]).1, 594.0);
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 882.0);
         (system, layout, w)
@@ -4588,7 +4620,7 @@ mod tests {
     #[test]
     fn a_drag_below_min_column_width_keeps_its_width() {
         let (mut system, layout, w) = kai_s_strip();
-        app_sizes(&mut system, layout, w[1], 597.0);
+        app_sizes(&mut system, layout, w[1], 595.0);
         assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 595.0));
 
         drag(&mut system, layout, w[1], xw(600.0, 595.0), xw(708.0, 487.0));
@@ -4813,7 +4845,7 @@ mod tests {
         let (mut system, layout, w) = kai_s_strip();
         system.on_window_resized(layout, w[1], None, xw(500.0, 982.0), 0.0, KAI_SCREEN, &kai_s_gaps());
 
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 981.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 982.0));
         assert_eq!(scroll_offset(&system, layout), 0.0);
     }
 
@@ -4884,7 +4916,7 @@ mod tests {
     fn a_removed_window_s_pin_does_not_move_the_column_selected_after_it() {
         let (mut system, layout, w) = kai_s_strip();
         app_sizes(&mut system, layout, w[2], 1148.0);
-        app_sizes(&mut system, layout, w[0], 596.0);
+        app_sizes(&mut system, layout, w[0], 594.0);
         assert!(system.select_window(layout, w[1]));
         assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 882.0));
 
@@ -4901,7 +4933,7 @@ mod tests {
     #[test]
     fn in_centred_mode_a_middle_column_dragged_out_50_from_its_left_edge_grows_100_and_stays_centred() {
         let (mut system, layout, w) = kai_s_centred_strip();
-        app_sizes(&mut system, layout, w[1], 586.0);
+        app_sizes(&mut system, layout, w[1], 584.0);
         assert_eq!(laid_out_xw(&system, layout, w[1]), (572.0, 584.0));
 
         drag(&mut system, layout, w[1], xw(572.0, 584.0), xw(522.0, 634.0));
@@ -4918,7 +4950,7 @@ mod tests {
         drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(3.0, 674.0));
         assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 674.0), "first");
 
-        app_sizes(&mut system, layout, w[2], 600.0);
+        app_sizes(&mut system, layout, w[2], 598.0);
         assert_eq!(laid_out_xw(&system, layout, w[2]), (1127.0, 598.0));
         drag(&mut system, layout, w[2], xw(1127.0, 598.0), xw(1047.0, 678.0));
         assert_eq!(laid_out_xw(&system, layout, w[2]), (1047.0, 678.0), "last");
@@ -5606,6 +5638,134 @@ mod tests {
         assert_eq!(loaded.columns.len(), 3);
         assert!(loaded.fold_origins.is_empty());
         assert!(loaded.full_width_origins.is_empty());
+    }
+
+    // ── the app answering rini's write ──────────────────────────────────────
+
+    /// The app reporting `window`'s frame from the pass before, `short` narrower and lower, then a
+    /// pass.
+    fn answer(system: &mut ScrollingLayoutSystem, layout: LayoutId, window: WindowId, short: (f64, f64)) {
+        let frame = frame_for(&kai_s_frames(system, layout), window);
+        let size = CGSize::new(frame.size.width - short.0, frame.size.height - short.1);
+        let report = CGRect::new(frame.origin, size);
+        system.on_window_resized(layout, window, None, report, 0.0, KAI_SCREEN, &kai_s_gaps());
+        kai_s_frames(system, layout);
+    }
+
+    fn assert_no_size_given(system: &ScrollingLayoutSystem, layout: LayoutId) {
+        for column in &system.layout_state(layout).expect("layout").columns {
+            assert!(!column.width_overridden, "{column:?}");
+            assert!(!column.height_overridden, "{column:?}");
+        }
+    }
+
+    #[test]
+    fn a_report_answers_the_slot_as_drawn_within_a_point() {
+        assert!(answers_slot(860.0, 859.5));
+        assert!(answers_slot(859.0, 859.5));
+        assert!(answers_slot(861.0, 859.5));
+        assert!(!answers_slot(858.0, 859.5));
+        assert!(answers_slot(367.0, 368.333));
+        assert!(!answers_slot(366.0, 368.333));
+    }
+
+    /// A1 of [A1,A2,A3] and B of [A][B]. Ghostty's 1pt short in height used to come back as a width
+    /// of 859, and the stack's even split as pixel heights of [367, 369, 369].
+    #[test]
+    fn a_report_of_the_frame_rini_gave_changes_nothing() {
+        let shortfalls = [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (-1.0, -1.0)];
+        for (columns, window) in [(&[&[1, 2, 3][..]][..], wid(1, 1)), (&[&[1][..], &[2][..]][..], wid(1, 2))] {
+            for short in shortfalls {
+                let (mut system, layout) = a_strip(columns);
+                assert!(system.select_window(layout, window));
+                let before = kai_s_frames(&system, layout);
+                let offset = scroll_offset(&system, layout);
+
+                answer(&mut system, layout, window, short);
+
+                assert_same_frames(&kai_s_frames(&system, layout), &before);
+                assert_eq!(scroll_offset(&system, layout), offset, "{columns:?} {short:?}");
+                assert_no_size_given(&system, layout);
+            }
+        }
+    }
+
+    #[test]
+    fn an_axis_the_app_answered_stays_while_the_other_is_taken() {
+        let (mut system, layout) = a_strip(&[&[1, 2, 3]]);
+        assert!(system.select_window(layout, wid(1, 1)));
+
+        answer(&mut system, layout, wid(1, 1), (1.0, 50.0));
+
+        let column = &system.layout_state(layout).expect("layout").columns[0];
+        assert!(!column.width_overridden);
+        assert!(column.height_overridden);
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 1)), (3.0, 860.0));
+        assert_eq!(laid_out_yh(&system, layout, wid(1, 1)), (3.0, 318.0));
+    }
+
+    /// Each row of [A][B1,B2] and [A][B1,B2,B3] folded out and back ten times by either key, the
+    /// moved window answering every pass with its frame or 1pt short of it. The answer to the
+    /// fold-out used to drop the view the fold back returns to, and every answer to narrow the
+    /// column by a point and turn the even split into pixel heights.
+    #[test]
+    fn ten_fold_round_trips_answered_by_the_app_leave_the_stack_as_it_was() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                for side in [Direction::Left, Direction::Right] {
+                    for short in [(0.0, 0.0), (0.0, 1.0)] {
+                        let (mut system, layout, a, b) = a_stack_on_the_right(rows);
+                        assert!(system.select_window(layout, b[row]));
+                        let before = kai_s_frames(&system, layout);
+                        let shape_before = shape(&system, layout);
+
+                        for _ in 0..10 {
+                            for _ in 0..2 {
+                                assert_eq!(system.toggle_fold_of_selection(layout, side), vec![b[row]]);
+                                answer(&mut system, layout, b[row], short);
+                            }
+                        }
+
+                        let case = format!("row {row} of {rows}, {side:?}, {short:?}");
+                        assert_eq!(shape(&system, layout), shape_before, "{case}");
+                        assert_same_frames(&kai_s_frames(&system, layout), &before);
+                        assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0), "{case}");
+                        assert_no_size_given(&system, layout);
+                    }
+                }
+            }
+        }
+    }
+
+    /// B of [A][B][C] centred, maximized and restored, then the app's answer to the restore: the
+    /// answer's scroll request used to drop the centring, and B went flush left.
+    #[test]
+    fn a_centred_column_keeps_its_centring_through_its_own_report() {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+        for window in w {
+            system.add_window_after_selection(layout, window);
+        }
+        assert!(system.select_window(layout, w[1]));
+        system.center_selected_column(layout);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (434.0, 860.0));
+
+        maximize_and_restore(&mut system, layout, w[1]);
+        answer(&mut system, layout, w[1], (0.0, 1.0));
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    /// A drag is the user's, not an answer: a point's drag of the right edge is a point wider.
+    #[test]
+    fn a_one_point_drag_still_gives_the_width() {
+        let (mut system, layout, w) = kai_s_strip();
+
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(600.0, 883.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 883.0));
     }
 
     /// A border inside each tiled window's slot: the strip is laid out from the slots as with no
