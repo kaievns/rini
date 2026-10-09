@@ -319,15 +319,9 @@ impl<P, O, C> Schedule<P, O, C> {
         }
     }
 
-    /// Starts `watch`. `before` is the thumbprint of the picture held of a window, which a repainting
-    /// landing settles against.
-    pub fn watch(&mut self, id: WatchId, watch: Watch, now: Instant, before: &dyn Fn(WindowId) -> Option<Vec<u8>>) {
-        self.watches.watch(id, watch, now, before)
-    }
+    pub fn watch(&mut self, id: WatchId, watch: Watch, now: Instant) { self.watches.watch(id, watch, now) }
 
-    pub fn retarget(&mut self, id: WatchId, watch: Watch, now: Instant, before: &dyn Fn(WindowId) -> Option<Vec<u8>>) {
-        self.watches.retarget(id, watch, now, before)
-    }
+    pub fn retarget(&mut self, id: WatchId, watch: Watch, now: Instant) { self.watches.retarget(id, watch, now) }
 
     pub fn stop(&mut self, id: WatchId) { self.watches.stop(id) }
 
@@ -1116,8 +1110,6 @@ mod tests {
 
     fn end() -> ScreenRect { rect(4.0, 32.0, 859.0, 1081.0) }
 
-    fn no_print(_: WindowId) -> Option<Vec<u8>> { None }
-
     /// What a transition waits on through SkyLight goes before any ScreenCaptureKit call is issued:
     /// queued ScreenCaptureKit work slows every SkyLight call behind it.
     #[test]
@@ -1126,7 +1118,7 @@ mod tests {
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
-        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now, &no_print);
+        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now);
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
         let _ = schedule.seen(now, &[]);
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
@@ -1143,9 +1135,9 @@ mod tests {
             _ => Vec::new(),
         };
         let mut schedule = Schedule::<(), (), ()>::default();
-        schedule.watch(WatchId(1), landing(1, end(), until), now, &no_print);
-        schedule.retarget(WatchId(1), landing(2, end(), until), now, &no_print);
-        schedule.retarget(WatchId(2), landing(3, end(), until), now, &no_print);
+        schedule.watch(WatchId(1), landing(1, end(), until), now);
+        schedule.retarget(WatchId(1), landing(2, end(), until), now);
+        schedule.retarget(WatchId(2), landing(3, end(), until), now);
         assert_eq!(looked(schedule.next(now, nothing_held)), vec![wid(2), wid(3)]);
         schedule.stop(WatchId(1));
         schedule.stop(WatchId(2));
@@ -1158,7 +1150,7 @@ mod tests {
     fn a_lost_window_is_reported_first_and_the_schedule_wakes_for_its_watches() {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
-        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now, &no_print);
+        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now);
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
         let _ = schedule.seen(now, &[]);
         assert!(matches!(
@@ -1197,7 +1189,6 @@ mod tests {
                 tries: CHANGE_TRIES,
             },
             now,
-            &no_print,
         );
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
         let outcome = schedule.seen(
@@ -1372,7 +1363,7 @@ mod tests {
         schedule.set_display(built_in(), false, now);
         schedule.hold(Hold::Settling, now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
-        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now, &no_print);
+        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now);
         schedule.check_handover(check());
         assert!(matches!(schedule.next(now, nothing_held), Next::Overlay(id) if id == WindowServerId::new(77)));
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)), "the overlay is being taken");

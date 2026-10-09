@@ -1,6 +1,5 @@
-//! When a window has finished painting: two consecutive thumbprints agree, or one differs from the
-//! rendering before the change. See "A resize flies at once, then reveals" in
-//! `src/transitions/docs/coordination.md`.
+//! When a window has finished painting: two consecutive thumbprints agree. See "A resize flies at
+//! once, then reveals" in `src/transitions/docs/coordination.md`.
 
 /// Share of samples that may differ and still count as the same rendering: forgives a blinking
 /// cursor, not a half-painted surface.
@@ -20,10 +19,10 @@ fn renderings_match(a: &[u8], b: &[u8]) -> bool {
     (differing as f64) <= (a.len() as f64) * STABLE_MAX_DIFFERING
 }
 
-/// Whether a capture of a window that has to repaint counts as its settled rendering.
-pub fn repaint_settled(prev: Option<&[u8]>, print: &[u8], pre_resize: Option<&[u8]>) -> bool {
+/// Whether a capture of a window that has to repaint counts as its settled rendering: it matches the
+/// capture before it, whatever the picture held before shows.
+pub fn repaint_settled(prev: Option<&[u8]>, print: &[u8]) -> bool {
     prev.is_some_and(|previous| renderings_match(previous, print))
-        || pre_resize.is_some_and(|before| !renderings_match(before, print))
 }
 
 #[cfg(test)]
@@ -53,19 +52,15 @@ mod tests {
     }
 
     #[test]
-    fn repaint_settled_on_a_match_or_a_repaint() {
-        let p = vec![10u8; 64];
-        let q = vec![200u8; 64];
-        assert!(!repaint_settled(None, &p, None), "nothing to compare against");
-        assert!(repaint_settled(Some(&p), &p, None), "two consecutive match");
-        assert!(
-            repaint_settled(None, &p, Some(&q)),
-            "differs from the pre-resize picture"
-        );
-        assert!(!repaint_settled(None, &p, Some(&p)), "still the old rendering");
-        assert!(
-            repaint_settled(Some(&q), &p, Some(&q)),
-            "a repaint settles even after a change"
-        );
+    fn repaint_settled_only_on_two_captures_in_a_row_that_match() {
+        let full = vec![10u8; 64];
+        let mut half = full.clone();
+        for value in half.iter_mut().skip(16) {
+            *value = 0; // the old rows at the top of a blank surface
+        }
+        assert!(!repaint_settled(None, &half), "a first capture, however it differs from before");
+        assert!(!repaint_settled(Some(&half), &full), "half-painted, then painted");
+        assert!(repaint_settled(Some(&full), &full), "painted twice in a row");
+        assert!(repaint_settled(Some(&half), &half), "two alike, whatever they show");
     }
 }

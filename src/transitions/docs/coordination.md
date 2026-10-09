@@ -790,10 +790,14 @@ window-server read, then captures it every 8ms, 125 times at most, about a secon
 capture taken between the two is a half-painted surface: delivering one flew the whole reveal with
 garbage. So a capture counts only when settled (`repaint_settled`): it matches the previous print
 (`renderings_match` on 32x32 RGBA thumbprints, a sample differing when any channel moves by more than
-8, up to 3% of samples allowed so cursors and clocks do not stall it), or it differs from the picture
-cached before the resize, which means the app has repainted. The second test saves one poll interval
-on most resizes; the first is all an entrance has. *What the watch's captures cost the motion they
-now run beside is not measured yet.*
+8, up to 3% of samples allowed so cursors and clocks do not stall it). Differing from the picture
+cached before the resize once counted too, and settled nearly every resize on its first capture:
+a thumbprint samples any size down to 32x32, so a surface at a new size differs from the old one
+however little of it is painted, and an unfolded Ghostty flew its old rows at the top of a blank
+surface the whole flight (2026-10-09). A window repainting without pause at its new size, streaming
+output, never settles, and flies its picture from before with the ground until the lift. *Whether a
+half-painted surface can hold still for 8ms and pass, and what the watch's captures cost the motion
+they now run beside, are not measured yet.*
 
 Every fill made of the picture's own pixels for what the app has not rendered yet was tried and
 rejected by eye: `contentsRect` past the picture's edge extends its outermost pixels (a hole to the

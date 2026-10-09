@@ -590,11 +590,6 @@ impl Pictures {
     fn lock(&self) -> MutexGuard<'_, Shared> { self.shared.lock().unwrap() }
 }
 
-/// The thumbprint of what the cache holds of `window`, which a repainting window settles against.
-fn held_print(cache: &PictureCache<Picture>, window: WindowId) -> Option<Vec<u8>> {
-    picture_thumbprint(cache.get(window)?)
-}
-
 /// A picture's thumbprint; `None` for a surface.
 fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> { thumbprint(&*picture.image.bitmap()?) }
 
@@ -692,14 +687,8 @@ impl Service {
             Command::Ask(ask) => shared.schedule.ask(ask, now),
             Command::AskOnScreen(ask) => shared.schedule.ask_on_screen(ask),
             Command::Refresh(targets) => shared.schedule.refresh(targets, now),
-            Command::Watch(id, watch) => {
-                let Shared { cache, schedule, .. } = &mut *shared;
-                schedule.watch(id, watch, now, &|window| held_print(cache, window));
-            }
-            Command::Retarget(id, watch) => {
-                let Shared { cache, schedule, .. } = &mut *shared;
-                schedule.retarget(id, watch, now, &|window| held_print(cache, window));
-            }
+            Command::Watch(id, watch) => shared.schedule.watch(id, watch, now),
+            Command::Retarget(id, watch) => shared.schedule.retarget(id, watch, now),
             Command::Stop(id) => shared.schedule.stop(id),
             Command::Hint(hint) => {
                 if let Hint::Focused(window) = hint {
@@ -1324,9 +1313,9 @@ mod tests {
         let mut delivered = Delivered::default();
         cache.insert(wid(1), blurred(0.5, now));
         cache.insert(wid(2), blurred(0.5, now));
-        schedule.watch(WatchId(1), landing_watch(&[1], Settle::Repainted), now, &|_| None);
+        schedule.watch(WatchId(1), landing_watch(&[1], Settle::Repainted), now);
         schedule.hint(Hint::Focused(wid(2)), now);
-        schedule.watch(WatchId(2), change_watch(2), now, &|_| None);
+        schedule.watch(WatchId(2), change_watch(2), now);
         let looks = sky(schedule.next(now, |_| None));
         let captured = with_prints(&looks, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.1, now))]);
         let events = round(&mut cache, &mut delivered, &mut schedule, now, found(&looks, Some(frame())), captured);
@@ -1765,12 +1754,11 @@ mod tests {
         assert!(is_region(&shared), "refused: nothing taken");
     }
 
-    /// A watched landing that has to repaint settles against the picture the cache held when it was
-    /// watched: a first capture that differs from it is the window repainted, one that matches it is
-    /// not. A retarget keeps that picture for a window still landing, though the cache holds the
-    /// watch's own capture by then.
+    /// A watched landing that has to repaint is never settled by its first capture, however it
+    /// differs from the picture the cache holds: an unfolded window's first capture at its new size
+    /// differed from its old picture while half of it was blank.
     #[test]
-    fn a_repainting_landing_settles_against_the_picture_held_when_it_was_watched() {
+    fn a_repainting_landing_is_not_settled_by_differing_from_the_picture_held() {
         let now = Instant::now();
         let (mut service, shared) = detached_service();
         {
@@ -1781,13 +1769,8 @@ mod tests {
         }
         service.apply(Command::Watch(WatchId(1), landing_watch(&[1, 2], Settle::Repainted)));
         service_round(&mut service, &shared, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.5, now))]);
-        assert!(delivered_of(&shared, 1), "repainted");
-        assert!(!delivered_of(&shared, 2), "the picture held before");
-
-        service.apply(Command::Retarget(WatchId(1), landing_watch(&[1, 2], Settle::Repainted)));
-        shared.lock().unwrap().cache.insert(wid(2), flat(0.9, now));
-        service_round(&mut service, &shared, vec![(wid(2), flat(0.9, now))]);
-        assert!(delivered_of(&shared, 2), "differs from the picture held when it was first watched");
+        assert!(!delivered_of(&shared, 1), "differs from the picture held");
+        assert!(!delivered_of(&shared, 2), "matches the picture held");
     }
 
     /// The reported shape of a click at rest: the picture held of a window is old and its band differs

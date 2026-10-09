@@ -228,8 +228,8 @@ destination for a window already moving.
   it shrinks on the other alike: laid against the same edges as the old one, with the window's ground
   wherever it does not cover the frame still to come. A picture taken at its new size MUST NOT be
   drawn before the window has repainted there; one that has not by the lift is never drawn, and the
-  lift shows the window. Not yet met: the first picture at the new size that differs from the old
-  one counts as repainted, however little of it is painted.
+  lift shows the window. A window MUST count as repainted at its new size only once two captures in a
+  row show the same rendering, never because a capture differs from the picture it had before.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
 > really. or it's clipped in an akward place slicing the content. i regularly see clipping on
@@ -697,8 +697,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 `src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
 depth bands, the edge bounce and the nudge; how a resizing tile is cropped, the ground it shows
 where its picture ends and the edges it stands still against are
-`src/animation/domain/motion/tile.rs`, and a window's ground is read off its picture in
-`src/pictures/domain/ground.rs`. The looks
+`src/animation/domain/motion/tile.rs`, a window's ground is read off its picture in
+`src/pictures/domain/ground.rs`, and when a resized window has repainted is
+`src/pictures/domain/settle.rs`. The looks
 (`src/animation/domain/choreography.rs`, Slide the default in
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
