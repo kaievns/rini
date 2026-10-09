@@ -5356,8 +5356,9 @@ mod tests {
         assert_eq!(system.toggle_fold_of_selection(layout, side), vec![window]);
     }
 
-    /// `ctrl-,` from a right stack lands the window right of it and scrolls one column: the fold
-    /// back used to leave A1 at x=-860 with half the screen empty.
+    /// Either fold key, out of a right stack and back. `Mod+Comma` lands the window right of it and
+    /// scrolls one column, and its fold back used to leave A1 at x=-860 with half the screen empty;
+    /// `Mod+Period` lands it in the stack's place and scrolls nothing.
     #[test]
     fn a_fold_round_trip_puts_the_strip_back_where_it_was() {
         for rows in [2, 3] {
@@ -5789,8 +5790,8 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
         let state = system.layout_state(layout).expect("layout");
         let saved = ron::ser::to_string(state).expect("serialize");
-        assert!(saved.contains("fold_origins:{"), "{saved}");
-        let old = saved.replace("fold_origins:", "stack_origins:");
+        assert!(saved.contains("full_width_origins:{},fold_origins:{"), "{saved}");
+        let old = saved.replace("full_width_origins:{},", "").replace("fold_origins:", "stack_origins:");
 
         let loaded: super::LayoutState = ron::from_str(&old).expect("a file from before loads");
 

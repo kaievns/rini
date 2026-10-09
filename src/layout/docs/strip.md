@@ -252,14 +252,18 @@ mechanisms:
   only the fold's. A fold with no column on its side changes nothing, the record
   and the view kept included.
 
-**The same key twice puts the view back too.** From a right stack the fold-out
-lands right of the stack and the reveal scrolls one column, 0 to 862.5 on Kai's
-halves. The fold back revealed from there, so A1 stayed at x=-860 with half the
-viewport empty. Under `"never"` the fold-out keeps the stack's view as the
-full-width toggle does (`KeptView`, by `Toggle::Fold` with the key's side, read
-before the fold's own reveal), and only the fold-in of that window by the same
-key spends it. Refocusing the window keeps it, as for full width. The other
-key, or any scroll in between, drops it, and the fold back reveals as before.
+**The same key twice puts the view back too.** From a right stack `Mod+Comma`
+lands the fold-out right of the stack and the reveal scrolls one column, 0 to
+862.5 on Kai's halves. The fold back revealed from there, so A1 stayed at
+x=-860 with half the viewport empty. `Mod+Period` lands it in the stack's
+place and scrolls nothing, and the same rule holds for it. Under `"never"` the
+fold-out keeps the stack's view as the full-width toggle does (`KeptView`, by
+`Toggle::Fold` with the key's side, read before the fold's own reveal), and only
+the fold-in of that window by the same key spends it. Refocusing the window
+keeps it, as for full width. The other key, or any scroll in between, drops it,
+and the fold back reveals as before. The other key folding into a column that is
+not the row's drops it by that fold's own scroll; into the row, which a drag swap
+can bring beside the window without scrolling, by the key the view names.
 
 There is no falling back to the other side at the ends of the strip. With both
 keys bound, that would make them agree in the first and last columns, which is
