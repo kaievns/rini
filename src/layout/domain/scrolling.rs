@@ -235,10 +235,6 @@ impl LayoutState {
         self.columns.first().and_then(|c| c.windows.first()).copied()
     }
 
-    /// Pull `wid` out of a shared column into its own, immediately to the right.
-    ///
-    /// `None` when it was alone in its column and there was nothing to pull it out of. Otherwise the
-    /// neighbour to put it back beside, which the caller keeps until the window is restored.
     /// Take `wid` out of its column into a column of its own, on `side` of the one it left.
     ///
     /// The one way a window leaves a stack. Unfolding, expelling and unstacking were four copies of
@@ -363,10 +359,11 @@ impl LayoutState {
     /// Maximise `wid`, pulling it out of any stack it shares.
     ///
     /// A maximised window fills the tiling area, which would cover the siblings sharing its column
-    /// while the tree still claimed they were abreast. It becomes its own column, and where it came
-    /// from is kept so the toggle can put it back.
+    /// while the tree still claimed they were abreast. It becomes its own column in the stack's
+    /// place, the stack one column right, so the strip does not scroll for a stack that was on
+    /// screen. Where it came from is kept so the toggle can put it back.
     fn enter_full_width(&mut self, wid: WindowId) {
-        if let Some(origin) = self.split_out(wid, Direction::Right) {
+        if let Some(origin) = self.split_out(wid, Direction::Left) {
             self.stack_origins.insert(wid, origin);
         }
         self.fullscreen_within_gaps.insert(wid);
@@ -3803,8 +3800,8 @@ mod tests {
 
         assert_eq!(
             shape(&system, layout),
-            vec![vec![w[0], w[2]], vec![w[1]]],
-            "the maximized window gets its own column and the stack closes up"
+            vec![vec![w[1]], vec![w[0], w[2]]],
+            "the maximized window takes the stack's place and the stack closes up beside it"
         );
         assert!(system.is_window_full_width(layout, w[1]));
     }
@@ -3853,7 +3850,7 @@ mod tests {
         assert!(system.select_window(layout, w[0]));
 
         assert!(system.toggle_full_width(layout, w[1]));
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
 
         assert!(system.toggle_full_width(layout, w[1]));
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
@@ -3878,7 +3875,7 @@ mod tests {
 
         assert!(system.select_window(layout, w[0]));
         toggle_selection(&mut system, layout);
-        assert_eq!(shape(&system, layout), vec![vec![w[1], w[2]], vec![w[0]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[0]], vec![w[1], w[2]]]);
 
         toggle_selection(&mut system, layout);
         assert_eq!(
@@ -3921,7 +3918,7 @@ mod tests {
         toggle_selection(&mut system, layout);
         assert_eq!(
             shape(&system, layout),
-            vec![vec![w[2]], vec![w[1]]],
+            vec![vec![w[1]], vec![w[2]]],
             "no stack to rejoin"
         );
     }
@@ -3940,7 +3937,7 @@ mod tests {
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
         system.cycle_preset_column_width(layout);
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
 
         // A fresh maximise and a fresh press to leave it. Nothing here asked for the old stack.
         toggle_selection(&mut system, layout);
@@ -3948,7 +3945,7 @@ mod tests {
 
         assert_eq!(
             shape(&system, layout),
-            vec![vec![w[0], w[2]], vec![w[1]]],
+            vec![vec![w[1]], vec![w[0], w[2]]],
             "it stays the ordinary column ctrl-R made it"
         );
     }
@@ -3978,7 +3975,7 @@ mod tests {
         assert!(system.select_window(layout, w[1]));
         system.cycle_preset_column_width(layout);
 
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
         assert!(system.is_window_full_width(layout, w[1]));
     }
 
@@ -3990,7 +3987,7 @@ mod tests {
 
         system.restore_window_full_width(layout, w[1]);
 
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
         assert!(system.is_window_full_width(layout, w[1]));
     }
 
@@ -5097,28 +5094,29 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w1), (3.0, 860.0));
     }
 
-    /// B2 of [A][B1,B2]: full width puts B2 two columns along, and the restore folds it back with
-    /// the strip where it was.
+    /// Each row of [A][B1,B2] and [A][B1,B2,B3]: full width puts the window in the stack's place,
+    /// one column along, and the restore folds it back with the strip where it was.
     #[test]
     fn a_right_stack_restores_with_its_left_neighbour_on_screen() {
-        let mut system = ScrollingLayoutSystem::new(&preset_settings());
-        let layout = system.create_layout();
-        let [a, b1, b2] = [wid(1, 1), wid(1, 2), wid(1, 3)];
-        for window in [a, b1, b2] {
-            system.add_window_after_selection(layout, window);
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                let (mut system, layout, a, b) = a_stack_on_the_right(rows);
+                assert!(system.select_window(layout, b[row]));
+                let before = kai_s_frames(&system, layout);
+                let case = format!("row {row} of {rows}");
+
+                assert!(system.toggle_full_width(layout, b[row]));
+                kai_s_frames(&system, layout);
+                let mut rest = b.clone();
+                rest.remove(row);
+                assert_eq!(shape(&system, layout), vec![vec![a], vec![b[row]], rest], "{case}");
+                assert_near(scroll_offset(&system, layout), 862.5, &case);
+                assert!(system.toggle_full_width(layout, b[row]));
+
+                assert_same_frames(&kai_s_frames(&system, layout), &before);
+                assert_eq!(shape(&system, layout), vec![vec![a], b.clone()], "{case}");
+            }
         }
-        system.toggle_fold_of_selection(layout, Direction::Left);
-        assert_eq!(shape(&system, layout), vec![vec![a], vec![b1, b2]]);
-        let before = kai_s_frames(&system, layout);
-        assert_eq!(scroll_offset(&system, layout), 0.0);
-
-        assert!(system.toggle_full_width(layout, b2));
-        kai_s_frames(&system, layout);
-        assert_near(scroll_offset(&system, layout), 1725.0, "full width");
-        assert!(system.toggle_full_width(layout, b2));
-
-        assert_same_frames(&kai_s_frames(&system, layout), &before);
-        assert_eq!(shape(&system, layout), vec![vec![a], vec![b1, b2]]);
     }
 
     #[test]
@@ -5329,6 +5327,57 @@ mod tests {
 
         assert_eq!(shape(&system, layout), vec![vec![a], b.clone(), vec![c]]);
         assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0));
+    }
+
+    // ── full width in the stack's place ─────────────────────────────────────
+
+    /// [A1..][B] on Kai's display, two halves with the stack on the left and the strip at 0.
+    fn a_stack_on_the_left(rows: u32) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>, WindowId) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let a: Vec<WindowId> = (1..1 + rows).map(|idx| wid(1, idx)).collect();
+        let b = wid(1, 9);
+        for &window in a.iter().chain(std::iter::once(&b)) {
+            system.add_window_after_selection(layout, window);
+        }
+        for &window in &a[1..] {
+            assert!(system.select_window(layout, window));
+            system.toggle_fold_of_selection(layout, Direction::Left);
+        }
+        assert!(system.select_window(layout, a[0]));
+        kai_s_frames(&system, layout);
+        assert_eq!(shape(&system, layout), vec![a.clone(), vec![b]]);
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+        (system, layout, a, b)
+    }
+
+    /// Landing right of the stack panned the strip a column, 0 to 862.5, the rows leaving left and
+    /// B right. In the stack's place nothing scrolls and everything else moves right of it.
+    #[test]
+    fn maximizing_in_a_left_stack_does_not_scroll_the_strip() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                let (mut system, layout, a, b) = a_stack_on_the_left(rows);
+                assert!(system.select_window(layout, a[row]));
+                let before = kai_s_frames(&system, layout);
+                let case = format!("row {row} of {rows}");
+
+                assert!(system.toggle_full_width(layout, a[row]));
+                kai_s_frames(&system, layout);
+                let mut rest = a.clone();
+                rest.remove(row);
+                assert_eq!(shape(&system, layout), vec![vec![a[row]], rest.clone(), vec![b]], "{case}");
+                assert_eq!(scroll_offset(&system, layout), 0.0, "{case}");
+                assert_eq!(laid_out_xw(&system, layout, a[row]), (3.0, 1722.0), "{case}");
+                for window in rest.into_iter().chain(std::iter::once(b)) {
+                    assert!(laid_out_xw(&system, layout, window).0 >= 1728.0, "{case}: {window:?}");
+                }
+                assert!(system.toggle_full_width(layout, a[row]));
+
+                assert_same_frames(&kai_s_frames(&system, layout), &before);
+                assert_eq!(shape(&system, layout), vec![a.clone(), vec![b]], "{case}");
+            }
+        }
     }
 
     /// A border inside each tiled window's slot: the strip is laid out from the slots as with no

@@ -46,8 +46,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A full-width column occupies the whole viewport, gap included. It MUST NOT leave a band of
   background down its side.
 - When the window is in a column stack, `Mod+F` MUST pull it out of the stack and maximise both
-  width and height. Pressing again MUST put it back where it was, if that place still exists, and the
-  move MUST be animated both ways.
+  width and height. The full-width column MUST take the stack's place, the stack one column right,
+  so a stack at the left of the screen does not scroll the strip. Pressing again MUST put it back
+  where it was, if that place still exists, and the move MUST be animated both ways.
 - **Pressing again MUST put the strip back too**, for a stacked window or a lone one: its column at
   the screen x it left, and a centred column centred again. Anything else that scrolls the strip in
   between wins: focus moving to another column, a strip scroll or snap, a window opening or closing,

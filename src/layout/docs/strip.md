@@ -119,11 +119,16 @@ is borrowed.
   asked for.
 - **Maximizing a stacked window pulls it out of the stack.** It fills the tiling
   area, which would otherwise cover the siblings sharing its column while the
-  tree still claimed they were abreast. It becomes its own column immediately to
-  the right, and a second press puts it back beside the neighbour it left
-  (`StackOrigin`). Every route in maximizes the same way — the key, the width
-  cycle, an app's title-bar zoom, and restoring a remembered full width at
-  startup. A neighbour is remembered rather than a row index, because
+  tree still claimed they were abreast. It becomes its own column in the
+  stack's place, the stack one column right (`split_out` toward `Left`), and a
+  second press puts it back beside the neighbour it left (`StackOrigin`). Landing
+  right of the stack, as it did, panned the strip one column for a stack flush
+  left, 0 to 862.5 on Kai's halves, with the siblings leaving left and the next
+  column right, and two for a stack on the right, 0 to 1725. In the stack's place
+  a stack flush left does not scroll, everything after it moves right, and a
+  right stack scrolls one column. Every route in maximizes the same way — the
+  key, the width cycle, an app's title-bar zoom, and restoring a remembered full
+  width at startup. A neighbour is remembered rather than a row index, because
   while the window is maximized its old column can move along the strip or
   change size. If every window it could return to has closed, it stays the
   column it became rather than being put somewhere the user never had it.
