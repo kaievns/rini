@@ -218,6 +218,18 @@ destination for a window already moving.
   ground, its background colour with its alpha, never the desktop behind it and never the picture's
   edge pixels drawn on. Only a picture the size of its frame at both ends of a movement, and the
   dark stand-in of a window with no picture, MAY be scaled.
+- A resize MUST fly as a strip movement does: from pictures taken at the press, the overlay up with
+  them, the windows written their new frames as it covers them, and the motion starting as soon as
+  the layout's follow-up passes are in. It MUST NOT wait for a resized window to repaint at its new
+  size. A window that has just opened keeps its own entrance, and a flight MAY wait for the first
+  picture of a window it has none of.
+- Each resized window MUST be pictured at its new size once it has repainted there, and that picture
+  MUST replace its old one mid-flight, for a grow, a shrink, and a window growing on one axis while
+  it shrinks on the other alike: laid against the same edges as the old one, with the window's ground
+  wherever it does not cover the frame still to come. A picture taken at its new size MUST NOT be
+  drawn before the window has repainted there; one that has not by the lift is never drawn, and the
+  lift shows the window. Not yet met: the first picture at the new size that differs from the old
+  one counts as repainted, however little of it is painted.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
 > really. or it's clipped in an akward place slicing the content. i regularly see clipping on
@@ -231,6 +243,17 @@ destination for a window already moving.
 > this requires; what was seen there is not measured. A bottom row restored from maximized had its
 > small picture cut in a tenth of the way through and stretched, its glyphs 1.5 to 2 times their
 > size on both axes.
+>
+> **Reported 2026-10-09**, after the recordings above. Kai: "your rework should utilse the same
+> tooling/sequencing that we've built for navigations: skylight frame zero -> overlay -> skylight new
+> positions -> swap pics in animations mid-run. the tricky part is that the pictures of the windows
+> should be fixed on the opposite sides of the resizing animation; if a window stretches down it's
+> fixed on top, expanding up it's fixed at the bottom, etc. the current navigation animations are very
+> smooth and performant and we should lean into the same structure. feel free to extract reusable bits
+> into modules/submodules as necessary". A grow held the overlay still for up to 300ms for its window
+> to repaint before anything moved, 4 of 21 maximizes that day to the limit; a shrink had its new
+> picture cut in as soon as the window was there, however it was painted; and a window unfolded out of
+> a stack flew a half-painted picture, its old rows at the top of a blank surface, the whole flight.
 
 ## Correctness the user can see
 
@@ -427,8 +450,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   the flight still moves, so nothing changes at rest after the lift.
 - From the moment the window server reports the window gaining focus focused, it MUST be pictured
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
-  its own look changes, if it ends wholly on a display and no pass opened or grew it: one a pass
-  opened or grew is pictured once it has repainted instead. A look a window already had when it landed
+  its own look changes, if it ends wholly on a display and no pass opened or resized it: one a pass
+  opened or resized is pictured once it has repainted instead. A look a window already had when it landed
   counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
   shadow turning with it: the window losing focus unfocused, the window gaining focus focused. Its
   focus ring and its border wear where the flight ends from the show (`decorations.md`).
@@ -438,7 +461,7 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   other MUST NOT delay looking at the window gaining focus: it MUST be looked for as often as any
   window landing until it is where it ends, and the windows behind the strip MUST wait only for its
   turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
-  pass opened or grew, or one whose watch ran out, MUST be drawn unfocused just before the window
+  pass opened or resized, or one whose watch ran out, MUST be drawn unfocused just before the window
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
   the same, old then new, while the flight still moves. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
@@ -690,7 +713,8 @@ the border's shape, style and depth, which the overlay draws on the layers in
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
-`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted,
+`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted and how a window's
+picture where it ends is waited for,
 `src/transitions/domain/frame_writes.rs` which frames are written and in what order, and
 `src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
 which touches no Core Animation. The journal is kept with the

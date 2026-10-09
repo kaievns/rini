@@ -16,9 +16,10 @@ pub(in crate::transitions) const COALESCE_WINDOW: Duration = Duration::from_mill
 /// A real window further than this from its intended frame at lift is a handover miss.
 pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 
-/// How long a flight stands still with the overlay up for a reveal: a grow's pixels at its new size,
-/// or an entrance's first picture, whatever the flight's duration.
-/// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+/// How long a flight stands still with the overlay up for the first picture of a window it has none of,
+/// a reserved entrance or a stand-in, whatever the flight's duration, and how long a window is watched
+/// to repaint where it ends. See "A resize flies at once, then reveals" in
+/// `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
 
 /// How long after a lift the flight's owed captures wait for the user to stop pressing.
@@ -33,7 +34,7 @@ pub(in crate::transitions) const LIFT_GRACE: Duration = Duration::from_millis(35
 mod tests {
     use super::*;
 
-    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+    /// See "A resize flies at once, then reveals" in `src/transitions/docs/coordination.md`.
     #[test]
     fn the_hold_is_capped_at_a_blink() {
         assert_eq!(HOLD_CAP, Duration::from_millis(300));

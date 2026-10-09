@@ -124,11 +124,11 @@ pub struct StageSummary {
     pub key: Option<WindowId>,
     /// The focus target, when its tile flies its focused look (`parked_focus`).
     pub focused_look: Option<WindowId>,
-    /// Windows this pass opens or grows, not painted at their new frames yet: watched until they
-    /// repaint, and held for, overlay up, until the motion starts.
+    /// Windows this pass draws with no picture of their own, a reserved entrance or a stand-in:
+    /// watched until they repaint, and held for, overlay up, until the motion starts.
     pub awaiting: Vec<WindowId>,
-    /// Windows this pass opens that fly from where macOS first showed them: watched until they repaint
-    /// where they end, and never held for.
+    /// Windows this pass resizes, or opens to fly from where macOS first showed them, not painted at
+    /// their new frames yet: watched until they repaint where they end, and never held for.
     pub repainting: Vec<WindowId>,
     pub start: Start,
     /// The motion's length: the press's own, and for a merge the score's when that is longer. A merge
@@ -333,12 +333,12 @@ pub struct EndWatch {
     pub generation: Generation,
     /// End windows captured once they are where they end (`Settle::AsSoonAsThere`)...
     pub landing: Vec<(WindowId, ScreenRect)>,
-    /// ... and end windows a pass opened or grew, captured once they have repainted there
-    /// (`Settle::Repainted`).
+    /// ... and end windows a pass resized, opened or drew as a stand-in, captured once they have
+    /// repainted there (`Settle::Repainted`).
     pub awaiting: Vec<(WindowId, ScreenRect)>,
     /// A window of `landing` not there by then is lost...
     pub landing_until: Instant,
-    /// ... and one of `awaiting`, when a hold for it runs out.
+    /// ... and one of `awaiting` when a hold would run out, held for or not.
     pub awaiting_until: Instant,
     /// The focus target and where it ends, watched until its look changes: only while focus is moving
     /// to it and its focused look is still to come, never for a window `awaiting` watches, and never
@@ -412,9 +412,11 @@ struct Flight {
     /// earlier one was taken for another end, and one under it or later still holds, whatever merged
     /// since it was taken.
     end_since: Vec<(WindowId, Generation)>,
-    /// Every window a pass of this flight opened or grew: watched until it repaints.
+    /// Every window a pass of this flight resized, opened or drew as a stand-in: watched until it
+    /// repaints.
     awaiting: Vec<WindowId>,
-    /// Of `awaiting`, the windows flying from where macOS showed them, which nothing holds for.
+    /// Of `awaiting`, the windows resized or flying from where macOS showed them, which nothing holds
+    /// for.
     repainting: Vec<WindowId>,
     /// The awaited windows the overlay still holds for before the motion starts.
     held: Vec<WindowId>,
@@ -492,9 +494,17 @@ impl Flight {
     }
 
     /// The awaited windows the overlay can hold for: those a watch can see repaint, but for the ones
-    /// flying from where macOS showed them.
+    /// resized or flying from where macOS showed them.
     fn holdable(&self) -> Vec<WindowId> {
         self.end_windows().0.into_iter().map(|(w, _)| w).filter(|w| !self.repainting.contains(w)).collect()
+    }
+
+    /// The end windows the last capture before the lift pictures: never one resized or opened that
+    /// has not been pictured repainted where it ends, which a capture then would show half painted.
+    /// The lift shows that one as it is.
+    fn final_windows(&self) -> Vec<(WindowId, ScreenRect)> {
+        let pictured = |window: &WindowId| self.landed.iter().any(|(w, _)| w == window);
+        self.stage.end_windows().into_iter().filter(|(w, _)| !self.repainting.contains(w) || pictured(w)).collect()
     }
 
     /// Snaps `window`'s tile onto `frame` once per generation, once the motion has started: until
@@ -801,7 +811,7 @@ impl Coordinator {
             return;
         }
         let target = f.stage.focus == Some(window);
-        // The focus target's look changing is the handover; one opened or grown shows it repainted;
+        // The focus target's look changing is the handover; one resized or opened shows it repainted;
         // and the last capture before the lift shows it as it lands, if its change watch ran out first.
         let handover = target
             && !f.focus_in
@@ -870,7 +880,7 @@ impl Coordinator {
                     f.final_asked = true;
                     out.push(Command::AskFinal {
                         generation: f.generation,
-                        windows: f.stage.end_windows(),
+                        windows: f.final_windows(),
                         behind: f.stage.behind(),
                     });
                     // Nothing showed the target's look change, or it looked focused before anything
@@ -1007,7 +1017,7 @@ fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
 
 /// The window focus leaves and its end, watched beside the target while its own turn is to come and
 /// can be seen, if it ends wholly on the display: SkyLight pictures only that, and the one
-/// ScreenCaptureKit capture a flight lets through is the target's. One a pass opened or grew is
+/// ScreenCaptureKit capture a flight lets through is the target's. One a pass resized or opened is
 /// watched to repaint instead.
 fn watched_losing(f: &Flight) -> Option<(WindowId, ScreenRect)> {
     watched_focus(f)?;
@@ -2000,6 +2010,42 @@ mod tests {
         c.on(Event::Merge { stage: opened.clone(), moved: false }, now);
         let out = c.on(Event::Picture { generation: c.generation(), window: w(1), frame: opened.tiles[0].end, why: Why::Landed }, now);
         assert!(has(&out, |c| *c == Command::StartMoving));
+    }
+
+    /// A layout pass resizing a window moves once its follow-ups are in, with the picture the tile
+    /// has: the window is watched until it repaints where it ends, its repainted landing is swapped
+    /// in mid-run, and the last capture before the lift pictures it only once that landing is in.
+    #[test]
+    fn a_resize_flies_at_once_and_its_repainted_landing_swaps_in_mid_run() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.kind = Kind::LayoutPass;
+        stage.start = Start::Coalesced;
+        let grown = r(3.0, 35.0, 1723.0, 1079.0);
+        stage.tiles[1].end = grown;
+        stage.final_frames[1].1 = grown;
+        stage.repainting = vec![w(2)];
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage.clone()), now);
+        let out = c.on(Event::FrameZero(c.generation()), now);
+        assert_eq!(watch(&out).unwrap().awaiting, vec![(w(2), grown)], "watched until it repaints");
+        let started = now + COALESCE_WINDOW;
+        let out = c.on(Event::Tick { settled: false, landed: false }, started);
+        assert_eq!(out, vec![Command::StartMoving], "no hold");
+
+        let last = started + PLAYS - FINAL_BEFORE_END;
+        let asked = |out: Vec<Command>| {
+            out.into_iter().find_map(|c| if let Command::AskFinal { windows, .. } = c { Some(windows) } else { None })
+        };
+        let mut unpainted = c.clone();
+        let tick = Event::Tick { settled: false, landed: false };
+        let windows = asked(unpainted.on(tick.clone(), last)).expect("asked");
+        assert_eq!(windows, vec![stage.final_frames[0]], "not repainted yet: the lift shows it");
+
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed }, started + Duration::from_millis(100));
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "mid-run");
+        assert_eq!(asked(c.on(tick, last)).expect("asked"), stage.final_frames, "and once in, pictured");
     }
 
     #[test]

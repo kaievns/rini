@@ -2453,6 +2453,59 @@ mod tests {
         }
     }
 
+    /// A shrink's landing, and that of a resize growing on one axis and shrinking on the other, is
+    /// smaller than the frame still to come: it is cut onto the crop grid on the leg's anchors and
+    /// re-keyed on the tile's track, and the window's ground fills the span between its content and
+    /// the moving edge's band until the frame reaches its size.
+    #[test]
+    fn a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge() {
+        use crate::pictures::platform::picture::test_picture;
+        let column: GroupRect = typed(4.0, 3.0, 859.0, 1074.0);
+        for (case, to, anchored_top) in [
+            ("a top row shrinking up", typed(4.0, 3.0, 859.0, 535.0), true),
+            ("a bottom row widening as it shrinks", typed(4.0, 542.0, 1148.0, 535.0), false),
+        ] {
+            let mut tile = strip_tile(to);
+            tile.anchors = Anchors::of_leg(column, to);
+            let before = test_picture(column.size);
+            set_tile_content(&mut tile, &before, ContentMode::Crop, column.size.respace(), 2.0);
+            let track = tile_track(column, to, 100.0, 0.35);
+            install_tile_track(&tile, &track);
+            let landed: TileSize = to.size.respace();
+            swap_onto(&mut tile, &test_picture(landed), landed, Some(&track), 2.0);
+            assert_eq!(tile.crop_of, Some(landed), "{case}");
+            assert_eq!(tile.anchors, Anchors::of_leg(column, to), "{case}: the leg's anchors");
+            let laid = |v: Value| crop(landed, as_frame(v).size.respace(), tile.anchors);
+            let grid = tile.crop_grid.as_ref().expect("a grid");
+            for (index, layer) in grid.pieces.iter().enumerate() {
+                assert_eq!(
+                    installed(layer, "rini.piece.move", point_in),
+                    expected(&track, |v| laid(v).pieces[index].frame.origin.to_cg()),
+                    "{case}: piece {index}"
+                );
+            }
+            for (index, layer) in grid.ground.iter().enumerate() {
+                assert_eq!(
+                    installed(layer, "rini.piece.move", point_in),
+                    expected(&track, |v| laid(v).ground[index].origin.to_cg()),
+                    "{case}: ground {index}"
+                );
+            }
+            let start = laid(Value::Rect(column));
+            let band = start.pieces[0].frame.size.height;
+            let (tall, high) = (column.size.height, landed.height);
+            let (top, bottom) =
+                if anchored_top { (high - band, tall - band) } else { (band, tall - high + band) };
+            let bare: f64 = start.ground.iter().map(|g| g.size.width * g.size.height).sum();
+            assert!((bare - column.size.width * (tall - high)).abs() < 1e-6, "{case}: {bare}");
+            for span in start.ground.iter().filter(|g| g.size.width * g.size.height > 0.0) {
+                assert_eq!((span.min_y(), span.max_y()), (top, bottom), "{case}: by the moving edge");
+            }
+            let end = laid(Value::Rect(to));
+            assert!(end.ground.iter().all(|g| g.size.width * g.size.height == 0.0), "{case}: none at the end");
+        }
+    }
+
     /// A stretched tile stays stretched for a picture fitting both ends of its leg, so a pan draws
     /// as before, and a stand-in's real picture landing on a resize is cut onto the crop grid and
     /// keyed along the leg rather than stretched over it.

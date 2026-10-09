@@ -31,8 +31,8 @@ pub enum ContentMode {
 
 /// Stretched only where stretching is exact: a picture fitting the frame it starts in and the one
 /// it ends in, and the stand-in, whose one flat pixel claims to cover nothing; cropped otherwise,
-/// a resize, a picture lagging one and a grow whose reveal has not landed alike, so content is
-/// never stretched.
+/// a resize, a picture lagging one and a grow whose repainted picture has not landed alike, so
+/// content is never stretched.
 pub fn content_mode<U: PointSpace>(
     covered: ScreenSize,
     source: Route,
@@ -312,9 +312,9 @@ mod tests {
     }
 
     /// The legs of a resize in Kai's geometry: a column at x=4, 859 wide, its 2-stack's rows at y=3
-    /// and 542, 535 tall, its 3-stack's at 3, 362 and 721, 355 tall, all 1074 tall maximized; the
-    /// anchors each axis takes.
-    fn legs() -> [(&'static str, Rect<Overlay>, Rect<Overlay>, Anchors); 9] {
+    /// and 542, 535 tall, its 3-stack's at 3, 362 and 721, 355 tall, all 1074 tall maximized, and a
+    /// wider column's bottom row; the anchors each axis takes.
+    fn legs() -> [(&'static str, Rect<Overlay>, Rect<Overlay>, Anchors); 10] {
         let (top, end) = (Anchor::Start, Anchor::End);
         let leg = |case, from, to, x, y| (case, from, to, Anchors { x, y });
         let (column, wide) = (rect(4.0, 3.0, 859.0, 1074.0), rect(4.0, 3.0, 1721.0, 1074.0));
@@ -330,6 +330,7 @@ mod tests {
             leg("middle row, its top moving more", middle, upper, top, end),
             leg("moving left as it widens", rect(866.0, 3.0, 859.0, 1074.0), wide, end, top),
             leg("widening right", column, wide, top, top),
+            leg("widening as it shrinks up", column, rect(4.0, 542.0, 1148.0, 535.0), top, end),
             leg("a pure move", parked, slot, top, top),
         ]
     }

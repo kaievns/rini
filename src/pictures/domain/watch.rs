@@ -34,7 +34,8 @@ pub const LANDING_POLL: Duration = Duration::from_millis(1);
 pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
 /// How often, and how many times at most, a window that has to repaint is captured once it is where
-/// it ends: about a second. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+/// it ends: about a second. See "A resize flies at once, then reveals" in
+/// `src/transitions/docs/coordination.md`.
 const REPAINT_EVERY: Duration = Duration::from_millis(8);
 const REPAINT_TRIES: usize = 125;
 /// The least time between two refreshes of the windows behind the strip.
@@ -107,8 +108,8 @@ pub enum Settle {
     /// The first capture once the window is there.
     AsSoonAsThere,
     /// The first capture whose rendering has settled, by `repaint_settled`: for a window a transition
-    /// holds its flight for, which grows or opens and is not painted at its new size yet. Captured every
-    /// `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there.
+    /// resizes or opens, or draws with no picture of its own, not painted at its new size yet. Captured
+    /// every `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there.
     Repainted,
 }
 
@@ -2695,7 +2696,7 @@ mod tests {
         );
     }
 
-    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+    /// See "A resize flies at once, then reveals" in `src/transitions/docs/coordination.md`.
     #[test]
     fn a_window_that_has_to_repaint_is_captured_every_8ms_for_a_second() {
         assert_eq!(REPAINT_EVERY, Duration::from_millis(8));
