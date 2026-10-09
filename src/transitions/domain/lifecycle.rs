@@ -1370,6 +1370,61 @@ mod tests {
         assert!(watch(&out).unwrap().awaiting.is_empty());
     }
 
+    /// Journal g665 and g670: the top of a right stack maximized. Its sibling, re-evened to the full
+    /// height as it parks, outgrows its picture and is awaited too. Its tile goes along its own place
+    /// on the strip, off the display, so the overlay holds for the maximized window alone; borrowing
+    /// the maximized window's movement, it ended on screen, was held for, never landed there, and
+    /// stalled the flight 300ms.
+    #[test]
+    fn a_maximize_holds_only_for_the_window_it_maximizes() {
+        use crate::transitions::domain::request::AnimationRequest;
+        use crate::transitions::domain::travel::tile_path;
+        let screen = r(0.0, 0.0, 1728.0, 1080.0);
+        let window = |i: u32, from, to, before, after| AnimationRequest {
+            window: w(i),
+            server_id: rini_core::ids::WindowServerId::new(i),
+            from,
+            to,
+            floating: false,
+            worn: Default::default(),
+            strip_before: Some(before),
+            strip_after: Some(after),
+        };
+        let left_park = |frame: ScreenRect| r(1.0 - frame.size.width, 1079.0, frame.size.width, frame.size.height);
+        let (a, a_after) = (r(3.0, 3.0, 860.0, 1074.0), r(-1723.0, 3.0, 860.0, 1074.0));
+        let (top, maximized) = (r(866.0, 3.0, 860.0, 536.0), r(3.0, 3.0, 1722.0, 1074.0));
+        let (sibling, sibling_after) = (r(866.0, 542.0, 860.0, 536.0), r(-860.0, 3.0, 860.0, 1074.0));
+        let requests = [
+            window(1, a, left_park(a_after), a, a_after),
+            window(2, top, maximized, top, maximized),
+            window(3, sibling, left_park(sibling_after), sibling, sibling_after),
+        ];
+        let tiles: Vec<TileSummary> = (0..requests.len())
+            .filter_map(|i| {
+                let path = tile_path(None, &requests, i, screen)?;
+                Some(tile(requests[i].window, path.start, path.end))
+            })
+            .collect();
+        let stage = StageSummary {
+            kind: Kind::LayoutPass,
+            final_frames: requests.iter().map(|q| (q.window, q.to)).collect(),
+            tiles,
+            focus: Some(w(2)),
+            losing_focus: None,
+            key: Some(w(2)),
+            awaiting: vec![w(2), w(3)],
+            display: screen,
+            ..pan()
+        };
+        let now = Instant::now();
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage), now);
+        let shown = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
+        assert_eq!(shown.awaiting, vec![(w(2), maximized)]);
+        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: maximized, why: Why::Landed }, now);
+        assert!(has(&out, |c| *c == Command::StartMoving), "{out:?}");
+    }
+
     #[test]
     fn a_newcomer_merged_while_the_passes_coalesce_is_held_for() {
         let now = Instant::now();

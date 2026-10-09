@@ -12,8 +12,8 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | | |
 |---|---|
 | **The port** | `domain/request.rs` — `AnimationRequest`, one window of a layout pass, `SurfaceWindow`, one window of a strip movement, and `Cause`, the press a request answers; what the reactor builds and the engine carries out |
-| **A layout pass, sorted** | `domain/pass.rs` — `plan`: which windows move, which stay and are still drawn, which are warmed |
-| **Where a tile starts and ends** | `domain/travel.rs` — the window server's frame against the request's, a park's way in and out by its neighbours' travel, what is worth flying |
+| **A layout pass, sorted** | `domain/pass.rs` — `plan`: which windows move, which stay and are still drawn, which are warmed; `place_on_strip`: each tiled window's place on the strip before and after the pass |
+| **Where a tile starts and ends** | `domain/travel.rs` — the window server's frame against the request's, a park's way in and out along its own place on the strip, what is worth flying |
 | **A move along the strip, staged** | `domain/strip_move.rs` — where the two columns changing places start (`swap_starts`), and the look's staging of the press put on the strip surface (`stage_move`); which column is held and whether the strip steps are the look's |
 | **A switch's stack** | `domain/strip_stack.rs` — the stacked workspace strips a vertical switch scrolls through |
 | **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, and how each window's picture where it ends is waited for (`EndPicture`) |

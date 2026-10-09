@@ -1222,6 +1222,73 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     );
 }
 
+/// A layout pass hands each tiled window over with where the strip had it before the pass and has
+/// it after, which is where a window the pass parks or unparks is drawn going or coming; a floating
+/// window, not on the strip, with neither.
+#[test]
+fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
+    let floating = WindowId::new(1, 3);
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, floating));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    assert!(reactor.layout_manager.layout_engine.is_window_floating(floating));
+    apps.requests();
+    let before = reactor.test_strip_layout(space);
+    assert!(!before.is_empty(), "a pass has looked at the strip");
+
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let layout: Vec<(WindowId, CGRect)> = (1..=3u32)
+        .map(|idx| {
+            let wid = WindowId::new(1, idx);
+            let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+            let dx = [120., -120., 40.][idx as usize - 1];
+            (wid, CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y), frame.size))
+        })
+        .collect();
+    crate::app::reactor::animation::AnimationManager::animate_layout(
+        &mut reactor,
+        space,
+        &layout,
+        false,
+        None,
+    );
+    let after = reactor.test_strip_layout(space);
+
+    let mut animated = Vec::new();
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
+            animated = windows;
+        }
+    }
+    let place = |layout: &[(WindowId, CGRect)], window| {
+        use rini_geometry::Round;
+        use rini_geometry::space::FromCg;
+        layout.iter().find(|(w, _)| *w == window).map(|(_, f)| ScreenRect::from_cg(*f).rounded())
+    };
+    let places: Vec<_> = animated.iter().map(|r| (r.window, r.strip_before, r.strip_after)).collect();
+    assert_eq!(
+        places,
+        animated
+            .iter()
+            .map(|r| match r.window == floating {
+                true => (r.window, None, None),
+                false => (r.window, place(&before, r.window), place(&after, r.window)),
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(animated.len(), 3, "{animated:?}");
+    assert!(place(&after, floating).is_some(), "the strip's layout holds the floating window's frame");
+    assert!(places.iter().filter(|p| p.0 != floating).all(|p| p.1.is_some() && p.2.is_some()), "{places:?}");
+}
+
 /// Focus moved from the first window to the second since the last batch: the second wears the ring
 /// and holds focus where the pass ends and the first neither, each request saying so with the
 /// decoration every managed window wears.

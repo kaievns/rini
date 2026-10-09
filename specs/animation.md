@@ -216,14 +216,29 @@ destination for a window already moving.
   scroll carries: a window already standing where the scroll puts it, as the one a left-edge drag
   resized stands at its release, MUST start where it stands ("Resizing with the mouse" in
   `specs/strip.md`). A window parked at the press MUST start where the strip had it, never from its
-  park corner, however much of it macOS left on screen: one the scroll carries comes in along the
-  strip, and one whose place on the strip the change kept, as the columns after a left-edge shrink
-  keep theirs, MUST stay where it was, off screen.
+  park corner, however much of it macOS left on screen, on a scroll and on any other layout change:
+  one the change carries comes in along the strip, in the row and at the size it ends at, and one
+  whose place on the strip the change kept, as the columns after a left-edge shrink keep theirs,
+  MUST stay where it was, off screen.
+- A window a layout change parks MUST leave along its own place on the strip, in the row and at the
+  size it is seen at, and end off screen: it moves with its column, and a resize the change gives it,
+  as the stack a maximize leaves is evened out over its column, happens off screen. No window MAY
+  take its movement from a window the change resizes: a resizing window's corner moves by its own
+  resize, not by the strip.
 
 > **Reported 2026-10-07.** "stil diagonal moves animation. specifically when i switch between the
 > two chrome windows on ws 1". A window standing on screen away from where the scroll drew it
 > started from where it stood, and macOS leaves more of a parked Chrome window on screen than the
 > off-screen test allows, so it flew in from the bottom-right corner, in x and y at once.
+
+> **Reported 2026-10-09.** "going full-size and back moves surrounding windows out incosistently
+> and they ovelap during the animations", "both on windows that are making space", "different
+> issues based on whether a window is at the top, middle, or bottom of a stack", "some of the issues
+> seem intermittent". A window a maximize, a restore, a fold or an unfold parked or brought back
+> moved by the nearest window moving on screen, usually the one being resized. On Kai's 1728x1080
+> screen the siblings and the next column slid up 359pt off the screen from the middle row of a
+> 3-stack and 539pt from the bottom of a 2-stack, diagonally from a right stack, and came back down
+> from above on the restore; which window lent the movement changed with how near each was.
 - A window MUST NOT be left at an animation's intermediate frame if a pass is interrupted.
 - The overlay MUST stop drawing a tile whose window is gone, and MUST drop a container once the last
   tile leaves it. An empty container is a layer the compositor keeps compositing.
@@ -659,8 +674,9 @@ the border's shape, style and depth, which the overlay draws on the layers in
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
 `src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted,
-`src/transitions/domain/frame_writes.rs` which frames are written and in what order, and
-`src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
+`src/transitions/domain/frame_writes.rs` which frames are written and in what order,
+`src/transitions/domain/travel.rs` where each tile starts and ends, a parked window's along its place
+on the strip, and `src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
 which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
 what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.

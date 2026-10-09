@@ -1931,9 +1931,10 @@ fn a_switch_claims_the_destination_strip_s_layout() {
 
     reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
 
-    let claimed = reactor.take_strip_layout(space).expect("the switch drew the destination");
+    let (claimed, now) = reactor.take_strip_layout(space).expect("a strip");
+    let claimed = claimed.expect("the switch drew the destination");
     assert!(claimed.iter().any(|(window, _)| *window == WindowId::new(1, 2)), "{claimed:?}");
-    assert_eq!(Some(claimed), reactor.take_strip_layout(space), "as the strip has it now");
+    assert_eq!(claimed, now, "as the strip has it now");
 }
 
 /// A restored layout shows the workspace it was saved on, and the first switch slides from that one.

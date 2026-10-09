@@ -130,7 +130,8 @@ impl AnimationManager {
         // the offset and the strip's layout stay current; the move with it, so it reaches one pass
         // only.
         let strip_movement = reactor.take_strip_movement(space);
-        let strip_before = reactor.take_strip_layout(space).unwrap_or_default();
+        let (strip_before, strip_now) = reactor.take_strip_layout(space).unwrap_or_default();
+        let strip_before = strip_before.unwrap_or_default();
         let moved = reactor.take_move_in(layout);
 
         // Visible moves wait for the flight decision; hidden ones go straight to the app.
@@ -186,6 +187,14 @@ impl AnimationManager {
         }
         // Added after the movement test above, which must judge only the windows going somewhere.
         overlay_requests.extend(unmoved);
+        let screen_space = |layout: &[(WindowId, CGRect)]| -> Vec<(WindowId, ScreenRect)> {
+            layout.iter().map(|&(window, frame)| (window, ScreenRect::from_cg(frame))).collect()
+        };
+        pass::place_on_strip(
+            &mut overlay_requests,
+            &screen_space(&strip_before),
+            &screen_space(&strip_now),
+        );
 
         // The overlay engine replaces the per-frame Accessibility writes entirely: the real windows
         // are placed once, and the motion the eye follows is drawn in the overlay. It is asked to

@@ -74,6 +74,8 @@ impl PassPlan {
                     to: m.to,
                     floating: m.floating,
                     worn: m.worn,
+                    strip_before: None,
+                    strip_after: None,
                 })
             })
             .collect()
@@ -98,6 +100,8 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
                     to: w.current,
                     floating: w.floating,
                     worn: w.worn,
+                    strip_before: None,
+                    strip_after: None,
                 });
             }
             continue;
@@ -124,6 +128,23 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
         });
     }
     out
+}
+
+/// Gives each tiled request its place on the strip before and after the pass, from the strip's
+/// layouts, rounded as `plan` rounds a `to` so a parked column moves with its on-screen neighbours
+/// to the point. A floating window gets none: the strip layout holds only where it was stored.
+pub fn place_on_strip(
+    requests: &mut [AnimationRequest],
+    before: &[(WindowId, ScreenRect)],
+    after: &[(WindowId, ScreenRect)],
+) {
+    let place = |layout: &[(WindowId, ScreenRect)], window: WindowId| {
+        layout.iter().find(|(w, _)| *w == window).map(|(_, frame)| frame.rounded())
+    };
+    for request in requests.iter_mut().filter(|request| !request.floating) {
+        request.strip_before = place(before, request.window);
+        request.strip_after = place(after, request.window);
+    }
 }
 
 #[cfg(test)]
@@ -218,5 +239,37 @@ mod tests {
         assert_eq!(overlay.len(), 2);
         assert_eq!(overlay[0].window, WindowId::new(1, 1));
         assert!(overlay[1].floating);
+    }
+
+    /// Each tiled request is given where the strip had its window before the pass and has it after,
+    /// rounded as the pass rounds a `to`, so a parked column moves with its on-screen neighbours to
+    /// the point; a floating one, or one a layout does not hold, gets none.
+    #[test]
+    fn a_tiled_request_is_given_its_place_on_the_strip_and_a_floating_one_none() {
+        let at = rect(4.0, 32.0, 859.0, 1081.0);
+        let tiled = window(1, at, at);
+        let mut floating = window(2, at, at);
+        floating.floating = true;
+        let new = window(3, at, at);
+        let mut requests = plan([tiled, floating, new]).unmoved;
+        let before = [
+            (WindowId::new(1, 1), rect(-859.4, 32.0, 859.0, 1081.0)),
+            (WindowId::new(1, 2), rect(100.0, 100.0, 400.0, 300.0)),
+        ];
+        let after = [
+            (WindowId::new(1, 1), rect(4.0, 32.0, 859.0, 1081.0)),
+            (WindowId::new(1, 2), rect(100.0, 100.0, 400.0, 300.0)),
+            (WindowId::new(1, 3), rect(1729.5, 32.0, 859.0, 1081.0)),
+        ];
+        place_on_strip(&mut requests, &before, &after);
+        let places: Vec<_> = requests.iter().map(|r| (r.strip_before, r.strip_after)).collect();
+        assert_eq!(
+            places,
+            vec![
+                (Some(rect(-859.0, 32.0, 859.0, 1081.0)), Some(rect(4.0, 32.0, 859.0, 1081.0))),
+                (None, None),
+                (None, Some(rect(1730.0, 32.0, 859.0, 1081.0))),
+            ]
+        );
     }
 }

@@ -32,6 +32,12 @@ pub struct AnimationRequest {
     pub floating: bool,
     /// What the window wears, carried to its tile unread.
     pub worn: Worn,
+    /// Where the strip had the window at the pass before, unparked. `None` for a floating window,
+    /// one the strip did not hold, or the first pass a workspace gets.
+    pub strip_before: Option<ScreenRect>,
+    /// Where the strip has it after this pass, unparked. `None` for a floating window or one the
+    /// strip does not hold.
+    pub strip_after: Option<ScreenRect>,
 }
 
 /// One window of a strip movement. `frame` is where it lands; the viewport moves, and only a window

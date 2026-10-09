@@ -1498,21 +1498,9 @@ impl FlightEngine {
         let mut sync_captures = 0usize;
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         let mut resolved: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = Vec::new();
-        // For `neighbour_travel`: a window leaving for or returning from a park rides its
-        // nearest strip neighbour's vector.
-        let others: Vec<(ScreenRect, ScreenRect, bool)> =
-            windows.iter().map(|r| (r.from, r.to, r.floating)).collect();
         for (index, request) in windows.iter().enumerate() {
-            let path = tile_path(
-                live_frame(request.server_id),
-                request.from,
-                request.to,
-                request.floating,
-                &others,
-                index,
-                display_frame,
-            );
-            let Some(TilePath { start, end, .. }) = path else {
+            let path = tile_path(live_frame(request.server_id), &windows, index, display_frame);
+            let Some(TilePath { start, end }) = path else {
                 offscreen += 1;
                 debug!(
                     wsid = request.server_id.as_u32(),
@@ -2346,6 +2334,8 @@ impl FlightEngine {
                     from: frame.translate(ScreenVector::new(dx, dy)),
                     to: frame,
                     worn: Worn::default(),
+                    strip_before: None,
+                    strip_after: None,
                 }
             })
             .collect();
@@ -4428,6 +4418,8 @@ mod tests {
                 from,
                 to,
                 floating: false,
+                strip_before: None,
+                strip_after: None,
             };
             let mut windows = vec![request(1, start(), end())];
             windows.extend(others.iter().map(|&(id, from, to)| request(id, from, to)));
@@ -4502,6 +4494,8 @@ mod tests {
                 to,
                 floating: false,
                 worn,
+                strip_before: None,
+                strip_after: None,
             };
             let parked = rect(1727.0, 1085.0, 859.0, 1081.0);
             let press = Event::Animate {

@@ -198,13 +198,28 @@ The two entry points feed the same `begin_group`:
   is not flown (`worth_flying`): its windows are placed directly, no overlay.
   A tile starts from the window server's frame when that differs from the
   request (`resolve_start`). A window displaced to a park, or returning from
-  one, travels by its neighbour's vector: `neighbour_travel` reads the
-  `to - from` of the nearest strip window (by centre x) that is on screen at
-  both ends and moves. Leaving, the tile ends at `start + travel`
-  (`resolve_end`); returning, it starts at `to - travel`. `final_frames`
-  keeps the real park either way. The display edge on the park's side, in
-  the tile's own row (`entry_frame`), is only the fallback when no neighbour
-  moves. Aimed at the edge, the displaced tile covered a different distance
+  one, goes along its own place on the strip: each request carries the
+  window's strip frame before and after the pass (`strip_before`,
+  `strip_after`, given by `pass::place_on_strip` from the two layouts
+  `Reactor::take_strip_layout` returns, rounded as `to` is), and the tile
+  keeps the row and size it is seen at, its edge facing the display where the
+  strip frame's is. Leaving, the tile ends there (`resolve_end`); returning,
+  it starts there; parked at both ends, it goes from one strip frame to the
+  other. So it moves with its column by construction, and a resize the pass
+  gives it happens off screen: the stack a maximize leaves is evened out over
+  its column as it parks, and drawn along its literal strip frames it
+  would climb and grow on its way out. `final_frames` keeps the real park
+  either way. Only a start with no strip frame (the first pass a workspace
+  gets, a window new to the strip) borrows a neighbour's vector:
+  `neighbour_travel` reads the `to - from` of the nearest strip window (by
+  centre x) that is on screen at both ends and moves without resizing. A
+  window being maximized or folded moves its corner AND resizes; lending
+  that, it sent its siblings and the next column up off the screen, or in
+  diagonally, at the restore back down from above (Kai, 2026-10-09). The
+  display edge on the park's side, in the tile's own row
+  (`park_entry_frame`), is the fallback when nothing beside it moves, and
+  replaces any start or end of a parked window that would show on the
+  display. Aimed at the edge, the displaced tile covered a different distance
   from its neighbour under one duration and curve, so it ran at its own speed
   and overlapped it (seen 2026-09-15). A park is judged from BOTH the
   requested frame and the server's: apps clamp a park past the 40pt
