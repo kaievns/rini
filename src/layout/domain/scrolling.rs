@@ -1634,6 +1634,11 @@ impl ScrollingLayoutSystem {
             {
                 kept.window = to;
             }
+            if let Some((of, _)) = &mut state.pending_pin_of
+                && *of == from
+            {
+                *of = to;
+            }
             if state.fullscreen_within_gaps.remove(&from) {
                 state.fullscreen_within_gaps.insert(to);
             }
@@ -5724,6 +5729,55 @@ mod tests {
 
         assert_eq!(shape(&system, layout), ids(&[&[1], &[3, 4], &[2], &[5]]));
         assert_eq!(laid_out_xw(&system, layout, wid(1, 4)), (3.0, 860.0));
+    }
+
+    // ── a window's id replaced while away ───────────────────────────────────
+
+    /// B1 out of [A][B1,B2] by `Mod+Comma` and back, with `renamed` given a new id in between: B1
+    /// goes back on top and the strip back to 0.
+    fn fold_round_trip_renaming(renamed: usize) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+        let (mut system, layout, a, mut b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[0]));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        let new = wid(2, 1);
+        system.replace_window(b[renamed], new);
+        b[renamed] = new;
+        assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![b[0]]);
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
+        assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0));
+        (system, layout, b)
+    }
+
+    #[test]
+    fn a_folded_out_window_given_a_new_id_folds_back_into_its_row() {
+        fold_round_trip_renaming(0);
+    }
+
+    #[test]
+    fn a_fold_back_finds_its_row_when_the_window_it_sat_above_has_a_new_id() {
+        fold_round_trip_renaming(1);
+    }
+
+    /// A on Kai's thirds, given a new id while full width, or between the toggle back and its pass.
+    #[test]
+    fn a_full_width_window_given_a_new_id_restores_to_the_view_it_left() {
+        for before_the_pass in [false, true] {
+            let (mut system, layout, w) = kai_s_thirds();
+            let new = wid(2, 1);
+            assert!(system.toggle_full_width(layout, w[1]));
+            kai_s_frames(&system, layout);
+            if before_the_pass {
+                assert!(system.toggle_full_width(layout, w[1]));
+                system.replace_window(w[1], new);
+            } else {
+                system.replace_window(w[1], new);
+                assert!(system.toggle_full_width(layout, new));
+            }
+
+            assert_eq!(laid_out_xw(&system, layout, new), (578.0, 572.0), "{before_the_pass}");
+        }
     }
 
     /// A layout file from before the two maps holds one `stack_origins`: it loads, its strip intact
