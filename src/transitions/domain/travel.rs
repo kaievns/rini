@@ -259,24 +259,33 @@ pub fn is_moving<U>(from: Rect<U>, to: Rect<U>) -> bool {
         || (to.size.height - from.size.height).abs() >= 0.5
 }
 
-/// How far one window is travelling, as a single distance.
+/// How far one window travels or is resized by the layout, as a single distance.
 ///
-/// Diagonal moves are rare in a tiling layout, so the larger of the two axes is the honest measure and
-/// avoids paying for a square root on every window of every layout pass.
-fn travel(request: &AnimationRequest) -> f64 {
+/// Diagonal moves are rare in a tiling layout, so the larger of the axes is the honest measure and
+/// avoids paying for a square root on every window of every layout pass. The resize is the slot's on
+/// the strip, before the pass against after, not the window's: an app that snapped rini's last write
+/// to its own grid stands a few points off its slot, and writing the slot again resizes nothing.
+fn change(request: &AnimationRequest) -> f64 {
     let dx = request.to.origin.x - request.from.origin.x;
     let dy = request.to.origin.y - request.from.origin.y;
-    dx.abs().max(dy.abs())
+    let resized = match (request.strip_before, request.strip_after) {
+        (Some(before), Some(after)) => (after.size.width - before.size.width)
+            .abs()
+            .max((after.size.height - before.size.height).abs()),
+        _ => 0.0,
+    };
+    dx.abs().max(dy.abs()).max(resized)
 }
 
-/// Whether any window in this pass moves far enough for the movement to be worth showing.
+/// Whether any window in this pass moves, or is resized by the layout, far enough to be worth
+/// showing.
 ///
 /// The threshold is about cost, not precision: an animation covers the display for its duration, so a
 /// one-point move buys nothing and freezes everything. Two points, because the layout rounds to whole
 /// points and a column boundary can land either side of where it was without anything having moved.
-pub fn travels_visibly(requests: &[AnimationRequest]) -> bool {
-    const MIN_VISIBLE_TRAVEL: f64 = 2.0;
-    requests.iter().any(|request| travel(request) >= MIN_VISIBLE_TRAVEL)
+pub fn changes_visibly(requests: &[AnimationRequest]) -> bool {
+    const MIN_VISIBLE_CHANGE: f64 = 2.0;
+    requests.iter().any(|request| change(request) >= MIN_VISIBLE_CHANGE)
 }
 
 #[cfg(test)]
@@ -1131,18 +1140,18 @@ mod tests {
     /// blanked every other window for 350ms.
     #[test]
     fn a_move_of_a_single_point_is_not_worth_animating() {
-        assert!(!travels_visibly(&[moving(502.0, 503.0)]));
-        assert!(!travels_visibly(&[moving(503.0, 502.0)]));
-        assert!(!travels_visibly(&[]));
+        assert!(!changes_visibly(&[moving(502.0, 503.0)]));
+        assert!(!changes_visibly(&[moving(503.0, 502.0)]));
+        assert!(!changes_visibly(&[]));
     }
 
     #[test]
     fn a_real_move_is_worth_animating() {
         // A column step on this display, and the smallest move that counts.
-        assert!(travels_visibly(&[moving(4.0, 865.0)]));
-        assert!(travels_visibly(&[moving(4.0, 6.0)]));
+        assert!(changes_visibly(&[moving(4.0, 865.0)]));
+        assert!(changes_visibly(&[moving(4.0, 6.0)]));
         // One window going somewhere is enough, however many are standing still around it.
-        assert!(travels_visibly(&[moving(502.0, 502.0), moving(4.0, 865.0)]));
+        assert!(changes_visibly(&[moving(502.0, 502.0), moving(4.0, 865.0)]));
     }
 
     /// Vertical movement counts too: a workspace switch travels in y, and reading only x would treat one as
@@ -1151,7 +1160,32 @@ mod tests {
     fn travel_is_measured_on_both_axes() {
         let mut vertical = moving(4.0, 4.0);
         vertical.to.origin.y = 32.0 + 1117.0;
-        assert!(travels_visibly(&[vertical]));
+        assert!(changes_visibly(&[vertical]));
+    }
+
+    /// Kai's report of 2026-10-09: `alt-R` on a column at the strip's left edge with nothing beside it
+    /// on screen resizes it where it stands, and that is shown like a move.
+    #[test]
+    fn a_column_resized_where_it_stands_changes_visibly() {
+        let full = ScreenRect::new(ScreenPoint::new(3.0, 35.0), ScreenSize::new(1722.0, 1079.0));
+        let third = ScreenRect::new(ScreenPoint::new(3.0, 35.0), ScreenSize::new(572.0, 1079.0));
+        for (from, to) in [(full, third), (third, full)] {
+            assert!(changes_visibly(&[on_strip(request(from, to, false), from, to)]), "{to:?}");
+        }
+        let shorter = ScreenRect { size: ScreenSize::new(1722.0, 538.0), ..full };
+        assert!(changes_visibly(&[on_strip(request(full, shorter, false), full, shorter)]));
+    }
+
+    /// An app snapped a few points off its slot is written its slot again, which resizes nothing the
+    /// layout changed; nor does a slot rounding a point either way.
+    #[test]
+    fn a_window_written_back_to_the_slot_it_had_does_not_change_visibly() {
+        let slot = ScreenRect::new(ScreenPoint::new(3.0, 35.0), ScreenSize::new(860.0, 1079.0));
+        let snapped = ScreenRect { size: ScreenSize::new(853.0, 1071.0), ..slot };
+        assert!(!changes_visibly(&[on_strip(request(snapped, slot, false), slot, slot)]));
+        let rounded = ScreenRect { size: ScreenSize::new(861.0, 1079.0), ..slot };
+        assert!(!changes_visibly(&[on_strip(request(slot, rounded, false), slot, rounded)]));
+        assert!(!changes_visibly(&[request(snapped, slot, false)]), "off the strip, origin only");
     }
 
     // --- tile_path: the whole geometry decision for one window ---------------------------------

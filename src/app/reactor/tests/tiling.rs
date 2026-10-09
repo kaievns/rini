@@ -2380,6 +2380,92 @@ fn moving_strip_with(
     (apps, reactor, animation_rx)
 }
 
+/// Every layout pass the reactor handed the overlay since the last look, each landed as the engine
+/// lands it, and every write carried out: the app answers each with the frame it was given.
+fn land_layout_passes(
+    apps: &mut Apps,
+    reactor: &mut Reactor,
+    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
+) -> Vec<Vec<crate::transitions::domain::request::AnimationRequest>> {
+    use crate::transitions::domain::travel::is_moving;
+    use crate::transitions::platform::engine::Event as Engine;
+    let mut passes = Vec::new();
+    while let Ok((_, event)) = rx.try_recv() {
+        let frames: Vec<(WindowId, CGRect)> = match event {
+            Engine::Animate { windows, .. } => {
+                let frames = windows
+                    .iter()
+                    .filter(|request| is_moving(request.from, request.to))
+                    .map(|request| (request.window, request.to.to_cg()))
+                    .collect();
+                passes.push(windows);
+                frames
+            }
+            Engine::AnimateSurface { final_frames, .. } => {
+                final_frames.iter().map(|&(window, frame)| (window, frame.to_cg())).collect()
+            }
+            _ => continue,
+        };
+        reactor.handle_event(Event::ApplyOverlayFrames(frames));
+        apps.simulate_until_quiet(reactor);
+    }
+    apps.simulate_until_quiet(reactor);
+    passes
+}
+
+/// Kai's report of 2026-10-09, "alt-R is broken now, doesn't animate anything": the strip's last
+/// column at the left edge, the columns before it parked, is resized where it stands by `alt-R` with
+/// nothing else on screen moving, and the pass was placed rather than flown. Every press flies, from
+/// each width the column can be at, the app answering each write with the frame it was given.
+#[test]
+fn every_alt_r_on_the_last_column_flies() {
+    use crate::layout::ResizeOrientation;
+    use crate::layout::settings::CenterFocusedColumn;
+    let space = SpaceId::new(1);
+    for columns in 1..=4 {
+        for start in ["a third", "a half", "two thirds", "ctrl-F", "ratio 1.0"] {
+            let case = format!("{columns} columns from {start}");
+            let (mut apps, mut reactor, mut rx) = moving_strip_with(0.5, columns, |scrolling| {
+                scrolling.min_column_width_ratio = 0.33333;
+                scrolling.max_column_width_ratio = if start == "ratio 1.0" { 1.0 } else { 0.66667 };
+                scrolling.preset_column_widths = vec![0.33333, 0.5, 0.66667, 1.0];
+                scrolling.center_focused_column = CenterFocusedColumn::Never;
+            });
+            let last = WindowId::new(1, columns as u32);
+            reactor.send_layout_event(LayoutEvent::WindowFocused(space, last));
+            let resize_by = |amount| LayoutCommand::ResizeWindowBy {
+                amount,
+                orientation: ResizeOrientation::Horizontal,
+            };
+            match start {
+                "a third" => reactor.handle_test_layout_command(resize_by(0.33333 - 0.5)),
+                "two thirds" => reactor.handle_test_layout_command(resize_by(0.66667 - 0.5)),
+                "ratio 1.0" => reactor.handle_test_layout_command(resize_by(0.5)),
+                "ctrl-F" => {
+                    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps)
+                }
+                _ => {}
+            }
+            land_layout_passes(&mut apps, &mut reactor, &mut rx);
+            let full = reactor.layout_manager.layout_engine.full_width_of_column(space, last);
+            assert_eq!(full, Some(start == "ctrl-F"), "{case}");
+
+            for press in 0..5 {
+                let width = apps.windows[&last].frame.size.width;
+                reactor.handle_test_layout_command(LayoutCommand::CyclePresetColumnWidth);
+                let passes = land_layout_passes(&mut apps, &mut reactor, &mut rx);
+                let resized = apps.windows[&last].frame;
+                assert_ne!(resized.size.width, width, "{case}, press {press}: the width changed");
+                let flown = passes.iter().flatten().find(|request| {
+                    request.window == last && request.to.to_cg() == resized
+                });
+                let flown = flown.unwrap_or_else(|| panic!("{case}, press {press}: {passes:?}"));
+                assert_eq!(flown.from.size.width, width, "{case}, press {press}");
+            }
+        }
+    }
+}
+
 /// A click or an app activation reaches the reactor as a focus report before the pass it causes, and a
 /// key press as a command before rini's raise is reported: either way the strip movement names the
 /// window focused as the event began, which is still drawn focused on screen at frame zero.
