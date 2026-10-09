@@ -16,6 +16,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, or was seen with none only while inactive; the window last reported focused, which says whether a capture shows a window active; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
 | **Routes** | `domain/route.rs` — `Route`, which way a picture was taken: SkyLight alone, SkyLight's baked call, ScreenCaptureKit, or the stand-in; which of them the overlay clips to the tile's corner |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
+| **The ground** | `domain/ground.rs` — `Ground`, the colour a window's content sits on, with its alpha: the most common colour among its body samples, which a crop-drawn tile fills where its picture ends |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
 | **The handover check** | `domain/handover.rs` — `HandoverCheck`, a lift to measure, and `compare`: how far the screen after it is from the overlay before it, inside each window, either side of its outline and over a band drawn outside it, sampled as the research measured it |
 | **Settled** | `domain/settle.rs` — when a capture of a window that has to repaint is its settled rendering, by thumbprint |
@@ -28,13 +29,13 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
-| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route` (`domain/route.rs`); the stand-in, one pixel; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
+| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage`, its `Route` (`domain/route.rs`) and its `Ground`; the stand-in, one pixel, whose colour is the ground of any picture none was read off; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
-| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
+| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, and its ground off them, what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
-| **Layers** | `platform/layer.rs` — handing a picture to a layer, and a region through `contentsRect` |
+| **Layers** | `platform/layer.rs` — handing a picture to a layer, and a region through `contentsRect`; filling a layer with a picture's ground |
 
 The stretch tolerance a fit is judged by is `rini_geometry::stretch`, shared with `animation`'s "is
 this a resize" so the two agree.
@@ -185,6 +186,12 @@ capture can be usable and still be the wrong shape" in [`capture-research.md`](c
 **The cache never downgrades.** A clipped capture never replaces a usable one, and a capture of a
 window on its own never replaces one of the same size that carries its blur. A stand-in is never
 cached: cached, the switcher would read it as a picture and the next flight would take it for one.
+
+**Every capture the service makes carries its ground.** The service reads it off the body samples
+on its own thread, for each picture a SkyLight round brings back, regions included, and for each
+ScreenCaptureKit capture as it lands; the framed capture of a window that opens reads it where it is
+taken, beside its blur merge. A picture none was read off, the desktop's, the bar's or one whose
+pixels could not be read, carries the stand-in's colour.
 
 **Two routes, chosen by visibility.** SkyLight is fresh and cheap but captures only what is on screen;
 ScreenCaptureKit captures a window anywhere but costs about 40ms, so it fills the cache in the

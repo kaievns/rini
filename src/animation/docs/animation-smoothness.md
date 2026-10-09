@@ -464,10 +464,12 @@ changes is how the picture maps onto it (`content_mode` in
 `crate::animation::domain::motion::tile`):
 
 - **A movement with a matching picture stretches.** Picture and frame are the
-  same shape, so `kCAGravityResize` is exact. Strip movements always stretch,
-  since their tiles never change size mid-flight.
+  same size at both ends, so `kCAGravityResize` is exact. Strip movements
+  stretch wherever their picture matches, since their tiles never change size
+  mid-flight. So does the stand-in, one flat pixel exact at any size.
 - **Everything else crops, standing still against the edge that moves less.**
-  A 3x3 grid of sublayers (`crop_pieces`): four corner pieces a band square,
+  A resize, a picture lagging one and a grow whose reveal has not landed alike.
+  A 3x3 grid of sublayers (`crop`): four corner pieces a band square,
   four edge bands and the middle, every piece mapped 1:1 via `contentsRect`.
   Per axis and per leg the content stands still against the edge that moves
   less from the leg's first key to its last (`Anchors::of_leg`, the top or left
@@ -486,9 +488,19 @@ changes is how the picture maps onto it (`content_mode` in
   from under the title band and its top rows were sliced out (recorded
   2026-10-09 on a top row folding a window under it and on a top row
   maximizing; Kai's report in `specs/animation.md` "Resizing"). Content never
-  stretches while the picture covers the frame; past the picture's side the
-  middle stretches what lies between its bands. All four rounded corners ride
-  through intact,
+  stretches: past the picture's side the middle shows all of the picture, and
+  the gap between it and the moving edge's band is the window's ground, a fill
+  of its own background colour with its alpha (`Picture::ground`, read off its
+  body samples by the pictures service, `src/pictures/domain/ground.rs`), in
+  layers under the picture layer so the corner clip covers them
+  (`a_crop_drawn_tile_is_grounded_where_its_picture_ends`). The ground
+  covers only what the picture does not, a column and the row either side of
+  it meeting without overlap, since a fill under the whole tile would darken a
+  translucent window. A grow whose hold missed flies its before picture with
+  the ground in the growth, and an entrance its spawn picture until its slot
+  picture lands. The stretch it replaced (`stand_in_mode`, the middle and the
+  whole tile stretched past the picture) read as the window squashing, Kai's
+  report. All four rounded corners ride through intact,
   under a hairline drawn at every size ("The hairline and the shadow, as drawn" in
   `src/decorations/docs/README.md`). A first cut used `contentsCenter` (nine-part
   stretching); it kept the corners but read as the window stretching, which
@@ -503,10 +515,14 @@ changes is how the picture maps onto it (`content_mode` in
   `the_crop_grid_of_a_region_stays_in_the_region`). A tile's region is its
   picture's (`Pixels::unit_rect`), all of the image for anything but a region
   (`a_crop_drawn_tile_takes_its_region_from_its_picture`).
-- **The animation is Core Animation end to end.** Piece frames and
-  contentsRects are linear functions of the tile frame while the band is
+- **The animation is Core Animation end to end.** A grid 1:1 and seamless at
+  both endpoint keys stays so at every frame interpolated between them, and
+  with the picture at one end's size, as a resize flies, piece frames, contents
+  and ground spans are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
-  IS the per-frame crop layout; one transaction installs frame, contentsRect,
+  IS the per-frame crop layout; a picture of neither end's size, a merged leg
+  starting mid-resize, stays 1:1 but shows its ground earlier than the frame's
+  own grid would; one transaction installs frame, contentsRect,
   shadow-path, shadow-mask, hairline-corner, picture-corner and outline-path
   animations on the shared curve, each path and corner at the tile's one corner.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
@@ -547,10 +563,10 @@ a track's `Form`, the constructor that made it, names the class
 the tile, each value mapped from its key's frame
 (`a_tile_track_is_installed_on_every_layer_of_the_tile`); a tile's new leg judges
 its content mode again against its first and last key, set only when it changes, and the leg it is
-on with its end moved, a snap, keeps it drawn as it was
-(`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`): judged again, a grow flying its
-old picture stretched turned crop-drawn when its repainted picture was cut in and it snapped a point
-short of the plan, the content jumping to 1:1 with its seam mid-resize.
+on with its end moved, a snap, keeps it drawn as it was, so a tile never turns mid-flight
+(`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`). A picture cut onto a stretched
+tile that it does not fit at both ends of its leg, a stand-in's real picture landing on a resize, is
+cut onto the crop grid (`a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped`).
 The presentation layer is read only by the trace.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in

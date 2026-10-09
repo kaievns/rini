@@ -1,7 +1,8 @@
 //! Pictures read on the service's thread: a picture's band print and its body samples, which say
-//! whether it shows anything new (`crate::pictures::domain::print`), and what a window's first picture
-//! says of it (`crate::pictures::domain::knowledge`), each drawing only as much of the picture as it
-//! needs; and the overlay and the screen drawn whole for a handover check
+//! whether it shows anything new (`crate::pictures::domain::print`) and what its ground is
+//! (`crate::pictures::domain::ground`), and what a window's first picture says of it
+//! (`crate::pictures::domain::knowledge`), each drawing only as much of the picture as it needs;
+//! and the overlay and the screen drawn whole for a handover check
 //! (`crate::pictures::domain::handover`).
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
@@ -12,6 +13,7 @@ use objc2_core_graphics::{
 use objc2_io_surface::{IOSurfaceLockOptions, IOSurfaceRef};
 use rini_geometry::space::ScreenPoint;
 
+use crate::pictures::domain::ground::{Ground, ground};
 use crate::pictures::domain::handover::Rgba;
 use crate::pictures::domain::knowledge::{
     MATERIAL_SIDE, TRANSLUCENCY_SIDE, has_material, is_translucent,
@@ -43,12 +45,13 @@ pub fn band_print(picture: &Picture) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// A picture's body sampled at [`body_points`], as RGB, for `bodies_differ`.
-pub fn body_samples(picture: &Picture) -> Option<Vec<[u8; 3]>> {
-    match &picture.image {
+/// A picture's body sampled at [`body_points`], premultiplied RGBA, for `bodies_differ` and its
+/// `ground`.
+pub fn body_samples(image: &Pixels) -> Option<Vec<[u8; 4]>> {
+    match image {
         Pixels::Surface(surface) => surface_samples(surface),
         Pixels::Bitmap(_) | Pixels::Region { .. } => {
-            let image = picture.image.bitmap()?;
+            let image = image.bitmap()?;
             let pixels = image_size(&image);
             let (width, height) = (pixels.width, pixels.height);
             let body = CGRect::new(
@@ -65,7 +68,7 @@ pub fn body_samples(picture: &Picture) -> Option<Vec<[u8; 3]>> {
                 (0..BODY_GRID * BODY_GRID)
                     .map(|i| {
                         let at = (i / BODY_GRID) * stride + (i % BODY_GRID) * 4;
-                        [bytes[at], bytes[at + 1], bytes[at + 2]]
+                        [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]
                     })
                     .collect(),
             )
@@ -73,8 +76,13 @@ pub fn body_samples(picture: &Picture) -> Option<Vec<[u8; 3]>> {
     }
 }
 
-/// A surface's pixels at the body's points, BGRA read as RGB.
-fn surface_samples(surface: &IOSurfaceRef) -> Option<Vec<[u8; 3]>> {
+/// The ground of a picture's pixels, read off its body samples.
+pub fn ground_of(image: &Pixels) -> Option<Ground> {
+    ground(&body_samples(image)?)
+}
+
+/// A surface's pixels at the body's points, BGRA read as RGBA.
+fn surface_samples(surface: &IOSurfaceRef) -> Option<Vec<[u8; 4]>> {
     let (width, height, stride) = (surface.width(), surface.height(), surface.bytes_per_row());
     if width == 0 || height == 0 || stride < width * 4 {
         return None;
@@ -90,7 +98,7 @@ fn surface_samples(surface: &IOSurfaceRef) -> Option<Vec<[u8; 3]>> {
                 let x = ((u * width as f64) as usize).min(width - 1);
                 let y = ((v * height as f64) as usize).min(height - 1);
                 let pixel = base.add(y * stride + x * 4);
-                [*pixel.add(2), *pixel.add(1), *pixel]
+                [*pixel.add(2), *pixel.add(1), *pixel, *pixel.add(3)]
             })
             .collect();
         surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
@@ -290,26 +298,45 @@ mod tests {
     #[test]
     fn bodies_are_sampled_alike_from_any_kind_and_a_repaint_shows() {
         let grey = window((400.0, 300.0), 2.0, (0.9, 0.9, 0.9));
-        let a = body_samples(&grey).unwrap();
+        let a = body_samples(&grey.image).unwrap();
         assert_eq!(a.len(), BODY_GRID * BODY_GRID);
         assert!(
-            a.iter().all(|rgb| rgb.iter().all(|c| c.abs_diff(128) <= 1)),
+            a.iter().all(|rgba| rgba[..3].iter().all(|c| c.abs_diff(128) <= 1) && rgba[3] == 255),
             "grey body"
         );
 
         let mut surface = test_picture(ScreenSize::new(400.0, 300.0));
         surface.image = Pixels::Surface(test_surface(800, 600, [128, 128, 128, 255]));
-        assert!(!bodies_differ(&a, &body_samples(&surface).unwrap()));
+        assert!(!bodies_differ(&a, &body_samples(&surface.image).unwrap()));
 
         surface.image = Pixels::Surface(test_surface(800, 600, [20, 20, 20, 255]));
-        assert!(bodies_differ(&a, &body_samples(&surface).unwrap()));
+        assert!(bodies_differ(&a, &body_samples(&surface.image).unwrap()));
         assert!(
             !bodies_differ(
                 &a,
-                &body_samples(&window((400.0, 300.0), 2.0, (0.1, 0.1, 0.1))).unwrap()
+                &body_samples(&window((400.0, 300.0), 2.0, (0.1, 0.1, 0.1)).image).unwrap()
             ),
             "the band is not the body"
         );
+    }
+
+    /// A picture's ground is its body's colour, whatever its title band, from a bitmap and from a
+    /// surface alike; a translucent surface keeps its alpha.
+    #[test]
+    fn a_pictures_ground_is_read_off_its_body() {
+        let near = |got: Ground, want: [f64; 4]| {
+            let got = [got.r, got.g, got.b, got.a];
+            got.iter().zip(want).all(|(got, want)| (got - want).abs() < 0.01)
+        };
+        let grey = ground_of(&window((400.0, 300.0), 2.0, (0.9, 0.9, 0.9)).image).unwrap();
+        assert!(near(grey, [0.5, 0.5, 0.5, 1.0]), "{grey:?}");
+        let surface = Pixels::Surface(test_surface(800, 600, [40, 20, 10, 255]));
+        let brown = ground_of(&surface).unwrap();
+        assert!(near(brown, [40.0 / 255.0, 20.0 / 255.0, 10.0 / 255.0, 1.0]), "{brown:?}");
+        let surface = Pixels::Surface(test_surface(800, 600, [95, 95, 95, 242]));
+        let clear = ground_of(&surface).unwrap();
+        let (level, alpha) = (95.0 / 242.0, 242.0 / 255.0);
+        assert!(near(clear, [level, level, level, alpha]), "unpremultiplied: {clear:?}");
     }
 
     /// First sight of an opaque window with rounded corners, and of a translucent one.

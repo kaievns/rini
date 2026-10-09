@@ -687,8 +687,9 @@ window at its own frame about 40ms before rini's first pass (AX
 `start` reads that frame from the window server and takes ONE framed
 capture there (`capture_via_framed`, 16-24ms), at most
 `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
-`Member::Entrance` from the spawn frame to the slot, stretched
-(`stand_in_mode`) until its picture at the slot is swapped in: the window is
+`Member::Entrance` from the spawn frame to the slot, crop-drawn with its spawn
+picture and the window's ground in the growth (`capture_via_framed` reads the
+ground where it captures) until its picture at the slot is swapped in: the window is
 watched until it has repainted where it ends (`StageSummary::repainting`,
 `Settle::Repainted`) and never held for, and its slot is written with every
 other frame as the overlay goes up. A frame off this display is not a spawn: a parked window
@@ -760,10 +761,10 @@ coalesce window, and is accepted.
 ## A grow holds, then reveals
 
 Every fill for the not-yet-rendered region
-of a grow was tried and rejected by eye: `contentsRect` past the picture's
-edge extends its outermost pixels (a hole to the backdrop on a translucent
-window), and stretching the lead reads as stretching, because it is. So the
-truthful pixels are made to exist first. A pass whose destination outgrows
+of a grow made of the picture's own pixels was tried and rejected by eye:
+`contentsRect` past the picture's edge extends its outermost pixels (a hole to
+the backdrop on a translucent window), and stretching the lead reads as
+stretching, because it is. So the truthful pixels are made to exist first. A pass whose destination outgrows
 its picture (`outgrows`) is held for: its frames are written as the overlay
 goes up, so the app rerenders at its new size behind a still frame, and the
 pictures service watches it (`Settle::Repainted`). It reads the window's
@@ -790,13 +791,19 @@ anyway. A 150ms cap was tried for a blink-length freeze and raised back
 to 300ms with the fit requirement above: an entrance's watch waits for
 the real frame to reach slot size before it captures, so it needs the
 runway a grow's does. *How often 300ms is enough is not measured yet.*
-An app that misses the cap flies with the old picture STRETCHED over the
-tile (`stand_in_mode`, `Stretch`): every mode fills the whole frame. A
-top-left crop that stopped the grid at the picture's edge and showed the
+An app that misses the cap flies with the old picture crop-drawn, all of it
+1:1, and the window's own ground in the growth: a fill of its background
+colour with its alpha, read off the picture's body
+("Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`).
+A top-left crop that stopped the grid at the picture's edge and showed the
 backdrop in the growth was tried and read as a hole (3:28:10), the same
-hole recorded above for `contentsRect` past the edge. If the repainted
-picture lands once the motion has started after all, it is hard-cut onto the tile, which keeps flying
-stretched, a snap onto its window included, and
+hole recorded above for `contentsRect` past the edge; what showed there was
+the backdrop, not the window's ground. The old picture stretched over the
+tile, which replaced that hole, read as the window squashing (Kai's report of
+2026-10-09, `specs/animation.md` "Resizing"). If the repainted
+picture lands once the motion has started after all, it is hard-cut onto the
+crop grid as it is, exact for the rest of the grow, a stand-in's real picture
+included, and
 `TileOverlay::swap` re-installs the tile's own track from the overlay's replica,
 the SAME begin, length and curve, while it plays (a plain move's track too, so a
 crop-drawn tile on a move re-keys the same way): the frame keeps its curve and only

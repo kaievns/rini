@@ -15,6 +15,7 @@ use rini_geometry::space::{
 
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
+use crate::pictures::domain::ground::Ground;
 use crate::pictures::domain::region::{WHOLE, unit_rect};
 use crate::pictures::domain::route::Route;
 use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
@@ -80,6 +81,9 @@ pub struct Picture {
     /// picture like this is not given up for a same-sized capture of the window alone, which would
     /// be flat grey exactly where the blur is. See [`crate::pictures::domain::translucency`].
     pub carries_blur: bool,
+    /// The colour its content sits on, which a crop-drawn tile fills where the picture ends: read
+    /// by the pictures service off every capture it makes, the stand-in's for any other.
+    pub ground: Ground,
 }
 
 impl Picture {
@@ -107,8 +111,8 @@ impl Picture {
 }
 
 /// `--n3`, the raised plane of the Okibi dark theme: the same stand-in the switcher draws for a row
-/// with no picture.
-const STAND_IN_RGB: (f64, f64, f64) = (0.133, 0.145, 0.153);
+/// with no picture, and the ground of a picture none was read off.
+pub const STAND_IN_GROUND: Ground = Ground { r: 0.133, g: 0.145, b: 0.153, a: 1.0 };
 
 /// The stand-in for a window of `window` size with no picture.
 ///
@@ -126,17 +130,18 @@ pub fn stand_in_picture(window: ScreenSize, image: CFRetained<CGImage>) -> Pictu
         source: Route::StandIn,
         taken: std::time::Instant::now(),
         carries_blur: false,
+        ground: STAND_IN_GROUND,
     }
 }
 
-/// The stand-in's pixels: one pixel of `STAND_IN_RGB`, which the overlay stretches over the tile and
-/// clips to its window's corner. One pixel rather than the window's size: a full-size bitmap of one
-/// flat colour would be 30MB for a maximised window at 2x.
+/// The stand-in's pixels: one pixel of `STAND_IN_GROUND`, which the overlay stretches over the tile
+/// and clips to its window's corner. One pixel rather than the window's size: a full-size bitmap of
+/// one flat colour would be 30MB for a maximised window at 2x.
 pub fn stand_in_image() -> Option<CFRetained<CGImage>> {
     use objc2_core_graphics::CGContext;
     let ctx = rgba_bitmap_context(1, 1)?;
-    let (r, g, b) = STAND_IN_RGB;
-    CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, 1.0);
+    let Ground { r, g, b, a } = STAND_IN_GROUND;
+    CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, a);
     CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
     objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx))
 }
@@ -231,6 +236,7 @@ pub(crate) fn test_picture<U: PointSpace>(size: Size<U>) -> Picture {
         source: Route::ScreenCaptureKit,
         taken: std::time::Instant::now(),
         carries_blur: false,
+        ground: STAND_IN_GROUND,
     }
 }
 
@@ -271,8 +277,8 @@ mod tests {
         let data = objc2_core_graphics::CGBitmapContextGetData(Some(&ctx)) as *const u8;
         // SAFETY: the context's own buffer, one RGBA pixel.
         let pixel = unsafe { std::slice::from_raw_parts(data, 4) };
-        let (r, g, b) = STAND_IN_RGB;
-        for (got, want) in pixel.iter().zip([r, g, b, 1.0]) {
+        let Ground { r, g, b, a } = STAND_IN_GROUND;
+        for (got, want) in pixel.iter().zip([r, g, b, a]) {
             assert!((*got as f64 - want * 255.0).abs() <= 1.0, "{pixel:?}");
         }
     }

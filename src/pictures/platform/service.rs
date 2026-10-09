@@ -39,7 +39,7 @@ use crate::pictures::domain::watch::{
 use crate::pictures::event::Event;
 use crate::pictures::platform::bitmap::thumbprint;
 use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
-use crate::pictures::platform::measure::{band_print, body_samples, rgba};
+use crate::pictures::platform::measure::{band_print, body_samples, ground_of, rgba};
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
@@ -279,12 +279,13 @@ fn wanted(looks: &[Look], frames: &[Option<CGRect>], display: Option<Display>) -
         .collect()
 }
 
-/// Each picture captured, with its prints: its band print, and its thumbprint only where a look at
-/// its window asks for one.
+/// Each picture captured, grounded, with its prints: its band print, and its thumbprint only where
+/// a look at its window asks for one.
 fn with_prints(looks: &[Look], captured: Vec<(WindowId, Picture)>) -> Vec<(WindowId, Picture, Option<Prints>)> {
     captured
         .into_iter()
         .map(|(window, picture)| {
+            let picture = grounded(picture);
             let thumbprint = looks.iter().any(|look| look.target.window == window && look.thumbprint);
             let prints = band_print(&picture).map(|band| Prints {
                 band,
@@ -293,6 +294,12 @@ fn with_prints(looks: &[Look], captured: Vec<(WindowId, Picture)>) -> Vec<(Windo
             (window, picture, prints)
         })
         .collect()
+}
+
+/// `picture` with the ground its pixels show, or the one it came with where they cannot be read.
+fn grounded(picture: Picture) -> Picture {
+    let ground = ground_of(&picture.image).unwrap_or(picture.ground);
+    Picture { ground, ..picture }
 }
 
 /// What each window looked at was seen as: at its server frame, and captured as `captures` says.
@@ -812,7 +819,7 @@ impl Service {
             if self.looks_checked.insert(window, pair) == Some(pair) {
                 continue;
             }
-            let stale = match (body_samples(&look), body_samples(&newer)) {
+            let stale = match (body_samples(&look.image), body_samples(&newer.image)) {
                 (Some(look), Some(newer)) => bodies_differ(&look, &newer),
                 _ => true,
             };
@@ -1051,6 +1058,7 @@ impl Service {
                 self.shared.lock().unwrap().schedule.listed(target.window, prepared);
             }
             Done::Captured { window, picture } => {
+                let picture = picture.map(grounded);
                 let (events, released) = {
                     let mut shared = self.shared.lock().unwrap();
                     let kept = shared.schedule.captured(window);
@@ -1113,6 +1121,7 @@ mod tests {
     use super::*;
     use crate::pictures::domain::handover::AFTER_LIFT;
     use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Moment, Settle};
+    use crate::pictures::domain::ground::Ground;
     use crate::pictures::platform::picture::test_picture;
 
     fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
@@ -1570,6 +1579,21 @@ mod tests {
             carries_blur: true,
             ..flat(level, taken)
         }
+    }
+
+    /// Every picture a round of SkyLight captures brings back carries the ground its pixels show, a
+    /// region of a composite included, ahead of the cache and every client.
+    #[test]
+    fn a_captured_picture_carries_the_ground_its_pixels_show() {
+        let now = Instant::now();
+        let grey = (0.25f64 * 255.0).round() / 255.0;
+        let region = crate::pictures::platform::picture::test_region();
+        let captured = with_prints(&[], vec![(wid(1), flat(0.25, now)), (wid(2), region)]);
+        let Ground { r, g, b, a } = captured[0].1.ground;
+        assert!([r, g, b].iter().all(|c| (c - grey).abs() < 1e-9) && a == 1.0, "{r} {g} {b} {a}");
+        let clear = Ground { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
+        assert_eq!(captured[1].1.ground, clear, "a region is read too, its composite clear");
+        assert_eq!(grounded(flat(0.25, now)).ground, captured[0].1.ground);
     }
 
     /// A client keeps as a window's focused look only a picture it was delivered under the tag it

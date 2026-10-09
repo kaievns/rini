@@ -620,8 +620,10 @@ corrected them.
 
 `needs_capture` now asks the question the caller means: does the picture fit the
 size the layout just gave this window. And a picture of the wrong shape is
-stretched onto the frame rather than dropped, because 350ms of a stretched window
-is a great deal better than 350ms of a hole. After both:
+drawn onto the frame rather than dropped, because 350ms of a misshapen window is
+a great deal better than 350ms of a hole; it is cropped, with the window's ground
+where it ends ("Resizes through the overlay" in
+`src/animation/docs/animation-smoothness.md`). After both:
 
 ```
 canvas animation, requested=20, tiles=20, missing=0, misshapen=0

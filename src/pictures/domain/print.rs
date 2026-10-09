@@ -31,16 +31,17 @@ pub fn body_points() -> impl Iterator<Item = (f64, f64)> {
     })
 }
 
-/// Whether two pictures' bodies, sampled at [`body_points`] as RGB, show different content. Samples
-/// that do not pair up are a picture that could not be read, which counts as different.
-pub fn bodies_differ(a: &[[u8; 3]], b: &[[u8; 3]]) -> bool {
+/// Whether two pictures' bodies, sampled at [`body_points`] as RGBA, show different content in
+/// their colour. Samples that do not pair up are a picture that could not be read, which counts
+/// as different.
+pub fn bodies_differ(a: &[[u8; 4]], b: &[[u8; 4]]) -> bool {
     if a.len() != b.len() || a.is_empty() {
         return true;
     }
     let sum: f64 = a
         .iter()
         .zip(b)
-        .map(|(a, b)| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b) as f64).sum::<f64>() / 3.0)
+        .map(|(a, b)| a[..3].iter().zip(b).map(|(a, b)| a.abs_diff(*b) as f64).sum::<f64>() / 3.0)
         .sum();
     sum / a.len() as f64 > BODIES_DIFFER_ABOVE
 }
@@ -70,8 +71,8 @@ mod tests {
         assert!(points[0].0 < points[1].0, "left to right");
     }
 
-    fn flat(level: u8) -> Vec<[u8; 3]> {
-        vec![[level; 3]; BODY_GRID * BODY_GRID]
+    fn flat(level: u8) -> Vec<[u8; 4]> {
+        vec![[level, level, level, 255]; BODY_GRID * BODY_GRID]
     }
 
     /// More than three levels on average is different content; a cursor or a clock is not.
@@ -82,12 +83,12 @@ mod tests {
         assert!(bodies_differ(&flat(100), &flat(104)), "four");
         let mut cursor = flat(100);
         for sample in cursor.iter_mut().take(10) {
-            *sample = [255, 255, 255];
+            *sample = [255, 255, 255, 255];
         }
         assert!(!bodies_differ(&flat(100), &cursor), "ten samples of 1600");
         let mut scrolled = flat(100);
         for sample in scrolled.iter_mut().take(400) {
-            *sample = [20, 20, 20];
+            *sample = [20, 20, 20, 255];
         }
         assert!(bodies_differ(&flat(100), &scrolled), "a quarter of it");
     }

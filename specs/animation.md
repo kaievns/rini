@@ -213,9 +213,11 @@ destination for a window already moving.
   keeps its right side where it is. Where both edges move, the one moving less holds the content,
   the top or the left when they move alike. The window's edges and rounded corners MUST ride the
   edges they belong to, whole.
-
-Not yet met: where a resizing window's picture does not cover its frame, its content is still
-stretched over the rest.
+- A resizing window's content MUST NOT be stretched or squashed. Where its picture does not cover
+  its frame, the picture MUST be drawn whole at its own size and the rest MUST be the window's own
+  ground, its background colour with its alpha, never the desktop behind it and never the picture's
+  edge pixels drawn on. Only a picture the size of its frame at both ends of a movement, and the
+  dark stand-in of a window with no picture, MAY be scaled.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
 > really. or it's clipped in an akward place slicing the content. i regularly see clipping on
@@ -226,7 +228,9 @@ stretched over the rest.
 > folding a window under it showed its rows from 29 down under its title bar, the rows above them
 > sliced out, and a top row maximizing unrolled its content downward from under the title bar
 > instead of revealing rows at the bottom. A bottom row maximizing, the case Kai named, recorded as
-> this requires; what was seen there is not measured.
+> this requires; what was seen there is not measured. A bottom row restored from maximized had its
+> small picture cut in a tenth of the way through and stretched, its glyphs 1.5 to 2 times their
+> size on both axes.
 
 ## Correctness the user can see
 
@@ -668,8 +672,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 ## Where it lives
 
 `src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
-depth bands, the edge bounce and the nudge; how a resizing tile is cropped and the edges it stands
-still against are `src/animation/domain/motion/tile.rs`. The looks
+depth bands, the edge bounce and the nudge; how a resizing tile is cropped, the ground it shows
+where its picture ends and the edges it stands still against are
+`src/animation/domain/motion/tile.rs`, and a window's ground is read off its picture in
+`src/pictures/domain/ground.rs`. The looks
 (`src/animation/domain/choreography.rs`, Slide the default in
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
