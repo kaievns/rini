@@ -785,8 +785,9 @@ not repainted by the last capture is not pictured then (`Flight::final_windows`)
 repainted by the lift is not drawn: the lift shows the real window.
 
 The watch reads the window's server frame every 1ms until it is within 20pt of where it ends, a cheap
-window-server read, then captures it every 8ms, 125 times at most, about a second, and no longer than
-`HOLD_CAP` (300ms) from the show. The frame resizes instantly while the app's pixels lag behind, and a
+window-server read, and reports it lost if it is not there `HOLD_CAP` (300ms) from the show. Once
+there, it captures it every 8ms, 125 times at most, about a second, until a capture settles or the
+lift stops the watch: `HOLD_CAP` does not bound the captures. The frame resizes instantly while the app's pixels lag behind, and a
 capture taken between the two is a half-painted surface: delivering one flew the whole reveal with
 garbage. So a capture counts only when settled (`repaint_settled`): it matches the previous print
 (`renderings_match` on 32x32 RGBA thumbprints, a sample differing when any channel moves by more than
@@ -807,8 +808,8 @@ stretched over the tile read as the window squashing (Kai's report of 2026-10-09
 ground is neither. Before Kai's direction of 2026-10-09 a grow its picture could not cover held the
 overlay still for its repaint, up to `HOLD_CAP`, before any motion: the old chase held 235ms median
 (min 173, max 299) with 22 of about 45 holds out at 300ms, and 4 of 21 maximize holds hit the cap on
-2026-10-09. `HOLD_CAP` now bounds only that watch and the hold for a window with no picture of its
-own ("The reservation fallback"); a 150ms cap was tried for it and raised back to 300ms, since a watch
+2026-10-09. `HOLD_CAP` now bounds only how long that watch waits for its window to arrive, and the hold for a
+window with no picture of its own ("The reservation fallback"); a 150ms cap was tried for it and raised back to 300ms, since a watch
 waits for the real frame to reach its end before it captures. *How often 300ms is enough is not
 measured yet.*
 

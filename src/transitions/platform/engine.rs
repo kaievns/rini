@@ -2016,8 +2016,9 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    // A wrong-shaped picture is stretched rather than dropped. See "A window that
-                    // was resized keeps a usable picture" in `src/pictures/docs/capture-research.md`.
+                    // A wrong-shaped picture is drawn rather than dropped, cropped with its window's
+                    // ground. See "A window that was resized keeps a usable picture" in
+                    // `src/pictures/docs/capture-research.md`.
                     if snapshot.source == Route::StandIn {
                         stand_ins += 1;
                     } else if !snapshot.fits(window.frame.size) {

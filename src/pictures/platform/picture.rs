@@ -116,10 +116,11 @@ pub const STAND_IN_GROUND: Ground = Ground { r: 0.133, g: 0.145, b: 0.153, a: 1.
 
 /// The stand-in for a window of `window` size with no picture.
 ///
-/// Claims to cover NOTHING of the window, which is honest and is also what makes a layout pass treat
-/// it as a picture waiting for its reveal: the flight holds for the window and watches it until it has
-/// repainted where it ends. A strip movement, which never holds, captures it once it lands there.
-/// Either way its real picture replaces this one on the same tile.
+/// Claims to cover NOTHING of the window, which is honest. Its route, `Route::StandIn`, is what makes
+/// a layout pass hold the flight for the window and watch it until it has repainted where it ends
+/// (`EndPicture::of_window`), and what lets its one flat pixel stretch (`content_mode`). A strip
+/// movement, which never holds, captures it once it lands there. Either way its real picture replaces
+/// this one on the same tile.
 pub fn stand_in_picture(window: ScreenSize, image: CFRetained<CGImage>) -> Picture {
     Picture {
         image: Pixels::Bitmap(image),

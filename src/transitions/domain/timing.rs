@@ -17,9 +17,9 @@ pub(in crate::transitions) const COALESCE_WINDOW: Duration = Duration::from_mill
 pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 
 /// How long a flight stands still with the overlay up for the first picture of a window it has none of,
-/// a reserved entrance or a stand-in, whatever the flight's duration, and how long a window is watched
-/// to repaint where it ends. See "A resize flies at once, then reveals" in
-/// `src/transitions/docs/coordination.md`.
+/// a reserved entrance or a stand-in, whatever the flight's duration, and how long a window watched to
+/// repaint where it ends is waited for there before it is lost; once there, it is captured until it
+/// settles. See "A resize flies at once, then reveals" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
 
 /// How long after a lift the flight's owed captures wait for the user to stop pressing.

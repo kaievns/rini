@@ -1195,5 +1195,6 @@ What each part of the prototype fixed:
   of pixels changed visibly, at an age of 1.6s p50.
 
 Cost: no measurable CPU. Over 16-press sweeps the WindowServer ran 42-46% and rini 14.6-16.4% with
-or without the prototype. A 400ms flight was no better than 350ms. Grows still lift at about 700ms
-because of the frame-zero reveal hold.
+or without the prototype. A 400ms flight was no better than 350ms. In the build measured here grows
+lifted at about 700ms because of the frame-zero reveal hold; the one kept flies a resize at once ("A
+resize flies at once, then reveals" in `src/transitions/docs/coordination.md`).

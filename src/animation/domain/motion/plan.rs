@@ -69,7 +69,8 @@ pub enum Member {
     Rigid { key: GroupKey, rel: GroupRect },
     /// Its size changes: own layer in `GroupKey::Loose`, animated as a resize from `from` to `to`.
     Changing { from: GroupRect, to: GroupRect },
-    /// New window: own layer in `GroupKey::Loose`, from spawn frame to slot, stretched until reveal.
+    /// New window: own layer in `GroupKey::Loose`, from spawn frame to slot, crop-drawn with its spawn
+    /// picture and its ground where that picture ends until its slot picture lands.
     Entrance { from: GroupRect, to: GroupRect },
     /// In the floating container; animated per tile only when `from != to`.
     Floating { from: GroupRect, to: GroupRect },

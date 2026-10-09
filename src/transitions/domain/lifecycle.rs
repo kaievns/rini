@@ -1355,10 +1355,10 @@ mod tests {
         c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now);
         assert!(c.is_moving());
 
-        // A window grown by a pass merged in flight repaints too, and joins as it lands.
-        let mut grown = stage.clone();
-        grown.awaiting = vec![w(1)];
-        let out = c.on(Event::Merge { stage: grown, moved: false }, now + Duration::from_millis(50));
+        // A window drawn as a stand-in by a pass merged in flight repaints too, and joins as it lands.
+        let mut stand_in = stage.clone();
+        stand_in.awaiting = vec![w(1)];
+        let out = c.on(Event::Merge { stage: stand_in, moved: false }, now + Duration::from_millis(50));
         let merged = watch(&out).unwrap();
         assert!(merged.landing.is_empty());
         assert_eq!(merged.awaiting.len(), 2, "{merged:?}");
@@ -1645,10 +1645,10 @@ mod tests {
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(4));
         assert_eq!(focus(&out), handed_over(), "nothing to wait for");
 
-        let mut growing = pan();
-        growing.awaiting = vec![w(1)];
+        let mut standing_in = pan();
+        standing_in.awaiting = vec![w(1)];
         let mut c = Coordinator::default();
-        c.on(Event::Begin(growing), now);
+        c.on(Event::Begin(standing_in), now);
         let g = c.generation();
         let watched = watch(&c.on(Event::FrameZero(g), now)).unwrap();
         assert_eq!(watched.losing_focus, None, "watched to repaint instead");
@@ -2001,10 +2001,10 @@ mod tests {
         assert_eq!(focus(&out), handed_over());
 
         // Merged in while the overlay holds for another, it does not add to the hold.
-        let mut grown = pan();
-        grown.awaiting = vec![w(1)];
-        let mut c = running(grown.clone(), now);
-        let mut opened = grown;
+        let mut standing_in = pan();
+        standing_in.awaiting = vec![w(1)];
+        let mut c = running(standing_in.clone(), now);
+        let mut opened = standing_in;
         opened.awaiting.clear();
         opened.repainting = vec![w(2)];
         c.on(Event::Merge { stage: opened.clone(), moved: false }, now);
@@ -2167,7 +2167,7 @@ mod tests {
         assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }));
         assert_eq!(focus(&out), vec![(w(2), true)]);
 
-        // A window opened or grown as the focus target hands over when it has repainted.
+        // A window reserved or drawn as a stand-in as the focus target hands over when it has repainted.
         let mut opened = pan();
         opened.awaiting = vec![w(2)];
         let mut c = running(opened, now);

@@ -501,8 +501,8 @@ changes is how the picture maps onto it (`content_mode` in
   the grid on the leg's anchors, a shrink's grounded by the moving edge until
   the frame reaches it ("A resize flies at once, then reveals" in
   `src/transitions/docs/coordination.md`); an entrance flies its spawn picture
-  until its slot picture lands. The stretch it replaced (`stand_in_mode`, the middle and the
-  whole tile stretched past the picture) read as the window squashing, Kai's
+  until its slot picture lands. The stretch it replaced, the middle and the
+  whole tile stretched past the picture, read as the window squashing, Kai's
   report. All four rounded corners ride through intact,
   under a hairline drawn at every size ("The hairline and the shadow, as drawn" in
   `src/decorations/docs/README.md`). A first cut used `contentsCenter` (nine-part
