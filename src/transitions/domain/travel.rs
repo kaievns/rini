@@ -646,6 +646,28 @@ mod tests {
             assert_eq!(tile_for(1, &requests), (moved(SLOT_B, PITCH), SLOT_B), "enters from where the strip was");
         }
 
+        /// A column carried off or on while the pass also changes its width keeps its edge facing
+        /// the display where its place on the strip has it, the gap to the column beside it, at the
+        /// size it is seen at.
+        #[test]
+        fn the_edge_facing_the_display_follows_the_strip_through_a_width_change() {
+            let left_park = rect(-W + 1.0, 1116.0, W, 1081.0);
+            let left = rect(-1263.0, 32.0, 1059.0, 1081.0);
+            let right = rect(1928.0, 32.0, 659.0, 1081.0);
+            let seen_left = rect(left.max().x - W, 32.0, W, 1081.0);
+            let seen_right = rect(right.origin.x, 32.0, W, 1081.0);
+
+            let leaving_left = [on_strip(request(SLOT_A, left_park, false), SLOT_A, left)];
+            assert_eq!(tile_for(0, &leaving_left), (SLOT_A, seen_left));
+            let leaving_right = [on_strip(request(SLOT_B, RIGHT_PARK, false), SLOT_B, right)];
+            assert_eq!(tile_for(0, &leaving_right), (SLOT_B, seen_right));
+
+            let returning_left = [on_strip(request(left_park, SLOT_A, false), left, SLOT_A)];
+            assert_eq!(tile_for(0, &returning_left), (seen_left, SLOT_A));
+            let returning_right = [on_strip(request(RIGHT_PARK, SLOT_B, false), right, SLOT_B)];
+            assert_eq!(tile_for(0, &returning_right), (seen_right, SLOT_B));
+        }
+
         /// The same close with B new to the strip, so no place before the pass: B rides A's vector.
         #[test]
         fn returning_travels_by_the_neighbours_vector() {
@@ -656,6 +678,17 @@ mod tests {
             let (from, to) = tile_for(1, &requests);
             assert_eq!(to, SLOT_B);
             assert_eq!(from, moved(SLOT_B, PITCH), "enters from where the strip was");
+        }
+
+        /// A neighbour's vector too short to carry B off the display would start it on screen.
+        #[test]
+        fn a_neighbours_vector_that_would_start_it_on_screen_gives_way_to_the_edge() {
+            let requests = [
+                request(SLOT_A, moved(SLOT_A, 100.0), false),
+                request(RIGHT_PARK, SLOT_B, false),
+            ];
+            let (from, _) = tile_for(1, &requests);
+            assert_eq!(from, park_entry_frame(RIGHT_PARK, SLOT_B, DISPLAY));
         }
 
         #[test]
