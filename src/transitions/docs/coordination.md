@@ -691,8 +691,8 @@ window at its own frame about 40ms before rini's first pass (AX
 capture there (`capture_via_framed`, 16-24ms), at most
 `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
 `Member::Entrance` from the spawn frame to the slot, crop-drawn with its spawn
-picture and the window's ground in the growth (`capture_via_framed` reads the
-ground where it captures) until its picture at the slot is swapped in: the window is
+picture and the window's ground in the growth until its picture at the slot is
+swapped in: the window is
 watched until it has repainted where it ends (`StageSummary::repainting`,
 `Settle::Repainted`) and never held for, and its slot is written with every
 other frame as the overlay goes up. A frame off this display is not a spawn: a parked window

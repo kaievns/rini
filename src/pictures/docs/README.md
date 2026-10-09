@@ -29,7 +29,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
-| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage`, its `Route` (`domain/route.rs`) and its `Ground`; the stand-in, one pixel, whose colour is the ground of any picture none was read off; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
+| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage`, its `Route` (`domain/route.rs`) and its `Ground`, read once on first ask; the stand-in, one pixel, whose colour is the ground of any picture none could be read off; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
 | **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, and its ground off them, what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
@@ -187,11 +187,16 @@ capture can be usable and still be the wrong shape" in [`capture-research.md`](c
 window on its own never replaces one of the same size that carries its blur. A stand-in is never
 cached: cached, the switcher would read it as a picture and the next flight would take it for one.
 
-**Every capture the service makes carries its ground.** The service reads it off the body samples
-on its own thread, for each picture a SkyLight round brings back, regions included, and for each
-ScreenCaptureKit capture as it lands; the framed capture of a window that opens reads it where it is
-taken, beside its blur merge. A picture none was read off, the desktop's, the bar's or one whose
-pixels could not be read, carries the stand-in's colour.
+**A picture's ground is read only when a crop-drawn tile asks for it.** `Picture::ground` reads it
+off the body samples the first time it is asked for, on the asking thread, the overlay's main thread
+as it fills a crop-drawn tile, and every copy of the picture shares that read; a stand-in's is its own
+colour, and a picture whose pixels cannot be read takes the stand-in's. Read on the pictures thread
+for every capture, it held up every round: a standalone copy of the body draw (a Swift script, not
+rini's binary, not real SkyLight images) took 3.6-5.6ms a picture at 3000x2000px, 2.1-2.6ms at
+1600x2000 and 0.7-0.8ms at 1000x1200, 5-8x a band print, so an estimated 3-15ms on frame zero of a
+4-6 window strip. A picture that fits its frame stretches and is never read; each crop-drawn tile,
+a resize's or a stale cached picture's on a navigation, pays it on the main thread, at the show and
+at each swap onto it. *What that costs press-to-show on real captures is not measured yet.*
 
 **Two routes, chosen by visibility.** SkyLight is fresh and cheap but captures only what is on screen;
 ScreenCaptureKit captures a window anywhere but costs about 40ms, so it fills the cache in the

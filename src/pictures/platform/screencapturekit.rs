@@ -27,7 +27,7 @@ use crate::pictures::domain::coverage::Coverage;
 use crate::pictures::domain::schedule::Display;
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::route::Route;
-use crate::pictures::platform::picture::{Picture, Pixels, STAND_IN_GROUND};
+use crate::pictures::platform::picture::{LazyGround, Picture, Pixels};
 
 /// Alpha above which a pixel counts as painted; shadows are excluded, so a painted edge is opaque.
 const PAINTED_ALPHA: u8 = 8;
@@ -304,7 +304,7 @@ fn window_picture(
         // The window on its own: grey wherever it has a blur. See `translucency`.
         carries_blur: false,
         taken,
-        ground: STAND_IN_GROUND,
+        ground: LazyGround::default(),
     })
 }
 
@@ -378,7 +378,7 @@ pub fn render_desktop(display: Display, done: impl Fn(Option<Picture>) + Send + 
                 source: Route::ScreenCaptureKit,
                 taken: std::time::Instant::now(),
                 carries_blur: false,
-                ground: STAND_IN_GROUND,
+                ground: LazyGround::default(),
             }));
         });
         unsafe {

@@ -2551,7 +2551,7 @@ mod tests {
     #[test]
     fn a_crop_drawn_tile_is_grounded_where_its_picture_ends() {
         use crate::pictures::domain::ground::Ground;
-        use crate::pictures::platform::picture::test_picture;
+        use crate::pictures::platform::picture::{LazyGround, test_picture};
         let fill = |layer: &CALayer| {
             let colour = layer.backgroundColor().expect("filled");
             // SAFETY: the colour's own four components, read while it is held.
@@ -2559,7 +2559,7 @@ mod tests {
             unsafe { std::slice::from_raw_parts(components, 4) }.to_vec()
         };
         let mut before = test_picture(TileSize::new(859.0, 535.0));
-        before.ground = Ground { r: 0.1, g: 0.1, b: 0.12, a: 0.95 };
+        before.ground = LazyGround::known(Ground { r: 0.1, g: 0.1, b: 0.12, a: 0.95 });
         let frame = TileSize::new(859.0, 1074.0);
         let mut tile = strip_tile(typed(4.0, 3.0, 859.0, 1074.0));
         set_tile_content(&mut tile, &before, ContentMode::Crop, frame, 2.0);
@@ -2574,7 +2574,7 @@ mod tests {
         assert_eq!(laid.ground[1].size.height, 1074.0 - 535.0, "the growth");
 
         let mut after = test_picture(frame);
-        after.ground = Ground { r: 0.2, g: 0.2, b: 0.2, a: 1.0 };
+        after.ground = LazyGround::known(Ground { r: 0.2, g: 0.2, b: 0.2, a: 1.0 });
         swap_onto(&mut tile, &after, frame, None, 2.0);
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for layer in &grid.ground {

@@ -20,9 +20,9 @@ use crate::pictures::domain::knowledge::{Call, Learned};
 use crate::pictures::domain::region::{composite_frame, composite_scale, contains, pixel_rect};
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::desktop::DesktopBackdrop;
-use crate::pictures::platform::measure::{first_sight, ground_of, shows_material};
+use crate::pictures::platform::measure::{first_sight, shows_material};
 use crate::pictures::domain::route::Route;
-use crate::pictures::platform::picture::{Picture, Pixels, STAND_IN_GROUND, image_size};
+use crate::pictures::platform::picture::{LazyGround, Picture, Pixels, image_size};
 use crate::windows::platform::window_server::{READ_CONNECTION, on_screen_windows};
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
@@ -68,7 +68,7 @@ pub fn capture_list_via_skylight(
         source: Route::SkyLight,
         taken: std::time::Instant::now(),
         carries_blur: false,
-        ground: STAND_IN_GROUND,
+        ground: LazyGround::default(),
     })
 }
 
@@ -299,7 +299,7 @@ fn region(
             source,
             taken,
             carries_blur,
-            ground: STAND_IN_GROUND,
+            ground: LazyGround::default(),
         },
     )
 }
@@ -328,10 +328,8 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
             Some((merged, merge)) if merge.carries_blur => (merged, true),
             _ => (framed, false),
         };
-    let image = Pixels::Bitmap(image);
-    let ground = ground_of(&image).unwrap_or(STAND_IN_GROUND);
     Some(Picture {
-        image,
+        image: Pixels::Bitmap(image),
         coverage: framed_coverage(
             ScreenSize::new(pixels.width / scale, pixels.height / scale),
             ScreenSize::from_cg(frame.size),
@@ -340,7 +338,7 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
         source: Route::SkyLight,
         taken: std::time::Instant::now(),
         carries_blur,
-        ground,
+        ground: LazyGround::default(),
     })
 }
 

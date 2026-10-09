@@ -31,9 +31,10 @@ pub fn set_contents(layer: &CALayer, picture: &CFType) {
 }
 
 /// Fills `layer` with `picture`'s ground, in the device RGB its body samples were read in
-/// (`crate::pictures::platform::measure`), so the fill matches the pixels drawn beside it.
+/// (`crate::pictures::platform::measure`), so the fill matches the pixels drawn beside it. The first
+/// fill of a picture reads its ground (`Picture::ground`).
 pub fn set_layer_ground(layer: &CALayer, picture: &Picture) {
-    let Ground { r, g, b, a } = picture.ground;
+    let Ground { r, g, b, a } = picture.ground();
     let space = CGColorSpace::new_device_rgb();
     let components = [r, g, b, a];
     // SAFETY: the four components an RGB space with alpha takes, read during the call.
@@ -57,7 +58,7 @@ mod tests {
     use super::*;
     use crate::pictures::domain::region::WHOLE;
     use crate::pictures::platform::bitmap::rgba_bitmap_context;
-    use crate::pictures::platform::picture::test_picture;
+    use crate::pictures::platform::picture::{LazyGround, test_picture};
 
     fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
@@ -87,7 +88,7 @@ mod tests {
     fn a_layer_is_filled_with_its_pictures_ground() {
         let layer = CALayer::layer();
         let mut picture = test_picture(ScreenSize::new(1.0, 1.0));
-        picture.ground = Ground { r: 0.1, g: 0.2, b: 0.3, a: 0.95 };
+        picture.ground = LazyGround::known(Ground { r: 0.1, g: 0.2, b: 0.3, a: 0.95 });
         set_layer_ground(&layer, &picture);
         let colour = layer.backgroundColor().expect("filled");
         assert_eq!(CGColor::number_of_components(Some(&colour)), 4);
