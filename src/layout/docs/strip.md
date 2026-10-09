@@ -150,6 +150,24 @@ is borrowed.
 - **Changing a width rescrolls to keep the column visible.** Every column start
   after it moves, so a window at the right edge grew off screen and the key
   looked dead until a focus nudge forced a reveal.
+- **The way back from full width puts the strip back instead.** Both ways the
+  toggle ran the one neutral reveal from wherever the strip was, so a column
+  came back flush left whatever x it had left, and a centred column lost its
+  centring to the reveal: Kai's thirds on 2026-10-09 had A at x=578, back at
+  x=3 with 575pt empty on the right. Under `"never"`, entering full width keeps
+  how the last pass showed the column (`View`): centred, or its start against
+  the scroll offset, read from `last_selected_rel_px` only when that pass had the
+  window selected (`last_selected_rel_of`), because a title-bar zoom can name a
+  window that was not. For a window pulled out of a stack that is the stack's
+  column. The way back restores the centre override, or pins the start
+  (`Pin::Start`), which the next pass applies where it applies a kept right edge
+  (see "Mouse resize"). A start rather than a scroll offset, so the column keeps
+  its x through a width change elsewhere in the strip that scrolls nothing. Any
+  scroll drops it (`LayoutState::unpin`): the four scroll requests, a strip
+  scroll or snap, a window closing, a width given. Refocusing the window keeps
+  it, as the app's own resize while full width does by returning before any
+  request. Only the toggle keeps a view: `ctrl-R` reaching full width, the
+  startup restore and a drag across the viewport come back by the reveal.
 
 ## Navigation
 
@@ -310,16 +328,17 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   right edge was pulled back by it and the released window slid 1pt left. The point stands until the
   next neutral reveal of that column, an app's own resize of it for one, which pulls the strip 1pt
   left then.
-- **The pin is spent by one pass and belongs to one window.** Every scroll request clears it, and the
-  pass applies it only while the window it names is still selected: `remove_window` moves the
-  selection without any request, and a focus change before the release must not drag the next
-  column to the old right edge. Under `center-focused-column "always"` no pin is set, because the
+- **The pin is spent by one pass and belongs to one window.** Every scroll clears it, a window
+  closing included (`LayoutState::unpin`), and the pass applies it only while the window it names is
+  still selected, so a selection moved without a scroll never drags the next column to the old right
+  edge. Under `center-focused-column "always"` no pin is set, because the
   centring places the column.
 - **The release focuses the resized window, and that keeps the pin.** The mouse-up sends a focus
   event ahead of its passes. After a resize it names the session's window, not the hit test's: the
   cursor lets go on the edge, where the column behind can answer. `select_window` on the window
-  already selected issues no scroll request while a pin names it, as it keeps a centre override;
-  the request would have cleared the pin before the only pass that reads it.
+  already selected issues no scroll request while a pin names it, as it keeps a centre override and
+  the view full width returns to; the request would have cleared the pin before the only pass that
+  reads it.
 - **A centred column takes twice the travel.** Centring moves both edges by half of any change, so
   the column takes the start width plus twice the dragged edge's travel (`edge_drag::dragged_width`)
   and the dragged edge ends under the cursor. niri doubles the delta the same way while it centres

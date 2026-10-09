@@ -45,9 +45,15 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   everything else; it is not a separate mode and there is no fullscreen state.
 - A full-width column occupies the whole viewport, gap included. It MUST NOT leave a band of
   background down its side.
-- When the window is in a column stack, `ctrl-F` MUST pull it out of the stack and maximise both width
-  and height. Pressing again MUST put it back where it was, if that place still exists, and the move
-  MUST be animated both ways.
+- When the window is in a column stack, `Mod+F` MUST pull it out of the stack and maximise both
+  width and height. Pressing again MUST put it back where it was, if that place still exists, and the
+  move MUST be animated both ways.
+- **Pressing again MUST put the strip back too**, for a stacked window or a lone one: its column at
+  the screen x it left, and a centred column centred again. Anything else that scrolls the strip in
+  between wins: focus moving to another column, a strip scroll or snap, a window opening or closing,
+  a move, centring, or a width given. The strip then scrolls only as far as it must to show the
+  column. So does it for a window that reached full width another way (`Mod+R`, a restart, a drag
+  across the screen) or was zoomed from its title bar without having focus.
 - A full-width window MUST come back full-width after a restart.
 - **Full width is the widest of the preset widths, not a state outside them.** `ctrl-R` MUST size a
   full-width window like any other, and MUST reach full width when the cycle comes round to it — even
@@ -75,6 +81,14 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   after the click. A double-click in a window's content or on another window, a drag that starts after
   the double-click, native fullscreen, and a floating window MUST each be handled exactly as with no
   double-click at all. `ctrl-F` or `ctrl-R` pressed after a double-click MUST keep the width it gave.
+
+> **Reported 2026-10-09.** "restoring windows back from full-size doesn't respect previous position
+> of a column, for example two columns on the screen, im expending a window from a column on the
+> left, but when i move back from a full size mode the column shift on the left", and "some of the
+> issues seem intermittent". Both ways, the toggle only scrolled as far as it had to to show the
+> column, from wherever full width had left the strip, so a column came back flush left whatever x
+> it had left, and a centred column lost its centring. It looked right only for a column that had
+> been flush left already, which is why it came and went.
 
 > **Reported 2026-09-30.** "when i double tap a window title to maximise it, rini doesn't pick up the
 > change and when i click to the window again it gets resized back to original rini's size. it should
