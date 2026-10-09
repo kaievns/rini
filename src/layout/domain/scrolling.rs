@@ -5259,6 +5259,33 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (866.0, 572.0));
     }
 
+    #[test]
+    fn a_strip_snap_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        system.snap_to_nearest_column(layout);
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
+    }
+
+    /// B full width and C closing: the close scrolls nothing, and still the way back reveals.
+    #[test]
+    fn a_window_closing_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        system.remove_window(w[2]);
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
+    }
+
     /// A title-bar zoom of B while the last pass had A selected: there is no view of B's column to
     /// go back to.
     #[test]
@@ -5675,6 +5702,28 @@ mod tests {
 
         assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
         assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    /// [Z][A][B1,B2][C], B2 out by `Mod+Comma` and swapped with A by a drag, which scrolls nothing,
+    /// then in by `Mod+Period` into B1's row: the stack's view was the other key's to return to, so
+    /// the strip scrolls only as far as it must and the stack lands at x=3, not back at x=866.
+    #[test]
+    fn folding_back_into_the_row_with_the_other_key_folds_back_by_the_reveal() {
+        let (mut system, layout) = a_strip(&[&[1], &[2], &[3, 4], &[5]]);
+        for window in [wid(1, 1), wid(1, 4)] {
+            assert!(system.select_window(layout, window));
+            kai_s_frames(&system, layout);
+        }
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 4)), (866.0, 860.0));
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        assert!(system.swap_windows(layout, wid(1, 4), wid(1, 2)));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Right);
+
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[3, 4], &[2], &[5]]));
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 4)), (3.0, 860.0));
     }
 
     /// A layout file from before the two maps holds one `stack_origins`: it loads, its strip intact
