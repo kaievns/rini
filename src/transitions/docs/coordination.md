@@ -205,10 +205,11 @@ The two entry points feed the same `begin_group`:
   keeps the row and size it is seen at, its edge facing the display where the
   strip frame's is. Leaving, the tile ends there (`resolve_end`); returning,
   it starts there; parked at both ends, it goes from one strip frame to the
-  other. So it moves with its column by construction, and a resize the pass
-  gives it happens off screen: the stack a maximize leaves is evened out over
-  its column as it parks, and drawn along its literal strip frames it
-  would climb and grow on its way out. `final_frames` keeps the real park
+  other when neither shows on the display, and is not drawn otherwise. So it
+  moves with its column by construction, and a resize the pass gives it
+  happens off screen: the stack a maximize leaves is evened out over its
+  column as it parks, and drawn along its literal strip frames it would climb
+  and grow on its way out. `final_frames` keeps the real park
   either way. Only a start with no strip frame (the first pass a workspace
   gets, a window new to the strip) borrows a neighbour's vector:
   `neighbour_travel` reads the `to - from` of the nearest strip window (by
@@ -219,12 +220,14 @@ The two entry points feed the same `begin_group`:
   display edge on the park's side, in the tile's own row
   (`park_entry_frame`), is the fallback when nothing beside it moves, and
   replaces any start or end of a parked window that would show on the
-  display. Aimed at the edge, the displaced tile covered a different distance
-  from its neighbour under one duration and curve, so it ran at its own speed
-  and overlapped it (seen 2026-09-15). A park is judged from BOTH the
-  requested frame and the server's: apps clamp a park past the 40pt
-  `is_off_screen` threshold (Kiro shows 41pt, Finder 52pt, log 20:35:56),
-  and the server may already report the slot. Judged from the server's frame
+  display: the layout parks a column off the screen less the Dock, the
+  overlay draws on the whole display, so with a side Dock a parked column's
+  strip frame can show where the Dock is. Aimed at the edge, the displaced
+  tile covered a different distance from its neighbour under one duration and
+  curve, so it ran at its own speed and overlapped it (seen 2026-09-15). A
+  park is judged from BOTH the requested frame and the server's: apps clamp
+  a park past the 40pt `is_off_screen` threshold (Kiro shows 41pt, Finder
+  52pt, log 20:35:56), and the server may already report the slot. Judged from the server's frame
   alone, the tile flew in from, or slid into, the bottom-right corner. The
   resolved `(start, end)` pairs become a `ReflowPlan` (`reflow_plan`): tiles
   moving by the same vector within 2pt (`GROUP_TOLERANCE`) share a group,

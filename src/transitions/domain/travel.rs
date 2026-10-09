@@ -180,9 +180,9 @@ pub struct TilePath {
 /// The start is the frame the window server reports, falling back to the requested one
 /// (`resolve_start`). A window parked at either end is drawn along its own place on the strip, the
 /// strip frames its request carries (`resolve_end`), so it moves with its column; parked at both
-/// ends, from one strip frame to the other. Only a start with no strip frame rides a neighbour's
-/// vector, and a floating window rides none. A tile that would move entirely off screen is not
-/// drawn at all.
+/// ends, from one strip frame to the other when neither shows on the display. Only a start with no
+/// strip frame rides a neighbour's vector, and a floating window rides none. A tile that would move
+/// entirely off screen is not drawn at all.
 pub fn tile_path(
     real: Option<ScreenRect>,
     requests: &[AnimationRequest],
@@ -209,7 +209,8 @@ pub fn tile_path(
         (Some(before), Some(after))
             if is_off_screen(display, start)
                 && is_off_screen(display, to)
-                && is_off_screen(display, before) =>
+                && is_off_screen(display, before)
+                && is_off_screen(display, after) =>
         {
             (before, after)
         }
@@ -1028,6 +1029,34 @@ mod tests {
                     assert_eq!(a.2, column(-860.0, 1)[0], "{rows} rows, at {at}");
                 }
             }
+        }
+
+        /// The layout parks against the screen less the Dock, the overlay draws on the whole display:
+        /// with a 128pt Dock on the right, the column just past the strip is parked yet its strip
+        /// frame shows 125pt of it where the Dock is. A tile parked at an end ends or starts off the display, never
+        /// there, and one parked at both ends is drawn only when it crosses the display.
+        #[test]
+        fn a_parked_end_never_shows_where_the_dock_is() {
+            let in_the_dock = rect(1603.0, 3.0, 860.0, 1074.0);
+            let beyond = rect(2466.0, 3.0, 860.0, 1074.0);
+            let on_screen = rect(740.0, 3.0, 860.0, 1074.0);
+            let park = written(beyond);
+            let path = |from, to, before, after| {
+                tile_path(None, &[on_strip(request(from, to, false), before, after)], 0, SCREEN)
+            };
+
+            let leaving = path(on_screen, park, on_screen, in_the_dock).expect("drawn");
+            assert_eq!(leaving.end, rect(SCREEN.max().x, 3.0, 860.0, 1074.0));
+
+            let returning = path(park, on_screen, in_the_dock, on_screen).expect("drawn");
+            assert_eq!(returning.start, rect(SCREEN.max().x, 3.0, 860.0, 1074.0));
+
+            assert_eq!(path(park, park, beyond, in_the_dock), None);
+            assert_eq!(path(park, park, in_the_dock, beyond), None);
+
+            let left = rect(-860.0, 3.0, 860.0, 1074.0);
+            let crossing = path(written(left), park, left, beyond).expect("drawn");
+            assert_eq!((crossing.start, crossing.end), (left, beyond));
         }
     }
 

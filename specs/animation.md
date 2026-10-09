@@ -224,7 +224,9 @@ destination for a window already moving.
   size it is seen at, and end off screen: it moves with its column, and a resize the change gives it,
   as the stack a maximize leaves is evened out over its column, happens off screen. No window MAY
   take its movement from a window the change resizes: a resizing window's corner moves by its own
-  resize, not by the strip.
+  resize, not by the strip. A window parked at both ends MUST NOT be seen unless the change carries
+  it across the display. Off screen means off the whole display: a parked column's place on the
+  strip can lie where a side Dock is, and it MUST NOT be drawn there.
 
 > **Reported 2026-10-07.** "stil diagonal moves animation. specifically when i switch between the
 > two chrome windows on ws 1". A window standing on screen away from where the scroll drew it
