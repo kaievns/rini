@@ -54,7 +54,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   between wins: focus moving to another column, a strip scroll or snap, a window opening or closing,
   a move, centring, or a width given. The strip then scrolls only as far as it must to show the
   column. So does it for a window that reached full width another way (`Mod+R`, a restart, a drag
-  across the screen) or was zoomed from its title bar without having focus.
+  across the screen) or was zoomed from its title bar without having focus. Once the strip is back,
+  focusing the window again MUST show it as it shows any column, even where the strip put it back
+  off screen.
 - **A full-width window MUST be alone in its column.** A fold key on it MUST end full width where it
   is and fold it as it folds any lone window; with no column on that side it MUST change nothing. A
   window that comes to share a full-width column, by a fold, `toggle-stack` or a drag swap, MUST end
@@ -234,7 +236,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - **A fold out and back in with the same key MUST put the strip back too**: the column at the screen
   x it left, and a centred column centred again. Anything else that scrolls the strip in between
   wins, as for full width, and so does folding back with the other key. The strip then scrolls only
-  as far as it must to show the column.
+  as far as it must to show the column. Once back, focusing the window again MUST show it, as for
+  full width.
 - **A fold-in MUST return a window to the row it was folded out of only from the column it left**,
   the neighbour on the key's side. Folded into any other column, it MUST join it at the bottom, as a
   window that was never folded out does. A fold that has no column on its side MUST change nothing,

@@ -181,7 +181,9 @@ is borrowed.
   scroll drops it (`LayoutState::unpin`): the four scroll requests, a strip
   scroll or snap, a window closing, a width given. Refocusing the window keeps
   it, as the app's own resize while full width does by returning before any
-  request. Only the toggle keeps a view for full width: `ctrl-R` reaching full
+  request. Once a pass has spent the pin, refocusing reveals as for any column:
+  a restore can put the column back off screen, and the spent pin still named
+  the window, so the click that should show it did nothing. Only the toggle keeps a view for full width: `ctrl-R` reaching full
   width, the startup restore and a drag across the viewport come back by the
   reveal.
 
@@ -256,8 +258,8 @@ halves. The fold back revealed from there, so A1 stayed at x=-860 with half the
 viewport empty. Under `"never"` the fold-out keeps the stack's view as the
 full-width toggle does (`KeptView`, by `Toggle::Fold` with the key's side, read
 before the fold's own reveal), and only the fold-in of that window by the same
-key spends it. The other key, or any scroll in between, drops it, and the fold
-back reveals as before.
+key spends it. Refocusing the window keeps it, as for full width. The other
+key, or any scroll in between, drops it, and the fold back reveals as before.
 
 There is no falling back to the other side at the ends of the strip. With both
 keys bound, that would make them agree in the first and last columns, which is
@@ -370,9 +372,9 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
 - **The release focuses the resized window, and that keeps the pin.** The mouse-up sends a focus
   event ahead of its passes. After a resize it names the session's window, not the hit test's: the
   cursor lets go on the edge, where the column behind can answer. `select_window` on the window
-  already selected issues no scroll request while a pin names it, as it keeps a centre override and
-  the view a toggle back returns to; the request would have cleared the pin before the only pass
-  that reads it.
+  already selected issues no scroll request while a pin no pass has spent names it, as it keeps a
+  centre override and the view a toggle back returns to; the request would have cleared the pin
+  before the only pass that reads it.
 - **A centred column takes twice the travel.** Centring moves both edges by half of any change, so
   the column takes the start width plus twice the dragged edge's travel (`edge_drag::dragged_width`)
   and the dragged edge ends under the cursor. niri doubles the delta the same way while it centres

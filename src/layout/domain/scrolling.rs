@@ -512,11 +512,12 @@ impl LayoutState {
         self.kept_view = None;
     }
 
-    /// Whether a scroll request for `wid` would drop something held for it: its centring, a pin, or
-    /// the view a toggle back returns to.
+    /// Whether a scroll request for `wid` would drop something held for it: its centring, a pin no
+    /// pass has spent yet, or the view a toggle back returns to.
     fn holds_scroll_for(&self, wid: WindowId) -> bool {
+        let pin_pending = !f64::from_bits(self.pending_pin.load(Ordering::Relaxed)).is_nan();
         self.center_override_window == Some(wid)
-            || self.pending_pin_of.is_some_and(|(of, _)| of == wid)
+            || (pin_pending && self.pending_pin_of.is_some_and(|(of, _)| of == wid))
             || self.kept_view.is_some_and(|kept| kept.window == wid)
     }
 
@@ -1791,7 +1792,7 @@ impl ScrollingLayoutSystem {
         if state.locate(wid).is_some() {
             // Refocusing the selected window keeps what is held for it: its centring, the right
             // edge a left-edge drag keeps, which the release refocuses before its pass, and the
-            // view its full width returns to, which the raise refocuses.
+            // view a toggle back returns to, a full width's or a fold's, which the raise refocuses.
             if state.selected == Some(wid) && state.holds_scroll_for(wid) {
                 return true;
             }
@@ -5256,6 +5257,25 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[2]), (3.0, 572.0));
     }
 
+    /// Z scrolled off screen, maximized and restored there: focusing it again shows it, as it does
+    /// with no toggle. The restore's spent pin still named it, and the refocus kept that.
+    #[test]
+    fn refocusing_a_window_restored_off_screen_reveals_it() {
+        let (mut system, layout, w) = kai_s_thirds();
+        assert!(system.select_window(layout, w[0]));
+        kai_s_frames(&system, layout);
+        system.scroll_by_delta(layout, 1.5);
+        kai_s_frames(&system, layout);
+        let off_screen = laid_out_xw(&system, layout, w[0]);
+        assert!(off_screen.0 + off_screen.1 < 0.0, "{off_screen:?}");
+
+        maximize_and_restore(&mut system, layout, w[0]);
+        assert_eq!(laid_out_xw(&system, layout, w[0]), off_screen);
+        assert!(system.select_window(layout, w[0]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 860.0));
+    }
+
     // ── the view a fold returns to ──────────────────────────────────────────
 
     /// [A1][B1..] on Kai's display, two halves with the stack on the right, the strip at 0 with the
@@ -5356,6 +5376,29 @@ mod tests {
 
         assert_same_frames(&kai_s_frames(&system, layout), &before);
         assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0));
+    }
+
+    /// [A][B1,B2][C][D] scrolled until the stack is off screen, B2 folded out and back there: once
+    /// back, focusing it again shows it.
+    #[test]
+    fn refocusing_a_window_folded_back_off_screen_reveals_it() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        for idx in [9, 10] {
+            system.add_window_after_selection(layout, wid(1, idx));
+        }
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+        system.scroll_by_delta(layout, 3.0);
+        kai_s_frames(&system, layout);
+        let off_screen = laid_out_xw(&system, layout, b[1]);
+        assert!(off_screen.0 + off_screen.1 < 0.0, "{off_screen:?}");
+
+        fold_out_and_back(&mut system, layout, b[1], Direction::Left);
+        assert_eq!(laid_out_xw(&system, layout, b[1]), off_screen);
+        assert!(system.select_window(layout, b[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, b[1]).0, 3.0);
     }
 
     #[test]
