@@ -376,13 +376,7 @@ struct Shape {
     kind: Kind,
     start: Start,
     duration: Duration,
-    /// Held for and watched until they repaint: grows, stand-ins and reserved entrances.
-    awaiting: Vec<WindowId>,
-    /// Watched until they repaint and pictured where they end only once they have: windows resized,
-    /// held for if they grow and kept if they shrink, and windows flying from where they opened.
-    repainting: Vec<WindowId>,
-    /// Of `repainting`, the shrinks: their tiles keep the pictures they have to the lift.
-    kept: Vec<WindowId>,
+    waits: Waits,
 }
 
 /// One pass, composed: what `begin_group` poses or merges.
@@ -425,9 +419,9 @@ fn summary(
         losing_focus,
         key,
         focused_look,
-        awaiting: shape.awaiting,
-        repainting: shape.repainting,
-        kept: shape.kept,
+        awaiting: shape.waits.awaiting,
+        repainting: shape.waits.repainting,
+        kept: shape.waits.kept,
         start: shape.start,
         duration: shape.duration,
         display,
@@ -1461,9 +1455,7 @@ impl FlightEngine {
             kind: Kind::LayoutPass,
             start: Start::Coalesced,
             duration,
-            awaiting: Vec::new(),
-            repainting: Vec::new(),
-            kept: Vec::new(),
+            waits: Waits::default(),
         };
         if !self.flights.coordinator().is_flying() {
             let requested = windows
@@ -1491,20 +1483,7 @@ impl FlightEngine {
         let mut offscreen = 0usize;
         let mut needs_capture: Vec<PictureTarget> = Vec::new();
         let mut entrances: Vec<PendingEntrance> = Vec::new();
-        let mut awaiting: Vec<WindowId> = Vec::new();
-        let mut repainting: Vec<WindowId> = Vec::new();
-        let mut kept: Vec<WindowId> = Vec::new();
-        let mut waits = |window, end: EndPicture| {
-            if end.holds() {
-                awaiting.push(window);
-            }
-            if end.repaints() {
-                repainting.push(window);
-            }
-            if end.keeps() {
-                kept.push(window);
-            }
-        };
+        let mut waits = Waits::default();
         // Newly opened windows travelling from their spawn frame.
         let mut spawn_entrances: Vec<(WindowId, GroupRect, GroupRect)> = Vec::new();
         let mut sync_captures = 0usize;
@@ -1564,7 +1543,7 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    waits(request.window, EndPicture::of_window(snapshot.source, request.from.size, request.to.size));
+                    waits.push(request.window, EndPicture::of_window(snapshot.source, request.from.size, request.to.size));
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -1600,7 +1579,7 @@ impl FlightEngine {
                         });
                     let usable = picture.as_ref().is_some_and(|p| p.is_usable());
                     let entrance = entrance_plan(spawn, request.to, usable, budget_left);
-                    waits(request.window, EndPicture::of_entrance(entrance));
+                    waits.push(request.window, EndPicture::of_entrance(entrance));
                     match entrance {
                         EntranceDecision::Travel { from, to } => {
                             let snapshot = picture.expect("usable implies a picture");
@@ -1699,12 +1678,7 @@ impl FlightEngine {
             tiles,
             final_frames,
             label: "per-window",
-            shape: Shape {
-                awaiting,
-                repainting,
-                kept,
-                ..shape
-            },
+            shape: Shape { waits, ..shape },
             entrances,
             focus: (focus, focused_before),
             key,
@@ -1967,9 +1941,7 @@ impl FlightEngine {
             kind: kind.unwrap_or_else(|| Kind::of_surface(&windows, from_offset, to_offset)),
             start: Start::Immediate,
             duration,
-            awaiting: Vec::new(),
-            repainting: Vec::new(),
-            kept: Vec::new(),
+            waits: Waits::default(),
         };
         if !self.flights.coordinator().is_flying() {
             let requested = windows
@@ -2471,14 +2443,12 @@ mod tests {
         snapshot
     }
 
-    fn layout(awaiting: Vec<WindowId>) -> Shape {
+    fn layout(waits: Waits) -> Shape {
         Shape {
             kind: Kind::LayoutPass,
             start: Start::Coalesced,
             duration: Duration::from_millis(300),
-            awaiting,
-            repainting: Vec::new(),
-            kept: Vec::new(),
+            waits,
         }
     }
 
@@ -2612,7 +2582,8 @@ mod tests {
             running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            let stage = running.stage(layout(vec![wid(2)]), (display, true), &|window| window == wid(1));
+            let waits = [(wid(2), EndPicture::Awaited), (wid(1), EndPicture::Kept)].into_iter().collect();
+            let stage = running.stage(layout(waits), (display, true), &|window| window == wid(1));
             assert_eq!(
                 stage.tiles[0],
                 TileSummary {
@@ -2635,9 +2606,10 @@ mod tests {
             assert_eq!(stage.final_frames, running.final_frames);
             assert_eq!(stage.losing_focus, Some(wid(1)), "drawn focused until focus hands over");
             assert_eq!(stage.opaque, vec![wid(1)]);
-            assert_eq!((stage.awaiting, stage.display), (vec![wid(2)], display));
+            assert_eq!((stage.awaiting, stage.repainting, stage.kept), (vec![wid(2)], vec![wid(1)], vec![wid(1)]));
+            assert_eq!(stage.display, display);
             running.shown_focus = Some(wid(2));
-            assert_eq!(running.stage(layout(Vec::new()), (display, true), &|_| false).losing_focus, None, "handed over");
+            assert_eq!(running.stage(layout(Waits::default()), (display, true), &|_| false).losing_focus, None, "handed over");
         }
     }
 

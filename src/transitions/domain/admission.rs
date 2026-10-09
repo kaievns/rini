@@ -114,21 +114,6 @@ impl EndPicture {
         }
     }
 
-    /// Whether the overlay holds the motion for it.
-    pub(in crate::transitions) fn holds(self) -> bool {
-        matches!(self, Self::Awaited | Self::Held)
-    }
-
-    /// Whether it is watched until it has repainted where it ends, and not pictured there before.
-    pub(in crate::transitions) fn repaints(self) -> bool {
-        matches!(self, Self::Held | Self::Kept | Self::Repainting)
-    }
-
-    /// Whether its tile keeps the picture it has to the lift.
-    pub(in crate::transitions) fn keeps(self) -> bool {
-        self == Self::Kept
-    }
-
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
     /// at its slot lands there, and a reservation is awaited.
     pub(in crate::transitions) fn of_entrance(entrance: EntranceDecision) -> Self {
@@ -137,6 +122,46 @@ impl EndPicture {
             EntranceDecision::Travel { .. } => Self::Repainting,
             EntranceDecision::Reserve(_) => Self::Awaited,
         }
+    }
+}
+
+/// A pass's windows as their `EndPicture`s sort them: `StageSummary::awaiting`, `::repainting` and
+/// `::kept`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(in crate::transitions) struct Waits {
+    /// Held for, overlay up, and watched until they repaint: grows, stand-ins and reserved entrances.
+    pub(in crate::transitions) awaiting: Vec<WindowId>,
+    /// Watched until they repaint, and pictured where they end only once they have: windows resized,
+    /// held for if they grow and kept if they shrink, and windows flying from where they opened.
+    pub(in crate::transitions) repainting: Vec<WindowId>,
+    /// Of `repainting`, the shrinks, whose tiles keep the pictures they have from the press.
+    pub(in crate::transitions) kept: Vec<WindowId>,
+}
+
+impl Waits {
+    pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
+        let (holds, repaints, keeps) = match end {
+            EndPicture::Awaited => (true, false, false),
+            EndPicture::Held => (true, true, false),
+            EndPicture::Kept => (false, true, true),
+            EndPicture::Repainting => (false, true, false),
+            EndPicture::Lands => (false, false, false),
+        };
+        for (sorted, into) in [(holds, &mut self.awaiting), (repaints, &mut self.repainting), (keeps, &mut self.kept)] {
+            if sorted {
+                into.push(window);
+            }
+        }
+    }
+}
+
+impl FromIterator<(WindowId, EndPicture)> for Waits {
+    fn from_iter<I: IntoIterator<Item = (WindowId, EndPicture)>>(ends: I) -> Self {
+        let mut waits = Self::default();
+        for (window, end) in ends {
+            waits.push(window, end);
+        }
+        waits
     }
 }
 
@@ -387,16 +412,20 @@ mod tests {
     }
 
     /// Held for: a window with no picture and a grow. Watched until repainted: a grow, a shrink and a
-    /// travelling entrance. Kept: a shrink alone.
+    /// travelling entrance. Kept: a shrink alone. A move, landing, is in none.
     #[test]
     fn a_grow_is_held_for_a_shrink_kept_and_both_watched_until_repainted() {
-        use EndPicture::*;
-        let sorted = |sorts: fn(EndPicture) -> bool| -> Vec<EndPicture> {
-            [Awaited, Held, Kept, Repainting, Lands].into_iter().filter(|e| sorts(*e)).collect()
-        };
-        assert_eq!(sorted(EndPicture::holds), [Awaited, Held]);
-        assert_eq!(sorted(EndPicture::repaints), [Held, Kept, Repainting]);
-        assert_eq!(sorted(EndPicture::keeps), [Kept]);
+        let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
+        let ends = [EndPicture::Awaited, EndPicture::Held, EndPicture::Kept, EndPicture::Repainting, EndPicture::Lands];
+        let waits: Waits = (1..).map(window).zip(ends).collect();
+        assert_eq!(
+            waits,
+            Waits {
+                awaiting: vec![window(1), window(2)],
+                repainting: vec![window(2), window(3), window(4)],
+                kept: vec![window(3)],
+            }
+        );
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one

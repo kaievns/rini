@@ -796,8 +796,8 @@ coalesce window, and is accepted.
 A resize runs a navigation's sequence (Kai, 2026-10-09; `specs/animation.md` "Resizing"): frame
 zero's SkyLight pictures at the press, the overlay up with them, and the real frames written as the
 overlay goes up, so the app repaints at its new size behind it. Each resized window is watched until
-it has repainted where it ends (`EndPicture::of_window`, `StageSummary::repainting`,
-`Settle::Repainted`). A window the pass grows on either axis, judged on the request's own sizes
+it has repainted where it ends (`EndPicture::of_window`, sorted into the stage's lists by `Waits`,
+`StageSummary::repainting`, `Settle::Repainted`). A window the pass grows on either axis, judged on the request's own sizes
 (`stretch::grows`), a fold widening a window as it shortens it included, is `EndPicture::Held`: in
 `StageSummary::awaiting` as well, so the overlay stands still at frame zero, in place of the 25ms
 coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show. That picture goes onto
