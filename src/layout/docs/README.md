@@ -47,6 +47,10 @@ because `max-column-width`, which bounds every ratio but a dragged one, is below
 purpose, which is why every rule that asks how wide a column is has to ask
 `column_ratio` rather than adding up the offset.
 
+**A maximized window is alone in its column.** Maximizing a stacked window pulls it
+out, and a window that comes to share a maximized one's column ends that full width
+where it is.
+
 ## Reading order
 
 `domain/strip.rs` (small, pure, tested) → `domain/constraints.rs` →

@@ -21,10 +21,11 @@ is borrowed.
   answers `Full` or `Ratio` and the caller applies the matching transition.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
   keys both do it, and the window stays where it is rather than going back to
-  the stack `ctrl-F` pulled it out of: `StackOrigin` is FORGOTTEN, not kept. A
-  kept one turned the next `ctrl-F` pair into a teleport — maximizing an already
-  lone window records no new origin, so the press that unmaximized it read the
-  stale one and dropped the window into a stack untouched since.
+  the stack `ctrl-F` pulled it out of: its `full_width_origins` entry is
+  FORGOTTEN, not kept. A kept one turned the next `ctrl-F` pair into a teleport —
+  maximizing an already lone window records no new origin, so the press that
+  unmaximized it read the stale one and dropped the window into a stack untouched
+  since.
 - **A key never moves a width against its direction.** A grow at or above
   `max-column-width` and a shrink at or below `min-column-width` do nothing,
   because the bound would pull the width back across itself. Growing a
@@ -121,7 +122,7 @@ is borrowed.
   area, which would otherwise cover the siblings sharing its column while the
   tree still claimed they were abreast. It becomes its own column in the
   stack's place, the stack one column right (`split_out` toward `Left`), and a
-  second press puts it back beside the neighbour it left (`StackOrigin`). Landing
+  second press puts it back beside the neighbour it left (`full_width_origins`). Landing
   right of the stack, as it did, panned the strip one column for a stack flush
   left, 0 to 862.5 on Kai's halves, with the siblings leaving left and the next
   column right, and two for a stack on the right, 0 to 1725. In the stack's place
@@ -133,6 +134,14 @@ is borrowed.
   change size. If every window it could return to has closed, it stays the
   column it became rather than being put somewhere the user never had it.
   The move rides the ordinary layout pass, so it animates like a join or unjoin.
+- **A maximized window is alone in its column.** A window that comes to share a
+  full-width column ends that column's full width where it is, as a width given
+  does (`keep_full_width_alone`, after a fold-in, a `toggle-stack` join, a full
+  width's own toggle back and a swap). Folding a maximized window in is the same
+  rule from the other end. Nothing stopped either before: on [A1,A2][B1] with A2
+  maximized, the left fold key put A2 back into A1's column still maximized, A2
+  at (3,3,1722,1074) over A1 at (3,3,1722,536), and folding B1 into a maximized
+  A1 drew B1 1722 wide over A1's lower half.
 - **Inner gaps are absorbed into the column width so N columns of ratio 1/N
   fit.** Without it two 0.5 columns need `2*(0.5*W) + gap`, one gap more than
   the viewport; the second column is never fully visible, reveal-on-demand
@@ -230,8 +239,16 @@ mechanisms:
   the column on its left came FROM that column's right, so that is where the left
   key puts it back. The other key unfolds too, to its own side — each key is the
   inverse of itself, not of the other one.
-- **Folding IN prefers the row it was folded out of** (`StackOrigin`) over
-  appending to the end, so the rows keep their order as well as the columns.
+- **Folding IN prefers the row it was folded out of** (`fold_origins`) over
+  appending to the end, so the rows keep their order as well as the columns. Only
+  from the neighbour on the key's side, the column the fold-out left: anywhere
+  else the window joins that neighbour at the bottom, as a window that was never
+  folded does. Fold and full width shared one record before, so a window folded
+  out of [A1,A2] and maximized went back into A1 on the second `ctrl-F`, and one
+  folded out of [A1,A2][B1][C1] and moved two columns right jumped back past C1
+  and B1 into A1 on the left key. Each now keeps its own, and a fold-in spends
+  only the fold's. A fold with no column on its side changes nothing, the record
+  and the view kept included.
 
 **The same key twice puts the view back too.** From a right stack the fold-out
 lands right of the stack and the reveal scrolls one column, 0 to 862.5 on Kai's

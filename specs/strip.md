@@ -55,6 +55,11 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   a move, centring, or a width given. The strip then scrolls only as far as it must to show the
   column. So does it for a window that reached full width another way (`Mod+R`, a restart, a drag
   across the screen) or was zoomed from its title bar without having focus.
+- **A full-width window MUST be alone in its column.** A fold key on it MUST end full width where it
+  is and fold it as it folds any lone window; with no column on that side it MUST change nothing. A
+  window that comes to share a full-width column, by a fold, `toggle-stack` or a drag swap, MUST end
+  that column's full width where it is. Either way the window is drawn the column's width, never the
+  viewport's over the windows below or above it.
 - A full-width window MUST come back full-width after a restart.
 - **Full width is the widest of the preset widths, not a state outside them.** `ctrl-R` MUST size a
   full-width window like any other, and MUST reach full width when the cycle comes round to it — even
@@ -221,9 +226,21 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   x it left, and a centred column centred again. Anything else that scrolls the strip in between
   wins, as for full width, and so does folding back with the other key. The strip then scrolls only
   as far as it must to show the column.
+- **A fold-in MUST return a window to the row it was folded out of only from the column it left**,
+  the neighbour on the key's side. Folded into any other column, it MUST join it at the bottom, as a
+  window that was never folded out does. A fold that has no column on its side MUST change nothing,
+  so the fold back by the key that folded the window out still finds its row and its strip.
+- **A full-width toggle MUST NOT send a folded-out window back into the stack it was folded out
+  of.** Full width puts back only what full width took.
 - A folded window MUST NOT be squashed to its title bar. A column's stored heights are either
   deliberate pixel heights from a vertical resize or the equal ratios a freshly folded column starts
   at, and the two MUST NOT be conflated.
+
+> **Found 2026-10-09, not reported.** Folding and full width shared one record of where a window
+> came from, and neither checked that a full-width window was alone. A window folded out of
+> [A1,A2] and maximized went back into A1 on the second `Mod+F`. One folded out of [A1,A2][B1][C1]
+> and moved two columns right jumped past C1 and B1 back into A1 on `Mod+Comma`. On [A1,A2][B1]
+> with A2 maximized, `Mod+Comma` put A2 back into A1's column still full width, drawn over A1.
 
 > **Reported 2026-09-22.** "The title collapse was not fixed — I tried a fresh new Ghostty terminal,
 > it squashed the window on the left to 0 again. Also trying to toggle unfold worked weirdly: I was in
