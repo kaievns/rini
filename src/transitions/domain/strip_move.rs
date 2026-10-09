@@ -16,7 +16,7 @@ use crate::transitions::domain::request::SurfaceWindow;
 const COLUMN_TOLERANCE: f64 = 0.5;
 
 /// How far from where the travel draws it at the start a window may stand and still ride the strip:
-/// the layout rounds to whole points, as `travel::travels_visibly` allows.
+/// the layout rounds to whole points, as `travel::changes_visibly` allows.
 const STANDING_TOLERANCE: f64 = 2.0;
 
 /// Where the moved window's column and the column it passed started on the strip.

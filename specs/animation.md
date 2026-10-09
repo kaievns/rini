@@ -5,7 +5,10 @@ only the transitions are missing.
 
 ## What animates
 
-- A window that changes position or size in a layout pass.
+- A window that changes position or size in a layout pass. **A column resized where it stands MUST
+  animate even when nothing else on screen moves**: a lone column, or the last one at the strip's left
+  edge with the columns before it parked, sized by `switch-preset-column-width`, a resize key or the
+  full-width toggle.
 - A window opening, from the frame macOS first showed it at to its slot.
 - The strip scrolling, and a workspace switch.
 - A window moved along the strip, changing places with the column it passes.
@@ -13,11 +16,19 @@ only the transitions are missing.
 ## What does not
 
 - A window that has not moved MUST NOT be re-placed. The round trip invites another layout pass.
+- A window written back to the slot it already had MUST NOT on its own make a pass fly. An app that
+  answered rini's write by snapping a few points off its slot, to its own grid, is given the slot again
+  by the next pass, and that resizes nothing the layout changed.
 - A window whose whole movement is off screen MUST NOT be drawn. A layer and a capture for something
   nobody can see is pure cost.
 - A column parked off the strip MUST NOT be raised. Nothing of it is visible, each raise is an
   Accessibility round-trip, and a raise issued after the on-screen windows puts a 1pt sliver in front
   of them.
+
+> **Reported 2026-10-09.** "alt-R is broken now, doesn't animate anything". The focused Visual Studio
+> Code window stood full width at the strip's left edge, the columns before it parked off screen and
+> nothing beside it on screen to move. Each `alt-R` changed its width at once and flew nothing: a pass
+> was judged worth flying only by how far a window's origin travelled, and this one's stood still.
 
 ## Pushing past an end
 
@@ -745,7 +756,7 @@ finds where a moved pair starts and puts the look's staging of it on the strip,
 picture where it ends is waited for,
 `src/transitions/domain/frame_writes.rs` which frames are written and in what order,
 `src/transitions/domain/travel.rs` where each tile starts and ends, a parked window's along its place
-on the strip, and `src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
+on the strip, and whether a pass moves or resizes anything far enough to fly, and `src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
 which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
 what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.

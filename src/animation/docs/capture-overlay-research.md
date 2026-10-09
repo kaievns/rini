@@ -343,9 +343,11 @@ Two fixes, both needed:
   the overlay reproduces the whole screen. They are drawn, never placed: asking an
   application to move a window to where it already is costs an Accessibility round
   trip and invites another layout pass.
-- A pass where nothing travels 2pt or more is not animated at all. Animating a
-  one-point move buys nothing and costs 350ms of frozen pictures over the whole
-  display.
+- A pass where no window moves 2pt or more, and the layout resizes no window's
+  slot by 2pt or more, is not animated at all. Animating a one-point move buys
+  nothing and costs 350ms of frozen pictures over the whole display. The resize
+  is the slot's, not the window's: an app snapped a few points off its slot is
+  written the slot again, and that is no resize.
 
 ## The stack has to be the one the overlay hands back to
 

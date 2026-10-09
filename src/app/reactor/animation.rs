@@ -1,7 +1,7 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use tracing::{debug, trace};
 
-use crate::transitions::domain::travel::travels_visibly;
+use crate::transitions::domain::travel::changes_visibly;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::app::power;
 use rini_geometry::space::{FromCg, ScreenRect, ScreenSize, ToCg};
@@ -161,11 +161,17 @@ impl AnimationManager {
 
         let mut overlay_requests = plan.overlay_requests();
         let PassPlan {
-            unmoved,
+            mut unmoved,
             warm,
             any_frame_changed,
             ..
         } = plan;
+        let screen_space = |layout: &[(WindowId, CGRect)]| -> Vec<(WindowId, ScreenRect)> {
+            layout.iter().map(|&(window, frame)| (window, ScreenRect::from_cg(frame))).collect()
+        };
+        let (was, is) = (screen_space(&strip_before), screen_space(&strip_now));
+        pass::place_on_strip(&mut overlay_requests, &was, &is);
+        pass::place_on_strip(&mut unmoved, &was, &is);
         let low_power = power::is_low_power_mode_enabled();
         let layout_animate = reactor.config.settings.animate;
         // `is_resize` means a window REPORTED a size change, which happens both when the user is
@@ -173,28 +179,20 @@ impl AnimationManager {
         // skips; animating a command's resize is what keeps the neighbour column and the resized
         // window arriving together.
         //
-        // A move nobody can see is not worth covering the display for. Guarded on the list being
+        // A change nobody can see is not worth covering the display for. Guarded on the list being
         // non-empty, because a window with no window server id never reaches it and an empty list
-        // must not read as "nothing is moving".
-        let motionless = !overlay_requests.is_empty() && !travels_visibly(&overlay_requests);
+        // must not read as "nothing is changing".
+        let unchanged = !overlay_requests.is_empty() && !changes_visibly(&overlay_requests);
         let skip_anim =
-            (is_resize && reactor.is_in_drag()) || !layout_animate || low_power || motionless;
-        if motionless {
+            (is_resize && reactor.is_in_drag()) || !layout_animate || low_power || unchanged;
+        if unchanged {
             debug!(
                 windows = overlay_requests.len(),
-                "no window travels far enough to see; placing rather than animating"
+                "no window moves or resizes far enough to see; placing rather than animating"
             );
         }
-        // Added after the movement test above, which must judge only the windows going somewhere.
+        // Added after the change test above, which must judge only the windows going somewhere.
         overlay_requests.extend(unmoved);
-        let screen_space = |layout: &[(WindowId, CGRect)]| -> Vec<(WindowId, ScreenRect)> {
-            layout.iter().map(|&(window, frame)| (window, ScreenRect::from_cg(frame))).collect()
-        };
-        pass::place_on_strip(
-            &mut overlay_requests,
-            &screen_space(&strip_before),
-            &screen_space(&strip_now),
-        );
 
         // The overlay engine replaces the per-frame Accessibility writes entirely: the real windows
         // are placed once, and the motion the eye follows is drawn in the overlay. It is asked to
