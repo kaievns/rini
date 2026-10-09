@@ -220,6 +220,11 @@ destination for a window already moving.
   one the change carries comes in along the strip, in the row and at the size it ends at, and one
   whose place on the strip the change kept, as the columns after a left-edge shrink keep theirs,
   MUST stay where it was, off screen.
+
+> **Reported 2026-10-07.** "stil diagonal moves animation. specifically when i switch between the
+> two chrome windows on ws 1". A window standing on screen away from where the scroll drew it
+> started from where it stood, and macOS leaves more of a parked Chrome window on screen than the
+> off-screen test allows, so it flew in from the bottom-right corner, in x and y at once.
 - A window a layout change parks MUST leave along its own place on the strip, in the row and at the
   size it is seen at, and end off screen: it moves with its column, and a resize the change gives it,
   as the stack a maximize leaves is evened out over its column, happens off screen. No window MAY
@@ -227,14 +232,7 @@ destination for a window already moving.
   resize, not by the strip. A window parked at both ends MUST NOT be seen unless the change carries
   it across the display. Off screen means off the whole display: a parked column's place on the
   strip can lie where a side Dock is, and it MUST NOT be drawn there. The movement MUST NOT wait for
-  a window the change parks, however it grows: no watch sees it repaint off screen. Held for at an
-  end on screen it never reached, the sibling a maximize of the top of a right stack leaves stood the
-  movement still 300ms, until its picture was given up on (journal g665 and g670).
-
-> **Reported 2026-10-07.** "stil diagonal moves animation. specifically when i switch between the
-> two chrome windows on ws 1". A window standing on screen away from where the scroll drew it
-> started from where it stood, and macOS leaves more of a parked Chrome window on screen than the
-> off-screen test allows, so it flew in from the bottom-right corner, in x and y at once.
+  a window the change parks, however it grows: no watch sees it repaint off screen.
 
 > **Reported 2026-10-09.** "going full-size and back moves surrounding windows out incosistently
 > and they ovelap during the animations", "both on windows that are making space", "different
