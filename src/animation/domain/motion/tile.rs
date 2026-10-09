@@ -509,6 +509,22 @@ mod tests {
         }
     }
 
+    /// A picture narrower than two bands on an axis, a small spawn picture or a dialog, is all corner
+    /// bands there, each half its side, with no middle, so no piece runs negative or overlaps.
+    #[test]
+    fn a_picture_narrower_than_two_bands_is_all_corners() {
+        let frame = TileSize::new(859.0, 1081.0);
+        for picture in [TileSize::new(60.0, 1081.0), TileSize::new(859.0, 60.0)] {
+            for x in [Anchor::Start, Anchor::End] {
+                for y in [Anchor::Start, Anchor::End] {
+                    let grid = crop(picture, frame, Anchors { x, y });
+                    assert_seamless(&grid, picture, frame, &format!("{picture:?} {x:?} {y:?}"));
+                    assert_eq!(grid.pieces[0].frame.size, TileSize::new(30.0, 30.0), "half its side");
+                }
+            }
+        }
+    }
+
     /// Growing past the picture, the middle shows all of the picture's own content 1:1 — never
     /// stretched, never reaching past its edge, where a translucent window's near-transparent
     /// pixels painted the grow as a hole — the ground fills between it and the moving edge's band,
