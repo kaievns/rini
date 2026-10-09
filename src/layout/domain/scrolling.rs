@@ -7,7 +7,7 @@ use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
     AxisConstraints, ColumnKind, clamp_to_constraints, column_limits, column_ratio, column_width,
-    solve_axis_lengths,
+    ratio_of_column_width, solve_axis_lengths,
 };
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::domain::edge_drag::{Drag, End, Side, dragged_side, dragged_width, trade_height};
@@ -20,16 +20,50 @@ use crate::layout::{Direction, LayoutId, ResizeOrientation};
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-/// Where a maximized window sat in its column stack, so a second press can put it back.
+/// Where a window sat in the stack it left, so the toggle back can put it there again.
 ///
-/// A neighbour rather than an index: while the window is maximized its old column can move along
-/// the strip, gain windows or lose them, and an index would point somewhere else by then.
+/// A neighbour rather than an index: while the window is away its old column can move along the
+/// strip, gain windows or lose them, and an index would point somewhere else by then.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 struct StackOrigin {
     /// A window that stayed behind in the column.
     anchor: WindowId,
     /// It sat below the anchor rather than above it.
     below: bool,
+}
+
+/// What the next layout holds the selected column to, by the value in `pending_pin`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pin {
+    /// Its right edge at that x, in display coordinates: a left-edge drag keeps the right one.
+    RightEdge,
+    /// Its start that far right of the scroll offset: where a toggle found the column.
+    Start,
+}
+
+/// How the strip showed a column when a toggle took its window, for the toggle back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum View {
+    /// Centred by a centre override.
+    Centred,
+    /// Its start this far right of the scroll offset.
+    StartingAt(f64),
+}
+
+/// The toggle whose way back returns to a kept view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Toggle {
+    FullWidth,
+    /// The fold key for this side.
+    Fold(Direction),
+}
+
+/// The view `window`'s column had before `by` took it, kept until any other scroll.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct KeptView {
+    window: WindowId,
+    by: Toggle,
+    view: View,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -71,6 +105,12 @@ impl Column {
         self.height_weights.clear();
         self.height_weights.resize(count, 1.0);
         self.height_overridden = false;
+    }
+
+    /// The height its rows share out of `height`, less the gaps between them.
+    fn available_height(&self, height: f64, gap: f64) -> f64 {
+        let total_gap = gap * (self.windows.len().saturating_sub(1) as f64);
+        (height - total_gap).max(0.0)
     }
 
     /// Each row's height in points out of `available`, before the windows' own limits. A column
@@ -134,13 +174,14 @@ struct LayoutState {
     pending_center_align: AtomicBool,
     #[serde(skip, default = "default_atomic_i8")]
     pending_reveal_direction: AtomicI8,
-    /// Where the next layout puts the selected column's right edge, in display coordinates, or NaN
-    /// for nowhere: a drag on its left edge keeps the right one. Applied only while
-    /// `pending_right_edge_of` is still the selection.
+    /// The value `pending_pin_of`'s pin holds the selected column to, or NaN once a pass spent it.
+    /// Applied only while the window it names is still the selection.
     #[serde(skip, default = "default_atomic_unset")]
-    pending_right_edge: AtomicU64,
+    pending_pin: AtomicU64,
     #[serde(skip)]
-    pending_right_edge_of: Option<WindowId>,
+    pending_pin_of: Option<(WindowId, Pin)>,
+    #[serde(skip)]
+    kept_view: Option<KeptView>,
     center_override_window: Option<WindowId>,
     #[serde(skip, default = "default_atomic")]
     last_screen_width: AtomicU64,
@@ -150,6 +191,15 @@ struct LayoutState {
     /// before the first. A change of gap re-spaces the strip around it, so the column stays put.
     #[serde(skip, default = "default_atomic_unset")]
     last_selected_rel_px: AtomicU64,
+    /// The selection `last_selected_rel_px` and the slot below were measured for, `packed`.
+    #[serde(skip)]
+    last_selected_rel_of: AtomicU64,
+    /// The slot size the last layout gave that selection, after its own limits: what the app
+    /// answering rini's write reports back.
+    #[serde(skip, default = "default_atomic_unset")]
+    last_selected_width_px: AtomicU64,
+    #[serde(skip, default = "default_atomic_unset")]
+    last_selected_height_px: AtomicU64,
     /// Where the strip's first column started after the last layout, against the tiling area's left
     /// edge: the anchor less the scroll offset, or NaN before the first. See `strip_origin`.
     #[serde(skip, default = "default_atomic_unset")]
@@ -161,9 +211,12 @@ struct LayoutState {
     #[serde(skip, default = "default_atomic")]
     overscroll_accumulation: AtomicU64,
     fullscreen_within_gaps: HashSet<WindowId>,
-    /// Only for windows pulled out of a stack to be maximized.
+    /// The stacks full width pulled windows out of, for the toggle back.
     #[serde(default)]
-    stack_origins: HashMap<WindowId, StackOrigin>,
+    full_width_origins: HashMap<WindowId, StackOrigin>,
+    /// The stacks a fold key folded windows out of, for the fold back in.
+    #[serde(default)]
+    fold_origins: HashMap<WindowId, StackOrigin>,
 }
 
 impl LayoutState {
@@ -176,18 +229,23 @@ impl LayoutState {
             pending_align: AtomicBool::new(false),
             pending_center_align: AtomicBool::new(false),
             pending_reveal_direction: AtomicI8::new(0),
-            pending_right_edge: default_atomic_unset(),
-            pending_right_edge_of: None,
+            pending_pin: default_atomic_unset(),
+            pending_pin_of: None,
+            kept_view: None,
             center_override_window: None,
             last_screen_width: AtomicU64::new(0.0f64.to_bits()),
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
             last_selected_rel_px: default_atomic_unset(),
+            last_selected_rel_of: AtomicU64::new(packed(None)),
+            last_selected_width_px: default_atomic_unset(),
+            last_selected_height_px: default_atomic_unset(),
             last_strip_origin_px: default_atomic_unset(),
             last_step_px: AtomicU64::new(0.0f64.to_bits()),
             last_center_offset_delta_px: AtomicU64::new(0.0f64.to_bits()),
             overscroll_accumulation: AtomicU64::new(0.0f64.to_bits()),
             fullscreen_within_gaps: HashSet::default(),
-            stack_origins: HashMap::default(),
+            full_width_origins: HashMap::default(),
+            fold_origins: HashMap::default(),
         }
     }
 
@@ -195,10 +253,6 @@ impl LayoutState {
         self.columns.first().and_then(|c| c.windows.first()).copied()
     }
 
-    /// Pull `wid` out of a shared column into its own, immediately to the right.
-    ///
-    /// `None` when it was alone in its column and there was nothing to pull it out of. Otherwise the
-    /// neighbour to put it back beside, which the caller keeps until the window is restored.
     /// Take `wid` out of its column into a column of its own, on `side` of the one it left.
     ///
     /// The one way a window leaves a stack. Unfolding, expelling and unstacking were four copies of
@@ -251,18 +305,15 @@ impl LayoutState {
 
     /// Put `wid` back beside the neighbour it was pulled away from.
     ///
-    /// `false` when the anchor is gone, in which case the window stays the column it became: there
+    /// Nothing moves when the anchor is gone: the window stays the column it became, because there
     /// is no stack left to rejoin, and inventing one would put it somewhere the user never had it.
-    fn restore_into_stack(&mut self, wid: WindowId, origin: StackOrigin) -> bool {
-        let Some((anchor_col, _)) = self.locate(origin.anchor) else {
-            return false;
-        };
-        let Some((col_idx, row_idx)) = self.locate(wid) else {
-            return false;
-        };
-        if col_idx == anchor_col {
-            return false;
+    fn restore_into_stack(&mut self, wid: WindowId, origin: StackOrigin) {
+        if self.locate(origin.anchor).is_none() {
+            return;
         }
+        let Some((col_idx, row_idx)) = self.locate(wid) else {
+            return;
+        };
         self.columns[col_idx].ensure_height_weights();
         self.columns[col_idx].windows.remove(row_idx);
         let weight = self.columns[col_idx].height_weights.remove(row_idx);
@@ -271,7 +322,7 @@ impl LayoutState {
         }
         // Located again: removing the column above may have shifted the anchor's own index.
         let Some((anchor_col, anchor_row)) = self.locate(origin.anchor) else {
-            return false;
+            return;
         };
         let at = if origin.below {
             anchor_row + 1
@@ -289,7 +340,7 @@ impl LayoutState {
         if !column.height_overridden {
             column.equalise_heights();
         }
-        true
+        self.keep_full_width_alone(anchor_col);
     }
 
     /// The width `wid`'s column is actually at, as a ratio of the viewport.
@@ -323,11 +374,12 @@ impl LayoutState {
     /// Maximise `wid`, pulling it out of any stack it shares.
     ///
     /// A maximised window fills the tiling area, which would cover the siblings sharing its column
-    /// while the tree still claimed they were abreast. It becomes its own column, and where it came
-    /// from is kept so the toggle can put it back.
+    /// while the tree still claimed they were abreast. It becomes its own column in the stack's
+    /// place, the stack one column right, so the strip does not scroll for a stack that was on
+    /// screen. Where it came from is kept so the toggle can put it back.
     fn enter_full_width(&mut self, wid: WindowId) {
-        if let Some(origin) = self.split_out(wid, Direction::Right) {
-            self.stack_origins.insert(wid, origin);
+        if let Some(origin) = self.split_out(wid, Direction::Left) {
+            self.full_width_origins.insert(wid, origin);
         }
         self.fullscreen_within_gaps.insert(wid);
     }
@@ -338,7 +390,7 @@ impl LayoutState {
     /// one whose whole former column has since closed.
     fn leave_full_width_restoring(&mut self, wid: WindowId) {
         self.fullscreen_within_gaps.remove(&wid);
-        if let Some(origin) = self.stack_origins.remove(&wid) {
+        if let Some(origin) = self.full_width_origins.remove(&wid) {
             self.restore_into_stack(wid, origin);
         }
     }
@@ -351,7 +403,25 @@ impl LayoutState {
     /// toggled off into a stack the user had not touched since.
     fn leave_full_width_in_place(&mut self, wid: WindowId) {
         self.fullscreen_within_gaps.remove(&wid);
-        self.stack_origins.remove(&wid);
+        self.full_width_origins.remove(&wid);
+        self.unpin();
+    }
+
+    /// A full-width window is alone in its column: one that comes to share it stops being full
+    /// width where it is, as if given a width.
+    fn keep_full_width_alone(&mut self, col_idx: usize) {
+        let Some(column) = self.columns.get(col_idx).filter(|column| column.windows.len() > 1) else {
+            return;
+        };
+        let maximized: Vec<WindowId> = column
+            .windows
+            .iter()
+            .copied()
+            .filter(|wid| self.fullscreen_within_gaps.contains(wid))
+            .collect();
+        for wid in maximized {
+            self.leave_full_width_in_place(wid);
+        }
     }
 
     /// Give `wid`'s column an explicit ratio, by a drag or not, leaving full width if it was
@@ -381,7 +451,7 @@ impl LayoutState {
     }
 
     fn align_scroll_to_selected(&mut self) {
-        self.unpin_right_edge();
+        self.unpin();
         // Keep centered alignment only while the same selection remains focused.
         if self.center_override_window.is_some() && self.center_override_window == self.selected {
             self.pending_center_align.store(true, Ordering::Relaxed);
@@ -400,7 +470,7 @@ impl LayoutState {
     }
 
     fn request_center_on_selected(&mut self) {
-        self.unpin_right_edge();
+        self.unpin();
         if self.selected_location().is_none() {
             return;
         }
@@ -419,7 +489,7 @@ impl LayoutState {
     }
 
     fn reveal_selected_in_direction(&mut self, direction: Direction) {
-        self.unpin_right_edge();
+        self.unpin();
         self.center_override_window = None;
         self.pending_center_align.store(false, Ordering::Relaxed);
         self.pending_align.store(false, Ordering::Relaxed);
@@ -432,7 +502,7 @@ impl LayoutState {
     }
 
     fn reveal_selected_without_direction(&mut self) {
-        self.unpin_right_edge();
+        self.unpin();
         self.center_override_window = None;
         self.pending_center_align.store(false, Ordering::Relaxed);
         self.pending_align.store(false, Ordering::Relaxed);
@@ -440,14 +510,81 @@ impl LayoutState {
         self.pending_reveal_direction.store(2, Ordering::Relaxed);
     }
 
-    fn pin_right_edge(&mut self, wid: WindowId, right_x: f64) {
-        self.pending_right_edge.store(right_x.to_bits(), Ordering::Relaxed);
-        self.pending_right_edge_of = Some(wid);
+    fn pin(&mut self, wid: WindowId, pin: Pin, value: f64) {
+        self.pending_pin.store(value.to_bits(), Ordering::Relaxed);
+        self.pending_pin_of = Some((wid, pin));
     }
 
-    fn unpin_right_edge(&mut self) {
-        self.pending_right_edge.store(f64::NAN.to_bits(), Ordering::Relaxed);
-        self.pending_right_edge_of = None;
+    /// Any scroll replaces what is held for a later pass: the pin, and the view a restore takes.
+    fn unpin(&mut self) {
+        self.pending_pin.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        self.pending_pin_of = None;
+        self.kept_view = None;
+    }
+
+    /// Whether a scroll request for `wid` would drop something held for it: its centring, a pin no
+    /// pass has spent yet, or the view a toggle back returns to.
+    fn holds_scroll_for(&self, wid: WindowId) -> bool {
+        let pin_pending = !f64::from_bits(self.pending_pin.load(Ordering::Relaxed)).is_nan();
+        self.center_override_window == Some(wid)
+            || (pin_pending && self.pending_pin_of.is_some_and(|(of, _)| of == wid))
+            || self.kept_view.is_some_and(|kept| kept.window == wid)
+    }
+
+    /// How the last pass showed `wid`'s column, if `wid` was its selection.
+    fn laid_out_view_of(&self, wid: WindowId) -> Option<View> {
+        if unpacked(self.last_selected_rel_of.load(Ordering::Relaxed)) != Some(wid) {
+            return None;
+        }
+        if self.center_override_window == Some(wid) {
+            return Some(View::Centred);
+        }
+        let rel = f64::from_bits(self.last_selected_rel_px.load(Ordering::Relaxed));
+        rel.is_finite().then_some(View::StartingAt(rel))
+    }
+
+    /// The slot size the last pass gave `wid`, if `wid` was its selection.
+    fn laid_out_slot_of(&self, wid: WindowId) -> Option<CGSize> {
+        if unpacked(self.last_selected_rel_of.load(Ordering::Relaxed)) != Some(wid) {
+            return None;
+        }
+        let width = f64::from_bits(self.last_selected_width_px.load(Ordering::Relaxed));
+        let height = f64::from_bits(self.last_selected_height_px.load(Ordering::Relaxed));
+        (width.is_finite() && height.is_finite()).then(|| CGSize::new(width, height))
+    }
+
+    /// The view `by`'s way back returns `wid` to, if it kept one. Any other kept view goes too.
+    fn take_kept_view(&mut self, wid: WindowId, by: Toggle) -> Option<View> {
+        let kept = self.kept_view.take()?;
+        (kept.window == wid && kept.by == by).then_some(kept.view)
+    }
+
+    /// Rescroll so a toggled column stays visible, as the resize path does, unless it is going back
+    /// to a view nothing has scrolled away from since.
+    fn rescroll_after_toggle(&mut self, wid: WindowId, back_to: Option<View>, reveals_only: bool) {
+        match back_to {
+            Some(view) => self.return_to_view(wid, view),
+            None if reveals_only => self.reveal_selected_without_direction(),
+            None => self.align_scroll_to_selected(),
+        }
+    }
+
+    /// Show the selected `wid`'s column the way `view` says the strip showed it.
+    fn return_to_view(&mut self, wid: WindowId, view: View) {
+        self.unpin();
+        self.pending_align.store(false, Ordering::Relaxed);
+        self.pending_reveal_direction.store(0, Ordering::Relaxed);
+        match view {
+            View::Centred => {
+                self.center_override_window = Some(wid);
+                self.pending_center_align.store(true, Ordering::Relaxed);
+            }
+            View::StartingAt(rel) => {
+                self.center_override_window = None;
+                self.pending_center_align.store(false, Ordering::Relaxed);
+                self.pin(wid, Pin::Start, rel);
+            }
+        }
     }
 
     fn clamp_scroll_offset(&mut self) {
@@ -470,10 +607,12 @@ impl LayoutState {
             self.columns.remove(col_idx);
         }
         self.fullscreen_within_gaps.remove(&wid);
-        self.stack_origins.remove(&wid);
         // An origin anchored on a window that has closed cannot be restored into, and keeping it
-        // would send the next un-maximize hunting for a window that is gone.
-        self.stack_origins.retain(|_, origin| origin.anchor != wid);
+        // would send the toggle back hunting for a window that is gone.
+        for origins in [&mut self.full_width_origins, &mut self.fold_origins] {
+            origins.remove(&wid);
+            origins.retain(|_, origin| origin.anchor != wid);
+        }
 
         if self.selected == Some(wid) {
             self.selected = None;
@@ -498,6 +637,7 @@ impl LayoutState {
             self.center_override_window = None;
         }
 
+        self.unpin();
         self.clamp_scroll_offset();
         self.selected
     }
@@ -571,6 +711,7 @@ impl LayoutState {
                 // resize afterwards still sets its own weights.
                 let _ = weight;
                 self.columns[target].equalise_heights();
+                self.keep_full_width_alone(target);
             }
             self.selected = Some(window);
             self.align_scroll_to_selected();
@@ -592,12 +733,16 @@ impl Clone for LayoutState {
             pending_reveal_direction: AtomicI8::new(
                 self.pending_reveal_direction.load(Ordering::Relaxed),
             ),
-            pending_right_edge: AtomicU64::new(self.pending_right_edge.load(Ordering::Relaxed)),
-            pending_right_edge_of: self.pending_right_edge_of,
+            pending_pin: AtomicU64::new(self.pending_pin.load(Ordering::Relaxed)),
+            pending_pin_of: self.pending_pin_of,
+            kept_view: self.kept_view,
             center_override_window: self.center_override_window,
             last_screen_width: AtomicU64::new(self.last_screen_width.load(Ordering::Relaxed)),
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
             last_selected_rel_px: AtomicU64::new(self.last_selected_rel_px.load(Ordering::Relaxed)),
+            last_selected_rel_of: AtomicU64::new(self.last_selected_rel_of.load(Ordering::Relaxed)),
+            last_selected_width_px: AtomicU64::new(self.last_selected_width_px.load(Ordering::Relaxed)),
+            last_selected_height_px: AtomicU64::new(self.last_selected_height_px.load(Ordering::Relaxed)),
             last_strip_origin_px: AtomicU64::new(self.last_strip_origin_px.load(Ordering::Relaxed)),
             last_step_px: AtomicU64::new(self.last_step_px.load(Ordering::Relaxed)),
             last_center_offset_delta_px: AtomicU64::new(
@@ -607,7 +752,8 @@ impl Clone for LayoutState {
                 self.overscroll_accumulation.load(Ordering::Relaxed),
             ),
             fullscreen_within_gaps: self.fullscreen_within_gaps.clone(),
-            stack_origins: self.stack_origins.clone(),
+            full_width_origins: self.full_width_origins.clone(),
+            fold_origins: self.fold_origins.clone(),
         }
     }
 }
@@ -624,6 +770,22 @@ fn default_atomic() -> AtomicU64 {
 
 fn default_atomic_unset() -> AtomicU64 {
     AtomicU64::new(f64::NAN.to_bits())
+}
+
+/// A window, or none, as one atomic word: `idx` is never zero, so zero is none.
+fn packed(wid: Option<WindowId>) -> u64 {
+    wid.map_or(0, |wid| (u64::from(wid.pid as u32) << 32) | u64::from(wid.idx.get()))
+}
+
+fn unpacked(bits: u64) -> Option<WindowId> {
+    let idx = std::num::NonZeroU32::new(bits as u32)?;
+    Some(WindowId { pid: (bits >> 32) as u32 as pid_t, idx })
+}
+
+/// Whether a reported length is the slot length the strip laid out, as drawn, to within the point a
+/// window's own rounding or its app's snapping takes off it.
+fn answers_slot(reported: f64, slot: f64) -> bool {
+    (reported - slot.round()).abs() <= 1.0
 }
 
 /// The scroll offset that keeps the selected column where it was on screen after the gap between
@@ -720,6 +882,18 @@ impl ScrollingLayoutSystem {
         column_ratio(ColumnKind::Bounded, ratio, 0.0, min_ratio, max_ratio)
     }
 
+    /// What holds `col` and the ratio of the viewport it asks for, as the layout pass lays it out.
+    fn laid_out_ratio(
+        state: &LayoutState,
+        col: &Column,
+        min_ratio: f64,
+        max_ratio: f64,
+    ) -> (ColumnKind, f64) {
+        let kind = state.column_kind(col);
+        let base_ratio = Self::clamp_base_ratio(state.column_width_ratio, min_ratio, max_ratio);
+        (kind, column_ratio(kind, base_ratio, col.width_offset, min_ratio, max_ratio))
+    }
+
     fn column_widths_and_starts(
         state: &LayoutState,
         screen_width: f64,
@@ -727,19 +901,12 @@ impl ScrollingLayoutSystem {
         min_ratio: f64,
         max_ratio: f64,
     ) -> (Vec<f64>, Vec<f64>) {
-        let base_ratio = Self::clamp_base_ratio(state.column_width_ratio, min_ratio, max_ratio);
         let mut widths = Vec::with_capacity(state.columns.len());
         let mut starts = Vec::with_capacity(state.columns.len());
         let mut cursor = 0.0;
         for col in &state.columns {
             starts.push(cursor);
-            let ratio = column_ratio(
-                state.column_kind(col),
-                base_ratio,
-                col.width_offset,
-                min_ratio,
-                max_ratio,
-            );
+            let (_, ratio) = Self::laid_out_ratio(state, col, min_ratio, max_ratio);
             let width = (screen_width * ratio).max(1.0);
             widths.push(width);
             cursor += width + gap_x;
@@ -777,6 +944,7 @@ impl ScrollingLayoutSystem {
         } else {
             (0.0, base_max_offset)
         };
+        state.unpin();
         let current = f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed));
         let next_raw = current + delta * step;
         let next = next_raw.clamp(min_offset, max_offset);
@@ -850,6 +1018,7 @@ impl ScrollingLayoutSystem {
             .copied()
             .unwrap_or(0.0);
         let next = (baseline + target).clamp(min_offset, max_offset);
+        state.unpin();
         state.scroll_offset_px.store(next.to_bits(), Ordering::Relaxed);
     }
 
@@ -1110,11 +1279,9 @@ impl ScrollingLayoutSystem {
             //
             // A lone column keeps its width; expanding it tied a window's size to its neighbours.
             // See "Column width" in `src/layout/docs/strip.md`.
-            let kind = state.column_kind(col);
-            let ratio = column_ratio(
-                kind,
-                base_ratio,
-                col.width_offset,
+            let (kind, ratio) = Self::laid_out_ratio(
+                state,
+                col,
                 self.settings.min_column_width_ratio,
                 self.settings.max_column_width_ratio,
             );
@@ -1183,21 +1350,23 @@ impl ScrollingLayoutSystem {
             state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
             state.pending_align.store(false, Ordering::Relaxed);
         }
-        let right_edge =
-            f64::from_bits(state.pending_right_edge.swap(f64::NAN.to_bits(), Ordering::Relaxed));
+        let pinned = f64::from_bits(state.pending_pin.swap(f64::NAN.to_bits(), Ordering::Relaxed));
         let mut keeps_right_edge = false;
-        if !right_edge.is_nan()
-            && state.selected == state.pending_right_edge_of
+        if !pinned.is_nan()
+            && let Some((wid, pin)) = state.pending_pin_of
+            && state.selected == Some(wid)
             && let Some((col_idx, _)) = state.selected_location()
         {
-            let offset = offset_keeping_right_edge(
-                anchor_x,
-                column_starts.get(col_idx).copied().unwrap_or(0.0),
-                column_widths.get(col_idx).copied().unwrap_or(0.0),
-                right_edge,
-            );
+            let start = column_starts.get(col_idx).copied().unwrap_or(0.0);
+            let offset = match pin {
+                Pin::RightEdge => {
+                    keeps_right_edge = true;
+                    let width = column_widths.get(col_idx).copied().unwrap_or(0.0);
+                    offset_keeping_right_edge(anchor_x, start, width, pinned)
+                }
+                Pin::Start => start - pinned,
+            };
             state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
-            keeps_right_edge = true;
         }
         let reveal_direction = state.pending_reveal_direction.swap(0, Ordering::Relaxed);
         if reveal_direction != 0 {
@@ -1242,6 +1411,8 @@ impl ScrollingLayoutSystem {
         state.scroll_offset_px.store(clamped.to_bits(), Ordering::Relaxed);
         let selected_rel = column_starts.get(selected_col_idx).copied().unwrap_or(0.0) - clamped;
         state.last_selected_rel_px.store(selected_rel.to_bits(), Ordering::Relaxed);
+        let measured_for = state.selected_location().and(state.selected);
+        state.last_selected_rel_of.store(packed(measured_for), Ordering::Relaxed);
         let origin = anchor_x - tiling.origin.x - clamped;
         state.last_strip_origin_px.store(origin.to_bits(), Ordering::Relaxed);
 
@@ -1258,8 +1429,7 @@ impl ScrollingLayoutSystem {
             if col.windows.is_empty() {
                 continue;
             }
-            let total_gap = gap_y * (col.windows.len().saturating_sub(1) as f64);
-            let available_height = (tiling.size.height - total_gap).max(0.0);
+            let available_height = col.available_height(tiling.size.height, gap_y);
             let row_constraints: Vec<AxisConstraints> = col
                 .windows
                 .iter()
@@ -1335,6 +1505,11 @@ impl ScrollingLayoutSystem {
                 frame = tile::window_in(frame, borders.of(*wid));
                 if let Some(c) = constraints.get(wid).copied() {
                     frame.size = clamp_to_constraints(frame.size, c);
+                }
+                if measured_for == Some(*wid) {
+                    let slot = tile::slot_of(frame, borders.of(*wid)).size;
+                    state.last_selected_width_px.store(slot.width.to_bits(), Ordering::Relaxed);
+                    state.last_selected_height_px.store(slot.height.to_bits(), Ordering::Relaxed);
                 }
                 out.push((*wid, frame));
                 y_cursor += row_height;
@@ -1454,15 +1629,27 @@ impl ScrollingLayoutSystem {
             if state.center_override_window == Some(from) {
                 state.center_override_window = Some(to);
             }
+            if let Some(kept) = &mut state.kept_view
+                && kept.window == from
+            {
+                kept.window = to;
+            }
+            if let Some((of, _)) = &mut state.pending_pin_of
+                && *of == from
+            {
+                *of = to;
+            }
             if state.fullscreen_within_gaps.remove(&from) {
                 state.fullscreen_within_gaps.insert(to);
             }
-            if let Some(origin) = state.stack_origins.remove(&from) {
-                state.stack_origins.insert(to, origin);
-            }
-            for origin in state.stack_origins.values_mut() {
-                if origin.anchor == from {
-                    origin.anchor = to;
+            for origins in [&mut state.full_width_origins, &mut state.fold_origins] {
+                if let Some(origin) = origins.remove(&from) {
+                    origins.insert(to, origin);
+                }
+                for origin in origins.values_mut() {
+                    if origin.anchor == from {
+                        origin.anchor = to;
+                    }
                 }
             }
         }
@@ -1634,12 +1821,10 @@ impl ScrollingLayoutSystem {
             return false;
         };
         if state.locate(wid).is_some() {
-            // Refocusing the selected window keeps what is pending for it: its centring, and the
-            // right edge a left-edge drag keeps, which the release refocuses before its pass.
-            if state.selected == Some(wid)
-                && (state.center_override_window == Some(wid)
-                    || state.pending_right_edge_of == Some(wid))
-            {
+            // Refocusing the selected window keeps what is held for it: its centring, the right
+            // edge a left-edge drag keeps, which the release refocuses before its pass, and the
+            // view a toggle back returns to, a full width's or a fold's, which the raise refocuses.
+            if state.selected == Some(wid) && state.holds_scroll_for(wid) {
                 return true;
             }
             state.selected = Some(wid);
@@ -1656,8 +1841,9 @@ impl ScrollingLayoutSystem {
 
     /// The window's own frame, read back as its slot under its `border` (`tile::slot_of`) and taken
     /// as its column's width and its row's height. `drag` is the mouse drag that resized it, `None`
-    /// for any other resize: the app's own, or a window rule's size. See "Mouse resize" in
-    /// `src/layout/docs/strip.md`.
+    /// for any other resize: the app's own, or a window rule's size, and then an axis within a point
+    /// of the slot the last pass gave the window is the app answering rini's write, which changes
+    /// nothing. See "Mouse resize" in `src/layout/docs/strip.md`.
     pub fn on_window_resized(
         &mut self,
         layout: LayoutId,
@@ -1698,6 +1884,17 @@ impl ScrollingLayoutSystem {
             // app settling its own size nor a drag that moves neither side gives it a width.
             return;
         }
+        let stacked = state.columns[col_idx].windows.len() > 1;
+        let (width_kept, height_kept) = match state.laid_out_slot_of(wid).filter(|_| drag.is_none()) {
+            Some(slot) => (
+                answers_slot(new_frame.size.width, slot.width),
+                !stacked || answers_slot(new_frame.size.height, slot.height),
+            ),
+            None => (false, false),
+        };
+        if width_kept && height_kept {
+            return;
+        }
         if reveals_only {
             state.reveal_selected_without_direction();
         } else {
@@ -1713,7 +1910,8 @@ impl ScrollingLayoutSystem {
         } else {
             ColumnKind::Bounded
         };
-        let ratio = column_ratio(kind, width / tiling.size.width, 0.0, min_ratio, max_ratio);
+        let read_back = ratio_of_column_width(kind, width, tiling.size.width, gaps.inner);
+        let ratio = column_ratio(kind, read_back, 0.0, min_ratio, max_ratio);
         if let Some((start, _)) = side_drag
             && ratio >= 1.0
             && state.columns[col_idx].windows.len() == 1
@@ -1724,15 +1922,14 @@ impl ScrollingLayoutSystem {
                 state.columns[col_idx].give_width(offset, true);
                 state.enter_full_width(wid);
             }
-        } else {
+        } else if !width_kept {
             state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Dragged);
         }
 
         let col = &mut state.columns[col_idx];
-        if col.windows.len() > 1 && tiling.size.height > 0.0 {
+        if col.windows.len() > 1 && tiling.size.height > 0.0 && !height_kept {
             col.ensure_height_weights();
-            let total_gap = gaps.inner * (col.windows.len().saturating_sub(1) as f64);
-            let available_height = (tiling.size.height - total_gap).max(0.0);
+            let available_height = col.available_height(tiling.size.height, gaps.inner);
             if available_height > 0.0 {
                 let height = new_frame.size.height;
                 match drag {
@@ -1748,7 +1945,7 @@ impl ScrollingLayoutSystem {
         if let Some((start, Side::Left)) = side_drag
             && reveals_only
         {
-            state.pin_right_edge(wid, start.origin.x + start.size.width);
+            state.pin(wid, Pin::RightEdge, start.origin.x + start.size.width);
         }
     }
 
@@ -1780,6 +1977,8 @@ impl ScrollingLayoutSystem {
             let b_weight = state.columns[b_col].height_weights[b_row];
             state.columns[a_col].height_weights[a_row] = b_weight;
             state.columns[b_col].height_weights[b_row] = a_weight;
+            state.keep_full_width_alone(a_col);
+            state.keep_full_width_alone(b_col);
         }
         true
     }
@@ -1815,8 +2014,11 @@ impl ScrollingLayoutSystem {
     ///
     /// Pressing the same key twice puts the window back, which takes two different mechanisms.
     /// Folding OUT lands the new column on the side AWAY from `side`, because that is where the
-    /// window was before it folded into that column. Folding IN prefers the row it was folded out
-    /// of (`StackOrigin`) over appending to the end, so the rows keep their order too.
+    /// window was before it folded into that column. Folding IN returns it to the row it was folded
+    /// out of (`fold_origins`) when that row is in the neighbour on `side`, and appends it to the
+    /// neighbour otherwise, so the rows keep their order too. Under `"never"` the fold back by the
+    /// same key also puts the strip back, unless any other scroll came in between. A full-width
+    /// window folds in as an ordinary column, its full width ended where it is.
     pub fn toggle_fold_of_selection(&mut self, layout: LayoutId, side: Direction) -> Vec<WindowId> {
         let away = match side {
             Direction::Left => Direction::Right,
@@ -1835,33 +2037,37 @@ impl ScrollingLayoutSystem {
             return Vec::new();
         };
         let selected = state.columns[col_idx].windows[row_idx];
+        let folding_out = state.columns[col_idx].windows.len() > 1;
+        let view_before =
+            (folding_out && reveals_only).then(|| state.laid_out_view_of(selected)).flatten();
 
-        if state.columns[col_idx].windows.len() > 1 {
+        if folding_out {
             if let Some(origin) = state.split_out(selected, away) {
-                state.stack_origins.insert(selected, origin);
+                state.fold_origins.insert(selected, origin);
             }
         } else {
-            let restored = match state.stack_origins.remove(&selected) {
-                Some(origin) => state.restore_into_stack(selected, origin),
-                None => false,
+            let target = match side {
+                Direction::Left => col_idx.checked_sub(1),
+                _ => (col_idx + 1 < state.columns.len()).then_some(col_idx + 1),
             };
-            if !restored {
-                let target = match side {
-                    Direction::Left => col_idx.checked_sub(1),
-                    _ => (col_idx + 1 < state.columns.len()).then_some(col_idx + 1),
-                };
-                let Some(target) = target else {
-                    return Vec::new();
-                };
-                state.move_window_to_column_end(selected, target);
+            let Some(target) = target else {
+                return Vec::new();
+            };
+            let origin = state.fold_origins.remove(&selected).filter(|origin| {
+                state.locate(origin.anchor).is_some_and(|(anchor_col, _)| anchor_col == target)
+            });
+            match origin {
+                Some(origin) => state.restore_into_stack(selected, origin),
+                None => state.move_window_to_column_end(selected, target),
             }
         }
 
+        let by = Toggle::Fold(side);
+        let back_to = state.take_kept_view(selected, by).filter(|_| !folding_out);
         state.selected = Some(selected);
-        if reveals_only {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
+        state.rescroll_after_toggle(selected, back_to, reveals_only);
+        if let Some(view) = view_before {
+            state.kept_view = Some(KeptView { window: selected, by, view });
         }
         vec![selected]
     }
@@ -1869,7 +2075,9 @@ impl ScrollingLayoutSystem {
     /// Maximise `wid`, or put it back to the width and stack it had before, and select it.
     ///
     /// The one toggle: `ctrl-F` asks it of the selection, a title-bar zoom of the window zoomed.
-    /// `false` when the window is not a column of this layout.
+    /// Under `"never"` the way back also puts the strip back, its column at the screen x it left or
+    /// centred again, unless any other scroll came in between. `false` when the window is not a
+    /// column of this layout.
     pub fn toggle_full_width(&mut self, layout: LayoutId, wid: WindowId) -> bool {
         let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
@@ -1879,18 +2087,19 @@ impl ScrollingLayoutSystem {
             return false;
         }
 
-        if state.fullscreen_within_gaps.contains(&wid) {
-            state.leave_full_width_restoring(wid);
-        } else {
+        let entering = !state.fullscreen_within_gaps.contains(&wid);
+        // Read before this toggle's own scroll request, which drops the centre override.
+        let view_before = (entering && reveals_only).then(|| state.laid_out_view_of(wid)).flatten();
+        let back_to = state.take_kept_view(wid, Toggle::FullWidth).filter(|_| !entering);
+        if entering {
             state.enter_full_width(wid);
+        } else {
+            state.leave_full_width_restoring(wid);
         }
         state.selected = Some(wid);
-
-        // Rescroll so the resized column stays visible, as the resize path does.
-        if reveals_only {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
+        state.rescroll_after_toggle(wid, back_to, reveals_only);
+        if let Some(view) = view_before {
+            state.kept_view = Some(KeptView { window: wid, by: Toggle::FullWidth, view });
         }
         true
     }
@@ -2091,7 +2300,7 @@ mod tests {
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::{Column, ScrollingLayoutSystem, rebased_offset};
+    use super::{Column, ScrollingLayoutSystem, answers_slot, rebased_offset};
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::Drag;
@@ -3675,8 +3884,8 @@ mod tests {
 
         assert_eq!(
             shape(&system, layout),
-            vec![vec![w[0], w[2]], vec![w[1]]],
-            "the maximized window gets its own column and the stack closes up"
+            vec![vec![w[1]], vec![w[0], w[2]]],
+            "the maximized window takes the stack's place and the stack closes up beside it"
         );
         assert!(system.is_window_full_width(layout, w[1]));
     }
@@ -3725,7 +3934,7 @@ mod tests {
         assert!(system.select_window(layout, w[0]));
 
         assert!(system.toggle_full_width(layout, w[1]));
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
 
         assert!(system.toggle_full_width(layout, w[1]));
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
@@ -3750,7 +3959,7 @@ mod tests {
 
         assert!(system.select_window(layout, w[0]));
         toggle_selection(&mut system, layout);
-        assert_eq!(shape(&system, layout), vec![vec![w[1], w[2]], vec![w[0]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[0]], vec![w[1], w[2]]]);
 
         toggle_selection(&mut system, layout);
         assert_eq!(
@@ -3793,7 +4002,7 @@ mod tests {
         toggle_selection(&mut system, layout);
         assert_eq!(
             shape(&system, layout),
-            vec![vec![w[2]], vec![w[1]]],
+            vec![vec![w[1]], vec![w[2]]],
             "no stack to rejoin"
         );
     }
@@ -3812,7 +4021,7 @@ mod tests {
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
         system.cycle_preset_column_width(layout);
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
 
         // A fresh maximise and a fresh press to leave it. Nothing here asked for the old stack.
         toggle_selection(&mut system, layout);
@@ -3820,7 +4029,7 @@ mod tests {
 
         assert_eq!(
             shape(&system, layout),
-            vec![vec![w[0], w[2]], vec![w[1]]],
+            vec![vec![w[1]], vec![w[0], w[2]]],
             "it stays the ordinary column ctrl-R made it"
         );
     }
@@ -3850,7 +4059,7 @@ mod tests {
         assert!(system.select_window(layout, w[1]));
         system.cycle_preset_column_width(layout);
 
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
         assert!(system.is_window_full_width(layout, w[1]));
     }
 
@@ -3862,7 +4071,7 @@ mod tests {
 
         system.restore_window_full_width(layout, w[1]);
 
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
         assert!(system.is_window_full_width(layout, w[1]));
     }
 
@@ -4352,8 +4561,8 @@ mod tests {
         for window in w {
             system.add_window_after_selection(layout, window);
         }
-        app_sizes(&mut system, layout, w[0], 596.0);
-        app_sizes(&mut system, layout, w[1], 883.5);
+        app_sizes(&mut system, layout, w[0], 594.0);
+        app_sizes(&mut system, layout, w[1], 882.0);
         assert_eq!(laid_out_xw(&system, layout, w[0]).1, 594.0);
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 882.0);
         (system, layout, w)
@@ -4430,7 +4639,7 @@ mod tests {
     #[test]
     fn a_drag_below_min_column_width_keeps_its_width() {
         let (mut system, layout, w) = kai_s_strip();
-        app_sizes(&mut system, layout, w[1], 597.0);
+        app_sizes(&mut system, layout, w[1], 595.0);
         assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 595.0));
 
         drag(&mut system, layout, w[1], xw(600.0, 595.0), xw(708.0, 487.0));
@@ -4655,7 +4864,7 @@ mod tests {
         let (mut system, layout, w) = kai_s_strip();
         system.on_window_resized(layout, w[1], None, xw(500.0, 982.0), 0.0, KAI_SCREEN, &kai_s_gaps());
 
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 981.0));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 982.0));
         assert_eq!(scroll_offset(&system, layout), 0.0);
     }
 
@@ -4726,7 +4935,7 @@ mod tests {
     fn a_removed_window_s_pin_does_not_move_the_column_selected_after_it() {
         let (mut system, layout, w) = kai_s_strip();
         app_sizes(&mut system, layout, w[2], 1148.0);
-        app_sizes(&mut system, layout, w[0], 596.0);
+        app_sizes(&mut system, layout, w[0], 594.0);
         assert!(system.select_window(layout, w[1]));
         assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 882.0));
 
@@ -4743,7 +4952,7 @@ mod tests {
     #[test]
     fn in_centred_mode_a_middle_column_dragged_out_50_from_its_left_edge_grows_100_and_stays_centred() {
         let (mut system, layout, w) = kai_s_centred_strip();
-        app_sizes(&mut system, layout, w[1], 586.0);
+        app_sizes(&mut system, layout, w[1], 584.0);
         assert_eq!(laid_out_xw(&system, layout, w[1]), (572.0, 584.0));
 
         drag(&mut system, layout, w[1], xw(572.0, 584.0), xw(522.0, 634.0));
@@ -4760,7 +4969,7 @@ mod tests {
         drag(&mut system, layout, w[0], xw(3.0, 594.0), xw(3.0, 674.0));
         assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 674.0), "first");
 
-        app_sizes(&mut system, layout, w[2], 600.0);
+        app_sizes(&mut system, layout, w[2], 598.0);
         assert_eq!(laid_out_xw(&system, layout, w[2]), (1127.0, 598.0));
         drag(&mut system, layout, w[2], xw(1127.0, 598.0), xw(1047.0, 678.0));
         assert_eq!(laid_out_xw(&system, layout, w[2]), (1047.0, 678.0), "last");
@@ -4888,6 +5097,918 @@ mod tests {
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
         let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
         assert_eq!(rows, [(3.0, 368.0), (374.0, 368.0), (746.0, 368.0)]);
+    }
+
+    // ── the view full width returns to ──────────────────────────────────────
+
+    fn kai_s_frames(system: &ScrollingLayoutSystem, layout: LayoutId) -> Vec<(WindowId, CGRect)> {
+        render(system, layout, KAI_SCREEN, &kai_s_gaps())
+    }
+
+    fn assert_same_frames(got: &[(WindowId, CGRect)], want: &[(WindowId, CGRect)]) {
+        assert_eq!(got.len(), want.len(), "{got:?} against {want:?}");
+        for ((got_id, got), (want_id, want)) in got.iter().zip(want) {
+            assert_eq!(got_id, want_id);
+            for (g, w) in [
+                (got.origin.x, want.origin.x),
+                (got.origin.y, want.origin.y),
+                (got.size.width, want.size.width),
+                (got.size.height, want.size.height),
+            ] {
+                assert!((g - w).abs() < 1e-6, "{got_id:?} at {got:?}, not {want:?}");
+            }
+        }
+    }
+
+    /// `ctrl-F` on `wid` twice, with the pass after each.
+    fn maximize_and_restore(system: &mut ScrollingLayoutSystem, layout: LayoutId, wid: WindowId) {
+        assert!(system.toggle_full_width(layout, wid));
+        kai_s_frames(system, layout);
+        assert!(system.toggle_full_width(layout, wid));
+    }
+
+    /// Kai's report of 2026-10-09 on their display: Z a half, A and B a third, the view reached by
+    /// walking focus right and back, so A sits at x=578 with the strip at 287.48852.
+    fn kai_s_thirds() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+        for window in w {
+            system.add_window_after_selection(layout, window);
+            kai_s_frames(&system, layout);
+        }
+        system.set_column_width_offset(layout, w[1], 0.33333 - 0.5, false);
+        system.set_column_width_offset(layout, w[2], 0.33333 - 0.5, false);
+        assert!(system.select_window(layout, w[0]));
+        kai_s_frames(&system, layout);
+        for direction in [Direction::Right, Direction::Right, Direction::Left] {
+            system.move_focus(layout, direction);
+            kai_s_frames(&system, layout);
+        }
+        assert_eq!(system.selected_window(layout), Some(w[1]));
+        assert_near(scroll_offset(&system, layout), 287.48852, "offset");
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (578.0, 572.0));
+        (system, layout, w)
+    }
+
+    #[test]
+    fn restoring_from_full_width_puts_the_strip_back_where_it_was() {
+        let (mut system, layout, w) = kai_s_thirds();
+        let before = kai_s_frames(&system, layout);
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "the strip scrolled");
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+        assert_near(scroll_offset(&system, layout), 287.48852, "offset");
+    }
+
+    /// Two halves, B on the right: full width scrolls A off screen, and the restore brings it back.
+    #[test]
+    fn a_right_column_restores_with_its_left_neighbour_on_screen() {
+        let (mut system, layout, w1, w2) = setup_two_windows(preset_settings());
+        assert!(system.select_window(layout, w2));
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(laid_out_xw(&system, layout, w2), (866.0, 860.0));
+
+        maximize_and_restore(&mut system, layout, w2);
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+        assert_eq!(laid_out_xw(&system, layout, w1), (3.0, 860.0));
+    }
+
+    /// Each row of [A][B1,B2] and [A][B1,B2,B3]: full width puts the window in the stack's place,
+    /// one column along, and the restore folds it back with the strip where it was.
+    #[test]
+    fn a_right_stack_restores_with_its_left_neighbour_on_screen() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                let (mut system, layout, a, b) = a_stack_on_the_right(rows);
+                assert!(system.select_window(layout, b[row]));
+                let before = kai_s_frames(&system, layout);
+                let case = format!("row {row} of {rows}");
+
+                assert!(system.toggle_full_width(layout, b[row]));
+                kai_s_frames(&system, layout);
+                let mut rest = b.clone();
+                rest.remove(row);
+                assert_eq!(shape(&system, layout), vec![vec![a], vec![b[row]], rest], "{case}");
+                assert_near(scroll_offset(&system, layout), 862.5, &case);
+                assert!(system.toggle_full_width(layout, b[row]));
+
+                assert_same_frames(&kai_s_frames(&system, layout), &before);
+                assert_eq!(shape(&system, layout), vec![vec![a], b.clone()], "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_centred_column_comes_back_centred() {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+        for window in w {
+            system.add_window_after_selection(layout, window);
+        }
+        assert!(system.select_window(layout, w[1]));
+        system.center_selected_column(layout);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (434.0, 860.0));
+
+        maximize_and_restore(&mut system, layout, w[1]);
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    /// The window's own focus event, which the raise after the toggle sends.
+    #[test]
+    fn refocusing_the_full_width_window_keeps_the_view_it_returns_to() {
+        let (mut system, layout, w) = kai_s_thirds();
+        let before = kai_s_frames(&system, layout);
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        assert!(system.select_window(layout, w[1]));
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    #[test]
+    fn a_focus_change_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        for window in [w[0], w[1]] {
+            assert!(system.select_window(layout, window));
+            kai_s_frames(&system, layout);
+        }
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
+    }
+
+    #[test]
+    fn a_strip_scroll_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        system.scroll_by_delta(layout, -1.0);
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (866.0, 572.0));
+    }
+
+    #[test]
+    fn a_strip_snap_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        system.snap_to_nearest_column(layout);
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
+    }
+
+    /// B full width and C closing: the close scrolls nothing, and still the way back reveals.
+    #[test]
+    fn a_window_closing_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        system.remove_window(w[2]);
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
+    }
+
+    /// A title-bar zoom of B while the last pass had A selected: there is no view of B's column to
+    /// go back to.
+    #[test]
+    fn a_toggle_on_a_window_the_last_pass_did_not_select_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        maximize_and_restore(&mut system, layout, w[2]);
+
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (3.0, 572.0));
+    }
+
+    /// Z scrolled off screen, maximized and restored there: focusing it again shows it, as it does
+    /// with no toggle. The restore's spent pin still named it, and the refocus kept that.
+    #[test]
+    fn refocusing_a_window_restored_off_screen_reveals_it() {
+        let (mut system, layout, w) = kai_s_thirds();
+        assert!(system.select_window(layout, w[0]));
+        kai_s_frames(&system, layout);
+        system.scroll_by_delta(layout, 1.5);
+        kai_s_frames(&system, layout);
+        let off_screen = laid_out_xw(&system, layout, w[0]);
+        assert!(off_screen.0 + off_screen.1 < 0.0, "{off_screen:?}");
+
+        maximize_and_restore(&mut system, layout, w[0]);
+        assert_eq!(laid_out_xw(&system, layout, w[0]), off_screen);
+        assert!(system.select_window(layout, w[0]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 860.0));
+    }
+
+    // ── the view a fold returns to ──────────────────────────────────────────
+
+    /// [A1][B1..] on Kai's display, two halves with the stack on the right, the strip at 0 with the
+    /// stack at x=866.
+    fn a_stack_on_the_right(rows: u32) -> (ScrollingLayoutSystem, LayoutId, WindowId, Vec<WindowId>) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let a = wid(1, 1);
+        let b: Vec<WindowId> = (2..2 + rows).map(|idx| wid(1, idx)).collect();
+        for &window in std::iter::once(&a).chain(&b) {
+            system.add_window_after_selection(layout, window);
+        }
+        for &window in &b[1..] {
+            assert!(system.select_window(layout, window));
+            system.toggle_fold_of_selection(layout, Direction::Left);
+        }
+        assert!(system.select_window(layout, a));
+        kai_s_frames(&system, layout);
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+        (system, layout, a, b)
+    }
+
+    /// One fold key on the selected `window` twice, with the pass after each.
+    fn fold_out_and_back(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        window: WindowId,
+        side: Direction,
+    ) {
+        assert_eq!(system.toggle_fold_of_selection(layout, side), vec![window]);
+        kai_s_frames(system, layout);
+        assert_eq!(system.toggle_fold_of_selection(layout, side), vec![window]);
+    }
+
+    /// Either fold key, out of a right stack and back. `Mod+Comma` lands the window right of it and
+    /// scrolls one column, and its fold back used to leave A1 at x=-860 with half the screen empty;
+    /// `Mod+Period` lands it in the stack's place and scrolls nothing.
+    #[test]
+    fn a_fold_round_trip_puts_the_strip_back_where_it_was() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                for side in [Direction::Left, Direction::Right] {
+                    let (mut system, layout, a, b) = a_stack_on_the_right(rows);
+                    assert!(system.select_window(layout, b[row]));
+                    let before = kai_s_frames(&system, layout);
+                    let shape_before = shape(&system, layout);
+
+                    fold_out_and_back(&mut system, layout, b[row], side);
+
+                    let case = format!("row {row} of {rows}, {side:?}");
+                    assert_eq!(shape(&system, layout), shape_before, "{case}");
+                    assert_same_frames(&kai_s_frames(&system, layout), &before);
+                    assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0), "{case}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_fold_out_of_a_right_stack_scrolls_the_strip() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+
+        assert_near(scroll_offset(&system, layout), 862.5, "offset");
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (866.0, 860.0));
+    }
+
+    #[test]
+    fn a_centred_stack_comes_back_centred_from_a_fold() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        system.add_window_after_selection(layout, wid(1, 9));
+        assert!(system.select_window(layout, b[1]));
+        system.center_selected_column(layout);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(laid_out_xw(&system, layout, b[1]).0, 434.0);
+
+        fold_out_and_back(&mut system, layout, b[1], Direction::Left);
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    #[test]
+    fn refocusing_the_folded_out_window_keeps_the_view_it_returns_to() {
+        let (mut system, layout, a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        let before = kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+        assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0));
+    }
+
+    /// [A][B1,B2][C][D] scrolled until the stack is off screen, B2 folded out and back there: once
+    /// back, focusing it again shows it.
+    #[test]
+    fn refocusing_a_window_folded_back_off_screen_reveals_it() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        for idx in [9, 10] {
+            system.add_window_after_selection(layout, wid(1, idx));
+        }
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+        system.scroll_by_delta(layout, 3.0);
+        kai_s_frames(&system, layout);
+        let off_screen = laid_out_xw(&system, layout, b[1]);
+        assert!(off_screen.0 + off_screen.1 < 0.0, "{off_screen:?}");
+
+        fold_out_and_back(&mut system, layout, b[1], Direction::Left);
+        assert_eq!(laid_out_xw(&system, layout, b[1]), off_screen);
+        assert!(system.select_window(layout, b[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, b[1]).0, 3.0);
+    }
+
+    #[test]
+    fn a_strip_scroll_between_the_folds_folds_back_by_the_reveal() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        system.scroll_by_delta(layout, -0.5);
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (435.0, 860.0));
+    }
+
+    /// Out by `Mod+Comma`, in by `Mod+Period`: the second key undoes nothing the first did, so the
+    /// window joins the column on the right and the strip only scrolls as far as it must.
+    #[test]
+    fn folding_back_with_the_other_key_folds_back_by_the_reveal() {
+        let (mut system, layout, a, b) = a_stack_on_the_right(2);
+        let c = wid(1, 9);
+        assert!(system.select_window(layout, b[1]));
+        system.add_window_after_selection(layout, c);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone(), vec![c]]);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Right);
+
+        assert_eq!(shape(&system, layout), vec![vec![a], vec![b[0]], vec![c, b[1]]]);
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (866.0, 860.0));
+    }
+
+    // ── full width in the stack's place ─────────────────────────────────────
+
+    /// [A1..][B] on Kai's display, two halves with the stack on the left and the strip at 0.
+    fn a_stack_on_the_left(rows: u32) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>, WindowId) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let a: Vec<WindowId> = (1..1 + rows).map(|idx| wid(1, idx)).collect();
+        let b = wid(1, 9);
+        for &window in a.iter().chain(std::iter::once(&b)) {
+            system.add_window_after_selection(layout, window);
+        }
+        for &window in &a[1..] {
+            assert!(system.select_window(layout, window));
+            system.toggle_fold_of_selection(layout, Direction::Left);
+        }
+        assert!(system.select_window(layout, a[0]));
+        kai_s_frames(&system, layout);
+        assert_eq!(shape(&system, layout), vec![a.clone(), vec![b]]);
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+        (system, layout, a, b)
+    }
+
+    /// Landing right of the stack panned the strip a column, 0 to 862.5, the rows leaving left and
+    /// B right. In the stack's place nothing scrolls and everything else moves right of it.
+    #[test]
+    fn maximizing_in_a_left_stack_does_not_scroll_the_strip() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                let (mut system, layout, a, b) = a_stack_on_the_left(rows);
+                assert!(system.select_window(layout, a[row]));
+                let before = kai_s_frames(&system, layout);
+                let case = format!("row {row} of {rows}");
+
+                assert!(system.toggle_full_width(layout, a[row]));
+                kai_s_frames(&system, layout);
+                let mut rest = a.clone();
+                rest.remove(row);
+                assert_eq!(shape(&system, layout), vec![vec![a[row]], rest.clone(), vec![b]], "{case}");
+                assert_eq!(scroll_offset(&system, layout), 0.0, "{case}");
+                assert_eq!(laid_out_xw(&system, layout, a[row]), (3.0, 1722.0), "{case}");
+                for window in rest.into_iter().chain(std::iter::once(b)) {
+                    assert!(laid_out_xw(&system, layout, window).0 >= 1728.0, "{case}: {window:?}");
+                }
+                assert!(system.toggle_full_width(layout, a[row]));
+
+                assert_same_frames(&kai_s_frames(&system, layout), &before);
+                assert_eq!(shape(&system, layout), vec![a.clone(), vec![b]], "{case}");
+            }
+        }
+    }
+
+    // ── folds, full width and the stacks they left ──────────────────────────
+
+    /// A strip on Kai's display with these columns, windows `wid(1, n)` top to bottom, each stack
+    /// made by folding its rows in from the right, the last window selected and laid out.
+    fn a_strip(columns: &[&[u32]]) -> (ScrollingLayoutSystem, LayoutId) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        for &idx in columns.iter().flat_map(|column| column.iter()) {
+            system.add_window_after_selection(layout, wid(1, idx));
+        }
+        for column in columns {
+            for &idx in &column[1..] {
+                assert!(system.select_window(layout, wid(1, idx)));
+                system.toggle_fold_of_selection(layout, Direction::Left);
+            }
+        }
+        kai_s_frames(&system, layout);
+        let want: Vec<Vec<WindowId>> = columns
+            .iter()
+            .map(|column| column.iter().map(|&idx| wid(1, idx)).collect())
+            .collect();
+        assert_eq!(shape(&system, layout), want, "fixture");
+        (system, layout)
+    }
+
+    fn ids(columns: &[&[u32]]) -> Vec<Vec<WindowId>> {
+        columns.iter().map(|column| column.iter().map(|&idx| wid(1, idx)).collect()).collect()
+    }
+
+    /// No window is full width in a column it shares, and every window of a column is its width.
+    fn assert_full_width_alone(system: &ScrollingLayoutSystem, layout: LayoutId) {
+        let frames = kai_s_frames(system, layout);
+        for column in shape(system, layout) {
+            if column.len() > 1 {
+                for &window in &column {
+                    assert!(!system.is_window_full_width(layout, window), "{window:?} in {column:?}");
+                }
+            }
+            let widths: Vec<f64> =
+                column.iter().map(|&window| frame_for(&frames, window).size.width).collect();
+            assert!(widths.iter().all(|&width| width == widths[0]), "{column:?} at {widths:?}");
+        }
+    }
+
+    /// [A1,A2][B1]: A2 folded out, then maximized and restored, stays the column the fold made.
+    #[test]
+    fn a_full_width_toggle_does_not_send_a_folded_out_window_back_into_its_stack() {
+        let (mut system, layout) = a_strip(&[&[1, 2], &[3]]);
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[2], &[3]]));
+
+        maximize_and_restore(&mut system, layout, wid(1, 2));
+
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[2], &[3]]));
+        assert!(!system.is_window_full_width(layout, wid(1, 2)));
+    }
+
+    /// [A1,A2][B1][C1]: A2 folded out and moved two columns right folds into C1, the column on its
+    /// left, rather than jumping back past C1 and B1 into A1.
+    #[test]
+    fn a_fold_in_returns_to_its_row_only_from_the_neighbour_on_the_key_s_side() {
+        let (mut system, layout) = a_strip(&[&[1, 2], &[3], &[4]]);
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        for _ in 0..2 {
+            assert!(system.move_selection(layout, Direction::Right));
+        }
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[3], &[4], &[2]]));
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[3], &[4, 2]]));
+    }
+
+    /// [Z][A1,A2][B1] with A2 full width: either fold key ends full width where it is and folds A2
+    /// into the neighbour on its side as an ordinary column.
+    #[test]
+    fn a_fold_on_a_full_width_window_ends_full_width_and_folds_it() {
+        for (side, want) in [
+            (Direction::Left, ids(&[&[1, 3], &[2], &[4]])),
+            (Direction::Right, ids(&[&[1], &[2, 3], &[4]])),
+        ] {
+            let (mut system, layout) = a_strip(&[&[1], &[2, 3], &[4]]);
+            assert!(system.toggle_full_width(layout, wid(1, 3)));
+            kai_s_frames(&system, layout);
+            assert_eq!(shape(&system, layout), ids(&[&[1], &[3], &[2], &[4]]));
+
+            assert_eq!(system.toggle_fold_of_selection(layout, side), vec![wid(1, 3)]);
+
+            assert_eq!(shape(&system, layout), want, "{side:?}");
+            assert_full_width_alone(&system, layout);
+            let state = system.layout_state(layout).expect("layout");
+            assert!(!state.full_width_origins.contains_key(&wid(1, 3)), "{side:?}");
+        }
+    }
+
+    /// [A1,A2] with A2 full width: nothing is on its left, so the left key leaves it full width with
+    /// its way back into A1's stack.
+    #[test]
+    fn a_fold_with_no_column_on_that_side_leaves_a_full_width_window_as_it_is() {
+        let (mut system, layout) = a_strip(&[&[1, 2]]);
+        assert!(system.toggle_full_width(layout, wid(1, 2)));
+        assert_eq!(shape(&system, layout), ids(&[&[2], &[1]]));
+
+        assert!(system.toggle_fold_of_selection(layout, Direction::Left).is_empty());
+        assert_eq!(shape(&system, layout), ids(&[&[2], &[1]]));
+        assert!(system.is_window_full_width(layout, wid(1, 2)));
+
+        assert!(system.toggle_full_width(layout, wid(1, 2)));
+        assert_eq!(shape(&system, layout), ids(&[&[1, 2]]));
+    }
+
+    /// B1 folded into a full-width A1, by the end of its column or back into the row it was folded
+    /// out of: A1's full width ends where it is and both are the column's width.
+    #[test]
+    fn a_window_folded_into_a_full_width_column_ends_its_full_width() {
+        let (mut system, layout) = a_strip(&[&[1], &[2]]);
+        assert!(system.toggle_full_width(layout, wid(1, 1)));
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), ids(&[&[1, 2]]));
+        assert_full_width_alone(&system, layout);
+
+        let (mut system, layout) = a_strip(&[&[1, 2]]);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert!(system.toggle_full_width(layout, wid(1, 1)));
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), ids(&[&[1, 2]]));
+        assert_full_width_alone(&system, layout);
+    }
+
+    /// `toggle-stack` with a full-width window on either end of it.
+    #[test]
+    fn stacking_with_a_full_width_window_ends_its_full_width() {
+        for maximized in [1, 2] {
+            let (mut system, layout) = a_strip(&[&[1], &[2]]);
+            assert!(system.toggle_full_width(layout, wid(1, maximized)));
+            assert!(system.select_window(layout, wid(1, 2)));
+            system.apply_stacking_to_parent_of_selection(layout);
+            assert_eq!(shape(&system, layout), ids(&[&[1, 2]]), "{maximized}");
+            assert_full_width_alone(&system, layout);
+        }
+    }
+
+    /// [A][B1,B2] with A full width, swapped with B1 either way round.
+    #[test]
+    fn a_swap_into_a_shared_column_ends_full_width() {
+        for swapped in [(1, 2), (2, 1)] {
+            let (mut system, layout) = a_strip(&[&[1], &[2, 3]]);
+            assert!(system.toggle_full_width(layout, wid(1, 1)));
+            assert!(system.swap_windows(layout, wid(1, swapped.0), wid(1, swapped.1)));
+            assert_eq!(shape(&system, layout), ids(&[&[2], &[1, 3]]), "{swapped:?}");
+            assert_full_width_alone(&system, layout);
+        }
+    }
+
+    /// B1 out of a right stack with `Mod+Comma`, `Mod+Period` from the last column does nothing,
+    /// and `Mod+Comma` still folds it back on top with the strip where it was.
+    #[test]
+    fn a_fold_that_does_nothing_keeps_the_row_and_the_view_the_fold_back_returns_to() {
+        let (mut system, layout, a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[0]));
+        let before = kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_fold_of_selection(layout, Direction::Right).is_empty());
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    /// [Z][A][B1,B2][C], B2 out by `Mod+Comma` and swapped with A by a drag, which scrolls nothing,
+    /// then in by `Mod+Period` into B1's row: the stack's view was the other key's to return to, so
+    /// the strip scrolls only as far as it must and the stack lands at x=3, not back at x=866.
+    #[test]
+    fn folding_back_into_the_row_with_the_other_key_folds_back_by_the_reveal() {
+        let (mut system, layout) = a_strip(&[&[1], &[2], &[3, 4], &[5]]);
+        for window in [wid(1, 1), wid(1, 4)] {
+            assert!(system.select_window(layout, window));
+            kai_s_frames(&system, layout);
+        }
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 4)), (866.0, 860.0));
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        assert!(system.swap_windows(layout, wid(1, 4), wid(1, 2)));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Right);
+
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[3, 4], &[2], &[5]]));
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 4)), (3.0, 860.0));
+    }
+
+    // ── a window's id replaced while away ───────────────────────────────────
+
+    /// B1 out of [A][B1,B2] by `Mod+Comma` and back, with `renamed` given a new id in between: B1
+    /// goes back on top and the strip back to 0.
+    fn fold_round_trip_renaming(renamed: usize) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+        let (mut system, layout, a, mut b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[0]));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        let new = wid(2, 1);
+        system.replace_window(b[renamed], new);
+        b[renamed] = new;
+        assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![b[0]]);
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
+        assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0));
+        (system, layout, b)
+    }
+
+    #[test]
+    fn a_folded_out_window_given_a_new_id_folds_back_into_its_row() {
+        fold_round_trip_renaming(0);
+    }
+
+    #[test]
+    fn a_fold_back_finds_its_row_when_the_window_it_sat_above_has_a_new_id() {
+        fold_round_trip_renaming(1);
+    }
+
+    /// A on Kai's thirds, given a new id while full width, or between the toggle back and its pass.
+    #[test]
+    fn a_full_width_window_given_a_new_id_restores_to_the_view_it_left() {
+        for before_the_pass in [false, true] {
+            let (mut system, layout, w) = kai_s_thirds();
+            let new = wid(2, 1);
+            assert!(system.toggle_full_width(layout, w[1]));
+            kai_s_frames(&system, layout);
+            if before_the_pass {
+                assert!(system.toggle_full_width(layout, w[1]));
+                system.replace_window(w[1], new);
+            } else {
+                system.replace_window(w[1], new);
+                assert!(system.toggle_full_width(layout, new));
+            }
+
+            assert_eq!(laid_out_xw(&system, layout, new), (578.0, 572.0), "{before_the_pass}");
+        }
+    }
+
+    /// A layout file from before the two maps holds one `stack_origins`: it loads, its strip intact
+    /// and the old origins dropped.
+    #[test]
+    fn a_layout_saved_with_the_shared_origins_still_loads() {
+        let (mut system, layout) = a_strip(&[&[1, 2], &[3]]);
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        let state = system.layout_state(layout).expect("layout");
+        let saved = ron::ser::to_string(state).expect("serialize");
+        assert!(saved.contains("full_width_origins:{},fold_origins:{"), "{saved}");
+        let old = saved.replace("full_width_origins:{},", "").replace("fold_origins:", "stack_origins:");
+
+        let loaded: super::LayoutState = ron::from_str(&old).expect("a file from before loads");
+
+        assert_eq!(loaded.columns.len(), 3);
+        assert!(loaded.fold_origins.is_empty());
+        assert!(loaded.full_width_origins.is_empty());
+    }
+
+    // ── the app answering rini's write ──────────────────────────────────────
+
+    /// The app reporting `window`'s frame from the pass before, `short` narrower and lower, then a
+    /// pass.
+    fn answer(system: &mut ScrollingLayoutSystem, layout: LayoutId, window: WindowId, short: (f64, f64)) {
+        answer_under(system, layout, window, short, &constraints_none());
+    }
+
+    /// `answer`, with every pass laid out under the windows' own `limits`, which the app holds its
+    /// answer to as well.
+    fn answer_under(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        window: WindowId,
+        short: (f64, f64),
+        limits: &HashMap<WindowId, WindowLayoutConstraints>,
+    ) {
+        let frame = frame_for(&kai_s_frames_under(system, layout, limits), window);
+        let own = limits.get(&window).copied().unwrap_or_default();
+        let size = CGSize::new(
+            (frame.size.width - short.0).max(own.min_width),
+            (frame.size.height - short.1).max(own.min_height),
+        );
+        let report = CGRect::new(frame.origin, size);
+        system.on_window_resized(layout, window, None, report, 0.0, KAI_SCREEN, &kai_s_gaps());
+        kai_s_frames_under(system, layout, limits);
+    }
+
+    fn kai_s_frames_under(
+        system: &ScrollingLayoutSystem,
+        layout: LayoutId,
+        limits: &HashMap<WindowId, WindowLayoutConstraints>,
+    ) -> Vec<(WindowId, CGRect)> {
+        system.calculate_layout(layout, KAI_SCREEN, limits, &tile::Borders::default(), &kai_s_gaps())
+    }
+
+    /// `window` at least 900pt wide, more than a half column's 860.
+    fn at_least_900_wide(window: WindowId) -> HashMap<WindowId, WindowLayoutConstraints> {
+        let mut limits = constraints_none();
+        let wide = WindowLayoutConstraints { is_resizable: true, min_width: 900.0, ..Default::default() };
+        limits.insert(window, wide);
+        limits
+    }
+
+    fn assert_no_size_given(system: &ScrollingLayoutSystem, layout: LayoutId) {
+        for column in &system.layout_state(layout).expect("layout").columns {
+            assert!(!column.width_overridden, "{column:?}");
+            assert!(!column.height_overridden, "{column:?}");
+        }
+    }
+
+    #[test]
+    fn a_report_answers_the_slot_as_drawn_within_a_point() {
+        assert!(answers_slot(860.0, 859.5));
+        assert!(answers_slot(859.0, 859.5));
+        assert!(answers_slot(861.0, 859.5));
+        assert!(!answers_slot(858.0, 859.5));
+        assert!(answers_slot(367.0, 368.333));
+        assert!(!answers_slot(366.0, 368.333));
+    }
+
+    /// A1 of [A1,A2,A3] and B of [A][B]. Ghostty's 1pt short in height used to come back as a width
+    /// of 859, and the stack's even split as pixel heights of [367, 369, 369].
+    #[test]
+    fn a_report_of_the_frame_rini_gave_changes_nothing() {
+        let shortfalls = [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (-1.0, -1.0)];
+        for (columns, window) in [(&[&[1, 2, 3][..]][..], wid(1, 1)), (&[&[1][..], &[2][..]][..], wid(1, 2))] {
+            for short in shortfalls {
+                let (mut system, layout) = a_strip(columns);
+                assert!(system.select_window(layout, window));
+                let before = kai_s_frames(&system, layout);
+                let offset = scroll_offset(&system, layout);
+
+                answer(&mut system, layout, window, short);
+
+                assert_same_frames(&kai_s_frames(&system, layout), &before);
+                assert_eq!(scroll_offset(&system, layout), offset, "{columns:?} {short:?}");
+                assert_no_size_given(&system, layout);
+            }
+        }
+    }
+
+    #[test]
+    fn an_axis_the_app_answered_stays_while_the_other_is_taken() {
+        let (mut system, layout) = a_strip(&[&[1, 2, 3]]);
+        assert!(system.select_window(layout, wid(1, 1)));
+
+        answer(&mut system, layout, wid(1, 1), (1.0, 50.0));
+
+        let column = &system.layout_state(layout).expect("layout").columns[0];
+        assert!(!column.width_overridden);
+        assert!(column.height_overridden);
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 1)), (3.0, 860.0));
+        assert_eq!(laid_out_yh(&system, layout, wid(1, 1)), (3.0, 318.0));
+    }
+
+    /// Each row of [A][B1,B2] and [A][B1,B2,B3] folded out and back ten times by either key, the
+    /// moved window answering every pass with its frame or 1pt short of it. The answer to the
+    /// fold-out used to drop the view the fold back returns to, and every answer to narrow the
+    /// column by a point and turn the even split into pixel heights.
+    #[test]
+    fn ten_fold_round_trips_answered_by_the_app_leave_the_stack_as_it_was() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                for side in [Direction::Left, Direction::Right] {
+                    for short in [(0.0, 0.0), (0.0, 1.0)] {
+                        let (mut system, layout, a, b) = a_stack_on_the_right(rows);
+                        assert!(system.select_window(layout, b[row]));
+                        let before = kai_s_frames(&system, layout);
+                        let shape_before = shape(&system, layout);
+
+                        for _ in 0..10 {
+                            for _ in 0..2 {
+                                assert_eq!(system.toggle_fold_of_selection(layout, side), vec![b[row]]);
+                                answer(&mut system, layout, b[row], short);
+                            }
+                        }
+
+                        let case = format!("row {row} of {rows}, {side:?}, {short:?}");
+                        assert_eq!(shape(&system, layout), shape_before, "{case}");
+                        assert_same_frames(&kai_s_frames(&system, layout), &before);
+                        assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0), "{case}");
+                        assert_no_size_given(&system, layout);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_width_taken_leaves_the_height_the_app_answered() {
+        let (mut system, layout) = a_strip(&[&[1, 2, 3]]);
+        assert!(system.select_window(layout, wid(1, 1)));
+        let rows = laid_out_yh(&system, layout, wid(1, 1));
+
+        answer(&mut system, layout, wid(1, 1), (50.0, 1.0));
+
+        let column = &system.layout_state(layout).expect("layout").columns[0];
+        assert!(column.width_overridden);
+        assert!(!column.height_overridden);
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 1)), (3.0, 810.0));
+        assert_eq!(laid_out_yh(&system, layout, wid(1, 1)), rows);
+    }
+
+    /// B of [A][B][C], centred and held to 900pt by its own minimum, given 899 and answering with
+    /// its 900: the slot was counted without the minimum, 860, so the answer was taken as a width
+    /// and its scroll request dropped the centring.
+    #[test]
+    fn a_window_held_to_its_minimum_answers_by_it_and_changes_nothing() {
+        let (mut system, layout) = a_strip(&[&[1], &[2], &[3]]);
+        let limits = at_least_900_wide(wid(1, 2));
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.center_selected_column(layout);
+        let before = kai_s_frames_under(&system, layout, &limits);
+        assert_eq!(frame_for(&before, wid(1, 2)).size.width, 899.0);
+
+        answer_under(&mut system, layout, wid(1, 2), (0.0, 0.0), &limits);
+
+        assert_same_frames(&kai_s_frames_under(&system, layout, &limits), &before);
+        assert_no_size_given(&system, layout);
+    }
+
+    /// [A][B1,B2] with B2 held to 900pt, folded out and back by `Mod+Comma`, answering each pass:
+    /// A1 came back at x=-860 rather than the -36 it left.
+    #[test]
+    fn a_fold_round_trip_of_a_window_held_to_its_minimum_puts_the_strip_back() {
+        let (mut system, layout, a, b) = a_stack_on_the_right(2);
+        let limits = at_least_900_wide(b[1]);
+        assert!(system.select_window(layout, b[1]));
+        let before = kai_s_frames_under(&system, layout, &limits);
+
+        for _ in 0..2 {
+            assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![b[1]]);
+            answer_under(&mut system, layout, b[1], (0.0, 0.0), &limits);
+        }
+
+        assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
+        assert_same_frames(&kai_s_frames_under(&system, layout, &limits), &before);
+    }
+
+    /// B of [A][B][C] centred, maximized and restored, then the app's answer to the restore: the
+    /// answer's scroll request used to drop the centring, and B went flush left.
+    #[test]
+    fn a_centred_column_keeps_its_centring_through_its_own_report() {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+        for window in w {
+            system.add_window_after_selection(layout, window);
+        }
+        assert!(system.select_window(layout, w[1]));
+        system.center_selected_column(layout);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (434.0, 860.0));
+
+        maximize_and_restore(&mut system, layout, w[1]);
+        answer(&mut system, layout, w[1], (0.0, 1.0));
+
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
+    }
+
+    /// A drag is the user's, not an answer: a point's drag of the right edge is a point wider.
+    #[test]
+    fn a_one_point_drag_still_gives_the_width() {
+        let (mut system, layout, w) = kai_s_strip();
+
+        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(600.0, 883.0));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 883.0));
     }
 
     /// A border inside each tiled window's slot: the strip is laid out from the slots as with no

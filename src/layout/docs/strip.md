@@ -21,10 +21,11 @@ is borrowed.
   answers `Full` or `Ratio` and the caller applies the matching transition.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
   keys both do it, and the window stays where it is rather than going back to
-  the stack `ctrl-F` pulled it out of: `StackOrigin` is FORGOTTEN, not kept. A
-  kept one turned the next `ctrl-F` pair into a teleport — maximizing an already
-  lone window records no new origin, so the press that unmaximized it read the
-  stale one and dropped the window into a stack untouched since.
+  the stack `ctrl-F` pulled it out of: its `full_width_origins` entry is
+  FORGOTTEN, not kept. A kept one turned the next `ctrl-F` pair into a teleport —
+  maximizing an already lone window records no new origin, so the press that
+  unmaximized it read the stale one and dropped the window into a stack untouched
+  since.
 - **A key never moves a width against its direction.** A grow at or above
   `max-column-width` and a shrink at or below `min-column-width` do nothing,
   because the bound would pull the width back across itself. Growing a
@@ -119,15 +120,28 @@ is borrowed.
   asked for.
 - **Maximizing a stacked window pulls it out of the stack.** It fills the tiling
   area, which would otherwise cover the siblings sharing its column while the
-  tree still claimed they were abreast. It becomes its own column immediately to
-  the right, and a second press puts it back beside the neighbour it left
-  (`StackOrigin`). Every route in maximizes the same way — the key, the width
-  cycle, an app's title-bar zoom, and restoring a remembered full width at
-  startup. A neighbour is remembered rather than a row index, because
+  tree still claimed they were abreast. It becomes its own column in the
+  stack's place, the stack one column right (`split_out` toward `Left`), and a
+  second press puts it back beside the neighbour it left (`full_width_origins`). Landing
+  right of the stack, as it did, panned the strip one column for a stack flush
+  left, 0 to 862.5 on Kai's halves, with the siblings leaving left and the next
+  column right, and two for a stack on the right, 0 to 1725. In the stack's place
+  a stack flush left does not scroll, everything after it moves right, and a
+  right stack scrolls one column. Every route in maximizes the same way — the
+  key, the width cycle, an app's title-bar zoom, and restoring a remembered full
+  width at startup. A neighbour is remembered rather than a row index, because
   while the window is maximized its old column can move along the strip or
   change size. If every window it could return to has closed, it stays the
   column it became rather than being put somewhere the user never had it.
   The move rides the ordinary layout pass, so it animates like a join or unjoin.
+- **A maximized window is alone in its column.** A window that comes to share a
+  full-width column ends that column's full width where it is, as a width given
+  does (`keep_full_width_alone`, after a fold-in, a `toggle-stack` join, a full
+  width's own toggle back and a swap). Folding a maximized window in is the same
+  rule from the other end. Nothing stopped either before: on [A1,A2][B1] with A2
+  maximized, the left fold key put A2 back into A1's column still maximized, A2
+  at (3,3,1722,1074) over A1 at (3,3,1722,536), and folding B1 into a maximized
+  A1 drew B1 1722 wide over A1's lower half.
 - **Inner gaps are absorbed into the column width so N columns of ratio 1/N
   fit.** Without it two 0.5 columns need `2*(0.5*W) + gap`, one gap more than
   the viewport; the second column is never fully visible, reveal-on-demand
@@ -150,6 +164,28 @@ is borrowed.
 - **Changing a width rescrolls to keep the column visible.** Every column start
   after it moves, so a window at the right edge grew off screen and the key
   looked dead until a focus nudge forced a reveal.
+- **The way back from full width puts the strip back instead.** Both ways the
+  toggle ran the one neutral reveal from wherever the strip was, so a column
+  came back flush left whatever x it had left, and a centred column lost its
+  centring to the reveal: Kai's thirds on 2026-10-09 had A at x=578, back at
+  x=3 with 575pt empty on the right. Under `"never"`, entering full width keeps
+  how the last pass showed the column (`View`, in a `KeptView` naming the
+  toggle that took it, as a fold-out does; see "Joining"): centred, or its
+  start against the scroll offset, read from `last_selected_rel_px` only when
+  that pass had the window selected (`last_selected_rel_of`), because a
+  title-bar zoom can name a window that was not. For a window pulled out of a
+  stack that is the stack's column. The way back restores the centre override,
+  or pins the start (`Pin::Start`), which the next pass applies where it applies
+  a kept right edge (see "Mouse resize"). A start rather than a scroll offset, so the column keeps
+  its x through a width change elsewhere in the strip that scrolls nothing. Any
+  scroll drops it (`LayoutState::unpin`): the four scroll requests, a strip
+  scroll or snap, a window closing, a width given. Refocusing the window keeps
+  it, as the app's own resize while full width does by returning before any
+  request. Once a pass has spent the pin, refocusing reveals as for any column:
+  a restore can put the column back off screen, and the spent pin still named
+  the window, so the click that should show it did nothing. Only the toggle keeps a view for full width: `ctrl-R` reaching full
+  width, the startup restore and a drag across the viewport come back by the
+  reveal.
 
 ## Navigation
 
@@ -205,8 +241,29 @@ mechanisms:
   the column on its left came FROM that column's right, so that is where the left
   key puts it back. The other key unfolds too, to its own side — each key is the
   inverse of itself, not of the other one.
-- **Folding IN prefers the row it was folded out of** (`StackOrigin`) over
-  appending to the end, so the rows keep their order as well as the columns.
+- **Folding IN prefers the row it was folded out of** (`fold_origins`) over
+  appending to the end, so the rows keep their order as well as the columns. Only
+  from the neighbour on the key's side, the column the fold-out left: anywhere
+  else the window joins that neighbour at the bottom, as a window that was never
+  folded does. Fold and full width shared one record before, so a window folded
+  out of [A1,A2] and maximized went back into A1 on the second `ctrl-F`, and one
+  folded out of [A1,A2][B1][C1] and moved two columns right jumped back past C1
+  and B1 into A1 on the left key. Each now keeps its own, and a fold-in spends
+  only the fold's. A fold with no column on its side changes nothing, the record
+  and the view kept included.
+
+**The same key twice puts the view back too.** From a right stack `Mod+Comma`
+lands the fold-out right of the stack and the reveal scrolls one column, 0 to
+862.5 on Kai's halves. The fold back revealed from there, so A1 stayed at
+x=-860 with half the viewport empty. `Mod+Period` lands it in the stack's
+place and scrolls nothing, and the same rule holds for it. Under `"never"` the
+fold-out keeps the stack's view as the full-width toggle does (`KeptView`, by
+`Toggle::Fold` with the key's side, read before the fold's own reveal), and only
+the fold-in of that window by the same key spends it. Refocusing the window
+keeps it, as for full width. The other key, or any scroll in between, drops it,
+and the fold back reveals as before. The other key folding into a column that is
+not the row's drops it by that fold's own scroll; into the row, which a drag swap
+can bring beside the window without scrolling, by the key the view names.
 
 There is no falling back to the other side at the ends of the strip. With both
 keys bound, that would make them agree in the first and last columns, which is
@@ -274,7 +331,8 @@ decoration. Each window of a stack is inset by its own, inside slots laid out as
   each limit a window reports (`tile::slot_limits`); counted without it, a window's minimum would
   leave the slot 2·border short, and the window would be clamped below its own minimum.
 - **Reports come back once, as slots.** `on_window_resized` reads the report and the drag's start
-  as slots on entry (`tile::slot_of`), so the dragged side, the dragged width, the ratio, the heights
+  as slots on entry (`tile::slot_of`), so the dragged side, the dragged width, the ratio
+  (`constraints::ratio_of_column_width`, see "Mouse resize"), the heights
   a stacked edge trades and the right edge a left-edge drag keeps are all a slot's, and a dragged
   column keeps its slot width whole: the window lands where it was let go. The reactor's
   `DragSession::start_frame` stays the window's frame.
@@ -308,18 +366,20 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   A bounded column's x and width are rounded each on its own, so a column flush with the viewport's
   right edge can stand a point past it, and the pin keeps that point. Checked as any reveal, the
   right edge was pulled back by it and the released window slid 1pt left. The point stands until the
-  next neutral reveal of that column, an app's own resize of it for one, which pulls the strip 1pt
-  left then.
-- **The pin is spent by one pass and belongs to one window.** Every scroll request clears it, and the
-  pass applies it only while the window it names is still selected: `remove_window` moves the
-  selection without any request, and a focus change before the release must not drag the next
-  column to the old right edge. Under `center-focused-column "always"` no pin is set, because the
+  next neutral reveal of that column, an app's own resize of it that changes its width for one,
+  which pulls the strip 1pt left then; an app answering rini's write is no reveal ("An app answering
+  rini's write changes nothing").
+- **The pin is spent by one pass and belongs to one window.** Every scroll clears it, a window
+  closing included (`LayoutState::unpin`), and the pass applies it only while the window it names is
+  still selected, so a selection moved without a scroll never drags the next column to the old right
+  edge. Under `center-focused-column "always"` no pin is set, because the
   centring places the column.
 - **The release focuses the resized window, and that keeps the pin.** The mouse-up sends a focus
   event ahead of its passes. After a resize it names the session's window, not the hit test's: the
   cursor lets go on the edge, where the column behind can answer. `select_window` on the window
-  already selected issues no scroll request while a pin names it, as it keeps a centre override;
-  the request would have cleared the pin before the only pass that reads it.
+  already selected issues no scroll request while a pin no pass has spent names it, as it keeps a
+  centre override and the view a toggle back returns to; the request would have cleared the pin
+  before the only pass that reads it.
 - **A centred column takes twice the travel.** Centring moves both edges by half of any change, so
   the column takes the start width plus twice the dragged edge's travel (`edge_drag::dragged_width`)
   and the dragged edge ends under the cursor. niri doubles the delta the same way while it centres
@@ -344,7 +404,7 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   moves the top or bottom edge leaves the heights and `height_overridden` alone. It used to mark the
   column as deliberately split, so a window folded back into it kept the 1.0 weight its own column
   held and ended 1pt high. An app's own height, with no drag, still comes out of the other rows in
-  proportion.
+  proportion, unless it answers the row's height ("An app answering rini's write changes nothing").
 - **Not taken from niri: the whole column sharing a stacked edge.** niri refuses only the topmost
   window's top edge (`niri:src/layout/scrolling.rs:3635-3650`). Every other top or bottom edge goes
   through `set_window_height` (`niri:src/layout/scrolling.rs:5045-5124`), which fixes the dragged
@@ -373,6 +433,24 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   clamp there would undo the drag. The mark is saved with the column and carried with the width
   (`ColumnWidth::Dragged`, which the file holds as an `Offset` with the drag beside it, as
   `src/workspaces/docs/launch-memory.md` says); a key or a preset clears it.
+- **An app answering rini's write changes nothing.** The reactor drops a report within 0.1pt of
+  rini's write before the layout sees it (`same_as`). A report off on one axis, a terminal snapping
+  its height to its cell grid for one, still carried the other, and both were taken: the width was
+  read as `width / viewport`, and `column_width` took the gap share out of that again, so Kai's
+  860pt half came back as 858.5, drawn at 859, a point narrower each time; the row's height became
+  pixel weights with `height_overridden` set; and the report's scroll request dropped the centre
+  override and the view a toggle back returns to. Now, with no drag, an axis within 1pt of the slot
+  the last pass gave the window changes nothing (a lone column's height is no row's), and a report
+  that changes neither returns before its scroll request. The pass records that slot for its
+  selection as it wrote it, after the windows' own limits (`last_selected_width_px`,
+  `last_selected_height_px`, measured for `last_selected_rel_of`); a slot worked out again from the
+  column's ratio missed those limits, so a window held to a 900pt minimum in an 860pt half answered
+  900 and was taken as a width, which dropped a centring and a fold's way back each time. A report
+  from a window the last pass did not select is taken. A width taken is read through
+  `constraints::ratio_of_column_width`, the inverse of `column_width`, so it is laid out as
+  reported: 982pt lands at 982, not 981. A drag is the user's, so it takes even a 1pt change. Not built: research suggested also ignoring
+  a report smaller than the slot by less than the window's own size step. rini reads no size step,
+  and it would undo a terminal settling 3pt under a dragged width, which is taken today.
 - **Full width and a drag.** A drag on a full-width column's left or right edge ends full width at
   the dragged width, through `leave_full_width_in_place`; anything else under full width, the app
   settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in

@@ -45,9 +45,23 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   everything else; it is not a separate mode and there is no fullscreen state.
 - A full-width column occupies the whole viewport, gap included. It MUST NOT leave a band of
   background down its side.
-- When the window is in a column stack, `ctrl-F` MUST pull it out of the stack and maximise both width
-  and height. Pressing again MUST put it back where it was, if that place still exists, and the move
-  MUST be animated both ways.
+- When the window is in a column stack, `Mod+F` MUST pull it out of the stack and maximise both
+  width and height. The full-width column MUST take the stack's place, the stack one column right,
+  so a stack at the left of the screen does not scroll the strip. Pressing again MUST put it back
+  where it was, if that place still exists, and the move MUST be animated both ways.
+- **Pressing again MUST put the strip back too**, for a stacked window or a lone one: its column at
+  the screen x it left, and a centred column centred again. Anything else that scrolls the strip in
+  between wins: focus moving to another column, a strip scroll or snap, a window opening or closing,
+  a move, centring, or a width given. The strip then scrolls only as far as it must to show the
+  column. So does it for a window that reached full width another way (`Mod+R`, a restart, a drag
+  across the screen) or was zoomed from its title bar without having focus. Once the strip is back,
+  focusing the window again MUST show it as it shows any column, even where the strip put it back
+  off screen.
+- **A full-width window MUST be alone in its column.** A fold key on it MUST end full width where it
+  is and fold it as it folds any lone window; with no column on that side it MUST change nothing. A
+  window that comes to share a full-width column, by a fold, `toggle-stack` or a drag swap, MUST end
+  that column's full width where it is. Either way the window is drawn the column's width, never the
+  viewport's over the windows below or above it.
 - A full-width window MUST come back full-width after a restart.
 - **Full width is the widest of the preset widths, not a state outside them.** `ctrl-R` MUST size a
   full-width window like any other, and MUST reach full width when the cycle comes round to it — even
@@ -75,6 +89,14 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   after the click. A double-click in a window's content or on another window, a drag that starts after
   the double-click, native fullscreen, and a floating window MUST each be handled exactly as with no
   double-click at all. `ctrl-F` or `ctrl-R` pressed after a double-click MUST keep the width it gave.
+
+> **Reported 2026-10-09.** "restoring windows back from full-size doesn't respect previous position
+> of a column, for example two columns on the screen, im expending a window from a column on the
+> left, but when i move back from a full size mode the column shift on the left", and "some of the
+> issues seem intermittent". Both ways, the toggle only scrolled as far as it had to to show the
+> column, from wherever full width had left the strip, so a column came back flush left whatever x
+> it had left, and a centred column lost its centring. It looked right only for a column that had
+> been flush left already, which is why it came and went.
 
 > **Reported 2026-09-30.** "when i double tap a window title to maximise it, rini doesn't pick up the
 > change and when i click to the window again it gets resized back to original rini's size. it should
@@ -156,9 +178,18 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A drag that never moves the top or bottom edge MUST leave the column's heights as they were. A
   column nobody resized vertically then still divides evenly when a window joins or leaves it.
 - A stacked edge dragged back to where it started MUST give the window across it its height back.
-- A window that resizes itself MUST keep its column where it was: the app's new width is taken and
-  its origin is not. Its new height is taken from the other windows in its column, in their
-  proportions.
+- A window that resizes itself MUST keep its column where it was: the app's new width is taken, laid
+  out at the width the app reported, and its origin is not. Its new height is taken from the other
+  windows in its column, in their proportions. A report within 1pt of the place rini gave the window
+  on an axis is the app answering rini's own write: it MUST change nothing on that axis, and a report
+  that changes neither axis MUST NOT scroll the strip, so a centred column stays centred and a fold
+  or full width still comes back to the view it left.
+
+> **Found 2026-10-09, not reported.** An app answering rini's write 1pt off on one axis had the other
+> axis read again with it. A half column's 860pt was read back as 860/1722 of the viewport and laid
+> out at 858.5, drawn at 859, a point narrower with every such answer. A stack's even split became
+> fixed heights, and the answer's scroll dropped a centred column's centring and the view a fold
+> back returns to. Ghostty snapping to its cell grid is the likely sender; not measured.
 
 > **Reported 2026-10-06.** "the left edge is finicky. i can reduce the size ok. and i can extend it
 > but it extends to the right not to the left. and when the right edge reaches the screen edge it
@@ -202,9 +233,26 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   the RIGHT. The two MUST be symmetric.
 - Folding MUST act on the focused window. It MUST NOT switch focus to another window and fold that one
   instead.
+- **A fold out and back in with the same key MUST put the strip back too**: the column at the screen
+  x it left, and a centred column centred again. Anything else that scrolls the strip in between
+  wins, as for full width, and so does folding back with the other key. The strip then scrolls only
+  as far as it must to show the column. Once back, focusing the window again MUST show it, as for
+  full width.
+- **A fold-in MUST return a window to the row it was folded out of only from the column it left**,
+  the neighbour on the key's side. Folded into any other column, it MUST join it at the bottom, as a
+  window that was never folded out does. A fold that has no column on its side MUST change nothing,
+  so the fold back by the key that folded the window out still finds its row and its strip.
+- **A full-width toggle MUST NOT send a folded-out window back into the stack it was folded out
+  of.** Full width puts back only what full width took.
 - A folded window MUST NOT be squashed to its title bar. A column's stored heights are either
   deliberate pixel heights from a vertical resize or the equal ratios a freshly folded column starts
   at, and the two MUST NOT be conflated.
+
+> **Found 2026-10-09, not reported.** Folding and full width shared one record of where a window
+> came from, and neither checked that a full-width window was alone. A window folded out of
+> [A1,A2] and maximized went back into A1 on the second `Mod+F`. One folded out of [A1,A2][B1][C1]
+> and moved two columns right jumped past C1 and B1 back into A1 on `Mod+Comma`. On [A1,A2][B1]
+> with A2 maximized, `Mod+Comma` put A2 back into A1's column still full width, drawn over A1.
 
 > **Reported 2026-09-22.** "The title collapse was not fixed — I tried a fresh new Ghostty terminal,
 > it squashed the window on the left to 0 again. Also trying to toggle unfold worked weirdly: I was in
