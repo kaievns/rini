@@ -466,15 +466,29 @@ changes is how the picture maps onto it (`content_mode` in
 - **A movement with a matching picture stretches.** Picture and frame are the
   same shape, so `kCAGravityResize` is exact. Strip movements always stretch,
   since their tiles never change size mid-flight.
-- **Everything else crops, anchored the way each axis really resizes.** A 2x2
-  grid of sublayers (`crop_pieces`), every piece mapped 1:1 via
-  `contentsRect`. Horizontally, content anchors LEFT and the right band —
-  carrying the window's right border and corners — rides the moving right
-  edge. Vertically, the TITLE BAR band stays pinned at the top and content
-  anchors to the BOTTOM (a terminal's prompt rides the bottom edge), so the
-  seam sits just below the title bar; cutting at the bottom instead read as
-  the window sliding into a slot. Content never stretches — the moving edges
-  swallow or reveal it — and all four rounded corners ride through intact,
+- **Everything else crops, standing still against the edge that moves less.**
+  A 3x3 grid of sublayers (`crop_pieces`): four corner pieces a band square,
+  four edge bands and the middle, every piece mapped 1:1 via `contentsRect`.
+  Per axis and per leg the content stands still against the edge that moves
+  less from the leg's first key to its last (`Anchors::of_leg`, the top or left
+  on a tie), the band on the other edge rides the moving edge, and the seam
+  that reveals or swallows content sits one band in from it. A top row growing
+  down or shrinking up stands against its top, the reveal at the bottom; a
+  bottom row growing up or shrinking down against its bottom, its title band
+  riding the top edge; a middle row against whichever edge moves less; a
+  window widening leftwards against its right. A new leg picks its anchors
+  again, a snap keeps them
+  (`a_new_leg_anchors_its_crop_again_and_a_snap_keeps_its_anchors`). The one
+  anchor before it, the title band pinned and the content bottom-anchored
+  whichever edge moved (ad0ee501, 2026-08-29, chosen because cutting a bottom
+  row at its bottom read as the window sliding into a slot), was right only
+  where the top edge moves: where the bottom edge moved, the content unrolled
+  from under the title band and its top rows were sliced out (recorded
+  2026-10-09 on a top row folding a window under it and on a top row
+  maximizing; Kai's report in `specs/animation.md` "Resizing"). Content never
+  stretches while the picture covers the frame; past the picture's side the
+  middle stretches what lies between its bands. All four rounded corners ride
+  through intact,
   under a hairline drawn at every size ("The hairline and the shadow, as drawn" in
   `src/decorations/docs/README.md`). A first cut used `contentsCenter` (nine-part
   stretching); it kept the corners but read as the window stretching, which
@@ -502,9 +516,10 @@ changes is how the picture maps onto it (`content_mode` in
   instead of snapping it. A retarget that no longer resizes takes away what the
   resize installed: left, its bounds went on to the old size under the new
   move and the tile snapped to its model when the old animation ended.
-- **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, so it
-  degrades continuously into a plain reveal as a frame approaches zero — no
-  seam pops mid-flight, no band ever wider than its frame.
+- **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, and no
+  more than half the picture's side, so it degrades continuously into a plain
+  reveal as a frame approaches zero — no seam pops mid-flight, no two bands
+  ever wider than their frame or their picture.
 - The caster's mask is created once per tile and reshaped in place; a
   resize animates its path and the shadow's silhouette between the two
   endpoint shapes, which interpolate because both are built by the same

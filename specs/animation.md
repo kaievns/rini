@@ -203,6 +203,31 @@ destination for a window already moving.
 > which no capture landing mid-flight replaced; the cache's pictures a flight drew were 1.6s old at
 > the median, measured 2026-10-02.
 
+## Resizing
+
+- A resizing window's content MUST stand still against the edge of each axis that moves less over
+  the movement, and MUST be clipped at the edge that moves: a window whose bottom edge moves, as a
+  top row growing down or shrinking up, keeps its top rows where they are and reveals or swallows
+  rows at its bottom; one whose top edge moves, as a bottom row growing up or shrinking down, keeps
+  its bottom rows where they are, its title bar riding the top edge; a window widening leftwards
+  keeps its right side where it is. Where both edges move, the one moving less holds the content,
+  the top or the left when they move alike. The window's edges and rounded corners MUST ride the
+  edges they belong to, whole.
+
+Not yet met: where a resizing window's picture does not cover its frame, its content is still
+stretched over the rest.
+
+> **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
+> really. or it's clipped in an akward place slicing the content. i regularly see clipping on
+> folding/unfolding animations going in a wrong direction, like for example a bottom stack window
+> expanding up but the clipping unfolding going down", "some of the issues seem intermittent".
+> Every resize was clipped one way, the title bar held at the top and the content held against the
+> bottom, whichever edge moved. Recorded the same day on Ghostty windows of numbered rows: a top row
+> folding a window under it showed its rows from 29 down under its title bar, the rows above them
+> sliced out, and a top row maximizing unrolled its content downward from under the title bar
+> instead of revealing rows at the bottom. A bottom row maximizing, the case Kai named, recorded as
+> this requires; what was seen there is not measured.
+
 ## Correctness the user can see
 
 - The frame written to a window is the layout's answer, never the animation's. A window parked off the
@@ -643,7 +668,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 ## Where it lives
 
 `src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
-depth bands, the edge bounce and the nudge. The looks
+depth bands, the edge bounce and the nudge; how a resizing tile is cropped and the edges it stands
+still against are `src/animation/domain/motion/tile.rs`. The looks
 (`src/animation/domain/choreography.rs`, Slide the default in
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
