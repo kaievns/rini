@@ -379,8 +379,10 @@ struct Shape {
     /// Held for and watched until they repaint: grows, stand-ins and reserved entrances.
     awaiting: Vec<WindowId>,
     /// Watched until they repaint and pictured where they end only once they have: windows resized,
-    /// held for if they grow, and windows flying from where they opened.
+    /// held for if they grow and kept if they shrink, and windows flying from where they opened.
     repainting: Vec<WindowId>,
+    /// Of `repainting`, the shrinks: their tiles keep the pictures they have to the lift.
+    kept: Vec<WindowId>,
 }
 
 /// One pass, composed: what `begin_group` poses or merges.
@@ -425,6 +427,7 @@ fn summary(
         focused_look,
         awaiting: shape.awaiting,
         repainting: shape.repainting,
+        kept: shape.kept,
         start: shape.start,
         duration: shape.duration,
         display,
@@ -1460,6 +1463,7 @@ impl FlightEngine {
             duration,
             awaiting: Vec::new(),
             repainting: Vec::new(),
+            kept: Vec::new(),
         };
         if !self.flights.coordinator().is_flying() {
             let requested = windows
@@ -1489,12 +1493,16 @@ impl FlightEngine {
         let mut entrances: Vec<PendingEntrance> = Vec::new();
         let mut awaiting: Vec<WindowId> = Vec::new();
         let mut repainting: Vec<WindowId> = Vec::new();
+        let mut kept: Vec<WindowId> = Vec::new();
         let mut waits = |window, end: EndPicture| {
             if end.holds() {
                 awaiting.push(window);
             }
             if end.repaints() {
                 repainting.push(window);
+            }
+            if end.keeps() {
+                kept.push(window);
             }
         };
         // Newly opened windows travelling from their spawn frame.
@@ -1694,6 +1702,7 @@ impl FlightEngine {
             shape: Shape {
                 awaiting,
                 repainting,
+                kept,
                 ..shape
             },
             entrances,
@@ -1960,6 +1969,7 @@ impl FlightEngine {
             duration,
             awaiting: Vec::new(),
             repainting: Vec::new(),
+            kept: Vec::new(),
         };
         if !self.flights.coordinator().is_flying() {
             let requested = windows
@@ -2468,6 +2478,7 @@ mod tests {
             duration: Duration::from_millis(300),
             awaiting,
             repainting: Vec::new(),
+            kept: Vec::new(),
         }
     }
 

@@ -133,7 +133,8 @@ state is watched. A layout pass then waits for the reactor's follow-up passes (2
 window, or draws one with no picture of its own, a reserved entrance or a stand-in, waits instead for
 that window to repaint (up to `HOLD_CAP`, and no longer for one whose picture the pictures service
 reports will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a window
-it only shrinks flies the picture it has at once ("A grow waits for its repaint"); a strip movement
+it only shrinks flies the picture it has at once and keeps it to the lift ("A grow waits for its
+repaint"); a strip movement
 moves at once.
 
 The coordinator hears every tile and frame in the window server's points (`Screen`), and says its
@@ -391,7 +392,8 @@ change watch then never saw change. The window losing focus is the watch's secon
 (`EndWatch::losing_focus`) when it ends wholly on screen and no pass resized or opened it. Either end
 resized or opened is watched only to repaint: a `Change` capture at its new size would show it half
 painted, and a band print taken at another width never matches, so the first capture there would
-count as its turn. Its macOS-drawn look turns with its repainted picture, or with the lift when none settles. The
+count as its turn. Its macOS-drawn look turns with its repainted picture, or with the lift when none
+settles or when the pass only shrank it, its tile keeping its picture from the press. The
 window losing focus, when watched, is captured in
 the same rounds, in the same call as the target where their kinds and frames allow, and done at its
 own change from its own frame-zero picture, out of its own tries, or at a refusal; the watch is done
@@ -427,8 +429,8 @@ change watch ran out first, and that hands focus over. If nothing has handed it 
 capture is asked, both tiles turn then, old then new, while the flight still moves: the window is
 reported focused, and a look that never showed a change (one already focused when the watch started,
 or an app whose title band looks the same either way) would otherwise turn at the lift. A target a
-layout pass opened, grew or flies as a stand-in hands over with its repainted picture, watched with no
-second end; a stand-in on a strip movement is pictured as it lands and hands over on its focus change
+layout pass opened, resized or flies as a stand-in hands over once it has repainted, watched with no
+second end, with its repainted picture, or, only shrunk, its hairline and shadow alone; a stand-in on a strip movement is pictured as it lands and hands over on its focus change
 or the final capture, as any target does. A
 target clipped by the display edge where it ends takes one ScreenCaptureKit capture through the hold, the
 only one a transition lets through: SkyLight returns only its visible sliver ("A clipped destination
@@ -801,15 +803,23 @@ so the flight starts with it on the crop grid on the leg's anchors and the movin
 content from its first frame. On the build that flew grows at once (journal n1, 2026-10-09, 6 flights)
 the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
 after the show: held, the motion starts about 160-225ms after the press. A window the pass only
-shrinks is `Repainting`: never held for, it moves once the follow-ups are in.
+shrinks is `EndPicture::Kept`, in `StageSummary::kept` as well: never held for, it moves once the
+follow-ups are in, and its tile flies its picture from the press to the lift. Crop-drawn on the
+leg's anchors, that picture covers every frame of a shrink, so there is no ground to cut from, and
+neither its repainted landing nor the last capture is swapped onto it (`Flight::kept`); on n1 each of
+5 shrinks had its repaint cut in 171-269ms after the press, and 2 flights cut the last capture in
+again at 325-350ms. Its landing still snaps the tile and hands focus over, its hairline and shadow
+turning; its macOS-drawn look turns with the lift. The latest pass to resize a window decides: a
+merged pass growing a kept window takes it out of `kept`, its landing swapped as a grow's with the
+motion already running, one shrinking it puts it in, and one only moving it leaves it as it was.
 
 Until its repainted picture lands, a tile flies the picture it has, crop-drawn on the leg's anchors,
 all of it 1:1, with the window's own ground where it does not cover the frame ("Resizes through the
-overlay" in `src/animation/docs/animation-smoothness.md`): a shrink until its repaint lands mid-run,
-and a grow only once its hold ran out, its growth the ground. A repainted picture landing in motion is
+overlay" in `src/animation/docs/animation-smoothness.md`): a grow only once its hold ran out, its
+growth the ground, and a shrink to the lift, its picture covering every frame. A repainted picture landing in motion is
 a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its content stands
-against the edges that move less, and where it does not cover the frame still to come, as a shrink's
-before the end, the ground fills the span by the moving edge
+against the edges that move less, and where it does not cover the frame still to come, as a
+mixed-axis grow's on its shrinking axis, the ground fills the span by the moving edge
 (`a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge`). On a grow that cut, from
 the ground to content, is what Kai saw as a flicker ("i'd rather take a lag of waiting for actual new
 window content than see a flicker", 2026-10-09): the hold leaves it to a grow that misses the cap.
@@ -821,8 +831,8 @@ and has nothing to re-key. Re-keying from the presented frame over the remaining
 the ease-out and the tile lurched at every swap. The flight keeps the windows its passes held for
 (`Flight::holds_for`), and holds only for those a watch can see (`Flight::holdable`); a grow that
 missed the cap is still repainting, so it is not pictured by the last capture until it has landed
-(`Flight::final_windows`), and one not repainted by the lift is not drawn: the lift shows the real
-window.
+(`Flight::final_windows`), a kept shrink never is, and one not repainted by the lift is not drawn:
+the lift shows the real window.
 
 The watch reads the window's server frame every 1ms until it is within 20pt of where it ends, a cheap
 window-server read, and reports it lost if it is not there `HOLD_CAP` (300ms) from the show. Once

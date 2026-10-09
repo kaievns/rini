@@ -129,8 +129,12 @@ pub struct StageSummary {
     pub awaiting: Vec<WindowId>,
     /// Windows this pass resizes, or opens to fly from where macOS first showed them, not painted at
     /// their new frames yet: watched until they repaint where they end, and pictured there only once
-    /// they have. Of them, only the grows are held for, in `awaiting` as well.
+    /// they have, the shrinks in `kept` never. Of them, only the grows are held for, in `awaiting` as
+    /// well.
     pub repainting: Vec<WindowId>,
+    /// Of `repainting`, the windows this pass only shrinks: their tiles keep the picture they have to
+    /// the lift, which covers every frame, and no picture of them where they end is drawn.
+    pub kept: Vec<WindowId>,
     pub start: Start,
     /// The motion's length: the press's own, and for a merge the score's when that is longer. A merge
     /// that moves anything restarts the clock with it.
@@ -417,11 +421,14 @@ struct Flight {
     /// repaints.
     awaiting: Vec<WindowId>,
     /// Of `awaiting`, the windows resized or flying from where macOS showed them, pictured where they
-    /// end only once they have repainted there.
+    /// end only once they have repainted there, those in `kept` never.
     repainting: Vec<WindowId>,
     /// Of `awaiting`, the windows a pass grew or drew with no picture of their own: what the overlay
     /// holds for before the motion starts.
     holds_for: Vec<WindowId>,
+    /// Of `repainting`, the windows the latest pass to resize them shrank: no picture of them where
+    /// they end is swapped onto their tiles, nor asked for by the last capture.
+    kept: Vec<WindowId>,
     /// The awaited windows the overlay still holds for before the motion starts.
     held: Vec<WindowId>,
     /// Every window this flight drew, across its merged passes, at the frame it last ended at: what
@@ -503,11 +510,15 @@ impl Flight {
     }
 
     /// The end windows the last capture before the lift pictures: never one resized or opened that
-    /// has not been pictured repainted where it ends, which a capture then would show half painted.
-    /// The lift shows that one as it is.
+    /// has not been pictured repainted where it ends, which a capture then would show half painted,
+    /// nor one kept, which keeps the picture it has. The lift shows either as it is.
     fn final_windows(&self) -> Vec<(WindowId, ScreenRect)> {
         let pictured = |window: &WindowId| self.landed.iter().any(|(w, _)| w == window);
-        self.stage.end_windows().into_iter().filter(|(w, _)| !self.repainting.contains(w) || pictured(w)).collect()
+        self.stage
+            .end_windows()
+            .into_iter()
+            .filter(|(w, _)| !self.kept.contains(w) && (!self.repainting.contains(w) || pictured(w)))
+            .collect()
     }
 
     /// Snaps `window`'s tile onto `frame` once per generation, once the motion has started: until
@@ -710,6 +721,7 @@ impl Coordinator {
             awaiting,
             repainting: stage.repainting.clone(),
             holds_for: stage.awaiting.clone(),
+            kept: stage.kept.clone(),
             stage,
             phase: Phase::Preparing { deadline: now + FRAME_ZERO_PATIENCE },
             clock: None,
@@ -744,6 +756,8 @@ impl Coordinator {
         extend_unique(&mut f.awaiting, stage.awaiting.iter().chain(&stage.repainting).copied());
         extend_unique(&mut f.repainting, stage.repainting.iter().copied());
         extend_unique(&mut f.holds_for, stage.awaiting.iter().copied());
+        f.kept.retain(|w| !stage.awaiting.contains(w) && !stage.repainting.contains(w));
+        extend_unique(&mut f.kept, stage.kept.iter().copied());
         let changed = changed_frames(&f.stage.final_frames, &stage.final_frames);
         let focus_moved = f.stage.focus != stage.focus;
         let newcomers = stage.awaiting.clone();
@@ -817,6 +831,9 @@ impl Coordinator {
             return;
         }
         let target = f.stage.focus == Some(window);
+        // A kept tile's picture stays: its landing snaps it and hands focus over, its hairline and
+        // shadow turning, and its own look turns with the lift.
+        let kept = f.kept.contains(&window);
         // The focus target's look changing is the handover; one resized or opened shows it repainted;
         // and the last capture before the lift shows it as it lands, if its change watch ran out first.
         let handover = target
@@ -840,11 +857,13 @@ impl Coordinator {
             if handover {
                 f.unfocus_losing(out);
             }
-            out.push(Command::Swap { generation, window });
+            if !kept {
+                out.push(Command::Swap { generation, window });
+            }
         }
         extend_latest(&mut f.landed, [(window, frame)].into_iter());
         f.snap(window, frame, out);
-        if target && why == Why::FocusChanged && !held {
+        if target && why == Why::FocusChanged && !held && !kept {
             out.push(Command::KeepFocusedLook { generation, window });
         }
         if handover && !held {
@@ -1432,7 +1451,7 @@ mod tests {
                         .map(|q| q.window)
                         .collect()
                 };
-                let (awaiting, repainting) = (ends(EndPicture::holds), ends(EndPicture::repaints));
+                let (awaiting, repainting, kept) = (ends(EndPicture::holds), ends(EndPicture::repaints), ends(EndPicture::keeps));
                 assert_eq!(awaiting.len(), rows as usize, "{case}: the stack's windows all grow");
                 let tiles: Vec<TileSummary> = (0..requests.len())
                     .filter_map(|i| {
@@ -1449,6 +1468,7 @@ mod tests {
                     key: Some(w(2 + maximized_row)),
                     awaiting,
                     repainting,
+                    kept,
                     display: screen,
                     ..pan()
                 };
@@ -2160,6 +2180,70 @@ mod tests {
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "mid-run");
         assert!(!has(&out, |c| *c == Command::StartMoving));
         assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "and once in, pictured");
+    }
+
+    /// A layout pass shrinking window 2: watched until it repaints, never held for, and kept, as
+    /// `EndPicture::Kept` sorts it.
+    fn shrink() -> (StageSummary, ScreenRect) {
+        let mut stage = pan();
+        stage.kind = Kind::LayoutPass;
+        stage.start = Start::Coalesced;
+        let shrunk = r(3.0, 35.0, 860.0, 537.0);
+        stage.tiles[1].end = shrunk;
+        stage.final_frames[1].1 = shrunk;
+        stage.repainting = vec![w(2)];
+        stage.kept = vec![w(2)];
+        (stage, shrunk)
+    }
+
+    /// A shrinking tile keeps its picture from the press to the lift: its repainted landing, or a
+    /// picture of its look turning, is not swapped, yet snaps the tile onto its window and hands focus
+    /// over, hairline and shadow, and the last capture before the lift leaves it out, landed or not.
+    #[test]
+    fn a_shrink_keeps_its_picture_to_the_lift_its_landing_snapping_and_handing_focus_over() {
+        let now = Instant::now();
+        let (stage, shrunk) = shrink();
+        let mut c = running(stage.clone(), now);
+        let tick = Event::Tick { settled: false, landed: false };
+        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "never held for");
+        let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
+        let others = Some(vec![stage.final_frames[0]]);
+        assert_eq!(asked_final(c.clone().on(tick.clone(), last)), others, "not landed");
+
+        let mut real = shrunk;
+        real.size.width += 1.0;
+        let pictured = |c: &mut Coordinator, why| {
+            let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: real, why }, now + Duration::from_millis(150));
+            assert!(!has(&out, |c| matches!(c, Command::Swap { .. } | Command::KeepFocusedLook { .. })), "{why:?}: {out:?}");
+            assert!(has(&out, |c| *c == Command::Snap { window: w(2), frame: to_overlay_space(real, DISPLAY) }), "{why:?}");
+            assert_eq!(focus(&out), handed_over(), "{why:?}");
+        };
+        pictured(&mut c.clone(), Why::FocusChanged);
+        pictured(&mut c, Why::Landed);
+        assert_eq!(asked_final(c.on(tick, last)), others, "landed");
+    }
+
+    /// The latest pass to resize a window decides whether its tile keeps its picture: shrunk, then
+    /// grown by a merged pass, its landing is swapped as a grow's; grown, then shrunk, it is kept; a
+    /// merged pass only moving a kept window leaves it kept.
+    #[test]
+    fn the_latest_pass_resizing_a_window_decides_whether_its_tile_keeps_its_picture() {
+        let now = Instant::now();
+        let ((shrinking, shrunk), (growing, grown)) = (shrink(), grow());
+        let mut moving = shrinking.clone();
+        moving.repainting.clear();
+        moving.kept.clear();
+        let swapped = |first: StageSummary, then: StageSummary, frame: ScreenRect| -> bool {
+            let mut c = running(first, now);
+            c.on(Event::Tick { settled: false, landed: false }, now + HOLD_CAP);
+            assert!(c.is_moving());
+            c.on(Event::Merge { stage: then, moved: true }, now + HOLD_CAP + Duration::from_millis(10));
+            let landed = Event::Picture { generation: c.generation(), window: w(2), frame, why: Why::Landed };
+            has(&c.on(landed, now + HOLD_CAP + Duration::from_millis(100)), |c| matches!(c, Command::Swap { window, .. } if *window == w(2)))
+        };
+        assert!(swapped(shrinking.clone(), growing.clone(), grown), "shrunk, then grown");
+        assert!(!swapped(growing, shrinking.clone(), shrunk), "grown, then shrunk");
+        assert!(!swapped(shrinking, moving, shrunk), "shrunk, then moved");
     }
 
     /// Frame zero delivered after its window's landing would put the picture from the press back over

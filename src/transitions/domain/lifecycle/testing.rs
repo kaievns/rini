@@ -47,6 +47,7 @@ pub(in crate::transitions) fn pan() -> StageSummary {
         focused_look: None,
         awaiting: Vec::new(),
         repainting: Vec::new(),
+        kept: Vec::new(),
         start: Start::Immediate,
         duration: PLAYS,
         display: DISPLAY,

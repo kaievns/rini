@@ -88,8 +88,11 @@ pub(in crate::transitions) enum EndPicture {
     /// A grow: held for, overlay up, watched until it has repainted where it ends, and pictured
     /// there only once it has.
     Held,
-    /// Watched until it has repainted where it ends, never held for, and pictured there only once it
-    /// has.
+    /// A shrink: watched until it has repainted where it ends, never held for, and never pictured
+    /// there: its picture from the press, which covers every frame, flies to the lift.
+    Kept,
+    /// An entrance flying from where it opened: watched until it has repainted at its slot, never
+    /// held for, and pictured there only once it has.
     Repainting,
     /// Captured once it is where it ends.
     Lands,
@@ -98,15 +101,14 @@ pub(in crate::transitions) enum EndPicture {
 impl EndPicture {
     /// A window going from `from` to `to`, drawn from a picture taken `source`: a stand-in, which is
     /// no picture of the window, is awaited; a resize growing on either axis is held for its repaint;
-    /// one that only shrinks flies the picture it has at once and repaints where it ends; a move
-    /// lands.
+    /// one that only shrinks flies the picture it has at once and keeps it; a move lands.
     pub(in crate::transitions) fn of_window(source: Route, from: ScreenSize, to: ScreenSize) -> Self {
         if source == Route::StandIn {
             Self::Awaited
         } else if grows(from, to) {
             Self::Held
         } else if is_a_resize(from, to) {
-            Self::Repainting
+            Self::Kept
         } else {
             Self::Lands
         }
@@ -117,9 +119,14 @@ impl EndPicture {
         matches!(self, Self::Awaited | Self::Held)
     }
 
-    /// Whether it is pictured where it ends only once it has repainted there.
+    /// Whether it is watched until it has repainted where it ends, and not pictured there before.
     pub(in crate::transitions) fn repaints(self) -> bool {
-        matches!(self, Self::Held | Self::Repainting)
+        matches!(self, Self::Held | Self::Kept | Self::Repainting)
+    }
+
+    /// Whether its tile keeps the picture it has to the lift.
+    pub(in crate::transitions) fn keeps(self) -> bool {
+        self == Self::Kept
     }
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
@@ -360,9 +367,9 @@ mod tests {
     }
 
     #[test]
-    fn a_shrink_repaints_unheld() {
-        assert_eq!(end(COLUMN, ScreenSize::new(859.0, 535.0)), EndPicture::Repainting);
-        assert_eq!(end(ScreenSize::new(1720.0, 1081.0), COLUMN), EndPicture::Repainting);
+    fn a_shrink_is_kept_unheld() {
+        assert_eq!(end(COLUMN, ScreenSize::new(859.0, 535.0)), EndPicture::Kept);
+        assert_eq!(end(ScreenSize::new(1720.0, 1081.0), COLUMN), EndPicture::Kept);
     }
 
     #[test]
@@ -379,15 +386,17 @@ mod tests {
         }
     }
 
-    /// Held for: a window with no picture and a grow. Pictured only once repainted: a grow and a
-    /// window that repaints unheld.
+    /// Held for: a window with no picture and a grow. Watched until repainted: a grow, a shrink and a
+    /// travelling entrance. Kept: a shrink alone.
     #[test]
-    fn a_grow_is_both_held_for_and_pictured_only_once_repainted() {
+    fn a_grow_is_held_for_a_shrink_kept_and_both_watched_until_repainted() {
         use EndPicture::*;
-        let held: Vec<_> = [Awaited, Held, Repainting, Lands].into_iter().filter(|e| e.holds()).collect();
-        let repaints: Vec<_> = [Awaited, Held, Repainting, Lands].into_iter().filter(|e| e.repaints()).collect();
-        assert_eq!(held, [Awaited, Held]);
-        assert_eq!(repaints, [Held, Repainting]);
+        let sorted = |sorts: fn(EndPicture) -> bool| -> Vec<EndPicture> {
+            [Awaited, Held, Kept, Repainting, Lands].into_iter().filter(|e| sorts(*e)).collect()
+        };
+        assert_eq!(sorted(EndPicture::holds), [Awaited, Held]);
+        assert_eq!(sorted(EndPicture::repaints), [Held, Kept, Repainting]);
+        assert_eq!(sorted(EndPicture::keeps), [Kept]);
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one

@@ -232,16 +232,19 @@ destination for a window already moving.
   once; the only addition is the wait, and only for a window that grows. A window that has just
   opened keeps its own entrance, and a flight MAY wait for the first picture of a window it has none
   of.
-- Each resized window MUST be pictured at its new size once it has repainted there. A grow whose
+- Each window a resize grows MUST be pictured at its new size once it has repainted there. One whose
   repaint missed the 300ms flies its picture from the press, with the window's ground in its growth,
-  and its repainted picture MUST replace that one mid-flight once it comes; a shrink's repainted
-  picture MUST replace its old one mid-flight. Either is laid against the same edges as the old one,
-  with the window's ground wherever it does not cover the frame still to come. A picture taken at its new size MUST NOT be
-  drawn before the window has repainted there, not even to show its focus turn; one that has not by
-  the lift is never drawn, and the lift shows the window. Until then the tile keeps the look its
-  picture from the press shows, the title bar and controls macOS draws focused or not, while its
-  hairline, shadow, ring and border turn as any window's: a window that never settles, as one
-  streaming output, turns its own look with the lift. A window MUST count as repainted at its new size only once two captures in a
+  and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
+  edges as the old one, with the window's ground wherever it does not cover the frame still to come.
+  A window a resize only shrinks MUST fly its picture from the press, clipped, to the lift: that
+  picture covers every frame of the movement, so there is no ground to cut from, and its repainted
+  picture and the last capture before the lift MUST NOT be drawn on it. Where passes merge, the
+  latest one resizing a window decides whether it grows or only shrinks. A picture taken at its
+  new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
+  one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
+  keeps the look its picture from the press shows, the title bar and controls macOS draws focused or
+  not, while its hairline, shadow, ring and border turn as any window's: a window that never settles,
+  as one streaming output, and a window a resize only shrinks turn their own look with the lift. A window MUST count as repainted at its new size only once two captures in a
   row show the same rendering, never because a capture differs from the picture it had before.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
@@ -273,7 +276,9 @@ destination for a window already moving.
 > from a smaller window to actual enlarged window. i'd rather take a lag of waiting for actual new
 > window content than see a flicker." On that build (journal n1, 6 flights) the motion started
 > 56-73ms after the press, and each of 5 grows flew its growth as the window's flat ground until its
-> repainted picture was cut in 162-224ms after the press: that cut was the flicker.
+> repainted picture was cut in 162-224ms after the press: that cut was the flicker. Each of 5 shrinks
+> had its repainted picture cut in 171-269ms after the press, and in 2 flights the last capture was
+> cut in again at 325-350ms, shrinks included.
 
 ## Correctness the user can see
 
@@ -489,8 +494,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - From the moment the window server reports the window gaining focus focused, it MUST be pictured
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or resized it: one a pass
-  opened or resized is pictured once it has repainted instead, its own look coming only with that
-  picture (Resizing). A look a window already had when it landed
+  opened or grew is pictured once it has repainted instead, its own look coming only with that
+  picture, and one a pass only shrinks keeps its picture from the press, its hairline and its shadow
+  turning once it has repainted, or just before the window gaining focus when it loses focus, and its
+  own look with the lift (Resizing). A look a window already had when it landed
   counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
   shadow turning with it: the window losing focus unfocused, the window gaining focus focused. Its
   focus ring and its border wear where the flight ends from the show (`decorations.md`).
@@ -502,9 +509,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
   pass opened or resized, or one whose watch ran out, MUST be drawn unfocused just before the window
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
-  the same, old then new, while the flight still moves, but for one a pass opened or resized that has
-  not repainted where it ends: it is not pictured then, only its hairline and its shadow turn, and
-  its own look turns with the lift. Until its turn the window losing focus MUST be
+  the same, old then new, while the flight still moves, but for one a pass only shrinks, or one a pass
+  opened or grew that has not repainted where it ends: it is not pictured then, only its hairline and
+  its shadow turn, and its own look turns with the lift. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
   keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its look turns at
   rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on
