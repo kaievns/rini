@@ -1224,69 +1224,59 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 
 /// A layout pass hands each tiled window over with where the strip had it before the pass and has
 /// it after, which is where a window the pass parks or unparks is drawn going or coming; a floating
-/// window, not on the strip, with neither.
+/// window, not on the strip, with neither. A maximize of the first of three columns parks the second
+/// and moves the third's place on the strip while its park stays put.
 #[test]
 fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
-    let (mut apps, mut reactor) = test_context();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
-    let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    use crate::transitions::platform::engine::Event as Engine;
+    use rini_geometry::Round;
+    use rini_geometry::space::FromCg;
 
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
-    let floating = WindowId::new(1, 3);
+    let (mut apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let space = SpaceId::new(1);
+    let (first, second, third, floating) =
+        (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3), WindowId::new(1, 4));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floating));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
     apps.simulate_until_quiet(&mut reactor);
     assert!(reactor.layout_manager.layout_engine.is_window_floating(floating));
+    while rx.try_recv().is_ok() {}
     apps.requests();
     let before = reactor.test_strip_layout(space);
-    assert!(!before.is_empty(), "a pass has looked at the strip");
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
-    let layout: Vec<(WindowId, CGRect)> = (1..=3u32)
-        .map(|idx| {
-            let wid = WindowId::new(1, idx);
-            let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
-            let dx = [120., -120., 40.][idx as usize - 1];
-            (wid, CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y), frame.size))
-        })
-        .collect();
-    crate::app::reactor::animation::AnimationManager::animate_layout(
-        &mut reactor,
-        space,
-        &layout,
-        false,
-        None,
-    );
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
     let after = reactor.test_strip_layout(space);
-
-    let mut animated = Vec::new();
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
-            animated = windows;
+    let mut passes = Vec::new();
+    while let Ok((_, event)) = rx.try_recv() {
+        if let Engine::Animate { windows, .. } = event {
+            passes.push(windows);
         }
     }
+    let [requests] = &passes[..] else { panic!("one pass: {passes:?}") };
     let place = |layout: &[(WindowId, CGRect)], window| {
-        use rini_geometry::Round;
-        use rini_geometry::space::FromCg;
         layout.iter().find(|(w, _)| *w == window).map(|(_, f)| ScreenRect::from_cg(*f).rounded())
     };
-    let places: Vec<_> = animated.iter().map(|r| (r.window, r.strip_before, r.strip_after)).collect();
-    assert_eq!(
-        places,
-        animated
-            .iter()
-            .map(|r| match r.window == floating {
-                true => (r.window, None, None),
-                false => (r.window, place(&before, r.window), place(&after, r.window)),
-            })
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(animated.len(), 3, "{animated:?}");
+    let places: Vec<_> = requests.iter().map(|r| (r.window, r.strip_before, r.strip_after)).collect();
+    let expected: Vec<_> = requests
+        .iter()
+        .map(|r| match r.window == floating {
+            true => (r.window, None, None),
+            false => (r.window, place(&before, r.window), place(&after, r.window)),
+        })
+        .collect();
+    assert_eq!(places, expected);
+    assert_eq!(requests.len(), 4, "{requests:?}");
+
+    let request = |window| requests.iter().find(|r| r.window == window).expect("in the pass");
+    let parked = request(second);
+    assert_ne!(parked.strip_before, parked.strip_after, "{parked:?}");
+    assert_eq!(parked.strip_before, Some(parked.from), "seen where the strip had it");
+    let kept = request(third);
+    assert_eq!(kept.from, kept.to, "its park stays put");
+    assert!(kept.strip_before.is_some() && kept.strip_before != kept.strip_after, "{kept:?}");
+    assert_eq!(request(floating).from, request(floating).to);
     assert!(place(&after, floating).is_some(), "the strip's layout holds the floating window's frame");
-    assert!(places.iter().filter(|p| p.0 != floating).all(|p| p.1.is_some() && p.2.is_some()), "{places:?}");
 }
 
 /// Focus moved from the first window to the second since the last batch: the second wears the ring
