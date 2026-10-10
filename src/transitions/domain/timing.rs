@@ -25,10 +25,11 @@ pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 /// in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
 
-/// How long, in all, passes merged before the motion can hold the overlay still, from its going up:
-/// twice `HOLD_CAP`, so presses 115ms apart whose window repaints 140ms after each set off on the
-/// third one's repaint, and a burst cannot stall the flight. See "A grow waits for its repaint" in
-/// `src/transitions/docs/coordination.md`.
+/// How long, in all, passes merged before the motion can hold the overlay still, from its going up,
+/// and passes held once it moves can keep from merging, from the first one's arrival: twice
+/// `HOLD_CAP`, so presses 115ms apart whose window repaints 140ms after each set off on the third
+/// one's repaint, and a burst cannot stall the flight. See "A grow waits for its repaint" and
+/// "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const BURST_HOLD_CAP: Duration = Duration::from_millis(600);
 
 /// How long after a lift the flight's owed captures wait for the user to stop pressing.

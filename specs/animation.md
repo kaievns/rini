@@ -258,13 +258,14 @@ destination for a window already moving.
   own sizes: a press shrinking a window whose earlier grow has not repainted yet still grows it past
   the picture on its tile, and a pass moving a window a held pass grows is judged so too; a move of
   any other window stays a navigation. A pass arriving while one is held replaces what the flight
-  waits for, its own grows from its own arrival, and the repainted picture where the latest one
-  ends the window MUST go onto its tile as they merge. A pass that grows no window, a strip
-  movement included, MUST merge at once, with any pass held before it. A held pass whose window
-  misses the 300ms merges with the picture its tile has, the window's ground in the growth, and the
-  repainted picture replaces that one when it comes.
+  waits for, its own grows from its own arrival, up to 600ms in all from the first one's, and the
+  repainted picture where the latest one ends the window MUST go onto its tile as they merge. A
+  pass that grows no window, a strip movement included, MUST merge at once, with any pass held
+  before it. A held pass whose window misses the 300ms, or the 600ms of a burst, merges with the
+  picture its tile has, the window's ground in the growth, and the repainted picture replaces that
+  one when it comes.
 - Each window a resize grows MUST be pictured at its new size once it has repainted there. One whose
-  repaint missed the 300ms flies its picture from the press, with the window's ground in its growth,
+  repaint missed the hold flies its picture from the press, with the window's ground in its growth,
   and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
   edges as the old one, with the window's ground wherever it does not cover the frame still to come.
   A window a resize only shrinks MUST fly its picture from the press, clipped, to the lift: that

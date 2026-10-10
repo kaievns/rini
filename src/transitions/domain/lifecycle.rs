@@ -385,6 +385,7 @@ enum Phase {
     /// The motion playing what it played before a pass that grows windows reached it, its tiles going
     /// on to where they ended and resting there, until those windows have repainted where the pass
     /// sends them, or the coordinator hears they will not: no last capture, no place, no lift.
+    /// `HOLD_CAP` from the latest pass held, `BURST_HOLD_CAP` from the first at most.
     MergeHeld { deadline: Instant },
     Playing,
     /// The clock is done; waiting for the tiles and the windows to be where they end.
@@ -397,6 +398,8 @@ enum Phase {
 struct HeldMerge {
     /// How many of them are still to merge: the latest one's merge takes the repaints.
     passes: usize,
+    /// When the first of them arrived.
+    first: Instant,
     /// When the latest of them arrived.
     since: Instant,
     /// The generation the grows were watched under, since their real frames were written.
@@ -1123,8 +1126,9 @@ fn hold_no_longer(f: &mut Flight, window: WindowId, now: Instant, out: &mut Vec<
 /// A pass reaching the flight while its motion runs, its real windows written at once: held, up to
 /// `HOLD_CAP` from now, until each window it grows that ends wholly on the display has repainted
 /// where it ends, watched there; merged at once when it grows none, or before the motion runs. A
-/// pass held after another replaces what the hold waits for, its own grows from its own arrival,
-/// and a window an earlier one grew is watched where the latest sends it.
+/// pass held after another replaces what the hold waits for, its own grows from its own arrival, but
+/// no longer than `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched
+/// where the latest sends it.
 fn hold_merge(
     f: &mut Flight,
     grows: Vec<(WindowId, ScreenRect)>,
@@ -1144,7 +1148,7 @@ fn hold_merge(
     let generation = f.generation;
     let held = f
         .held_merge
-        .get_or_insert_with(|| HeldMerge { passes: 0, since: now, generation, ends: Vec::new(), repainted: Vec::new() });
+        .get_or_insert_with(|| HeldMerge { passes: 0, first: now, since: now, generation, ends: Vec::new(), repainted: Vec::new() });
     held.passes += 1;
     held.since = now;
     for (window, end) in held.ends.iter_mut() {
@@ -1155,7 +1159,7 @@ fn hold_merge(
     held.ends.retain(|(_, end)| wholly_inside(*end, display));
     extend_latest(&mut held.ends, seen.iter().copied());
     f.held = seen.into_iter().map(|(window, _)| window).collect();
-    f.phase = Phase::MergeHeld { deadline: now + HOLD_CAP };
+    f.phase = Phase::MergeHeld { deadline: (now + HOLD_CAP).min(held.first + BURST_HOLD_CAP) };
     let changed = changed_frames(&f.stage.final_frames, &writes);
     if !changed.is_empty() {
         f.placed = None;
@@ -2738,6 +2742,27 @@ mod tests {
         assert_eq!(c.on(lost, arrives + Duration::from_millis(40)), vec![Command::Retarget { held: Duration::from_millis(40) }]);
     }
 
+    /// Grows held while the motion runs every 100ms whose window never repaints merge at most
+    /// `BURST_HOLD_CAP` from the first one's arrival, however close the latest one came.
+    #[test]
+    fn a_burst_of_held_merges_merges_at_most_its_cap_after_the_first() {
+        let now = Instant::now();
+        let (flying, grown, _) = grown_mid_flight();
+        let wider = r(3.0, 35.0, 1148.0, 1079.0);
+        let mut c = running(flying, now);
+        let tick = Event::Tick { settled: false, landed: false };
+        let first = now + Duration::from_millis(100);
+        let mut latest = first;
+        for (i, end) in [grown, wider, grown, wider, grown].into_iter().enumerate() {
+            latest = first + Duration::from_millis(100 * i as u64);
+            assert_eq!(retargets(&c.on(hold(&[(w(2), end)]), latest)), None, "held");
+        }
+        assert_eq!(retargets(&c.on(tick.clone(), first + HOLD_CAP)), None, "the first's own cap");
+        assert_eq!(retargets(&c.on(tick.clone(), first + BURST_HOLD_CAP - Duration::from_millis(1))), None);
+        let capped = first + BURST_HOLD_CAP;
+        assert_eq!(retargets(&c.on(tick, capped)), Some(capped - latest), "its cap runs out");
+    }
+
     /// While a merge is held the flight plays on to its tiles' ends and rests there, overlay up: no
     /// last capture, no place and no lift, nor any landing read for them, until it merges and its
     /// own clock runs.
@@ -2861,6 +2886,8 @@ mod tests {
         shown: u64,
         /// When the latest pass growing it before the motion arrived.
         grew: u64,
+        /// When the first of the passes held since the motion ran arrived.
+        first_held: u64,
         /// Merges that waited.
         held: usize,
         /// Merges of two held passes growing it or more.
@@ -2871,7 +2898,7 @@ mod tests {
         fn new(widths: Vec<f64>, gap: u64, delay: u64) -> Rapid {
             let (end, picture) = (widths[0], widths[0]);
             let c = Coordinator::default();
-            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, grew: 0, held: 0, held_together: 0 }
+            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, grew: 0, first_held: 0, held: 0, held_together: 0 }
         }
 
         fn frame(width: f64) -> ScreenRect { r(3.0, 35.0, width, 1079.0) }
@@ -2944,7 +2971,7 @@ mod tests {
                         for stage in std::mem::take(&mut self.queued) {
                             self.on(Event::Merge { stage, moved: true }, false);
                         }
-                        self.sets_off(ticked && held >= HOLD_CAP);
+                        self.sets_off(ticked && (held >= HOLD_CAP || self.past(self.first_held, BURST_HOLD_CAP)));
                     }
                     _ => {}
                 }
@@ -2968,6 +2995,9 @@ mod tests {
                         let g = self.c.generation();
                         self.on(Event::FrameZero(g), false);
                     } else if self.c.is_moving() && (grows || !self.queued.is_empty()) {
+                        if self.queued.is_empty() {
+                            self.first_held = self.at;
+                        }
                         self.queued.push(stage);
                         let grows = if grows { vec![(w(2), Self::frame(to))] } else { Vec::new() };
                         self.on(Event::HoldMerge { grows, writes: vec![(w(2), Self::frame(to))] }, false);

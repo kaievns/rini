@@ -363,7 +363,7 @@ grow ending wholly on the display to repaint there, the watches retargeted under
 generation (`HeldMerge`), and holds (`Phase::MergeHeld`): the flight plays on, its tiles going on to
 the ends they had and resting there, with no last capture, no place, no lift and no landing read. A
 repaint delivered there is held for the merge (`Coordinator::holds`). Once each grow has repainted,
-is given up on (`Lost`) or `HOLD_CAP` has passed since the pass arrived, the coordinator says
+is given up on (`Lost`) or `HOLD_CAP` has passed since the latest pass arrived, the coordinator says
 `Command::Retarget`: the engine merges every pass it kept, oldest first, from where each tile is
 drawn then (`FlightEngine::merge_now`, the path any other pass takes at once), and tells it
 `Event::Merge` for each, each starting the next generation. The latest one's merge takes the held
@@ -371,7 +371,10 @@ repaint onto the retargeted tile as a picture watched there since the hold (`wat
 moving edge reveals content; an earlier one's tile ends elsewhere, so `HeldMerge` counts the passes
 kept and lasts until the latest has merged (`latest_held`).
 A pass arriving while one is held replaces what the hold waits for, its own grows from its own
-arrival, a window an earlier one grew watched where the latest sends it; one growing nothing by that
+arrival, a window an earlier one grew watched where the latest sends it, but never past
+`BURST_HOLD_CAP` (600ms) from the first one's arrival, so presses closer together than the repaint
+cannot keep the tiles resting at the ends they had for as long as they come (Kai's g144-157 spanned
+3.2s; `a_burst_of_held_merges_merges_at_most_its_cap_after_the_first`); one growing nothing by that
 measure, a strip movement included, merges at once with every pass kept. Missing the cap, the merge flies the
 picture the tile has with the ground, and the repaint, still watched, is cut in when it lands. The
 journal marks each pass held (`hold_merge`) and each merge it led to (`retarget`, `waited_ms` since
@@ -928,7 +931,7 @@ cached picture smaller than its window stays a navigation, crop-drawn with its g
 pass grows that window.
 `HOLD_CAP` bounds the hold for a grow, from the show or the latest pass merged before the motion
 holding for one, `BURST_HOLD_CAP` bounding those in all, a held merge's wait for its grows from its
-arrival ("Mid-flight passes"), the hold for a window with no picture of its own ("The reservation
+arrival, `BURST_HOLD_CAP` from the first pass held ("Mid-flight passes"), the hold for a window with no picture of its own ("The reservation
 fallback"), and how long a repaint watch waits for its window to arrive; a 150ms cap was
 tried and raised back to 300ms, since a watch waits for the real frame to reach its end before it
 captures. *How often 300ms is enough is not
