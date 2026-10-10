@@ -980,7 +980,7 @@ impl Coordinator {
             f.unfocus_losing(out);
             f.swap_held_change(out);
         }
-        if !f.held_merge.as_ref().is_some_and(|held| held.ends.iter().any(|(w, _)| *w == window)) {
+        if f.held_merge.is_none() {
             hold_no_longer(f, window, now, out);
         }
     }
@@ -2779,7 +2779,9 @@ mod tests {
         let mut c = running(flying.clone(), now);
         let g = c.generation();
         c.on(hold(&[(w(2), wider)]), arrives);
-        assert_eq!(retargets(&c.on(picture(g, before), arrives + Duration::from_millis(20))), None, "where the flight ended it");
+        let out = c.on(picture(g, before), arrives + Duration::from_millis(20));
+        assert_eq!(retargets(&out), None, "where the flight ended it");
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
         assert!(!c.holds(w(2), g, before));
         let repainted = arrives + Duration::from_millis(140);
         assert_eq!(retargets(&c.on(picture(g, wider), repainted)), Some(Duration::from_millis(140)));
