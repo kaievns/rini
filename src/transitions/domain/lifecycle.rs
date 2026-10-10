@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayRect, ScreenRect, SurfacePoint};
-use rini_geometry::{is_off_screen, to_overlay_space};
+use rini_geometry::{is_off_screen, shows_on, to_overlay_space};
 use serde::Serialize;
 
 use crate::animation::domain::motion::holes::hole_in;
@@ -1338,19 +1338,9 @@ pub(in crate::transitions) fn frame_zero_pictures(start: ScreenRect, floating: b
     !floating && wholly_inside(start, display)
 }
 
-/// A frame no wider or taller than this is a sliver, not a window: what a parked column peeks in by
-/// (`PARK_CLAMP_PX`, "Parking" in `src/layout/docs/strip.md`).
-const SLIVER: f64 = 100.0;
-
-/// Wholly on `display`, and big enough to be a window rather than a sliver.
+/// Wholly on `display`, and big enough to be a window rather than a parked sliver (`shows_on`).
 fn wholly_inside(frame: ScreenRect, display: ScreenRect) -> bool {
-    frame.size.width > SLIVER && frame.size.height > SLIVER && wholly_on(frame, display)
-}
-
-/// More than a sliver of `frame` on `display`, wholly or cut by its edge: where a watch sees a window
-/// repaint, through SkyLight, or, cut, through ScreenCaptureKit.
-fn shows_on(frame: ScreenRect, display: ScreenRect) -> bool {
-    frame.intersection(&display).is_some_and(|seen| seen.size.width > SLIVER && seen.size.height > SLIVER)
+    shows_on(frame, display) && wholly_on(frame, display)
 }
 
 #[cfg(test)]

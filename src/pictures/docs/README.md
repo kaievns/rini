@@ -259,7 +259,7 @@ names only while its flight is up (`keep_focused`), is dropped there and then ra
 own id, and the debug slide flies it by that id; one it does not under a synthetic id, pid 0
 (`synthetic_window_id`), and the slide flies it by that (`picture_id`).
 A warm, on the debug command alone, pictures only windows rini does not manage, told by what the
-cache holds or owes under a real id, and only those showing at least `WARM_MIN_SHOWN` (100pt) of
+cache holds or owes under a real id, and only those showing at least `MIN_SHOWN` (100pt, `rini_geometry::shows_on`) of
 themselves on the display each way: a window parked at the corner keeps its full size and shows a
 sliver, which the window server counts as on screen. No flight reads these pictures, so a change of
 display warms nothing. At boot the cache may hold nothing of a managed window yet, so a warm or a

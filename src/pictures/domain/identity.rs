@@ -4,13 +4,10 @@
 use std::collections::HashSet;
 
 use rini_core::ids::{WindowId, WindowServerId};
+use rini_geometry::shows_on;
 use rini_geometry::space::ScreenRect;
 
 use crate::pictures::domain::target::PictureTarget;
-
-/// The least a window must show of itself on the display, each way, for a warm to picture it. A window
-/// parked at the corner keeps its full size and shows a sliver there.
-pub const WARM_MIN_SHOWN: f64 = 100.0;
 
 /// A stable [`WindowId`] for a window rini does not manage, derived from its window server id: one a
 /// warm or the debug slide pictures. Pid 0 keeps it clear of real ids.
@@ -40,8 +37,8 @@ pub fn picture_id(server_id: WindowServerId, pictured: &[WindowId]) -> WindowId 
 }
 
 /// What a warm of `display` pictures of the windows `listed` on it: each that is not `managed` and
-/// shows at least [`WARM_MIN_SHOWN`] of itself each way, under its synthetic id. A managed window is
-/// pictured under its own id, and once is enough.
+/// shows on it, at least `MIN_SHOWN` of itself each way (`rini_geometry::shows_on`), under its
+/// synthetic id. A managed window is pictured under its own id, and once is enough.
 pub fn warm_targets(
     listed: &[(WindowServerId, ScreenRect)],
     display: ScreenRect,
@@ -50,11 +47,7 @@ pub fn warm_targets(
     listed
         .iter()
         .filter(|(server_id, _)| !managed.contains(&server_id.as_u32()))
-        .filter(|(_, frame)| {
-            frame
-                .intersection(&display)
-                .is_some_and(|shown| shown.size.width >= WARM_MIN_SHOWN && shown.size.height >= WARM_MIN_SHOWN)
-        })
+        .filter(|(_, frame)| shows_on(*frame, display))
         .map(|&(server_id, frame)| PictureTarget {
             window: synthetic_window_id(server_id),
             server_id,
@@ -90,6 +83,7 @@ pub fn unwanted(held: &[WindowId], alive: &HashSet<u32>) -> Unwanted {
 
 #[cfg(test)]
 mod tests {
+    use rini_geometry::MIN_SHOWN;
     use rini_geometry::space::{ScreenPoint, ScreenSize};
 
     use super::*;
@@ -141,9 +135,9 @@ mod tests {
 
     #[test]
     fn a_warm_pictures_a_window_showing_enough_of_itself_each_way() {
-        let peeking = (server(1), rect(1728.0 - WARM_MIN_SHOWN, 35.0, 860.0, 1079.0));
-        let narrower = (server(2), rect(1728.0 - WARM_MIN_SHOWN + 1.0, 35.0, 860.0, 1079.0));
-        let shorter = (server(3), rect(3.0, 1117.0 - WARM_MIN_SHOWN + 1.0, 860.0, 1079.0));
+        let peeking = (server(1), rect(1728.0 - MIN_SHOWN, 35.0, 860.0, 1079.0));
+        let narrower = (server(2), rect(1728.0 - MIN_SHOWN + 1.0, 35.0, 860.0, 1079.0));
+        let shorter = (server(3), rect(3.0, 1117.0 - MIN_SHOWN + 1.0, 860.0, 1079.0));
         assert_eq!(warmed(&[peeking, narrower, shorter], &[]), vec![synthetic_window_id(server(1))]);
     }
 

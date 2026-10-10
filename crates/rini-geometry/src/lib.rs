@@ -195,6 +195,19 @@ pub fn is_off_screen<U>(display: Rect<U>, window: Rect<U>) -> bool {
     visible_width <= PARK_CLAMP_PX && visible_height <= PARK_CLAMP_PX
 }
 
+/// The least a window shows of itself on a display, each way, to count as a window there rather than
+/// a parked sliver: above the widest clamp a parked window keeps on screen (`PARK_CLAMP_PX`, apps up
+/// to Finder's 52pt), with margin.
+pub const MIN_SHOWN: f64 = 100.0;
+
+/// Whether `window` shows at least `MIN_SHOWN` of itself on `display` each way, wholly or cut by its
+/// edge.
+pub fn shows_on<U>(window: Rect<U>, display: Rect<U>) -> bool {
+    window
+        .intersection(&display)
+        .is_some_and(|shown| shown.size.width >= MIN_SHOWN && shown.size.height >= MIN_SHOWN)
+}
+
 /// Where a window parked at `park` should start an animation towards `destination`: the same row,
 /// just past the display edge on the park's side, so it enters from the side it left by.
 pub fn park_entry_frame<U>(park: Rect<U>, destination: Rect<U>, display: Rect<U>) -> Rect<U> {
@@ -334,6 +347,19 @@ mod tests {
             !is_off_screen(display, screen(-770.0, 0.0, 800.0, 1117.0)),
             "30pt wide but full height"
         );
+    }
+
+    /// A window shows on the display from `MIN_SHOWN` of itself each way, whichever edge cuts it; a
+    /// parked column's sliver, Finder's 52pt clamp included, does not.
+    #[test]
+    fn a_window_shows_on_the_display_from_min_shown_of_itself_each_way() {
+        let display = screen(0.0, 0.0, 1728.0, 1117.0);
+        assert!(shows_on(screen(3.0, 35.0, 860.0, 1079.0), display), "wholly on it");
+        assert!(shows_on(screen(-285.0, 35.0, 1148.0, 1079.0), display), "cut by the left edge");
+        assert!(shows_on(screen(1728.0 - MIN_SHOWN, 35.0, 860.0, 1079.0), display), "exactly MIN_SHOWN");
+        assert!(!shows_on(screen(1728.0 - MIN_SHOWN + 1.0, 35.0, 860.0, 1079.0), display), "narrower");
+        assert!(!shows_on(screen(1728.0 - 52.0, 35.0, 860.0, 1079.0), display), "Finder's clamp");
+        assert!(!shows_on(screen(1800.0, 35.0, 860.0, 1079.0), display), "wholly off it");
     }
 
     #[test]
