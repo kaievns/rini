@@ -1797,11 +1797,19 @@ impl FlightEngine {
         }
     }
 
-    /// One later pass reaching the flight running: once the plan plays, one growing a window, and any
-    /// while one is held, waits for the coordinator to say when it merges (`Event::HoldMerge`); any
-    /// other merges now. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
-    fn merge_group(&mut self, pass: Composed) {
+    /// One later pass reaching the flight running, its windows judged against the pictures their
+    /// tiles carry and the grows of the passes held (`Waits::against_tiles`): once the plan plays, one
+    /// growing a window, and any while one is held, waits for the coordinator to say when it merges
+    /// (`Event::HoldMerge`); any other merges now. See "Mid-flight passes" in
+    /// `src/transitions/docs/coordination.md`.
+    fn merge_group(&mut self, mut pass: Composed) {
         let Some(running) = self.running.as_mut() else { return };
+        let held: Vec<WindowId> = running.held.iter().flat_map(|held| held.shape.waits.grows()).collect();
+        pass.shape.waits.against_tiles(
+            pass.tiles.iter().map(|tile| (tile.window, tile.to.size.respace())),
+            |window| running.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.snapshot.coverage.covered),
+            |window| held.contains(&window),
+        );
         let grows: Vec<(WindowId, OverlayRect)> = pass
             .shape
             .waits
@@ -4666,6 +4674,70 @@ mod tests {
             let sent = h.step(other);
             assert_eq!(swapped(&sent, wid(1)).len(), 1, "kept for the merge");
             assert_eq!(swapped(&sent, wid(2)).len(), 1);
+        }
+
+        /// Kai's rapid Alt-R: a press shrinking `wid(1)` on its own sizes, superseding a held grow
+        /// whose repaint has not come, ends wider than the picture its tile still carries from the
+        /// press: it is held too, and the repaint where it ends goes onto the tile as both merge.
+        #[test]
+        fn a_shrink_superseding_a_held_grow_ending_wider_than_its_tiles_picture_waits_for_its_repaint() {
+            let mut h = moving_pair();
+            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(1, grown, narrower)]);
+            let sent = h.step(press);
+            assert!(!plays(&sent), "held");
+            assert_eq!(placed(&sent), [vec![(wid(1), narrower)]], "written at once");
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, narrower)]);
+            let sent = h.step(landed);
+            let order = kinds(only_batch(&sent));
+            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
+            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            let to = h.engine.running.as_ref().and_then(|running| running.tiles.iter().find(|tile| tile.window == wid(1)).map(|tile| tile.to));
+            assert_eq!(to, Some(on(narrower)));
+        }
+
+        /// The same shrink once the grow's repaint is on the tile ends inside that picture, and bends
+        /// the flight at once.
+        #[test]
+        fn a_shrink_after_the_grows_repaint_landed_retargets_at_once() {
+            let mut h = moving_pair();
+            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, grown)]);
+            assert_eq!(swapped(&h.step(landed), wid(1)).len(), 1, "on the tile");
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(1, grown, narrower)]);
+            assert!(plays(&h.step(press)));
+        }
+
+        /// Before the motion, the same shrink merged into a hold for the grow keeps the overlay holding,
+        /// now for the repaint where the shrink ends it, and the motion starts once that lands.
+        #[test]
+        fn a_shrink_merged_before_the_motion_ending_wider_than_its_tiles_picture_keeps_the_hold() {
+            let mut h = Harness::new();
+            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(1), Some(start().to_cg()));
+            let press = resize_of(&h, &[(1, start(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(1), None);
+            h.advance(Duration::from_millis(10));
+            let press = resize_of(&h, &[(1, grown, narrower)]);
+            assert!(!plays(&h.step(press)));
+            h.advance(COALESCE_WINDOW);
+            assert!(!plays(&h.step(Event::Tick)), "still holding");
+            h.advance(Duration::from_millis(100));
+            let landed = repainted(&h, &[(1, narrower)]);
+            assert!(plays(&h.step(landed)), "its repaint in, the motion starts");
         }
 
         #[test]

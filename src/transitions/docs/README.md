@@ -38,8 +38,8 @@ the coordinator's holes and snaps in `Overlay`. The reactor converts at the door
 
 **One actor, one flight at a time.** Every transition goes through `FlightEngine`. A pass arriving
 while a flight runs merges into it instead of starting another, which is how a burst of presses reads
-as one movement; one growing a window once the flight moves merges only once that window has
-repainted ("Mid-flight passes" in `coordination.md`).
+as one movement; one growing a window past the picture its tile carries once the flight moves
+merges only once that window has repainted ("Mid-flight passes" in `coordination.md`).
 
 **The reactor asks, and hears back only the frames.** It sends a layout pass (`Event::Animate`), a strip
 movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as

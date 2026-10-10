@@ -83,8 +83,9 @@ How to read them:
   generation running, with the `write`, `holes` and `watch` that hold it after it unless it merges
   at once. The `retarget` comes once the grows have repainted, been given up on or waited
   `HOLD_CAP`: its `waited_ms` is the wait since the latest `hold_merge`, 0 for one that merged at
-  once, and the `merge` of each pass held follows it, the first starting the next generation. A
-  `swap` with `of` the generation before that `merge` is the held repaint going on.
+  once, and the `merge` of each pass held follows it, each starting the next generation. A `swap`
+  after the latest of them, with `of` the generation the passes were held in, is the held repaint
+  going on.
 - **A delivery carries its times as ages,** in microseconds before its own `t`: `sent_before_us` is
   when the service sent it, and each `delivered`'s `taken_before_us` when that picture's capture
   started (below).

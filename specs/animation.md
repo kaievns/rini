@@ -252,11 +252,16 @@ destination for a window already moving.
   MUST play on as it was, its tiles going on to the ends they had and resting there with the overlay
   up, and the pass MUST merge into it only once that window has repainted where the pass ends it,
   up to 300ms from the pass's arrival. The tiles then MUST set off from where each is drawn at that
-  moment, the grown window flying its repainted picture, so its growth shows its content. A pass
-  arriving while one is held replaces what the flight waits for, its own grows from its own
-  arrival. A pass that grows no window, a strip movement included, MUST merge at once, with any pass
-  held before it. A held pass whose window misses the 300ms merges with the picture its tile has,
-  the window's ground in the growth, and the repainted picture replaces that one when it comes.
+  moment, the grown window flying its repainted picture, so its growth shows its content. A merged
+  pass grows a window when it ends it wider or taller than the picture its tile carries, whatever its
+  own sizes: a press shrinking a window whose earlier grow has not repainted yet still grows it past
+  the picture on its tile, and a pass moving a window a held pass grows is judged so too; a move of
+  any other window stays a navigation. A pass arriving while one is held replaces what the flight
+  waits for, its own grows from its own arrival, and the repainted picture where the latest one
+  ends the window MUST go onto its tile as they merge. A pass that grows no window, a strip
+  movement included, MUST merge at once, with any pass held before it. A held pass whose window
+  misses the 300ms merges with the picture its tile has, the window's ground in the growth, and the
+  repainted picture replaces that one when it comes.
 - Each window a resize grows MUST be pictured at its new size once it has repainted there. One whose
   repaint missed the 300ms flies its picture from the press, with the window's ground in its growth,
   and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
@@ -266,7 +271,8 @@ destination for a window already moving.
   picture and the last capture before the lift MUST NOT be drawn on it. One starting clipped or off
   the display has no picture from the press, and its repainted picture MUST replace the one it flies
   as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
-  shrinks, and so whether the motion still waits for it. A picture taken at its
+  shrinks, against the picture its tile carries, and so whether the motion still waits for it,
+  before the motion starts as once it moves. A picture taken at its
   new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
   one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
   keeps the look its picture from the press shows, the title bar and controls macOS draws focused or

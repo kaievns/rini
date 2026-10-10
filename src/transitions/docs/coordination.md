@@ -348,9 +348,16 @@ reached a flight already moving: each merged 3-15ms after its press with no hold
 grew flew its picture from before with its ground in the growth until its repaint was cut in,
 31-287ms after the press. Only the presses that began a flight (g148, g149, g153) and one merged
 before its flight moved (g150) waited for theirs. So once the plan plays, the engine keeps a pass
-that grows a window (`Waits::grows`, the begin's sort), and any pass while one is kept, unmerged
+that grows a window (`Waits::grows`), and any pass while one is kept, unmerged
 (`RunningAnimation::held`), and tells the coordinator each grow's end and the frames the pass writes
-(`Event::HoldMerge`). The coordinator writes those frames at once, so the app repaints, watches each
+(`Event::HoldMerge`). A merged pass's grows are judged against the flight it reaches, before the
+motion as once it moves (`Waits::against_tiles`, `EndPicture::against_tile`): a window it resizes,
+or one a kept pass grows, that it ends wider or taller than the picture its running tile carries
+(`stretch::grows` from `coverage.covered`) is a grow whatever its own sizes. A press shrinking a
+window from a grow whose repaint has not come (572 on the tile, held toward 1148, the next press 1148
+to 860) is held so, where its own sizes would have merged every kept pass at once and flown 572 into
+860, and before the motion it keeps the hold, which `Flight::holds_for` would otherwise have let go.
+A move of a window no kept pass grows stays a navigation, however small its cached picture. The coordinator writes those frames at once, so the app repaints, watches each
 grow ending wholly on the display to repaint there, the watches retargeted under the same
 generation (`HeldMerge`), and holds (`Phase::MergeHeld`): the flight plays on, its tiles going on to
 the ends they had and resting there, with no last capture, no place, no lift and no landing read. A
@@ -358,19 +365,20 @@ repaint delivered there is held for the merge (`Coordinator::holds`). Once each 
 is given up on (`Lost`) or `HOLD_CAP` has passed since the pass arrived, the coordinator says
 `Command::Retarget`: the engine merges every pass it kept, oldest first, from where each tile is
 drawn then (`FlightEngine::merge_now`, the path any other pass takes at once), and tells it
-`Event::Merge`, which starts the next generation and takes the held repaint onto the retargeted
-tile as a picture watched there since the hold (`watched_since`), so the moving edge reveals content.
+`Event::Merge` for each, each starting the next generation. The latest one's merge takes the held
+repaint onto the retargeted tile as a picture watched there since the hold (`watched_since`), so the
+moving edge reveals content; an earlier one's tile ends elsewhere, so `HeldMerge` counts the passes
+kept and lasts until the latest has merged (`latest_held`).
 A pass arriving while one is held replaces what the hold waits for, its own grows from its own
-arrival, a window an earlier one grew watched where the latest sends it; one growing nothing, a
-strip movement included, merges at once with every pass kept. Missing the cap, the merge flies the
+arrival, a window an earlier one grew watched where the latest sends it; one growing nothing by that
+measure, a strip movement included, merges at once with every pass kept. Missing the cap, the merge flies the
 picture the tile has with the ground, and the repaint, still watched, is cut in when it lands. The
 journal marks each pass held (`hold_merge`) and each merge it led to (`retarget`, `waited_ms` since
-the latest pass held). *How long a held press waits on screen is not measured yet. Two cases still
-fly ground: a pass that only shrinks, judged on its own sizes, merging held grows whose repaints
-have not come can end wider than its tile's picture; and passes merged before the motion still wait
-up to `HOLD_CAP` from the show, not from their own arrival, which three presses inside one hold can
-run out (the simulation in `rapid_resizes_never_fly_a_grown_tile_with_ground_unless_a_hold_runs_out`
-does, a press every 115ms repainting after 140ms).*
+the latest pass held). *How long a held press waits on screen is not measured yet. One case still
+flies ground: passes merged before the motion still wait up to `HOLD_CAP` from the show, not from
+their own arrival, which three presses inside one hold can run out (the simulation in
+`rapid_resizes_never_fly_a_grown_tile_with_ground_unless_a_hold_runs_out` does, a press every 115ms
+repainting after 140ms).*
 
 A tile the pass retargets keeps the picture it has and how focus is drawn on it: a pass is composed
 from the cache, and copied over it erased frame zero's picture, a picture the flight took or a parked
@@ -829,7 +837,7 @@ zero's SkyLight pictures at the press, the overlay up with them, and the real fr
 overlay goes up, so the app repaints at its new size behind it. Each resized window is watched until
 it has repainted where it ends (`EndPicture::of_window`, sorted into the stage's lists by `Waits`,
 `StageSummary::repainting`, `Settle::Repainted`). A window the pass grows on either axis, judged on the request's own sizes
-(`stretch::grows`), a fold widening a window as it shortens it included, is `EndPicture::Held`: in
+(`stretch::grows`) and a merged pass's against its tile's picture as well ("Mid-flight passes"), a fold widening a window as it shortens it included, is `EndPicture::Held`: in
 `StageSummary::awaiting` as well, so the overlay stands still at frame zero, in place of the 25ms
 coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show. That picture goes onto
 the tile before the motion starts, `FlightEngine::swap` posing frame zero again with it (`reinstall`),
@@ -854,11 +862,12 @@ its macOS-drawn look turns with the lift. Only a window frame zero was asked for
 the press: one starting clipped or off the display flies the cache's, whatever its age and size, so
 it keeps nothing, and its repainted landing is swapped in as it lands, as a travelling entrance's
 (`a_shrink_frame_zero_never_pictured_has_its_repaint_swapped_in`). The latest pass to resize a window
-decides, for the hold as for the picture: a merged pass growing a kept window takes it out of `kept`,
-its landing swapped as a grow's, held for if the motion has not started, and held itself until the
-window repaints if it has ("Mid-flight passes"); one shrinking a held grow
-takes it out of `Flight::holds_for`, so the motion stops waiting for it, and puts it in `kept`; one
-only moving it leaves it as it was.
+decides, for the hold as for the picture, judged against the picture its tile carries: a merged pass
+growing a kept window takes it out of `kept`, its landing swapped as a grow's, held for if the motion
+has not started, and held itself until the window repaints if it has ("Mid-flight passes"); one
+shrinking a held grow inside that picture takes it out of `Flight::holds_for`, so the motion stops
+waiting for it, and puts it in `kept`, while one ending it past that picture is a grow still; one
+only moving it leaves it as it was, unless a kept pass grows it and it ends past that picture.
 
 Until its repainted picture lands, a tile flies the picture it has, crop-drawn on the leg's anchors,
 all of it 1:1, with the window's own ground where it does not cover the frame ("Resizes through the
@@ -909,8 +918,10 @@ the picture's own size, held the overlay still for its repaint, up to `HOLD_CAP`
 235ms median (min 173, max 299) with 22 of about 45 holds out at 300ms, and 4 of 21 maximize holds hit
 the cap on 2026-10-09, when a capture differing from the picture before still counted as a repaint.
 That direction flew every resize at once, and the cut from the ground to content on a grow was the
-flicker Kai reported the same day. The hold came back for a grow judged on the window's own sizes, so a
-move flying a cached picture smaller than its window stays a navigation, crop-drawn with its ground.
+flicker Kai reported the same day. The hold came back for a grow judged on the window's own sizes, a
+merged pass's against the picture its tile carries as well ("Mid-flight passes"), so a move flying a
+cached picture smaller than its window stays a navigation, crop-drawn with its ground, unless a held
+pass grows that window.
 `HOLD_CAP` bounds the hold for a grow, a held merge's wait for its grows from its arrival ("Mid-flight
 passes"), the hold for a window with no picture of its own ("The reservation fallback"), and how long
 a repaint watch waits for its window to arrive; a 150ms cap was

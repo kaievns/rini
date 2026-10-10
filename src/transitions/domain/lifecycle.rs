@@ -251,10 +251,11 @@ pub enum Event {
     /// A pass absorbed while a transition runs; its plan is already merged and the renderer retargeted.
     /// `moved` when the merge moved anything, which restarts the clock.
     Merge { stage: StageSummary, moved: bool },
-    /// A pass reaching a flight whose motion runs, not merged yet: one that grows windows, each with
-    /// where the pass ends it, or any pass while one is held. `writes` is where it sends the real
-    /// windows. The coordinator says when it merges (`Command::Retarget`): once the grows it can see
-    /// repaint have repainted there, at once when there are none.
+    /// A pass reaching a flight whose motion runs, not merged yet: one that grows windows past the
+    /// pictures their tiles carry (`Waits::against_tiles`), each with where the pass ends it, or any
+    /// pass while one is held. `writes` is where it sends the real windows. The coordinator says when
+    /// it merges (`Command::Retarget`): once the grows it can see repaint have repainted there, at
+    /// once when there are none.
     HoldMerge { grows: Vec<(WindowId, ScreenRect)>, writes: Vec<(WindowId, ScreenRect)> },
     /// The frame-zero pictures arrived (or the service has nothing more to give).
     FrameZero(Generation),
@@ -307,8 +308,9 @@ pub enum Command {
     Watch(EndWatch),
     StopWatches,
     StartMoving,
-    /// Merge the passes held since the motion ran (`Event::HoldMerge`), from where each tile is drawn
-    /// now, then tell it `Event::Merge`: `held` is how long since the latest of them arrived.
+    /// Merge the passes held since the motion ran (`Event::HoldMerge`), oldest first, from where each
+    /// tile is drawn now, telling it `Event::Merge` for each: `held` is how long since the latest of
+    /// them arrived.
     Retarget { held: Duration },
     /// One more capture of every end window, before the lift.
     AskFinal { generation: Generation, windows: Vec<(WindowId, ScreenRect)>, behind: Vec<WindowId> },
@@ -387,9 +389,12 @@ enum Phase {
     Landing,
 }
 
-/// The passes held since the motion ran, as the coordinator sees them until they merge.
+/// The passes held since the motion ran, as the coordinator sees them until the latest of them
+/// merges.
 #[derive(Clone, Debug, PartialEq)]
 struct HeldMerge {
+    /// How many of them are still to merge: the latest one's merge takes the repaints.
+    passes: usize,
     /// When the latest of them arrived.
     since: Instant,
     /// The generation the grows were watched under, since their real frames were written.
@@ -397,8 +402,8 @@ struct HeldMerge {
     /// Every window they grow, where the latest of them sends it, while that is on the display:
     /// watched there until it repaints.
     ends: Vec<(WindowId, ScreenRect)>,
-    /// The repainted pictures delivered there, held for the merge: under their generation, at their
-    /// frame, and why.
+    /// The repainted pictures delivered there, held for the latest pass's merge: under their
+    /// generation, at their frame, and why.
     repainted: Vec<(Generation, WindowId, ScreenRect, Why)>,
 }
 
@@ -827,7 +832,7 @@ impl Coordinator {
         let focus_moved = f.stage.focus != stage.focus;
         let newcomers = stage.awaiting.clone();
         let before = std::mem::replace(&mut f.stage, stage);
-        let held = f.held_merge.take();
+        let held = latest_held(&mut f.held_merge);
         if matches!(f.phase, Phase::Preparing { .. }) {
             // Nothing is shown or written yet: the show takes the merged stage as it is, and waits for
             // frame zero to picture what the merge brought on screen too.
@@ -1113,11 +1118,17 @@ fn hold_merge(
     let display = f.stage.display;
     let seen: Vec<_> = grows.into_iter().filter(|(_, end)| wholly_inside(*end, display)).collect();
     if f.clock.is_none() || seen.is_empty() {
+        if let Some(held) = f.held_merge.as_mut() {
+            held.passes += 1;
+        }
         retarget(f, now, out);
         return;
     }
     let generation = f.generation;
-    let held = f.held_merge.get_or_insert_with(|| HeldMerge { since: now, generation, ends: Vec::new(), repainted: Vec::new() });
+    let held = f
+        .held_merge
+        .get_or_insert_with(|| HeldMerge { passes: 0, since: now, generation, ends: Vec::new(), repainted: Vec::new() });
+    held.passes += 1;
     held.since = now;
     for (window, end) in held.ends.iter_mut() {
         if let Some((_, written)) = writes.iter().find(|(w, _)| w == window) {
@@ -1146,6 +1157,14 @@ fn retarget(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     }
     let held = f.held_merge.as_ref().map_or(Duration::ZERO, |merge| now.saturating_duration_since(merge.since));
     out.push(Command::Retarget { held });
+}
+
+/// The passes held, taken by the merge of the latest of them, which takes their repaints: an earlier
+/// one's tiles end elsewhere.
+fn latest_held(held: &mut Option<HeldMerge>) -> Option<HeldMerge> {
+    let merge = held.as_mut()?;
+    merge.passes = merge.passes.saturating_sub(1);
+    if merge.passes == 0 { held.take() } else { None }
 }
 
 /// Each tile a held merge watched to repaint where the merged stage ends it, ended there since the
@@ -2682,26 +2701,61 @@ mod tests {
         assert!(place.is_some_and(|place| lift.is_some_and(|lift| place < lift)), "{out:?}");
     }
 
+    /// Kai's rapid Alt-R: a press shrinking window 2 on its own sizes, superseding a held grow whose
+    /// repaint has not come, ends wider than the picture its tile carries, and the engine sends it as
+    /// a grow: it waits for the repaint where it ends, which is held through the first pass's merge,
+    /// ending the window elsewhere, and goes onto the tile with the latest one's.
+    #[test]
+    fn a_shrink_superseding_a_held_grow_waits_and_its_repaint_goes_on_with_the_latest_merge() {
+        let now = Instant::now();
+        let (flying, grown, merged) = grown_mid_flight();
+        let narrower = r(3.0, 35.0, 1148.0, 1079.0);
+        let mut narrowed = merged.clone();
+        narrowed.tiles[1].end = narrower;
+        narrowed.final_frames[1].1 = narrower;
+        let mut c = running(flying, now);
+        let g = c.generation();
+        let (first, later) = (now + Duration::from_millis(100), now + Duration::from_millis(160));
+        c.on(hold(&[(w(2), grown)]), first);
+        let out = c.on(hold(&[(w(2), narrower)]), later);
+        assert_eq!(retargets(&out), None, "held");
+        assert!(watch(&out).expect("watched").awaiting.contains(&(w(2), narrower)));
+        let repainted = later + Duration::from_millis(140);
+        let landed = Event::Picture { generation: g, window: w(2), frame: narrower, why: Why::Landed };
+        assert_eq!(retargets(&c.on(landed, repainted)), Some(Duration::from_millis(140)));
+
+        let out = c.on(Event::Merge { stage: merged, moved: true }, repainted);
+        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "the first ends it elsewhere: {out:?}");
+        assert!(c.holds(w(2), g, narrower), "kept for the latest");
+        let out = c.on(Event::Merge { stage: narrowed, moved: true }, repainted);
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        assert!(!c.holds(w(2), g, narrower));
+    }
+
     /// Kai's width presets on window 2, a third, a half, two thirds and the display wide, pressed 80
-    /// to 150ms apart through the cycle and back and forth, each window repainting 40 to 140ms after
-    /// it is watched where it ends: every time its tile sets off for an end, as the motion starts or
-    /// as passes merge, the picture on it covers that end, unless a hold ran out. Each pass reaches the
+    /// to 150ms apart through the cycle, back and forth, twice round and skipping steps, so that some
+    /// merges take two held grows at once, each window repainting 40 to 140ms after it is watched
+    /// where it ends: every time its tile sets off for an end, as the motion starts or as passes
+    /// merge, the picture on it covers that end, unless a hold ran out. Each pass reaches the
     /// coordinator as the engine sends it.
     #[test]
     fn rapid_resizes_never_fly_a_grown_tile_with_ground_unless_a_hold_runs_out() {
         let widths = [572.0, 860.0, 1148.0, 1722.0];
-        let sequences: [&[usize]; 4] = [&[0, 1, 2, 3, 0], &[2, 3, 0, 1, 2], &[1, 2, 1, 2, 1], &[0, 1, 2, 3]];
-        let mut held = 0;
+        let sequences: [&[usize]; 6] =
+            [&[0, 1, 2, 3, 0], &[2, 3, 0, 1, 2], &[1, 2, 1, 2, 1], &[0, 1, 2, 3], &[0, 1, 2, 3, 0, 1, 2, 3, 0], &[0, 2, 1, 3, 2, 3, 1, 2]];
+        let (mut held, mut together) = (0, 0);
         for sequence in sequences {
             for gap in [80, 115, 150] {
                 for delay in [40, 90, 140] {
                     let mut presses = Rapid::new(sequence.iter().map(|&i| widths[i]).collect(), gap, delay);
                     presses.run();
                     held += presses.held;
+                    together += presses.held_together;
                 }
             }
         }
         assert!(held > 0, "some merges waited");
+        assert!(together > 0, "some merged two grows held at once");
     }
 
     /// Window 2 resized through `widths`, a press every `gap` ms, and the pictures service delivering
@@ -2724,19 +2778,22 @@ mod tests {
         shown: u64,
         /// Merges that waited.
         held: usize,
+        /// Merges of two held passes growing it or more.
+        held_together: usize,
     }
 
     impl Rapid {
         fn new(widths: Vec<f64>, gap: u64, delay: u64) -> Rapid {
             let (end, picture) = (widths[0], widths[0]);
             let c = Coordinator::default();
-            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, held: 0 }
+            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, held: 0, held_together: 0 }
         }
 
         fn frame(width: f64) -> ScreenRect { r(3.0, 35.0, width, 1079.0) }
 
-        /// The pass resizing window 2 from `from` to `to`, sorted as the engine sorts it, and whether
-        /// it grows.
+        /// The pass resizing window 2 from `from` to `to`, sorted as the engine sorts it, one merged
+        /// into the flight against the picture on its tile and the grows of the passes held, and
+        /// whether it grows.
         fn pass(&self, from: f64, to: f64) -> (StageSummary, bool) {
             let mut stage = pan();
             stage.kind = Kind::LayoutPass;
@@ -2745,11 +2802,17 @@ mod tests {
             stage.tiles = vec![tile(w(2), Self::frame(self.widths[0]), Self::frame(to))];
             stage.final_frames = vec![(w(2), Self::frame(to))];
             let end = EndPicture::of_window(Route::SkyLight, Self::frame(from).size, Self::frame(to).size);
-            let waits: Waits = [(w(2), end)].into_iter().collect();
+            let mut waits: Waits = [(w(2), end)].into_iter().collect();
+            if self.c.is_flying() {
+                let held = self.queued.iter().any(Self::grows);
+                waits.against_tiles([(w(2), Self::frame(to).size)], |_| Some(Self::frame(self.picture).size), |_| held);
+            }
             let grows = waits.grows().count() > 0;
             (stage.awaiting, stage.repainting, stage.kept) = (waits.awaiting, waits.repainting, waits.kept);
             (stage, grows)
         }
+
+        fn grows(stage: &StageSummary) -> bool { stage.awaiting.contains(&w(2)) && stage.repainting.contains(&w(2)) }
 
         fn case(&self) -> String { format!("{:?} every {}ms, repainted after {}ms, at {}ms", self.widths, self.gap, self.delay, self.at) }
 
@@ -2784,6 +2847,7 @@ mod tests {
                     Command::StartMoving => self.sets_off(ticked && Duration::from_millis(self.at - self.shown) >= HOLD_CAP),
                     Command::Retarget { held } => {
                         self.held += usize::from(!held.is_zero());
+                        self.held_together += usize::from(self.queued.iter().filter(|stage| Self::grows(stage)).count() > 1);
                         for stage in std::mem::take(&mut self.queued) {
                             self.on(Event::Merge { stage, moved: true }, false);
                         }
