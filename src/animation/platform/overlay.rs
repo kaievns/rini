@@ -2854,8 +2854,8 @@ mod tests {
     }
 
     /// A stretched tile stays stretched for a picture fitting both ends of its leg, so a pan draws
-    /// as before, and a stand-in's real picture landing on a resize is cut onto the crop grid and
-    /// keyed along the leg rather than stretched over it.
+    /// as before and is not re-keyed, and a stand-in's real picture landing on a resize is cut onto
+    /// the crop grid and keyed along the leg rather than stretched over it.
     #[test]
     fn a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped() {
         use crate::pictures::platform::picture::{stand_in_picture, test_bitmap, test_picture};
@@ -2890,6 +2890,7 @@ mod tests {
         swap_onto(&mut panning, &test_picture(slot.size), slot.size.respace(), Some(&pan), 2.0);
         assert_eq!(panning.crop_of, None, "a pan stays stretched");
         assert!(panning.crop_grid.is_none(), "and never builds a grid");
+        assert!(panning.layers().into_iter().all(|layer| animation_keys(layer).is_empty()), "nor is re-keyed");
     }
 
     /// A crop-drawn tile is filled with its picture's ground where the picture ends, in layers
