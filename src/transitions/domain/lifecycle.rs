@@ -13,6 +13,7 @@ use rini_geometry::space::{OverlayRect, ScreenRect, SurfacePoint};
 use rini_geometry::{is_off_screen, to_overlay_space};
 use serde::Serialize;
 
+use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::tile::snap_to;
 use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
 
@@ -351,6 +352,9 @@ pub struct EndWatch {
     /// ... and end windows a pass resized, opened or drew as a stand-in, captured once they have
     /// repainted there (`Settle::Repainted`), a window a held merge grows where that merge ends it.
     pub awaiting: Vec<(WindowId, ScreenRect)>,
+    /// Of `landing` and `awaiting`, the windows ending wholly on the display: what a measured lift
+    /// compares the overlay with the screen over, never a grow watched where it ends cut by its edge.
+    pub compared: Vec<(WindowId, ScreenRect)>,
     /// A window of `landing` not there by then is lost...
     pub landing_until: Instant,
     /// ... and one of `awaiting` when a hold would run out, held for or not.
@@ -1219,8 +1223,10 @@ fn start_moving(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
 
 fn end_watch(f: &Flight, now: Instant) -> EndWatch {
     let (awaiting, landing) = f.end_windows();
+    let compared = landing.iter().chain(&awaiting).filter(|(_, end)| wholly_inside(*end, f.stage.display)).copied().collect();
     EndWatch {
         generation: f.generation,
+        compared,
         landing,
         awaiting,
         landing_until: now + LANDING_PATIENCE,
@@ -1259,16 +1265,19 @@ fn final_at(started: Instant, duration: Duration) -> Instant {
     (started + duration).checked_sub(FINAL_BEFORE_END).unwrap_or(started).max(started + FINAL_NOT_BEFORE)
 }
 
-/// Over every end window watched that ends wholly on the display: those that land, and those that
-/// repaint, floating or not, since a window the overlay covers wholly may stop painting.
+/// Over every end window watched where its hole lands on the display (`hole_in`): those that land,
+/// and those that repaint, floating or not, since a window the overlay covers wholly may stop
+/// painting. A grow ending cut by the display's right edge is holed; one cut by its left edge is not,
+/// its hole a point in from its left edge, off the display.
 fn holes(f: &Flight) -> Vec<(WindowId, OverlayRect)> {
     let (awaited, landing) = f.end_windows();
     let display = f.stage.display;
+    let overlay = to_overlay_space(display, display);
     awaited
         .into_iter()
         .chain(landing)
-        .filter(|(_, frame)| wholly_inside(*frame, display))
         .map(|(window, frame)| (window, to_overlay_space(frame, display)))
+        .filter(|(_, end)| overlay.contains_rect(&hole_in(*end)))
         .collect()
 }
 
@@ -2408,9 +2417,10 @@ mod tests {
 
     /// fold1's g18 (`docs/data/2026-10-10-fold`): window 2 unfolds from 3,35 1148x538 to end part off
     /// the left edge, at -285,35 1148x1079. Watched there, through ScreenCaptureKit, it holds the
-    /// motion until its repaint lands, which is swapped onto frame zero; no hole is left over it,
-    /// SkyLight's last capture leaves it out, and a grow ending wholly off the display, or showing a
-    /// parked column's sliver, is still not held for.
+    /// motion until its repaint lands, which is swapped onto frame zero; no hole is left over it, its
+    /// hole off the display, a measured lift does not compare it, SkyLight's last capture leaves it
+    /// out, and a grow ending wholly off the display, or showing a parked column's sliver, is still not
+    /// held for. One ending cut by the right edge is watched and holed, and not compared either.
     #[test]
     fn a_grow_ending_part_off_the_display_is_held_for_its_repaint_and_flies_it_from_frame_zero() {
         let now = Instant::now();
@@ -2427,7 +2437,9 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
-        assert_eq!(watch(&out).unwrap().awaiting, vec![(w(2), cut)], "watched where it ends");
+        let watched = watch(&out).unwrap();
+        assert_eq!(watched.awaiting, vec![(w(2), cut)], "watched where it ends");
+        assert!(!watched.compared.iter().any(|(window, _)| *window == w(2)), "not compared");
         let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
         assert!(!holes.unwrap().iter().any(|(window, _)| *window == w(2)), "its hole would be off the display");
         assert!(c.on(tick.clone(), now + COALESCE_WINDOW).is_empty(), "held");
@@ -2440,6 +2452,16 @@ mod tests {
         assert!(at(Command::StartMoving).is_some_and(|moved| swapped < moved), "onto frame zero: {out:?}");
         let last = repainted + PLAYS - FINAL_BEFORE_END;
         assert_eq!(asked_final(c.on(tick.clone(), last)), Some(vec![stage.final_frames[0]]), "SkyLight sees it only whole");
+
+        let right = r(1000.0, 35.0, 1148.0, 1079.0);
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(unfold(right)), now);
+        let out = c.on(Event::FrameZero(c.generation()), now);
+        let watched = watch(&out).unwrap();
+        assert_eq!(watched.awaiting, vec![(w(2), right)], "cut by the right edge, watched");
+        assert!(!watched.compared.iter().any(|(window, _)| *window == w(2)), "cut by the right edge, not compared");
+        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
+        assert!(holes.unwrap().iter().any(|(window, _)| *window == w(2)), "cut by the right edge, holed");
 
         for (what, end) in [("wholly off", r(1800.0, 35.0, 1148.0, 1079.0)), ("a sliver", r(1680.0, 35.0, 1148.0, 1079.0))] {
             let mut c = Coordinator::default();

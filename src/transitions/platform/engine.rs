@@ -58,7 +58,7 @@ use crate::transitions::domain::admission::*;
 use crate::transitions::domain::drawn::{Drawn, Owed};
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::flight_score::FlightScore;
-use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, compared, measures};
+use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures};
 use crate::transitions::domain::lifecycle::{
     self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
     extend_latest, losing_focus,
@@ -932,8 +932,8 @@ pub struct FlightEngine {
     frame_clock: Option<RepeatingTimer>,
     /// The quiet after the lift of a generation.
     quiet: Option<(Generation, RepeatingTimer)>,
-    /// The end windows the last watch named: what a measured lift compares, of those ending wholly on
-    /// screen (`journal::compared`).
+    /// The end windows the last watch named ending wholly on screen: what a measured lift compares
+    /// (`EndWatch::compared`).
     ends: Vec<(WindowId, ScreenRect)>,
     /// The lift held for the overlay's own picture, while the handover is measured.
     held: Option<HeldLift>,
@@ -1132,7 +1132,7 @@ impl FlightEngine {
                 self.render(Render::Holes(holes));
             }
             Command::Watch(end) => {
-                self.ends = end.landing.iter().chain(&end.awaiting).copied().collect();
+                self.ends = end.compared.clone();
                 self.watches.watch(&self.pictures, self.client, &end)
             }
             Command::StopWatches => self.watches.stop(&self.pictures),
@@ -2334,12 +2334,11 @@ impl FlightEngine {
     /// What measuring `generation`'s lift compares: the overlay against the screen over the end windows
     /// the last watch named. `None` unless the lift is measured (`journal::measures`).
     fn handover_check(&mut self, generation: Generation) -> Option<HandoverCheck> {
-        let ends = std::mem::take(&mut self.ends);
-        let (display, scale) = self.display?;
-        let windows = compared(ends, display);
+        let windows = std::mem::take(&mut self.ends);
         if !measures(self.journal.is_some_and(|journal| journal.measure_handover), &windows) {
             return None;
         }
+        let (display, scale) = self.display?;
         let band = |window| self.running.as_ref().map_or(0.0, |running| running.band(window, scale));
         let windows = windows.into_iter().map(|(window, end)| (window, end, band(window))).collect();
         Some(HandoverCheck {
@@ -2626,6 +2625,7 @@ mod tests {
         fn end(generation: u64, now: Instant) -> EndWatch {
             EndWatch {
                 generation: Generation(generation),
+                compared: vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0)), (wid(2), rect(867.0, 32.0, 859.0, 1081.0))],
                 landing: vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))],
                 awaiting: vec![(wid(2), rect(867.0, 32.0, 859.0, 1081.0))],
                 landing_until: now + Duration::from_millis(150),

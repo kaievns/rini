@@ -204,7 +204,9 @@ destination for a window already moving.
   Every frame MUST be written as soon as the overlay is on screen, so the window has the whole flight
   to land in.
 - A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
-  window that ends wholly on screen, so the window server counts it visible. Covered wholly, a
+  window that ends wholly on screen, and over each grow ending cut by the display's right edge, so
+  the window server counts it visible. A grow ending cut by its left edge has no such point: the
+  point sits just in from a window's left edge, off the display for that one. Covered wholly, a
   terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
   all 24. So MUST a decoration rini draws around one at rest (`decorations.md`): a point is left
   clear over its band too.

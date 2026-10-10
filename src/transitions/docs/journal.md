@@ -224,8 +224,9 @@ A crash loses the marks not yet written: a panic hook cannot reach the engine's 
 
 `animations { journal { measure-handover; } }` measures every lift as "The handover, measured" in
 `src/animation/docs/capture-overlay-research.md` did: the overlay's own picture just before it comes
-down against the screen just after, over every window that ends wholly on screen, the ones the last
-watch of the flight named (`landing` and `awaiting`), which are the windows the overlay is holed over.
+down against the screen just after, over every window that ends wholly on screen, the ones of
+`landing` and `awaiting` the last watch of the flight named (`EndWatch::compared`), each of which the
+overlay is holed over; a grow watched where it ends cut by the display's edge is not compared.
 It is off unless asked for, and `journal false` turns it off with the writing.
 
 - **The engine.** A lift is held when the last watch named a window ending wholly on screen

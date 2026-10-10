@@ -126,8 +126,9 @@ under the transition's generation, for the strip windows wholly on screen where 
 floating windows seen behind them. Only then is the pass composed from the cache, the overlay
 installed hidden, and the coordinator told what was composed (`Event::Merge`). The overlay goes up
 once those pictures arrive, each put on its tile, or 80ms pass (`FRAME_ZERO_PATIENCE`); the real frames
-are written then and never before, for every kind; a 1pt hole is cut over every window that ends wholly
-on screen, so the window server counts it visible and its app keeps painting, and another over the
+are written then and never before, for every kind; a 1pt hole is cut over every window watched that
+ends where the hole, a point in from its left edge, lands on screen, wholly on it or a grow cut by its
+right edge, so the window server counts it visible and its app keeps painting, and another over the
 border and focus ring rini draws around it at rest when it wears either where it ends; and the end
 state is watched. A layout pass then waits for the reactor's follow-up passes (25ms); one that grows a
 window, or draws one with no picture of its own, a reserved entrance or a stand-in, waits instead for
@@ -980,12 +981,14 @@ returns its surface whole: one capture after another, each listed afresh, throug
 `Priority::Repaint`, judged by the same rule on 32x32 thumbprints read off the surface, 20 times at
 most (`ELSEWHERE_TRIES`). On fold1's unfold (`docs/data/2026-10-10-fold`, g18) lab-A, ending at about
 -285, was never watched and flew its growth as the ground for the 359ms from the motion's start to the
-lift, up to 422 blocks. No hole is cut over it (`holes`): a hole sits 1pt in from a window's left edge,
-off the display for one cut by that edge. *Whether a
+lift, up to 422 blocks. A hole is cut over a grow ending cut by the display's right edge, whose left
+edge it sits 1pt in from, and none over one cut by its left edge, as lab-A is, its hole off the display
+(`holes`); a measured lift compares neither (`EndWatch::compared`). *Whether a
 half-painted surface can hold still for 8ms and pass, what the watch's captures cost the motion
 they now run beside, how long the ScreenCaptureKit captures of a cut end keep the hold (38-56ms a
 capture, `src/pictures/docs/capture-research.md`, so two inferred to fit `HOLD_CAP`), and whether a
-window the overlay covers with no hole over it keeps painting, are not measured yet.*
+grow cut by the left edge, which the overlay covers on the display with no hole over it, keeps
+painting, are not measured yet.*
 
 Every fill made of the picture's own pixels for what the app has not rendered yet was tried and
 rejected by eye: `contentsRect` past the picture's edge extends its outermost pixels (a hole to the

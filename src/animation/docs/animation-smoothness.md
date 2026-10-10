@@ -230,7 +230,9 @@ Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
 coordinates, flipped as the canvas is; where a hole lands on screen was not
 measured on a window shorter than the display. Which windows get holes, and
 when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
-it watches end wholly on screen, from the show to the lift. A window wearing a
+it watches end where its hole lands on the display, from the show to the lift: one
+ending wholly on screen, or a grow ending cut by the display's right edge, never
+one cut by its left edge, whose hole a point in from that edge is off the display. A window wearing a
 border, or its focus ring where the flight ends, gets a second hole, over the
 bands rini draws around it at rest: a point square, or their width where that is
 narrower, halfway across their left edge and halfway down (`band_hole_in`, pinned

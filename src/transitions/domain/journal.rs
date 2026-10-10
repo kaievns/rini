@@ -23,7 +23,7 @@ use super::lifecycle::{Command, Coordinator, Event, Generation, Kind, Start};
 use super::request::Cause;
 use crate::pictures::domain::handover::HandoverDiff;
 use crate::pictures::domain::route::Route;
-use crate::pictures::domain::watch::{Why, wholly_on};
+use crate::pictures::domain::watch::Why;
 
 /// How many marks the ring holds.
 pub const RING: usize = 8192;
@@ -758,15 +758,9 @@ impl Journalled {
 pub const OVERLAY_TAKE_PATIENCE: Duration = Duration::from_millis(60);
 
 /// Whether a lift is held for the overlay's own picture: while the handover is measured, and with a
-/// window ending wholly on screen to compare (`compared`).
+/// window ending wholly on screen to compare (`EndWatch::compared`).
 pub fn measures(measure_handover: bool, ends: &[(WindowId, ScreenRect)]) -> bool {
     measure_handover && !ends.is_empty()
-}
-
-/// Of the end windows the last watch named, those a measured lift compares: the ones ending wholly
-/// on `display`, not a grow watched where it ends cut by its edge.
-pub fn compared(ends: Vec<(WindowId, ScreenRect)>, display: ScreenRect) -> Vec<(WindowId, ScreenRect)> {
-    ends.into_iter().filter(|(_, end)| wholly_on(*end, display)).collect()
 }
 
 /// A lift held for the overlay's own picture: the generation that lifted, and when.
@@ -874,6 +868,7 @@ mod tests {
         let frames = vec![(w(1), r(0.0, 0.0, 200.0, 200.0))];
         let watch = EndWatch {
             generation: g,
+            compared: frames.clone(),
             landing: frames.clone(),
             awaiting: Vec::new(),
             landing_until: Instant::now(),
@@ -1474,15 +1469,6 @@ mod tests {
         assert!(measures(true, &ends));
         assert!(!measures(false, &ends), "not measuring");
         assert!(!measures(true, &[]), "nothing ending on screen");
-    }
-
-    /// A grow the last watch named where it ends cut by the display's edge is not compared.
-    #[test]
-    fn a_measured_lift_compares_only_the_ends_wholly_on_the_display() {
-        let display = r(0.0, 0.0, 1728.0, 1117.0);
-        let (on, cut) = ((w(1), r(866.0, 35.0, 860.0, 1079.0)), (w(2), r(-285.0, 35.0, 1148.0, 1079.0)));
-        assert_eq!(compared(vec![on, cut], display), [on]);
-        assert!(!measures(true, &compared(vec![cut], display)));
     }
 
     /// The pan, journalled, to its lift, which the engine holds: the generation that lifted, and when.
