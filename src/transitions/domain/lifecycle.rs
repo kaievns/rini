@@ -2853,8 +2853,8 @@ mod tests {
 
     /// A pass held after another replaces what the hold waits for, its own grows from its own
     /// arrival: a repaint where the first sent the window merges nothing, nor does the first's cap,
-    /// and a window the first grew that the later one moves is watched where it moves. A pass growing
-    /// nothing merges both at once.
+    /// and a window the first grew that the later one moves is watched where it moves, or where the
+    /// first ended it cut by the display's edge. A pass growing nothing merges both at once.
     #[test]
     fn a_held_merge_superseded_waits_for_the_later_passs_grows() {
         let now = Instant::now();
@@ -2883,6 +2883,13 @@ mod tests {
         let watched = watch(&c.on(Event::HoldMerge { grows: vec![(w(1), neighbour)], writes: vec![(w(1), neighbour), (w(2), moved)] }, later));
         let awaiting = watched.expect("watched").awaiting;
         assert!(awaiting.contains(&(w(2), moved)) && !awaiting.contains(&(w(2), wider)), "where the later one moves it: {awaiting:?}");
+
+        let mut c = running(flying.clone(), now);
+        let cut = r(-285.0, 35.0, 1148.0, 1079.0);
+        c.on(hold(&[(w(2), cut)]), first);
+        let watched = watch(&c.on(hold(&[(w(1), neighbour)]), later));
+        let awaiting = watched.expect("watched").awaiting;
+        assert!(awaiting.contains(&(w(2), cut)) && awaiting.contains(&(w(1), neighbour)), "still watched cut by the edge: {awaiting:?}");
 
         let mut c = running(flying, now);
         held(&mut c);

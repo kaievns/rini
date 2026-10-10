@@ -1307,6 +1307,57 @@ mod tests {
         assert!(captures(&mut schedule, now).is_empty(), "settled");
     }
 
+    /// A repainting window cut by the display's edge with a warm capture of it waiting through the
+    /// hold: that one job is raised to a settling `Priority::Repaint` capture, which starts through
+    /// the hold. One already out when the watch hands the window over owes the watch nothing, and a
+    /// settling capture of its own follows it.
+    #[test]
+    fn a_cut_repainting_end_raises_a_waiting_capture_of_it_and_follows_one_out() {
+        use crate::pictures::domain::watch::{Capture, Seen, Settle};
+        let now = Instant::now();
+        let cut = rect(-285.0, 32.0, 1148.0, 1081.0);
+        let handed_over = |schedule: &mut Schedule<(), (), ()>| {
+            schedule.hold(Hold::Transition, now);
+            let landing = Watch::Landing {
+                tag: tag(),
+                windows: vec![(target(1, 1148.0), cut)],
+                behind: Vec::new(),
+                slack: 20.0,
+                settle: Settle::Repainted,
+                until: now + Duration::from_millis(300),
+            };
+            schedule.watch(WatchId(1), landing, now);
+            assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
+            schedule.seen(now, &[Seen { window: wid(1), frame: Some(cut), capture: Capture::Missed }]);
+        };
+        let ready = || {
+            let mut schedule = Schedule::<(), (), ()>::default();
+            schedule.set_display(built_in(), false, now);
+            let _ = schedule.next(now, nothing_held);
+            let _ = schedule.desktop_rendered(built_in(), Some(now));
+            schedule
+        };
+        let settling = Some(Owed { focus: Vec::new(), settles: true });
+
+        let mut waiting = ready();
+        waiting.hold(Hold::Transition, now);
+        waiting.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        assert!(captures(&mut waiting, now).is_empty(), "a warm waits through the hold");
+        handed_over(&mut waiting);
+        assert_eq!(waiting.owed().collect::<Vec<_>>(), [wid(1)], "one job");
+        assert_eq!(captures(&mut waiting, now), vec![wid(1)], "raised, through the hold");
+        assert_eq!(waiting.captured(wid(1)), settling);
+        assert!(waiting.owed().next().is_none());
+
+        let mut out = ready();
+        out.ask(ask(Priority::Warm, &[1]), settled_by(now));
+        assert_eq!(captures(&mut out, now), vec![wid(1)], "out before the hold");
+        handed_over(&mut out);
+        assert_eq!(out.captured(wid(1)), Some(Owed { focus: Vec::new(), settles: false }), "owes the watch nothing");
+        assert_eq!(captures(&mut out, now), vec![wid(1)], "its own follows");
+        assert_eq!(out.captured(wid(1)), settling);
+    }
+
     /// A capture of the window already out began before its focus: the clipped end's capture follows
     /// it, a job of its own.
     #[test]
