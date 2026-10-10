@@ -3853,25 +3853,22 @@ mod tests {
             .collect()
     }
 
-    fn stacked_three(
+    /// One column of `rows` windows, each folded into the first.
+    fn column_of(
         settings: ScrollingLayoutSettings,
-    ) -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        rows: usize,
+    ) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
-        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
-        for id in w {
+        let w: Vec<WindowId> = (1..=rows as u32).map(|idx| wid(1, idx)).collect();
+        for &id in &w {
             system.add_window_after_selection(layout, id);
         }
-        // Pull w2 and w3 into w1's column, so the strip is one column of three.
-        assert!(system.select_window(layout, w[1]));
-        system.toggle_fold_of_selection(layout, Direction::Left);
-        assert!(system.select_window(layout, w[2]));
-        system.toggle_fold_of_selection(layout, Direction::Left);
-        assert_eq!(
-            shape(&system, layout),
-            vec![vec![w[0], w[1], w[2]]],
-            "fixture is one stack"
-        );
+        for &id in &w[1..] {
+            assert!(system.select_window(layout, id));
+            system.toggle_fold_of_selection(layout, Direction::Left);
+        }
+        assert_eq!(shape(&system, layout), vec![w.clone()], "fixture is one column");
         (system, layout, w)
     }
 
@@ -3879,7 +3876,7 @@ mod tests {
     /// was sharing with: the tree said three windows abreast and the screen showed one.
     #[test]
     fn maximizing_a_stacked_window_pulls_it_out_of_the_stack() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
@@ -3894,7 +3891,7 @@ mod tests {
 
     #[test]
     fn a_second_press_puts_it_back_between_the_windows_it_left() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
@@ -3932,7 +3929,7 @@ mod tests {
 
     #[test]
     fn full_width_of_an_unselected_stacked_window_puts_it_back_in_its_stack() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
         assert!(system.select_window(layout, w[0]));
 
         assert!(system.toggle_full_width(layout, w[1]));
@@ -3957,7 +3954,7 @@ mod tests {
     // front of it rather than after it.
     #[test]
     fn the_top_of_a_stack_goes_back_to_the_top() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[0]));
         toggle_selection(&mut system, layout);
@@ -3975,7 +3972,7 @@ mod tests {
     /// column it became rather than being put somewhere the user never had it.
     #[test]
     fn a_window_whose_stack_is_gone_stays_its_own_column() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
@@ -3994,7 +3991,7 @@ mod tests {
     // gone is how a stale record turns into a window in the wrong place.
     #[test]
     fn closing_the_anchor_alone_leaves_the_rest_of_the_stack_reachable() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
@@ -4018,7 +4015,7 @@ mod tests {
     /// not touched since.
     #[test]
     fn a_window_given_a_width_does_not_rejoin_its_old_stack_later() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
@@ -4040,7 +4037,7 @@ mod tests {
     /// This is what stops the record being dropped too eagerly.
     #[test]
     fn a_maximised_window_still_rejoins_its_stack_on_the_second_press() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
@@ -4049,26 +4046,11 @@ mod tests {
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
     }
 
-    /// Kai, 2026-10-10: `Mod+R` changes the width only. The whole column goes the viewport wide with
-    /// its stack, and nothing is recorded to return to.
-    #[test]
-    fn cycling_to_the_full_viewport_keeps_a_stacked_window_in_its_stack() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.preset_column_widths = vec![1.0];
-        let (mut system, layout, w) = stacked_three(settings);
-
-        assert!(system.select_window(layout, w[1]));
-        system.cycle_preset_column_width(layout);
-
-        assert_eq!(shape(&system, layout), vec![w.to_vec()]);
-        assert!(!system.is_window_full_width(layout, w[1]));
-    }
-
     /// Restoring a remembered full width at startup goes through the same transition, so a window
     /// whose column is shared is pulled out of it rather than left maximised over its siblings.
     #[test]
     fn restoring_a_remembered_full_width_pulls_the_window_out_of_its_stack() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         system.restore_window_full_width(layout, w[1]);
 
@@ -4278,7 +4260,7 @@ mod tests {
     /// three; this does.
     #[test]
     fn folding_a_window_in_and_out_returns_it_to_the_same_row() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[1]));
         system.toggle_fold_of_selection(layout, Direction::Left);
@@ -4387,7 +4369,7 @@ mod tests {
     /// a round trip: a window folded into the column on the left came FROM its right.
     #[test]
     fn folding_out_lands_away_from_the_side_the_key_names() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
         assert!(system.select_window(layout, w[1]));
         system.toggle_fold_of_selection(layout, Direction::Left);
         assert_eq!(
@@ -4396,7 +4378,7 @@ mod tests {
             "the left key sends it out to the right"
         );
 
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
         assert!(system.select_window(layout, w[1]));
         system.toggle_fold_of_selection(layout, Direction::Right);
         assert_eq!(
@@ -4413,7 +4395,7 @@ mod tests {
     fn pressing_one_fold_key_twice_returns_the_strip_to_its_shape() {
         for side in [Direction::Left, Direction::Right] {
             // Starting folded in.
-            let (mut system, layout, _w) = stacked_three(ScrollingLayoutSettings::default());
+            let (mut system, layout, _w) = column_of(ScrollingLayoutSettings::default(), 3);
             let selected = system.selected_window(layout).expect("a selection");
             let before = shape(&system, layout);
             system.toggle_fold_of_selection(layout, side);
@@ -4449,7 +4431,7 @@ mod tests {
     /// fell back to the top of the strip would look identical, so it is pinned here.
     #[test]
     fn folding_out_takes_the_selected_window_not_the_top_of_the_stack() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
 
         assert!(system.select_window(layout, w[2]));
         system.toggle_fold_of_selection(layout, Direction::Left);
@@ -4468,7 +4450,7 @@ mod tests {
 
     #[test]
     fn folding_with_nothing_selected_does_nothing() {
-        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
         let before = shape(&system, layout);
 
         system.clear_selection_for_test(layout);
@@ -4772,20 +4754,22 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0, "bounded again");
     }
 
-    /// One column of `rows` windows on Kai's display, under the shipped bounds.
-    fn kai_s_column_of(rows: usize) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
-        let mut system = ScrollingLayoutSystem::new(&preset_settings());
-        let layout = system.create_layout();
-        let w: Vec<WindowId> = (1..=rows as u32).map(|idx| wid(1, idx)).collect();
-        for &id in &w {
-            system.add_window_after_selection(layout, id);
+    /// A stack's heights made its own: the top window's bottom edge dragged 100pt down, so the rows
+    /// are no longer the even split a fold leaves. A lone window is left as it is.
+    fn heights_dragged_apart(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        w: &[WindowId],
+    ) -> Vec<(f64, f64)> {
+        if w.len() > 1 {
+            assert!(system.select_window(layout, w[0]));
+            let (y, height) = laid_out_yh(system, layout, w[0]);
+            let from = at_yh(system, layout, w[0], y, height);
+            let taller = at_yh(system, layout, w[0], y, height + 100.0);
+            drag(system, layout, w[0], from, taller);
+            assert_eq!(laid_out_yh(system, layout, w[0]), (y, height + 100.0), "dragged apart");
         }
-        for &id in &w[1..] {
-            assert!(system.select_window(layout, id));
-            system.toggle_fold_of_selection(layout, Direction::Left);
-        }
-        assert_eq!(shape(&system, layout), vec![w.clone()], "fixture is one column");
-        (system, layout, w)
+        w.iter().map(|&id| laid_out_yh(system, layout, id)).collect()
     }
 
     /// Kai, 2026-10-10: `Mod+R` from two thirds makes the whole column the tiling area wide, its
@@ -4794,11 +4778,11 @@ mod tests {
     fn the_cycle_s_full_viewport_is_a_width_that_keeps_the_column_and_its_stack() {
         for rows in 1..=3 {
             for row in 0..rows {
-                let (mut system, layout, w) = kai_s_column_of(rows);
+                let (mut system, layout, w) = column_of(preset_settings(), rows);
+                let heights = heights_dragged_apart(&mut system, layout, &w);
                 assert!(system.select_window(layout, w[row]));
                 system.cycle_preset_column_width(layout);
                 assert_eq!(laid_out_xw(&system, layout, w[row]).1, 1148.0, "{rows}/{row}: 2/3");
-                let heights: Vec<_> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
 
                 system.cycle_preset_column_width(layout);
 
@@ -4818,9 +4802,35 @@ mod tests {
         }
     }
 
+    /// Column 1 of Kai's three, stacked two high, goes the tiling area wide in its place: its
+    /// neighbours keep their order and widths, and the strip shows it from its start, as the reveal
+    /// shows any column that fills the viewport.
+    #[test]
+    fn the_cycle_s_full_viewport_keeps_a_stacked_column_s_place_on_the_strip() {
+        let (mut system, layout, w) = kai_s_strip();
+        let folded = wid(1, 4);
+        system.add_window_after_selection(layout, folded);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        let strip = vec![vec![w[0]], vec![w[1], folded], vec![w[2]]];
+        assert_eq!(shape(&system, layout), strip, "fixture");
+        let w2_width = laid_out_xw(&system, layout, w[2]).1;
+        assert!(system.select_window(layout, folded));
+
+        system.cycle_preset_column_width(layout);
+        system.cycle_preset_column_width(layout);
+
+        assert_eq!(shape(&system, layout), strip);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0));
+        assert_eq!(laid_out_xw(&system, layout, folded), (3.0, 1722.0));
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (-594.0, 594.0), "left neighbour");
+        assert_eq!(laid_out_xw(&system, layout, w[2]), (1728.0, w2_width), "right neighbour");
+        assert_eq!(scroll_offset(&system, layout), 597.0);
+        assert!(!system.is_window_full_width(layout, folded));
+    }
+
     #[test]
     fn the_cycle_steps_from_the_full_viewport_to_the_narrowest_preset() {
-        let (mut system, layout, w) = kai_s_column_of(2);
+        let (mut system, layout, w) = column_of(preset_settings(), 2);
         assert!(system.select_window(layout, w[1]));
         system.cycle_preset_column_width(layout);
         system.cycle_preset_column_width(layout);
@@ -4832,11 +4842,12 @@ mod tests {
     }
 
     /// `ctrl-F` maximises afresh from the 100% column and gives that column back: a stacked window
-    /// rejoins its stack, the column still the viewport wide.
+    /// rejoins its stack with the heights it had, the column still the viewport wide.
     #[test]
     fn ctrl_f_from_the_cycle_s_full_viewport_restores_to_it() {
         for rows in [1, 3] {
-            let (mut system, layout, w) = kai_s_column_of(rows);
+            let (mut system, layout, w) = column_of(preset_settings(), rows);
+            let heights = heights_dragged_apart(&mut system, layout, &w);
             let row = rows / 2;
             assert!(system.select_window(layout, w[row]));
             system.cycle_preset_column_width(layout);
@@ -4852,6 +4863,8 @@ mod tests {
             let after: Vec<_> = w.iter().map(|&id| laid_out_xw(&system, layout, id)).collect();
             assert_eq!(after, before, "{rows} rows");
             assert_eq!(after[row], (3.0, 1722.0), "{rows} rows");
+            let rows_after: Vec<_> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+            assert_eq!(rows_after, heights, "{rows} rows: heights");
         }
     }
 
@@ -4861,7 +4874,7 @@ mod tests {
     fn the_only_preset_ends_a_maximise_in_place_at_the_full_viewport() {
         let mut settings = preset_settings();
         settings.preset_column_widths = vec![1.0];
-        let (mut system, layout, w) = stacked_three(settings);
+        let (mut system, layout, w) = column_of(settings, 3);
         assert!(system.select_window(layout, w[1]));
         toggle_selection(&mut system, layout);
         assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
@@ -5092,8 +5105,8 @@ mod tests {
     }
 
     /// Three windows stacked on Kai's display, each `[y, h]` 368.333pt high before rounding.
-    fn kai_s_stack() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
-        let (system, layout, w) = stacked_three(preset_settings());
+    fn kai_s_stack() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+        let (system, layout, w) = column_of(preset_settings(), 3);
         let rows: Vec<(f64, f64)> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
         assert_eq!(rows, [(3.0, 368.0), (374.0, 368.0), (746.0, 368.0)]);
         (system, layout, w)
