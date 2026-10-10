@@ -888,8 +888,9 @@ posing it (`RunningAnimation::take_picture`, the tile's `OverlayTile::from_corne
 the crop grid against the press picture up to the corner and the repaint from it, and cuts each
 piece's picture and the ground's colour to the repaint's on the corner's key time with a discrete
 keyframe installed with the leg, so the drain at the corner carries nothing
-(`a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner`); the drain installing the
-leg reads the repaint's ground, and its `drawn` mark counts it in `crops` and `ground_us`. The engine's alternative,
+(`a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner`), and the drain installing the
+leg reads the repaint's ground ("A picture's ground is read only when a crop-drawn tile asks for it"
+in `src/pictures/docs/README.md`). The engine's alternative,
 a swap sent at the corner's media time, would land up to a frame, 8.3ms at 120Hz, off it. A repaint
 landing in the first step, its hold run out, waits for the corner too, the leg installed again as it
 plays with the repaint on the tile (`FlightScore::again`); one landing past the corner is cut in as
@@ -957,8 +958,11 @@ same way): the frame keeps its curve and only the pixels cut
 and has nothing to re-key. Each swap judges the tile again against the picture landing: one fitting
 both ends of the leg, or the tile's model with no track, is drawn stretched, a riding tile cut from a
 stale cached picture onto a fresh one included, so it reads no ground
-(`a_crop_drawn_riding_tile_given_a_fitting_picture_draws_it_stretched`); a resize's repaint fits only
-its leg's end and stays cropped (`a_resizing_tile_stays_cropped_when_its_repaint_lands`). Re-keying from the presented frame over the remaining duration restarted
+(`a_crop_drawn_riding_tile_given_a_fitting_picture_draws_it_stretched`); one a stretched tile does
+not fit at both ends, a stand-in's real picture landing on a resize, is cut onto the crop grid and
+keyed along the leg (`a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped`); a
+resize's repaint fits only its leg's end and stays cropped
+(`a_resizing_tile_stays_cropped_when_its_repaint_lands`). Re-keying from the presented frame over the remaining duration restarted
 the ease-out and the tile lurched at every swap. The flight keeps the windows the latest pass to
 resize each held for (`Flight::holds_for`), and holds only for those a watch can see
 (`Flight::holdable`); a grow that missed the cap is still repainting, so it is not pictured by the

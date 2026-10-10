@@ -593,13 +593,10 @@ a track's `Form`, the constructor that made it, names the class
 the tile, each value mapped from its key's frame
 (`a_tile_track_is_installed_on_every_layer_of_the_tile`); a tile's new leg judges
 its content mode again against its first and last key, set only when it changes, and the leg it is
-on with its end moved, a snap, keeps it drawn as it was, so a tile never turns mid-flight
-(`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`). A picture cut onto a stretched
-tile that it does not fit at both ends of its leg, a stand-in's real picture landing on a resize, is
-cut onto the crop grid (`a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped`), and
-one cut onto a crop-drawn tile that it fits at both, a pan's fresh picture after a stale one, is
-drawn stretched, its grid hidden and no ground read
-(`a_crop_drawn_riding_tile_given_a_fitting_picture_draws_it_stretched`).
+on with its end moved, a snap, keeps it drawn as it was, so a snap never turns a tile
+(`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`); a swap judges it again against
+the picture landing (`TileOverlay::swap` in "A grow waits for its repaint",
+`src/transitions/docs/coordination.md`).
 The presentation layer is read only by the trace.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
