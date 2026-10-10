@@ -1050,6 +1050,26 @@ mod tests {
         assert!(!wants(build_event_mask(false, true), CGEventType::KeyDown));
     }
 
+    /// specs/input.md: rini MUST NOT tap trackpad gestures. A two-finger scroll arrives as a scroll
+    /// wheel event; the rest are the NSEvent gesture types and the Dock's swipe (30).
+    #[test]
+    fn no_mask_asks_for_a_trackpad_gesture() {
+        let gestures = [CGEventType::ScrollWheel]
+            .into_iter()
+            .chain([18, 19, 20, 29, 30, 31, 32].map(CGEventType));
+        for ty in gestures {
+            for keyboard in [false, true] {
+                for mouse_move in [false, true] {
+                    let mask = build_event_mask(keyboard, mouse_move);
+                    assert!(
+                        !wants(mask, ty),
+                        "{ty:?} asked for with keyboard={keyboard} mouse_move={mouse_move}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn tap_recovery_discards_cached_keys_and_uses_live_flags() {
         let mut state = State::default();

@@ -276,6 +276,52 @@ fn transitions_never_touches_core_animation_or_app_kit() {
     );
 }
 
+/// What tapping or reading the trackpad takes: a tap at the HID location, the multitouch frames,
+/// the touches on an NSEvent. specs/input.md: rini MUST NOT tap trackpad gestures, so the session
+/// tap is the one tap there is, and only `EventTap` creates it.
+const TRACKPAD: [&str; 4] = [
+    "HIDEventTap",
+    "AnnotatedSessionEventTap",
+    "MultitouchSupport",
+    "NSTouch",
+];
+const THE_TAP: &str = "src/input/platform/tap.rs";
+
+#[test]
+fn rini_taps_no_trackpad_gesture() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src")).into_iter().chain(rust_files(Path::new("crates"))) {
+        let name = slash(&path);
+        for (line, code) in code_lines(&path) {
+            for surface in TRACKPAD {
+                if code.contains(surface) {
+                    broken.push(format!("{name}:{line}: {surface} in {}", code.trim()));
+                }
+            }
+            let creates = code.contains("tap_create") || code.contains("CGEventTapCreate");
+            if creates && name != THE_TAP {
+                broken.push(format!("{name}:{line}: a second tap in {}", code.trim()));
+            }
+        }
+    }
+    for name in ["build.rs", "Cargo.toml"] {
+        let text = fs::read_to_string(name).expect("readable build file");
+        for (n, line) in text.lines().enumerate() {
+            for surface in TRACKPAD {
+                if line.contains(surface) {
+                    broken.push(format!("{name}:{}: {surface} in {}", n + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "rini MUST NOT tap trackpad gestures (specs/input.md): a swipe does what macOS does with \
+         it, and the session tap {THE_TAP} creates is the one tap:\n{}",
+        broken.join("\n")
+    );
+}
+
 #[test]
 fn every_named_exception_still_exists() {
     for name in MIXED {
