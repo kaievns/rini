@@ -4,7 +4,7 @@
 use knus::span::Span;
 
 use super::value::{
-    Columns, Fingers, Flag, Haptics, Number, Proportion, Slowdown, Tolerance, TriggerDistance,
+    Fingers, Flag, Haptics, Number, Proportion, Slowdown, Tolerance, TriggerDistance,
 };
 
 #[derive(knus::Decode, Debug, Default)]
@@ -60,18 +60,6 @@ pub struct SwipeViewScrollPart {
     pub vertical_tolerance: Option<Number<Tolerance>>,
     #[knus(child)]
     pub invert: Option<Flag>,
-    #[knus(child)]
-    pub switch_workspace_on_overscroll: Option<OverscrollPart>,
-}
-
-#[derive(knus::Decode, Debug)]
-#[knus(span_type = Span)]
-pub struct OverscrollPart {
-    #[knus(argument, default = true)]
-    pub on: bool,
-    /// Columns past the end of the strip.
-    #[knus(property)]
-    pub threshold: Option<Number<Columns>>,
 }
 
 #[derive(knus::Decode, Debug, Default)]

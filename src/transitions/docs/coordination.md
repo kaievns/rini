@@ -594,8 +594,7 @@ Tiles sit on whole points so the lift does not pop by a fraction ("Whole points"
 A command that pushes past an end of the strip (the first/last
 column) or of the workspace stack (next/prev at the bottom/top, which never wraps,
 or nothing further to skip to) used to stop dead, which read
-as a dropped keypress. The layout reports it as `EventResponse::edge_hit`,
-distinct from `boundary_hit`, which is the gesture's threshold crossing. Four
+as a dropped keypress. The layout reports it as `EventResponse::edge_hit`. Four
 places report it: `move_focus_internal`'s fallback and `MoveNode`'s, both
 left/right only, and `handle_virtual_workspace_command` and
 `move_window_to_workspace`, both up/down. Moving reports it because moving

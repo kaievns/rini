@@ -245,7 +245,8 @@ Largest methods, and what each one turned out to be:
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
-`layout::domain::boundary` (`workspace_step_at_boundary`), with 15 tests between them.
+`layout::domain::boundary` (`workspace_step_at_boundary`, deleted with the trackpad swipes), with
+15 tests between them.
 One of those extractions was a bug fix: see 3.2.1.
 
 `handle_authoritative_space_snapshot` gave up its display-set comparison to

@@ -19,7 +19,7 @@ principle, and deliberately is not reused — see "Why this shape" in
 | `domain/tile.rs` | A tiled window and its slot, the window and the border it wears: the border each window wears (`Borders`), the window inside a slot (`window_in`), the slot of a reported frame (`slot_of`), and a slot's limits (`slot_limits`) |
 | `domain/preset_width.rs` | Which width the next `ctrl-R` asks for, and whether that width is the whole viewport, past the bounds |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
-| `domain/boundary.rs` | What a swipe means once the strip has run out: which workspace step a strip edge implies, and the inversion flag that swaps it |
+| `domain/boundary.rs` | The ends of the strip and of the workspace stack: `strip_edge`, the left/right end a command stops at rather than crossing displays, and `workspace_stack_direction`, the end a `next`/`prev` step runs into |
 | `settings.rs` | Ratios, gaps and struts, presets, where focus sits (`center-focused-column`), insertion |
 
 ## The shape that matters

@@ -73,10 +73,6 @@ pub struct ScrollingGestureSettings {
     pub fingers: usize,
     /// Horizontal distance (0..1 of the trackpad) a scroll step needs.
     pub distance_pct: f64,
-    /// Scrolling past either end of the strip switches workspace.
-    pub switch_workspace_on_overscroll: bool,
-    /// How many columns past the end that takes.
-    pub workspace_switch_threshold: f64,
 }
 
 impl Default for ScrollingGestureSettings {
@@ -87,8 +83,6 @@ impl Default for ScrollingGestureSettings {
             vertical_tolerance: 0.4,
             fingers: 3,
             distance_pct: 0.08,
-            switch_workspace_on_overscroll: false,
-            workspace_switch_threshold: 0.15,
         }
     }
 }

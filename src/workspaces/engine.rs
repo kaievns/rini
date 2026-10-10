@@ -103,9 +103,6 @@ pub struct EventResponse {
     pub changed: bool,
     pub raise_windows: Vec<WindowId>,
     pub focus_window: Option<WindowId>,
-    /// A gesture overscrolled the strip past `workspace_switch_threshold`: the swipe continues
-    /// into a workspace switch (`switch_workspace_on_overscroll`).
-    pub boundary_hit: Option<Direction>,
     /// A command tried to go past an end: the strip's first/last column (`Left`/`Right`) or the
     /// workspace stack's top/bottom (`Up`/`Down`). Nothing moved; the reactor bounces the view
     /// so the stop reads as an edge rather than a dropped keypress.
@@ -227,7 +224,6 @@ impl LayoutEngine {
                 changed: true,
                 raise_windows,
                 focus_window: None,
-                boundary_hit: None,
                 edge_hit: None,
                 moved: None,
             }
@@ -403,7 +399,6 @@ impl LayoutEngine {
                 preferred_focus_window,
             ),
             raise_windows: vec![],
-            boundary_hit: None,
             edge_hit: None,
             moved: None,
         }
@@ -526,7 +521,6 @@ impl LayoutEngine {
             changed: true,
             focus_window,
             raise_windows: tiled_windows,
-            boundary_hit: None,
             edge_hit: None,
             moved: None,
         };
@@ -570,7 +564,6 @@ impl LayoutEngine {
                 changed: true,
                 focus_window,
                 raise_windows,
-                boundary_hit: None,
                 edge_hit: None,
                 moved: None,
             };
@@ -619,7 +612,6 @@ impl LayoutEngine {
                         changed: true,
                         focus_window: Some(target_window),
                         raise_windows: windows_in_new_space,
-                        boundary_hit: None,
                         edge_hit: None,
                         moved: None,
                     };
@@ -652,7 +644,6 @@ impl LayoutEngine {
                     changed: true,
                     focus_window: Some(fallback_focus),
                     raise_windows: vec![],
-                    boundary_hit: None,
                     edge_hit,
                     moved: None,
                 };
@@ -1781,7 +1772,6 @@ impl LayoutEngine {
                 changed: app_rule_outcome.has_resizes() || constraints_changed,
                 raise_windows: vec![window],
                 focus_window: Some(window),
-                boundary_hit: None,
                 edge_hit: None,
                 moved: None,
             };
@@ -2032,7 +2022,6 @@ impl LayoutEngine {
             changed: true,
             raise_windows: vec![wid],
             focus_window: Some(wid),
-            boundary_hit: None,
             edge_hit: None,
             moved: None,
         };
@@ -2056,7 +2045,6 @@ impl LayoutEngine {
                 changed: true,
                 raise_windows,
                 focus_window,
-                boundary_hit: None,
                 edge_hit: None,
                 moved: None,
             };
@@ -2075,7 +2063,6 @@ impl LayoutEngine {
                 changed: true,
                 raise_windows,
                 focus_window,
-                boundary_hit: None,
                 edge_hit: None,
                 moved: None,
             };
@@ -2632,7 +2619,6 @@ impl LayoutEngine {
                 changed: true,
                 focus_window: Some(focused_window),
                 raise_windows: vec![],
-                boundary_hit: None,
                 edge_hit: None,
                 moved: None,
             };
@@ -2653,7 +2639,6 @@ impl LayoutEngine {
                     changed: true,
                     focus_window: Some(new_focus),
                     raise_windows: vec![],
-                    boundary_hit: None,
                     edge_hit: None,
                     moved: None,
                 };
@@ -2986,7 +2971,6 @@ impl LayoutEngine {
                 changed: true,
                 raise_windows: vec![window_id],
                 focus_window: Some(window_id),
-                boundary_hit: None,
                 edge_hit: None,
                 moved: None,
             };
@@ -3114,7 +3098,6 @@ impl LayoutEngine {
             changed: true,
             raise_windows: vec![window_id],
             focus_window: Some(window_id),
-            boundary_hit: None,
             edge_hit: None,
             moved: None,
         }

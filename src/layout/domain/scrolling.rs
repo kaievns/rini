@@ -208,8 +208,6 @@ struct LayoutState {
     last_step_px: AtomicU64,
     #[serde(skip, default = "default_atomic")]
     last_center_offset_delta_px: AtomicU64,
-    #[serde(skip, default = "default_atomic")]
-    overscroll_accumulation: AtomicU64,
     fullscreen_within_gaps: HashSet<WindowId>,
     /// The stacks full width pulled windows out of, for the toggle back.
     #[serde(default)]
@@ -242,7 +240,6 @@ impl LayoutState {
             last_strip_origin_px: default_atomic_unset(),
             last_step_px: AtomicU64::new(0.0f64.to_bits()),
             last_center_offset_delta_px: AtomicU64::new(0.0f64.to_bits()),
-            overscroll_accumulation: AtomicU64::new(0.0f64.to_bits()),
             fullscreen_within_gaps: HashSet::default(),
             full_width_origins: HashMap::default(),
             fold_origins: HashMap::default(),
@@ -748,9 +745,6 @@ impl Clone for LayoutState {
             last_center_offset_delta_px: AtomicU64::new(
                 self.last_center_offset_delta_px.load(Ordering::Relaxed),
             ),
-            overscroll_accumulation: AtomicU64::new(
-                self.overscroll_accumulation.load(Ordering::Relaxed),
-            ),
             fullscreen_within_gaps: self.fullscreen_within_gaps.clone(),
             full_width_origins: self.full_width_origins.clone(),
             fold_origins: self.fold_origins.clone(),
@@ -914,27 +908,26 @@ impl ScrollingLayoutSystem {
         (widths, starts)
     }
 
-    pub fn scroll_by_delta(&mut self, layout: LayoutId, delta: f64) -> Option<Direction> {
+    pub fn scroll_by_delta(&mut self, layout: LayoutId, delta: f64) {
         let min_ratio = self.settings.min_column_width_ratio;
         let max_ratio = self.settings.max_column_width_ratio;
-        let threshold = self.settings.gestures.workspace_switch_threshold;
         let Some(state) = self.layout_state_mut(layout) else {
-            return None;
+            return;
         };
         let screen_width = f64::from_bits(state.last_screen_width.load(Ordering::Relaxed));
         let gap_x = f64::from_bits(state.last_gap_x.load(Ordering::Relaxed));
         if screen_width <= 0.0 {
-            return None;
+            return;
         }
         let (widths, starts) =
             Self::column_widths_and_starts(state, screen_width, gap_x, min_ratio, max_ratio);
         if starts.is_empty() {
-            return None;
+            return;
         }
         let selected_idx = state.selected_location().map(|(idx, _)| idx).unwrap_or(0);
         let step = widths.get(selected_idx).copied().unwrap_or(1.0) + gap_x;
         if step <= 0.0 {
-            return None;
+            return;
         }
         let base_max_offset = starts.last().copied().unwrap_or(0.0);
         let center_offset_delta =
@@ -946,36 +939,8 @@ impl ScrollingLayoutSystem {
         };
         state.unpin();
         let current = f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed));
-        let next_raw = current + delta * step;
-        let next = next_raw.clamp(min_offset, max_offset);
+        let next = (current + delta * step).clamp(min_offset, max_offset);
         state.scroll_offset_px.store(next.to_bits(), Ordering::Relaxed);
-
-        if next_raw < min_offset && delta < 0.0 {
-            let overscroll = (min_offset - next_raw) / step;
-            let accum =
-                f64::from_bits(state.overscroll_accumulation.load(Ordering::Relaxed)) + overscroll;
-            if accum >= threshold {
-                state.overscroll_accumulation.store(0.0f64.to_bits(), Ordering::Relaxed);
-                Some(Direction::Left)
-            } else {
-                state.overscroll_accumulation.store(accum.to_bits(), Ordering::Relaxed);
-                None
-            }
-        } else if next_raw > max_offset && delta > 0.0 {
-            let overscroll = (next_raw - max_offset) / step;
-            let accum =
-                f64::from_bits(state.overscroll_accumulation.load(Ordering::Relaxed)) + overscroll;
-            if accum >= threshold {
-                state.overscroll_accumulation.store(0.0f64.to_bits(), Ordering::Relaxed);
-                Some(Direction::Right)
-            } else {
-                state.overscroll_accumulation.store(accum.to_bits(), Ordering::Relaxed);
-                None
-            }
-        } else {
-            state.overscroll_accumulation.store(0.0f64.to_bits(), Ordering::Relaxed);
-            None
-        }
     }
 
     pub fn snap_to_nearest_column(&mut self, layout: LayoutId) {

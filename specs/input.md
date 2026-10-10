@@ -77,15 +77,6 @@ binding naming one is satisfied by the flag alone.
 - A tap the OS disables MUST be re-armed, and a re-arm MUST be matched to the generation that was
   disabled, or a stale recovery re-enables a tap that has since been replaced.
 
-## Gestures
-
-- A horizontal swipe scrolls the strip. When the strip has run out in that direction, the swipe MAY
-  continue into the workspace stack, when `switch-workspace-on-overscroll` is written.
-- Only a HORIZONTAL edge carries on into the stack. A vertical swipe already moves through the
-  workspace stack, so carrying a vertical edge on would step it twice.
-- `invert` swaps which workspace a left or right edge steps to. The two directions MUST NOT ever answer
-  the same way.
-
 ## Where it lives
 
 `src/input/domain/key.rs` is the vocabulary, `src/input/domain/binding.rs` what a bind names,

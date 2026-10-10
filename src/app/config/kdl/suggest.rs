@@ -85,7 +85,6 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "trigger-distance",
         "vertical-tolerance",
         "invert",
-        "switch-workspace-on-overscroll",
     ]),
     ("recent-windows", &["icons", "binds"]),
     ("bar", &["off"]),

@@ -19,10 +19,9 @@ impl LayoutEngine {
         } = target;
         match command {
             LayoutCommand::ScrollStrip { delta } => {
-                let mut resp = EventResponse::default();
                 let system = self.workspace_tree_mut(workspace_id);
-                resp.boundary_hit = system.scroll_by_delta(layout, delta);
-                resp
+                system.scroll_by_delta(layout, delta);
+                EventResponse::default()
             }
             LayoutCommand::SnapStrip => {
                 let system = self.workspace_tree_mut(workspace_id);

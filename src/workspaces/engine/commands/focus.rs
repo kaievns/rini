@@ -57,7 +57,6 @@ impl LayoutEngine {
                         changed: true,
                         focus_window: Some(windows[next]),
                         raise_windows: vec![windows[next]],
-                        boundary_hit: None,
                         edge_hit: None,
                         moved: None,
                     };
@@ -74,7 +73,6 @@ impl LayoutEngine {
                         changed: true,
                         focus_window,
                         raise_windows,
-                        boundary_hit: None,
                         edge_hit: None,
                         moved: None,
                     };

@@ -146,12 +146,6 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
             if let Some(Flag(invert)) = swipe.invert {
                 g.invert_horizontal = invert;
             }
-            if let Some(overscroll) = swipe.switch_workspace_on_overscroll {
-                g.switch_workspace_on_overscroll = overscroll.on;
-                if let Some(threshold) = overscroll.threshold {
-                    g.workspace_switch_threshold = threshold.get();
-                }
-            }
         }
         if let Some(Flag(pass)) = gestures.pass_through {
             settings.gestures.consume_dock_swipe = !pass;

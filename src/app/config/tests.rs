@@ -352,7 +352,7 @@ fn input_settings_are_assembled_from_both_swipes() {
         "gestures {\n",
         "    swipe-workspace-switch {\n        on\n        fingers 4\n        haptics \"off\"\n    }\n",
         "    swipe-view-scroll {\n        on\n        fingers 2\n        trigger-distance 0.2\n",
-        "        switch-workspace-on-overscroll threshold=0.5\n    }\n",
+        "    }\n",
         "    pass-through\n",
         "    visit-empty-workspaces\n",
         "    drag-swap-overlap 0.4\n",
@@ -367,10 +367,17 @@ fn input_settings_are_assembled_from_both_swipes() {
     assert!(input.strip_scroll.enabled);
     assert_eq!(input.strip_scroll.fingers, 2);
     assert_eq!(input.strip_scroll.distance_pct, 0.2);
-    let scroll = &config.settings.layout.scrolling.gestures;
-    assert!(scroll.switch_workspace_on_overscroll);
-    assert_eq!(scroll.workspace_switch_threshold, 0.5);
     assert_eq!(config.settings.window_snapping.drag_swap_fraction, 0.4);
+    let report = refused(concat!(
+        "gestures {\n    swipe-view-scroll {\n",
+        "        switch-workspace-on-overscroll\n    }\n}\n",
+    ));
+    assert!(
+        report.contains(
+            "unknown node `switch-workspace-on-overscroll` in `gestures › swipe-view-scroll`"
+        ),
+        "{report}"
+    );
 }
 
 #[test]

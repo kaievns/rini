@@ -170,7 +170,6 @@ bounds! {
     TriggerDistance: 0.01, 1.0;
     Tolerance: 0.0, 100.0;
     Slowdown: 0.0, 100.0;
-    Columns: 0.0, 100.0;
     Fingers: 1.0, 5.0, integer = true;
 }
 

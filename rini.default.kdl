@@ -179,9 +179,6 @@ gestures {
         trigger-distance 0.08
         vertical-tolerance 0.4
         // invert
-        // Scrolling `threshold` columns past either end of the strip switches workspace, so one
-        // long swipe runs on through the next workspace's strip.
-        // switch-workspace-on-overscroll threshold=0.15
     }
 
     // Let macOS and the frontmost application see the swipes rini handles, too.

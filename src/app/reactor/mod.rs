@@ -59,7 +59,6 @@ use std::thread;
 use crate::displays::domain::topology::display_set_delta;
 use crate::displays::platform::spaces::SpaceKinds;
 use crate::input::domain::switch_session::Signal as SwitchSignal;
-use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
 use crate::switcher::domain::entries::{Entry, entries};
 use crate::switcher::domain::selection::Selection;
@@ -4917,7 +4916,6 @@ impl Reactor {
             changed,
             raise_windows,
             mut focus_window,
-            boundary_hit,
             edge_hit,
             moved,
         } = response;
@@ -4953,37 +4951,6 @@ impl Reactor {
         {
             focus_window = self.visible_focus_candidate_in_active_workspace(space, focus_window);
             switch_target = focus_window;
-        }
-
-        if let Some(dir) = boundary_hit
-            && self.config.settings.layout.scrolling.gestures.switch_workspace_on_overscroll
-        {
-            let cmd = workspace_step_at_boundary(
-                dir,
-                self.config.settings.layout.scrolling.gestures.invert_horizontal,
-                self.config.settings.gestures.skip_empty,
-            );
-            if let Some(cmd) = cmd {
-                let space = workspace_switch_space.or_else(|| self.command_context_space());
-                if let Some(space) = space {
-                    let resp = self.layout_manager.layout_engine.handle_virtual_workspace_command(
-                        &mut self.state.windows,
-                        &mut self.state.display_memory,
-                        space,
-                        &cmd,
-                    );
-
-                    if self.config.settings.gestures.haptics_enabled {
-                        let _ = crate::input::platform::haptics::perform_haptic(
-                            self.config.settings.gestures.haptic_pattern,
-                        );
-                    }
-
-                    // Recurse to handle the new response (e.g. focus window on the new workspace)
-                    self.handle_layout_response(resp, Some(space));
-                    return;
-                }
-            }
         }
 
         let original_focus = focus_window;
