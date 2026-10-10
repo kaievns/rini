@@ -22,10 +22,11 @@ is borrowed.
   asked for as one comes back clamped to it — so `preset_width::next_preset`
   answers `Full` or `Ratio`, and `Full` is given `width_unbounded`, the
   representation a drag across the viewport already gives a stacked column. The
-  app settling its window short of the viewport under such a column leaves it
-  the viewport wide, as under the mode: read back, a window 20pt short sat at
-  0.988, over the 1% `next_preset` reads as the same width, so the next `ctrl-R`
-  found 1.0 above it again and stood still. A maximized window still takes its
+  app resizing its window under such a column, by however much, leaves it the
+  viewport wide, as under the mode: `on_window_resized` reads any report under
+  an unbounded column the viewport wide as answering rini. Read back, a window
+  settling 20pt short sat at 0.988, over the 1% `next_preset` reads as the same
+  width, so the next `Mod+R` found 1.0 above it again and stood still. A maximized window still takes its
   turn: `ratio_of` reads it as 1.0, where the stored `width_offset` the cycle
   used to read made `ctrl-R` look dead on it.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize

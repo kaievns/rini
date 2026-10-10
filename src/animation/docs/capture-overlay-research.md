@@ -1199,6 +1199,7 @@ What each part of the prototype fixed:
 Cost: no measurable CPU. Over 16-press sweeps the WindowServer ran 42-46% and rini 14.6-16.4% with
 or without the prototype. A 400ms flight was no better than 350ms. In the build measured here grows
 lifted at about 700ms because of the frame-zero reveal hold; the one kept holds a grow only for its
-repaint, up to 300ms from the show or the latest press merged before the motion, 600ms in all, and flies a shrink at once on its picture from the press, kept to
-the lift ("A grow waits for its repaint" in
+repaint, up to 300ms from the show or the latest press merged before the motion, 600ms in all, and
+never holds for a shrink but one merged into a flight ending wider than the picture its tile carries
+("A grow waits for its repaint" and "Mid-flight passes" in
 `src/transitions/docs/coordination.md`).

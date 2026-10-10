@@ -105,8 +105,11 @@ changes timing as well as coverage, so two different "confirmed" causes both
 turned out to be sampling noise. Single-threaded runs never reproduced it across
 88 runs.
 
-`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it. The suite goes
-from about 0.4s to 1.25s, which is not a trade worth thinking about. The tests
+`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it, at a cost. On
+2026-10-10 the lib suite's 2687 tests took 60.0s on one thread and 11.5s on 8,
+and two 8-thread runs failed besides: 8 and then 9 of the Core Animation tests
+in `animation::platform::overlay` and `decorations::platform::layers`, which are
+not safe in parallel either, for a reason not looked into. The tests
 that build capture fixtures also avoid `IOSurface` entirely for the same reason
 and use a CPU bitmap instead.
 
@@ -128,3 +131,13 @@ What it presses and records, the 87 metrics, the acceptance rule and its second 
 `tools/focuslab/README.md` ("The battery"). Its tests (`tools/focuslab/test_battery.py`) run inside
 `tests/focuslab.rs`, so `cargo test` counts them as one test. The 2026-10-08 runs are in
 `docs/data/2026-10-08-ring-perf/`.
+
+## How a resize looks is watched on the screen, by a recording of the lab
+
+The suite pins where a resizing tile's content stands and where its ground goes. Whether it reads
+right on the screen, its content against the edges that move less, its ground and the swap to the
+real window at the lift, is seen only on a film of the whole display, which the battery does not
+take. `tools/focuslab/screenrec.sh` takes one of Ghostty lab windows full of a numbered ruler
+while posting the resize keys, and `sheet.sh` cuts each press into a contact sheet
+(`tools/focuslab/README.md`, "Watching a resize"). It is a screen test with the battery's guard, run
+only while Kai is away. The 2026-10-09 runs are in `docs/data/2026-10-09-resize/`.

@@ -2452,18 +2452,59 @@ fn every_alt_r_on_the_last_column_flies() {
             assert_eq!(full, Some(start == "ctrl-F"), "{case}");
 
             for press in 0..5 {
-                let width = apps.windows[&last].frame.size.width;
-                reactor.handle_test_layout_command(LayoutCommand::CyclePresetColumnWidth);
-                let passes = land_layout_passes(&mut apps, &mut reactor, &mut rx);
-                let resized = apps.windows[&last].frame;
-                assert_ne!(resized.size.width, width, "{case}, press {press}: the width changed");
-                let flown = passes.iter().flatten().find(|request| {
-                    request.window == last && request.to.to_cg() == resized
-                });
-                let flown = flown.unwrap_or_else(|| panic!("{case}, press {press}: {passes:?}"));
-                assert_eq!(flown.from.size.width, width, "{case}, press {press}");
+                let case = format!("{case}, press {press}");
+                press_flies(&mut apps, &mut reactor, &mut rx, last, LayoutCommand::CyclePresetColumnWidth, &case);
             }
         }
+    }
+}
+
+/// `command` resizes `window`'s column, and the pass that does it flies the window from the width it
+/// had to the frame the app is left at.
+fn press_flies(
+    apps: &mut Apps,
+    reactor: &mut Reactor,
+    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
+    window: WindowId,
+    command: LayoutCommand,
+    case: &str,
+) {
+    let width = apps.windows[&window].frame.size.width;
+    reactor.handle_test_layout_command(command);
+    let passes = land_layout_passes(apps, reactor, rx);
+    let resized = apps.windows[&window].frame;
+    assert_ne!(resized.size.width, width, "{case}: the width changed");
+    let flown = passes.iter().flatten().find(|request| request.window == window && request.to.to_cg() == resized);
+    let flown = flown.unwrap_or_else(|| panic!("{case}: {passes:?}"));
+    assert_eq!(flown.from.size.width, width, "{case}");
+}
+
+/// The other two ways `specs/animation.md` names of resizing a column where it stands, on the same
+/// last column with the columns before it parked: a resize key, and the full-width toggle both ways.
+#[test]
+fn a_resize_key_and_the_full_width_toggle_on_the_last_column_fly() {
+    use crate::layout::ResizeOrientation;
+    use crate::layout::settings::CenterFocusedColumn;
+    let space = SpaceId::new(1);
+    for columns in 1..=4 {
+        let (mut apps, mut reactor, mut rx) = moving_strip_with(0.5, columns, |scrolling| {
+            scrolling.min_column_width_ratio = 0.33333;
+            scrolling.max_column_width_ratio = 0.66667;
+            scrolling.center_focused_column = CenterFocusedColumn::Never;
+        });
+        let last = WindowId::new(1, columns as u32);
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, last));
+        land_layout_passes(&mut apps, &mut reactor, &mut rx);
+        let presses = [
+            ("a shrink key", LayoutCommand::ResizeWindowBy { amount: -0.1, orientation: ResizeOrientation::Horizontal }),
+            ("a grow key", LayoutCommand::ResizeWindowBy { amount: 0.1, orientation: ResizeOrientation::Horizontal }),
+            ("Mod+F", LayoutCommand::ToggleFullscreenWithinGaps),
+            ("Mod+F back", LayoutCommand::ToggleFullscreenWithinGaps),
+        ];
+        for (press, command) in presses {
+            press_flies(&mut apps, &mut reactor, &mut rx, last, command, &format!("{columns} columns, {press}"));
+        }
+        assert_eq!(reactor.layout_manager.layout_engine.full_width_of_column(space, last), Some(false));
     }
 }
 

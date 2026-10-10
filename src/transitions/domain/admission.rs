@@ -11,6 +11,7 @@ use rini_geometry::{SameAs, to_overlay_space};
 
 use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::route::Route;
+use crate::transitions::domain::request::AnimationRequest;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
@@ -88,14 +89,34 @@ pub(in crate::transitions) enum EndPicture {
     /// A grow: held for, overlay up, watched until it has repainted where it ends, and pictured
     /// there only once it has.
     Held,
-    /// A shrink: watched until it has repainted where it ends, never held for, and never pictured
-    /// there: its picture from the press, which covers every frame, flies to the lift.
+    /// A shrink: watched until it has repainted where it ends, and never held for itself. Its tile
+    /// keeps the picture frame zero took of it, which covers every frame, to the lift; one frame zero
+    /// never pictured, starting clipped or off the display, has its repaint swapped in
+    /// (`Flight::keeps`).
     Kept,
     /// An entrance flying from where it opened: watched until it has repainted at its slot, never
     /// held for, and pictured there only once it has.
     Repainting,
     /// Captured once it is where it ends.
     Lands,
+}
+
+/// What a pass's window flies on: the picture it has, taken by a `Route`, or, having none, its
+/// entrance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::transitions) enum FliesOn {
+    Picture(Route),
+    Entrance(EntranceDecision),
+}
+
+/// The tile of the flight running that a window of a pass merged into it lands on: how big the
+/// picture it carries is, where the pass ends it, and whether a pass held before this one grows its
+/// window. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::transitions) struct Landing {
+    pub(in crate::transitions) carried: ScreenSize,
+    pub(in crate::transitions) to: ScreenSize,
+    pub(in crate::transitions) held: bool,
 }
 
 impl EndPicture {
@@ -113,10 +134,32 @@ impl EndPicture {
         }
     }
 
+    /// The window `request` places, flying on `flies`: sorted on its request's own sizes, and, in a
+    /// pass merged into the flight running, judged against the tile it lands on (`landing`, none
+    /// for a first pass or a window joining).
+    pub(in crate::transitions) fn of_request(request: &AnimationRequest, flies: FliesOn, landing: Option<Landing>) -> Self {
+        let own = match flies {
+            FliesOn::Picture(source) => Self::of_window(source, request.from.size, request.to.size),
+            FliesOn::Entrance(entrance) => Self::of_entrance(entrance),
+        };
+        own.landing_on(landing)
+    }
+
+    /// A window the strip surface carries, which the pass neither resizes nor holds for, a stand-in
+    /// included: it lands, unless judged against the tile it lands on in a flight running
+    /// (`landing`).
+    pub(in crate::transitions) fn of_strip(landing: Option<Landing>) -> Self {
+        Self::Lands.landing_on(landing)
+    }
+
+    fn landing_on(self, landing: Option<Landing>) -> Self {
+        landing.map_or(self, |Landing { carried, to, held }| self.against_tile(carried, to, held))
+    }
+
     /// A window going from `from` to `to`, drawn from a picture taken `source`: a stand-in, which is
     /// no picture of the window, is awaited; a resize growing on either axis is held for its repaint;
-    /// one that only shrinks flies the picture it has at once and keeps it; a move lands.
-    pub(in crate::transitions) fn of_window(source: Route, from: ScreenSize, to: ScreenSize) -> Self {
+    /// one that only shrinks is watched, never held for itself; a move lands.
+    fn of_window(source: Route, from: ScreenSize, to: ScreenSize) -> Self {
         if source == Route::StandIn {
             Self::Awaited
         } else if grows(from, to) {
@@ -140,7 +183,7 @@ impl EndPicture {
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
     /// at its slot lands there, and a reservation is awaited.
-    pub(in crate::transitions) fn of_entrance(entrance: EntranceDecision) -> Self {
+    fn of_entrance(entrance: EntranceDecision) -> Self {
         match entrance {
             EntranceDecision::Travel { from, to } if from.same_as(to) => Self::Lands,
             EntranceDecision::Travel { .. } => Self::Repainting,
@@ -158,44 +201,33 @@ pub(in crate::transitions) struct Waits {
     /// Watched until they repaint, and pictured where they end only once they have: windows resized,
     /// held for if they grow and kept if they shrink, and windows flying from where they opened.
     pub(in crate::transitions) repainting: Vec<WindowId>,
-    /// Of `repainting`, the shrinks, whose tiles keep the pictures they have from the press.
+    /// Of `repainting`, the shrinks, whose tiles keep the pictures frame zero took of them, if it took
+    /// one (`Flight::keeps`).
     pub(in crate::transitions) kept: Vec<WindowId>,
 }
 
 impl Waits {
     /// The grows: held for and pictured where they end only once repainted, what a pass merged while
-    /// the motion runs is held for, a merged pass's judged against its tiles (`against_tiles`).
+    /// the motion runs is held for, a merged pass's judged against its tiles (`Landing`).
     pub(in crate::transitions) fn grows(&self) -> impl Iterator<Item = WindowId> + '_ {
         self.awaiting.iter().copied().filter(|window| self.of(*window) == EndPicture::Held)
-    }
-
-    /// A merged pass's windows sorted again against the flight it reaches (`EndPicture::against_tile`):
-    /// each of `ends`, where the pass ends a window, against the size of the picture its running tile
-    /// carries (`carried`, none for a window joining), and whether a pass held before it grows it
-    /// (`held`).
-    pub(in crate::transitions) fn against_tiles(
-        &mut self,
-        ends: impl IntoIterator<Item = (WindowId, ScreenSize)>,
-        carried: impl Fn(WindowId) -> Option<ScreenSize>,
-        held: impl Fn(WindowId) -> bool,
-    ) {
-        for (window, to) in ends {
-            let Some(carried) = carried(window) else { continue };
-            let end = self.of(window);
-            let judged = end.against_tile(carried, to, held(window));
-            if judged != end {
-                for sorted in [&mut self.awaiting, &mut self.repainting, &mut self.kept] {
-                    sorted.retain(|w| *w != window);
-                }
-                self.push(window, judged);
-            }
-        }
     }
 
     /// How `push` sorted `window`: a window in none of the lists lands.
     fn of(&self, window: WindowId) -> EndPicture {
         let lists = (self.awaiting.contains(&window), self.repainting.contains(&window), self.kept.contains(&window));
         EndPicture::ALL.into_iter().find(|end| end.lists() == lists).unwrap_or(EndPicture::Lands)
+    }
+
+    /// Sorts the window `request` places, flying on `flies` and landing on `landing`
+    /// (`EndPicture::of_request`).
+    pub(in crate::transitions) fn push_request(&mut self, request: &AnimationRequest, flies: FliesOn, landing: Option<Landing>) {
+        self.push(request.window, EndPicture::of_request(request, flies, landing));
+    }
+
+    /// Sorts `window`, carried by the strip surface and landing on `landing` (`EndPicture::of_strip`).
+    pub(in crate::transitions) fn push_strip(&mut self, window: WindowId, landing: Option<Landing>) {
+        self.push(window, EndPicture::of_strip(landing));
     }
 
     pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
@@ -427,12 +459,6 @@ mod tests {
         assert_eq!(merge_action(None, to), Admitted::Joined);
     }
 
-
-
-
-
-
-
     const COLUMN: ScreenSize = ScreenSize::new(859.0, 1081.0);
 
     fn end(from: ScreenSize, to: ScreenSize) -> EndPicture { EndPicture::of_window(Route::SkyLight, from, to) }
@@ -516,32 +542,55 @@ mod tests {
         }
     }
 
-    /// Re-sorted, a window leaves the lists it was in for a grow's: out of `kept`, in `awaiting` and
-    /// `repainting`. A window joining has no tile to judge against and keeps its sort, as does every
-    /// window whose sort stands.
+    /// Sorted against its tiles, a window outgrowing its tile's picture is in a grow's lists: out of
+    /// `kept`, in `awaiting` and `repainting`. A window joining has no tile to judge against and keeps
+    /// its sort, as does every window whose sort stands.
     #[test]
     fn a_pass_sorted_again_against_its_tiles_moves_only_the_outgrown_windows() {
-        let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
-        let mut waits: Waits =
-            [(window(1), EndPicture::Kept), (window(2), EndPicture::Kept), (window(3), EndPicture::Lands), (window(4), EndPicture::Kept)]
-                .into_iter()
-                .collect();
+        use rini_core::ids::WindowServerId;
         let to = ScreenSize::new(860.0, 1079.0);
-        let carried = |w: WindowId| match w.idx.get() {
-            1 | 3 => Some(ScreenSize::new(572.0, 1079.0)),
-            2 => Some(ScreenSize::new(1148.0, 1079.0)),
-            _ => None,
+        let request = |idx, from: ScreenSize| AnimationRequest {
+            window: window(idx),
+            server_id: WindowServerId::new(idx),
+            from: ScreenRect::new(ScreenPoint::new(3.0, 35.0), from),
+            to: ScreenRect::new(ScreenPoint::new(3.0, 35.0), to),
+            floating: false,
+            worn: Default::default(),
+            strip_before: None,
+            strip_after: None,
         };
-        waits.against_tiles((1..=4).map(|idx| (window(idx), to)), carried, |w| w == window(3));
+        let landing = |carried: f64, held| Some(Landing { carried: ScreenSize::new(carried, 1079.0), to, held });
+        let wider = ScreenSize::new(1148.0, 1079.0);
+        let pass = [
+            (request(1, wider), landing(572.0, false)),
+            (request(2, wider), landing(1148.0, false)),
+            (request(3, to), landing(572.0, true)),
+            (request(4, wider), None),
+        ];
+        let mut waits = Waits::default();
+        for (request, landing) in &pass {
+            waits.push_request(request, FliesOn::Picture(Route::SkyLight), *landing);
+        }
         assert_eq!(
             waits,
             Waits {
                 awaiting: vec![window(1), window(3)],
-                repainting: vec![window(2), window(4), window(1), window(3)],
+                repainting: vec![window(1), window(2), window(3), window(4)],
                 kept: vec![window(2), window(4)],
             }
         );
         assert_eq!(waits.grows().collect::<Vec<_>>(), [window(1), window(3)]);
+    }
+
+    /// A window the strip surface carries lands, a stand-in's too, unless a pass held before grows it
+    /// and it ends wider than the picture its tile carries.
+    #[test]
+    fn a_window_the_strip_carries_lands_unless_a_held_pass_grows_it_past_its_tiles_picture() {
+        let (carried, to) = (ScreenSize::new(572.0, 1079.0), ScreenSize::new(1148.0, 1079.0));
+        assert_eq!(EndPicture::of_strip(None), EndPicture::Lands);
+        assert_eq!(EndPicture::of_strip(Some(Landing { carried, to, held: false })), EndPicture::Lands);
+        assert_eq!(EndPicture::of_strip(Some(Landing { carried, to, held: true })), EndPicture::Held);
+        assert_eq!(EndPicture::of_strip(Some(Landing { carried: to, to, held: true })), EndPicture::Lands);
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one
@@ -553,6 +602,50 @@ mod tests {
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }), EndPicture::Repainting);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }), EndPicture::Lands);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Reserve("capture budget")), EndPicture::Awaited);
+    }
+
+    /// A pass's windows sorted from their requests, each by the sizes it goes from and to: a grow and
+    /// a fold held for and watched, a shrink watched and kept, a move landing, a stand-in held for, an
+    /// entrance flying from where it opened watched, one standing at its slot landing and a
+    /// reservation held for.
+    #[test]
+    fn a_pass_s_windows_are_sorted_by_the_sizes_their_requests_go_from_and_to() {
+        use rini_core::ids::WindowServerId;
+        let request = |idx, from, to| AnimationRequest {
+            window: window(idx),
+            server_id: WindowServerId::new(idx),
+            from,
+            to,
+            floating: false,
+            worn: Default::default(),
+            strip_before: None,
+            strip_after: None,
+        };
+        let column: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
+        let next = rect(867.0, 32.0, 859.0, 1081.0);
+        let picture = FliesOn::Picture(Route::SkyLight);
+        let pass = [
+            (request(1, column, rect(4.0, 32.0, 1720.0, 1081.0)), picture),
+            (request(2, column, rect(4.0, 32.0, 1148.0, 538.0)), picture),
+            (request(3, column, rect(4.0, 32.0, 859.0, 535.0)), picture),
+            (request(4, column, next), picture),
+            (request(5, column, next), FliesOn::Picture(Route::StandIn)),
+            (
+                request(6, column, next),
+                FliesOn::Entrance(EntranceDecision::Travel { from: rect(400.0, 200.0, 700.0, 500.0), to: next }),
+            ),
+            (request(7, next, next), FliesOn::Entrance(EntranceDecision::Travel { from: next, to: next })),
+            (request(8, column, next), FliesOn::Entrance(EntranceDecision::Reserve("capture budget"))),
+        ];
+        let mut waits = Waits::default();
+        for (request, flies) in &pass {
+            waits.push_request(request, *flies, None);
+        }
+        let windows = |idxs: &[u32]| idxs.iter().copied().map(window).collect::<Vec<_>>();
+        assert_eq!(
+            waits,
+            Waits { awaiting: windows(&[1, 2, 5, 8]), repainting: windows(&[1, 2, 3, 6]), kept: windows(&[3]) }
+        );
     }
 
     #[test]

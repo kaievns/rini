@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
     FromCg, GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, Respace,
-    ScreenRect, ScreenVector, Size, SurfacePoint, ToCg,
+    ScreenRect, ScreenSize, ScreenVector, Size, SurfacePoint, ToCg,
 };
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
@@ -1426,6 +1426,16 @@ impl FlightEngine {
         }))
     }
 
+    /// The tile of the flight running that a later pass ending `window` `to` big lands it on, none
+    /// with no flight or for a window joining: what that pass's window is judged against
+    /// (`Landing`). See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
+    fn landing(&self, window: WindowId, to: ScreenSize) -> Option<Landing> {
+        let running = self.running.as_ref()?;
+        let tile = running.tiles.iter().find(|tile| tile.window == window)?;
+        let held = running.held.iter().any(|held| held.shape.waits.grows().any(|grown| grown == window));
+        Some(Landing { carried: tile.snapshot.coverage.covered, to, held })
+    }
+
     /// The focus a pass's tiles are drawn with, its own else the flight's, and the window they draw
     /// focused until it hands over: the flight's, else the one focused as the pass began.
     fn drawing_focus(
@@ -1552,7 +1562,7 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    waits.push(request.window, EndPicture::of_window(snapshot.source, request.from.size, request.to.size));
+                    waits.push_request(request, FliesOn::Picture(snapshot.source), self.landing(request.window, end.size));
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -1588,7 +1598,11 @@ impl FlightEngine {
                         });
                     let usable = picture.as_ref().is_some_and(|p| p.is_usable());
                     let entrance = entrance_plan(spawn, request.to, usable, budget_left);
-                    waits.push(request.window, EndPicture::of_entrance(entrance));
+                    let landing = match entrance {
+                        EntranceDecision::Travel { to, .. } => self.landing(request.window, to.size),
+                        EntranceDecision::Reserve(_) => None,
+                    };
+                    waits.push_request(request, FliesOn::Entrance(entrance), landing);
                     match entrance {
                         EntranceDecision::Travel { from, to } => {
                             let snapshot = picture.expect("usable implies a picture");
@@ -1797,19 +1811,13 @@ impl FlightEngine {
         }
     }
 
-    /// One later pass reaching the flight running, its windows judged against the pictures their
-    /// tiles carry and the grows of the passes held (`Waits::against_tiles`): once the plan plays, one
-    /// growing a window, and any while one is held, waits for the coordinator to say when it merges
-    /// (`Event::HoldMerge`); any other merges now. See "Mid-flight passes" in
-    /// `src/transitions/docs/coordination.md`.
-    fn merge_group(&mut self, mut pass: Composed) {
+    /// One later pass reaching the flight running, its windows sorted against the pictures their
+    /// tiles carry and the grows of the passes held as it was composed (`FlightEngine::landing`):
+    /// once the plan plays, one growing a window, and any while one is held, waits for the
+    /// coordinator to say when it merges (`Event::HoldMerge`); any other merges now. See "Mid-flight
+    /// passes" in `src/transitions/docs/coordination.md`.
+    fn merge_group(&mut self, pass: Composed) {
         let Some(running) = self.running.as_mut() else { return };
-        let held: Vec<WindowId> = running.held.iter().flat_map(|held| held.shape.waits.grows()).collect();
-        pass.shape.waits.against_tiles(
-            pass.tiles.iter().map(|tile| (tile.window, tile.to.size.respace())),
-            |window| running.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.snapshot.coverage.covered),
-            |window| held.contains(&window),
-        );
         let grows: Vec<(WindowId, OverlayRect)> = pass
             .shape
             .waits
@@ -2013,6 +2021,7 @@ impl FlightEngine {
             .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
         let mut tiles = Vec::with_capacity(windows.len());
+        let mut waits = Waits::default();
         let mut missing = 0usize;
         let mut misshapen = 0usize;
         let mut stand_ins = 0usize;
@@ -2037,6 +2046,7 @@ impl FlightEngine {
                     } else if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
+                    waits.push_strip(window.window, self.landing(window.window, to.size.respace()));
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(window.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -2079,13 +2089,13 @@ impl FlightEngine {
             .collect();
         let plan = plan::surface_plan(&drawn, from_offset, to_offset);
 
-        // A strip movement never resizes, never carries a brand-new window and never holds: a stand-in
-        // whose window comes on screen is pictured once it lands there.
+        // A strip movement never resizes, never carries a brand-new window and never holds for
+        // itself: a stand-in whose window comes on screen is pictured once it lands there.
         self.begin_group(Composed {
             tiles,
             final_frames,
             label: "surface",
-            shape,
+            shape: Shape { waits, ..shape },
             entrances: Vec::new(),
             focus,
             key,
@@ -2702,7 +2712,17 @@ mod tests {
             let park = rect(1727.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let stand_in = stand_in_picture(slot.size.respace(), stand_in_image().expect("drawn"));
-            assert_eq!(EndPicture::of_window(stand_in.source, park.size.respace(), slot.size.respace()), EndPicture::Awaited);
+            let request = AnimationRequest {
+                window: wid(1),
+                server_id: WindowServerId::new(1),
+                from: from_overlay_space(park, ScreenRect::zero()),
+                to: from_overlay_space(slot, ScreenRect::zero()),
+                floating: false,
+                worn: Default::default(),
+                strip_before: None,
+                strip_after: None,
+            };
+            assert_eq!(EndPicture::of_request(&request, FliesOn::Picture(stand_in.source), None), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;

@@ -252,7 +252,7 @@ pub enum Event {
     /// `moved` when the merge moved anything, which restarts the clock.
     Merge { stage: StageSummary, moved: bool },
     /// A pass reaching a flight whose motion runs, not merged yet: one that grows windows past the
-    /// pictures their tiles carry (`Waits::against_tiles`), each with where the pass ends it, or any
+    /// pictures their tiles carry (`admission::Landing`), each with where the pass ends it, or any
     /// pass while one is held. `writes` is where it sends the real windows. The coordinator says when
     /// it merges (`Command::Retarget`): once the grows it can see repaint have repainted there, at
     /// once when there are none.
@@ -1331,7 +1331,8 @@ mod tests {
     use super::testing::{DISPLAY, PLAYS, pan, r, running, tile, w};
     use super::*;
     use crate::pictures::domain::route::Route;
-    use crate::transitions::domain::admission::{EndPicture, Waits};
+    use crate::transitions::domain::admission::{FliesOn, Landing, Waits};
+    use crate::transitions::domain::request::AnimationRequest;
     use crate::transitions::domain::timing::SETTLE_BEFORE_CAPTURES;
 
     fn has(out: &[Command], f: impl Fn(&Command) -> bool) -> bool {
@@ -1614,7 +1615,7 @@ mod tests {
     #[test]
     fn a_maximize_holds_only_for_the_window_it_maximizes() {
         use crate::pictures::domain::route::Route;
-        use crate::transitions::domain::admission::{EndPicture, Waits};
+        use crate::transitions::domain::admission::{FliesOn, Waits};
         use crate::transitions::domain::request::AnimationRequest;
         use crate::transitions::domain::travel::tile_path;
         let screen = r(0.0, 0.0, 1728.0, 1080.0);
@@ -1645,10 +1646,11 @@ mod tests {
                     let to = if i == maximized_row { maximized } else { left_park(after) };
                     requests.push(window(2 + i, at, to, at, after));
                 }
-                let Waits { awaiting, repainting, kept } = requests
-                    .iter()
-                    .map(|q| (q.window, EndPicture::of_window(Route::SkyLight, q.from.size, q.to.size)))
-                    .collect();
+                let mut waits = Waits::default();
+                for request in &requests {
+                    waits.push_request(request, FliesOn::Picture(Route::SkyLight), None);
+                }
+                let Waits { awaiting, repainting, kept } = waits;
                 assert_eq!(awaiting.len(), rows as usize, "{case}: the stack's windows all grow");
                 let tiles: Vec<TileSummary> = (0..requests.len())
                     .filter_map(|i| {
@@ -2380,6 +2382,48 @@ mod tests {
         assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "and once in, pictured");
     }
 
+    /// A grow ending part off the display, its column running past the right edge: no watch sees it
+    /// repaint there, so it is neither held for nor watched, and the last capture before the lift
+    /// leaves it out.
+    #[test]
+    fn a_grow_ending_part_off_the_display_is_not_held_for() {
+        let now = Instant::now();
+        let (mut stage, _) = grow();
+        let past = r(866.0, 35.0, 1723.0, 1079.0);
+        stage.tiles[1].end = past;
+        stage.final_frames[1].1 = past;
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage.clone()), now);
+        let out = c.on(Event::FrameZero(c.generation()), now);
+        assert!(watch(&out).unwrap().awaiting.is_empty(), "{out:?}");
+        let tick = Event::Tick { settled: false, landed: false };
+        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "not held");
+        let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
+        assert_eq!(asked_final(c.on(tick, last)), Some(vec![stage.final_frames[0]]), "the lift shows it");
+    }
+
+    /// A pass growing window 2 and shrinking window 1: the shrink is never held for itself, so its
+    /// own repaint starts nothing, and it moves with the grow once the grow has repainted.
+    #[test]
+    fn a_shrink_moves_with_the_grow_its_pass_holds_for() {
+        let now = Instant::now();
+        let (mut stage, grown) = grow();
+        let shrunk = r(866.0, 35.0, 860.0, 537.0);
+        stage.tiles[0].end = shrunk;
+        stage.final_frames[0].1 = shrunk;
+        stage.repainting.push(w(1));
+        stage.kept = vec![w(1)];
+        let mut c = running(stage, now);
+        let tick = Event::Tick { settled: false, landed: false };
+        assert!(c.on(tick, now + COALESCE_WINDOW).is_empty(), "held for the grow");
+        let g = c.generation();
+        let landed = |window, frame| Event::Picture { generation: g, window, frame, why: Why::Landed };
+        let out = c.on(landed(w(1), shrunk), now + Duration::from_millis(100));
+        assert!(!has(&out, |c| *c == Command::StartMoving), "{out:?}");
+        let out = c.on(landed(w(2), grown), now + Duration::from_millis(150));
+        assert!(has(&out, |c| *c == Command::StartMoving), "{out:?}");
+    }
+
     /// A layout pass shrinking window 2, on screen, so frame zero pictures it: watched until it
     /// repaints, never held for, and kept, as `EndPicture::Kept` sorts it.
     fn shrink() -> (StageSummary, ScreenRect) {
@@ -2979,12 +3023,23 @@ mod tests {
             (stage.focus, stage.losing_focus, stage.key) = (None, None, None);
             stage.tiles = vec![tile(w(2), Self::frame(self.widths[0]), Self::frame(to))];
             stage.final_frames = vec![(w(2), Self::frame(to))];
-            let end = EndPicture::of_window(Route::SkyLight, Self::frame(from).size, Self::frame(to).size);
-            let mut waits: Waits = [(w(2), end)].into_iter().collect();
-            if self.c.is_flying() {
-                let held = self.queued.iter().any(Self::grows);
-                waits.against_tiles([(w(2), Self::frame(to).size)], |_| Some(Self::frame(self.picture).size), |_| held);
-            }
+            let request = AnimationRequest {
+                window: w(2),
+                server_id: rini_core::ids::WindowServerId::new(2),
+                from: Self::frame(from),
+                to: Self::frame(to),
+                floating: false,
+                worn: Default::default(),
+                strip_before: None,
+                strip_after: None,
+            };
+            let landing = self.c.is_flying().then(|| Landing {
+                carried: Self::frame(self.picture).size,
+                to: Self::frame(to).size,
+                held: self.queued.iter().any(Self::grows),
+            });
+            let mut waits = Waits::default();
+            waits.push_request(&request, FliesOn::Picture(Route::SkyLight), landing);
             let grows = waits.grows().count() > 0;
             (stage.awaiting, stage.repainting, stage.kept) = (waits.awaiting, waits.repainting, waits.kept);
             (stage, grows)
