@@ -1,0 +1,160 @@
+{
+ "label": "o3",
+ "rini_pid": 67506,
+ "started": "2026-10-10 23:56:01",
+ "run_s": 41,
+ "focused_at_start": [
+  "{\"pid\": 66173, \"idx\": 26560}",
+  "work",
+  "Ghostty"
+ ],
+ "aborted": null,
+ "binary_sha": "466145203d7b03e6c3f981503b9d79c0656759e28beeec6406b6b502ad394af0",
+ "repo_head": "baea4c7e",
+ "journal_from_line": 393755,
+ "windows": {
+  "comms": {
+   "workspace": "comms",
+   "app": "Code",
+   "id": {
+    "pid": 48655,
+    "idx": 33135
+   }
+  },
+  "spare": {
+   "workspace": "spare",
+   "app": "Messages",
+   "id": {
+    "pid": 3089,
+    "idx": 73
+   }
+  },
+  "blur": {
+   "workspace": "spare",
+   "app": "Microsoft Outlook",
+   "pid": 98033
+  }
+ },
+ "pane": [
+  20,
+  140,
+  280,
+  900
+ ],
+ "scene": {
+  "comms_pan": {
+   "workspace": "comms",
+   "app": "Code",
+   "focus": [
+    3.0,
+    35.0,
+    1722.0,
+    1079.0
+   ],
+   "windows": [
+    {
+     "app": "Code",
+     "frame": [
+      3.0,
+      35.0,
+      1722.0,
+      1079.0
+     ],
+     "floating": false
+    },
+    {
+     "app": "Ghostty",
+     "frame": [
+      1727.0,
+      1085.0,
+      1148.0,
+      1079.0
+     ],
+     "floating": false
+    },
+    {
+     "app": "Ghostty",
+     "frame": [
+      1727.0,
+      1085.0,
+      1148.0,
+      1079.0
+     ],
+     "floating": false
+    },
+    {
+     "app": "Ghostty",
+     "frame": [
+      1727.0,
+      1085.0,
+      1148.0,
+      1079.0
+     ],
+     "floating": false
+    },
+    {
+     "app": "Ghostty",
+     "frame": [
+      1727.0,
+      1085.0,
+      1148.0,
+      1079.0
+     ],
+     "floating": false
+    },
+    {
+     "app": "Ghostty",
+     "frame": [
+      1727.0,
+      1085.0,
+      860.0,
+      1079.0
+     ],
+     "floating": false
+    },
+    {
+     "app": "Ghostty",
+     "frame": [
+      1727.0,
+      1085.0,
+      860.0,
+      1079.0
+     ],
+     "floating": false
+    }
+   ]
+  },
+  "spare_pan": {
+   "workspace": "spare",
+   "app": "Messages",
+   "focus": [
+    3.0,
+    35.0,
+    860.0,
+    1079.0
+   ],
+   "windows": [
+    {
+     "app": "Messages",
+     "frame": [
+      3.0,
+      35.0,
+      860.0,
+      1079.0
+     ],
+     "floating": false
+    },
+    {
+     "app": "Microsoft Outlook",
+     "frame": [
+      866.0,
+      35.0,
+      1722.0,
+      1079.0
+     ],
+     "floating": false
+    }
+   ]
+  }
+ }
+}

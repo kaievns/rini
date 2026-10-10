@@ -1,0 +1,8 @@
+flag: /tmp/rini-lab/bat4/n1: 37 pictures worn over 5s old, the oldest 210.9s on [3086, 16842]
+flag: /tmp/rini-lab/bat4/n2: 31 pictures worn over 5s old, the oldest 37.0s on [98033, 27967]
+flag: /tmp/rini-lab/bat4/n3: 30 pictures worn over 5s old, the oldest 36.9s on [98033, 27967]
+flag: /tmp/rini-lab/bat4/n4: 25 pictures worn over 5s old, the oldest 37.0s on [98033, 27967]
+flag: /tmp/rini-lab/bat4/n5: 27 pictures worn over 5s old, the oldest 37.0s on [98033, 27967]
+flag: /tmp/rini-lab/bat4/n6: 27 pictures worn over 5s old, the oldest 37.1s on [98033, 27967]
+87 metrics: 72 pass, 15 need stage 2, 0 regressions, 0 missing: NOT ACCEPTED
+  needs stage 2: pan.overlay_up.p50, pan.lift.p50, pan.screen_up_after_post.p50, pan.screen_up_after_post.max, pan.screen_gone_after_post.p50, switch.screen_up_after_post.p90, switch.screen_up_after_post.max, drains.applied.p50, drains.heard.p50, drains.heard.p90, drains.heard.p99, phase.show.queued.p50, phase.show.applied.max, phase.flight.applied.p90, phase.lift.queued.p50
