@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn a_drain_is_committed_with_its_crop_drawn_tiles() {
         let at = Instant::now();
-        let crops = Crops { tiles: 2, ground: std::time::Duration::from_micros(7_910) };
+        let crops = Crops { fills: 2, ground: std::time::Duration::from_micros(7_910) };
         let Event::Committed { crops: answered, .. } = answer(3, true, Some(None), (Some(true), false, crops), (at, at, at)) else {
             panic!("committed")
         };

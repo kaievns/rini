@@ -677,7 +677,7 @@ impl Journalled {
             seq,
             shown,
             places,
-            crops: crops.tiles,
+            crops: crops.fills,
             ground_us: micros(crops.ground),
             queued_us: micros(began.saturating_duration_since(sent)),
             applied_us: micros(flushed.saturating_duration_since(began)),
@@ -1097,7 +1097,7 @@ mod tests {
         let sent = now + Duration::from_micros(200);
         let at = |us| sent + Duration::from_micros(us);
         let before = held(&flights).len();
-        let crops = Crops { tiles: 2, ground: Duration::from_micros(7_910) };
+        let crops = Crops { fills: 2, ground: Duration::from_micros(7_910) };
         flights.drawn(at(2_000), 4, (Some(true), false, crops), (sent, at(1_300), at(1_700)));
         let mark = Mark::Drawn { seq: 4, shown: Some(true), places: false, crops: 2, ground_us: 7_910, queued_us: 1_300, applied_us: 400, flushed_before_us: 300 };
         assert_eq!(held(&flights)[before..], [Stamped { at: at(2_000), generation: g, mark }], "stamped when the engine heard it");
@@ -1626,7 +1626,7 @@ mod tests {
         /// crop grid in it, their grounds read in `ground_us`.
         fn drawn(&mut self, us: i64, seq: u64, (shown, places, crops, ground_us): (Option<bool>, bool, u32, u64), (sent, began, flushed): (i64, i64, i64)) {
             let (sent, began, flushed) = (self.at(sent), self.at(began), self.at(flushed));
-            let crops = Crops { tiles: crops, ground: Duration::from_micros(ground_us) };
+            let crops = Crops { fills: crops, ground: Duration::from_micros(ground_us) };
             self.flights.drawn(self.at(us), seq, (shown, places, crops), (sent, began, flushed));
         }
 

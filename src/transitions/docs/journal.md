@@ -68,7 +68,7 @@ until it has a mark.
 | `Focus { window, focused }` | `focus` | `window`, `focused` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
-| the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `places` (it placed what is drawn at rest: with `shown` `null`, the place a tick ahead of the lift, not a drain in flight), `crops` (tiles it drew on the crop grid, dressed, swapped onto it or cut onto a repaint at a corner), `ground_us` (reading their pictures' grounds), `queued_us`, `applied_us`, `flushed_before_us` |
+| the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `places` (it placed what is drawn at rest: with `shown` `null`, the place a tick ahead of the lift, not a drain in flight), `crops` (times it filled a crop grid, a tile dressed on it, swapped onto it or cut onto a repaint at a corner, one tile counting once a fill), `ground_us` (reading their pictures' grounds), `queued_us`, `applied_us`, `flushed_before_us` |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
 | a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out`, and `band` for a window wearing a band at rest (levels, and a share for `interior_over`) |
 | a turn of the main thread's run loop over 8ms, stamped when it began | `main_turn` | `busy_us` (waking to going back to sleep), `outside_us` (the busy time no actor's poll covers: AppKit, Core Animation's commit, the event dispatch), `actors`, `changes` (counts of the marks after it) |
@@ -101,7 +101,7 @@ How to read them:
   The window's alpha goes to 1 just after the flush ("One transaction a drain, flushed" in
   `src/animation/docs/README.md`), and the window server shows it after that, which only a probe sees
   (`journal.py probe`, below). `ground_us` is inside `applied_us`: the main thread's reads of the
-  grounds of the `crops` tiles the drain drew on the crop grid, each picture read once on its first
+  grounds of the pictures its `crops` fills drew, each picture read once on its first
   fill, so a drain swapping pictures already read shows `crops` with next to no `ground_us`
   ("A picture's ground is read only when a crop-drawn tile asks for it" in
   `src/pictures/docs/README.md`).

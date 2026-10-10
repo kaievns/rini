@@ -3193,7 +3193,7 @@ mod tests {
 
             tree.swap(wid(1), &test_picture(TileSize::new(600.0, 1074.0)), false, 0.0);
             let stale = tree.crops;
-            assert_eq!(stale.tiles, 1, "a stale picture is crop-drawn");
+            assert_eq!(stale.fills, 1, "a stale picture is crop-drawn");
             assert!(stale.ground > Duration::ZERO, "and its ground read");
             tree.swap(wid(1), &test_picture(frame.size), false, 0.0);
             assert_eq!(tree.crops, stale, "a fitting picture is stretched and reads nothing");
@@ -3230,9 +3230,9 @@ mod tests {
                 tree.take_crops()
             };
             let dressed = drawn(None);
-            assert_eq!(dressed.tiles, 1, "the press picture, crop-drawn");
+            assert_eq!(dressed.fills, 1, "the press picture, crop-drawn");
             let turning = drawn(Some(test_picture(to.size)));
-            assert_eq!(turning.tiles, 2, "and the repaint cut onto at the corner");
+            assert_eq!(turning.fills, 2, "and the repaint cut onto at the corner");
             assert!(turning.ground > Duration::ZERO, "its ground read");
         }
 

@@ -110,9 +110,9 @@ after it, as `journal.py probe` does, and to the frames recorded until the next 
 - `drains_all`: every drain of the joined flights, `queued` (waiting for the renderer), `applied`
   (played to its flush), `heard` (flushed to heard) and `ground` (reading the grounds of the tiles it
   drew on the crop grid), defined in `src/transitions/docs/journal.md`.
-- `crops`: the drains of the joined flights that drew any tile on the crop grid (`drains`), the tiles
-  (`tiles`), and the grounds read over those drains alone (`ground`, ms). A navigation flying only
-  pictures that fit its frames has none.
+- `crops`: the drains of the joined flights that drew any tile on the crop grid (`drains`), the
+  times they filled a crop grid (`fills`, one tile counting once a fill), and the grounds read over
+  those drains alone (`ground`, ms). A navigation flying only pictures that fit its frames has none.
 - `drains_by_phase.<show|flight|lift>`: every drain in the slice by its `shown` (true, null, false),
   `queued` and `applied`. The place drain ahead of a lift falls in `flight`.
 - `segments.<segment>` and `pacing_all`: the gaps between the frames the overlay showed, counted

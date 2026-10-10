@@ -150,10 +150,10 @@ DRAIN_KEYS = tuple(key for key, _ in journal.DRAINS)
 
 
 def crops(drains):
-    """What the drains of the joined flights spent on crop-drawn tiles: how many drew any, the tiles
-    they drew, and their ground reads (ms) over those drains alone."""
+    """What the drains of the joined flights spent on crop-drawn tiles: how many drew any, how many
+    times they filled a crop grid, and their ground reads (ms) over those drains alone."""
     cropped = [d for d in drains if d["crops"]]
-    return {"drains": len(cropped), "tiles": sum(d["crops"] for d in cropped),
+    return {"drains": len(cropped), "fills": sum(d["crops"] for d in cropped),
             "ground": stats([d["ground"] for d in cropped], digits=3)}
 
 
@@ -239,7 +239,7 @@ def summary(meta, agg, flights_out):
     for key, label in journal.DRAINS:
         lines.append(f"  {label:26s} {fmt(d[key], ('p50', 'p90', 'p99', 'max'))}")
     c = agg["crops"]
-    lines.append(f"  crop-drawn tiles {c['tiles']} in {c['drains']} drains, their grounds read "
+    lines.append(f"  crop-grid fills {c['fills']} in {c['drains']} drains, their grounds read "
                  f"{fmt(c['ground'], ('p50', 'p90', 'max'))}")
     lines.append("")
     lines.append("frame pacing (recorded overlay, 60fps cap; intervals p50/p90/max ms)")

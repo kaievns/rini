@@ -309,7 +309,7 @@ def table(title, rows, keys, digits=1):
 def drains(found):
     """Every drain the renderer committed in `found`: how long its oldest batch waited for the
     renderer, how long playing it took to its flush, and the way back to the engine, in ms; and the
-    tiles it drew on the crop grid (`crops`) and the time their grounds took to read (`ground`, ms),
+    times it filled a crop grid (`crops`) and the time their grounds took to read (`ground`, ms),
     0 in a journal written before drains carried them."""
     return [{"queued": mark["queued_us"] / 1000, "applied": mark["applied_us"] / 1000,
              "heard": mark["flushed_before_us"] / 1000, "crops": mark.get("crops", 0),

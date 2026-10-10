@@ -5509,7 +5509,7 @@ mod tests {
             h.advance(Duration::from_micros(1_500));
             let heard = h.at();
             let at = |us| handed + Duration::from_micros(us);
-            let crops = Crops { tiles: 1, ground: Duration::from_micros(7_910) };
+            let crops = Crops { fills: 1, ground: Duration::from_micros(7_910) };
             let answer = Committed { seq: shown, overlay: Some(OVERLAY), shown: Some(true), places: false, crops, sent: handed, began: at(400), flushed: at(700) };
             assert_eq!(placed(&h.step(Event::Rendered(answer))), [vec![(wid(1), end())]]);
             assert_eq!(h.at(), heard + Duration::from_millis(3), "the writes took their time");
