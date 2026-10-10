@@ -1426,7 +1426,7 @@ mod tests {
     #[test]
     fn a_maximize_holds_only_for_the_window_it_maximizes() {
         use crate::pictures::domain::route::Route;
-        use crate::transitions::domain::admission::{EndPicture, Waits};
+        use crate::transitions::domain::admission::{FliesOn, Waits};
         use crate::transitions::domain::request::AnimationRequest;
         use crate::transitions::domain::travel::tile_path;
         let screen = r(0.0, 0.0, 1728.0, 1080.0);
@@ -1457,10 +1457,11 @@ mod tests {
                     let to = if i == maximized_row { maximized } else { left_park(after) };
                     requests.push(window(2 + i, at, to, at, after));
                 }
-                let Waits { awaiting, repainting, kept } = requests
-                    .iter()
-                    .map(|q| (q.window, EndPicture::of_window(Route::SkyLight, q.from.size, q.to.size)))
-                    .collect();
+                let mut waits = Waits::default();
+                for request in &requests {
+                    waits.push_request(request, FliesOn::Picture(Route::SkyLight));
+                }
+                let Waits { awaiting, repainting, kept } = waits;
                 assert_eq!(awaiting.len(), rows as usize, "{case}: the stack's windows all grow");
                 let tiles: Vec<TileSummary> = (0..requests.len())
                     .filter_map(|i| {

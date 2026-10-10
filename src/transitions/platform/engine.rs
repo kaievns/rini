@@ -1543,7 +1543,7 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    waits.push(request.window, EndPicture::of_window(snapshot.source, request.from.size, request.to.size));
+                    waits.push_request(request, FliesOn::Picture(snapshot.source));
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -1579,7 +1579,7 @@ impl FlightEngine {
                         });
                     let usable = picture.as_ref().is_some_and(|p| p.is_usable());
                     let entrance = entrance_plan(spawn, request.to, usable, budget_left);
-                    waits.push(request.window, EndPicture::of_entrance(entrance));
+                    waits.push_request(request, FliesOn::Entrance(entrance));
                     match entrance {
                         EntranceDecision::Travel { from, to } => {
                             let snapshot = picture.expect("usable implies a picture");
@@ -2661,7 +2661,17 @@ mod tests {
             let park = rect(1727.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let stand_in = stand_in_picture(slot.size.respace(), stand_in_image().expect("drawn"));
-            assert_eq!(EndPicture::of_window(stand_in.source, park.size.respace(), slot.size.respace()), EndPicture::Awaited);
+            let request = AnimationRequest {
+                window: wid(1),
+                server_id: WindowServerId::new(1),
+                from: from_overlay_space(park, ScreenRect::zero()),
+                to: from_overlay_space(slot, ScreenRect::zero()),
+                floating: false,
+                worn: Default::default(),
+                strip_before: None,
+                strip_after: None,
+            };
+            assert_eq!(EndPicture::of_request(&request, FliesOn::Picture(stand_in.source)), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;

@@ -11,6 +11,7 @@ use rini_geometry::{SameAs, to_overlay_space};
 
 use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::route::Route;
+use crate::transitions::domain::request::AnimationRequest;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
@@ -88,8 +89,10 @@ pub(in crate::transitions) enum EndPicture {
     /// A grow: held for, overlay up, watched until it has repainted where it ends, and pictured
     /// there only once it has.
     Held,
-    /// A shrink: watched until it has repainted where it ends, never held for, and never pictured
-    /// there: its picture from the press, which covers every frame, flies to the lift.
+    /// A shrink: watched until it has repainted where it ends, and never held for itself. Its tile
+    /// keeps the picture frame zero took of it, which covers every frame, to the lift; one frame zero
+    /// never pictured, starting clipped or off the display, has its repaint swapped in
+    /// (`Flight::keeps`).
     Kept,
     /// An entrance flying from where it opened: watched until it has repainted at its slot, never
     /// held for, and pictured there only once it has.
@@ -98,11 +101,27 @@ pub(in crate::transitions) enum EndPicture {
     Lands,
 }
 
+/// What a pass's window flies on: the picture it has, taken by a `Route`, or, having none, its
+/// entrance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::transitions) enum FliesOn {
+    Picture(Route),
+    Entrance(EntranceDecision),
+}
+
 impl EndPicture {
+    /// The window `request` places, flying on `flies`.
+    pub(in crate::transitions) fn of_request(request: &AnimationRequest, flies: FliesOn) -> Self {
+        match flies {
+            FliesOn::Picture(source) => Self::of_window(source, request.from.size, request.to.size),
+            FliesOn::Entrance(entrance) => Self::of_entrance(entrance),
+        }
+    }
+
     /// A window going from `from` to `to`, drawn from a picture taken `source`: a stand-in, which is
     /// no picture of the window, is awaited; a resize growing on either axis is held for its repaint;
-    /// one that only shrinks flies the picture it has at once and keeps it; a move lands.
-    pub(in crate::transitions) fn of_window(source: Route, from: ScreenSize, to: ScreenSize) -> Self {
+    /// one that only shrinks is watched, never held for itself; a move lands.
+    fn of_window(source: Route, from: ScreenSize, to: ScreenSize) -> Self {
         if source == Route::StandIn {
             Self::Awaited
         } else if grows(from, to) {
@@ -116,7 +135,7 @@ impl EndPicture {
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
     /// at its slot lands there, and a reservation is awaited.
-    pub(in crate::transitions) fn of_entrance(entrance: EntranceDecision) -> Self {
+    fn of_entrance(entrance: EntranceDecision) -> Self {
         match entrance {
             EntranceDecision::Travel { from, to } if from.same_as(to) => Self::Lands,
             EntranceDecision::Travel { .. } => Self::Repainting,
@@ -134,11 +153,17 @@ pub(in crate::transitions) struct Waits {
     /// Watched until they repaint, and pictured where they end only once they have: windows resized,
     /// held for if they grow and kept if they shrink, and windows flying from where they opened.
     pub(in crate::transitions) repainting: Vec<WindowId>,
-    /// Of `repainting`, the shrinks, whose tiles keep the pictures they have from the press.
+    /// Of `repainting`, the shrinks, whose tiles keep the pictures frame zero took of them, if it took
+    /// one (`Flight::keeps`).
     pub(in crate::transitions) kept: Vec<WindowId>,
 }
 
 impl Waits {
+    /// Sorts the window `request` places, flying on `flies`.
+    pub(in crate::transitions) fn push_request(&mut self, request: &AnimationRequest, flies: FliesOn) {
+        self.push(request.window, EndPicture::of_request(request, flies));
+    }
+
     pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
         let (holds, repaints, keeps) = match end {
             EndPicture::Awaited => (true, false, false),
@@ -374,12 +399,6 @@ mod tests {
         assert_eq!(merge_action(None, to), Admitted::Joined);
     }
 
-
-
-
-
-
-
     const COLUMN: ScreenSize = ScreenSize::new(859.0, 1081.0);
 
     fn end(from: ScreenSize, to: ScreenSize) -> EndPicture { EndPicture::of_window(Route::SkyLight, from, to) }
@@ -437,6 +456,50 @@ mod tests {
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }), EndPicture::Repainting);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }), EndPicture::Lands);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Reserve("capture budget")), EndPicture::Awaited);
+    }
+
+    /// A pass's windows sorted from their requests, each by the sizes it goes from and to: a grow and
+    /// a fold held for and watched, a shrink watched and kept, a move landing, a stand-in held for, an
+    /// entrance flying from where it opened watched, one standing at its slot landing and a
+    /// reservation held for.
+    #[test]
+    fn a_pass_s_windows_are_sorted_by_the_sizes_their_requests_go_from_and_to() {
+        use rini_core::ids::WindowServerId;
+        let request = |idx, from, to| AnimationRequest {
+            window: window(idx),
+            server_id: WindowServerId::new(idx),
+            from,
+            to,
+            floating: false,
+            worn: Default::default(),
+            strip_before: None,
+            strip_after: None,
+        };
+        let column: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
+        let next = rect(867.0, 32.0, 859.0, 1081.0);
+        let picture = FliesOn::Picture(Route::SkyLight);
+        let pass = [
+            (request(1, column, rect(4.0, 32.0, 1720.0, 1081.0)), picture),
+            (request(2, column, rect(4.0, 32.0, 1148.0, 538.0)), picture),
+            (request(3, column, rect(4.0, 32.0, 859.0, 535.0)), picture),
+            (request(4, column, next), picture),
+            (request(5, column, next), FliesOn::Picture(Route::StandIn)),
+            (
+                request(6, column, next),
+                FliesOn::Entrance(EntranceDecision::Travel { from: rect(400.0, 200.0, 700.0, 500.0), to: next }),
+            ),
+            (request(7, next, next), FliesOn::Entrance(EntranceDecision::Travel { from: next, to: next })),
+            (request(8, column, next), FliesOn::Entrance(EntranceDecision::Reserve("capture budget"))),
+        ];
+        let mut waits = Waits::default();
+        for (request, flies) in &pass {
+            waits.push_request(request, *flies);
+        }
+        let windows = |idxs: &[u32]| idxs.iter().copied().map(window).collect::<Vec<_>>();
+        assert_eq!(
+            waits,
+            Waits { awaiting: windows(&[1, 2, 5, 8]), repainting: windows(&[1, 2, 3, 6]), kept: windows(&[3]) }
+        );
     }
 
     #[test]
