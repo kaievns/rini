@@ -4625,6 +4625,11 @@ mod tests {
 
         fn plays(sent: &[Sent]) -> bool { batches(sent).iter().any(|batch| kinds(batch).contains(&"play")) }
 
+        /// Where the running flight ends `window`'s tile.
+        fn tile_to(h: &Harness, window: u32) -> Option<OverlayRect> {
+            h.engine.running.as_ref().and_then(|running| running.tiles.iter().find(|tile| tile.window == wid(window)).map(|tile| tile.to))
+        }
+
         /// A pass growing a window while the flight moves writes it at once and draws nothing of it
         /// until its repaint lands: then, in one drain, the tile is bent from where it is drawn at that
         /// moment and the repaint goes onto it.
@@ -4646,7 +4651,7 @@ mod tests {
             let at = h.media.at(h.at());
             let begins = begins(&sent);
             assert!(!begins.is_empty() && begins.iter().all(|begin| (begin - at).abs() < 1e-9), "{begins:?} from {at}");
-            let to = h.engine.running.as_ref().and_then(|running| running.tiles.iter().find(|tile| tile.window == wid(1)).map(|tile| tile.to));
+            let to = tile_to(&h, 1);
             assert_eq!(to, Some(on(grown)));
         }
 
@@ -4696,8 +4701,49 @@ mod tests {
             let order = kinds(only_batch(&sent));
             let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
             assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
-            let to = h.engine.running.as_ref().and_then(|running| running.tiles.iter().find(|tile| tile.window == wid(1)).map(|tile| tile.to));
+            let to = tile_to(&h, 1);
             assert_eq!(to, Some(on(narrower)));
+        }
+
+        /// A pass growing nothing that reaches a held one merges with it at once, the held one first:
+        /// a window both send somewhere ends where the latest sends it, and stays there as the held
+        /// grow's repaint lands.
+        #[test]
+        fn a_pass_growing_nothing_merges_after_the_one_held_before_it() {
+            let mut h = moving_pair();
+            let (grown, beside) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(857.0, 0.0, 859.0, 1081.0));
+            let (sent, latest) = (rect(869.0, 0.0, 859.0, 1081.0), rect(807.0, 0.0, 859.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown), (2, beside, sent)]);
+            assert!(!plays(&h.step(press)), "held");
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(2, sent, latest)]);
+            assert!(plays(&h.step(press)), "at once");
+            assert!(h.engine.running.as_ref().is_some_and(|running| running.held.is_empty()), "with the held one");
+            assert_eq!((tile_to(&h, 1), tile_to(&h, 2)), (Some(on(grown)), Some(on(latest))));
+            h.advance(Duration::from_millis(80));
+            let landed = repainted(&h, &[(1, grown)]);
+            h.step(landed);
+            assert_eq!(tile_to(&h, 2), Some(on(latest)), "not sent back where the held one ends it");
+        }
+
+        /// A pass only moving a window a held pass grows ends it wider than the picture its tile
+        /// carries: held too, and merged once its repaint lands where it moves, onto the moved tile.
+        #[test]
+        fn a_move_of_a_window_a_held_pass_grows_waits_for_its_repaint() {
+            let mut h = moving_pair();
+            let (grown, moved) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(100.0, 0.0, 1300.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(1, grown, moved)]);
+            assert!(!plays(&h.step(press)), "held");
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, moved)]);
+            let sent = h.step(landed);
+            let order = kinds(only_batch(&sent));
+            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
+            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            assert_eq!(tile_to(&h, 1), Some(on(moved)));
         }
 
         /// The same shrink once the grow's repaint is on the tile ends inside that picture, and bends

@@ -2714,6 +2714,69 @@ mod tests {
         assert_eq!(c.on(nothing, later + Duration::from_millis(30)), vec![Command::Retarget { held: Duration::from_millis(30) }]);
     }
 
+    /// A pass growing nothing that arrives while two are held merges all three at once: the repaint
+    /// held where the first ends window 2 waits through the first two merges, which write nothing
+    /// again, and goes onto its tile with the third's only while that one still ends it there.
+    #[test]
+    fn a_held_repaint_waits_for_the_latest_of_the_passes_merged_at_once() {
+        let now = Instant::now();
+        let (flying, _, _) = grown_mid_flight();
+        let (wider, neighbour, moved) =
+            (r(3.0, 35.0, 1148.0, 1079.0), r(580.0, 35.0, 1140.0, 1079.0), r(403.0, 35.0, 1148.0, 1079.0));
+        let mut first = flying.clone();
+        (first.tiles[1].end, first.final_frames[1].1) = (wider, wider);
+        (first.awaiting, first.repainting) = (vec![w(2)], vec![w(2)]);
+        let mut second = first.clone();
+        (second.tiles[0].end, second.final_frames[0].1) = (neighbour, neighbour);
+        (second.awaiting, second.repainting) = (vec![w(1)], vec![w(1)]);
+        for (what, ends, swapped, written) in [
+            ("ending it there", wider, [false, false, true], vec![]),
+            ("moving it", moved, [false, false, false], vec![(w(2), moved)]),
+        ] {
+            let mut third = second.clone();
+            (third.tiles[1].end, third.final_frames[1].1) = (ends, ends);
+            (third.awaiting, third.repainting) = (Vec::new(), Vec::new());
+            let mut c = running(flying.clone(), now);
+            let g = c.generation();
+            let at = now + Duration::from_millis(100);
+            c.on(hold(&[(w(2), wider)]), at);
+            c.on(hold(&[(w(1), neighbour)]), at + Duration::from_millis(40));
+            let landed = Event::Picture { generation: g, window: w(2), frame: wider, why: Why::Landed };
+            assert_eq!(retargets(&c.on(landed, at + Duration::from_millis(80))), None, "{what}: held for window 1");
+            let nothing = Event::HoldMerge { grows: Vec::new(), writes: vec![(w(2), ends)] };
+            assert!(retargets(&c.on(nothing, at + Duration::from_millis(100))).is_some(), "{what}: at once");
+            let (mut swaps, mut holding) = (Vec::new(), Vec::new());
+            for (i, stage) in [first.clone(), second.clone(), third].into_iter().enumerate() {
+                let out = c.on(Event::Merge { stage, moved: true }, at + Duration::from_millis(100));
+                swaps.push(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }));
+                holding.push(c.holds(w(2), g, wider));
+                let expected = if i == 2 { written.clone() } else { Vec::new() };
+                assert_eq!(writes(&out), expected, "{what}: merge {i}");
+            }
+            assert_eq!(swaps, swapped, "{what}");
+            assert_eq!(holding, [true, true, false], "{what}");
+        }
+    }
+
+    /// A window an earlier held pass grows that a later one sends off the display is watched to
+    /// repaint no longer, nor is a hole left over it there: no watch can see it repaint.
+    #[test]
+    fn a_held_grow_a_later_pass_sends_off_the_display_is_watched_no_longer() {
+        let now = Instant::now();
+        let (flying, _, _) = grown_mid_flight();
+        let (wider, neighbour, off) =
+            (r(3.0, 35.0, 1148.0, 1079.0), r(580.0, 35.0, 1140.0, 1079.0), r(1800.0, 35.0, 1148.0, 1079.0));
+        let mut c = running(flying, now);
+        c.on(hold(&[(w(2), wider)]), now + Duration::from_millis(100));
+        let later = Event::HoldMerge { grows: vec![(w(1), neighbour)], writes: vec![(w(1), neighbour), (w(2), off)] };
+        let out = c.on(later, now + Duration::from_millis(160));
+        let awaiting = watch(&out).expect("watched").awaiting;
+        assert!(awaiting.contains(&(w(1), neighbour)), "{awaiting:?}");
+        assert!(!awaiting.iter().any(|(window, _)| *window == w(2)), "{awaiting:?}");
+        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
+        assert!(!holes.expect("holes").contains(&(w(2), to_overlay_space(off, DISPLAY))));
+    }
+
     /// A held merge waits `HOLD_CAP` from its own arrival, past the flight's clock, or until its window
     /// is given up on; merged without its repaint, the repaint is cut in mid-run when it lands.
     #[test]
