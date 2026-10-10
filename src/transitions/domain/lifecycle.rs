@@ -17,7 +17,7 @@ use crate::animation::domain::motion::tile::snap_to;
 use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
 
 use super::request::SurfaceWindow;
-use super::timing::{COALESCE_WINDOW, FRAME_INTERVAL, HOLD_CAP, LIFT_GRACE};
+use super::timing::{BURST_HOLD_CAP, COALESCE_WINDOW, FRAME_INTERVAL, HOLD_CAP, LIFT_GRACE};
 
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
 pub const FRAME_ZERO_PATIENCE: Duration = Duration::from_millis(80);
@@ -378,7 +378,9 @@ enum Phase {
     Preparing { deadline: Instant },
     /// Overlay up, waiting for the follow-up passes.
     Coalescing { until: Instant },
-    /// Overlay up, waiting for the awaited windows' first pictures, or to hear they will not come.
+    /// Overlay up, waiting for the awaited windows' first pictures, or to hear they will not come:
+    /// `HOLD_CAP` from the latest pass holding for one, `BURST_HOLD_CAP` from the overlay going up at
+    /// most.
     Holding { deadline: Instant },
     /// The motion playing what it played before a pass that grows windows reached it, its tiles going
     /// on to where they ended and resting there, until those windows have repainted where the pass
@@ -414,6 +416,8 @@ struct Flight {
     began: Generation,
     stage: StageSummary,
     phase: Phase,
+    /// When the overlay went up.
+    shown: Option<Instant>,
     /// When the motion started, and how long it runs from then.
     clock: Option<(Instant, Duration)>,
     /// The background was left out of frame zero.
@@ -791,6 +795,7 @@ impl Coordinator {
             kept: stage.kept.clone(),
             stage,
             phase: Phase::Preparing { deadline: now + FRAME_ZERO_PATIENCE },
+            shown: None,
             clock: None,
             background_later,
             asked,
@@ -858,9 +863,11 @@ impl Coordinator {
             }
         }
         let holdable = f.holdable();
-        // Until the motion starts, a newcomer is held for too; once moving, it joins as it lands.
-        if f.clock.is_none() {
+        // Until the motion starts, a newcomer is held for too, from its own arrival; once moving, it
+        // joins as it lands.
+        if f.clock.is_none() && newcomers.iter().any(|w| holdable.contains(w)) {
             extend_unique(&mut f.held, newcomers.into_iter().filter(|w| holdable.contains(w)));
+            hold_again(f, now);
         }
         if f.stage.kind.writes() && !changed.is_empty() {
             f.placed = None;
@@ -1059,6 +1066,7 @@ fn ask_frame_zero_again(f: &mut Flight, out: &mut Vec<Command>) {
 /// The overlay goes up: the real windows are written behind it, and the end state is watched.
 fn show(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     out.push(Command::Show);
+    f.shown = Some(now);
     if f.stage.kind.writes() && !f.stage.final_frames.is_empty() {
         out.push(Command::Write(f.stage.final_frames.clone()));
     }
@@ -1080,12 +1088,21 @@ fn refresh(turned: Vec<(WindowId, ScreenRect)>, out: &mut Vec<Command>) {
     }
 }
 
-/// Holds for the awaited windows, up to `HOLD_CAP`, or starts the motion when there are none.
+/// Holds for the awaited windows, up to `HOLD_CAP` unless a merge holds again (`hold_again`), or
+/// starts the motion when there are none.
 fn hold_or_move(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     if f.held.is_empty() {
         start_moving(f, now, out);
     } else {
         f.phase = Phase::Holding { deadline: now + HOLD_CAP };
+    }
+}
+
+/// A pass merged before the motion holding for a window, holding the overlay `HOLD_CAP` from its own
+/// arrival, but no longer than `BURST_HOLD_CAP` from the overlay going up, so a burst cannot stall it.
+fn hold_again(f: &mut Flight, now: Instant) {
+    if let (Phase::Holding { deadline }, Some(shown)) = (&mut f.phase, f.shown) {
+        *deadline = (now + HOLD_CAP).min(shown + BURST_HOLD_CAP);
     }
 }
 
@@ -2441,6 +2458,72 @@ mod tests {
         assert_eq!(preparing.on(tick, now + COALESCE_WINDOW), vec![Command::StartMoving], "before the show");
     }
 
+    /// `grow()` from 572 wide, ending `width` wide.
+    fn grow_to(width: f64) -> (StageSummary, ScreenRect) {
+        let (mut stage, _) = grow();
+        let end = r(3.0, 35.0, width, 1079.0);
+        stage.tiles[1].start = r(3.0, 35.0, 572.0, 1079.0);
+        stage.tiles[1].end = end;
+        stage.final_frames[1].1 = end;
+        (stage, end)
+    }
+
+    /// Presses every 115ms growing window 2 from 572 to 860, 1148 and 1722 before the motion, each
+    /// repainting 140ms after it: each merge holds `HOLD_CAP` from its own arrival, so the hold
+    /// outlasts the show's cap and the flight sets off on the 1722 repaint, never with 572 on the tile.
+    #[test]
+    fn a_grow_merged_before_the_motion_holds_from_its_own_arrival() {
+        let now = Instant::now();
+        let at = |ms| now + Duration::from_millis(ms);
+        let mut c = running(grow_to(860.0).0, now);
+        let tick = Event::Tick { settled: false, landed: false };
+        c.on(Event::Merge { stage: grow_to(1148.0).0, moved: true }, at(115));
+        let stale = Event::Picture { generation: c.generation(), window: w(2), frame: grow_to(860.0).1, why: Why::Landed };
+        assert!(!has(&c.on(stale, at(140)), |c| *c == Command::StartMoving), "where it no longer ends");
+        let (latest, widest) = grow_to(1722.0);
+        c.on(Event::Merge { stage: latest, moved: true }, at(230));
+        assert!(!has(&c.on(tick.clone(), at(300)), |c| *c == Command::StartMoving), "past the show's cap");
+        let g = c.generation();
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: widest, why: Why::Landed }, at(370));
+        let swapped = out.iter().position(|c| *c == Command::Swap { generation: g, window: w(2) });
+        let moved = out.iter().position(|c| *c == Command::StartMoving);
+        assert!(swapped.is_some_and(|swapped| moved.is_some_and(|moved| swapped < moved)), "{out:?}");
+    }
+
+    /// Grows merged before the motion every 100ms whose window never repaints hold the overlay at most
+    /// `BURST_HOLD_CAP` from the show, however close the latest one came.
+    #[test]
+    fn a_burst_of_grows_before_the_motion_sets_off_at_most_its_cap_after_the_show() {
+        let now = Instant::now();
+        let mut c = running(grow_to(860.0).0, now);
+        let tick = Event::Tick { settled: false, landed: false };
+        for (i, width) in [1148.0, 1436.0, 1722.0, 1148.0, 1436.0].into_iter().enumerate() {
+            let arrives = now + Duration::from_millis(100 * (i as u64 + 1));
+            c.on(Event::Merge { stage: grow_to(width).0, moved: true }, arrives);
+            assert!(c.on(tick.clone(), arrives).is_empty(), "held at {width}");
+        }
+        assert!(c.on(tick.clone(), now + BURST_HOLD_CAP - Duration::from_millis(1)).is_empty());
+        assert_eq!(c.on(tick, now + BURST_HOLD_CAP), vec![Command::StartMoving], "its cap runs out");
+    }
+
+    /// A pass merged before the motion holding for no window, one moving window 1 only, leaves the
+    /// hold where it was.
+    #[test]
+    fn a_merge_holding_for_nothing_before_the_motion_leaves_the_hold() {
+        let now = Instant::now();
+        let (growing, _) = grow_to(860.0);
+        let mut moving = growing.clone();
+        moving.awaiting.clear();
+        moving.repainting.clear();
+        moving.tiles[0].end = r(400.0, 35.0, 860.0, 1079.0);
+        moving.final_frames[0].1 = moving.tiles[0].end;
+        let mut c = running(growing, now);
+        let tick = Event::Tick { settled: false, landed: false };
+        c.on(Event::Merge { stage: moving, moved: true }, now + Duration::from_millis(200));
+        assert!(c.on(tick.clone(), now + HOLD_CAP - Duration::from_millis(1)).is_empty(), "held for the grow");
+        assert_eq!(c.on(tick, now + HOLD_CAP), vec![Command::StartMoving], "from the show");
+    }
+
     /// A shrinking window frame zero never pictured, one starting off the display, flies the cache's
     /// picture: its repainted landing is swapped in mid-run, and the last capture pictures it once in.
     #[test]
@@ -2776,6 +2859,8 @@ mod tests {
         delivered: Option<(Generation, f64)>,
         /// When the overlay went up.
         shown: u64,
+        /// When the latest pass growing it before the motion arrived.
+        grew: u64,
         /// Merges that waited.
         held: usize,
         /// Merges of two held passes growing it or more.
@@ -2786,7 +2871,7 @@ mod tests {
         fn new(widths: Vec<f64>, gap: u64, delay: u64) -> Rapid {
             let (end, picture) = (widths[0], widths[0]);
             let c = Coordinator::default();
-            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, held: 0, held_together: 0 }
+            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, grew: 0, held: 0, held_together: 0 }
         }
 
         fn frame(width: f64) -> ScreenRect { r(3.0, 35.0, width, 1079.0) }
@@ -2816,6 +2901,9 @@ mod tests {
 
         fn case(&self) -> String { format!("{:?} every {}ms, repainted after {}ms, at {}ms", self.widths, self.gap, self.delay, self.at) }
 
+        /// Whether `cap` has passed since `since`.
+        fn past(&self, since: u64, cap: Duration) -> bool { Duration::from_millis(self.at - since) >= cap }
+
         fn sets_off(&self, capped: bool) {
             assert!(capped || self.picture >= self.end - 1.0, "{}: a tile {} wide sets off for {}", self.case(), self.picture, self.end);
         }
@@ -2824,6 +2912,9 @@ mod tests {
         fn on(&mut self, event: Event, ticked: bool) {
             if let Event::Merge { stage, .. } | Event::Begin(stage) = &event {
                 self.end = stage.tiles[0].end.size.width;
+                if !self.c.is_moving() && Self::grows(stage) {
+                    self.grew = self.at;
+                }
             }
             let out = self.c.on(event, self.start + Duration::from_millis(self.at));
             for command in out {
@@ -2844,7 +2935,9 @@ mod tests {
                         }
                     }
                     Command::Show => self.shown = self.at,
-                    Command::StartMoving => self.sets_off(ticked && Duration::from_millis(self.at - self.shown) >= HOLD_CAP),
+                    Command::StartMoving => {
+                        self.sets_off(ticked && (self.past(self.grew, HOLD_CAP) || self.past(self.shown, BURST_HOLD_CAP)))
+                    }
                     Command::Retarget { held } => {
                         self.held += usize::from(!held.is_zero());
                         self.held_together += usize::from(self.queued.iter().filter(|stage| Self::grows(stage)).count() > 1);

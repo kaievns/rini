@@ -236,8 +236,9 @@ destination for a window already moving.
   with them, and the windows written their new frames as it covers them. A resize that grows a
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the
   overlay standing still, until that window has repainted at its new size, up to 300ms from the
-  overlay going up, and that window MUST fly its repainted picture from the motion's first frame, so
-  its growth shows its content and never a fill cut to content mid-flight. A window growing on one
+  overlay going up or from the latest press growing it before the motion starts, and 600ms in all
+  from the overlay going up, and that window MUST fly its repainted picture from the motion's first
+  frame, so its growth shows its content and never a fill cut to content mid-flight. A window growing on one
   axis as it shrinks on the other, as a fold or an unfold, has no picture covering every frame: its
   repainted picture, short of the start on the shrinking axis, shows the window's ground there, which
   the moving edge swallows, and the cut onto it from the picture at the press comes as the motion
