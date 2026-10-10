@@ -14,8 +14,9 @@ is borrowed.
   remembered per display.
 - **The widest preset is a width, not the mode.** `ctrl-R` reaching 1.0 makes
   the whole column, its stack kept, the viewport wide; it pulls no window out
-  and records nothing to return to, which is `ctrl-F`'s alone. Entering the mode
-  there split a stacked window out and broke the column (Kai, 2026-10-10). It
+  and records nothing to return to, which only the full-width mode does, entered
+  by `ctrl-F` or its title-bar zoom, a lone window's drag across the viewport or
+  a restart restoring one. Entering the mode there split a stacked window out and broke the column (Kai, 2026-10-10). It
   cannot be a bounded ratio like the others — `max-column-width` is below 1.0,
   0.9 by default, so a preset of 1.0 asked for as one comes back clamped to it —
   so `preset_width::next_preset` answers `Full` or `Ratio`, and `Full` is given
@@ -132,8 +133,8 @@ is borrowed.
   column right, and two for a stack on the right, 0 to 1725. In the stack's place
   a stack flush left does not scroll, everything after it moves right, and a
   right stack scrolls one column. Every route in maximizes the same way — the
-  key, the width cycle, an app's title-bar zoom, and restoring a remembered full
-  width at startup. A neighbour is remembered rather than a row index, because
+  key, an app's title-bar zoom, a lone window's drag across the viewport, and
+  restoring a remembered full width at startup. A neighbour is remembered rather than a row index, because
   while the window is maximized its old column can move along the strip or
   change size. If every window it could return to has closed, it stays the
   column it became rather than being put somewhere the user never had it.

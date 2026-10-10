@@ -73,7 +73,7 @@ struct Column {
     #[serde(default)]
     width_overridden: bool,
     /// The width is held only to the viewport, not to `min-column-width` and `max-column-width`,
-    /// as a mouse drag gives it.
+    /// as a mouse drag or `ctrl-R`'s 100% gives it.
     #[serde(default, rename = "width_dragged")]
     width_unbounded: bool,
     #[serde(default)]
@@ -3446,7 +3446,7 @@ mod tests {
     }
 
     /// The bounds the shipped config uses: a maximum well below 1.0, so that `ctrl-+` cannot crawl
-    /// to the full viewport, which only the cycle's 1.0 and `ctrl-F` give.
+    /// to the full viewport, which only the cycle's 1.0, `ctrl-F` and a drag across it give.
     fn preset_settings() -> ScrollingLayoutSettings {
         let mut settings = niri_settings(0.5);
         settings.min_column_width_ratio = 0.33333;

@@ -105,7 +105,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > also remembers the window's previous configuration (width, height, column pracement, etc) and
 > reverts." The cycle's 100% step entered the maximise mode, which pulled the window out of its
 > stack. It is now a width held only to the viewport, the way a drag across it already sized a
-> stacked column, and remembering where to go back to is `Mod+F`'s alone.
+> stacked column, and only the full-width mode, entered by `Mod+F` or its title-bar zoom, a lone
+> window's drag across the viewport or a restart, remembers where to go back to.
 
 > **Reported 2026-10-09.** "restoring windows back from full-size doesn't respect previous position
 > of a column, for example two columns on the screen, im expending a window from a column on the

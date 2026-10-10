@@ -46,7 +46,7 @@ pub enum ColumnKind {
     /// Maximised: the whole viewport, whatever its stored ratio.
     FullWidth,
     /// Held only to the viewport, not to `min-column-width` and `max-column-width`: the width a
-    /// mouse drag gave it.
+    /// mouse drag gave it, or `ctrl-R`'s 100%.
     Unbounded,
     /// Held to `min-column-width` and `max-column-width`.
     Bounded,
@@ -57,8 +57,9 @@ pub enum ColumnKind {
 /// Full width is a MODE rather than a wider ratio: a bounded column is clamped to
 /// `max-column-width` — below 1.0, deliberately, so that the incremental resize keys and the
 /// default width cannot crawl to 100% — so a maximised column cannot be expressed as a
-/// ratio at all and has to be asked for separately. The bounds are for the keys, not a drag: an
-/// unbounded column is held only to the viewport.
+/// ratio at all and has to be asked for separately. The bounds are for the resize keys and the
+/// presets below 100%, not a drag or `ctrl-R`'s 100%: an unbounded column is held only to the
+/// viewport.
 ///
 /// Both the layout pass and the scroll-gesture arithmetic read this, because they used to disagree:
 /// the gesture computed a maximised column at `max-column-width` of the viewport, so it
@@ -85,7 +86,7 @@ pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, ma
 /// The gap comes out of the column rather than out of the space between columns, which is what keeps
 /// two columns at ratio 0.5 adding up to the viewport instead of overflowing it by one gap. It is
 /// skipped when it would take the column below a pixel, and for an unbounded column, whose width is
-/// the one the window was let go at.
+/// the one a drag let go at or, from `ctrl-R`'s 100%, the viewport's whole width.
 pub fn column_width(
     kind: ColumnKind,
     ratio: f64,
