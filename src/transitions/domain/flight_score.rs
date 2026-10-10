@@ -8,12 +8,12 @@
 use std::time::Duration;
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{OverlayRect, OverlayVector};
+use rini_geometry::space::{Group, OverlayRect, OverlayVector, Size};
 
 use crate::animation::domain::choreography::{Choreography, Cue, Look, Pass, Retarget, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::plan::{Banding, FlightPlan, ReflowPlan};
-use crate::animation::domain::motion::score::{Channel, Edit, Node, Score};
+use crate::animation::domain::motion::score::{Channel, Edit, Node, Score, Value};
 use crate::animation::domain::motion::tile;
 
 #[derive(Debug)]
@@ -96,6 +96,25 @@ impl FlightScore {
     pub fn corner_at(&self, window: WindowId) -> Option<f64> {
         let track = self.score.track(Node::Tile(window), Channel::Base)?;
         Some(track.begin() + tile::corner_key(track)? * track.seconds())
+    }
+
+    /// The size `window`'s tile's leg starts at, where it was drawn as the leg was made; none for a
+    /// tile with no leg.
+    pub fn leg_start(&self, window: WindowId) -> Option<Size<Group>> {
+        let track = self.score.track(Node::Tile(window), Channel::Base)?;
+        match track.keys().first()?.1 {
+            Value::Rect(start) => Some(start.size),
+            Value::Point(_) => None,
+        }
+    }
+
+    /// The size `window`'s tile is drawn at `at`: on its leg while that plays, where it rests
+    /// otherwise, so a leg made at `at` starts there. None for a tile the score does not hold.
+    pub fn drawn_size(&self, window: WindowId, at: f64) -> Option<Size<Group>> {
+        match self.score.along(Node::Tile(window), at)? {
+            Value::Rect(drawn) => Some(drawn.size),
+            Value::Point(_) => None,
+        }
     }
 
     /// `window`'s tile's leg added again as it plays, so the renderer installs it with the pictures
@@ -285,8 +304,9 @@ mod tests {
     }
 
     /// A tile folding is on a leg in two steps, which turns its corner at its middle key's time on
-    /// the media clock and plays again exactly as it was; a strip window on one movement has no
-    /// corner, and a window with no tile no leg.
+    /// the media clock and plays again exactly as it was, starting at the column and drawn at the
+    /// corner's size there; a strip window on one movement has no corner, and a window with no tile
+    /// no leg.
     #[test]
     fn a_folds_corner_is_when_its_leg_turns_and_its_leg_plays_again_as_it_was() {
         let fold = (wid(9), rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0), false);
@@ -298,8 +318,12 @@ mod tests {
         let key = tile::corner_key(&track).expect("two steps");
         assert_eq!(flight.score.corner_at(wid(9)), Some(BEGIN + key * PLAIN));
         assert_eq!(flight.score.again(wid(9)), [Edit::Add(track)]);
+        assert_eq!(flight.score.leg_start(wid(9)), Some(Size::new(860.0, 1079.0)));
+        let turning = flight.score.drawn_size(wid(9), BEGIN + key * PLAIN).expect("drawn");
+        assert!((turning.width - 860.0).abs() < 1e-6 && (turning.height - 538.0).abs() < 1e-6, "{turning:?}");
         assert_eq!(flight.score.corner_at(wid(1)), None, "one movement");
         assert!(flight.score.again(wid(42)).is_empty(), "no tile");
+        assert_eq!((flight.score.leg_start(wid(42)), flight.score.drawn_size(wid(42), BEGIN)), (None, None));
     }
 
     /// A merge bends the flight from its own score: every window is drawn where it was, the strip's

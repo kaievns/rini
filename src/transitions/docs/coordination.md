@@ -893,11 +893,18 @@ landing in the first step, its hold run out, waits for the corner too, the leg i
 plays with the repaint on the tile (`FlightScore::again`); one landing past the corner is cut in as
 any landing in motion, and one not landed by then leaves the second step the press picture with the
 ground in its growth (`a_folds_late_repaint_waits_for_the_corner_until_it_is_past`). A picture
-fitting where the tile starts, frame zero's delivered after the show, goes on at once. A merge bending
-the leg from where the tile is drawn splits it the same way, and the repaint held becomes the tile's
-own picture as a new leg is made with no corner of its own ahead or past the old one's
-(`RunningAnimation::turn_corners`). A stand-in, stretched with no crop grid, takes its repaint at
-once. Holding a fold follows Kai's 2026-10-09 choice of a lag over a flicker. On the
+fitting where the tile's leg starts, frame zero's delivered after the show, goes on at once. A merge
+bending the leg from where the tile is drawn splits it the same way, from that rect, and a repaint
+landing before the new leg's corner waits for it, though it fits where the flight first started, as
+an unfold bent from a fold past its corner ends there
+(`a_repaint_landing_after_a_bend_waits_for_the_new_legs_corner`). The repaint held becomes the tile's
+own picture as a new leg is made past the old one's corner, or with no corner of its own ahead
+(`RunningAnimation::turn_corners`); one held for a corner not reached is let go instead where the
+picture from the press covers the new leg, as a fold reversed in its first step's, never drawn and
+needed nowhere (`drop_corners_covered`). A merged pass is judged against the picture its tile carries
+into the new leg so chosen (`FlightEngine::landing`,
+`a_fold_shrunk_further_before_its_corner_is_judged_against_its_held_repaint`). A tile drawn
+stretched, a stand-in's with no crop grid, takes its repaint at once (`tile::content_mode`). Holding a fold follows Kai's 2026-10-09 choice of a lag over a flicker. On the
 build that flew grows at once (journal n1 in `docs/data/2026-10-09-resize`, 6 flights)
 the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
 after the show: held, the motion starts about 160-225ms after the press. A window the pass only
