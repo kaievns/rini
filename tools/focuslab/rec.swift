@@ -8,6 +8,9 @@
 import Cocoa
 import ScreenCaptureKit
 let MAGIC: Int64 = 0x52494e49
+// Compiled afresh on 2026-10-09, rec asserted in CGS_REQUIRE_INIT until this was added; screenrec, posting and
+// streaming the same way without it, never has, so what needs it is narrower than either and not found.
+_ = NSApplication.shared
 var tb = mach_timebase_info_data_t(); mach_timebase_info(&tb)
 func machNs(_ t: UInt64) -> UInt64 { t * UInt64(tb.numer) / UInt64(tb.denom) }
 func nowNs() -> UInt64 { DispatchTime.now().uptimeNanoseconds }

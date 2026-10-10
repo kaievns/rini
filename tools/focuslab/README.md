@@ -9,7 +9,8 @@ sequenced. The timing battery (`battery.sh`, below) is the check for any change 
 costs: it flies a fixed set of pans and switches, records rini's overlay and reads the journal.
 `playback.swift` is the exception: it reads what Core Animation draws, for "The score" in
 `src/animation/docs/animation-smoothness.md`. `journal.py` reads rini's own record of each
-transition, on the same clock, and joins it to what a probe saw.
+transition, on the same clock, and joins it to what a probe saw. `screenrec` is the other exception:
+it films the whole display, for how a resize looks ("Watching a resize", below).
 
 ## The probes
 
@@ -25,6 +26,7 @@ transition, on the same clock, and joins it to what a probe saw.
 | `overlayrec.swift` | rini's overlay window alone through an `SCStream` while posting presses, one PNG per frame named by its milliseconds since the first press: what the tiles show mid-flight, whatever the screen shows beneath |
 | `playback.swift` | what Core Animation draws for the overlay's animations at chosen media times, against the curves `Score` evaluates; touches nothing on screen and needs no grant |
 | `rec.swift` | the battery's recorder: rini's overlay window alone (rini's window at level 18) through an `SCStream` at 60fps while posting tagged Option presses, one JSON line a press and a frame. It writes numbers only, never a picture |
+| `screenrec.swift` | the main display, rini's overlay and the real windows beneath it, through an `SCStream` at 60fps into an H.264 movie while posting tagged presses; beside it a JSON of each press's time, each frame the movie holds and each one the writer dropped. `screenrec.sh` runs it |
 | `inputwatch.swift` | the battery's guard: a listen-only tap over keys, clicks, moves and scrolls; the first event the battery did not post writes a flag file and exits |
 | `poke.swift` | posts one untagged released Option, to check that `inputwatch` stops a battery |
 
@@ -152,6 +154,34 @@ in `<out>/rollback/`, copies the new one in as `target/release/rini.new` and ren
 `target/release/rini service restart`, and checks that the new process runs from that path. Any
 check failing stops it with the line to roll back. It builds nothing and never passes `--move`:
 build and sign the binary in a worktree with its own `CARGO_TARGET_DIR` first.
+
+## Watching a resize
+
+How a resize looks, its content against the edges, its ground and the swap to the real window at
+the lift, is seen only in a film of the whole screen: `rec` and `overlayrec` see the overlay alone.
+The lab is a few Ghostty windows full of a ruler, recorded while posting the resize keys.
+
+| file | does |
+|---|---|
+| `pattern.py <letter>` | fills its terminal with a ruler redrawn at every size: row `n` reads `<letter><n>` at both ends, the first `TOP` and the last `BOT`, and every 5 rows change colour, so a frame shows which rows a tile draws, where it cuts and whether glyphs stretch |
+| `lab.sh <workspace> [letter...]` | switches to the workspace and opens a Ghostty window `lab-<letter>` running `pattern.py` per letter, A to D by default, then prints the lab windows' ids and frames |
+| `screenrec.sh [--out DIR] <name> <code:mods:gap_ms>...` | one recording, `<name>.mov`, `.mov.json` and `.journal.jsonl` in `DIR` (`/tmp/rini-focuslab/screenrec` by default), building `screenrec` and `inputwatch` into `~/Library/Caches/rini-focuslab/` as the battery does |
+| `sheet.sh <run.mov> <press> [dur_ms] [x,y,w,h] [cols] [width]` | one press's frames from 20ms before it, beside the movie, and a contact sheet of them; the crop is in points |
+| `screenrec.py` | what `lab.sh` and `sheet.sh` read, tested by `test_screenrec.py` |
+
+A press is `<key code>:<mods>:<gap after it, ms>`, mods any of `a` (Option), `s`, `c`, `m`, or `-`.
+Kai's fold left is `43:a`, full width `3:a`, focus up and down the stack `34:a` and `40:a`.
+
+**It is a screen test, run only while Kai is away**, with the battery's guard: `screenrec.sh`
+refuses unless the HID idle time is at least 300s or no input came since the last battery or
+recording marked the machine quiet, stops on the first input it did not post (exit 3), and puts
+focus back. `lab.sh` opens windows and switches workspace, so it waits for the same. Ghostty 1.3
+asks once whether it may run `pattern.py`. Close the lab windows with `kill -9` on their pids, which
+saves no window state.
+
+**The movie shows Kai's screen.** It stays out of the repo; what a run is read for, the journal
+and the `.mov.json`, goes in `docs/data/`. The 2026-10-09 runs are in
+`docs/data/2026-10-09-resize/`.
 
 ## Reading rini's journal
 
