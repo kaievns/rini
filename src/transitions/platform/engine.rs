@@ -1560,9 +1560,9 @@ impl FlightEngine {
                 display_frame,
                 || self.pictures.stand_in(request.to.size),
             );
-            match snapshot {
+            let flies = match snapshot {
                 Some(snapshot) => {
-                    waits.push_request(request, FliesOn::Picture(snapshot.source), self.landing(request.window, end.size));
+                    let flies = FliesOn::Picture(snapshot.source);
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -1579,6 +1579,7 @@ impl FlightEngine {
                         clipped,
                     });
                     resolved.push((request.window, start, end, request.floating));
+                    flies
                 }
                 // No picture: almost always a window that just opened. See "A window that opens"
                 // in `src/transitions/docs/coordination.md`.
@@ -1598,11 +1599,6 @@ impl FlightEngine {
                         });
                     let usable = picture.as_ref().is_some_and(|p| p.is_usable());
                     let entrance = entrance_plan(spawn, request.to, usable, budget_left);
-                    let landing = match entrance {
-                        EntranceDecision::Travel { to, .. } => self.landing(request.window, to.size),
-                        EntranceDecision::Reserve(_) => None,
-                    };
-                    waits.push_request(request, FliesOn::Entrance(entrance), landing);
                     match entrance {
                         EntranceDecision::Travel { from, to } => {
                             let snapshot = picture.expect("usable implies a picture");
@@ -1668,8 +1664,11 @@ impl FlightEngine {
                             });
                         }
                     }
+                    FliesOn::Entrance(entrance)
                 }
-            }
+            };
+            let landing = flies.ends_at(end.size).and_then(|to| self.landing(request.window, to));
+            waits.push_request(request, flies, landing);
         }
         restack(&mut tiles, drawing_focus);
         self.ask_missing(needs_capture);

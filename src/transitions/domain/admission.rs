@@ -109,6 +109,19 @@ pub(in crate::transitions) enum FliesOn {
     Entrance(EntranceDecision),
 }
 
+impl FliesOn {
+    /// How big the tile of a window flying so ends, its path ending it `end` big, which a pass
+    /// merged into the flight running judges it at (`Landing::to`): a picture at `end`, a travelling
+    /// entrance at its slot, and a reserved entrance, which has no tile, at none.
+    pub(in crate::transitions) fn ends_at(self, end: ScreenSize) -> Option<ScreenSize> {
+        match self {
+            Self::Picture(_) => Some(end),
+            Self::Entrance(EntranceDecision::Travel { to, .. }) => Some(to.size),
+            Self::Entrance(EntranceDecision::Reserve(_)) => None,
+        }
+    }
+}
+
 /// The tile of the flight running that a window of a pass merged into it lands on: how big the
 /// picture it carries is, where the pass ends it, and whether a pass held before this one grows its
 /// window. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
@@ -602,6 +615,33 @@ mod tests {
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }), EndPicture::Repainting);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }), EndPicture::Lands);
         assert_eq!(EndPicture::of_entrance(EntranceDecision::Reserve("capture budget")), EndPicture::Awaited);
+    }
+
+    /// A merged pass judges a picture's tile where its path ends it and a travelling entrance's at
+    /// its slot, so one standing there that a held pass grows past its tile's picture is held; a
+    /// reservation has no tile to judge.
+    #[test]
+    fn a_merged_pass_judges_a_tile_where_it_ends_an_entrance_at_its_slot() {
+        use rini_core::ids::WindowServerId;
+        let slot: ScreenRect = rect(867.0, 32.0, 1148.0, 1081.0);
+        let (end, carried) = (ScreenSize::new(860.0, 1081.0), ScreenSize::new(572.0, 1081.0));
+        let standing = FliesOn::Entrance(EntranceDecision::Travel { from: slot, to: slot });
+        assert_eq!(FliesOn::Picture(Route::SkyLight).ends_at(end), Some(end));
+        assert_eq!(standing.ends_at(end), Some(slot.size));
+        assert_eq!(FliesOn::Entrance(EntranceDecision::Reserve("capture budget")).ends_at(end), None);
+        let request = AnimationRequest {
+            window: window(1),
+            server_id: WindowServerId::new(1),
+            from: slot,
+            to: slot,
+            floating: false,
+            worn: Default::default(),
+            strip_before: None,
+            strip_after: None,
+        };
+        let landing = standing.ends_at(end).map(|to| Landing { carried, to, held: true });
+        assert_eq!(EndPicture::of_request(&request, standing, landing), EndPicture::Held);
+        assert_eq!(EndPicture::of_request(&request, standing, None), EndPicture::Lands);
     }
 
     /// A pass's windows sorted from their requests, each by the sizes it goes from and to: a grow and
