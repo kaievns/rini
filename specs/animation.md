@@ -279,16 +279,18 @@ destination for a window already moving.
   picture covers every frame of the movement, so there is no ground to cut from, and its repainted
   picture and the last capture before the lift MUST NOT be drawn on it. It is never held for itself,
   and moves when its flight does, with the held grows when the same resize grows another window. One
-  starting clipped or off the display has no picture from the press, and its repainted picture MUST
-  replace the one it flies as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
+  starting clipped or off the display has no picture from the press: it MUST fly the cached picture
+  of it the same way, to the lift, when that picture fits where it starts, its content as old as that
+  picture; only one whose tile starts with no picture covering its start MUST have its repainted
+  picture replace the one it flies as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
   shrinks, against the picture its tile carries, and so whether the motion still waits for it,
   before the motion starts as once it moves. A picture taken at its
   new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
   one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
   keeps the look its picture from the press shows, the title bar and controls macOS draws focused or
   not, while its hairline, shadow, ring and border turn as any window's: a window that never settles,
-  as one streaming output, and a window a resize only shrinks, frame zero having pictured it, turn
-  their own look with the lift. A window MUST count as repainted at its new size only once two
+  as one streaming output, and a window a resize only shrinks inside the picture it starts with,
+  turn their own look with the lift. A window MUST count as repainted at its new size only once two
   captures in a row show the same rendering, never because a capture differs from the picture it had before.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
@@ -334,7 +336,11 @@ destination for a window already moving.
 > grows (`docs/data/2026-10-10-rapid-altr`, run altr1, 12 presses): 2 of 5 merges of held passes
 > went at once on a picture of the window at the end the flight had for it before the press, taken
 > before the press. After the second, lab-A's growth from 860 to 1148 showed its ground, up to
-> about 170pt wide, for 129ms (frames 1954-2083ms) until its repaint was cut in.
+> about 170pt wide, for 129ms (frames 1954-2083ms) until its repaint was cut in. A fold and an
+> unfold recorded the same evening (`docs/data/2026-10-10-fold`, run fold1) showed up to 422 flat
+> dark blocks, about a quarter of the screen: a window starting part off the display shrank with its
+> landing swapped on before the motion, its ground under it, and grew back to end part off it with
+> its ground in the growth, never held for, for the 359ms from the motion's start to the lift.
 
 ## Correctness the user can see
 
@@ -551,10 +557,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or resized it: one a pass
   opened or grew is pictured once it has repainted instead, its own look coming only with that
-  picture, and one a pass only shrinks, frame zero having pictured it, keeps its picture from the
-  press, its hairline and its shadow turning once it has repainted, or just before the window gaining
-  focus when it loses focus, and its own look with the lift (Resizing). One a pass only shrinks that
-  started clipped or off the display turns with its repainted picture, as a grow does. A look a
+  picture, and one a pass only shrinks inside the picture it starts with keeps that picture, its
+  hairline and its shadow turning once it has repainted, or just before the window gaining focus when
+  it loses focus, and its own look with the lift (Resizing). One a pass only shrinks that starts with
+  no picture covering its start turns with its repainted picture, as a grow does. A look a
   window already had when it landed counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
   shadow turning with it: the window losing focus unfocused, the window gaining focus focused. Its
   focus ring and its border wear where the flight ends from the show (`decorations.md`).
@@ -566,8 +572,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
   pass opened or resized, or one whose watch ran out, MUST be drawn unfocused just before the window
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
-  the same, old then new, while the flight still moves, but for one a pass only shrinks that frame
-  zero pictured, or one a pass opened, grew or shrank that has not repainted where it ends: it is
+  the same, old then new, while the flight still moves, but for one a pass only shrinks inside the
+  picture it starts with, or one a pass opened, grew or shrank that has not repainted where it ends: it is
   not pictured then, only its hairline and its shadow turn, and its own look turns with the lift. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
   keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its look turns at

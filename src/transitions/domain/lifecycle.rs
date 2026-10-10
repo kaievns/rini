@@ -129,12 +129,11 @@ pub struct StageSummary {
     pub awaiting: Vec<WindowId>,
     /// Windows this pass resizes, or opens to fly from where macOS first showed them, not painted at
     /// their new frames yet: watched until they repaint where they end, and pictured there only once
-    /// they have, the shrinks in `kept` frame zero pictured never. Of them, only the grows are held
-    /// for, in `awaiting` as well.
+    /// they have, those in `kept` never. Of them, only the grows are held for, in `awaiting` as well.
     pub repainting: Vec<WindowId>,
-    /// Of `repainting`, the windows this pass only shrinks: the tiles of those frame zero pictures keep
-    /// that picture to the lift, which covers every frame, and no picture of them where they end is
-    /// drawn.
+    /// Of `repainting`, the windows this pass only shrinks whose tiles start with a picture covering
+    /// their start (`EndPicture::Kept`): those keep it to the lift, as it covers every frame, and no
+    /// picture of them where they end is drawn.
     pub kept: Vec<WindowId>,
     pub start: Start,
     /// The motion's length: the press's own, and for a merge the score's when that is longer. A merge
@@ -183,7 +182,7 @@ impl StageSummary {
     fn frame_zero_strip(&self) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| !t.floating && wholly_inside(t.start, self.display))
+            .filter(|t| frame_zero_pictures(t.start, t.floating, self.display))
             .map(|t| (t.window, t.start))
             .collect()
     }
@@ -468,8 +467,8 @@ struct Flight {
     /// Of `awaiting`, the windows the latest pass to resize them grew, and those a pass drew with no
     /// picture of their own: what the overlay holds for before the motion starts.
     holds_for: Vec<WindowId>,
-    /// Of `repainting`, the windows the latest pass to resize them shrank: those frame zero pictured
-    /// keep that picture (`keeps`).
+    /// Of `repainting`, the windows the latest pass to resize them shrank whose tiles start with a
+    /// picture covering their start: they keep it (`keeps`).
     kept: Vec<WindowId>,
     /// The awaited windows the overlay still holds for before the motion starts, or the grows a held
     /// merge waits for.
@@ -576,12 +575,10 @@ impl Flight {
             .collect()
     }
 
-    /// Whether `window`'s tile flies its picture from the press to the lift, no picture of it where it
-    /// ends swapped on: kept, and asked of frame zero, so that picture is the press's and covers every
-    /// frame of its shrink. One frame zero never asked for flies the cache's picture, which its
-    /// repaint replaces as it lands.
+    /// Whether `window`'s tile flies the picture it starts with to the lift, no picture of it where it
+    /// ends swapped on: a shrink whose picture covers its start, and so every frame of the shrink.
     fn keeps(&self, window: WindowId) -> bool {
-        self.kept.contains(&window) && self.asked.iter().any(|(w, _)| *w == window)
+        self.kept.contains(&window)
     }
 
     /// Snaps `window`'s tile onto `frame` once per generation, once the motion has started: until
@@ -1321,6 +1318,12 @@ pub(in crate::transitions) fn extend_latest(
     }
 }
 
+/// Whether frame zero pictures a window fresh where its tile starts, at `start`: a strip window
+/// wholly on `display` there.
+pub(in crate::transitions) fn frame_zero_pictures(start: ScreenRect, floating: bool, display: ScreenRect) -> bool {
+    !floating && wholly_inside(start, display)
+}
+
 /// Wholly on `display`, and big enough to be a window rather than a sliver.
 fn wholly_inside(frame: ScreenRect, display: ScreenRect) -> bool {
     frame.size.width > 100.0 && frame.size.height > 100.0 && wholly_on(frame, display)
@@ -1331,7 +1334,7 @@ pub(in crate::transitions) mod testing;
 
 #[cfg(test)]
 mod tests {
-    use rini_geometry::space::{Point, Size, SurfaceRect};
+    use rini_geometry::space::{Point, ScreenSize, Size, SurfaceRect};
 
     use super::testing::{DISPLAY, PLAYS, pan, r, running, tile, w};
     use super::*;
@@ -1653,7 +1656,8 @@ mod tests {
                 }
                 let mut waits = Waits::default();
                 for request in &requests {
-                    waits.push_request(request, FliesOn::Picture(Route::SkyLight), None);
+                    let flies = FliesOn::Picture { source: Route::SkyLight, covered: request.from.size };
+                    waits.push_request(request, flies, None, request.from, screen);
                 }
                 let Waits { awaiting, repainting, kept } = waits;
                 assert_eq!(awaiting.len(), rows as usize, "{case}: the stack's windows all grow");
@@ -2583,13 +2587,65 @@ mod tests {
         assert_eq!(c.on(tick, now + HOLD_CAP), vec![Command::StartMoving], "from the show");
     }
 
-    /// A shrinking window frame zero never pictured, one starting off the display, flies the cache's
-    /// picture: its repainted landing is swapped in mid-run, and the last capture pictures it once in.
+    /// fold1's g17 (`docs/data/2026-10-10-fold`): window 2, starting part off the left edge at -285,
+    /// shrinks to 1148x538 at 3,35, its tile flying the cache's picture, `cached` big, sorted as the
+    /// engine sorts it. Frame zero does not picture it there.
+    fn shrink_from_off_the_display(cached: ScreenSize) -> (StageSummary, ScreenRect) {
+        let (mut stage, _) = shrink();
+        let (start, shrunk) = (r(-285.0, 35.0, 1148.0, 1079.0), r(3.0, 35.0, 1148.0, 538.0));
+        stage.tiles[1].start = start;
+        stage.tiles[1].end = shrunk;
+        stage.final_frames[1].1 = shrunk;
+        let request = AnimationRequest {
+            window: w(2),
+            server_id: rini_core::ids::WindowServerId::new(2),
+            from: start,
+            to: shrunk,
+            floating: false,
+            worn: Default::default(),
+            strip_before: None,
+            strip_after: None,
+        };
+        let mut waits = Waits::default();
+        waits.push_request(&request, FliesOn::Picture { source: Route::ScreenCaptureKit, covered: cached }, None, start, DISPLAY);
+        (stage.awaiting, stage.repainting, stage.kept) = (waits.awaiting, waits.repainting, waits.kept);
+        (stage, shrunk)
+    }
+
+    /// A shrink starting part off the display, its cached picture fitting its start, keeps that
+    /// picture to the lift: its landing, before the motion as after it, is not swapped on, and the
+    /// last capture leaves it out.
     #[test]
-    fn a_shrink_frame_zero_never_pictured_has_its_repaint_swapped_in() {
+    fn a_shrink_starting_off_the_display_keeps_the_cached_picture_that_fits_its_start() {
         let now = Instant::now();
-        let (mut stage, shrunk) = shrink();
-        stage.tiles[1].start = r(-860.0, 35.0, 860.0, 1079.0);
+        let (stage, shrunk) = shrink_from_off_the_display(ScreenSize::new(1148.0, 1079.0));
+        let mut c = Coordinator::default();
+        let out = c.on(Event::Begin(stage.clone()), now);
+        assert!(
+            has(&out, |c| matches!(c, Command::AskFrameZero { strip, .. } if !strip.iter().any(|(window, _)| *window == w(2)))),
+            "{out:?}"
+        );
+        let g = c.generation();
+        c.on(Event::FrameZero(g), now);
+        let landed = Event::Picture { generation: g, window: w(2), frame: shrunk, why: Why::Landed };
+        let out = c.clone().on(landed.clone(), now + Duration::from_millis(10));
+        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "before the motion: {out:?}");
+        let tick = Event::Tick { settled: false, landed: false };
+        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving]);
+        let out = c.on(landed, now + Duration::from_millis(150));
+        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "in motion: {out:?}");
+        let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
+        assert_eq!(asked_final(c.on(tick, last)), Some(vec![stage.final_frames[0]]), "never pictured where it ends");
+    }
+
+    /// A shrink starting part off the display whose cached picture does not fit its start has no
+    /// picture covering its frames: its repainted landing is swapped in mid-run, and the last capture
+    /// pictures it once in.
+    #[test]
+    fn a_shrink_starting_with_no_picture_covering_its_start_has_its_repaint_swapped_in() {
+        let now = Instant::now();
+        let (stage, shrunk) = shrink_from_off_the_display(ScreenSize::new(860.0, 1079.0));
+        assert!(stage.kept.is_empty() && stage.repainting == vec![w(2)], "{stage:?}");
         let mut c = running(stage.clone(), now);
         let tick = Event::Tick { settled: false, landed: false };
         assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving]);
@@ -3098,7 +3154,8 @@ mod tests {
                 held: self.queued.iter().any(Self::grows),
             });
             let mut waits = Waits::default();
-            waits.push_request(&request, FliesOn::Picture(Route::SkyLight), landing);
+            let flies = FliesOn::Picture { source: Route::SkyLight, covered: request.from.size };
+            waits.push_request(&request, flies, landing, request.from, DISPLAY);
             let grows = waits.grows().count() > 0;
             (stage.awaiting, stage.repainting, stage.kept) = (waits.awaiting, waits.repainting, waits.kept);
             (stage, grows)

@@ -1562,7 +1562,7 @@ impl FlightEngine {
             );
             let flies = match snapshot {
                 Some(snapshot) => {
-                    let flies = FliesOn::Picture(snapshot.source);
+                    let flies = FliesOn::Picture { source: snapshot.source, covered: snapshot.coverage.covered };
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -1668,7 +1668,7 @@ impl FlightEngine {
                 }
             };
             let landing = flies.ends_at(end.size).and_then(|to| self.landing(request.window, to));
-            waits.push_request(request, flies, landing);
+            waits.push_request(request, flies, landing, start, display_frame);
         }
         restack(&mut tiles, drawing_focus);
         self.ask_missing(needs_capture);
@@ -2721,7 +2721,9 @@ mod tests {
                 strip_before: None,
                 strip_after: None,
             };
-            assert_eq!(EndPicture::of_request(&request, FliesOn::Picture(stand_in.source), None), EndPicture::Awaited);
+            let flies = FliesOn::Picture { source: stand_in.source, covered: stand_in.coverage.covered };
+            let display = rect(0.0, 0.0, 1728.0, 1117.0);
+            assert_eq!(EndPicture::of_request(&request, flies, None, request.from, display), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;

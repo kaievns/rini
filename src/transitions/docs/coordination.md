@@ -135,8 +135,8 @@ that window to repaint (up to `HOLD_CAP` from the show or from the latest pass m
 motion holding for one, `BURST_HOLD_CAP` in all, and no longer for one whose picture the pictures service
 reports will not come, `Lost`, or one ending where no watch can see it repaint, part off the display
 or sent there by a merged pass); a window it only shrinks is never held for itself and moves when
-the flight does, keeping its picture from the press to the lift when frame zero took one ("A grow
-waits for its repaint"); a strip movement moves at once. A pass that grows a window once the motion
+the flight does, keeping the picture its tile starts with to the lift when that covers its start
+("A grow waits for its repaint"); a strip movement moves at once. A pass that grows a window once the motion
 runs, judged against the picture that window's tile carries, is held until that window repaints
 ("Mid-flight passes").
 
@@ -453,7 +453,7 @@ change watch then never saw change. The window losing focus is the watch's secon
 resized or opened is watched only to repaint: a `Change` capture at its new size would show it half
 painted, and a band print taken at another width never matches, so the first capture there would
 count as its turn. Its macOS-drawn look turns with its repainted picture, or with the lift when none
-settles or when the pass only shrank it and frame zero pictured it, its tile keeping that picture.
+settles or when the pass only shrank it inside the picture its tile starts with, which it keeps.
 The
 window losing focus, when watched, is captured in
 the same rounds, in the same call as the target where their kinds and frames allow, and done at its
@@ -884,22 +884,33 @@ its repainted landing nor the last capture is swapped onto it (`Flight::keeps`);
 shrinks had its repaint cut in 171-269ms after the press, and 2 flights cut the last capture in again
 at 325-350ms. Its landing still snaps the tile and hands focus over, its hairline and shadow turning;
 its macOS-drawn look turns with the lift. Only a window frame zero was asked for flies a picture from
-the press: one starting clipped or off the display flies the cache's, whatever its age and size, so
-it keeps nothing, and its repainted landing is swapped in as it lands, as a travelling entrance's
-(`a_shrink_frame_zero_never_pictured_has_its_repaint_swapped_in`). The latest pass to resize a window
-decides, for the hold as for the picture, judged against the picture its tile carries: a merged pass
+the press: one starting clipped or off the display flies the cache's, whatever its age and size, or
+for a merged pass the one its tile carries. It is judged at compose, where that picture is known
+(`EndPicture::of_request`): one fitting the start (`coverage::fits_frame`) covers every frame of the
+shrink as frame zero's would, and is kept, its content as old as that picture, which nothing bounds;
+one not fitting it leaves the shrink `EndPicture::Repainting`, keeping nothing, its repainted
+landing swapped in as it lands, as a travelling entrance's
+(`a_shrink_starting_with_no_picture_covering_its_start_has_its_repaint_swapped_in`). On fold1
+(`docs/data/2026-10-10-fold`) lab-A, starting at about -285 with the cache's ScreenCaptureKit picture
+taken 196ms before, 1148x1079 (inferred), had its 538-tall landing swapped on before the motion, its
+ground below it on the 1079-tall start, up to 422 blocks; kept, nothing is swapped onto it
+(`a_shrink_starting_off_the_display_keeps_the_cached_picture_that_fits_its_start`). Picturing it
+fresh at frame zero through ScreenCaptureKit instead would spend 38-56ms a capture
+(`src/pictures/docs/capture-research.md`) of the 80ms `FRAME_ZERO_PATIENCE`, delaying the show. The
+latest pass to resize a window decides, for the hold as for the picture, judged against the picture its tile carries: a merged pass
 growing a kept window takes it out of `kept`, its landing swapped as a grow's, held for if the motion
 has not started, and held itself until the window repaints if it has ("Mid-flight passes"); one
 shrinking a held grow inside that picture takes it out of `Flight::holds_for`, so the motion stops
-waiting for it, and puts it in `kept`, while one ending it past that picture is a grow still; one
+waiting for it, and puts it in `kept` when the picture it starts with covers its start, while one
+ending it past that picture is a grow still; one
 only moving it leaves it as it was, unless a held pass grows it and it ends past that picture.
 
 Until its repainted picture lands, a tile flies the picture it has, crop-drawn on the leg's anchors,
 all of it 1:1, with the window's own ground where it does not cover the frame ("Resizes through the
 overlay" in `src/animation/docs/animation-smoothness.md`): a grow only once its hold ran out, or
-ending part off the display, where it is never held, its growth the ground; a shrink frame zero
-pictured to the lift, its picture covering every frame. A repainted picture landing in motion is
-a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its content stands
+ending part off the display, where it is never held, its growth the ground; a kept shrink to the
+lift, its picture, frame zero's or the cache's fitting its start, covering every frame. A repainted
+picture landing in motion is a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its content stands
 against the edges that move less, and where it does not cover the frame still to come, as a
 mixed-axis grow's on its shrinking axis, the ground fills the span by the moving edge
 (`a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge`). On a grow that cut, from
