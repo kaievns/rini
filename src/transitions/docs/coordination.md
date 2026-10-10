@@ -361,7 +361,10 @@ or one a kept pass grows, that it ends wider or taller than the picture its runn
 window from a grow whose repaint has not come (572 on the tile, held toward 1148, the next press 1148
 to 860) is held so, where its own sizes would have merged every kept pass at once and flown 572 into
 860, and before the motion it keeps the hold, which `Flight::holds_for` would otherwise have let go.
-A move of a window no kept pass grows stays a navigation, however small its cached picture. The coordinator writes those frames at once, so the app repaints, watches each
+A move of a window no kept pass grows stays a navigation, however small its cached picture, and a
+strip pan of one a kept pass grows past that picture is held so too
+(`a_strip_pan_of_a_window_a_held_pass_grows_waits_for_its_repaint`). The coordinator writes those
+frames at once, so the app repaints, watches each
 grow ending wholly on the display to repaint there, the watches retargeted under the same
 generation (`HeldMerge`), and holds (`Phase::MergeHeld`): the flight plays on, its tiles going on to
 the ends they had and resting there, with no last capture, no place, no lift and no landing read. A
@@ -382,8 +385,8 @@ arrival, a window an earlier one grew watched where the latest sends it, but nev
 `BURST_HOLD_CAP` (600ms) from the first one's arrival, so presses closer together than the repaint
 cannot keep the tiles resting at the ends they had for as long as they come (Kai's g144-157 spanned
 3.2s; `a_burst_of_held_merges_merges_at_most_its_cap_after_the_first`); one growing nothing by that
-measure, a strip movement included, merges at once with every pass kept. Missing the cap, the merge flies the
-picture the tile has with the ground, and the repaint, still watched, is cut in when it lands. The
+measure merges at once with every pass kept. Missing the cap, the merge flies the picture the tile
+has with the ground, and the repaint, still watched, is cut in when it lands. The
 journal marks each pass held (`hold_merge`) and each merge it led to (`retarget`, `waited_ms` since
 the latest pass held for a grow, which a pass growing nothing that merges them at once reports too). *How long a held press waits on screen is not measured yet.*
 
