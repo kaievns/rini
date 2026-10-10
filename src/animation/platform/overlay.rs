@@ -507,15 +507,8 @@ fn install_crop_grid(tile: &mut Tile, track: &Track, corner: Option<Corner>) {
     }
     let turn = corner.zip(tile::corner_key(track)).filter(|_| tile.crop_of.is_some());
     if let Some((corner, _)) = turn {
-        for piece in &grid.pieces {
-            set_layer_contents(piece, corner.after);
-        }
-        for ground in &grid.ground {
-            set_layer_ground(ground, corner.after);
-        }
-        crop_to(tile, corner.after);
         let end = track.keys()[track.keys().len() - 1].1;
-        layout_crop_grid(tile, as_frame(end).size.respace());
+        cut_onto(tile, corner.after, as_frame(end).size.respace());
     }
     let (Some(grid), Some(picture)) = (&tile.crop_grid, tile.crop_of) else {
         return;
@@ -544,6 +537,7 @@ fn install_crop_grid(tile: &mut Tile, track: &Track, corner: Option<Corner>) {
         let cut = switch(track, key, "contents", cf_object(before), cf_object(after));
         add_under(layer, &cut, PIECE_PICTURE_KEY);
     }
+    // Both grounds are read by now, `before`'s filling the grid it flew and `after`'s by `cut_onto`.
     let (Some(before), Some(after)) = (ground_colour(corner.before), ground_colour(corner.after))
     else {
         return;
@@ -1420,22 +1414,27 @@ fn swap_onto(
             return;
         }
     } else {
-        // The new picture is the window at its new size; the grid built against the old one would
-        // draw it squashed.
-        if let Some(grid) = &entry.crop_grid {
-            for piece in &grid.pieces {
-                set_layer_contents(piece, snapshot);
-            }
-            for ground in &grid.ground {
-                set_layer_ground(ground, snapshot);
-            }
-        }
-        crop_to(entry, snapshot);
-        layout_crop_grid(entry, size);
+        cut_onto(entry, snapshot, size);
     }
     if let Some(track) = playing {
         install_tile_track(entry, track, None);
     }
+}
+
+/// Cuts a crop-drawn tile onto `snapshot`: each piece's picture and the ground's colour become its,
+/// and the grid is laid against it for `size`, the grid built against the old picture drawing the new
+/// one squashed.
+fn cut_onto(entry: &mut Tile, snapshot: &Picture, size: TileSize) {
+    if let Some(grid) = &entry.crop_grid {
+        for piece in &grid.pieces {
+            set_layer_contents(piece, snapshot);
+        }
+        for ground in &grid.ground {
+            set_layer_ground(ground, snapshot);
+        }
+    }
+    crop_to(entry, snapshot);
+    layout_crop_grid(entry, size);
 }
 
 /// The bar's picture at the strip's origin, at the size it covers, never stretched. See "The bar
