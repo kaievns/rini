@@ -4241,14 +4241,20 @@ mod tests {
 
         /// A strip pan of `wid(id)` for each of `ids`, side by side from where `pan` starts `wid(1)`.
         fn strip_of(h: &Harness, ids: &[u32], from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
-            let windows: Vec<SurfaceWindow> = ids
+            let frames: Vec<(u32, SurfaceRect)> =
+                ids.iter().enumerate().map(|(i, &id)| (id, rect(867.0 * (i as f64 + 1.0), 0.0, 859.0, 1081.0))).collect();
+            strip_over(h, &frames, from_offset, to_offset)
+        }
+
+        /// A strip pan of `wid(id)` at each of `frames` on the surface.
+        fn strip_over(h: &Harness, frames: &[(u32, SurfaceRect)], from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
+            let windows: Vec<SurfaceWindow> = frames
                 .iter()
-                .enumerate()
-                .map(|(i, &id)| SurfaceWindow {
+                .map(|&(id, frame)| SurfaceWindow {
                     worn: Default::default(),
                     window: wid(id),
                     server_id: WindowServerId::new(id),
-                    frame: rect(867.0 * (i as f64 + 1.0), 0.0, 859.0, 1081.0),
+                    frame,
                     pinned: false,
                     floating: false,
                     from: None,
@@ -4764,6 +4770,29 @@ mod tests {
             let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
             assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
             assert_eq!(tile_to(&h, 1), Some(on(moved)));
+        }
+
+        /// A strip pan carrying a window a held pass grows ends it wider than the picture its tile
+        /// carries: held too, not merging every held pass at once, and merged once its repaint lands
+        /// where the pan ends it, onto the panned tile.
+        #[test]
+        fn a_strip_pan_of_a_window_a_held_pass_grows_waits_for_its_repaint() {
+            let mut h = moving_pair();
+            let grown = rect(0.0, 0.0, 1300.0, 1081.0);
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(40));
+            h.engine.pictures.insert(wid(1), test_picture(end().size));
+            let pan = strip_over(&h, &[(1, rect(0.0, 0.0, 1300.0, 1081.0))], SurfacePoint::origin(), SurfacePoint::new(-100.0, 0.0));
+            assert!(!plays(&h.step(pan)), "held");
+            let panned = rect(100.0, 0.0, 1300.0, 1081.0);
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, panned)]);
+            let sent = h.step(landed);
+            let order = kinds(only_batch(&sent));
+            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
+            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            assert_eq!(tile_to(&h, 1), Some(on(panned)));
         }
 
         /// The same shrink once the grow's repaint is on the tile ends inside that picture, and bends
