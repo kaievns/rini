@@ -1,7 +1,7 @@
 //! Handing a picture to a Core Animation layer. One place decides how pixels become layer contents,
 //! for the flight overlay, the switcher's cards and the bar alike.
 
-use objc2_core_foundation::CFType;
+use objc2_core_foundation::{CFRetained, CFType};
 use objc2_core_graphics::{CGColor, CGColorSpace};
 use objc2_quartz_core::CALayer;
 use rini_geometry::space::ToCg;
@@ -14,12 +14,18 @@ use crate::pictures::platform::picture::{Picture, Pixels};
 /// composite with `contentsRect` on its part, anything else whole. Written for every kind, because
 /// layers are pooled.
 pub fn set_layer_contents(layer: &CALayer, picture: &Picture) {
-    match &picture.image {
-        Pixels::Bitmap(image) => set_contents(layer, image),
-        Pixels::Surface(surface) => set_contents(layer, surface),
-        Pixels::Region { composite, .. } => set_contents(layer, composite),
-    }
+    set_contents(layer, contents_of(picture));
     layer.setContentsRect(picture.image.unit_rect().to_cg());
+}
+
+/// What a layer showing `picture` takes as its contents: a region's whole composite, anything else
+/// itself.
+pub fn contents_of(picture: &Picture) -> &CFType {
+    match &picture.image {
+        Pixels::Bitmap(image) => image,
+        Pixels::Surface(surface) => surface,
+        Pixels::Region { composite, .. } => composite,
+    }
 }
 
 /// Hands `picture`, a `CGImage` or an `IOSurface`, to `layer` as its contents.
@@ -35,12 +41,16 @@ pub fn set_contents(layer: &CALayer, picture: &CFType) {
 /// (`ground_space`), so the fill matches the pixels drawn beside it. The first fill of a picture
 /// reads its ground (`Picture::ground`).
 pub fn set_layer_ground(layer: &CALayer, picture: &Picture) {
+    layer.setBackgroundColor(ground_colour(picture).as_deref());
+}
+
+/// `picture`'s ground as the colour `set_layer_ground` fills a layer with.
+pub fn ground_colour(picture: &Picture) -> Option<CFRetained<CGColor>> {
     let Ground { r, g, b, a } = picture.ground();
     let space = ground_space(&picture.image).or_else(CGColorSpace::new_device_rgb);
     let components = [r, g, b, a];
     // SAFETY: the four components an RGB space with alpha takes, read during the call.
-    let colour = unsafe { CGColor::new(space.as_deref(), components.as_ptr()) };
-    layer.setBackgroundColor(colour.as_deref());
+    unsafe { CGColor::new(space.as_deref(), components.as_ptr()) }
 }
 
 /// Lets go of `layer`'s picture. A hidden layer keeps its contents, and the picture with them, until

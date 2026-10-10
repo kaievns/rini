@@ -9,7 +9,7 @@ interface speaks. Pure, and the only crate that tests without linking AppKit:
 
 `CGRectExt` (`intersection`, `union`, `area`, `contains`, `contains_rect`), `Round`
 (`rounded`), `SameAs` and `IsWithin` for float comparison, on CG values and typed
-ones alike, `centered_in` on CG, `is_off_screen` and `park_entry_frame` in any one
+ones alike, `centered_in` on CG, `is_off_screen`, `shows_on` and `park_entry_frame` in any one
 space, and `to_overlay_space` and `from_overlay_space`, a window server rect on the
 overlay covering a display and back. `stretch`: the stretch tolerance (`MIN_STRETCH`,
 `MAX_STRETCH`), and `within_stretch`, `is_a_resize` and `grows` over sizes in any one space.
@@ -104,6 +104,11 @@ fallback `round` is reachable only while a rect has no inherent one.
 clamp a park past it — Kiro reports 41pt, Finder 52pt — which is why a park is judged
 from both the requested frame and the server's. See "Parking" in
 [`src/layout/docs/strip.md`](../../../src/layout/docs/strip.md).
+
+**`shows_on` has a threshold too, and it is chosen.** `MIN_SHOWN`, 100pt each way: above every clamp
+a parked window keeps on screen (Finder's 52pt the widest seen), with margin. A window showing that
+much of itself is one a warm pictures and a transition watches repaint, cut by the display's edge or
+not; less is a parked sliver.
 
 **Float comparison is explicit.** `SameAs` and `IsWithin` exist so no layout test
 compares `f64` with `==` and no production code rounds by accident.

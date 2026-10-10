@@ -30,16 +30,15 @@ use crate::pictures::domain::handover::{HandoverCheck, HandoverDiff, compare};
 use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
-use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Priority, Schedule};
+use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Owed, Priority, Schedule};
 use crate::pictures::domain::identity::{is_synthetic, managed_server_ids, unwanted, warm_targets};
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
-    Capture, Hint, Look, OnScreen, Prints, Seen, Set, Tag, Watch, WatchId, Why,
+    Capture, CapturedElsewhere, Hint, Look, OnScreen, Outcome, Prints, Seen, Set, Tag, Watch, WatchId, Why,
 };
 use crate::pictures::event::Event;
-use crate::pictures::platform::bitmap::thumbprint;
 use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
-use crate::pictures::platform::measure::{band_print, body_samples, rgba};
+use crate::pictures::platform::measure::{band_print, body_samples, picture_thumbprint, rgba};
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
@@ -226,33 +225,78 @@ fn put(cache: &mut PictureCache<Picture>, window: WindowId, picture: Picture, ev
     took
 }
 
-/// What a background capture that came back tells the clients, once the cache has had it (`put`), and,
-/// when it took it, a delivery to each client owed it as a focus change, sent `now`; nothing when the
-/// cache kept what it holds, or for an empty capture or a window forgotten meanwhile (`kept` is `None`).
-fn landing(
+/// What a ScreenCaptureKit capture that came back tells the clients, once the cache has had it
+/// (`put`): when it took it, a delivery to each client owed it as a focus change, sent `now`; and,
+/// owed to a repaint watch, what the watch makes of it by its thumbprint
+/// (`Schedule::captured_elsewhere`), a capture the cache refused or an empty one judged as such.
+/// Nothing for a window forgotten meanwhile (`owed` is `None`).
+fn landing<P, O, C>(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
+    schedule: &mut Schedule<P, O, C>,
     now: Instant,
     window: WindowId,
-    kept: Option<Vec<(Tag, ScreenRect)>>,
+    owed: Option<Owed>,
     picture: Option<Picture>,
 ) -> Vec<Event> {
     let mut events = Vec::new();
-    let (Some(owed), Some(picture)) = (kept, picture) else {
+    let Some(owed) = owed else {
         return events;
     };
-    if !put(cache, window, picture.clone(), &mut events) {
-        return events;
+    let captured = picture.is_some();
+    let took = picture.filter(|picture| put(cache, window, picture.clone(), &mut events));
+    if let Some(picture) = &took {
+        for (tag, frame) in owed.focus {
+            delivered.record(tag, window, picture.clone());
+            events.push(Event::Delivered {
+                tag,
+                why: Why::FocusChanged,
+                sent: now,
+                pictures: vec![(window, picture.clone(), frame)],
+            });
+        }
     }
-    for (tag, frame) in owed {
-        delivered.record(tag, window, picture.clone());
+    if owed.settles {
+        let capture = match &took {
+            Some(picture) => {
+                picture_thumbprint(picture).map_or(CapturedElsewhere::Missed, CapturedElsewhere::Taken)
+            }
+            None if captured => CapturedElsewhere::Refused,
+            None => CapturedElsewhere::Missed,
+        };
+        let outcome = schedule.captured_elsewhere(window, capture, now);
+        let took = took.into_iter().map(|picture| (window, picture)).collect();
+        events.extend(told(delivered, now, outcome, &took));
+    }
+    events
+}
+
+/// What `outcome` tells the clients: every delivery as the watches decided it, of the pictures the
+/// cache `took`, stamped `now` and recorded as delivered; and every window lost.
+fn told(
+    delivered: &mut Delivered<Picture>,
+    now: Instant,
+    outcome: Outcome,
+    took: &HashMap<WindowId, Picture>,
+) -> Vec<Event> {
+    let mut events = Vec::new();
+    for delivery in outcome.deliveries {
+        let pictures: Vec<(WindowId, Picture, ScreenRect)> = delivery
+            .windows
+            .iter()
+            .filter_map(|(window, frame)| Some((*window, took.get(window)?.clone(), *frame)))
+            .collect();
+        for (window, picture, _) in &pictures {
+            delivered.record(delivery.tag, *window, picture.clone());
+        }
         events.push(Event::Delivered {
-            tag,
-            why: Why::FocusChanged,
+            tag: delivery.tag,
+            why: delivery.why,
             sent: now,
-            pictures: vec![(window, picture.clone(), frame)],
+            pictures,
         });
     }
+    events.extend(outcome.lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }));
     events
 }
 
@@ -332,23 +376,7 @@ fn round<P, O, C>(
         captures.insert(window, capture);
     }
     let outcome = schedule.seen(now, &seen_as(looked, &captures));
-    for delivery in outcome.deliveries {
-        let pictures: Vec<(WindowId, Picture, ScreenRect)> = delivery
-            .windows
-            .iter()
-            .filter_map(|(window, frame)| Some((*window, took.get(window)?.clone(), *frame)))
-            .collect();
-        for (window, picture, _) in &pictures {
-            delivered.record(delivery.tag, *window, picture.clone());
-        }
-        events.push(Event::Delivered {
-            tag: delivery.tag,
-            why: delivery.why,
-            sent: now,
-            pictures,
-        });
-    }
-    events.extend(outcome.lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }));
+    events.extend(told(delivered, now, outcome, &took));
     events
 }
 
@@ -582,9 +610,6 @@ impl Pictures {
 
     fn lock(&self) -> MutexGuard<'_, Shared> { self.shared.lock().unwrap() }
 }
-
-/// A picture's thumbprint; `None` for a surface.
-fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> { thumbprint(&*picture.image.bitmap()?) }
 
 /// What the cache holds of `window` that is worth drawing, as the warm filter reads it.
 fn held(cache: &PictureCache<Picture>, window: WindowId) -> Option<Held> {
@@ -1060,7 +1085,8 @@ impl Service {
                         );
                     }
                     let Shared { cache, delivered, schedule, .. } = &mut *shared;
-                    (landing(cache, delivered, Instant::now(), window, kept, picture), !schedule.held())
+                    let events = landing(cache, delivered, schedule, Instant::now(), window, kept, picture);
+                    (events, !schedule.held())
                 };
                 self.tell(events);
                 if released {
@@ -1135,25 +1161,26 @@ mod tests {
         let now = Instant::now();
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
-        let kept = || Some(Vec::new());
-        assert!(landing(&mut cache, &mut delivered, now, wid(1), None, Some(sized(859.0, 1081.0))).is_empty());
+        let mut schedule = Schedule::<(), (), ()>::default();
+        let kept = || owed_as_focus(Vec::new());
+        assert!(landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), None, Some(sized(859.0, 1081.0))).is_empty());
         assert!(cache.get(wid(1)).is_none(), "forgotten meanwhile: not cached");
-        assert!(landing(&mut cache, &mut delivered, now, wid(1), kept(), None).is_empty(), "no picture");
+        assert!(landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), kept(), None).is_empty(), "no picture");
 
         assert!(matches!(
-            landing(&mut cache, &mut delivered, now, wid(1), kept(), Some(sized(859.0, 1081.0))).as_slice(),
+            landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), kept(), Some(sized(859.0, 1081.0))).as_slice(),
             [Event::Taken { window, .. }] if *window == wid(1)
         ));
 
         let mut blurred = sized(859.0, 1081.0);
         blurred.carries_blur = true;
-        landing(&mut cache, &mut delivered, now, wid(2), kept(), Some(blurred));
+        landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), kept(), Some(blurred));
         assert!(
-            landing(&mut cache, &mut delivered, now, wid(2), kept(), Some(sized(859.0, 1081.0))).is_empty(),
+            landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), kept(), Some(sized(859.0, 1081.0))).is_empty(),
             "refused for the blur it holds"
         );
         assert!(
-            landing(&mut cache, &mut delivered, now, wid(2), kept(), Some(sliver())).is_empty(),
+            landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), kept(), Some(sliver())).is_empty(),
             "a sliver refused is no news"
         );
     }
@@ -1169,6 +1196,8 @@ mod tests {
         ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(859.0, 1081.0))
     }
 
+    fn owed_as_focus(focus: Vec<(Tag, ScreenRect)>) -> Option<Owed> { Some(Owed { focus, settles: false }) }
+
     /// The one ScreenCaptureKit capture of a clipped focus end is delivered to the client owed it as
     /// its focus change, once the cache has it; refused, it is delivered to no one.
     #[test]
@@ -1176,7 +1205,8 @@ mod tests {
         let now = Instant::now();
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
-        let events = landing(&mut cache, &mut delivered, now, wid(1), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        let mut schedule = Schedule::<(), (), ()>::default();
+        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), owed_as_focus(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
         assert!(matches!(&events[..], [
             Event::Taken { .. },
             Event::Delivered { tag: t, why: Why::FocusChanged, pictures, .. },
@@ -1186,9 +1216,63 @@ mod tests {
         let mut blurred = sized(859.0, 1081.0);
         blurred.carries_blur = true;
         cache.insert(wid(2), blurred);
-        let events = landing(&mut cache, &mut delivered, now, wid(2), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), owed_as_focus(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
         assert!(events.is_empty());
         assert!(delivered.under(tag(3), wid(2)).is_none());
+    }
+
+    /// A ScreenCaptureKit capture a repaint watch is owed is judged by its thumbprint once the cache
+    /// has it: owed again until two in a row match, then delivered as the window landed; one the cache
+    /// refuses loses the window.
+    #[test]
+    fn a_capture_owed_to_a_repaint_watch_is_delivered_as_landed_once_two_in_a_row_match() {
+        let now = Instant::now();
+        let cut = ScreenRect::new(ScreenPoint::new(-285.0, 32.0), ScreenSize::new(1148.0, 1081.0));
+        let watched = |cache: &mut PictureCache<Picture>| {
+            let mut schedule = Schedule::<(), (), ()>::default();
+            schedule.set_display(built_in(), false, now);
+            let landing = Watch::Landing {
+                tag: tag(3),
+                windows: vec![(target(1), cut)],
+                behind: Vec::new(),
+                slack: 20.0,
+                settle: Settle::Repainted,
+                until: now + Duration::from_millis(300),
+            };
+            schedule.watch(WatchId(1), landing, now);
+            let _ = sky(schedule.next(now, |window| held(cache, window)));
+            schedule.seen(now, &[Seen { window: wid(1), frame: Some(cut), capture: Capture::Missed }]);
+            schedule
+        };
+        let came_back = |schedule: &mut Schedule<(), (), ()>| loop {
+            match schedule.next(now, |_| None) {
+                Next::List(targets) => targets.into_iter().for_each(|t| schedule.listed(t.window, Some(()))),
+                Next::Capture { target, .. } => break schedule.captured(target.window),
+                other => panic!("a capture: {other:?}"),
+            }
+        };
+        let mut cache = PictureCache::new();
+        let mut delivered = Delivered::default();
+        let mut schedule = watched(&mut cache);
+        let first = came_back(&mut schedule);
+        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), first, Some(sized(1148.0, 1081.0)));
+        assert!(matches!(&events[..], [Event::Taken { .. }]), "{events:?}");
+        let second = came_back(&mut schedule);
+        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), second, Some(sized(1148.0, 1081.0)));
+        assert!(matches!(&events[..], [
+            Event::Taken { .. },
+            Event::Delivered { tag: t, why: Why::Landed, pictures, .. },
+        ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == cut), "{events:?}");
+        assert!(delivered.under(tag(3), wid(1)).is_some());
+
+        let mut cache = PictureCache::new();
+        let mut blurred = sized(1148.0, 1081.0);
+        blurred.carries_blur = true;
+        cache.insert(wid(1), blurred);
+        let mut schedule = watched(&mut cache);
+        let owed = came_back(&mut schedule);
+        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), owed, Some(sized(1148.0, 1081.0)));
+        assert!(matches!(&events[..], [Event::Lost { tag: t, window }] if *t == tag(3) && *window == wid(1)), "{events:?}");
     }
 
     fn target(idx: u32) -> PictureTarget {
@@ -1366,8 +1450,8 @@ mod tests {
             Event::Delivered { why: Why::FrameZero, sent: at, pictures, .. },
         ] if *at == sent && pictures[0].1.taken == taken));
 
-        let owed = Some(vec![(tag(3), frame())]);
-        let events = landing(&mut cache, &mut delivered, sent, wid(2), owed, Some(flat(0.5, taken)));
+        let owed = owed_as_focus(vec![(tag(3), frame())]);
+        let events = landing(&mut cache, &mut delivered, &mut schedule, sent, wid(2), owed, Some(flat(0.5, taken)));
         assert!(matches!(&events[..], [
             Event::Taken { .. },
             Event::Delivered { why: Why::FocusChanged, sent: at, .. },

@@ -27,9 +27,9 @@ pub enum Event {
     Unavailable { seq: u64 },
 }
 
-/// What a drain spent on crop-drawn tiles: how many tiles it drew on the crop grid, dressed or
-/// swapped onto it, and how long reading their pictures' grounds took (`Picture::ground`), each read
-/// once a picture.
+/// What a drain spent on crop-drawn tiles: how many tiles it drew on the crop grid, dressed, swapped
+/// onto it or cut onto a repaint at a leg's corner, and how long reading their pictures' grounds
+/// took (`Picture::ground`), each read once a picture.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Crops {
     pub tiles: u32,

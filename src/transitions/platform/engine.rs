@@ -23,9 +23,10 @@ use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
-    FromCg, GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, Respace,
+    FromCg, GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, PointSpace, Respace,
     ScreenRect, ScreenSize, ScreenVector, Size, SurfacePoint, ToCg,
 };
+use rini_geometry::stretch::grows;
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
@@ -36,6 +37,7 @@ use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::score::{Edit, MediaClock, Node, Value};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
+use crate::animation::domain::motion::tile;
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
 use crate::pictures::domain::handover::HandoverCheck;
@@ -254,6 +256,8 @@ enum Took {
     Entrance(OverlayTile),
     /// The picture on the window's tile.
     Tile,
+    /// The picture its tile's leg in two steps flies from the corner on.
+    Corner,
     /// Nothing draws the window.
     Nothing,
 }
@@ -290,6 +294,7 @@ fn entrance_tile(
         from: entrance_from(entrance.to),
         to: entrance.to,
         snapshot: snapshot.clone(),
+        from_corner: None,
         floating: entrance.floating,
         server_order: Some(0),
         depth: 0,
@@ -506,28 +511,107 @@ impl RunningAnimation {
         self.tiles.iter().find(|t| t.window == window).cloned()
     }
 
-    /// A picture swapped in for `window`, `clipped` or whole: a reserved entrance joins with it,
-    /// rounded at the radius `radius` reads, else its tile takes it in place, a stand-in's included,
-    /// moving on as it was and flying no focused look from now.
+    /// A picture swapped in for `window`, `clipped` or whole, at `at` on the media clock: a reserved
+    /// entrance joins with it, rounded at the radius `radius` reads; one waiting for the corner of
+    /// its tile's leg in two steps is what the tile flies from there (`waits_for_corner`), clipped if
+    /// it or the tile's own is; else its tile takes it in place, a stand-in's included, moving on as
+    /// it was. Either way the tile flies no focused look from now.
     fn take_picture(
         &mut self,
         window: WindowId,
         picture: &Picture,
         clipped: bool,
         radius: impl FnOnce() -> Option<f64>,
+        at: f64,
     ) -> Took {
         if let Some(tile) = self.admit(window, picture, clipped, radius) {
             return Took::Entrance(tile);
         }
+        let waits = self.waits_for_corner(window, picture, at);
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window) else {
             return Took::Nothing;
         };
-        tile.snapshot = picture.clone();
-        tile.clipped = clipped;
         if self.focused_look == Some(window) {
             self.focused_look = None;
         }
+        if waits {
+            tile.from_corner = Some(picture.clone());
+            tile.clipped |= clipped;
+            return Took::Corner;
+        }
+        tile.snapshot = picture.clone();
+        tile.from_corner = None;
+        tile.clipped = clipped;
         Took::Tile
+    }
+
+    /// Whether `picture`, landing for `window` at `at` on the media clock, waits for the corner of
+    /// its tile's leg in two steps: one not fitting where that leg starts, before the motion on a leg
+    /// in two steps (`tile::two_steps`), and once it moves until its leg turns the corner. One fitting
+    /// the leg's start, as frame zero's does, goes on at once, and so does any onto a tile drawn
+    /// stretched, with no crop grid to cut (`tile::content_mode`).
+    fn waits_for_corner(&self, window: WindowId, picture: &Picture, at: f64) -> bool {
+        let Some(tile) = self.tiles.iter().find(|t| t.window == window) else { return false };
+        let start = self.score.leg_start(window).filter(|_| self.flown).map_or(tile.from.size, Respace::respace);
+        let (covered, source) = (tile.snapshot.coverage.covered, tile.snapshot.source);
+        if tile::content_mode(covered, source, start, tile.to.size) == tile::ContentMode::Stretch || picture.fits(start) {
+            return false;
+        }
+        if !self.flown {
+            return tile::two_steps(tile.from, tile.to).is_some();
+        }
+        self.score.corner_at(window).is_some_and(|corner| at < corner)
+    }
+
+    /// Whether `tile`'s picture from the press covers a leg from where the score draws it at `at` to
+    /// `to`: every frame of it, so a repaint held for a corner not reached by `at` is not needed.
+    fn press_covers<U: PointSpace>(&self, tile: &OverlayTile, to: Size<U>, at: f64) -> bool {
+        let press = tile.snapshot.coverage.covered;
+        let drawn = self.score.drawn_size(tile.window, at);
+        drawn.is_some_and(|drawn| !grows(press, drawn.respace()) && !grows(press, to.respace()))
+    }
+
+    /// Each picture a tile holds for a corner it no longer waits for at `at`, its leg in one movement
+    /// now or past its corner, made the tile's own: called as a leg is made, so a new one starts
+    /// from what its tile shows.
+    fn turn_corners(&mut self, at: f64) {
+        let waiting: Vec<WindowId> = self
+            .tiles
+            .iter()
+            .filter(|tile| tile.from_corner.is_some())
+            .map(|tile| tile.window)
+            .filter(|window| !self.score.corner_at(*window).is_some_and(|corner| at < corner))
+            .collect();
+        for tile in self.tiles.iter_mut().filter(|tile| waiting.contains(&tile.window)) {
+            if let Some(picture) = tile.from_corner.take() {
+                tile.snapshot = picture;
+            }
+        }
+    }
+
+    /// Each picture held for a corner a merge at `at` bent its tile's leg away from before reaching
+    /// it, let go where the picture from the press covers the new leg (`press_covers`): it was never
+    /// drawn, and the tile flies on with no ground.
+    fn drop_corners_covered(&mut self, at: f64) {
+        let covered: Vec<WindowId> = self
+            .tiles
+            .iter()
+            .filter(|tile| tile.from_corner.is_some() && self.press_covers(tile, tile.to.size, at))
+            .map(|tile| tile.window)
+            .collect();
+        for tile in self.tiles.iter_mut().filter(|tile| covered.contains(&tile.window)) {
+            tile.from_corner = None;
+        }
+    }
+
+    /// The size of the picture `window`'s tile carries into a leg a merge at `at` bends to end `to`
+    /// big: one held for its corner once that is past, or while the picture from the press does not
+    /// cover the new leg; the tile's own otherwise, as `take_pass` leaves it.
+    fn carried_into(&self, window: WindowId, to: ScreenSize, at: f64) -> Option<ScreenSize> {
+        let tile = self.tiles.iter().find(|tile| tile.window == window)?;
+        let ahead = self.score.corner_at(window).is_some_and(|corner| at < corner);
+        let held = tile.from_corner.as_ref().filter(|_| !ahead || !self.press_covers(tile, to, at));
+        Some(held.unwrap_or(&tile.snapshot).coverage.covered)
     }
 
     /// `target`'s tile flies `look`, drawn focused and `clipped` or whole, if it fits where the tile
@@ -594,9 +678,12 @@ impl RunningAnimation {
     /// carry it out.
     fn take_pass(&mut self, pass: &Pass, at: f64) -> Option<(plan::PlanDelta, Vec<Edit>)> {
         if self.flown {
+            self.turn_corners(at);
             let merged = self.score.merge(&self.plan, pass, at);
             self.plan = merged.plan;
             sync_tiles_to_plan(&mut self.tiles, &self.plan);
+            self.drop_corners_covered(at);
+            self.turn_corners(at);
             return Some((merged.delta, merged.edits));
         }
         if let Some(accent) = pass.accent {
@@ -845,7 +932,8 @@ pub struct FlightEngine {
     frame_clock: Option<RepeatingTimer>,
     /// The quiet after the lift of a generation.
     quiet: Option<(Generation, RepeatingTimer)>,
-    /// The end windows the last watch named, ending wholly on screen: what a measured lift compares.
+    /// The end windows the last watch named ending wholly on screen: what a measured lift compares
+    /// (`EndWatch::compared`).
     ends: Vec<(WindowId, ScreenRect)>,
     /// The lift held for the overlay's own picture, while the handover is measured.
     held: Option<HeldLift>,
@@ -1044,7 +1132,7 @@ impl FlightEngine {
                 self.render(Render::Holes(holes));
             }
             Command::Watch(end) => {
-                self.ends = end.landing.iter().chain(&end.awaiting).copied().collect();
+                self.ends = end.compared.clone();
                 self.watches.watch(&self.pictures, self.client, &end)
             }
             Command::StopWatches => self.watches.stop(&self.pictures),
@@ -1252,6 +1340,8 @@ impl FlightEngine {
 
     /// The picture delivered of `window` under `generation`, onto its tile; a reserved entrance's
     /// first joins the flight with it, at the radius the window server reports now that it has drawn.
+    /// One held for the corner of its tile's leg in two steps poses nothing before the motion, and
+    /// once the leg plays has it installed again, carrying the picture from the corner.
     fn swap(&mut self, generation: Generation, window: WindowId, now: Instant) {
         if self.delivered.get(&window).is_none_or(|(delivered, _, _)| *delivered != generation) {
             return;
@@ -1259,16 +1349,27 @@ impl FlightEngine {
         let Some((_, _, picture)) = self.delivered.remove(&window) else { return };
         let server_id = WindowServerId::from(window);
         let clipped = picture.source.clips();
+        let at = self.media.at(now);
         let Some(running) = self.running.as_mut() else { return };
         let radius = || crate::windows::platform::window_server::corner_radius(server_id);
-        let took = running.take_picture(window, &picture, clipped, radius);
+        let took = running.take_picture(window, &picture, clipped, radius, at);
         let flown = running.flown;
-        if matches!(took, Took::Nothing) {
-            return;
-        }
-        self.journal_wears(Wearing::Swap, vec![(window, picture.source, picture.carries_blur, picture.taken)]);
-        if let Took::Entrance(tile) = took {
-            return self.admit_entrance(tile, now);
+        let worn = vec![(window, picture.source, picture.carries_blur, picture.taken)];
+        match took {
+            Took::Nothing => return,
+            Took::Entrance(tile) => {
+                self.journal_wears(Wearing::Swap, worn);
+                return self.admit_entrance(tile, now);
+            }
+            Took::Corner => {
+                let again = running.score.again(window);
+                self.journal_wears(Wearing::Corner, worn);
+                if flown {
+                    self.play(again);
+                }
+                return;
+            }
+            Took::Tile => self.journal_wears(Wearing::Swap, worn),
         }
         debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, flown, "picture swapped mid-flight");
         if !flown {
@@ -1428,12 +1529,12 @@ impl FlightEngine {
 
     /// The tile of the flight running that a later pass ending `window` `to` big lands it on, none
     /// with no flight or for a window joining: what that pass's window is judged against
-    /// (`Landing`). See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
+    /// (`Landing`), the picture its tile carries into the leg bent now (`carried_into`). See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
     fn landing(&self, window: WindowId, to: ScreenSize) -> Option<Landing> {
         let running = self.running.as_ref()?;
-        let tile = running.tiles.iter().find(|tile| tile.window == window)?;
         let held = running.held.iter().any(|held| held.shape.waits.grows().any(|grown| grown == window));
-        Some(Landing { carried: tile.snapshot.coverage.covered, to, held })
+        let carried = running.carried_into(window, to, self.media.at(self.now()))?;
+        Some(Landing { carried, to, held })
     }
 
     /// The focus a pass's tiles are drawn with, its own else the flight's, and the window they draw
@@ -1562,7 +1663,7 @@ impl FlightEngine {
             );
             let flies = match snapshot {
                 Some(snapshot) => {
-                    let flies = FliesOn::Picture(snapshot.source);
+                    let flies = FliesOn::Picture { source: snapshot.source, covered: snapshot.coverage.covered };
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -1570,6 +1671,7 @@ impl FlightEngine {
                         from: to_overlay_space(start, display_frame),
                         to: to_overlay_space(end, display_frame),
                         snapshot,
+                        from_corner: None,
                         floating: request.floating,
                         server_order: depths.get(&request.server_id.as_u32()).copied(),
                         depth: 0,
@@ -1629,6 +1731,7 @@ impl FlightEngine {
                                 from: from_o,
                                 to: to_o,
                                 snapshot,
+                                from_corner: None,
                                 floating: request.floating,
                                 server_order: if standing {
                                     depths.get(&request.server_id.as_u32()).copied()
@@ -1668,7 +1771,7 @@ impl FlightEngine {
                 }
             };
             let landing = flies.ends_at(end.size).and_then(|to| self.landing(request.window, to));
-            waits.push_request(request, flies, landing);
+            waits.push_request(request, flies, landing, start, display_frame);
         }
         restack(&mut tiles, drawing_focus);
         self.ask_missing(needs_capture);
@@ -2053,6 +2156,7 @@ impl FlightEngine {
                         from,
                         to,
                         snapshot,
+                        from_corner: None,
                         floating: window.floating,
                         server_order: depths.get(&window.server_id.as_u32()).copied(),
                         depth: 0,
@@ -2172,6 +2276,7 @@ impl FlightEngine {
             accents: &[],
         };
         let edits = running.score.start_moving(&stage, at);
+        running.turn_corners(at);
         let remaining = running.score.remaining(at);
         self.play(edits);
         self.drive(lifecycle::Event::Extend(remaining));
@@ -2476,6 +2581,7 @@ mod tests {
             from,
             to,
             snapshot: test_picture(to.size),
+            from_corner: None,
             floating,
             server_order,
             depth: 0,
@@ -2519,6 +2625,7 @@ mod tests {
         fn end(generation: u64, now: Instant) -> EndWatch {
             EndWatch {
                 generation: Generation(generation),
+                compared: vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0)), (wid(2), rect(867.0, 32.0, 859.0, 1081.0))],
                 landing: vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))],
                 awaiting: vec![(wid(2), rect(867.0, 32.0, 859.0, 1081.0))],
                 landing_until: now + Duration::from_millis(150),
@@ -2721,14 +2828,16 @@ mod tests {
                 strip_before: None,
                 strip_after: None,
             };
-            assert_eq!(EndPicture::of_request(&request, FliesOn::Picture(stand_in.source), None), EndPicture::Awaited);
+            let flies = FliesOn::Picture { source: stand_in.source, covered: stand_in.coverage.covered };
+            let display = rect(0.0, 0.0, 1728.0, 1117.0);
+            assert_eq!(EndPicture::of_request(&request, flies, None, request.from, display), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;
             tile.clipped = true;
             running.tiles.push(tile);
             let real = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(1), &real, false, || panic!("a radius read for a tile")), Took::Tile));
+            assert!(matches!(running.take_picture(wid(1), &real, false, || panic!("a radius read for a tile"), 0.0), Took::Tile));
             assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
             let tile = &running.tiles[0];
             assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
@@ -2748,10 +2857,10 @@ mod tests {
             running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false, worn: Default::default() });
             running.focused_look = Some(wid(1));
             let picture = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(2), &picture, false, || None), Took::Entrance(tile) if tile.from == entrance_from(slot)));
-            assert!(matches!(running.take_picture(wid(1), &picture, false, || panic!("a radius read for a tile")), Took::Tile));
+            assert!(matches!(running.take_picture(wid(2), &picture, false, || None, 0.0), Took::Entrance(tile) if tile.from == entrance_from(slot)));
+            assert!(matches!(running.take_picture(wid(1), &picture, false, || panic!("a radius read for a tile"), 0.0), Took::Tile));
             assert_eq!(running.focused_look, None);
-            assert!(matches!(running.take_picture(wid(3), &picture, false, || panic!("a radius read for no tile")), Took::Nothing));
+            assert!(matches!(running.take_picture(wid(3), &picture, false, || panic!("a radius read for no tile"), 0.0), Took::Nothing));
             assert_eq!(running.tiles.len(), 2);
         }
 
@@ -2837,6 +2946,96 @@ mod tests {
             assert_eq!(running.plan.position_of(key), OverlayPoint::new(-2589.0, 0.0));
             let tile = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
             assert_eq!(tile.to.origin.x, 4.0 - 2589.0, "the tile follows the merged plan");
+        }
+
+        /// fold1's lab-C folding (`docs/data/2026-10-10-fold`), its repaint held for the corner before
+        /// the motion: a frame-zero picture fitting where it starts goes on at once, and the repaint
+        /// stays held as the motion starts on a leg in two steps. A pass bending the leg keeps it held
+        /// for the new leg's corner only while the old one's is still ahead and the new leg is in two
+        /// steps too; one past the old corner becomes the tile's own picture as the new leg is made,
+        /// and one before it is let go where the picture from the press covers the new leg.
+        #[test]
+        fn a_repaint_held_for_the_corner_is_the_tiles_own_once_no_corner_is_ahead() {
+            let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
+            let further = rect(3.0, 600.0, 1148.0, 514.0);
+            for (at, to, held) in [(10.005, further, true), (10.1, further, false), (10.005, column, false)] {
+                let requests = [(wid(1), column, folded, false)];
+                let mut running = flight();
+                running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
+                running.tiles[0].snapshot = test_picture(column.size);
+                running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
+                pose(&mut running);
+                let at_start = test_picture(column.size);
+                assert!(matches!(running.take_picture(wid(1), &at_start, false, || None, 0.0), Took::Tile), "where it starts");
+                let repaint = test_picture(folded.size);
+                assert!(matches!(running.take_picture(wid(1), &repaint, false, || None, 0.0), Took::Corner));
+                running.flown = true;
+                let (plan, drawn) = (running.plan.clone(), running.drawn());
+                running.score.start_moving(&stage(&plan, &drawn), 10.0);
+                running.turn_corners(10.0);
+                let tile = &running.tiles[0];
+                assert_eq!((tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered)), (column.size, Some(folded.size)), "held through the start");
+
+                let again = plan::reflow_plan(&[(wid(1), folded, to, false)], DISPLAY);
+                let drawn = running.drawn();
+                let pass = Pass { plan: &again, pan: None, focus: None, viewport: VIEWPORT, drawn: &drawn, seconds: 0.35, cue: Cue::Plain, accent: None };
+                running.take_pass(&pass, at).expect("bent");
+                let tile = &running.tiles[0];
+                let carries = (tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered));
+                let expected = if held { (column.size, Some(folded.size)) } else { (folded.size, None) };
+                let expected = if to == column && at < 10.01 { (column.size, None) } else { expected };
+                assert_eq!(carries, expected, "bent at {at} to {to:?}");
+            }
+        }
+
+        /// lab-C's fold bent back into an unfold on its second step: the new leg runs in two steps
+        /// from where the tile is drawn, narrowing first, so the column's repaint landing before that
+        /// leg's corner waits for it, though it fits where the flight first started.
+        #[test]
+        fn a_repaint_landing_after_a_bend_waits_for_the_new_legs_corner() {
+            let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
+            let requests = [(wid(1), column, folded, false)];
+            let mut running = flight();
+            running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
+            running.tiles[0].snapshot = test_picture(column.size);
+            running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
+            pose(&mut running);
+            running.tiles[0].from_corner = Some(test_picture(folded.size));
+            running.flown = true;
+            let (plan, drawn) = (running.plan.clone(), running.drawn());
+            running.score.start_moving(&stage(&plan, &drawn), 10.0);
+
+            let again = plan::reflow_plan(&[(wid(1), folded, column, false)], DISPLAY);
+            let drawn = running.drawn();
+            let pass = Pass { plan: &again, pan: None, focus: None, viewport: VIEWPORT, drawn: &drawn, seconds: 0.35, cue: Cue::Plain, accent: None };
+            running.take_pass(&pass, 10.1).expect("bent");
+            let tile = &running.tiles[0];
+            assert_eq!(tile.snapshot.coverage.covered, folded.size, "past the old corner");
+            let corner = running.score.corner_at(wid(1)).expect("the new leg in two steps");
+            let repaint = test_picture(column.size);
+            assert!(matches!(running.take_picture(wid(1), &repaint, false, || None, corner - 0.001), Took::Corner));
+            let tile = &running.tiles[0];
+            assert_eq!((tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered)), (folded.size, Some(column.size)));
+            let late = test_picture(column.size);
+            assert!(matches!(running.take_picture(wid(1), &late, false, || None, corner + 0.001), Took::Tile), "past the new corner");
+        }
+
+        /// A stand-in flying a fold, stretched with no crop grid to cut, takes its real picture at
+        /// once rather than holding it for the corner.
+        #[test]
+        fn a_stand_in_on_a_fold_takes_its_real_picture_at_once() {
+            use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
+            let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
+            assert!(tile::two_steps(column, folded).is_some());
+            let mut running = flight();
+            let mut tile = stacked(wid(1), on(column), on(folded), Some(0), false);
+            tile.snapshot = stand_in_picture(folded.size.respace(), stand_in_image().expect("drawn"));
+            running.tiles.push(tile);
+            let real = test_picture(folded.size);
+            assert!(matches!(running.take_picture(wid(1), &real, false, || None, 0.0), Took::Tile));
+            let tile = &running.tiles[0];
+            assert!(tile.from_corner.is_none());
+            assert_ne!(tile.snapshot.source, Route::StandIn);
         }
 
         /// Each tile is drawn focused or not on its own. The window left turning unfocused first, focus
@@ -4834,6 +5033,111 @@ mod tests {
             h.advance(Duration::from_millis(100));
             let landed = repainted(&h, &[(1, narrower)]);
             assert!(plays(&h.step(landed)), "its repaint in, the motion starts");
+        }
+
+        /// Where `folding` folds `wid(1)`: wider and shorter, as fold1's lab-C
+        /// (`docs/data/2026-10-10-fold`) folded under the window beside it.
+        fn folded() -> ScreenRect { rect(0.0, 540.0, 1148.0, 541.0) }
+
+        /// `wid(1)` folding from `start` to `folded`, shown and held for its repaint, the window
+        /// server reporting it where the pass starts it until then.
+        fn folding() -> Harness {
+            let mut h = Harness::new();
+            let server = WindowServerId::new(1);
+            crate::windows::platform::window_server::set_window_frame_override(server, Some(start().to_cg()));
+            let press = resize_of(&h, &[(1, start(), folded())]);
+            h.step(press);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            assert!(!plays(&h.commit(shown)), "held for its repaint");
+            crate::windows::platform::window_server::set_window_frame_override(server, None);
+            h
+        }
+
+        /// What the plays among `sent` hand the renderer of `window`'s tile: the size of the picture
+        /// it flies to the corner, and of the one from it.
+        fn carried(sent: &[Sent], window: WindowId) -> Vec<(ScreenSize, Option<ScreenSize>)> {
+            batches(sent)
+                .into_iter()
+                .flat_map(|batch| &batch.commands)
+                .filter_map(|command| match command {
+                    Render::Play { tiles, .. } => tiles.iter().find(|tile| tile.window == window),
+                    _ => None,
+                })
+                .map(|tile| (tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered)))
+                .collect()
+        }
+
+        /// The leg every play among `sent` adds `window`'s tile.
+        fn legs_of(sent: &[Sent], window: WindowId) -> Vec<crate::animation::domain::motion::score::Track> {
+            let plays = batches(sent).into_iter().flat_map(|batch| &batch.commands);
+            let edits = plays.filter_map(|command| if let Render::Play { edits, .. } = command { Some(edits) } else { None });
+            edits.flatten().filter_map(|edit| match edit {
+                Edit::Add(track) if track.node() == Node::Tile(window) => Some(track.clone()),
+                _ => None,
+            }).collect()
+        }
+
+        /// A fold's repaint landing before the motion is not posed at frame zero: the motion starts
+        /// in the same drain, its leg in two steps, the tile flying the picture from the press to the
+        /// corner and the repaint from it.
+        #[test]
+        fn a_folds_repaint_before_the_motion_is_flown_from_its_corner_and_never_posed() {
+            let mut h = folding();
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, folded())]);
+            let sent = h.step(landed);
+            let order = kinds(only_batch(&sent));
+            assert!(!order.contains(&"stage") && !order.contains(&"swap"), "{order:?}");
+            assert_eq!(carried(&sent, wid(1)), [(start().size, Some(folded().size))]);
+            let legs = legs_of(&sent, wid(1));
+            assert!(legs.len() == 1 && tile::corner_key(&legs[0]).is_some(), "{legs:?}");
+        }
+
+        /// A fold's repaint landing after its hold ran out, while its tile is still on the first
+        /// step, waits for the corner: its leg is installed again as it plays, the tile carrying the
+        /// repaint from the corner. One landing past the corner is cut in at once.
+        #[test]
+        fn a_folds_late_repaint_waits_for_the_corner_until_it_is_past() {
+            for (after, waits) in [(Duration::from_millis(5), true), (Duration::from_millis(100), false)] {
+                let mut h = folding();
+                h.advance(HOLD_CAP);
+                let ticked = h.step(Event::Tick);
+                let legs = legs_of(&ticked, wid(1));
+                assert!(legs.len() == 1 && tile::corner_key(&legs[0]).is_some(), "moving: {legs:?}");
+                let corner = h.engine.running.as_ref().and_then(|running| running.score.corner_at(wid(1)));
+                h.advance(after);
+                let at = h.media.at(h.at());
+                assert_eq!(corner.is_some_and(|corner| at < corner), waits, "{after:?}");
+                let landed = repainted(&h, &[(1, folded())]);
+                let sent = h.step(landed);
+                if waits {
+                    assert!(swapped(&sent, wid(1)).is_empty(), "{after:?}: not cut in");
+                    assert_eq!(legs_of(&sent, wid(1)), legs, "{after:?}: its leg again");
+                    assert_eq!(carried(&sent, wid(1)), [(start().size, Some(folded().size))]);
+                } else {
+                    assert_eq!(swapped(&sent, wid(1)).len(), 1, "{after:?}: cut in");
+                    assert!(legs_of(&sent, wid(1)).is_empty());
+                }
+            }
+        }
+
+        /// A fold whose repaint is held for the corner, shrunk further by a press before the corner:
+        /// the merged pass is judged against that repaint, which covers the new end, so the window is
+        /// kept and the pass merges at once, not held as a grow past the picture from the press.
+        #[test]
+        fn a_fold_shrunk_further_before_its_corner_is_judged_against_its_held_repaint() {
+            let mut h = folding();
+            h.advance(HOLD_CAP);
+            assert!(plays(&h.step(Event::Tick)), "moving");
+            h.advance(Duration::from_millis(5));
+            let landed = repainted(&h, &[(1, folded())]);
+            assert!(swapped(&h.step(landed), wid(1)).is_empty(), "held for the corner");
+            let press = resize_of(&h, &[(1, folded(), rect(0.0, 564.0, 1148.0, 517.0))]);
+            assert!(plays(&h.step(press)), "merged at once");
+            let running = h.engine.running.as_ref().expect("running");
+            assert!(running.held.is_empty(), "nothing held");
         }
 
         #[test]

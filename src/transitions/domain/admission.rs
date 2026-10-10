@@ -10,7 +10,9 @@ use rini_geometry::stretch::{grows, is_a_resize};
 use rini_geometry::{SameAs, to_overlay_space};
 
 use crate::decorations::domain::style::Worn;
+use crate::pictures::domain::coverage::fits_frame;
 use crate::pictures::domain::route::Route;
+use crate::transitions::domain::lifecycle::frame_zero_pictures;
 use crate::transitions::domain::request::AnimationRequest;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
@@ -89,23 +91,23 @@ pub(in crate::transitions) enum EndPicture {
     /// A grow: held for, overlay up, watched until it has repainted where it ends, and pictured
     /// there only once it has.
     Held,
-    /// A shrink: watched until it has repainted where it ends, and never held for itself. Its tile
-    /// keeps the picture frame zero took of it, which covers every frame, to the lift; one frame zero
-    /// never pictured, starting clipped or off the display, has its repaint swapped in
-    /// (`Flight::keeps`).
+    /// A shrink whose tile starts with a picture covering its start: watched until it has repainted
+    /// where it ends, never held for itself, and its tile keeps that picture, which covers every
+    /// frame, to the lift (`Flight::keeps`).
     Kept,
-    /// An entrance flying from where it opened: watched until it has repainted at its slot, never
-    /// held for, and pictured there only once it has.
+    /// Watched until it has repainted where it ends, never held for, and pictured there only once it
+    /// has: an entrance flying from where it opened, and a shrink whose tile starts with no picture
+    /// covering its start.
     Repainting,
     /// Captured once it is where it ends.
     Lands,
 }
 
-/// What a pass's window flies on: the picture it has, taken by a `Route`, or, having none, its
-/// entrance.
+/// What a pass's window flies on: the picture it has, taken by a `Route` and `covered` big, or,
+/// having none, its entrance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::transitions) enum FliesOn {
-    Picture(Route),
+    Picture { source: Route, covered: ScreenSize },
     Entrance(EntranceDecision),
 }
 
@@ -115,7 +117,7 @@ impl FliesOn {
     /// entrance at its slot, and a reserved entrance, which has no tile, at none.
     pub(in crate::transitions) fn ends_at(self, end: ScreenSize) -> Option<ScreenSize> {
         match self {
-            Self::Picture(_) => Some(end),
+            Self::Picture { .. } => Some(end),
             Self::Entrance(EntranceDecision::Travel { to, .. }) => Some(to.size),
             Self::Entrance(EntranceDecision::Reserve(_)) => None,
         }
@@ -147,15 +149,26 @@ impl EndPicture {
         }
     }
 
-    /// The window `request` places, flying on `flies`: sorted on its request's own sizes, and, in a
-    /// pass merged into the flight running, judged against the tile it lands on (`landing`, none
-    /// for a first pass or a window joining).
-    pub(in crate::transitions) fn of_request(request: &AnimationRequest, flies: FliesOn, landing: Option<Landing>) -> Self {
-        let own = match flies {
-            FliesOn::Picture(source) => Self::of_window(source, request.from.size, request.to.size),
-            FliesOn::Entrance(entrance) => Self::of_entrance(entrance),
+    /// The window `request` places, its tile starting at `start` on `display`, flying on `flies`:
+    /// sorted on its request's own sizes, and, in a pass merged into the flight running, judged
+    /// against the tile it lands on (`landing`, none for a first pass or a window joining). A shrink
+    /// is kept only when its tile starts with a picture covering its start (`covers_start`).
+    pub(in crate::transitions) fn of_request(
+        request: &AnimationRequest,
+        flies: FliesOn,
+        landing: Option<Landing>,
+        start: ScreenRect,
+        display: ScreenRect,
+    ) -> Self {
+        let (own, composed) = match flies {
+            FliesOn::Picture { source, covered } => (Self::of_window(source, request.from.size, request.to.size), Some(covered)),
+            FliesOn::Entrance(entrance) => (Self::of_entrance(entrance), None),
         };
-        own.landing_on(landing)
+        let carried = landing.map(|landing| landing.carried).or(composed);
+        match own.landing_on(landing) {
+            Self::Kept if !covers_start(carried, start, request.floating, display) => Self::Repainting,
+            sorted => sorted,
+        }
     }
 
     /// A window the strip surface carries, which the pass neither resizes nor holds for, a stand-in
@@ -205,6 +218,12 @@ impl EndPicture {
     }
 }
 
+/// Whether a tile starting at `start` starts with a picture covering it: frame zero's, taken there
+/// when it starts wholly on `display`, else the one it carries, `carried` big, when that fits it.
+fn covers_start(carried: Option<ScreenSize>, start: ScreenRect, floating: bool, display: ScreenRect) -> bool {
+    frame_zero_pictures(start, floating, display) || carried.is_some_and(|carried| fits_frame(carried, start.size))
+}
+
 /// A pass's windows as their `EndPicture`s sort them: `StageSummary::awaiting`, `::repainting` and
 /// `::kept`.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -212,10 +231,11 @@ pub(in crate::transitions) struct Waits {
     /// Held for, overlay up, and watched until they repaint: grows, stand-ins and reserved entrances.
     pub(in crate::transitions) awaiting: Vec<WindowId>,
     /// Watched until they repaint, and pictured where they end only once they have: windows resized,
-    /// held for if they grow and kept if they shrink, and windows flying from where they opened.
+    /// held for if they grow and kept if they shrink inside the picture they start with, and windows
+    /// flying from where they opened.
     pub(in crate::transitions) repainting: Vec<WindowId>,
-    /// Of `repainting`, the shrinks, whose tiles keep the pictures frame zero took of them, if it took
-    /// one (`Flight::keeps`).
+    /// Of `repainting`, the shrinks whose tiles start with a picture covering their start, which they
+    /// keep to the lift (`Flight::keeps`).
     pub(in crate::transitions) kept: Vec<WindowId>,
 }
 
@@ -232,10 +252,17 @@ impl Waits {
         EndPicture::ALL.into_iter().find(|end| end.lists() == lists).unwrap_or(EndPicture::Lands)
     }
 
-    /// Sorts the window `request` places, flying on `flies` and landing on `landing`
-    /// (`EndPicture::of_request`).
-    pub(in crate::transitions) fn push_request(&mut self, request: &AnimationRequest, flies: FliesOn, landing: Option<Landing>) {
-        self.push(request.window, EndPicture::of_request(request, flies, landing));
+    /// Sorts the window `request` places, its tile starting at `start` on `display`, flying on `flies`
+    /// and landing on `landing` (`EndPicture::of_request`).
+    pub(in crate::transitions) fn push_request(
+        &mut self,
+        request: &AnimationRequest,
+        flies: FliesOn,
+        landing: Option<Landing>,
+        start: ScreenRect,
+        display: ScreenRect,
+    ) {
+        self.push(request.window, EndPicture::of_request(request, flies, landing, start, display));
     }
 
     /// Sorts `window`, carried by the strip surface and landing on `landing` (`EndPicture::of_strip`).
@@ -295,6 +322,12 @@ mod tests {
     fn window(idx: u32) -> WindowId {
         WindowId::new(1, idx)
     }
+
+    /// The built-in display, the menu bar's band included.
+    const DISPLAY: ScreenRect = ScreenRect::new(ScreenPoint::new(0.0, 0.0), ScreenSize::new(1728.0, 1117.0));
+
+    /// A SkyLight picture `covered` big.
+    fn skylight(covered: ScreenSize) -> FliesOn { FliesOn::Picture { source: Route::SkyLight, covered } }
 
     /// A pass that repeats a destination is not a new flight. This is what stops a held key from
     /// restarting the animation on every repeat, which would mean it never lands.
@@ -582,7 +615,7 @@ mod tests {
         ];
         let mut waits = Waits::default();
         for (request, landing) in &pass {
-            waits.push_request(request, FliesOn::Picture(Route::SkyLight), *landing);
+            waits.push_request(request, skylight(request.from.size), *landing, request.from, DISPLAY);
         }
         assert_eq!(
             waits,
@@ -626,7 +659,7 @@ mod tests {
         let slot: ScreenRect = rect(867.0, 32.0, 1148.0, 1081.0);
         let (end, carried) = (ScreenSize::new(860.0, 1081.0), ScreenSize::new(572.0, 1081.0));
         let standing = FliesOn::Entrance(EntranceDecision::Travel { from: slot, to: slot });
-        assert_eq!(FliesOn::Picture(Route::SkyLight).ends_at(end), Some(end));
+        assert_eq!(skylight(carried).ends_at(end), Some(end));
         assert_eq!(standing.ends_at(end), Some(slot.size));
         assert_eq!(FliesOn::Entrance(EntranceDecision::Reserve("capture budget")).ends_at(end), None);
         let request = AnimationRequest {
@@ -640,8 +673,8 @@ mod tests {
             strip_after: None,
         };
         let landing = standing.ends_at(end).map(|to| Landing { carried, to, held: true });
-        assert_eq!(EndPicture::of_request(&request, standing, landing), EndPicture::Held);
-        assert_eq!(EndPicture::of_request(&request, standing, None), EndPicture::Lands);
+        assert_eq!(EndPicture::of_request(&request, standing, landing, slot, DISPLAY), EndPicture::Held);
+        assert_eq!(EndPicture::of_request(&request, standing, None, slot, DISPLAY), EndPicture::Lands);
     }
 
     /// A pass's windows sorted from their requests, each by the sizes it goes from and to: a grow and
@@ -663,13 +696,13 @@ mod tests {
         };
         let column: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
         let next = rect(867.0, 32.0, 859.0, 1081.0);
-        let picture = FliesOn::Picture(Route::SkyLight);
+        let picture = skylight(column.size);
         let pass = [
             (request(1, column, rect(4.0, 32.0, 1720.0, 1081.0)), picture),
             (request(2, column, rect(4.0, 32.0, 1148.0, 538.0)), picture),
             (request(3, column, rect(4.0, 32.0, 859.0, 535.0)), picture),
             (request(4, column, next), picture),
-            (request(5, column, next), FliesOn::Picture(Route::StandIn)),
+            (request(5, column, next), FliesOn::Picture { source: Route::StandIn, covered: next.size }),
             (
                 request(6, column, next),
                 FliesOn::Entrance(EntranceDecision::Travel { from: rect(400.0, 200.0, 700.0, 500.0), to: next }),
@@ -679,13 +712,47 @@ mod tests {
         ];
         let mut waits = Waits::default();
         for (request, flies) in &pass {
-            waits.push_request(request, *flies, None);
+            waits.push_request(request, *flies, None, request.from, DISPLAY);
         }
         let windows = |idxs: &[u32]| idxs.iter().copied().map(window).collect::<Vec<_>>();
         assert_eq!(
             waits,
             Waits { awaiting: windows(&[1, 2, 5, 8]), repainting: windows(&[1, 2, 3, 6]), kept: windows(&[3]) }
         );
+    }
+
+    /// fold1's g17 (`docs/data/2026-10-10-fold`): a shrink starting part off the display, where frame
+    /// zero does not picture it, is kept only when the picture its tile starts with fits its start,
+    /// the cache's composed for a first pass and the one its tile carries for a merged one; one
+    /// starting wholly on the display is kept whatever the cache holds, frame zero picturing it, but
+    /// not a floating one, which frame zero leaves out.
+    #[test]
+    fn a_shrink_is_kept_only_when_the_picture_its_tile_starts_with_covers_its_start() {
+        use rini_core::ids::WindowServerId;
+        let request = |from: ScreenRect, floating| AnimationRequest {
+            window: window(1),
+            server_id: WindowServerId::new(1),
+            from,
+            to: rect(3.0, 35.0, 1148.0, 538.0),
+            floating,
+            worn: Default::default(),
+            strip_before: None,
+            strip_after: None,
+        };
+        let (fits, short) = (ScreenSize::new(1148.0, 1079.0), ScreenSize::new(1148.0, 900.0));
+        let sort = |from: ScreenRect, floating, covered, carried: Option<ScreenSize>| {
+            let request = request(from, floating);
+            let landing = carried.map(|carried| Landing { carried, to: request.to.size, held: false });
+            EndPicture::of_request(&request, skylight(covered), landing, from, DISPLAY)
+        };
+        let (off, on) = (rect(-285.0, 35.0, 1148.0, 1079.0), rect(3.0, 35.0, 1148.0, 1079.0));
+        assert_eq!(sort(off, false, fits, None), EndPicture::Kept, "the cache's picture fits its start");
+        assert_eq!(sort(off, false, short, None), EndPicture::Repainting, "it does not");
+        assert_eq!(sort(off, false, short, Some(fits)), EndPicture::Kept, "its tile carries one that does");
+        assert_eq!(sort(off, false, fits, Some(short)), EndPicture::Repainting, "its tile carries one that does not");
+        assert_eq!(sort(on, false, short, None), EndPicture::Kept, "frame zero pictures it");
+        assert_eq!(sort(on, true, short, None), EndPicture::Repainting, "floating");
+        assert_eq!(sort(on, true, fits, None), EndPicture::Kept, "floating, its cache's picture fitting");
     }
 
     #[test]

@@ -204,7 +204,9 @@ destination for a window already moving.
   Every frame MUST be written as soon as the overlay is on screen, so the window has the whole flight
   to land in.
 - A window the overlay covers MUST keep painting: a point of the overlay is left clear over each
-  window that ends wholly on screen, so the window server counts it visible. Covered wholly, a
+  window that ends wholly on screen, and over each grow ending cut by the display's right edge, so
+  the window server counts it visible. A grow ending cut by its left edge has no such point: the
+  point sits just in from a window's left edge, off the display for that one. Covered wholly, a
   terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
   all 24. So MUST a decoration rini draws around one at rest (`decorations.md`): a point is left
   clear over its band too.
@@ -246,13 +248,23 @@ destination for a window already moving.
   overlay standing still, until that window has repainted at its new size, up to 300ms from the
   overlay going up or from the latest press growing it before the motion starts, and 600ms in all
   from the overlay going up, and that window MUST fly its repainted picture from the motion's first
-  frame, so its growth shows its content and never a fill cut to content mid-flight. A grow ending
-  part off the display MUST NOT be held for: SkyLight returns only a window's visible part, so no
-  watch sees it repaint there, and it flies its picture from the press, its ground in the growth, to
-  the lift. A window growing on one axis as it shrinks on the other, as a fold or an unfold, has no
-  picture covering every frame: its repainted picture, short of the start on the shrinking axis,
-  shows the window's ground there, which the moving edge swallows, and the cut onto it from the
-  picture at the press comes as that repaint lands, on the overlay still standing, never mid-flight.
+  frame, or for a fold or an unfold from its corner (below), so its growth shows its content and
+  never a fill cut to content mid-flight. A grow ending
+  part off the display MUST be held for the same way: SkyLight returns only a window's visible part,
+  so its repaint there MUST be watched through ScreenCaptureKit, which returns the window whole, and
+  counted on two of its captures in a row. A grow ending wholly off the display, or showing no more
+  of itself there than a parked window's sliver, MUST NOT be held for: no watch sees it repaint. A
+  window growing on one axis as it shrinks on the other, as a fold or an unfold, has no picture
+  covering every frame, and MUST fly in two steps, never showing its ground: first the shrinking
+  axis to its end, flying its picture from the press, which covers every frame of that step, then
+  the growing axis, flying its repainted picture, which covers every frame of that one. Its picture
+  MUST be cut from the one to the other at the corner between the steps, a cut between two
+  renderings of the window, and its repainted picture MUST NOT be drawn before the corner: one
+  landing before the motion or in the first step waits for it. One not landed by the corner leaves
+  the second step its picture from the press, the window's ground in the growth, until it is cut in
+  as it lands. The two steps MUST read as one movement, on the flight's one curve and length, its
+  edges as fast through the corner as either side of it, and a leg a merge bends from where the
+  tile is drawn MUST fly in two steps the same way.
   A resize growing no window MUST move as soon as the layout's follow-up passes are in, and MUST NOT
   wait for a resized window to repaint. The press's sequence stays a navigation's, the overlay first
   and the frames written at once; the only addition is the wait, and only for a window that grows. A
@@ -276,8 +288,8 @@ destination for a window already moving.
   a window again, least of all back where an earlier held pass sent it. A held pass whose window misses the 300ms, or the 600ms of a burst, merges with the
   picture its tile has, the window's ground in the growth, and the repainted picture replaces that
   one when it comes.
-- Each window a resize grows to end wholly on the display MUST be pictured at its new size once it
-  has repainted there. One whose
+- Each window a resize grows to end on the display, wholly or cut by its edge, MUST be pictured at
+  its new size once it has repainted there. One whose
   repaint missed the hold flies its picture from the press, with the window's ground in its growth,
   and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
   edges as the old one, with the window's ground wherever it does not cover the frame still to come.
@@ -285,16 +297,18 @@ destination for a window already moving.
   picture covers every frame of the movement, so there is no ground to cut from, and its repainted
   picture and the last capture before the lift MUST NOT be drawn on it. It is never held for itself,
   and moves when its flight does, with the held grows when the same resize grows another window. One
-  starting clipped or off the display has no picture from the press, and its repainted picture MUST
-  replace the one it flies as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
+  starting clipped or off the display has no picture from the press: it MUST fly the cached picture
+  of it the same way, to the lift, when that picture fits where it starts, its content as old as that
+  picture; only one whose tile starts with no picture covering its start MUST have its repainted
+  picture replace the one it flies as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
   shrinks, against the picture its tile carries, and so whether the motion still waits for it,
   before the motion starts as once it moves. A picture taken at its
   new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
   one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
   keeps the look its picture from the press shows, the title bar and controls macOS draws focused or
   not, while its hairline, shadow, ring and border turn as any window's: a window that never settles,
-  as one streaming output, and a window a resize only shrinks, frame zero having pictured it, turn
-  their own look with the lift. A window MUST count as repainted at its new size only once two
+  as one streaming output, and a window a resize only shrinks inside the picture it starts with,
+  turn their own look with the lift. A window MUST count as repainted at its new size only once two
   captures in a row show the same rendering, never because a capture differs from the picture it had before.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
@@ -340,7 +354,13 @@ destination for a window already moving.
 > grows (`docs/data/2026-10-10-rapid-altr`, run altr1, 12 presses): 2 of 5 merges of held passes
 > went at once on a picture of the window at the end the flight had for it before the press, taken
 > before the press. After the second, lab-A's growth from 860 to 1148 showed its ground, up to
-> about 170pt wide, for 129ms (frames 1954-2083ms) until its repaint was cut in.
+> about 170pt wide, for 129ms (frames 1954-2083ms) until its repaint was cut in. A fold and an
+> unfold recorded the same evening (`docs/data/2026-10-10-fold`, run fold1) showed up to 422 flat
+> dark blocks, about a quarter of the screen: a window starting part off the display shrank with its
+> landing swapped on before the motion, its ground under it; the window folding under it flew its
+> repainted picture, 538 tall, over its 1079-tall start, its ground above it until its height caught
+> up; and the first grew back to end part off the display with its ground in the growth, never held
+> for, for the 359ms from the motion's start to the lift.
 
 ## Correctness the user can see
 
@@ -557,10 +577,10 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or resized it: one a pass
   opened or grew is pictured once it has repainted instead, its own look coming only with that
-  picture, and one a pass only shrinks, frame zero having pictured it, keeps its picture from the
-  press, its hairline and its shadow turning once it has repainted, or just before the window gaining
-  focus when it loses focus, and its own look with the lift (Resizing). One a pass only shrinks that
-  started clipped or off the display turns with its repainted picture, as a grow does. A look a
+  picture, and one a pass only shrinks inside the picture it starts with keeps that picture, its
+  hairline and its shadow turning once it has repainted, or just before the window gaining focus when
+  it loses focus, and its own look with the lift (Resizing). One a pass only shrinks that starts with
+  no picture covering its start turns with its repainted picture, as a grow does. A look a
   window already had when it landed counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
   shadow turning with it: the window losing focus unfocused, the window gaining focus focused. Its
   focus ring and its border wear where the flight ends from the show (`decorations.md`).
@@ -572,8 +592,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
   pass opened or resized, or one whose watch ran out, MUST be drawn unfocused just before the window
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
-  the same, old then new, while the flight still moves, but for one a pass only shrinks that frame
-  zero pictured, or one a pass opened, grew or shrank that has not repainted where it ends: it is
+  the same, old then new, while the flight still moves, but for one a pass only shrinks inside the
+  picture it starts with, or one a pass opened, grew or shrank that has not repainted where it ends: it is
   not pictured then, only its hairline and its shadow turn, and its own look turns with the lift. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
   keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its look turns at
@@ -605,8 +625,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
 - Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the
-  press to the quiet after the lift, but for the screen a measured lift's handover check takes once
-  its overlay is down (`journal { measure-handover; }`, below). With four of its captures out, the
+  press to the quiet after the lift, but for a grow's repaint where it ends cut by the display's
+  edge (Resizing) and the screen a measured lift's handover check takes once its overlay is down (`journal { measure-handover; }`, below). With four of its captures out, the
   capture the overlay waits for at the press took three times as long.
 - A flight that moves focus nowhere MUST NOT recapture through ScreenCaptureKit, and MUST NOT watch for
   a change of focus: no report comes to arm the watch, and one left waiting holds the windows behind
@@ -845,7 +865,7 @@ stand-in, the blur, and the schedule that holds background capture off while a f
 `src/pictures/domain/`, which id a window is pictured under, which windows rini does not manage are
 pictured and when those pictures go in `src/pictures/domain/identity.rs`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
 for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
-captures), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
+captures and those of a window cut by the display's edge, a focus target's or a grow's repaint), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
 Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),
 `src/animation/docs/animation-smoothness.md` (how it moves),
 `src/animation/docs/capture-overlay-research.md` (the overlay, and "The handover, measured", which a

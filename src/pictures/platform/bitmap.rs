@@ -60,7 +60,7 @@ unsafe extern "C-unwind" {
 }
 
 /// The side of the square a [`thumbprint`] samples an image down to.
-const THUMBPRINT_SIDE: usize = 32;
+pub const THUMBPRINT_SIDE: usize = 32;
 
 /// A small fingerprint of an image's content, for telling when a window has finished repainting.
 pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {

@@ -262,6 +262,8 @@ pub enum Wearing {
     FocusedLook,
     /// A delivered picture swapped onto the tile, or an entrance joining with its first.
     Swap,
+    /// A delivered picture held for the corner of the tile's leg in two steps, on from there.
+    Corner,
 }
 
 /// A mark, when its drive ran and the generation that drive left.
@@ -762,7 +764,7 @@ impl Journalled {
 pub const OVERLAY_TAKE_PATIENCE: Duration = Duration::from_millis(60);
 
 /// Whether a lift is held for the overlay's own picture: while the handover is measured, and with a
-/// window ending wholly on screen to compare.
+/// window ending wholly on screen to compare (`EndWatch::compared`).
 pub fn measures(measure_handover: bool, ends: &[(WindowId, ScreenRect)]) -> bool {
     measure_handover && !ends.is_empty()
 }
@@ -872,6 +874,7 @@ mod tests {
         let frames = vec![(w(1), r(0.0, 0.0, 200.0, 200.0))];
         let watch = EndWatch {
             generation: g,
+            compared: frames.clone(),
             landing: frames.clone(),
             awaiting: Vec::new(),
             landing_until: Instant::now(),
@@ -1264,6 +1267,11 @@ mod tests {
         assert_eq!(
             whys.map(|why| serde_json::to_value(why).unwrap()),
             ["frame_zero", "landed", "focus_changed", "background", "final"]
+        );
+        let wearing = [Wearing::Compose, Wearing::FrameZero, Wearing::FocusedLook, Wearing::Swap, Wearing::Corner];
+        assert_eq!(
+            wearing.map(|at| serde_json::to_value(at).unwrap()),
+            ["compose", "frame_zero", "focused_look", "swap", "corner"]
         );
         assert_eq!(
             line(&anchor, &stamped(Mark::Hide { measured: true, waited_us: 31_400 })),

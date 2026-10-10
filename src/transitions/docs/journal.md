@@ -27,7 +27,8 @@ when the engine heard it, so the real frames, the bar's picture and the quiet a 
 out at its `t`. And each picture a tile takes goes to `Journalled::wears` as the engine puts it on
 (`FlightEngine::journal_wears`): every tile a pass composes, a later pass's only for the windows it
 brings, with the cache's picture or the stand-in; frame zero's, worn before the show; the focused look a
-parked focus target flies; and each picture swapped onto a tile or an entrance joining with its first.
+parked focus target flies; each picture swapped onto a tile or an entrance joining with its first;
+and each repaint a tile's leg in two steps holds for its corner, flown from there.
 A `wears` mark each, stamped when the engine put it on. And each turn of the main thread's run loop
 over 8ms, one frame at 120Hz, goes to `Journalled::main_turn` as the engine hears it
 (`Event::MainTurn`): a `main_turn` mark, then a `turn_actor` for each actor polled in it and a
@@ -63,11 +64,11 @@ until it has a mark.
 | `AskFinal` | `ask_final` | `windows`, `behind` (counts) |
 | `Swap` / `KeepFocusedLook` | `swap` / `keep_focused_look` | `of`, `window` |
 | `Snap { window, frame }` | `snap` | `window`, `frame` (overlay points) |
-| a picture a tile takes, after the marks of the drive or delivery it came with | `wears` | `window`, `at` (`compose`, `frame_zero`, `focused_look` or `swap`), `route` (`skylight`, the window alone; `baked`, SkyLight's baked call; `screencapturekit`; `stand_in`), `blur` (it carries its window's blur), `taken_before_us` |
+| a picture a tile takes, after the marks of the drive or delivery it came with | `wears` | `window`, `at` (`compose`, `frame_zero`, `focused_look`, `swap` or `corner`), `route` (`skylight`, the window alone; `baked`, SkyLight's baked call; `screencapturekit`; `stand_in`), `blur` (it carries its window's blur), `taken_before_us` |
 | `Focus { window, focused }` | `focus` | `window`, `focused` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
-| the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `places` (it placed what is drawn at rest: with `shown` `null`, the place a tick ahead of the lift, not a drain in flight), `crops` (tiles it drew on the crop grid, dressed or swapped onto it), `ground_us` (reading their pictures' grounds), `queued_us`, `applied_us`, `flushed_before_us` |
+| the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `places` (it placed what is drawn at rest: with `shown` `null`, the place a tick ahead of the lift, not a drain in flight), `crops` (tiles it drew on the crop grid, dressed, swapped onto it or cut onto a repaint at a corner), `ground_us` (reading their pictures' grounds), `queued_us`, `applied_us`, `flushed_before_us` |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
 | a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out`, and `band` for a window wearing a band at rest (levels, and a share for `interior_over`) |
 | a turn of the main thread's run loop over 8ms, stamped when it began | `main_turn` | `busy_us` (waking to going back to sleep), `outside_us` (the busy time no actor's poll covers: AppKit, Core Animation's commit, the event dispatch), `actors`, `changes` (counts of the marks after it) |
@@ -165,8 +166,8 @@ takes the press"). It is not the key-down: the tap and the reactor's queue come 
 
 The pictures service stamps each delivery with when it sent it (`Delivered.sent`): for a round of
 SkyLight captures, once its calls and band prints are done, as the cache and the schedule are handed
-them; for the one ScreenCaptureKit capture of a clipped focus end, once that capture is back on the
-service's thread. Each picture keeps when its capture started (`Picture::taken`), stamped before the
+them; for a ScreenCaptureKit capture, a clipped focus end's or a cut grow's repaint, once that capture
+is back on the service's thread. Each picture keeps when its capture started (`Picture::taken`), stamped before the
 call that took it. On the probe's clock a `delivery`'s `t - sent_before_us` is the round's end and a
 `delivered`'s `t - taken_before_us` its capture's start, so a delivery splits into two gaps:
 
@@ -227,8 +228,9 @@ A crash loses the marks not yet written: a panic hook cannot reach the engine's 
 
 `animations { journal { measure-handover; } }` measures every lift as "The handover, measured" in
 `src/animation/docs/capture-overlay-research.md` did: the overlay's own picture just before it comes
-down against the screen just after, over every window that ends wholly on screen, the ones the last
-watch of the flight named (`landing` and `awaiting`), which are the windows the overlay is holed over.
+down against the screen just after, over every window that ends wholly on screen, the ones of
+`landing` and `awaiting` the last watch of the flight named (`EndWatch::compared`), each of which the
+overlay is holed over; a grow watched where it ends cut by the display's edge is not compared.
 It is off unless asked for, and `journal false` turns it off with the writing.
 
 - **The engine.** A lift is held when the last watch named a window ending wholly on screen
@@ -272,7 +274,7 @@ It is off unless asked for, and `journal false` turns it off with the writing.
   with it: its `hide`'s `waited_us` says how much. A press that lands while the pictures thread takes the overlay's picture or the screen waits
   for that one call, a SkyLight call of the overlay or of the display, before its frame
   zero is taken. The screen capture is made while the transition settles, the one capture besides a
-  clipped focus end's that the hold lets through. The two pictures,
+  clipped focus end's and a cut grow's repaint that the hold lets through. The two pictures,
   a display's worth each, are drawn and compared on `handover`, off the pictures thread, and dropped
   once compared.
 

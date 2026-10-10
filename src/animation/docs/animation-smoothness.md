@@ -230,7 +230,9 @@ Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
 coordinates, flipped as the canvas is; where a hole lands on screen was not
 measured on a window shorter than the display. Which windows get holes, and
 when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
-it watches end wholly on screen, from the show to the lift. A window wearing a
+it watches end where its hole lands on the display, from the show to the lift: one
+ending wholly on screen, or a grow ending cut by the display's right edge, never
+one cut by its left edge, whose hole a point in from that edge is off the display. A window wearing a
 border, or its focus ring where the flight ends, gets a second hole, over the
 bands rini draws around it at rest: a point square, or their width where that is
 narrower, halfway across their left edge and halfway down (`band_hole_in`, pinned
@@ -501,11 +503,29 @@ changes is how the picture maps onto it (`content_mode` in
   it meeting without overlap, since a fill under the whole tile would darken a
   translucent window. A grow is held for its repainted picture and flies it
   from frame zero, or, merged once the flight moves, from where its tile is
-  drawn as that picture lands, one shrinking on its other axis with the ground in the
-  span that picture leaves short there, swallowed by the moving edge; one
-  whose hold ran out flies its before picture with the ground in the growth
-  until the repainted one lands mid-run, cut onto the grid on the leg's
-  anchors. A shrink frame zero pictured flies that picture to the lift,
+  drawn as that picture lands; one whose hold ran out flies its before
+  picture with the ground in the growth until the repainted one lands
+  mid-run, cut onto the grid on the leg's anchors. A leg growing on one axis
+  as it shrinks on the other, a fold or an unfold, is two steps on three keys
+  (`tile::leg`): the shrinking axis to the corner flying the before picture,
+  then the growing axis flying the repainted one, each covering every frame
+  of its step, on one curve cut at the corner (`CubicBezier::split`). The
+  grid is laid against the before picture at the keys up to the corner and
+  against the repainted one from it, the corner keyed twice at one time so
+  the grid jumps there, and a discrete keyframe cuts each piece's `contents`
+  and the ground's `backgroundColor` at that key time; the model is the
+  repainted picture's grid, which the leg ends on
+  (`a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner`).
+  The repainted picture is put on there as a swap puts one on (`land` in
+  `overlay.rs`), judged against the leg, so one fitting both its ends is drawn
+  stretched over all of it with nothing to cut
+  (`a_leg_in_two_steps_given_a_picture_fitting_both_its_ends_draws_it_stretched`),
+  and its ground, read as the leg is installed, counts in the drain's `crops`
+  (`a_tree_counts_the_ground_a_corner_cut_reads`).
+  Flown in one movement, the repainted picture left the ground in the span
+  it falls short on the shrinking axis, and the before picture in the
+  growth. A shrink whose tile starts with a picture covering its start,
+  frame zero's or the cache's fitting it, flies that picture to the lift,
   clipped, with no ground and nothing swapped onto it ("A grow waits for its
   repaint" in `src/transitions/docs/coordination.md`); an entrance flies its spawn picture
   until its slot picture lands. The stretch it replaced, the middle and the
@@ -530,9 +550,10 @@ changes is how the picture maps onto it (`content_mode` in
   with the picture at one end's size, as a resize flies, piece frames, contents
   and ground spans are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
-  IS the per-frame crop layout; a picture of neither end's size, a merged leg
-  starting mid-resize, stays 1:1 but shows its ground earlier than the frame's
-  own grid would; one transaction installs frame, contentsRect,
+  IS the per-frame crop layout; a leg in two steps holds this on each step,
+  between the corner key and the endpoint one; a picture of neither end's
+  size, a merged leg starting mid-resize, stays 1:1 but shows its ground
+  earlier than the frame's own grid would; one transaction installs frame, contentsRect,
   shadow-path, shadow-mask, hairline-corner, picture-corner and outline-path
   animations on the shared curve, each path and corner at the tile's one corner.
   Below 89pt the band's `min` curve is approximated linearly, drifting the

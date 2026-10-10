@@ -101,6 +101,43 @@ impl CubicBezier {
         Self::coordinate(self.parameter_at(t), self.y1, self.y2)
     }
 
+    /// The curve cut where its progress reaches `progress`, inside `(0, 1)`: the time it gets there,
+    /// and the curve either side scaled to run from `(0, 0)` to `(1, 1)` on its own. The first eased
+    /// over `[0, time]` up to `progress` and the second over `[time, 1]` on from it are the whole
+    /// curve, so its speed runs on unbroken through the cut. Its progress has to rise as it goes, as
+    /// every curve here does.
+    pub fn split(&self, progress: f64) -> (f64, CubicBezier, CubicBezier) {
+        let (mut lo, mut hi) = (0.0, 1.0);
+        for _ in 0..64 {
+            let s = (lo + hi) / 2.0;
+            if Self::coordinate(s, self.y1, self.y2) < progress {
+                lo = s
+            } else {
+                hi = s
+            }
+        }
+        let s = (lo + hi) / 2.0;
+        let lerp = |a: (f64, f64), b: (f64, f64)| (a.0 + (b.0 - a.0) * s, a.1 + (b.1 - a.1) * s);
+        let (p1, p2) = ((self.x1, self.y1), (self.x2, self.y2));
+        let (a, b, c) = (lerp((0.0, 0.0), p1), lerp(p1, p2), lerp(p2, (1.0, 1.0)));
+        let (d, e) = (lerp(a, b), lerp(b, c));
+        let cut = lerp(d, e);
+        let first = CubicBezier {
+            x1: a.0 / cut.0,
+            y1: a.1 / cut.1,
+            x2: d.0 / cut.0,
+            y2: d.1 / cut.1,
+        };
+        let (w, h) = (1.0 - cut.0, 1.0 - cut.1);
+        let second = CubicBezier {
+            x1: (e.0 - cut.0) / w,
+            y1: (e.1 - cut.1) / h,
+            x2: (c.0 - cut.0) / w,
+            y2: (c.1 - cut.1) / h,
+        };
+        (cut.0, first, second)
+    }
+
     /// How fast progress is changing at time `t`, in progress per unit time: `dy/dx`. Zero once the
     /// curve is done.
     pub fn slope(&self, t: f64) -> f64 {
@@ -155,6 +192,31 @@ mod tests {
             let h = 1e-6;
             let numeric = (MOTION_CURVE.ease(t + h) - MOTION_CURVE.ease(t - h)) / (2.0 * h);
             assert!((MOTION_CURVE.slope(t) - numeric).abs() < 1e-3, "t={t}");
+        }
+    }
+
+    /// Cut where its progress reaches a share of the way, a curve's two segments, each eased over its
+    /// own span, are the whole curve, and the speed either side of the cut is the whole curve's
+    /// there.
+    #[test]
+    fn a_curve_cut_at_a_progress_is_the_whole_curve_either_side_and_keeps_its_speed() {
+        for (curve, progress) in [(MOTION_CURVE, 541.0 / 1979.0), (MOTION_CURVE, 0.8), (EASE_IN_OUT, 0.3)] {
+            let (at, first, second) = curve.split(progress);
+            assert!((curve.ease(at) - progress).abs() < 1e-6, "{at}: {}", curve.ease(at));
+            for i in 0..=200 {
+                let t = i as f64 / 200.0;
+                let cut = if t <= at {
+                    progress * first.ease(t / at)
+                } else {
+                    progress + (1.0 - progress) * second.ease((t - at) / (1.0 - at))
+                };
+                assert!((cut - curve.ease(t)).abs() < 1e-6, "{curve:?} cut at {progress}, t={t}");
+            }
+            let into = first.slope(1.0 - 1e-9) * progress / at;
+            let out = second.slope(0.0) * (1.0 - progress) / (1.0 - at);
+            let whole = curve.slope(at);
+            assert!((into - whole).abs() < 1e-3 * whole.max(1.0), "{into} into the cut, {whole}");
+            assert!((out - whole).abs() < 1e-3 * whole.max(1.0), "{out} out of it, {whole}");
         }
     }
 
