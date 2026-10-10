@@ -1131,10 +1131,10 @@ fn hold_no_longer(f: &mut Flight, window: WindowId, now: Instant, out: &mut Vec<
 
 /// A pass reaching the flight while its motion runs, its real windows written at once: held, up to
 /// `HOLD_CAP` from now, until each window it grows that ends wholly on the display has repainted
-/// where it ends, watched there; merged at once when it grows none, or before the motion runs. A
-/// pass held after another replaces what the hold waits for, its own grows from its own arrival, but
-/// no longer than `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched
-/// where the latest sends it.
+/// where it ends, watched there; merged at once when it grows none. A pass held after another
+/// replaces what the hold waits for, its own grows from its own arrival, but no longer than
+/// `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched where the
+/// latest sends it.
 fn hold_merge(
     f: &mut Flight,
     grows: Vec<(WindowId, ScreenRect)>,
@@ -1144,7 +1144,7 @@ fn hold_merge(
 ) {
     let display = f.stage.display;
     let seen: Vec<_> = grows.into_iter().filter(|(_, end)| wholly_inside(*end, display)).collect();
-    if f.clock.is_none() || seen.is_empty() {
+    if seen.is_empty() {
         if let Some(held) = f.held_merge.as_mut() {
             held.passes += 1;
         }
@@ -2658,8 +2658,7 @@ mod tests {
         assert!(!c.holds(w(2), g, grown));
     }
 
-    /// A pass whose grows no watch can see repaint, one growing nothing, or one reaching a flight not
-    /// moving yet merges at once, a hold before the motion holding on for its own windows.
+    /// A pass whose grows no watch can see repaint, or one growing nothing, merges at once.
     #[test]
     fn a_pass_growing_nothing_a_watch_can_see_merges_at_once() {
         let now = Instant::now();
@@ -2674,14 +2673,6 @@ mod tests {
             let mut c = running(flying.clone(), now);
             assert_eq!(c.on(event, arrives), vec![Command::Retarget { held: Duration::ZERO }], "{what}");
         }
-
-        let (growing, grown) = grow();
-        let mut c = running(growing, now);
-        assert!(!c.is_moving());
-        let wider = r(3.0, 35.0, 1148.0, 1079.0);
-        assert_eq!(c.on(hold(&[(w(1), wider)]), arrives), vec![Command::Retarget { held: Duration::ZERO }]);
-        let landed = Event::Picture { generation: c.generation(), window: w(2), frame: grown, why: Why::Landed };
-        assert!(has(&c.on(landed, arrives), |c| *c == Command::StartMoving), "its own hold");
     }
 
     /// A pass held after another replaces what the hold waits for, its own grows from its own
