@@ -2662,6 +2662,26 @@ mod tests {
         assert!(has(&c.on(tick, repainted + PLAYS), |c| matches!(c, Command::Lift { .. })));
     }
 
+    /// The rest placed before a held merge wrote its windows is placed again before the lift, even
+    /// by a merge that moves nothing.
+    #[test]
+    fn a_held_merge_places_the_rest_again_before_its_lift() {
+        let now = Instant::now();
+        let (flying, grown, merged) = grown_mid_flight();
+        let mut c = running(flying, now);
+        let g = c.generation();
+        let placed = c.on(Event::Tick { settled: false, landed: true }, now + PLAYS - FRAME_INTERVAL);
+        assert!(has(&placed, |c| *c == Command::PlaceRest));
+        let arrives = now + PLAYS - Duration::from_millis(4);
+        c.on(hold(&[(w(2), grown)]), arrives);
+        let landed = Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed };
+        assert!(retargets(&c.on(landed, arrives + Duration::from_millis(60))).is_some());
+        c.on(Event::Merge { stage: merged, moved: false }, arrives + Duration::from_millis(60));
+        let out = c.on(Event::Tick { settled: true, landed: true }, arrives + Duration::from_millis(70));
+        let (place, lift) = (out.iter().position(|c| *c == Command::PlaceRest), out.iter().position(|c| matches!(c, Command::Lift { .. })));
+        assert!(place.is_some_and(|place| lift.is_some_and(|lift| place < lift)), "{out:?}");
+    }
+
     /// Kai's width presets on window 2, a third, a half, two thirds and the display wide, pressed 80
     /// to 150ms apart through the cycle and back and forth, each window repainting 40 to 140ms after
     /// it is watched where it ends: every time its tile sets off for an end, as the motion starts or
