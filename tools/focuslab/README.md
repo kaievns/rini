@@ -167,7 +167,7 @@ The lab is a few Ghostty windows full of a ruler, recorded while posting the res
 | `lab.sh <workspace> [letter...]` | switches to the workspace and opens a Ghostty window `lab-<letter>` running `pattern.py` per letter, A to D by default, then prints the lab windows' ids and frames |
 | `screenrec.sh [--out DIR] <name> <code:mods:gap_ms>...` | one recording, `<name>.mov`, `.mov.json` and `.journal.jsonl` in `DIR` (`/tmp/rini-focuslab/screenrec` by default), building `screenrec` and `inputwatch` into `~/Library/Caches/rini-focuslab/` as the battery does |
 | `sheet.sh <run.mov> <press> [dur_ms] [x,y,w,h] [cols] [width]` | one press's frames from 20ms before it, beside the movie, and a contact sheet of them; the crop is in points |
-| `screenrec.py` | what `lab.sh` and `sheet.sh` read, tested by `test_screenrec.py` |
+| `screenrec.py` | what `lab.sh` and `sheet.sh` read, and `screenrec.py blank <run.mov>`: each frame's time and its flat dark blocks of 32pt below the bar, the ground a resize shows, read against the count of a frame with nothing moving; tested by `test_screenrec.py` |
 
 A press is `<key code>:<mods>:<gap after it, ms>`, mods any of `a` (Option), `s`, `c`, `m`, or `-`.
 Kai's fold left is `43:a`, full width `3:a`, focus up and down the stack `34:a` and `40:a`.

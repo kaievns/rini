@@ -1,5 +1,6 @@
-"""The lab's reading: screenrec.py's workspace and window lookups, and where a press's frames sit in a
-screenrec movie. Run `python3 -m unittest discover -s tools/focuslab`.
+"""The lab's reading: screenrec.py's workspace and window lookups, where a press's frames sit in a
+screenrec movie, and how many of a frame's blocks are flat and dark. Run
+`python3 -m unittest discover -s tools/focuslab`.
 """
 import unittest
 
@@ -39,6 +40,33 @@ class Cut(unittest.TestCase):
 
     def test_a_crop_in_points_is_read_at_the_movies_scale(self):
         self.assertEqual(screenrec.cut(RUN, 1, 700, "3,35,860,537", 288)[2], "crop=1720:1074:6:70,scale=288:-1")
+
+
+def frame(width, height, at=lambda x, y: 200):
+    return bytes(at(x, y) for y in range(height) for x in range(width))
+
+
+class Blank(unittest.TestCase):
+    def test_a_flat_dark_block_counts(self):
+        dark = frame(16, 32, lambda x, y: 20 if x < 8 and 16 <= y < 24 else 200)
+        self.assertEqual(screenrec.blank_blocks(dark, 16, 32), 1)
+
+    def test_a_flat_block_as_bright_as_the_dark_limit_does_not(self):
+        self.assertEqual(screenrec.blank_blocks(frame(16, 32, lambda x, y: 59), 16, 32), 4)
+        self.assertEqual(screenrec.blank_blocks(frame(16, 32, lambda x, y: 60), 16, 32), 0)
+
+    def test_a_dark_block_with_texture_does_not(self):
+        textured = frame(8, 24, lambda x, y: 10 + 6 * ((x + y) % 2))
+        self.assertEqual(screenrec.blank_blocks(textured, 8, 24), 0)
+        faint = frame(8, 24, lambda x, y: 10 + 4 * ((x + y) % 2))
+        self.assertEqual(screenrec.blank_blocks(faint, 8, 24), 1)
+
+    def test_the_bar_rows_are_skipped(self):
+        self.assertEqual(screenrec.blank_blocks(frame(8, 16, lambda x, y: 0), 8, 16), 0)
+        self.assertEqual(screenrec.blank_blocks(frame(8, 24, lambda x, y: 0), 8, 24), 1)
+
+    def test_a_part_block_at_the_edges_is_left_out(self):
+        self.assertEqual(screenrec.blank_blocks(frame(15, 31, lambda x, y: 0), 15, 31), 1)
 
 
 if __name__ == "__main__":
