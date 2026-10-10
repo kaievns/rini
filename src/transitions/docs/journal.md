@@ -161,8 +161,8 @@ takes the press"). It is not the key-down: the tap and the reactor's queue come 
 
 The pictures service stamps each delivery with when it sent it (`Delivered.sent`): for a round of
 SkyLight captures, once its calls and band prints are done, as the cache and the schedule are handed
-them; for the one ScreenCaptureKit capture of a clipped focus end, once that capture is back on the
-service's thread. Each picture keeps when its capture started (`Picture::taken`), stamped before the
+them; for a ScreenCaptureKit capture, a clipped focus end's or a cut grow's repaint, once that capture
+is back on the service's thread. Each picture keeps when its capture started (`Picture::taken`), stamped before the
 call that took it. On the probe's clock a `delivery`'s `t - sent_before_us` is the round's end and a
 `delivered`'s `t - taken_before_us` its capture's start, so a delivery splits into two gaps:
 
@@ -268,7 +268,7 @@ It is off unless asked for, and `journal false` turns it off with the writing.
   with it: its `hide`'s `waited_us` says how much. A press that lands while the pictures thread takes the overlay's picture or the screen waits
   for that one call, a SkyLight call of the overlay or of the display, before its frame
   zero is taken. The screen capture is made while the transition settles, the one capture besides a
-  clipped focus end's that the hold lets through. The two pictures,
+  clipped focus end's and a cut grow's repaint that the hold lets through. The two pictures,
   a display's worth each, are drawn and compared on `handover`, off the pictures thread, and dropped
   once compared.
 

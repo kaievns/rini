@@ -56,7 +56,7 @@ use crate::transitions::domain::admission::*;
 use crate::transitions::domain::drawn::{Drawn, Owed};
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::flight_score::FlightScore;
-use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures};
+use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, compared, measures};
 use crate::transitions::domain::lifecycle::{
     self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
     extend_latest, losing_focus,
@@ -845,7 +845,8 @@ pub struct FlightEngine {
     frame_clock: Option<RepeatingTimer>,
     /// The quiet after the lift of a generation.
     quiet: Option<(Generation, RepeatingTimer)>,
-    /// The end windows the last watch named, ending wholly on screen: what a measured lift compares.
+    /// The end windows the last watch named: what a measured lift compares, of those ending wholly on
+    /// screen (`journal::compared`).
     ends: Vec<(WindowId, ScreenRect)>,
     /// The lift held for the overlay's own picture, while the handover is measured.
     held: Option<HeldLift>,
@@ -2229,11 +2230,12 @@ impl FlightEngine {
     /// What measuring `generation`'s lift compares: the overlay against the screen over the end windows
     /// the last watch named. `None` unless the lift is measured (`journal::measures`).
     fn handover_check(&mut self, generation: Generation) -> Option<HandoverCheck> {
-        let windows = std::mem::take(&mut self.ends);
+        let ends = std::mem::take(&mut self.ends);
+        let (display, scale) = self.display?;
+        let windows = compared(ends, display);
         if !measures(self.journal.is_some_and(|journal| journal.measure_handover), &windows) {
             return None;
         }
-        let (display, scale) = self.display?;
         let band = |window| self.running.as_ref().map_or(0.0, |running| running.band(window, scale));
         let windows = windows.into_iter().map(|(window, end)| (window, end, band(window))).collect();
         Some(HandoverCheck {

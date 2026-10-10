@@ -241,9 +241,11 @@ destination for a window already moving.
   overlay going up or from the latest press growing it before the motion starts, and 600ms in all
   from the overlay going up, and that window MUST fly its repainted picture from the motion's first
   frame, so its growth shows its content and never a fill cut to content mid-flight. A grow ending
-  part off the display MUST NOT be held for: SkyLight returns only a window's visible part, so no
-  watch sees it repaint there, and it flies its picture from the press, its ground in the growth, to
-  the lift. A window growing on one axis as it shrinks on the other, as a fold or an unfold, has no
+  part off the display MUST be held for the same way: SkyLight returns only a window's visible part,
+  so its repaint there MUST be watched through ScreenCaptureKit, which returns the window whole, and
+  counted on two of its captures in a row. A grow ending wholly off the display, or showing no more
+  of itself there than a parked window's sliver, MUST NOT be held for: no watch sees it repaint. A
+  window growing on one axis as it shrinks on the other, as a fold or an unfold, has no
   picture covering every frame: its repainted picture, short of the start on the shrinking axis,
   shows the window's ground there, which the moving edge swallows, and the cut onto it from the
   picture at the press comes as that repaint lands, on the overlay still standing, never mid-flight.
@@ -270,8 +272,8 @@ destination for a window already moving.
   a window again, least of all back where an earlier held pass sent it. A held pass whose window misses the 300ms, or the 600ms of a burst, merges with the
   picture its tile has, the window's ground in the growth, and the repainted picture replaces that
   one when it comes.
-- Each window a resize grows to end wholly on the display MUST be pictured at its new size once it
-  has repainted there. One whose
+- Each window a resize grows to end on the display, wholly or cut by its edge, MUST be pictured at
+  its new size once it has repainted there. One whose
   repaint missed the hold flies its picture from the press, with the window's ground in its growth,
   and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
   edges as the old one, with the window's ground wherever it does not cover the frame still to come.
@@ -605,8 +607,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
 - Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the
-  press to the quiet after the lift, but for the screen a measured lift's handover check takes once
-  its overlay is down (`journal { measure-handover; }`, below). With four of its captures out, the
+  press to the quiet after the lift, but for a grow's repaint where it ends cut by the display's
+  edge (Resizing) and the screen a measured lift's handover check takes once its overlay is down (`journal { measure-handover; }`, below). With four of its captures out, the
   capture the overlay waits for at the press took three times as long.
 - A flight that moves focus nowhere MUST NOT recapture through ScreenCaptureKit, and MUST NOT watch for
   a change of focus: no report comes to arm the watch, and one left waiting holds the windows behind

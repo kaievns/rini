@@ -69,7 +69,8 @@ per-window knowledge, the cache policy; and on the platform side the SkyLight an
 backends, first-sight measurement, and the service thread. Rules the schedule keeps, each a test:
 frame zero first; a focus capture never queued behind a background or warm ask; a landing read from
 the window server's own frame; windows that overlap a translucent one never share a composite;
-ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end and,
+ScreenCaptureKit only while no transition holds it off, except one capture of a clipped focus end, the
+captures of a grow's repaint where it ends cut by the display's edge, and,
 while the handover is measured, the screen a lift's check takes as the transition settles; a refresh
 only while none does, through SkyLight where its window is wholly on the display.
 
@@ -121,7 +122,7 @@ service remembers it for a second.
 | Decision | Why | Alternative |
 |---|---|---|
 | Make-key stays after the raise's Accessibility calls (the prototype's `mkfirst` is not carried) | it measured no gain, and making the window key before the cancellation checks breaks `specs/focus.md` | carry it behind the raise mutex |
-| A focus target clipped by the display edge takes one ScreenCaptureKit capture through the hold; the window losing focus, ending clipped, takes none, turns at rest after the lift and is pictured again at the quiet, one with a material keeping its blurred picture until a flight next pictures it on screen (Known debt in `src/pictures/docs/README.md`) | keeps `specs/animation.md`'s rule that the window gaining focus is recaptured wherever it ends, with one ScreenCaptureKit capture a flight: four out made frame zero three times as slow | let a clipped end change at rest; or a second capture through the hold for the window losing focus |
+| A focus target clipped by the display edge takes one ScreenCaptureKit capture through the hold; the window losing focus, ending clipped, takes none, turns at rest after the lift and is pictured again at the quiet, one with a material keeping its blurred picture until a flight next pictures it on screen (Known debt in `src/pictures/docs/README.md`) | keeps `specs/animation.md`'s rule that the window gaining focus is recaptured wherever it ends, with one ScreenCaptureKit capture a flight for a focus change: four out made frame zero three times as slow | let a clipped end change at rest; or a second capture through the hold for the window losing focus |
 | Baked pictures and the stand-in are clipped by the overlay to the corner radius the window server reports | a crop of a desktop composite fills the rounded corners with wallpaper, and the stand-in, one flat pixel, has no corners of its own | capture the corners' alpha separately; draw the stand-in's corners into its image |
 | The bar's menu-extras thread stays in `bar` for now | it has its own pacing and pauses for flights already | move it behind the pictures thread |
 | A transition's hold has three states: up at its begin, before anything is composed, settling at the lift, released at the quiet after it | the bar is pictured 250ms after the lift, as it always was, while the warms the flight held wait for the quiet, which keeps a burst of presses off a busy compositor | release at the lift, and picture the bar 250ms after the quiet instead |

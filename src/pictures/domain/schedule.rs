@@ -17,11 +17,16 @@ use crate::pictures::domain::coverage::{Coverage, needs_capture, picture_is_stal
 use crate::pictures::domain::handover::{AFTER_LIFT, HandoverCheck};
 use crate::pictures::domain::refresh::Refreshes;
 use crate::pictures::domain::target::PictureTarget;
-use crate::pictures::domain::watch::{Hint, OnScreen, Outcome, Seen, Set, Tag, Watch, WatchId, Watches};
+use crate::pictures::domain::watch::{
+    CapturedElsewhere, Hint, OnScreen, Outcome, Seen, Set, Tag, Watch, WatchId, Watches,
+};
 
 /// How urgently windows are wanted, most urgent first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
+    /// A window a flight holds for, repainting where it ends cut by the display's edge, which
+    /// SkyLight cannot picture whole: the motion waits for it.
+    Repaint,
     /// A focus target ending clipped by the display's edge, which SkyLight cannot picture whole.
     Focus,
     /// Every window on the display, after a display change or on the debug command; and a window
@@ -34,9 +39,9 @@ pub enum Priority {
 }
 
 impl Priority {
-    /// A focus capture starts through a hold, and at once: the transition holding the service is the
-    /// one waiting for it.
-    fn wanted_now(self) -> bool { matches!(self, Self::Focus) }
+    /// A repaint or a focus capture starts through a hold, and at once: the transition holding the
+    /// service is the one waiting for it.
+    fn wanted_now(self) -> bool { matches!(self, Self::Repaint | Self::Focus) }
 }
 
 /// Windows wanted, at one priority.
@@ -49,10 +54,10 @@ pub struct Ask {
 /// What a transition is doing to the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hold {
-    /// A transition runs: of ScreenCaptureKit's work only a focus capture starts, every refresh is
-    /// cancelled, and the bar is not pictured, since a picture of it is read off the framebuffer the
-    /// overlay covers. A handover check under way is dropped, with the overlay's picture it holds: the
-    /// screen it would take may show the overlay again.
+    /// A transition runs: of ScreenCaptureKit's work only a repaint or a focus capture starts, every
+    /// refresh is cancelled, and the bar is not pictured, since a picture of it is read off the
+    /// framebuffer the overlay covers. A handover check under way is dropped, with the overlay's
+    /// picture it holds: the screen it would take may show the overlay again.
     Transition,
     /// The overlay has lifted and the transition is settling: the bar is pictured again, and the rest
     /// still waits.
@@ -179,6 +184,17 @@ struct Job<P> {
     forgotten: bool,
     /// Clients owed the picture as a focus change, with the server frame they asked at.
     deliver: Vec<(Tag, ScreenRect)>,
+    /// A repaint watch judges what comes back (`Schedule::captured_elsewhere`).
+    settles: bool,
+}
+
+/// Who a capture that came back is owed to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Owed {
+    /// Clients owed it as a focus change, with the server frame each asked at.
+    pub focus: Vec<(Tag, ScreenRect)>,
+    /// A repaint watch judges it (`Schedule::captured_elsewhere`).
+    pub settles: bool,
 }
 
 impl<P> Job<P> {
@@ -255,6 +271,7 @@ impl<P, O, C> Schedule<P, O, C> {
                     stage: Stage::Waiting,
                     forgotten: false,
                     deliver: Vec::new(),
+                    settles: false,
                 }),
             }
         }
@@ -328,15 +345,60 @@ impl<P, O, C> Schedule<P, O, C> {
     pub fn hint(&mut self, hint: Hint, now: Instant) { self.watches.hint(hint, now) }
 
     /// What the window server and the captures said of the windows `Next::Sky` named. A window a
-    /// changing watch found cut by the display's edge is owed one ScreenCaptureKit capture, which
-    /// starts through any hold.
+    /// changing or a repainting watch found cut by the display's edge is owed a ScreenCaptureKit
+    /// capture, which starts through any hold.
     pub fn seen(&mut self, now: Instant, seen: &[Seen]) -> Outcome {
         let display = self.display.map(|display| display.frame);
         let mut outcome = self.watches.seen(now, seen, display);
         for (tag, target, frame) in std::mem::take(&mut outcome.clipped) {
             self.ask_clipped(tag, target, frame, now);
         }
+        self.ask_elsewhere(&mut outcome, now);
         outcome
+    }
+
+    /// What came of the ScreenCaptureKit capture of `window` a repaint watch was owed (`Owed::settles`),
+    /// as the watch judges it (`Watches::captured_elsewhere`): one more is owed until it settles.
+    pub fn captured_elsewhere(
+        &mut self,
+        window: WindowId,
+        capture: CapturedElsewhere,
+        now: Instant,
+    ) -> Outcome {
+        let mut outcome = self.watches.captured_elsewhere(window, capture);
+        self.ask_elsewhere(&mut outcome, now);
+        outcome
+    }
+
+    /// One capture of each window `outcome` owes a repaint watch, at `Priority::Repaint`. A listing or
+    /// a capture of the window already out began before it was there, so it is followed by one of its
+    /// own.
+    fn ask_elsewhere(&mut self, outcome: &mut Outcome, now: Instant) {
+        for target in std::mem::take(&mut outcome.elsewhere) {
+            self.asked += 1;
+            let waiting = self
+                .jobs
+                .iter_mut()
+                .find(|job| job.target.window == target.window && matches!(job.stage, Stage::Waiting));
+            match waiting {
+                Some(job) => {
+                    job.target = target;
+                    job.priority = job.priority.min(Priority::Repaint);
+                    job.forgotten = false;
+                    job.settles = true;
+                }
+                None => self.jobs.push(Job {
+                    target,
+                    priority: Priority::Repaint,
+                    order: self.asked,
+                    asked_at: now,
+                    stage: Stage::Waiting,
+                    forgotten: false,
+                    deliver: Vec::new(),
+                    settles: true,
+                }),
+            }
+        }
     }
 
     /// What the window server and the captures said of the windows `Next::Refresh` named, with the
@@ -379,6 +441,7 @@ impl<P, O, C> Schedule<P, O, C> {
                 stage: Stage::Waiting,
                 forgotten: false,
                 deliver: vec![(tag, frame)],
+                settles: false,
             }),
         }
     }
@@ -438,12 +501,12 @@ impl<P, O, C> Schedule<P, O, C> {
         }
     }
 
-    /// A capture of `window` came back. `None` when what it brought may not be kept; else the clients
-    /// owed it as a focus change, with the server frame each asked at.
-    pub fn captured(&mut self, window: WindowId) -> Option<Vec<(Tag, ScreenRect)>> {
+    /// A capture of `window` came back. `None` when what it brought may not be kept; else who it is
+    /// owed to.
+    pub fn captured(&mut self, window: WindowId) -> Option<Owed> {
         let at = self.position(window, |stage| matches!(stage, Stage::Capturing))?;
         let job = self.jobs.remove(at);
-        (!job.forgotten).then_some(job.deliver)
+        (!job.forgotten).then_some(Owed { focus: job.deliver, settles: job.settles })
     }
 
     /// A render of `display`'s desktop came back, taken at `taken`, or not at all. Whether it may be
@@ -678,7 +741,7 @@ mod tests {
     /// The full table, hold by priority: what starts.
     #[test]
     fn what_starts_under_each_hold() {
-        const PRIORITIES: [Priority; 3] = [Priority::Focus, Priority::Background, Priority::Warm];
+        const PRIORITIES: [Priority; 4] = [Priority::Repaint, Priority::Focus, Priority::Background, Priority::Warm];
         let mut started = 0usize;
         for hold in [Hold::Released, Hold::Transition, Hold::Settling] {
             for priority in PRIORITIES {
@@ -687,13 +750,13 @@ mod tests {
                 schedule.hold(hold, now);
                 schedule.ask(ask(priority, &[1]), settled_by(now));
                 let starts = !captures(&mut schedule, now).is_empty();
-                let expected = hold == Hold::Released || priority == Priority::Focus;
+                let expected = hold == Hold::Released || matches!(priority, Priority::Repaint | Priority::Focus);
                 assert_eq!(starts, expected, "{hold:?}/{priority:?}");
                 started += starts as usize;
             }
         }
-        // Released 3, each hold 1.
-        assert_eq!(started, 5);
+        // Released 4, each hold 2.
+        assert_eq!(started, 8);
     }
 
     /// A pass's warm usually reaches the service before the hold of the flight that pass started, so
@@ -1201,7 +1264,47 @@ mod tests {
         );
         assert!(outcome.clipped.is_empty(), "taken over by the schedule");
         assert_eq!(captures(&mut schedule, now), vec![wid(1)], "through the hold");
-        assert_eq!(schedule.captured(wid(1)), Some(vec![(tag(), clipped)]));
+        assert_eq!(schedule.captured(wid(1)).map(|owed| owed.focus), Some(vec![(tag(), clipped)]));
+    }
+
+    /// A repainting window ending cut by the display's edge is captured through ScreenCaptureKit,
+    /// through the transition's hold, one capture after another as its watch judges each, until two in
+    /// a row match and it is delivered as landed.
+    #[test]
+    fn a_repainting_end_cut_by_the_displays_edge_is_captured_through_the_hold_until_it_settles() {
+        use crate::pictures::domain::watch::{Capture, Seen, Settle, Why};
+        let now = Instant::now();
+        let mut schedule = Schedule::<(), (), ()>::default();
+        schedule.set_display(built_in(), false, now);
+        let _ = schedule.next(now, nothing_held);
+        let _ = schedule.desktop_rendered(built_in(), Some(now));
+        schedule.hold(Hold::Transition, now);
+        let cut = rect(-285.0, 32.0, 1148.0, 1081.0);
+        let landing = Watch::Landing {
+            tag: tag(),
+            windows: vec![(target(1, 1148.0), cut)],
+            behind: Vec::new(),
+            slack: 20.0,
+            settle: Settle::Repainted,
+            until: now + Duration::from_millis(300),
+        };
+        schedule.watch(WatchId(1), landing, now);
+        assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
+        let outcome = schedule.seen(now, &[Seen { window: wid(1), frame: Some(cut), capture: Capture::Missed }]);
+        assert!(outcome.elsewhere.is_empty(), "taken over by the schedule");
+        let rounds = [
+            (CapturedElsewhere::Missed, false),
+            (CapturedElsewhere::Taken(vec![4]), false),
+            (CapturedElsewhere::Taken(vec![4]), true),
+        ];
+        for (capture, settled) in rounds {
+            assert_eq!(captures(&mut schedule, now), vec![wid(1)], "through the hold");
+            assert_eq!(schedule.captured(wid(1)), Some(Owed { focus: Vec::new(), settles: true }));
+            let outcome = schedule.captured_elsewhere(wid(1), capture, now);
+            let delivered: Vec<_> = outcome.deliveries.iter().map(|d| (d.why, d.windows.clone())).collect();
+            assert_eq!(delivered, if settled { vec![(Why::Landed, vec![(wid(1), cut)])] } else { Vec::new() });
+        }
+        assert!(captures(&mut schedule, now).is_empty(), "settled");
     }
 
     /// A capture of the window already out began before its focus: the clipped end's capture follows
@@ -1213,9 +1316,9 @@ mod tests {
         schedule.ask(ask(Priority::Focus, &[1]), now);
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
         schedule.ask_clipped(tag(), target(1, 859.0), end(), now);
-        assert_eq!(schedule.captured(wid(1)), Some(Vec::new()), "the one out owes no one");
+        assert_eq!(schedule.captured(wid(1)).map(|owed| owed.focus), Some(Vec::new()), "the one out owes no one");
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
-        assert_eq!(schedule.captured(wid(1)), Some(vec![(tag(), end())]));
+        assert_eq!(schedule.captured(wid(1)).map(|owed| owed.focus), Some(vec![(tag(), end())]));
         schedule.ask_clipped(tag(), target(1, 859.0), end(), now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
         schedule.forget(wid(1));

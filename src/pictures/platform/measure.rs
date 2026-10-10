@@ -1,6 +1,7 @@
 //! Pictures read on the service's thread: a picture's band print and its body samples, which say
 //! whether it shows anything new (`crate::pictures::domain::print`) and what its ground is
-//! (`crate::pictures::domain::ground`), and what a window's first picture says of it
+//! (`crate::pictures::domain::ground`), its thumbprint, which says whether its window's rendering
+//! has settled (`crate::pictures::domain::settle`), and what a window's first picture says of it
 //! (`crate::pictures::domain::knowledge`), each drawing only as much of the picture as it needs;
 //! and the overlay and the screen drawn whole for a handover check
 //! (`crate::pictures::domain::handover`).
@@ -21,7 +22,7 @@ use crate::pictures::domain::knowledge::{
 use crate::pictures::domain::print::{
     BAND_PRINT, BAND_PT, BODY_ACROSS, BODY_DOWN, BODY_GRID, body_points,
 };
-use crate::pictures::platform::bitmap::rgba_bitmap_context;
+use crate::pictures::platform::bitmap::{THUMBPRINT_SIDE, rgba_bitmap_context, thumbprint};
 use crate::pictures::platform::picture::{Picture, Pixels, image_size};
 
 /// The band print of a picture: its top `BAND_PT` at the picture's own scale, drawn down to
@@ -73,6 +74,54 @@ pub fn body_samples(image: &Pixels) -> Option<Vec<[u8; 4]>> {
                     .collect(),
             )
         }
+    }
+}
+
+/// A picture's thumbprint: a bitmap's drawn small (`thumbprint`), a surface's read off its pixels
+/// (`surface_thumbprint`). The two are never judged against each other: a window's repaint settles on
+/// captures of one route.
+pub fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> {
+    match &picture.image {
+        Pixels::Surface(surface) => surface_thumbprint(surface),
+        image => thumbprint(&*image.bitmap()?),
+    }
+}
+
+/// A surface's thumbprint, BGRA read as RGBA: each cell of a `THUMBPRINT_SIDE` square the mean of
+/// `THUMBPRINT_POINTS` squared points across it.
+fn surface_thumbprint(surface: &IOSurfaceRef) -> Option<Vec<u8>> {
+    const THUMBPRINT_POINTS: usize = 4;
+    let (width, height, stride) = (surface.width(), surface.height(), surface.bytes_per_row());
+    if width == 0 || height == 0 || stride < width * 4 {
+        return None;
+    }
+    let (side, points) = (THUMBPRINT_SIDE, THUMBPRINT_POINTS);
+    // The middle of the `at`th of `side * points` equal steps across `length` pixels.
+    let step = |at: usize, length: usize| (at * 2 + 1) * length / (side * points * 2);
+    // SAFETY: locked for reading, and every read below is inside `stride * height`.
+    unsafe {
+        if surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) != 0 {
+            return None;
+        }
+        let base = surface.base_address().as_ptr() as *const u8;
+        let mut print = Vec::with_capacity(side * side * 4);
+        for row in 0..side {
+            for column in 0..side {
+                let mut sum = [0usize; 4];
+                for down in 0..points {
+                    let y = step(row * points + down, height);
+                    for across in 0..points {
+                        let pixel = base.add(y * stride + step(column * points + across, width) * 4);
+                        for (channel, at) in [2, 1, 0, 3].into_iter().enumerate() {
+                            sum[channel] += *pixel.add(at) as usize;
+                        }
+                    }
+                }
+                print.extend(sum.map(|total| (total / (points * points)) as u8));
+            }
+        }
+        surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+        Some(print)
     }
 }
 
@@ -392,6 +441,18 @@ mod tests {
         assert_eq!(&drawn.bytes[drawn.stride..drawn.stride + 4], &[0, 0, 255, 255]);
         let read = drawn.at(ScreenPoint::new(10.0, 20.0), 2.0);
         assert_eq!((read.origin, read.scale, read.bytes.len()), (ScreenPoint::new(10.0, 20.0), 2.0, drawn.stride * 2));
+    }
+
+    /// A surface is thumbprinted off its pixels, read as RGBA, into one small square whatever its
+    /// size: the same content prints the same, other content otherwise.
+    #[test]
+    fn a_surface_is_thumbprinted_into_one_small_square_whatever_its_size() {
+        let print = |width, height, rgba| surface_thumbprint(&test_surface(width, height, rgba)).expect("printed");
+        let small = print(60, 40, [10, 20, 30, 255]);
+        assert_eq!(small.len(), THUMBPRINT_SIDE * THUMBPRINT_SIDE * 4);
+        assert_eq!(small[..4], [10, 20, 30, 255], "RGBA");
+        assert_eq!(small, print(1148, 1079, [10, 20, 30, 255]));
+        assert_ne!(small, print(60, 40, [200, 20, 30, 255]));
     }
 
     fn test_surface(width: i64, height: i64, bgra_of_rgba: [u8; 4]) -> CFRetained<IOSurfaceRef> {

@@ -1,6 +1,8 @@
 //! Captures of windows on screen, through SkyLight: what a transition asks for at frame zero and just
 //! before its lift, and the watches that capture a window as it lands where it ends, as its look
-//! changes after a focus report, and as the windows behind the strip repaint.
+//! changes after a focus report, and as the windows behind the strip repaint. A window those watches
+//! wait for that ends cut by the display's edge, which SkyLight cannot picture whole, is handed to
+//! ScreenCaptureKit (`Outcome::clipped`, `Outcome::elsewhere`).
 //!
 //! Pure. Frames and prints come in with `now`; the windows to look at, and what to deliver to whom, go
 //! out. `crate::pictures::domain::schedule` orders this work against ScreenCaptureKit's, and
@@ -38,6 +40,10 @@ pub const CHANGE_TRIES: u32 = 6;
 /// `src/transitions/docs/coordination.md`.
 const REPAINT_EVERY: Duration = Duration::from_millis(8);
 const REPAINT_TRIES: usize = 125;
+/// How many times at most a window that has to repaint, where it ends but cut by the display's edge,
+/// is captured through ScreenCaptureKit, one capture after another: about a second at 38-56ms a
+/// capture, its listings besides.
+const ELSEWHERE_TRIES: usize = 20;
 /// The least time between two refreshes of the windows behind the strip.
 pub const LIVE_EVERY: Duration = Duration::from_millis(16);
 /// A refresh behind the strip waits for a change watch's target capture due this soon.
@@ -109,14 +115,16 @@ pub enum Settle {
     AsSoonAsThere,
     /// The first capture whose rendering has settled, by `repaint_settled`: for a window a transition
     /// resizes or opens, or draws with no picture of its own, not painted at its new size yet. Captured
-    /// every `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there.
+    /// every `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there; one there but cut by the
+    /// display's edge, which SkyLight cannot picture whole, through ScreenCaptureKit instead,
+    /// `ELSEWHERE_TRIES` times at most (`Outcome::elsewhere`).
     Repainted,
 }
 
 #[derive(Clone, Debug)]
 pub enum Watch {
     /// Each window captured once the window server has it within `slack` of where it ends and wholly on
-    /// the display; one not there by `until` is reported lost.
+    /// the display, or, repainting, cut by its edge; one not there by `until` is reported lost.
     Landing {
         tag: Tag,
         windows: Vec<(PictureTarget, ScreenRect)>,
@@ -273,6 +281,20 @@ pub struct Outcome {
     /// A changing window cut by the display's edge, which SkyLight cannot picture whole: one capture of
     /// it is owed through ScreenCaptureKit, delivered as its focus change.
     pub clipped: Vec<(Tag, PictureTarget, ScreenRect)>,
+    /// A repainting window where it ends but cut by the display's edge: one capture of it is owed
+    /// through ScreenCaptureKit, what came of it told back (`Watches::captured_elsewhere`).
+    pub elsewhere: Vec<PictureTarget>,
+}
+
+/// What came of the ScreenCaptureKit capture a repainting window was owed (`Outcome::elsewhere`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum CapturedElsewhere {
+    /// No picture, or none with a thumbprint.
+    Missed,
+    /// A picture the cache refused for the one it holds.
+    Refused,
+    /// A picture the cache took, with its thumbprint.
+    Taken(Vec<u8>),
 }
 
 impl Outcome {
@@ -342,6 +364,13 @@ enum Arrival {
         left: usize,
         last: Option<Vec<u8>>,
         next: Instant,
+    },
+    /// There at `frame` but cut by the display's edge, and captured through ScreenCaptureKit, one
+    /// capture owed or out at a time, until its rendering settles.
+    Elsewhere {
+        left: usize,
+        last: Option<Vec<u8>>,
+        frame: ScreenRect,
     },
     Arrived,
     Lost,
@@ -463,9 +492,10 @@ impl Watches {
     }
 
     /// Replaces what `id` watches, keeping what it already knows: a window that landed where it still
-    /// ends stays landed, a focus report already seen stays seen, a change watch at the same size
-    /// keeps its baseline, its tries and whether it is done, the window losing focus given up on
-    /// reported lost again under the new tag, and the background keeps its pace. A window watched to
+    /// ends stays landed, one settling there through ScreenCaptureKit goes on settling, a focus report
+    /// already seen stays seen, a change watch at the same size keeps its baseline, its tries and
+    /// whether it is done, the window losing focus given up on reported lost again under the new tag,
+    /// and the background keeps its pace. A window watched to
     /// land somewhere new starts its print afresh: what the client was delivered of it was taken for
     /// the end before, which the client no longer draws.
     pub fn retarget(&mut self, id: WatchId, watch: Watch, now: Instant) {
@@ -475,17 +505,17 @@ impl Watches {
         let fresh = self.start(watch, now);
         let old = std::mem::replace(&mut self.watches[at].1, fresh);
         match (&mut self.watches[at].1, old) {
-            (Watching::Landing(new), Watching::Landing(old)) => {
+            (Watching::Landing(new), Watching::Landing(mut old)) => {
                 for lands in &mut new.windows {
                     let Some(kept) =
-                        old.windows.iter().find(|o| o.target.window == lands.target.window)
+                        old.windows.iter_mut().find(|o| o.target.window == lands.target.window)
                     else {
                         continue;
                     };
                     if kept.end != lands.end {
                         self.prints.remove(&(new.tag.client, lands.target.window));
-                    } else if kept.state == Arrival::Arrived {
-                        lands.state = Arrival::Arrived;
+                    } else if matches!(kept.state, Arrival::Arrived | Arrival::Elsewhere { .. }) {
+                        lands.state = std::mem::replace(&mut kept.state, Arrival::Pending);
                     }
                 }
             }
@@ -636,7 +666,7 @@ impl Watches {
                         let wanted = match &lands.state {
                             Arrival::Pending => landing.poll <= now,
                             Arrival::Settling { next, .. } => *next <= now,
-                            Arrival::Arrived | Arrival::Lost => false,
+                            Arrival::Elsewhere { .. } | Arrival::Arrived | Arrival::Lost => false,
                         };
                         if wanted {
                             let accept = Accept::Near {
@@ -708,7 +738,7 @@ impl Watches {
                                 take(landing.until);
                             }
                             Arrival::Settling { next, .. } => take(*next),
-                            Arrival::Arrived | Arrival::Lost => {}
+                            Arrival::Elsewhere { .. } | Arrival::Arrived | Arrival::Lost => {}
                         }
                     }
                 }
@@ -779,8 +809,20 @@ impl Watches {
                     if let Some(lands) =
                         landing.windows.iter_mut().find(|l| l.target.window == window)
                     {
-                        let there = looked_at(window, Accept::Near { end: lands.end, slack });
-                        land(lands, settle, tag, there, now, &mut self.prints, &mut out);
+                        let cut = of(window).and_then(|seen| seen.frame).zip(display).filter(|(frame, display)| {
+                            near(*frame, lands.end, slack) && clipped(*frame, *display)
+                        });
+                        match cut {
+                            Some((frame, _)) if settle == Settle::Repainted => {
+                                let left = ELSEWHERE_TRIES;
+                                lands.state = Arrival::Elsewhere { left, last: None, frame };
+                                out.elsewhere.push(lands.target);
+                            }
+                            _ => {
+                                let there = looked_at(window, Accept::Near { end: lands.end, slack });
+                                land(lands, settle, tag, there, now, &mut self.prints, &mut out);
+                            }
+                        }
                     }
                     if landing.windows.iter().any(|l| l.state == Arrival::Pending) {
                         landing.poll = now + LANDING_POLL;
@@ -867,6 +909,48 @@ impl Watches {
                 }
                 let missed = change.ends().any(|end| !end.done && end.missed);
                 change.poll = missed.then_some(now + LANDING_POLL);
+            }
+        }
+        out
+    }
+
+    /// What came of the ScreenCaptureKit capture `window` was owed, settling where it ends cut by the
+    /// display's edge: delivered as landed, at the frame it was found there, once its thumbprint
+    /// matches the capture's before it; lost when the cache refuses it or its tries run out; else
+    /// owed another. Its band print is not taken from a surface, so the client's print of it is
+    /// dropped as it is delivered.
+    pub fn captured_elsewhere(&mut self, window: WindowId, capture: CapturedElsewhere) -> Outcome {
+        let mut out = Outcome::default();
+        for (_, watching) in &mut self.watches {
+            let Watching::Landing(landing) = watching else { continue };
+            let tag = landing.tag;
+            let Some(lands) = landing.windows.iter_mut().find(|l| l.target.window == window) else {
+                continue;
+            };
+            let Arrival::Elsewhere { left, last, frame } = &mut lands.state else { continue };
+            let frame = *frame;
+            match &capture {
+                CapturedElsewhere::Taken(thumb) if repaint_settled(last.as_deref(), thumb) => {
+                    lands.state = Arrival::Arrived;
+                    self.prints.remove(&(tag.client, window));
+                    out.deliver(tag, Why::Landed, window, frame);
+                }
+                CapturedElsewhere::Refused => {
+                    lands.state = Arrival::Lost;
+                    out.lost.push((tag, window));
+                }
+                _ if *left <= 1 => {
+                    lands.state = Arrival::Lost;
+                    out.lost.push((tag, window));
+                }
+                capture => {
+                    *left -= 1;
+                    *last = match capture {
+                        CapturedElsewhere::Taken(thumb) => Some(thumb.clone()),
+                        _ => None,
+                    };
+                    out.elsewhere.push(lands.target);
+                }
             }
         }
         out
@@ -1006,7 +1090,7 @@ fn land(
         Capture::Missed | Capture::Refused => None,
     });
     let (left, last) = match std::mem::replace(&mut lands.state, Arrival::Arrived) {
-        done @ (Arrival::Arrived | Arrival::Lost) => {
+        done @ (Arrival::Elsewhere { .. } | Arrival::Arrived | Arrival::Lost) => {
             lands.state = done;
             return;
         }
@@ -1617,6 +1701,88 @@ mod tests {
         assert_eq!(outcome.lost, vec![(tag(1), wid(2))], "settling, refused");
         assert!(watches.next(start + ms(50)).is_none(), "looked at no more");
         assert!(watches.expire(start + ms(150)).is_empty(), "each lost once");
+    }
+
+    /// Where a window ends cut by the left edge, as fold1's g18 unfold ends it.
+    const CUT: ScreenRect = rect(-285.0, 32.0, 1148.0, 1081.0);
+
+    /// A repainting window there, watched from `start`, handed to ScreenCaptureKit by the round that
+    /// finds it there.
+    fn handed_elsewhere(start: Instant) -> Watches {
+        let mut watches = Watches::default();
+        watches.watch(WatchId(1), landing(&[(1, CUT)], Settle::Repainted, start + ms(300)), start);
+        let (sets, outcome) = round(&mut watches, start, |_| Some(CUT), |_| Some(1)).unwrap();
+        assert!(sets[0].looks[0].thumbprint);
+        assert!(outcome.deliveries.is_empty(), "SkyLight cannot picture it whole");
+        assert_eq!(outcome.elsewhere, vec![target(1)]);
+        watches
+    }
+
+    /// A repainting window where it ends but cut by the display's edge is captured through
+    /// ScreenCaptureKit, one capture after another, no longer looked at through SkyLight, and
+    /// delivered as landed, at the frame it was found at, once two captures in a row match. A window
+    /// only landing there is never handed over: it is lost at its deadline.
+    #[test]
+    fn a_repainting_landing_cut_by_the_displays_edge_settles_on_captures_elsewhere() {
+        let start = Instant::now();
+        let mut watches = handed_elsewhere(start);
+        assert!(watches.next(start + ms(50)).is_none() && watches.wake(start).is_none(), "nothing to poll");
+        assert!(watches.expire(start + ms(300)).is_empty(), "there, so past its deadline");
+        let outcome = watches.captured_elsewhere(wid(1), CapturedElsewhere::Taken(vec![1]));
+        assert!(outcome.deliveries.is_empty());
+        assert_eq!(outcome.elsewhere, vec![target(1)], "another, to judge it by");
+        let outcome = watches.captured_elsewhere(wid(1), CapturedElsewhere::Taken(vec![1]));
+        assert_eq!(outcome.deliveries, vec![Delivery { tag: tag(1), why: Why::Landed, windows: vec![(wid(1), CUT)] }]);
+        assert!(outcome.elsewhere.is_empty());
+        assert_eq!(watches.captured_elsewhere(wid(1), CapturedElsewhere::Taken(vec![1])), Outcome::default(), "done");
+
+        let mut watches = Watches::default();
+        watches.watch(WatchId(1), landing(&[(1, CUT)], Settle::AsSoonAsThere, start + ms(150)), start);
+        let (_, outcome) = round(&mut watches, start, |_| Some(CUT), |_| Some(1)).unwrap();
+        assert!(outcome.elsewhere.is_empty());
+        assert_eq!(watches.expire(start + ms(150)), vec![(tag(1), wid(1))]);
+    }
+
+    /// One captured elsewhere is lost at once when the cache refuses a capture, and once
+    /// `ELSEWHERE_TRIES` captures never settle, an empty capture spending a try too.
+    #[test]
+    fn a_repainting_landing_captured_elsewhere_is_lost_when_refused_or_out_of_tries() {
+        let start = Instant::now();
+        let mut watches = handed_elsewhere(start);
+        let outcome = watches.captured_elsewhere(wid(1), CapturedElsewhere::Refused);
+        assert_eq!((outcome.lost, outcome.elsewhere), (vec![(tag(1), wid(1))], Vec::new()));
+
+        let mut watches = handed_elsewhere(start);
+        let mut lost = Vec::new();
+        for try_ in 0..ELSEWHERE_TRIES {
+            let capture = if try_ == 0 { CapturedElsewhere::Missed } else { CapturedElsewhere::Taken(vec![(try_ as u8).wrapping_mul(50)]) };
+            let outcome = watches.captured_elsewhere(wid(1), capture);
+            assert!(outcome.deliveries.is_empty());
+            assert_eq!(outcome.elsewhere.is_empty(), try_ == ELSEWHERE_TRIES - 1, "try {try_}");
+            lost.extend(outcome.lost);
+        }
+        assert_eq!(lost, vec![(tag(1), wid(1))]);
+    }
+
+    /// A retarget to the same end carries a window settling elsewhere on, its capture out delivered
+    /// under the new tag; one to a new end starts it afresh, and what comes back meanwhile is
+    /// nobody's.
+    #[test]
+    fn a_retarget_carries_a_window_settling_elsewhere_on_while_it_ends_there() {
+        let start = Instant::now();
+        let mut watches = handed_elsewhere(start);
+        watches.captured_elsewhere(wid(1), CapturedElsewhere::Taken(vec![1]));
+        let retagged = |end| landing_of(tag(2), vec![WindowServerId::new(9)], &[(1, end)], Settle::Repainted, start + ms(300));
+        watches.retarget(WatchId(1), retagged(CUT), start + ms(40));
+        assert!(watches.next(start + ms(40)).is_none(), "not polled again");
+        let outcome = watches.captured_elsewhere(wid(1), CapturedElsewhere::Taken(vec![1]));
+        assert_eq!(outcome.deliveries, vec![Delivery { tag: tag(2), why: Why::Landed, windows: vec![(wid(1), CUT)] }]);
+
+        let mut watches = handed_elsewhere(start);
+        let wider = rect(-285.0, 32.0, 1400.0, 1081.0);
+        watches.retarget(WatchId(1), retagged(wider), start + ms(40));
+        assert_eq!(watches.captured_elsewhere(wid(1), CapturedElsewhere::Taken(vec![1])), Outcome::default());
+        assert!(watches.next(start + ms(40)).is_some(), "looked for where it ends now");
     }
 
     /// The focus target is captured only once its focus is reported; from then every 15ms, six times

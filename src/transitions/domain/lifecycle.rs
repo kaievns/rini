@@ -224,12 +224,12 @@ impl StageSummary {
             .collect()
     }
 
-    /// Of `awaiting`, the windows that end wholly on screen, floating or not: what a watch can see
-    /// repaint.
+    /// Of `awaiting`, the windows that end on screen, wholly or cut by its edge, floating or not: what
+    /// a watch can see repaint.
     fn awaited_ends(&self, awaiting: &[WindowId]) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| awaiting.contains(&t.window) && wholly_inside(t.end, self.display))
+            .filter(|t| awaiting.contains(&t.window) && shows_on(t.end, self.display))
             .map(|t| (t.window, t.end))
             .collect()
     }
@@ -403,10 +403,10 @@ struct HeldMerge {
     since: Instant,
     /// The generation the grows were watched under, since their real frames were written.
     generation: Generation,
-    /// Every window they grow, where the latest of them sends it, while that is on the display:
-    /// watched there until it repaints. Only that repaint, under `generation` or later, lets the hold
-    /// go for it: a picture of it anywhere else, or under an older generation, goes on only as a
-    /// landing `Flight::takes` allows.
+    /// Every window they grow, where the latest of them sends it, while that is on the display, wholly
+    /// or cut by its edge: watched there until it repaints. Only that repaint, under `generation` or
+    /// later, lets the hold go for it: a picture of it anywhere else, or under an older generation,
+    /// goes on only as a landing `Flight::takes` allows.
     ends: Vec<(WindowId, ScreenRect)>,
     /// The repainted pictures delivered there under `generation` or later, held for the latest
     /// pass's merge: under their generation, at their frame, and why.
@@ -1132,10 +1132,10 @@ fn hold_no_longer(f: &mut Flight, window: WindowId, now: Instant, out: &mut Vec<
 }
 
 /// A pass reaching the flight while its motion runs, its real windows written at once: held, up to
-/// `HOLD_CAP` from now, until each window it grows that ends wholly on the display has repainted
-/// where it ends, watched there; merged at once when it grows none. A pass held after another
-/// replaces what the hold waits for, its own grows from its own arrival, but no longer than
-/// `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched where the
+/// `HOLD_CAP` from now, until each window it grows that ends on the display, wholly or cut by its
+/// edge, has repainted where it ends, watched there; merged at once when it grows none. A pass held
+/// after another replaces what the hold waits for, its own grows from its own arrival, but no longer
+/// than `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched where the
 /// latest sends it.
 fn hold_merge(
     f: &mut Flight,
@@ -1145,7 +1145,7 @@ fn hold_merge(
     out: &mut Vec<Command>,
 ) {
     let display = f.stage.display;
-    let seen: Vec<_> = grows.into_iter().filter(|(_, end)| wholly_inside(*end, display)).collect();
+    let seen: Vec<_> = grows.into_iter().filter(|(_, end)| shows_on(*end, display)).collect();
     if seen.is_empty() {
         if let Some(held) = f.held_merge.as_mut() {
             held.passes += 1;
@@ -1164,7 +1164,7 @@ fn hold_merge(
             *end = *written;
         }
     }
-    held.ends.retain(|(_, end)| wholly_inside(*end, display));
+    held.ends.retain(|(_, end)| shows_on(*end, display));
     extend_latest(&mut held.ends, seen.iter().copied());
     f.held = seen.into_iter().map(|(window, _)| window).collect();
     f.phase = Phase::MergeHeld { deadline: (now + HOLD_CAP).min(held.first + BURST_HOLD_CAP) };
@@ -1259,12 +1259,17 @@ fn final_at(started: Instant, duration: Duration) -> Instant {
     (started + duration).checked_sub(FINAL_BEFORE_END).unwrap_or(started).max(started + FINAL_NOT_BEFORE)
 }
 
-/// Over every end window watched: those that land, and those that repaint, floating or not, since a
-/// window the overlay covers wholly may stop painting.
+/// Over every end window watched that ends wholly on the display: those that land, and those that
+/// repaint, floating or not, since a window the overlay covers wholly may stop painting.
 fn holes(f: &Flight) -> Vec<(WindowId, OverlayRect)> {
     let (awaited, landing) = f.end_windows();
     let display = f.stage.display;
-    awaited.into_iter().chain(landing).map(|(window, frame)| (window, to_overlay_space(frame, display))).collect()
+    awaited
+        .into_iter()
+        .chain(landing)
+        .filter(|(_, frame)| wholly_inside(*frame, display))
+        .map(|(window, frame)| (window, to_overlay_space(frame, display)))
+        .collect()
 }
 
 /// Each tile of `after` with the generation since which it has ended where it ends: what `since` says
@@ -1324,9 +1329,19 @@ pub(in crate::transitions) fn frame_zero_pictures(start: ScreenRect, floating: b
     !floating && wholly_inside(start, display)
 }
 
+/// A frame no wider or taller than this is a sliver, not a window: what a parked column peeks in by
+/// (`PARK_CLAMP_PX`, "Parking" in `src/layout/docs/strip.md`).
+const SLIVER: f64 = 100.0;
+
 /// Wholly on `display`, and big enough to be a window rather than a sliver.
 fn wholly_inside(frame: ScreenRect, display: ScreenRect) -> bool {
-    frame.size.width > 100.0 && frame.size.height > 100.0 && wholly_on(frame, display)
+    frame.size.width > SLIVER && frame.size.height > SLIVER && wholly_on(frame, display)
+}
+
+/// More than a sliver of `frame` on `display`, wholly or cut by its edge: where a watch sees a window
+/// repaint, through SkyLight, or, cut, through ScreenCaptureKit.
+fn shows_on(frame: ScreenRect, display: ScreenRect) -> bool {
+    frame.intersection(&display).is_some_and(|seen| seen.size.width > SLIVER && seen.size.height > SLIVER)
 }
 
 #[cfg(test)]
@@ -2391,24 +2406,48 @@ mod tests {
         assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "and once in, pictured");
     }
 
-    /// A grow ending part off the display, its column running past the right edge: no watch sees it
-    /// repaint there, so it is neither held for nor watched, and the last capture before the lift
-    /// leaves it out.
+    /// fold1's g18 (`docs/data/2026-10-10-fold`): window 2 unfolds from 3,35 1148x538 to end part off
+    /// the left edge, at -285,35 1148x1079. Watched there, through ScreenCaptureKit, it holds the
+    /// motion until its repaint lands, which is swapped onto frame zero; no hole is left over it,
+    /// SkyLight's last capture leaves it out, and a grow ending wholly off the display, or showing a
+    /// parked column's sliver, is still not held for.
     #[test]
-    fn a_grow_ending_part_off_the_display_is_not_held_for() {
+    fn a_grow_ending_part_off_the_display_is_held_for_its_repaint_and_flies_it_from_frame_zero() {
         let now = Instant::now();
-        let (mut stage, _) = grow();
-        let past = r(866.0, 35.0, 1723.0, 1079.0);
-        stage.tiles[1].end = past;
-        stage.final_frames[1].1 = past;
+        let unfold = |end: ScreenRect| {
+            let (mut stage, _) = grow();
+            stage.tiles[1].start = r(3.0, 35.0, 1148.0, 538.0);
+            stage.tiles[1].end = end;
+            stage.final_frames[1].1 = end;
+            stage
+        };
+        let tick = Event::Tick { settled: false, landed: false };
+        let cut = r(-285.0, 35.0, 1148.0, 1079.0);
+        let stage = unfold(cut);
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
-        assert!(watch(&out).unwrap().awaiting.is_empty(), "{out:?}");
-        let tick = Event::Tick { settled: false, landed: false };
-        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "not held");
-        let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
-        assert_eq!(asked_final(c.on(tick, last)), Some(vec![stage.final_frames[0]]), "the lift shows it");
+        assert_eq!(watch(&out).unwrap().awaiting, vec![(w(2), cut)], "watched where it ends");
+        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
+        assert!(!holes.unwrap().iter().any(|(window, _)| *window == w(2)), "its hole would be off the display");
+        assert!(c.on(tick.clone(), now + COALESCE_WINDOW).is_empty(), "held");
+
+        let g = c.generation();
+        let repainted = now + Duration::from_millis(200);
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: cut, why: Why::Landed }, repainted);
+        let at = |command: Command| out.iter().position(|c| *c == command);
+        let swapped = at(Command::Swap { generation: g, window: w(2) }).expect("swapped in");
+        assert!(at(Command::StartMoving).is_some_and(|moved| swapped < moved), "onto frame zero: {out:?}");
+        let last = repainted + PLAYS - FINAL_BEFORE_END;
+        assert_eq!(asked_final(c.on(tick.clone(), last)), Some(vec![stage.final_frames[0]]), "SkyLight sees it only whole");
+
+        for (what, end) in [("wholly off", r(1800.0, 35.0, 1148.0, 1079.0)), ("a sliver", r(1680.0, 35.0, 1148.0, 1079.0))] {
+            let mut c = Coordinator::default();
+            c.on(Event::Begin(unfold(end)), now);
+            let out = c.on(Event::FrameZero(c.generation()), now);
+            assert!(watch(&out).unwrap().awaiting.is_empty(), "{what}: {out:?}");
+            assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "{what}: not held");
+        }
     }
 
     /// A pass growing window 2 and shrinking window 1: the shrink is never held for itself, so its
@@ -2778,6 +2817,26 @@ mod tests {
             let mut c = running(flying.clone(), now);
             assert_eq!(c.on(event, arrives), vec![Command::Retarget { held: Duration::ZERO }], "{what}");
         }
+    }
+
+    /// A pass growing a window mid-motion to end part off the display holds its merge like any grow,
+    /// watched there to repaint, with no hole left over it.
+    #[test]
+    fn a_grow_merged_mid_motion_ending_part_off_the_display_waits_for_its_repaint() {
+        let now = Instant::now();
+        let (flying, _, _) = grown_mid_flight();
+        let cut = r(-285.0, 35.0, 1148.0, 1079.0);
+        let mut c = running(flying, now);
+        let g = c.generation();
+        let arrives = now + Duration::from_millis(100);
+        let out = c.on(hold(&[(w(2), cut)]), arrives);
+        assert_eq!(retargets(&out), None, "held");
+        assert!(watch(&out).expect("watched").awaiting.contains(&(w(2), cut)));
+        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
+        assert!(!holes.expect("holes").iter().any(|(window, _)| *window == w(2)));
+        let landed = Event::Picture { generation: g, window: w(2), frame: cut, why: Why::Landed };
+        let repainted = arrives + Duration::from_millis(150);
+        assert_eq!(c.on(landed, repainted), vec![Command::Retarget { held: Duration::from_millis(150) }]);
     }
 
     /// A pass held after another replaces what the hold waits for, its own grows from its own

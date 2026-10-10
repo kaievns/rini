@@ -133,8 +133,8 @@ state is watched. A layout pass then waits for the reactor's follow-up passes (2
 window, or draws one with no picture of its own, a reserved entrance or a stand-in, waits instead for
 that window to repaint (up to `HOLD_CAP` from the show or from the latest pass merged before the
 motion holding for one, `BURST_HOLD_CAP` in all, and no longer for one whose picture the pictures service
-reports will not come, `Lost`, or one ending where no watch can see it repaint, part off the display
-or sent there by a merged pass); a window it only shrinks is never held for itself and moves when
+reports will not come, `Lost`, or one ending where no watch can see it repaint, wholly off the
+display or showing no more than a parked window's sliver, or sent there by a merged pass); a window it only shrinks is never held for itself and moves when
 the flight does, keeping the picture its tile starts with to the lift when that covers its start
 ("A grow waits for its repaint"); a strip movement moves at once. A pass that grows a window once the motion
 runs, judged against the picture that window's tile carries, is held until that window repaints
@@ -365,7 +365,7 @@ A move of a window no held pass grows stays a navigation, however small its cach
 strip pan of one a held pass grows past that picture is held so too
 (`a_strip_pan_of_a_window_a_held_pass_grows_waits_for_its_repaint`). The coordinator writes those
 frames at once, so the app repaints, watches each
-grow ending wholly on the display to repaint there, the watches retargeted under the same
+grow ending on the display, wholly or cut by its edge, to repaint there, the watches retargeted under the same
 generation (`HeldMerge`), and holds (`Phase::MergeHeld`): the flight plays on, its tiles going on to
 the ends they had and resting there, with no last capture, no place, no lift and no landing read. A
 repaint delivered there, under the hold's generation or later, is held for the merge (`Coordinator::holds`);
@@ -482,7 +482,7 @@ target is drawn focused. One ending clipped by the display's edge keeps its fram
 lift, only its hairline and shadow turning, and its look turns at rest, pictured again at the quiet,
 unless it has a material: then it keeps its blurred picture until a flight next pictures it on screen
 ("Known debt" in `src/pictures/docs/README.md`). SkyLight returns only its visible part, and the one
-ScreenCaptureKit capture a flight lets through is the target's ("Decisions taken while Kai was away" in
+ScreenCaptureKit capture a focus change lets through is the target's ("Decisions taken while Kai was away" in
 `docs/pictures-motion-transitions.md`). A capture the cache refuses ends that end of the watch,
 delivering nothing: the cache refuses a picture without the blur in place of one with it at the same
 size, and so every later capture there. The target is pictured again by the final capture too, if its
@@ -494,7 +494,7 @@ layout pass opened, resized or flies as a stand-in hands over once it has repain
 second end, with its repainted picture, or, only shrunk, its hairline and shadow alone; a stand-in on a strip movement is pictured as it lands and hands over on its focus change
 or the final capture, as any target does. A
 target clipped by the display edge where it ends takes one ScreenCaptureKit capture through the hold, the
-only one a transition lets through: SkyLight returns only its visible sliver ("A clipped destination
+only one a focus change lets through: SkyLight returns only its visible sliver ("A clipped destination
 needs ScreenCaptureKit, not SkyLight" in `src/pictures/docs/capture-research.md`). A flight that moves
 focus nowhere watches no change.
 
@@ -551,8 +551,9 @@ pictures service holds background capture off (`crate::pictures::domain::schedul
 The coordinator holds it at the begin, before anything is composed (`Hold::Transition`), lets the
 bar be pictured again at the lift (`Hold::Settling`), and releases it at
 the quiet (`Hold::Released`), or at once for a transition it abandons. While it holds, only the
-transition's SkyLight work runs, the frame-zero and final asks and the watches, and one
-ScreenCaptureKit capture of a clipped focus end; and, with the handover measured, the lift's check:
+transition's SkyLight work runs, the frame-zero and final asks and the watches, and the
+ScreenCaptureKit captures of what the flight waits for cut by the display's edge, one of a clipped
+focus end and those of a grow's repaint ("A grow waits for its repaint"); and, with the handover measured, the lift's check:
 the overlay alone through SkyLight, then the screen through `CGWindowList`, which goes through
 ScreenCaptureKit's queue, while the transition settles (`journal.md`, "The handover, measured"). A pass's ask for the windows it has no picture of
 is a warm, for the next flight. The
@@ -907,8 +908,8 @@ only moving it leaves it as it was, unless a held pass grows it and it ends past
 
 Until its repainted picture lands, a tile flies the picture it has, crop-drawn on the leg's anchors,
 all of it 1:1, with the window's own ground where it does not cover the frame ("Resizes through the
-overlay" in `src/animation/docs/animation-smoothness.md`): a grow only once its hold ran out, or
-ending part off the display, where it is never held, its growth the ground; a kept shrink to the
+overlay" in `src/animation/docs/animation-smoothness.md`): a grow only once its hold ran out, its
+growth the ground; a kept shrink to the
 lift, its picture, frame zero's or the cache's fitting its start, covering every frame. A repainted
 picture landing in motion is a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its content stands
 against the edges that move less, and where it does not cover the frame still to come, as a
@@ -942,9 +943,18 @@ a thumbprint samples any size down to 32x32, so a surface at a new size differs 
 however little of it is painted, and an unfolded Ghostty flew its old rows at the top of a blank
 surface the whole flight (2026-10-09). A window repainting without pause at its new size, streaming
 output, never settles: held to the cap if it grows, it flies its picture from before with the ground
-until the lift. *Whether a
-half-painted surface can hold still for 8ms and pass, and what the watch's captures cost the motion
-they now run beside, are not measured yet.*
+until the lift. A window ending cut by the display's edge, which SkyLight returns only the visible
+part of, is captured once there through ScreenCaptureKit instead (`Arrival::Elsewhere`), which
+returns its surface whole: one capture after another, each listed afresh, through the hold at
+`Priority::Repaint`, judged by the same rule on 32x32 thumbprints read off the surface, 20 times at
+most (`ELSEWHERE_TRIES`). On fold1's unfold (`docs/data/2026-10-10-fold`, g18) lab-A, ending at about
+-285, was never watched and flew its growth as the ground for the 359ms from the motion's start to the
+lift, up to 422 blocks. No hole is cut over it (`holes`): a hole sits 1pt in from a window's left edge,
+off the display for one cut by that edge. *Whether a
+half-painted surface can hold still for 8ms and pass, what the watch's captures cost the motion
+they now run beside, how long the ScreenCaptureKit captures of a cut end keep the hold (38-56ms a
+capture, `src/pictures/docs/capture-research.md`, so two inferred to fit `HOLD_CAP`), and whether a
+window the overlay covers with no hole over it keeps painting, are not measured yet.*
 
 Every fill made of the picture's own pixels for what the app has not rendered yet was tried and
 rejected by eye: `contentsRect` past the picture's edge extends its outermost pixels (a hole to the
