@@ -2150,12 +2150,12 @@ mod title_bar_zoom {
         }
     }
 
-    // From the default 0.7, the next preset `ctrl-R` reaches is 1.0.
+    // From the default 0.7, the next preset `ctrl-R` reaches is 1.0: a width, not the mode.
     #[test]
-    fn ctrl_f_or_ctrl_r_after_a_double_click_keeps_the_full_width_it_gave() {
-        for command in [
-            LayoutCommand::ToggleFullscreenWithinGaps,
-            LayoutCommand::CyclePresetColumnWidth,
+    fn ctrl_f_or_ctrl_r_after_a_double_click_keeps_the_width_it_gave() {
+        for (command, maximised) in [
+            (LayoutCommand::ToggleFullscreenWithinGaps, true),
+            (LayoutCommand::CyclePresetColumnWidth, false),
         ] {
             let mut strip = Strip::new();
             strip.double_click_title_bar();
@@ -2164,14 +2164,18 @@ mod title_bar_zoom {
             strip.reactor.handle_test_layout_command(command.clone());
             assert_eq!(strip.reactor.drag_manager.title_bar_click, None, "{command:?}");
             strip.settle(strip.window);
-            assert_eq!(strip.full_width(), Some(true), "{command:?}");
+            assert_eq!(strip.full_width(), Some(maximised), "{command:?}");
+            let tiling = strip.tiling();
+            let full = strip.laid_out(strip.window);
+            assert_eq!((full.origin.x, full.size.width), (tiling.origin.x, tiling.size.width));
 
             // The app snapping its height to a grid after rini's write.
-            let full = strip.laid_out(strip.window);
             let snapped =
                 CGRect::new(full.origin, CGSize::new(full.size.width, full.size.height - 4.));
             strip.app_reports(strip.window, snapped, MouseState::Up);
-            assert_eq!(strip.full_width(), Some(true), "{command:?}");
+            assert_eq!(strip.full_width(), Some(maximised), "{command:?}");
+            let after = strip.laid_out(strip.window);
+            assert_eq!((after.origin.x, after.size.width), (tiling.origin.x, tiling.size.width));
         }
     }
 

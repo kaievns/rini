@@ -2111,9 +2111,11 @@ impl ScrollingLayoutSystem {
     /// snaps to a known set — so every column ends up at one of a few predictable
     /// sizes instead of drifting.
     ///
-    /// Full width is one of those widths rather than a mode outside the cycle: a maximised column
-    /// takes its turn like the rest, and a step off it is what UNMAXIMISES the window. The rule is
-    /// [`next_preset`]; what a width means for a maximised column is `LayoutState::set_column_ratio`.
+    /// Only ever a width: the 100% step makes the whole column, stack and all, the viewport wide and
+    /// held only to it, as a drag across the viewport does, and enters no full-width mode. A
+    /// maximised column takes its turn from 1.0, and the step is what ends the mode, in place. The
+    /// rule is [`next_preset`]; what a width does to a maximised column is
+    /// `LayoutState::set_column_ratio`.
     pub fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let presets = self.settings.preset_column_widths.clone();
         let reveals_only = self.settings.reveals_only();
@@ -2129,7 +2131,7 @@ impl ScrollingLayoutSystem {
         };
 
         match next_preset(state.ratio_of(selected, col_idx), &presets) {
-            Some(PresetWidth::Full) => state.enter_full_width(selected),
+            Some(PresetWidth::Full) => state.set_column_ratio(selected, col_idx, 1.0, true),
             Some(PresetWidth::Ratio(ratio)) => state.set_column_ratio(selected, col_idx, ratio, false),
             None => return Vec::new(),
         }
@@ -3444,7 +3446,7 @@ mod tests {
     }
 
     /// The bounds the shipped config uses: a maximum well below 1.0, so that `ctrl-+` cannot crawl
-    /// to the full viewport and full width stays `ctrl-F`'s to give.
+    /// to the full viewport, which only the cycle's 1.0 and `ctrl-F` give.
     fn preset_settings() -> ScrollingLayoutSettings {
         let mut settings = niri_settings(0.5);
         settings.min_column_width_ratio = 0.33333;
@@ -3487,11 +3489,11 @@ mod tests {
         );
     }
 
-    /// Full width is reachable from the cycle even though it is above `max_column_width_ratio`,
-    /// because it is the maximise MODE rather than a ratio. Asking for it as a ratio would be
-    /// clamped to two thirds and the widest preset would be unreachable.
+    /// The full viewport is reachable from the cycle even though it is above
+    /// `max_column_width_ratio`, because the cycle gives it held only to the viewport. Asking for it
+    /// as a bounded ratio would be clamped to two thirds and the widest preset would be unreachable.
     #[test]
-    fn the_cycle_reaches_full_width_past_the_configured_maximum() {
+    fn the_cycle_reaches_the_full_viewport_past_the_configured_maximum() {
         let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
         let screen = screen(1200.0, 800.0);
         let gaps = Gaps::default();
@@ -3499,9 +3501,9 @@ mod tests {
 
         assert!(system.select_window(layout, w1));
         system.cycle_preset_column_width(layout); // 0.5 -> 0.66667
-        system.cycle_preset_column_width(layout); // 0.66667 -> full
+        system.cycle_preset_column_width(layout); // 0.66667 -> 1.0
 
-        assert!(system.is_window_full_width(layout, w1));
+        assert!(!system.is_window_full_width(layout, w1), "a width, not the mode");
         let width = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
         assert!(
             (width / tiling_width - 1.0).abs() < 0.02,
@@ -4047,11 +4049,10 @@ mod tests {
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
     }
 
-    /// Reaching full width through the width cycle has to pull the window out of its stack, exactly
-    /// as `ctrl-F` does. It fills the tiling area either way, so leaving it in the column would cover
-    /// the siblings the tree still says are abreast of it.
+    /// Kai, 2026-10-10: `Mod+R` changes the width only. The whole column goes the viewport wide with
+    /// its stack, and nothing is recorded to return to.
     #[test]
-    fn cycling_to_full_width_pulls_a_stacked_window_out_too() {
+    fn cycling_to_the_full_viewport_keeps_a_stacked_window_in_its_stack() {
         let mut settings = ScrollingLayoutSettings::default();
         settings.preset_column_widths = vec![1.0];
         let (mut system, layout, w) = stacked_three(settings);
@@ -4059,8 +4060,8 @@ mod tests {
         assert!(system.select_window(layout, w[1]));
         system.cycle_preset_column_width(layout);
 
-        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
-        assert!(system.is_window_full_width(layout, w[1]));
+        assert_eq!(shape(&system, layout), vec![w.to_vec()]);
+        assert!(!system.is_window_full_width(layout, w[1]));
     }
 
     /// Restoring a remembered full width at startup goes through the same transition, so a window
@@ -4753,13 +4754,15 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0, "past max");
     }
 
-    /// The preset is a width given by a key, so the bounds hold it again.
+    /// A preset below 1.0 is a width given by a key, so the bounds hold it again. 1.0 is held only
+    /// to the viewport.
     #[test]
     fn ctrl_r_on_it_takes_the_first_preset_above() {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
         system.cycle_preset_column_width(layout);
-        assert!(system.is_window_full_width(layout, w[1]), "past two thirds");
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1722.0, "past two thirds");
+        assert!(!system.is_window_full_width(layout, w[1]), "past two thirds");
 
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(782.0, 700.0));
@@ -4767,6 +4770,108 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 860.0, "a half");
         system.on_window_resized(layout, w[1], None, xw(39.0, 1443.0), 0.0, KAI_SCREEN, &kai_s_gaps());
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0, "bounded again");
+    }
+
+    /// One column of `rows` windows on Kai's display, under the shipped bounds.
+    fn kai_s_column_of(rows: usize) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let w: Vec<WindowId> = (1..=rows as u32).map(|idx| wid(1, idx)).collect();
+        for &id in &w {
+            system.add_window_after_selection(layout, id);
+        }
+        for &id in &w[1..] {
+            assert!(system.select_window(layout, id));
+            system.toggle_fold_of_selection(layout, Direction::Left);
+        }
+        assert_eq!(shape(&system, layout), vec![w.clone()], "fixture is one column");
+        (system, layout, w)
+    }
+
+    /// Kai, 2026-10-10: `Mod+R` from two thirds makes the whole column the tiling area wide, its
+    /// stack, heights and place kept, and is no full-width mode.
+    #[test]
+    fn the_cycle_s_full_viewport_is_a_width_that_keeps_the_column_and_its_stack() {
+        for rows in 1..=3 {
+            for row in 0..rows {
+                let (mut system, layout, w) = kai_s_column_of(rows);
+                assert!(system.select_window(layout, w[row]));
+                system.cycle_preset_column_width(layout);
+                assert_eq!(laid_out_xw(&system, layout, w[row]).1, 1148.0, "{rows}/{row}: 2/3");
+                let heights: Vec<_> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+
+                system.cycle_preset_column_width(layout);
+
+                let case = format!("{rows} rows, row {row}");
+                assert_eq!(shape(&system, layout), vec![w.clone()], "{case}");
+                for &id in &w {
+                    assert_eq!(laid_out_xw(&system, layout, id), (3.0, 1722.0), "{case}");
+                }
+                let after: Vec<_> = w.iter().map(|&id| laid_out_yh(&system, layout, id)).collect();
+                assert_eq!(after, heights, "{case}");
+                assert_eq!(scroll_offset(&system, layout), 0.0, "{case}");
+                let state = system.layout_state(layout).expect("layout");
+                assert!(state.fullscreen_within_gaps.is_empty(), "{case}");
+                assert!(state.full_width_origins.is_empty(), "{case}");
+                assert!(!system.is_window_full_width(layout, w[row]), "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_cycle_steps_from_the_full_viewport_to_the_narrowest_preset() {
+        let (mut system, layout, w) = kai_s_column_of(2);
+        assert!(system.select_window(layout, w[1]));
+        system.cycle_preset_column_width(layout);
+        system.cycle_preset_column_width(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1722.0);
+
+        system.cycle_preset_column_width(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 572.0);
+        assert_eq!(laid_out_xw(&system, layout, w[0]).1, 572.0);
+    }
+
+    /// `ctrl-F` maximises afresh from the 100% column and gives that column back: a stacked window
+    /// rejoins its stack, the column still the viewport wide.
+    #[test]
+    fn ctrl_f_from_the_cycle_s_full_viewport_restores_to_it() {
+        for rows in [1, 3] {
+            let (mut system, layout, w) = kai_s_column_of(rows);
+            let row = rows / 2;
+            assert!(system.select_window(layout, w[row]));
+            system.cycle_preset_column_width(layout);
+            system.cycle_preset_column_width(layout);
+            let before: Vec<_> = w.iter().map(|&id| laid_out_xw(&system, layout, id)).collect();
+
+            toggle_selection(&mut system, layout);
+            assert!(system.is_window_full_width(layout, w[row]), "{rows} rows: maximised");
+            toggle_selection(&mut system, layout);
+
+            assert!(!system.is_window_full_width(layout, w[row]), "{rows} rows");
+            assert_eq!(shape(&system, layout), vec![w.clone()], "{rows} rows");
+            let after: Vec<_> = w.iter().map(|&id| laid_out_xw(&system, layout, id)).collect();
+            assert_eq!(after, before, "{rows} rows");
+            assert_eq!(after[row], (3.0, 1722.0), "{rows} rows");
+        }
+    }
+
+    /// With 1.0 the only preset, the step off a maximised window is the 100% width: the mode ends
+    /// where the window is, and it stays the viewport wide.
+    #[test]
+    fn the_only_preset_ends_a_maximise_in_place_at_the_full_viewport() {
+        let mut settings = preset_settings();
+        settings.preset_column_widths = vec![1.0];
+        let (mut system, layout, w) = stacked_three(settings);
+        assert!(system.select_window(layout, w[1]));
+        toggle_selection(&mut system, layout);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]]);
+
+        system.cycle_preset_column_width(layout);
+
+        assert!(!system.is_window_full_width(layout, w[1]));
+        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]], "in place");
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1722.0);
+        assert!(system.layout_state(layout).expect("layout").full_width_origins.is_empty());
     }
 
     #[test]

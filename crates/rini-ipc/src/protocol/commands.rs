@@ -45,8 +45,9 @@ pub enum LayoutCommand {
     /// ResizeWindowShrink commands step by a fixed ~5%, which leaves columns at
     /// arbitrary in-between widths; this snaps to a known set instead.
     ///
-    /// Full width is one of those widths: the cycle reaches it, and a step off it
-    /// unmaximises the window.
+    /// The whole viewport is one of those widths, a width rather than full-width mode:
+    /// the cycle reaches it with the column's stack kept, and a step off a full-width
+    /// window unmaximises it.
     CyclePresetColumnWidth,
     CenterSelection,
     NextWorkspace(Option<bool>),

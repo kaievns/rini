@@ -2,17 +2,17 @@
 //!
 //! Lifted out of `scrolling.rs` so the rule can be exercised without a layout, a column or a
 //! selection. The whole content is "given the width a column has now, which preset comes next" —
-//! and the one subtlety that full width is not a ratio like the others.
+//! and the one subtlety that the full viewport is not held by the bounds like the others.
 
 /// The width a preset step asks a column to take.
 ///
-/// Full width is a case of its own rather than `Ratio(1.0)` because an ordinary column's ratio is
-/// clamped to `max-column-width` — below 1.0 on purpose — so asking for 1.0 as a ratio yields
-/// that, not the viewport. Maximising is a mode that bypasses the clamp, which
-/// is why the caller has to be told which of the two it is applying.
+/// The full viewport is a case of its own rather than `Ratio(1.0)` because an ordinary column's
+/// ratio is clamped to `max-column-width` — below 1.0 on purpose — so asking for 1.0 as a ratio
+/// yields that, not the viewport. The caller gives it as a width held only to the viewport, which is
+/// why it has to be told which of the two it is applying. Neither is the full-width mode.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PresetWidth {
-    /// The whole viewport, gap included.
+    /// The whole viewport, gap included, past `max-column-width`.
     Full,
     /// A fraction of the viewport, still subject to the configured bounds.
     Ratio(f64),
@@ -35,8 +35,8 @@ const SAME: f64 = 0.01;
 /// The next preset wider than `current`, wrapping to the narrowest.
 ///
 /// Ascending with a wrap, which is niri's `switch-preset-column-width`: the widths grow under
-/// repeated presses and a full-width column starts over at the narrowest, because nothing is wider
-/// than the viewport to grow into.
+/// repeated presses and a column the viewport wide starts over at the narrowest, because nothing
+/// is wider than the viewport to grow into.
 ///
 /// Presets outside `(0, 1]` are ignored — a zero-width column cannot be focused out of and one
 /// wider than the viewport has a region nothing can scroll to. `None` means there is nothing to
@@ -72,8 +72,8 @@ mod tests {
         assert_eq!(next_preset(0.66667, &PRESETS), Some(PresetWidth::Full));
     }
 
-    /// The reported defect. A maximised column has nothing wider to grow into, so the cycle starts
-    /// over at the narrowest rather than standing still.
+    /// The reported defect. A column the viewport wide, at 100% or maximised, has nothing wider to
+    /// grow into, so the cycle starts over at the narrowest rather than standing still.
     #[test]
     fn a_full_width_column_wraps_to_the_narrowest() {
         assert_eq!(next_preset(1.0, &PRESETS), Some(PresetWidth::Ratio(0.33333)));

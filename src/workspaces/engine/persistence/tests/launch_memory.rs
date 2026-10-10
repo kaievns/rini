@@ -596,6 +596,109 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
     assert_eq!(loaded.launch.slots("com.mitchellh.ghostty", &topology)[0].width, dragged);
 }
 
+/// "Full width and height" in `specs/strip.md`: `Mod+R`'s 100% comes back after a restart as a width
+/// held only to the viewport, not as the full-width mode. From the default 0.7, one step is 1.0.
+#[test]
+fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
+    use crate::layout::domain::area::compute_tiling_area;
+    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::workspaces::domain::launch_memory::topology_key;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    const APP: &str = "com.mitchellh.ghostty";
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(53);
+    let before_quit = WindowId::new(902, 2);
+    let after_relaunch = WindowId::new(903, 4);
+    let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1085.0));
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, screen.size),
+    );
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+
+    let insert = |store: &mut WindowStore, window: WindowId| {
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+        store.insert_window(
+            window,
+            WindowState {
+                info: WindowInfo {
+                    is_standard: true,
+                    is_root: true,
+                    is_minimized: false,
+                    is_resizable: true,
+                    min_size: None,
+                    max_size: None,
+                    title: "~/projects/rini".into(),
+                    frame,
+                    sys_id: Some(WindowServerId::new(window.idx.get())),
+                    bundle_id: Some(APP.into()),
+                    path: None,
+                    ax_role: None,
+                    ax_subrole: None,
+                    is_modal: false,
+                },
+                frame_monotonic: frame,
+                is_manageable: true,
+                ignore_app_rule: false,
+            },
+        );
+    };
+    insert(&mut window_store, before_quit);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowAdded(space, before_quit),
+    );
+    let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
+    let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
+    engine.workspace_tree_mut(ws_id).cycle_preset_column_width(layout);
+    assert!(!engine.workspace_tree(ws_id).is_window_full_width(layout, before_quit), "setup");
+
+    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+
+    let topology = topology_key(&[DISPLAY.to_owned()]);
+    let unbounded = |width: Option<ColumnWidth>| {
+        matches!(width, Some(ColumnWidth::Unbounded(offset)) if (offset - 0.3).abs() < 1e-9)
+    };
+    let remembered = memory.launch.slots(APP, &topology)[0].width;
+    assert!(unbounded(remembered), "{remembered:?}");
+
+    let path =
+        std::env::temp_dir().join(format!("rini-full-viewport-slot-test-{}.ron", std::process::id()));
+    engine.save(&mut memory, path.clone()).unwrap();
+    let loaded = LayoutEngine::load_file(&path).unwrap().memory;
+    let _ = std::fs::remove_file(path);
+    let reloaded = loaded.launch.slots(APP, &topology)[0].width;
+    assert!(unbounded(reloaded), "{reloaded:?}");
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowRemoved(before_quit),
+    );
+    insert(&mut window_store, after_relaunch);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowAdded(space, after_relaunch),
+    );
+
+    let gaps = LayoutSettings::default().gaps.effective_for_display(None);
+    let tiling = compute_tiling_area(screen, &gaps);
+    let frames = engine.calculate_layout(space, screen, &gaps);
+    let frame = frames.iter().find(|(wid, _)| *wid == after_relaunch).expect("laid out").1;
+    assert_eq!((frame.origin.x, frame.size.width), (tiling.origin.x, tiling.size.width));
+    let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
+    let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
+    assert!(!engine.workspace_tree(ws_id).is_window_full_width(layout, after_relaunch));
+}
+
 /// The bug that came back three times. ctrl-F, quit rini, start it again: the window relaunched at the
 /// default half width, and the next autosave then overwrote `FullWidth` with nothing, so the record was
 /// gone for good and ctrl-F had to be pressed again.

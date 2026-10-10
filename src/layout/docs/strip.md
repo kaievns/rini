@@ -10,15 +10,19 @@ is borrowed.
   viewport, which made a window's size depend on how many *other* windows the
   workspace held: a full-size window moved from workspace 1 to 2 to 3 went
   half-size on 2 and full on 3 with nothing about the window changing. niri
-  does the same; full width is asked for, by `ctrl-F` or by the width cycle
-  reaching 1.0, and that mode is remembered per display.
-- **Full width is the widest preset, and a mode.** Both, and the pair is why
-  `ctrl-R` looked dead on a maximized window: the cycle wrote a `width_offset`
-  that `calculate_layout` then ignored, because a column holding a maximized
-  window is 1.0 whatever its stored width says. It cannot be a ratio like the
-  others — `max-column-width` is below 1.0, 0.9 by default, so a preset of 1.0
-  asked for as a ratio comes back clamped to it — so `preset_width::next_preset`
-  answers `Full` or `Ratio` and the caller applies the matching transition.
+  does the same; full width is asked for, by `ctrl-F`, and that mode is
+  remembered per display.
+- **The widest preset is a width, not the mode.** `ctrl-R` reaching 1.0 makes
+  the whole column, its stack kept, the viewport wide; it pulls no window out
+  and records nothing to return to, which is `ctrl-F`'s alone. Entering the mode
+  there split a stacked window out and broke the column (Kai, 2026-10-10). It
+  cannot be a bounded ratio like the others — `max-column-width` is below 1.0,
+  0.9 by default, so a preset of 1.0 asked for as one comes back clamped to it —
+  so `preset_width::next_preset` answers `Full` or `Ratio`, and `Full` is given
+  `width_unbounded`, the representation a drag across the viewport already
+  gives a stacked column. A maximized window still takes its turn: `ratio_of`
+  reads it as 1.0, where the stored `width_offset` the cycle used to read made
+  `ctrl-R` look dead on it.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
   keys both do it, and the window stays where it is rather than going back to
   the stack `ctrl-F` pulled it out of: its `full_width_origins` entry is
@@ -183,9 +187,8 @@ is borrowed.
   it, as the app's own resize while full width does by returning before any
   request. Once a pass has spent the pin, refocusing reveals as for any column:
   a restore can put the column back off screen, and the spent pin still named
-  the window, so the click that should show it did nothing. Only the toggle keeps a view for full width: `ctrl-R` reaching full
-  width, the startup restore and a drag across the viewport come back by the
-  reveal.
+  the window, so the click that should show it did nothing. Only the toggle keeps a view for full width: the startup restore and
+  a drag across the viewport come back by the reveal.
 
 ## Navigation
 
@@ -433,7 +436,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   does, and a clamp there would undo the drag. The mark is saved with the column, under the file
   key `width_dragged`, which older rinis read too, and carried with the width
   (`ColumnWidth::Unbounded`, which the file holds as an `Offset` with the mark beside it, as
-  `src/workspaces/docs/launch-memory.md` says); a key or a preset clears it.
+  `src/workspaces/docs/launch-memory.md` says); a key or a preset below 1.0 clears it, and the
+  preset 1.0 sets it.
 - **An app answering rini's write changes nothing.** The reactor drops a report within 0.1pt of
   rini's write before the layout sees it (`same_as`). A report off on one axis, a terminal snapping
   its height to its cell grid for one, still carried the other, and both were taken: the width was

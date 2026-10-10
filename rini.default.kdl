@@ -103,14 +103,14 @@ layout {
     default-column-width { proportion 0.7; }
 
     // The narrowest and widest set-column-width makes a column, with the default width between
-    // them. Full width (maximize-column, or `proportion 1.0` below) is a mode rather than a width,
-    // and a mouse drag is not a key, so these hold back neither.
+    // them. Full width (maximize-column) is a mode rather than a width, `proportion 1.0` below is
+    // the whole viewport, and a mouse drag is not a key, so these hold back none of them.
     min-column-width { proportion 0.3; }
     max-column-width { proportion 0.9; }
 
     // The widths switch-preset-column-width steps through, ascending, wrapping. niri's stop at two
-    // thirds; rini adds full width, so a maximised column can be stepped back down. 1.0 is the
-    // maximised mode.
+    // thirds; rini adds the whole viewport, so a maximised column can be stepped back down. 1.0 is
+    // a width, the column and its stack kept, never the maximised mode.
     preset-column-widths {
         proportion 0.33333
         proportion 0.5

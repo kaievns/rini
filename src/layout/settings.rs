@@ -36,9 +36,9 @@ pub struct ScrollingLayoutSettings {
     pub min_column_width_ratio: f64,
     pub max_column_width_ratio: f64,
     /// Column widths cycled by `switch-preset-column-width`, as ratios of the tiling width. niri's
-    /// presets stop at two thirds; 1.0 is here too, and means the maximise mode rather than a ratio
-    /// (`layout::domain::preset_width`), so a maximised column can be stepped back down. Ratios
-    /// outside `(0, 1]` are ignored.
+    /// presets stop at two thirds; 1.0 is here too, the whole viewport held only to it rather than to
+    /// `max_column_width_ratio` (`layout::domain::preset_width`), and never the maximise mode, so a
+    /// maximised column can be stepped back down. Ratios outside `(0, 1]` are ignored.
     pub preset_column_widths: Vec<f64>,
     pub center_focused_column: CenterFocusedColumn,
     pub gestures: ScrollingGestureSettings,

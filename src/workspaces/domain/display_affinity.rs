@@ -62,14 +62,14 @@ pub struct DisplayAffinity {
 /// widths, which is exactly when this record is consulted. A file holds it as a `StoredWidth`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColumnWidth {
-    /// Full viewport width, as `ctrl-F` and the widest preset both produce. Kept distinct
-    /// from `Offset` because it is a MODE, not a ratio: it must stay full width on a
-    /// display of any size, and it round-trips back to the preset width when toggled off.
+    /// Full viewport width, as `ctrl-F` produces. Kept distinct from `Offset` because it is a
+    /// MODE, not a ratio: it must stay full width on a display of any size, and it round-trips
+    /// back to the width it had when toggled off.
     FullWidth,
     /// A deliberate width, as an offset from the configured `column_width_ratio`.
     Offset(f64),
     /// An offset as `Offset` is, but unlike it held by no display's `min-column-width` or
-    /// `max-column-width`: the width a mouse drag gives.
+    /// `max-column-width`: the width a mouse drag gives, and the preset cycle's 100%.
     Unbounded(f64),
 }
 
