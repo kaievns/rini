@@ -74,7 +74,8 @@ pub enum Mark {
         grows: u16,
         writes: u16,
     },
-    /// The passes held since the motion ran merge, `waited_ms` after the latest of them arrived.
+    /// The passes held since the motion ran merge, `waited_ms` after the latest of them held for a
+    /// grow arrived.
     Retarget {
         waited_ms: u32,
     },

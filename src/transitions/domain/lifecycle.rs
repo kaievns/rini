@@ -310,7 +310,7 @@ pub enum Command {
     StartMoving,
     /// Merge the passes held since the motion ran (`Event::HoldMerge`), oldest first, from where each
     /// tile is drawn now, telling it `Event::Merge` for each: `held` is how long since the latest of
-    /// them arrived.
+    /// them held for a grow arrived, a pass growing nothing that merges them at once included.
     Retarget { held: Duration },
     /// One more capture of every end window, before the lift.
     AskFinal { generation: Generation, windows: Vec<(WindowId, ScreenRect)>, behind: Vec<WindowId> },
@@ -400,7 +400,7 @@ struct HeldMerge {
     passes: usize,
     /// When the first of them arrived.
     first: Instant,
-    /// When the latest of them arrived.
+    /// When the latest of them held for a grow arrived.
     since: Instant,
     /// The generation the grows were watched under, since their real frames were written.
     generation: Generation,

@@ -382,7 +382,7 @@ cannot keep the tiles resting at the ends they had for as long as they come (Kai
 measure, a strip movement included, merges at once with every pass kept. Missing the cap, the merge flies the
 picture the tile has with the ground, and the repaint, still watched, is cut in when it lands. The
 journal marks each pass held (`hold_merge`) and each merge it led to (`retarget`, `waited_ms` since
-the latest pass held). *How long a held press waits on screen is not measured yet.*
+the latest pass held for a grow, which a pass growing nothing that merges them at once reports too). *How long a held press waits on screen is not measured yet.*
 
 A tile the pass retargets keeps the picture it has and how focus is drawn on it: a pass is composed
 from the cache, and copied over it erased frame zero's picture, a picture the flight took or a parked
