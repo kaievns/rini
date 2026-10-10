@@ -99,6 +99,20 @@ pub(in crate::transitions) enum EndPicture {
 }
 
 impl EndPicture {
+    /// Every sort.
+    const ALL: [Self; 5] = [Self::Awaited, Self::Held, Self::Kept, Self::Repainting, Self::Lands];
+
+    /// Which of `Waits`' lists a window so sorted is in: `awaiting`, `repainting` and `kept`.
+    const fn lists(self) -> (bool, bool, bool) {
+        match self {
+            Self::Awaited => (true, false, false),
+            Self::Held => (true, true, false),
+            Self::Kept => (false, true, true),
+            Self::Repainting => (false, true, false),
+            Self::Lands => (false, false, false),
+        }
+    }
+
     /// A window going from `from` to `to`, drawn from a picture taken `source`: a stand-in, which is
     /// no picture of the window, is awaited; a resize growing on either axis is held for its repaint;
     /// one that only shrinks flies the picture it has at once and keeps it; a move lands.
@@ -119,7 +133,7 @@ impl EndPicture {
     /// `to` wider or taller than that picture is a grow; every other sort stands. A first pass is
     /// judged on its own sizes alone, and so is a move of a window nothing held grows, however small
     /// its cached picture. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
-    pub(in crate::transitions) fn against_tile(self, carried: ScreenSize, to: ScreenSize, held: bool) -> Self {
+    fn against_tile(self, carried: ScreenSize, to: ScreenSize, held: bool) -> Self {
         let judged = self == Self::Kept || held && self == Self::Lands;
         if judged && grows(carried, to) { Self::Held } else { self }
     }
@@ -152,7 +166,7 @@ impl Waits {
     /// The grows: held for and pictured where they end only once repainted, what a pass merged while
     /// the motion runs is held for, a merged pass's judged against its tiles (`against_tiles`).
     pub(in crate::transitions) fn grows(&self) -> impl Iterator<Item = WindowId> + '_ {
-        self.awaiting.iter().copied().filter(|window| self.repainting.contains(window))
+        self.awaiting.iter().copied().filter(|window| self.of(*window) == EndPicture::Held)
     }
 
     /// A merged pass's windows sorted again against the flight it reaches (`EndPicture::against_tile`):
@@ -178,27 +192,14 @@ impl Waits {
         }
     }
 
-    /// How `push` sorted `window`.
+    /// How `push` sorted `window`: a window in none of the lists lands.
     fn of(&self, window: WindowId) -> EndPicture {
-        let (holds, repaints, keeps) =
-            (self.awaiting.contains(&window), self.repainting.contains(&window), self.kept.contains(&window));
-        match (holds, repaints, keeps) {
-            (true, true, _) => EndPicture::Held,
-            (true, false, _) => EndPicture::Awaited,
-            (false, true, true) => EndPicture::Kept,
-            (false, true, false) => EndPicture::Repainting,
-            (false, false, _) => EndPicture::Lands,
-        }
+        let lists = (self.awaiting.contains(&window), self.repainting.contains(&window), self.kept.contains(&window));
+        EndPicture::ALL.into_iter().find(|end| end.lists() == lists).unwrap_or(EndPicture::Lands)
     }
 
     pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
-        let (holds, repaints, keeps) = match end {
-            EndPicture::Awaited => (true, false, false),
-            EndPicture::Held => (true, true, false),
-            EndPicture::Kept => (false, true, true),
-            EndPicture::Repainting => (false, true, false),
-            EndPicture::Lands => (false, false, false),
-        };
+        let (holds, repaints, keeps) = end.lists();
         for (sorted, into) in [(holds, &mut self.awaiting), (repaints, &mut self.repainting), (keeps, &mut self.kept)] {
             if sorted {
                 into.push(window);
@@ -468,8 +469,7 @@ mod tests {
     #[test]
     fn a_grow_is_held_for_a_shrink_kept_and_both_watched_until_repainted() {
         let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
-        let ends = [EndPicture::Awaited, EndPicture::Held, EndPicture::Kept, EndPicture::Repainting, EndPicture::Lands];
-        let waits: Waits = (1..).map(window).zip(ends).collect();
+        let waits: Waits = (1..).map(window).zip(EndPicture::ALL).collect();
         assert_eq!(
             waits,
             Waits {
@@ -479,6 +479,16 @@ mod tests {
             }
         );
         assert_eq!(waits.grows().collect::<Vec<_>>(), [window(2)], "the grow alone");
+    }
+
+    /// Every sort pushed reads back as itself, so each is in its own lists.
+    #[test]
+    fn each_sort_reads_back_as_it_was_pushed() {
+        let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
+        let waits: Waits = (1..).map(window).zip(EndPicture::ALL).collect();
+        for (idx, end) in (1..).zip(EndPicture::ALL) {
+            assert_eq!(waits.of(window(idx)), end);
+        }
     }
 
     /// Kai's rapid Alt-R: a press shrinking the column on its own sizes, 1148 to 860, superseding a

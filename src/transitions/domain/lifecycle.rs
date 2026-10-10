@@ -2927,7 +2927,10 @@ mod tests {
             (stage, grows)
         }
 
-        fn grows(stage: &StageSummary) -> bool { stage.awaiting.contains(&w(2)) && stage.repainting.contains(&w(2)) }
+        fn grows(stage: &StageSummary) -> bool {
+            let waits = Waits { awaiting: stage.awaiting.clone(), repainting: stage.repainting.clone(), kept: stage.kept.clone() };
+            waits.grows().any(|window| window == w(2))
+        }
 
         fn case(&self) -> String { format!("{:?} every {}ms, repainted after {}ms, at {}ms", self.widths, self.gap, self.delay, self.at) }
 
