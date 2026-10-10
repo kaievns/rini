@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -134,6 +135,13 @@ class Analyze(unittest.TestCase):
         self.assertIn("0/2 pass", text)
         self.assertIn("presses not beginning a flight: comms_pan#2 alt+j (joined), comms_pan#3 alt+l (unmatched)", text)
 
+    def test_the_crop_drawn_tiles_of_the_joined_flights_are_counted_with_their_ground_reads(self):
+        self.assertEqual(self.metrics["crops"], {"drains": 1, "tiles": 1, "ground": {
+            "n": 1, "p50": 7.91, "p90": 7.91, "p99": 7.91, "max": 7.91}})
+        self.assertEqual(self.metrics["drains_all"]["ground"]["max"], 7.91)
+        with open(os.path.join(self.run, "summary.txt")) as file:
+            self.assertIn("crop-drawn tiles 1 in 1 drains, their grounds read 7.9/7.9/7.9 n=1", file.read())
+
     def test_compare_reads_87_metrics_from_a_run(self):
         read = compare.metrics(self.run)
         self.assertEqual(len(read), 87)
@@ -208,6 +216,61 @@ class Rule(unittest.TestCase):
             shutil.rmtree(root)
 
 
+    def test_runs_flying_another_scene_are_refused_before_any_metric_is_judged(self):
+        root = tempfile.mkdtemp()
+        try:
+            runs = []
+            for n in range(2):
+                runs.append(sample_run(root, f"r{n}"))
+                with redirect_stdout(io.StringIO()):
+                    analyze.main(runs[-1])
+            slice_path = os.path.join(runs[1], "journal.slice.jsonl")
+            with open(slice_path) as file:
+                text = file.read()
+            with open(slice_path, "w") as file:
+                file.write(text.replace('"frame":[866.0,35.0,860.0,1079.0]', '"frame":[3.0,724.0,1148.0,390.0]'))
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                self.assertEqual(compare.main([runs[0], "--", runs[1]]), 3)
+            self.assertEqual(out.getvalue(), "", "no metric judged")
+            self.assertIn(f"{runs[1]} flew another scene than {runs[0]}", err.getvalue())
+            self.assertIn("delivered at [3.0, 724.0, 1148.0, 390.0], which it never was", err.getvalue())
+            self.assertIn("never delivered at [866.0, 35.0, 860.0, 1079.0]", err.getvalue())
+        finally:
+            shutil.rmtree(root)
+
+    def test_a_scene_is_its_segments_kinds_in_order_and_its_frames_delivered_within_a_point(self):
+        a = {"kinds": {"comms_pan": ["bounce", "pan"]}, "frames": [[577.0, 35.0, 1148.0, 1079.0], [866.0, 35.0, 860.0, 1079.0]]}
+        nudged = {"kinds": a["kinds"], "frames": [[577.0, 35.0, 1148.0, 1079.0], [865.0, 35.0, 860.0, 1079.0]]}
+        self.assertEqual(compare.scene_differences(a, nudged), [], "a point off is the same window")
+        panned = dict(a, kinds={"comms_pan": ["pan", "pan"]})
+        self.assertEqual(compare.scene_differences(a, panned),
+                         ["comms_pan flew ['pan', 'pan'], not ['bounce', 'pan']"], "press 0 panned")
+        self.assertEqual(compare.scene_differences(a, dict(a, kinds={})), ["comms_pan flew None, not ['bounce', 'pan']"])
+
+    def test_a_run_wearing_a_picture_over_five_seconds_old_is_flagged_and_still_judged(self):
+        root = tempfile.mkdtemp()
+        try:
+            runs = []
+            for n in range(2):
+                runs.append(sample_run(root, f"r{n}"))
+                with redirect_stdout(io.StringIO()):
+                    analyze.main(runs[-1])
+            stale = {"t": 81234566000000, "g": 1, "mark": "wears", "window": [1, 1], "at": "compose",
+                     "route": "skylight", "blur": True, "taken_before_us": 744_000_000}
+            with open(os.path.join(runs[1], "journal.slice.jsonl"), "a") as file:
+                file.write(json.dumps(stale) + "\n")
+            self.assertEqual(compare.stale_wears(runs[0]), (0, None), "the sample's oldest is 2.1s")
+            self.assertEqual(compare.stale_wears(runs[1]), (1, (744_000_000, [1, 1])))
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(compare.main([runs[0], "--", runs[1]]), 1, "judged as before")
+            self.assertIn(f"flag: {runs[1]}: 1 pictures worn over 5s old, the oldest 744.0s on [1, 1]", err.getvalue())
+            self.assertNotIn(f"flag: {runs[0]}", err.getvalue())
+        finally:
+            shutil.rmtree(root)
+
+
 WORKSPACES = [
     {"name": "main", "is_active": False, "windows": [
         {"id": {"pid": 5, "idx": 9}, "app_name": "Code", "is_focused": False}]},
@@ -219,6 +282,20 @@ WORKSPACES = [
         {"id": {"pid": 7, "idx": 73}, "app_name": "Messages", "is_focused": True},
         {"id": {"pid": 8, "idx": 67}, "app_name": None, "is_focused": False}]},
 ]
+def placed(pid, idx, app, x, y, w, h, floating=False):
+    return {"id": {"pid": pid, "idx": idx}, "app_name": app, "is_focused": False, "is_floating": floating,
+            "frame": {"origin": {"x": x, "y": y}, "size": {"width": w, "height": h}}}
+
+
+COMMS = [{"name": "comms", "is_active": True, "windows": [
+    placed(48655, 33135, "Code", 3, 35, 568, 1079),
+    placed(3086, 53, "Ghostty", 577, 35, 1148, 1079),
+    placed(3086, 16842, "Ghostty", 1731, 35, 860, 1079),
+    placed(9, 1, "Calculator", 200, 200, 230, 400, floating=True)]}]
+MIRRORED = [{"name": "comms", "is_active": True, "windows": [
+    placed(3086, 2534, "Ghostty", 3, 35, 1148, 686),
+    placed(3086, 53, "Ghostty", 3, 724, 1148, 390),
+    placed(48655, 33135, "Code", 1157, 35, 568, 1079)]}]
 CONFIG = """layout {
     gaps 8
     focus-ring {
@@ -245,6 +322,59 @@ class Setup(unittest.TestCase):
     def test_the_focused_window_is_the_active_workspaces(self):
         self.assertEqual(battery.focused(WORKSPACES), ({"pid": 2, "idx": 53}, "comms", "Ghostty"))
         self.assertIsNone(battery.focused([dict(WORKSPACES[2], is_active=True, windows=[])]))
+
+    def test_a_scene_is_the_workspaces_windows_by_app_and_frame_and_where_its_window_is(self):
+        found = battery.scene(COMMS, "comms", "Code")
+        self.assertEqual(found["focus"], [3, 35, 568, 1079])
+        self.assertEqual([(w["app"], w["frame"][0], w["floating"]) for w in found["windows"]],
+                         [("Code", 3, False), ("Ghostty", 577, False), ("Ghostty", 1731, False), ("Calculator", 200, True)])
+        self.assertEqual(battery.scene_problems(found), [])
+        self.assertIsNone(battery.scene(COMMS, "spare", "Code"))
+        self.assertEqual(battery.scene_problems(None), ["no such workspace"])
+        self.assertEqual(battery.scene_problems(battery.scene(COMMS, "comms", "Zoom")), ["no Zoom window on comms"])
+
+    def test_a_scene_whose_window_is_not_the_leftmost_column_is_refused_since_its_first_press_would_pan(self):
+        problems = battery.scene_problems(battery.scene(MIRRORED, "comms", "Code"))
+        self.assertEqual(problems, ["Code is not the leftmost column of comms (x 1157 against 3): "
+                                    "its first press would pan, not bounce"])
+
+    def test_a_scene_is_refused_unless_every_window_is_where_its_reference_had_it(self):
+        reference = battery.scene(COMMS, "comms", "Code")
+        self.assertEqual(battery.scene_problems(reference, reference), [])
+        nudged = json.loads(json.dumps(COMMS))
+        nudged[0]["windows"][1]["frame"]["origin"]["x"] = 578
+        self.assertEqual(battery.scene_problems(battery.scene(nudged, "comms", "Code"), reference), [], "a point off")
+        stacked = json.loads(json.dumps(COMMS))
+        stacked[0]["windows"][1]["frame"]["size"]["height"] = 686
+        self.assertEqual(battery.scene_problems(battery.scene(stacked, "comms", "Code"), reference),
+                         ["Ghostty at [577, 35, 1148, 686] is not in the reference",
+                          "Ghostty at [577, 35, 1148, 1079] is missing"])
+        meta = {"label": "old-1", "scene": {"comms_pan": reference}}
+        self.assertEqual(battery.reference_scene(meta, "comms"), reference, "a run's meta.json holds its scenes")
+        self.assertIsNone(battery.reference_scene(meta, "spare"))
+
+    def test_the_scene_command_prints_the_scene_and_exits_one_naming_why_it_is_refused(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as file:
+            json.dump({"scene": {"comms_pan": battery.scene(COMMS, "comms", "Code")}}, file)
+        try:
+            for workspaces, args, code in ((COMMS, [], 0), (COMMS, [file.name], 0), (MIRRORED, [], 1), (MIRRORED, [file.name], 1)):
+                out, err = io.StringIO(), io.StringIO()
+                stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps(workspaces))
+                try:
+                    with redirect_stdout(out), redirect_stderr(err):
+                        self.assertEqual(battery.main(["scene", "comms", "Code", *args]), code, args)
+                finally:
+                    sys.stdin = stdin
+                self.assertEqual(json.loads(out.getvalue())["workspace"], "comms")
+                self.assertEqual(bool(err.getvalue()), bool(code))
+            stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps(COMMS))
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    self.assertEqual(battery.main(["scene", "spare", "Messages", file.name]), 1, "no scene of spare")
+            finally:
+                sys.stdin = stdin
+        finally:
+            os.unlink(file.name)
 
     def test_the_ring_turns_off_and_on_in_the_layouts_block_alone(self):
         off = battery.set_ring(CONFIG, "off")

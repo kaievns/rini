@@ -1,26 +1,29 @@
-//! Core Graphics bitmaps: a fresh RGBA context to draw into, an image's copy of its own, and an image's
-//! thumbprint.
+//! Core Graphics bitmaps: a fresh context to draw into, RGBA or in a format given, an image's copy
+//! of its own, and an image's thumbprint.
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGColorSpace, CGContext, CGImage,
-    CGImageAlphaInfo, CGImageByteOrderInfo,
+    CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGBitmapInfo, CGColorSpace, CGContext,
+    CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
 };
 
 /// A fresh `width` x `height` RGBA bitmap context, alpha last and premultiplied, owning its buffer.
 pub fn rgba_bitmap_context(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
     let space = CGColorSpace::new_device_rgb()?;
+    bitmap_context(width, height, &space, CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0))
+}
+
+/// A fresh `width` x `height` bitmap context of 8 bits a channel in `space`, its pixels laid out as
+/// `info` has them, owning its buffer. `None` for a format Core Graphics draws no context in.
+pub fn bitmap_context(
+    width: usize,
+    height: usize,
+    space: &CGColorSpace,
+    info: CGBitmapInfo,
+) -> Option<CFRetained<CGContext>> {
     // SAFETY: a fresh context; CG owns and frees the backing store with it.
     let ctx = unsafe {
-        CGBitmapContextCreate(
-            std::ptr::null_mut(),
-            width,
-            height,
-            8,
-            0,
-            Some(&space),
-            CGImageAlphaInfo::PremultipliedLast.0,
-        )
+        CGBitmapContextCreate(std::ptr::null_mut(), width, height, 8, 0, Some(space), info.0)
     };
     unsafe { Some(CFRetained::from_raw(std::ptr::NonNull::new(ctx)?)) }
 }
@@ -34,11 +37,7 @@ pub fn standalone_copy(image: &CGImage) -> Option<CFRetained<CGImage>> {
     }
     let space = CGImage::color_space(Some(image)).or_else(CGColorSpace::new_device_rgb)?;
     let bgra = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
-    // SAFETY: a fresh context; CG owns and frees the backing store with it.
-    let ctx = unsafe {
-        CGBitmapContextCreate(std::ptr::null_mut(), width, height, 8, 0, Some(&space), bgra)
-    };
-    let ctx = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(ctx)?) };
+    let ctx = bitmap_context(width, height, &space, CGBitmapInfo(bgra))?;
     CGContext::draw_image(
         Some(&ctx),
         CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width as f64, height as f64)),

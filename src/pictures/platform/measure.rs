@@ -7,7 +7,8 @@
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGContext, CGImage,
+    CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGBitmapInfo, CGColorSpace,
+    CGColorSpaceModel, CGContext, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
     CGInterpolationQuality,
 };
 use objc2_io_surface::{IOSurfaceLockOptions, IOSurfaceRef};
@@ -21,7 +22,7 @@ use crate::pictures::domain::knowledge::{
 use crate::pictures::domain::print::{
     BAND_PRINT, BAND_PT, BODY_ACROSS, BODY_DOWN, BODY_GRID, body_points,
 };
-use crate::pictures::platform::bitmap::rgba_bitmap_context;
+use crate::pictures::platform::bitmap::{bitmap_context, rgba_bitmap_context};
 use crate::pictures::platform::picture::{Picture, Pixels, image_size};
 
 /// The band print of a picture: its top `BAND_PT` at the picture's own scale, drawn down to
@@ -46,7 +47,7 @@ pub fn band_print(picture: &Picture) -> Option<Vec<u8>> {
 }
 
 /// A picture's body sampled at [`body_points`], premultiplied RGBA, for `bodies_differ` and its
-/// `ground`.
+/// `ground`, in the colour space [`ground_space`] names.
 pub fn body_samples(image: &Pixels) -> Option<Vec<[u8; 4]>> {
     match image {
         Pixels::Surface(surface) => surface_samples(surface),
@@ -63,12 +64,20 @@ pub fn body_samples(image: &Pixels) -> Option<Vec<[u8; 4]>> {
             );
             let body = CGImage::with_image_in_rect(Some(&image), body)?;
             // One source pixel per cell, at its centre: the grid's points, not an average of them.
-            let (bytes, stride) = drawn(&body, BODY_GRID, BODY_GRID, CGInterpolationQuality::None)?;
+            let quality = CGInterpolationQuality::None;
+            let ((bytes, stride), format) = match own_format(&image) {
+                Some((format, space)) => {
+                    let ctx = bitmap_context(BODY_GRID, BODY_GRID, &space, format.info)?;
+                    (drawn_into(&ctx, &body, BODY_GRID, BODY_GRID, quality)?, format)
+                }
+                None => (drawn(&body, BODY_GRID, BODY_GRID, quality)?, RGBA),
+            };
+            let [r, g, b, a] = format.channels;
             Some(
                 (0..BODY_GRID * BODY_GRID)
                     .map(|i| {
                         let at = (i / BODY_GRID) * stride + (i % BODY_GRID) * 4;
-                        [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]
+                        [bytes[at + r], bytes[at + g], bytes[at + b], bytes[at + a]]
                     })
                     .collect(),
             )
@@ -76,9 +85,73 @@ pub fn body_samples(image: &Pixels) -> Option<Vec<[u8; 4]>> {
     }
 }
 
-/// The ground of a picture's pixels, read off its body samples.
+/// The ground of a picture's pixels, read off its body samples, in the colour space
+/// [`ground_space`] names.
 pub fn ground_of(image: &Pixels) -> Option<Ground> {
     ground(&body_samples(image)?)
+}
+
+/// The colour space a picture's body is sampled in, and so its ground filled in: a bitmap's own,
+/// read in its own pixel format, and device RGB (`None`) for a surface and for a bitmap whose format
+/// [`sample_format`] cannot read.
+pub fn ground_space(image: &Pixels) -> Option<CFRetained<CGColorSpace>> {
+    own_format(&*image.bitmap()?).map(|(_, space)| space)
+}
+
+/// How a 32-bit premultiplied pixel holds its channels: the byte each of red, green, blue and alpha
+/// is at, and the bitmap info a context drawing such pixels is made with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SampleFormat {
+    pub channels: [usize; 4],
+    pub info: CGBitmapInfo,
+}
+
+/// The format of the device RGB context a picture is drawn into when its own cannot be read.
+const RGBA: SampleFormat =
+    SampleFormat { channels: [0, 1, 2, 3], info: CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0) };
+
+/// How to read the pixels of an image in an RGB space of `bits_per_component` and `bits_per_pixel`
+/// with `info`, drawn into a context of the same: 8 bits a channel, four to a pixel, alpha
+/// premultiplied first or last, in either 32-bit byte order. `None` for any other, 16 bits, float,
+/// packed or without alpha, which a context of its own would not take or which is not read as bytes.
+pub fn sample_format(
+    model: CGColorSpaceModel,
+    info: CGBitmapInfo,
+    bits_per_component: usize,
+    bits_per_pixel: usize,
+) -> Option<SampleFormat> {
+    let extra = info.0 & !(CGBitmapInfo::AlphaInfoMask.0 | CGBitmapInfo::ByteOrderInfoMask.0);
+    if model != CGColorSpaceModel::RGB || bits_per_component != 8 || bits_per_pixel != 32 || extra != 0 {
+        return None;
+    }
+    let alpha = CGImageAlphaInfo(info.0 & CGBitmapInfo::AlphaInfoMask.0);
+    let order = CGImageByteOrderInfo(info.0 & CGBitmapInfo::ByteOrderInfoMask.0);
+    let little = match order {
+        CGImageByteOrderInfo::Order32Little => true,
+        CGImageByteOrderInfo::OrderDefault | CGImageByteOrderInfo::Order32Big => false,
+        _ => return None,
+    };
+    let channels = match (alpha, little) {
+        (CGImageAlphaInfo::PremultipliedFirst, true) => [2, 1, 0, 3],
+        (CGImageAlphaInfo::PremultipliedFirst, false) => [1, 2, 3, 0],
+        (CGImageAlphaInfo::PremultipliedLast, true) => [3, 2, 1, 0],
+        (CGImageAlphaInfo::PremultipliedLast, false) => [0, 1, 2, 3],
+        _ => return None,
+    };
+    Some(SampleFormat { channels, info })
+}
+
+/// `image`'s own colour space and the format its pixels are read in, when [`sample_format`] reads
+/// them: drawn into a context of both, nothing of the image is converted.
+fn own_format(image: &CGImage) -> Option<(SampleFormat, CFRetained<CGColorSpace>)> {
+    let space = CGImage::color_space(Some(image))?;
+    let format = sample_format(
+        CGColorSpace::model(Some(&space)),
+        CGImage::bitmap_info(Some(image)),
+        CGImage::bits_per_component(Some(image)),
+        CGImage::bits_per_pixel(Some(image)),
+    )?;
+    Some((format, space))
 }
 
 /// A surface's pixels at the body's points, BGRA read as RGBA.
@@ -167,17 +240,30 @@ fn drawn(
     quality: CGInterpolationQuality,
 ) -> Option<(Vec<u8>, usize)> {
     let ctx: CFRetained<CGContext> = rgba_bitmap_context(width, height)?;
-    CGContext::set_interpolation_quality(Some(&ctx), quality);
+    drawn_into(&ctx, image, width, height, quality)
+}
+
+/// `image` drawn into `ctx`, a fresh `width` x `height` bitmap context, and its bytes top row first,
+/// with the stride.
+fn drawn_into(
+    ctx: &CGContext,
+    image: &CGImage,
+    width: usize,
+    height: usize,
+    quality: CGInterpolationQuality,
+) -> Option<(Vec<u8>, usize)> {
+    let ctx = Some(ctx);
+    CGContext::set_interpolation_quality(ctx, quality);
     CGContext::draw_image(
-        Some(&ctx),
+        ctx,
         CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width as f64, height as f64)),
         Some(image),
     );
-    let data = CGBitmapContextGetData(Some(&ctx)) as *const u8;
+    let data = CGBitmapContextGetData(ctx) as *const u8;
     if data.is_null() {
         return None;
     }
-    let stride = CGBitmapContextGetBytesPerRow(Some(&ctx));
+    let stride = CGBitmapContextGetBytesPerRow(ctx);
     // SAFETY: the context owns `stride * height` bytes and outlives this copy.
     Some((
         unsafe { std::slice::from_raw_parts(data, stride * height) }.to_vec(),
@@ -337,6 +423,96 @@ mod tests {
         let clear = ground_of(&surface).unwrap();
         let (level, alpha) = (95.0 / 242.0, 242.0 / 255.0);
         assert!(near(clear, [level, level, level, alpha]), "unpremultiplied: {clear:?}");
+    }
+
+    /// A window picture in Display P3, BGRA premultiplied first in little endian, flat in `p3`,
+    /// components in its own space.
+    fn p3_image(width: usize, height: usize, p3: [f64; 4]) -> CFRetained<CGImage> {
+        let space = display_p3();
+        let bgra = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
+        let ctx = bitmap_context(width, height, &space, CGBitmapInfo(bgra)).unwrap();
+        // SAFETY: the four components an RGB space with alpha takes, read during the call.
+        let colour = unsafe { objc2_core_graphics::CGColor::new(Some(&space), p3.as_ptr()) }.unwrap();
+        CGContext::set_fill_color_with_color(Some(&ctx), Some(&colour));
+        CGContext::fill_rect(Some(&ctx), rect(0.0, 0.0, width as f64, height as f64));
+        CGBitmapContextCreateImage(Some(&ctx)).unwrap()
+    }
+
+    fn display_p3() -> CFRetained<CGColorSpace> {
+        // SAFETY: Core Graphics' own colour space name.
+        CGColorSpace::with_name(Some(unsafe { objc2_core_graphics::kCGColorSpaceDisplayP3 })).unwrap()
+    }
+
+    fn is_p3(space: Option<&CGColorSpace>) -> bool {
+        // SAFETY: Core Graphics' own colour space name.
+        let p3 = unsafe { objc2_core_graphics::kCGColorSpaceDisplayP3 };
+        CGColorSpace::name(space).is_some_and(|name| *name == *p3)
+    }
+
+    /// BGRA, premultiplied first in little endian, is read with red at byte 2, and every other 8-bit
+    /// premultiplied layout at its own bytes.
+    #[test]
+    fn sample_format_reads_bgra_premultiplied_first_as_rgba() {
+        let rgb = CGColorSpaceModel::RGB;
+        let info = |alpha: CGImageAlphaInfo, order: CGImageByteOrderInfo| CGBitmapInfo(alpha.0 | order.0);
+        let (first, last) = (CGImageAlphaInfo::PremultipliedFirst, CGImageAlphaInfo::PremultipliedLast);
+        let (little, big) = (CGImageByteOrderInfo::Order32Little, CGImageByteOrderInfo::Order32Big);
+        let bgra = info(first, little);
+        assert_eq!(sample_format(rgb, bgra, 8, 32), Some(SampleFormat { channels: [2, 1, 0, 3], info: bgra }));
+        assert_eq!(sample_format(rgb, info(first, big), 8, 32).unwrap().channels, [1, 2, 3, 0], "ARGB");
+        assert_eq!(sample_format(rgb, info(last, little), 8, 32).unwrap().channels, [3, 2, 1, 0], "ABGR");
+        let rgba = info(last, CGImageByteOrderInfo::OrderDefault);
+        assert_eq!(sample_format(rgb, rgba, 8, 32).unwrap().channels, [0, 1, 2, 3], "RGBA");
+    }
+
+    /// What a context of the image's own format would not take, or that is not read a byte a channel,
+    /// goes through the device RGB draw: 16 bits a channel, float, no alpha, alpha not premultiplied,
+    /// 16-bit byte order, a packed format, and a space that is not RGB.
+    #[test]
+    fn sample_format_refuses_16_bit_and_float() {
+        let rgb = CGColorSpaceModel::RGB;
+        let bgra = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
+        assert!(sample_format(rgb, CGBitmapInfo(bgra), 16, 64).is_none(), "16-bit");
+        let float = CGImageAlphaInfo::PremultipliedLast.0 | objc2_core_graphics::CGImageComponentInfo::Float.0;
+        assert!(sample_format(rgb, CGBitmapInfo(float), 32, 128).is_none(), "float");
+        assert!(sample_format(rgb, CGBitmapInfo(float), 8, 32).is_none(), "the float flag alone");
+        assert!(sample_format(rgb, CGBitmapInfo(float | CGImageByteOrderInfo::Order16Little.0), 16, 64).is_none(), "half float");
+        for alpha in [CGImageAlphaInfo::NoneSkipFirst, CGImageAlphaInfo::NoneSkipLast, CGImageAlphaInfo::None, CGImageAlphaInfo::First, CGImageAlphaInfo::Last] {
+            assert!(sample_format(rgb, CGBitmapInfo(alpha.0), 8, 32).is_none(), "{alpha:?}");
+        }
+        let sixteen = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order16Little.0;
+        assert!(sample_format(rgb, CGBitmapInfo(sixteen), 8, 32).is_none(), "16-bit order");
+        assert!(sample_format(rgb, CGBitmapInfo(bgra | objc2_core_graphics::CGImagePixelFormatInfo::RGB101010.0), 8, 32).is_none(), "packed");
+        assert!(sample_format(CGColorSpaceModel::Monochrome, CGBitmapInfo(bgra), 8, 32).is_none(), "grey");
+    }
+
+    /// A Display P3 picture's ground is its own P3 components, read without converting the picture,
+    /// and is filled in P3: read in device RGB, P3's saturated colours would come out shifted, and
+    /// the fill beside the picture tinted.
+    #[test]
+    fn a_p3_pictures_ground_is_read_in_p3() {
+        let p3 = [0.2, 0.5, 0.8, 1.0];
+        let picture = Pixels::Bitmap(p3_image(800, 600, p3));
+        let got = ground_of(&picture).expect("a ground");
+        let got = [got.r, got.g, got.b, got.a];
+        assert!(got.iter().zip(p3).all(|(got, want)| (got - want).abs() <= 1.0 / 255.0), "{got:?}");
+        assert!(is_p3(ground_space(&picture).as_deref()), "kept in P3");
+
+        let surface = Pixels::Surface(test_surface(8, 8, [51, 128, 204, 255]));
+        assert!(ground_space(&surface).is_none(), "a surface is device RGB");
+        assert!(ground_space(&window((40.0, 30.0), 1.0, (0.5, 0.5, 0.5)).image)
+            .is_some_and(|space| !is_p3(Some(&space))), "a device RGB picture stays so");
+    }
+
+    /// A P3 bitmap and a surface holding its bytes are sampled alike, so a focused look kept from one
+    /// is not dropped for a newer picture of the other route showing the same window.
+    #[test]
+    fn a_p3_bitmap_and_a_surface_of_its_colour_do_not_differ() {
+        let bitmap = body_samples(&Pixels::Bitmap(p3_image(800, 600, [0.2, 0.5, 0.8, 1.0]))).unwrap();
+        let surface = body_samples(&Pixels::Surface(test_surface(800, 600, [51, 128, 204, 255]))).unwrap();
+        assert!(!bodies_differ(&bitmap, &surface));
+        let other = body_samples(&Pixels::Surface(test_surface(800, 600, [80, 128, 204, 255]))).unwrap();
+        assert!(bodies_differ(&bitmap, &other));
     }
 
     /// First sight of an opaque window with rounded corners, and of a translucent one.

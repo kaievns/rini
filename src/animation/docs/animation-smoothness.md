@@ -491,7 +491,10 @@ changes is how the picture maps onto it (`content_mode` in
   stretches: past the picture's side the middle shows all of the picture, and
   the gap between it and the moving edge's band is the window's ground, a fill
   of its own background colour with its alpha (`Picture::ground`, read off its
-  body samples as the tile is first filled, `src/pictures/domain/ground.rs`), in
+  body samples as the tile is first filled, `src/pictures/domain/ground.rs`, in
+  the picture's own colour space and pixel format and filled in that space: "A
+  picture's ground is read only when a crop-drawn tile asks for it" in
+  `src/pictures/docs/README.md`), in
   layers under the picture layer so the corner clip covers them
   (`a_crop_drawn_tile_is_grounded_where_its_picture_ends`). The ground
   covers only what the picture does not, a column and the row either side of
@@ -573,7 +576,10 @@ its content mode again against its first and last key, set only when it changes,
 on with its end moved, a snap, keeps it drawn as it was, so a tile never turns mid-flight
 (`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`). A picture cut onto a stretched
 tile that it does not fit at both ends of its leg, a stand-in's real picture landing on a resize, is
-cut onto the crop grid (`a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped`).
+cut onto the crop grid (`a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped`), and
+one cut onto a crop-drawn tile that it fits at both, a pan's fresh picture after a stale one, is
+drawn stretched, its grid hidden and no ground read
+(`a_crop_drawn_riding_tile_given_a_fitting_picture_draws_it_stretched`).
 The presentation layer is read only by the trace.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in

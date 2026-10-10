@@ -31,11 +31,11 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage`, its `Route` (`domain/route.rs`) and its `Ground`, read once on first ask; the stand-in, one pixel, whose colour is the ground of any picture none could be read off; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
-| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, and its ground off them, what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
+| **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, read in the picture's own colour space and pixel format where `sample_format` reads it, and its ground off them, what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
-| **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
-| **Layers** | `platform/layer.rs` — handing a picture to a layer, and a region through `contentsRect`; filling a layer with a picture's ground |
+| **Bitmaps** | `platform/bitmap.rs` — a fresh context, RGBA or in a format given, an image's copy of its own, and an image's thumbprint |
+| **Layers** | `platform/layer.rs` — handing a picture to a layer, and a region through `contentsRect`; filling a layer with a picture's ground, in the colour space it was read in |
 
 The stretch tolerance a fit is judged by is `rini_geometry::stretch`, shared with `animation`'s "is
 this a resize" so the two agree.
@@ -187,16 +187,42 @@ capture can be usable and still be the wrong shape" in [`capture-research.md`](c
 window on its own never replaces one of the same size that carries its blur. A stand-in is never
 cached: cached, the switcher would read it as a picture and the next flight would take it for one.
 
-**A picture's ground is read only when a crop-drawn tile asks for it.** `Picture::ground` reads it
-off the body samples the first time it is asked for, on the asking thread, the overlay's main thread
-as it fills a crop-drawn tile, and every copy of the picture shares that read; a stand-in's is its own
-colour, and a picture whose pixels cannot be read takes the stand-in's. Read on the pictures thread
-for every capture, it held up every round: a standalone copy of the body draw (a Swift script, not
-rini's binary, not real SkyLight images) took 3.6-5.6ms a picture at 3000x2000px, 2.1-2.6ms at
-1600x2000 and 0.7-0.8ms at 1000x1200, 5-8x a band print, so an estimated 3-15ms on frame zero of a
-4-6 window strip. A picture that fits its frame stretches and is never read; each crop-drawn tile,
-a resize's or a stale cached picture's on a navigation, pays it on the main thread, at the show and
-at each swap onto it. *What that costs press-to-show on real captures is not measured yet.*
+**A picture's ground is read only when a crop-drawn tile asks for it, and in the picture's own
+format.** `Picture::ground` reads it off the body samples the first time it is asked for, on the
+asking thread, the overlay's main thread as it fills a crop-drawn tile, and every copy of the picture
+shares that read; a stand-in's is its own colour, and a picture whose pixels cannot be read takes the
+stand-in's. Each crop-drawn tile asks: a resize's, and a navigation's flying a stale cached picture
+that does not fit its frame, at the show and at each swap onto it, since each new picture brings a
+ground not yet read.
+
+The body is drawn 40x40 into a context of the picture's own colour space and bitmap info
+(`sample_format`, `platform/measure.rs`): 8 bits a channel, alpha premultiplied first or last, in
+either 32-bit byte order; which format SkyLight's captures come in is not checked here. Core Graphics
+converts the whole sub-image it is handed before it samples it, so a context differing in either one costs the whole
+picture's conversion. The ground is filled in the space it was read in (`ground_space`,
+`set_layer_ground`): P3 components filled as device RGB would show a tinted seam beside the picture.
+A surface's bytes are read as they are and filled in device RGB; a 16-bit, float, packed or
+alpha-less bitmap goes through the device RGB draw and is filled in device RGB.
+
+Measured 2026-10-10: `ground_of` timed by a scratch bench linking rini's library, release build, 30
+reads a row, on synthetic BGRA images premultiplied first (a dark ground under rows of light bars),
+not real captures; before is e050e168's device RGB draw.
+
+| picture, at 2x | space | before p50 | own format p50 |
+|---|---|---|---|
+| 1148x1079pt | Display P3 | 11,475us | 53us |
+| 1148x1079pt | sRGB | 2,886us | 53us |
+| 1148x1079pt | device RGB | 2,911us | 53us |
+| 1728x1085pt | Display P3 | 18,676us | 59us |
+| 1728x1085pt | sRGB | 4,274us | 59us |
+| 1728x1085pt | device RGB | 3,720us | 59us |
+
+The colour space alone is not enough: an RGBA context in the picture's own space took 2,465us at
+1148x1079pt in P3, still swizzling the whole picture from BGRA. Read on the pictures thread for every
+capture, before it was read lazily, the device RGB draw held up every round (a Swift copy of it took
+3.6-5.6ms a picture at 3000x2000px). *What a crop-drawn tile's read costs on real captures is not
+measured yet:* each `drawn` mark carries the drain's `crops` and their `ground_us`
+(`src/transitions/docs/journal.md`) for the next battery to say.
 
 **Two routes, chosen by visibility.** SkyLight is fresh and cheap but captures only what is on screen;
 ScreenCaptureKit captures a window anywhere but costs about 40ms, so it fills the cache in the

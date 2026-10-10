@@ -15,7 +15,7 @@ use rini_runloop::channel::Receiver;
 use tracing::warn;
 
 use crate::animation::domain::motion::score::{Edit, MediaClock, Score};
-use crate::animation::event::Event;
+use crate::animation::event::{Crops, Event};
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
 use crate::decorations::domain::style::Worn;
 use crate::decorations::platform::rest::Handover;
@@ -103,17 +103,19 @@ fn needs_overlay(command: &Render) -> bool { matches!(command, Render::Dress { .
 /// What a drain comes to, given the overlay after it and its window's number: not drawn when it
 /// `needed` the overlay and there is none, else committed, any drain with no overlay included, with
 /// the window's number once the window server has numbered it, whether it showed or lifted the
-/// overlay and whether it placed what is drawn at rest.
+/// overlay, whether it placed what is drawn at rest and what it spent on crop-drawn tiles.
 fn answer(
     seq: u64,
     needed: bool,
     overlay: Option<Option<WindowServerId>>,
-    (shown, places): (Option<bool>, bool),
+    (shown, places, crops): (Option<bool>, bool, Crops),
     (sent, began, flushed): (Instant, Instant, Instant),
 ) -> Event {
     match overlay {
         None if needed => Event::Unavailable { seq },
-        overlay => Event::Committed { seq, overlay: overlay.flatten(), shown, places, sent, began, flushed },
+        overlay => {
+            Event::Committed { seq, overlay: overlay.flatten(), shown, places, crops, sent, began, flushed }
+        }
     }
 }
 
@@ -200,12 +202,14 @@ impl Renderer {
     /// it, and what is drawn at rest covered; and the window's background set once the holes' mask
     /// is committed.
     /// Without an overlay every command but `Display` does nothing; a drain that dressed or posed a
-    /// flight on none is `Unavailable`. A commit says when the drain began and when it was flushed.
+    /// flight on none is `Unavailable`. A commit says when the drain began and when it was flushed,
+    /// and what its commands spent on crop-drawn tiles.
     fn play(&mut self, drained: Drained) -> Event {
         let began = Instant::now();
         let Drained { mut commands, seq, sent, shown, places, through } = drained;
         let needed = commands.iter().any(needs_overlay);
         let mut flushed = began;
+        let mut crops = Crops::default();
         let display = self.display.map(|(frame, _, _)| frame);
         for step in steps(shown, places) {
             match step {
@@ -229,6 +233,7 @@ impl Renderer {
                     CATransaction::commit();
                     CATransaction::flush();
                     flushed = Instant::now();
+                    crops = self.overlay.as_mut().map(TileOverlay::take_crops).unwrap_or_default();
                 }
                 Step::Background => self.overlay.as_mut().into_iter().for_each(TileOverlay::paint_background),
                 Step::Show => self.overlay.as_mut().into_iter().for_each(TileOverlay::show),
@@ -240,7 +245,7 @@ impl Renderer {
             }
         }
         let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
-        answer(seq, needed, overlay, (shown, places), (sent, began, flushed))
+        answer(seq, needed, overlay, (shown, places, crops), (sent, began, flushed))
     }
 
     fn apply(&mut self, command: Render) {
@@ -392,7 +397,7 @@ mod tests {
     #[test]
     fn a_drain_that_needed_the_overlay_and_has_none_is_not_drawn() {
         let at = Instant::now();
-        assert_eq!(answer(3, true, None, (Some(true), false), (at, at, at)), Event::Unavailable { seq: 3 });
+        assert_eq!(answer(3, true, None, (Some(true), false, Crops::default()), (at, at, at)), Event::Unavailable { seq: 3 });
     }
 
     #[test]
@@ -400,14 +405,27 @@ mod tests {
         let at = Instant::now();
         let times = (at, at + std::time::Duration::from_millis(1), at + std::time::Duration::from_millis(2));
         let (sent, began, flushed) = times;
-        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, places: false, sent, began, flushed };
+        let none = Crops::default();
+        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, places: false, crops: none, sent, began, flushed };
         let numbered = WindowServerId(4_242);
-        assert_eq!(answer(3, false, None, (None, false), times), committed(None), "a display or holes, no overlay");
-        assert_eq!(answer(3, true, Some(None), (None, false), times), committed(None), "made, not numbered yet");
-        assert_eq!(answer(3, true, Some(Some(numbered)), (None, false), times), committed(Some(numbered)));
-        assert_eq!(answer(3, false, Some(Some(numbered)), (None, false), times), committed(Some(numbered)), "every drain");
-        let placed = Event::Committed { seq: 3, overlay: Some(numbered), shown: None, places: true, sent, began, flushed };
-        assert_eq!(answer(3, false, Some(Some(numbered)), (None, true), times), placed, "a place, told apart from a drain in flight");
+        assert_eq!(answer(3, false, None, (None, false, none), times), committed(None), "a display or holes, no overlay");
+        assert_eq!(answer(3, true, Some(None), (None, false, none), times), committed(None), "made, not numbered yet");
+        assert_eq!(answer(3, true, Some(Some(numbered)), (None, false, none), times), committed(Some(numbered)));
+        assert_eq!(answer(3, false, Some(Some(numbered)), (None, false, none), times), committed(Some(numbered)), "every drain");
+        let placed = Event::Committed { seq: 3, overlay: Some(numbered), shown: None, places: true, crops: none, sent, began, flushed };
+        assert_eq!(answer(3, false, Some(Some(numbered)), (None, true, none), times), placed, "a place, told apart from a drain in flight");
+    }
+
+    /// A drain answers with what its commands spent on crop-drawn tiles, so the journal can say what
+    /// the grounds read on the main thread cost it.
+    #[test]
+    fn a_drain_is_committed_with_its_crop_drawn_tiles() {
+        let at = Instant::now();
+        let crops = Crops { tiles: 2, ground: std::time::Duration::from_micros(7_910) };
+        let Event::Committed { crops: answered, .. } = answer(3, true, Some(None), (Some(true), false, crops), (at, at, at)) else {
+            panic!("committed")
+        };
+        assert_eq!(answered, crops);
     }
 
     #[test]

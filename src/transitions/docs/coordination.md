@@ -61,7 +61,7 @@ sends none, so a tick is no transaction. The renderer (`Renderer::run`) wakes on
 every batch queued behind it, plays them in order as one drain in one `CATransaction`, flushed, and
 answers once, with the highest number (`Event::Rendered`): a busy main thread costs one late commit,
 never a backlog of them. The answer is `Committed`, with the overlay's window number once the window
-server has numbered it, whether it showed, lifted or placed, and the drain's times, which the journal marks (`drawn` in `journal.md`)
+server has numbered it, whether it showed, lifted or placed, what it spent on crop-drawn tiles, and the drain's times, which the journal marks (`drawn` in `journal.md`)
 before what the commit releases goes out, or `Unavailable` when the drain dressed or posed a flight
 and there is no overlay to draw it on. Nothing in that drain will ever be drawn, so what it covers
 releases what waited for it all the same: a lift that went out before the answer still writes its
@@ -909,7 +909,11 @@ the ground to content, is the flicker Kai reported (the third Reported line of `
 length and curve, while it plays (a plain move's track too, so a crop-drawn tile on a move re-keys the
 same way): the frame keeps its curve and only the pixels cut
 (`a_swap_re_keys_a_crop_grid_on_its_tiles_track`). A tile with no track of its own rides its container
-and has nothing to re-key. Re-keying from the presented frame over the remaining duration restarted
+and has nothing to re-key. Each swap judges the tile again against the picture landing: one fitting
+both ends of the leg, or the tile's model with no track, is drawn stretched, a riding tile cut from a
+stale cached picture onto a fresh one included, so it reads no ground
+(`a_crop_drawn_riding_tile_given_a_fitting_picture_draws_it_stretched`); a resize's repaint fits only
+its leg's end and stays cropped (`a_resizing_tile_stays_cropped_when_its_repaint_lands`). Re-keying from the presented frame over the remaining duration restarted
 the ease-out and the tile lurched at every swap. The flight keeps the windows the latest pass to
 resize each held for (`Flight::holds_for`), and holds only for those a watch can see
 (`Flight::holdable`); a grow that missed the cap is still repainting, so it is not pictured by the

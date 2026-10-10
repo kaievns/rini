@@ -234,6 +234,12 @@ destination for a window already moving.
   not reach: a translucent window, as Ghostty at 0.95, would show it through and darken. Only a
   picture the size of its frame at both ends of a movement, and the dark stand-in of a window with no
   picture, MAY be scaled.
+- Reading a window's ground MUST NOT convert its whole picture: it MUST be read in the picture's own
+  colour space and pixel format, and filled in the colour space it was read in, so the fill beside
+  the picture takes no tint. Converted whole, a synthetic 1148x1079pt picture in Display P3 took
+  11.5ms to read, which the overlay's main thread pays as it fills a crop-drawn tile (measured
+  2026-10-10, "A picture's ground is read only when a crop-drawn tile asks for it" in
+  `src/pictures/docs/README.md`).
 - A resize MUST start as a strip movement does: from pictures taken at the press, the overlay up
   with them, and the windows written their new frames as it covers them. A resize that grows a
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the

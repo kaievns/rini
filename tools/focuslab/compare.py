@@ -9,7 +9,13 @@ median of its CAND runs is at most the max of its BASE runs. Blur passes only wi
 in every run given, of both. A metric failing that, blur aside, is judged again with --stage2's runs
 added to each side, the same rule: failing then, it is a regression.
 
-Exit 0 when every metric passes, 1 when any does not, 2 on a usage error.
+Runs of different scenes are never judged: every run given must fly what the first does, each
+segment's flights of the same kinds in the same order and the same frames delivered, within
+FRAME_SLACK points. And every run whose tiles wore a picture taken over STALE_US before it is
+flagged on stderr, its count and its oldest, which judges nothing.
+
+Exit 0 when every metric passes, 1 when any does not, 2 on a usage error, 3 when the runs flew
+different scenes.
 """
 import json
 import os
@@ -17,6 +23,8 @@ import statistics
 import sys
 
 BLUR = "blur.failed"
+FRAME_SLACK = 1.0
+STALE_US = 5_000_000
 COLUMNS = ("metric", "base_min", "base_max", "cand_median", "cand_runs", "stage1",
            "stage2_base_max", "stage2_cand_median", "verdict")
 
@@ -49,6 +57,65 @@ def metrics(run):
     b = m["blur"]
     out[BLUR] = b["flights"] - b["passed"] if b["flights"] else None
     return out
+
+
+def journal_marks(run):
+    with open(os.path.join(run, "journal.slice.jsonl")) as file:
+        return [json.loads(line) for line in file if line.strip()]
+
+
+def scene(run):
+    """What a run flew: each segment's flights' kinds in press order, from metrics.json, and every
+    frame a picture was delivered at, from its journal slice, once each, sorted."""
+    with open(os.path.join(run, "metrics.json")) as file:
+        flights = json.load(file)["flights"]
+    kinds = {}
+    for flight in flights:
+        kinds.setdefault(flight["segment"], []).append(flight.get("kind") or "-")
+    frames = sorted({tuple(mark["frame"]) for mark in journal_marks(run) if mark.get("mark") == "delivered"})
+    return {"kinds": kinds, "frames": [list(frame) for frame in frames]}
+
+
+def scene_differences(a, b):
+    """How scene `b` differs from `a`: a segment's kinds, and a frame either delivered that the other
+    has nothing within FRAME_SLACK of. Empty for one scene."""
+    out = []
+    for segment in sorted(set(a["kinds"]) | set(b["kinds"])):
+        if a["kinds"].get(segment) != b["kinds"].get(segment):
+            out.append(f"{segment} flew {b['kinds'].get(segment)}, not {a['kinds'].get(segment)}")
+    near = lambda frame, frames: any(all(abs(x - y) <= FRAME_SLACK for x, y in zip(frame, other))
+                                     for other in frames)
+    out += [f"delivered at {frame}, which it never was" for frame in b["frames"] if not near(frame, a["frames"])]
+    out += [f"never delivered at {frame}" for frame in a["frames"] if not near(frame, b["frames"])]
+    return out
+
+
+def stale_wears(run, over_us=STALE_US):
+    """The pictures a run's tiles wore taken over `over_us` before: how many, and the oldest, as
+    (taken_before_us, window), None with none."""
+    stale = [(mark["taken_before_us"], mark["window"]) for mark in journal_marks(run)
+             if mark.get("mark") == "wears" and mark.get("taken_before_us", 0) > over_us]
+    return len(stale), max(stale, default=None)
+
+
+def refusal(runs):
+    """Why `runs` are not to be judged together: every run whose scene differs from the first's,
+    with how. None when they all flew one."""
+    first = scene(runs[0])
+    lines = [f"{run} flew another scene than {runs[0]}: " + "; ".join(found)
+             for run in runs[1:] for found in [scene_differences(first, scene(run))] if found]
+    return "\n".join(lines) or None
+
+
+def flags(runs):
+    """One line a run whose tiles wore a picture over STALE_US old."""
+    lines = []
+    for run in runs:
+        count, oldest = stale_wears(run)
+        if count:
+            lines.append(f"flag: {run}: {count} pictures worn over {STALE_US // 1_000_000}s old, the oldest "
+                         f"{oldest[0] / 1e6:.1f}s on {oldest[1]}")
+    return lines
 
 
 def passes(base, cand):
@@ -132,6 +199,13 @@ def main(argv):
     except ValueError as error:
         print(f"compare.py: {error}\n\n{__doc__}", file=sys.stderr)
         return 2
+    runs = base + cand + (base2 or []) + (cand2 or [])
+    refused = refusal(runs)
+    if refused:
+        print(f"compare.py: refused, the runs flew different scenes:\n{refused}", file=sys.stderr)
+        return 3
+    for line in flags(runs):
+        print(line, file=sys.stderr)
     load = lambda runs: None if runs is None else [metrics(run) for run in runs]
     rows = compare(load(base), load(cand), load(base2), load(cand2))
     print(",".join(COLUMNS))

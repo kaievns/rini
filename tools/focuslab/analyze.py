@@ -146,6 +146,17 @@ def phases(rundir):
             for phase, shown in PHASES}
 
 
+DRAIN_KEYS = tuple(key for key, _ in journal.DRAINS)
+
+
+def crops(drains):
+    """What the drains of the joined flights spent on crop-drawn tiles: how many drew any, the tiles
+    they drew, and their ground reads (ms) over those drains alone."""
+    cropped = [d for d in drains if d["crops"]]
+    return {"drains": len(cropped), "tiles": sum(d["crops"] for d in cropped),
+            "ground": stats([d["ground"] for d in cropped], digits=3)}
+
+
 def totals(flights_out, all_gaps, by_seg_gaps):
     kinds = sorted({f.get("kind") for f in flights_out if f.get("kind")})
     by_kind = {}
@@ -158,7 +169,7 @@ def totals(flights_out, all_gaps, by_seg_gaps):
             "lift": stats([f["lift"] for f in rows]),
             "screen_up_after_post": stats([f["screen_up"] for f in rows]),
             "screen_gone_after_post": stats([f["screen_gone"] for f in rows]),
-            "drains": {key: stats([d[key] for d in drains]) for key in ("queued", "applied", "heard")},
+            "drains": {key: stats([d[key] for d in drains]) for key in DRAIN_KEYS},
             "overdue_lifts": sum(f["overdue_lift"] for f in rows),
             "frame_zero_timeouts": sum(f["frame_zero_timeout"] for f in rows),
         }
@@ -185,7 +196,8 @@ def totals(flights_out, all_gaps, by_seg_gaps):
     checked = [f["blur"] for f in flights_out if "blur" in f]
     return {
         "by_kind": by_kind,
-        "drains_all": {key: stats([d[key] for d in drains]) for key in ("queued", "applied", "heard")},
+        "drains_all": {key: stats([d[key] for d in drains]) for key in DRAIN_KEYS},
+        "crops": crops(drains),
         "segments": segments,
         "pacing_all": {"intervals": stats(all_gaps), "over_20ms": sum(1 for g in all_gaps if g > DROP_MS),
                        "over_25ms": sum(1 for g in all_gaps if g > MISS_MS),
@@ -226,6 +238,9 @@ def summary(meta, agg, flights_out):
     lines.append("renderer drains, all joined flights (ms, p50/p90/p99/max)")
     for key, label in journal.DRAINS:
         lines.append(f"  {label:26s} {fmt(d[key], ('p50', 'p90', 'p99', 'max'))}")
+    c = agg["crops"]
+    lines.append(f"  crop-drawn tiles {c['tiles']} in {c['drains']} drains, their grounds read "
+                 f"{fmt(c['ground'], ('p50', 'p90', 'max'))}")
     lines.append("")
     lines.append("frame pacing (recorded overlay, 60fps cap; intervals p50/p90/max ms)")
     for seg, s in agg["segments"].items():
