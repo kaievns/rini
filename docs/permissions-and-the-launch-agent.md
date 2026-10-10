@@ -144,9 +144,10 @@ including the TCC dialog that would have fixed it. Only a reboot recovered.
 
 The mechanism, in three parts:
 
-1. rini owns two ACTIVE CGEventTaps: the session tap (all mouse buttons, plus
-   keyboard whenever any hotkey is bound — effectively always) and the HID
-   gesture tap. An active tap sits in the delivery path: the window server
+1. rini owns one ACTIVE CGEventTap: the session tap (all mouse buttons, plus
+   keyboard whenever any hotkey is bound — effectively always). When the freeze
+   was observed it owned a second, the HID tap for the trackpad swipes, removed
+   2026-10-10. An active tap sits in the delivery path: the window server
    holds each matching event until the tap's callback answers.
 2. The callbacks make synchronous SkyLight calls per event (hit tests,
    occlusion checks) over the same SLS connection the capture paths use. When
@@ -170,6 +171,6 @@ input thread cannot deliver the message, so the tap stays down exactly as long
 as the thread is unhealthy.
 
 Residual, deliberately not addressed here: the synchronous SLS hit tests
-inside the tap callbacks are still the thing that stalls. Moving them off the
+inside the session tap's callback are still the thing that stalls. Moving them off the
 event path (or onto a separate SLS connection) would remove the freeze
 trigger rather than the freeze amplifier, and is queued as follow-up work.

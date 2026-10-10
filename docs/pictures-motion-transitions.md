@@ -37,7 +37,7 @@ feature") records why, and `tests/architecture.rs` holds each one's `domain/` fr
 ```
 
 The coordinator runs on its own thread, `transitions`. The main thread runs what draws, the renderer,
-the switcher and the bar, and eight actors not yet moved off it (the `src/main.rs` row of "What is
+the switcher and the bar, and seven actors not yet moved off it (the `src/main.rs` row of "What is
 still not where the map says" in `docs/architecture.md`). Merges never read Core Animation back: a
 score evaluates to exactly what the render server draws, so the coordinator retargets from the score.
 

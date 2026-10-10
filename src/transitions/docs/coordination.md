@@ -45,7 +45,7 @@ ended in the overlay's favour.
 
 The engine runs on a thread of its own, `transitions`, at the quality of service Apple gives an app's
 main thread (`Executor::run_interactive`), and the renderer on the main thread, which keeps what
-draws, the renderer, the switcher and the bar, and eight actors not yet moved off it (the
+draws, the renderer, the switcher and the bar, and seven actors not yet moved off it (the
 `src/main.rs` row of "What is still not where the map says" in `docs/architecture.md`). The engine
 is made on its thread from `Parts`, since its timers run on the loop that makes them, and holds
 everything that decides: the coordinator with its journal, staging and merges, the flight's score,

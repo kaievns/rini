@@ -133,9 +133,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > gained 1.0, and a step off a full-width window now sizes it like any column. Kai chose niri's
 > direction after considering a downward cycle: ascending, with 100% wrapping to 1/3.
 
-> **Found 2026-09-24, not reported.** The same blind spot in the scroll gesture, which computed its own
+> **Found 2026-09-24, not reported.** The same blind spot in `scroll-strip`, which computed its own
 > column widths: it stepped the strip by `max-column-width` of the viewport for a column
-> occupying all of it, so one swipe left the next column part-way on screen.
+> occupying all of it, so one step left the next column part-way on screen.
 
 > **Reported 2026-09-22.** "Most of the windows/apps that were in full-size mode don't come back as
 > full sized and respawn as the default 1/2 size... we already fixed it like 3 times in the past."

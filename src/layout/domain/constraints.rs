@@ -61,8 +61,8 @@ pub enum ColumnKind {
 /// presets below 100%, not a drag or `ctrl-R`'s 100%: an unbounded column is held only to the
 /// viewport.
 ///
-/// Both the layout pass and the scroll-gesture arithmetic read this, because they used to disagree:
-/// the gesture computed a maximised column at `max-column-width` of the viewport, so it
+/// Both the layout pass and `scroll-strip`'s step read this, because they used to disagree:
+/// `scroll-strip` computed a maximised column at `max-column-width` of the viewport, so it
 /// stepped the strip by two thirds of a screen for a column occupying all of it.
 pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, max: f64) -> f64 {
     let ratio = base_ratio + offset;

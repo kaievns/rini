@@ -5,14 +5,12 @@ use std::time::Instant;
 use objc2_core_foundation::CGPoint;
 use rini_core::ids::WindowServerId;
 
-use crate::input::domain::binding::{Action, Command};
+use crate::input::domain::binding::Action;
 
 #[derive(Debug)]
 pub enum Event {
     /// A key binding fired.
     Action(Action),
-    /// A gesture fired.
-    Command(Command),
     /// A switcher session opened, moved, committed or was cancelled.
     ///
     /// On the same channel as `Action`, so an Open, its Steps and its Commit cannot be reordered

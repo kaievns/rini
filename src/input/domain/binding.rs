@@ -11,7 +11,7 @@ use knus::decode::{Context, Kind};
 use knus::errors::DecodeError;
 use knus::span::Spanned;
 use knus::traits::ErrorSpan;
-pub use rini_ipc::protocol::{Command, RestoreScope, RestoreSource, SwitchScope};
+pub use rini_ipc::protocol::{RestoreScope, RestoreSource, SwitchScope};
 use serde::Serialize;
 
 use crate::input::domain::key::{ModKey, substitute_mod};

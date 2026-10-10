@@ -1,4 +1,4 @@
-# Bindings, modifiers and gestures
+# Bindings, modifiers and the event tap
 
 ## Key specs
 
@@ -76,10 +76,16 @@ binding naming one is satisfied by the flag alone.
   is listening for puts rini between the user and every keystroke for nothing.
 - A tap the OS disables MUST be re-armed, and a re-arm MUST be matched to the generation that was
   disabled, or a stale recovery re-enables a tap that has since been replaced.
+- rini MUST NOT tap trackpad gestures. A swipe MUST do what macOS does with it.
+
+> **Reported 2026-10-10.** Of the trackpad swipes rini handled, Kai: "those are all inherited from rift
+> and i never used any of them and neither did we review them. some cleaning up would be good". Then:
+> "you can delete all the swipe gestures and related code/harness, i don't use them and don't need
+> them". The workspace swipe, the strip swipe, their HID tap and the haptic engine went.
 
 ## Where it lives
 
 `src/input/domain/key.rs` is the vocabulary, `src/input/domain/binding.rs` what a bind names,
 `src/input/domain/hotkey.rs` what a press fires, `src/input/domain/held_keys.rs` which keys are held,
-`src/input/domain/gesture.rs` the swipe phases, `src/input/platform/input_tap.rs` and
-`gesture_tap.rs` the taps. Measurements are in `docs/permissions-and-the-launch-agent.md`.
+`src/input/platform/input_tap.rs` the tap. Measurements are in
+`docs/permissions-and-the-launch-agent.md`.

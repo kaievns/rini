@@ -157,36 +157,6 @@ animations {
 }
 
 gestures {
-    // Horizontal trackpad swipes switch workspaces. Off unless `on`.
-    swipe-workspace-switch {
-        // on
-        fingers 3
-        // How far the fingers travel before the switch fires, as a fraction of the trackpad's width.
-        trigger-distance 0.08
-        // How far the fingers may drift vertically and still count as a horizontal swipe:
-        // a fraction (0.4) or a percentage (40).
-        vertical-tolerance 0.4
-        // Swap the two directions.
-        // invert
-        // Haptic feedback when the switch commits: "level-change", "alignment", "generic" or "off".
-        haptics "level-change"
-    }
-
-    // Horizontal trackpad swipes scroll the strip, column by column. Off unless `on`.
-    swipe-view-scroll {
-        // on
-        fingers 3
-        trigger-distance 0.08
-        vertical-tolerance 0.4
-        // invert
-    }
-
-    // Let macOS and the frontmost application see the swipes rini handles, too.
-    // pass-through
-
-    // Stop on empty workspaces when a swipe switches workspace, instead of skipping them.
-    // visit-empty-workspaces
-
     // Dragging a window over another swaps the two once their overlap reaches this share of the
     // area they cover together (intersection over union, above 0 and up to 1). Lower swaps sooner.
     drag-swap-overlap 0.3

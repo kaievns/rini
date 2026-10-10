@@ -13,7 +13,6 @@ use super::layout::GradientRelativeTo;
 use crate::decorations::domain::paint::{Colour, ColourSpace, Hue};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Decimal;
-use crate::input::platform::haptics::HapticPattern;
 use crate::layout::settings::{CenterFocusedColumn, WindowInsertionPoint};
 use crate::windows::domain::rules::RelativeTo;
 use crate::workspaces::domain::display_pin::DisplayRole;
@@ -27,7 +26,6 @@ pub trait Bounds {
     const MIN: f64;
     const MAX: f64;
     const ABOVE_MIN: bool = false;
-    const INTEGER: bool = false;
 }
 
 /// A number, written as an integer or a decimal, refused where it is written when it is out of range.
@@ -39,13 +37,8 @@ impl<B> Number<B> {
 }
 
 fn range_text<B: Bounds>() -> String {
-    let what = if B::INTEGER {
-        "a whole number"
-    } else {
-        "a number"
-    };
     let low = if B::ABOVE_MIN { "above" } else { "from" };
-    format!("{what} {low} {} to {}", B::MIN, B::MAX)
+    format!("a number {low} {} to {}", B::MIN, B::MAX)
 }
 
 impl<S: ErrorSpan, B: Bounds> knus::DecodeScalar<S> for Number<B> {
@@ -59,9 +52,6 @@ impl<S: ErrorSpan, B: Bounds> knus::DecodeScalar<S> for Number<B> {
     ) -> Result<Self, DecodeError<S>> {
         let expected = || DecodeError::conversion(value, format!("expected {}", range_text::<B>()));
         if !matches!(&**value, Literal::Int(_) | Literal::Decimal(_)) {
-            return Err(expected());
-        }
-        if B::INTEGER && !matches!(&**value, Literal::Int(_)) {
             return Err(expected());
         }
         let Decimal(number) = Decimal::raw_decode(value, ctx)?;
@@ -147,7 +137,7 @@ fn colour_space(text: &str) -> Result<ColourSpace, String> {
 }
 
 macro_rules! bounds {
-    ($($name:ident: $min:expr, $max:expr $(, above = $above:expr)? $(, integer = $integer:expr)?;)*) => {
+    ($($name:ident: $min:expr, $max:expr $(, above = $above:expr)?;)*) => {
         $(
             #[derive(Debug, Clone, Copy, PartialEq)]
             pub struct $name;
@@ -155,7 +145,6 @@ macro_rules! bounds {
                 const MIN: f64 = $min;
                 const MAX: f64 = $max;
                 $(const ABOVE_MIN: bool = $above;)?
-                $(const INTEGER: bool = $integer;)?
             }
         )*
     };
@@ -167,10 +156,7 @@ bounds! {
     Size: 0.0, 65535.0, above = true;
     Proportion: 0.0, 1.0, above = true;
     Fraction: 0.0, 1.0;
-    TriggerDistance: 0.01, 1.0;
-    Tolerance: 0.0, 100.0;
     Slowdown: 0.0, 100.0;
-    Fingers: 1.0, 5.0, integer = true;
 }
 
 /// Decodes a string enum the config spells in kebab-case into a type that lives with its feature.
@@ -234,15 +220,4 @@ kebab_scalar!(RelativeTo {
     "bottom" => RelativeTo::Bottom,
     "left" => RelativeTo::Left,
     "right" => RelativeTo::Right,
-});
-
-/// `haptics`: a pattern, or none.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Haptics(pub Option<HapticPattern>);
-
-kebab_scalar!(Haptics {
-    "level-change" => Haptics(Some(HapticPattern::LevelChange)),
-    "alignment" => Haptics(Some(HapticPattern::Alignment)),
-    "generic" => Haptics(Some(HapticPattern::Generic)),
-    "off" => Haptics(None),
 });

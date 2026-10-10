@@ -46,7 +46,7 @@ Rules for keeping this honest:
 | [`displays.md`](displays.md) | More than one screen, and surviving a replug |
 | [`focus.md`](focus.md) | Who has focus, and what is in front of what |
 | [`switcher.md`](switcher.md) | Every window, by application or one by one, in the order they were last used |
-| [`input.md`](input.md) | Bindings, modifiers, and the gestures |
+| [`input.md`](input.md) | Bindings, modifiers, and the event tap |
 | [`persistence.md`](persistence.md) | What survives a restart, and what a bad file costs |
 | [`animation.md`](animation.md) | What moves, and what must never be seen to move |
 | [`decorations.md`](decorations.md) | Borders and the focus ring: what rini draws around a window |

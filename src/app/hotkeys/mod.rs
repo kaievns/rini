@@ -13,7 +13,6 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::app::config::actor as config;
 use crate::input::domain::binding::{Action, Bind};
-use crate::input::platform::gesture_tap;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::pid_t;
 
@@ -84,7 +83,6 @@ pub struct WmController {
     config_tx: config::Sender,
     events_tx: reactor::Sender,
     event_tap_tx: event_tap::Sender,
-    gesture_tap_tx: Option<gesture_tap::Sender>,
     window_tx_store: Option<WindowTxStore>,
     receiver: Receiver,
     sender: Sender,
@@ -98,8 +96,7 @@ impl WmController {
         config_tx: config::Sender,
         events_tx: reactor::Sender,
         event_tap_tx: event_tap::Sender,
-        gesture_tap_tx: Option<gesture_tap::Sender>,
-        window_tx_store: Option<WindowTxStore>,
+            window_tx_store: Option<WindowTxStore>,
     ) -> (Self, channels::Sender<WmEvent>) {
         let (sender, receiver) = channels::channel();
         crate::windows::platform::app::set_application_callback({
@@ -111,7 +108,6 @@ impl WmController {
             config_tx,
             events_tx,
             event_tap_tx,
-            gesture_tap_tx,
             window_tx_store,
             receiver,
             sender: sender.clone(),
@@ -138,9 +134,6 @@ impl WmController {
         match event {
             Displays(event) => self.events_tx.send(Event::from(event)),
             Input(crate::input::event::Event::Action(action)) => self.carry_out(action),
-            Input(crate::input::event::Event::Command(command)) => {
-                self.events_tx.send(reactor::Event::Command(command))
-            }
             Input(crate::input::event::Event::Switch(signal)) => {
                 self.events_tx.send(Event::Switch(signal))
             }
@@ -205,10 +198,7 @@ impl WmController {
                     crate::input::settings::InputSettings::from(&self.config.config);
                 _ = self
                     .event_tap_tx
-                    .send(event_tap::Request::SettingsUpdated(input_settings.clone()));
-                if let Some(tx) = &self.gesture_tap_tx {
-                    tx.send(gesture_tap::GestureRequest::SettingsUpdated(input_settings));
-                }
+                    .send(event_tap::Request::SettingsUpdated(input_settings));
 
                 if !self.hotkeys_installed {
                     debug!(
@@ -436,7 +426,7 @@ mod tests {
             config: crate::app::config::Config::default(),
         };
         let (mut controller, _sender) =
-            WmController::new(config, config_tx, events_tx, event_tap_tx, None, None);
+            WmController::new(config, config_tx, events_tx, event_tap_tx, None);
         controller.handle_event(WmEvent::ClockChanged);
         assert!(matches!(
             events_rx.try_recv(),

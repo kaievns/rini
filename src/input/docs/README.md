@@ -1,8 +1,7 @@
 # `input` — what the user asked for
 
-Keys, bindings, gestures and drags. A key emits the `Action` it is bound to, which the
-application lowers to a `rini-ipc` command, and a gesture emits a command; so the reactor
-cannot tell a hotkey from a CLI call — which is why every binding is testable as a command
+Keys, bindings and drags. A key emits the `Action` it is bound to, which the
+application lowers to a `rini-ipc` command, so the reactor cannot tell a hotkey from a CLI call — which is why every binding is testable as a command
 and why the CLI is a first-class client rather than a debugging aid.
 
 ## What it owns
@@ -13,13 +12,11 @@ and why the CLI is a first-class client rather than a debugging aid.
 | `domain/hotkey.rs` | `modifiers_satisfy`: whether the keys held down are the ones a binding asked for; `HotkeyTable`: what a press fires, and that a held key's repeats fire only a bind written `repeat=true` |
 | `domain/binding.rs` | `Action` and `Bind`: what a `binds` entry names, in niri's words, decoded straight from the config |
 | `domain/pointer.rs` | When a mouse move is worth processing, when the cached pointer window still answers, which press is a double-click, how long ago an event happened, and which events the tap asks for at all |
-| `domain/gesture.rs` | Trackpad rules over normalised touches: `swipe_step`, `scroll_step`, `touch_centroid`, and `SwipeTrack`'s phase machine |
 | `domain/drag_swap.rs` | Recognising a drag that means "swap these two windows" |
-| `platform/tap.rs` | `EventTap`, plus the shared tap lifecycle: `ReEnableGovernor` and `on_recovery` |
+| `platform/tap.rs` | `EventTap`, plus the tap lifecycle: `ReEnableGovernor` and `on_recovery` |
 | `platform/input_tap.rs` | The session tap: mouse buttons (a release through the sink, and every left press to `set_on_left_press`), and keys whenever a hotkey is bound |
-| `platform/gesture_tap.rs` | The HID tap for trackpad gestures |
 | `platform/keyboard.rs` | The layout-dependent `FromStr` impls — the only part that needs the current keyboard |
-| `platform/haptics.rs`, `cursor.rs` | The haptic engine and pointer control |
+| `platform/cursor.rs` | Pointer control |
 
 ## The shape that matters
 
@@ -51,12 +48,12 @@ silicon is not measured. For the press it does not matter: nanoseconds run ahead
 of the tick count there, so the age comes out as none, and the press is timed
 when the tap saw it, which is still before the app could.
 
-**Rules are separable from taps.** Every gesture decision is a pure function over
-normalised positions, so it can be exercised without a trackpad.
+**Rules are separable from the tap.** Every pointer and drag decision is a pure function
+(`domain/pointer.rs`, `domain/drag_swap.rs`), so it can be exercised without a mouse.
 
 ## Reading order
 
-`domain/gesture.rs` → `platform/tap.rs` → then either tap.
+`domain/pointer.rs` → `platform/tap.rs` → `platform/input_tap.rs`.
 
 **The mask is a decision, not a constant.** Mouse buttons are always asked for, because
 a drag is how a window moves between displays. Keys are asked for only when something is

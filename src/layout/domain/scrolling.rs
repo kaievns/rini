@@ -3515,12 +3515,12 @@ mod tests {
         );
     }
 
-    /// Found while fixing the above, not reported: the scroll gesture computed its own column widths
-    /// and did not know about maximised ones, so it stepped the strip by `max_column_width_ratio` of
-    /// the viewport for a column occupying all of it. One swipe left the next column part-way on
-    /// screen. Both sides read `constraints::column_ratio` now.
+    /// Found while fixing the above, not reported: `scroll-strip` computed its own column widths and
+    /// did not know about maximised ones, so it stepped the strip by `max_column_width_ratio` of the
+    /// viewport for a column occupying all of it. One step left the next column part-way on screen.
+    /// Both sides read `constraints::column_ratio` now.
     #[test]
-    fn a_swipe_steps_over_a_maximised_column_by_its_real_width() {
+    fn scroll_strip_steps_over_a_maximised_column_by_its_real_width() {
         let (mut system, layout, w1, w2) = setup_two_windows(preset_settings());
         let screen = screen(1200.0, 800.0);
         let gaps = Gaps::default();
@@ -3528,7 +3528,7 @@ mod tests {
 
         assert!(system.select_window(layout, w1));
         toggle_selection(&mut system, layout);
-        // The gesture reads the geometry the last layout pass recorded.
+        // `scroll-strip` reads the geometry the last layout pass recorded.
         render(&system, layout, screen, &gaps);
         assert_eq!(scroll_offset(&system, layout), 0.0);
 
@@ -3537,12 +3537,12 @@ mod tests {
         let stepped = scroll_offset(&system, layout);
         assert!(
             (stepped - (tiling_width + gaps.inner)).abs() < 2.0,
-            "one swipe should clear the whole maximised column ({} + gap), stepped {stepped}",
+            "one step should clear the whole maximised column ({} + gap), stepped {stepped}",
             tiling_width
         );
         assert!(
             frame_for(&render(&system, layout, screen, &gaps), w2).origin.x < tiling_width,
-            "the next column should be on screen after the swipe"
+            "the next column should be on screen after the step"
         );
     }
 
@@ -4651,9 +4651,9 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "stacked");
     }
 
-    /// Bounded, the gesture would step it by 1148pt plus the gap while the layout drew it 1443.
+    /// Bounded, `scroll-strip` would step it by 1148pt plus the gap while the layout drew it 1443.
     #[test]
-    fn the_scroll_gesture_steps_a_dragged_column_by_its_dragged_width() {
+    fn scroll_strip_steps_a_dragged_column_by_its_dragged_width() {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
         render(&system, layout, KAI_SCREEN, &kai_s_gaps());

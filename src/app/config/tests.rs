@@ -99,25 +99,19 @@ fn an_empty_section_means_the_same_as_an_absent_one() {
         assert_eq!(parse(&format!("{section} {{\n}}\n")), absent, "`{section} {{}}`");
     }
     assert_eq!(
-        parse(
-            "gestures {\n    swipe-workspace-switch {\n    }\n    swipe-view-scroll {\n    }\n}\n"
-        ),
-        absent
-    );
-    assert_eq!(
         parse("recent-windows {\n    icons {\n    }\n    binds {\n    }\n}\n"),
         absent
     );
     assert_eq!(parse("layout {\n    preset-column-widths {\n    }\n}\n"), absent);
 }
 
-/// Each has one default, whether its section is written or not (`specs/config.md`).
+/// It has one default, whether its section is written or not (`specs/config.md`).
 #[test]
-fn skipping_empty_workspaces_and_the_drag_swap_overlap_have_one_default() {
-    let config = parse("gestures {\n    pass-through false\n}\n");
-    assert!(config.settings.gestures.skip_empty);
-    assert_eq!(config.settings.window_snapping.drag_swap_fraction, 0.3);
-    assert_eq!(parse("").settings.window_snapping.drag_swap_fraction, 0.3);
+fn the_drag_swap_overlap_has_one_default() {
+    let overlap = |text: &str| parse(text).settings.window_snapping.drag_swap_fraction;
+    assert_eq!(overlap(""), 0.3);
+    assert_eq!(overlap("gestures {\n}\n"), 0.3);
+    assert_eq!(overlap("gestures {\n    drag-swap-overlap 0.4\n}\n"), 0.4);
 }
 
 #[test]
@@ -248,10 +242,6 @@ fn a_number_out_of_range_or_of_the_wrong_kind_says_what_is_expected() {
         refused("layout {\n    gaps \"wide\"\n}\n").contains("expected a number from 0 to 65535")
     );
     assert!(refused("gestures {\n    drag-swap-overlap 0\n}\n").contains("above 0 to 1"));
-    assert!(
-        refused("gestures {\n    swipe-view-scroll { fingers 2.5; }\n}\n")
-            .contains("a whole number")
-    );
 }
 
 #[test]
@@ -345,47 +335,21 @@ fn the_handover_is_measured_only_when_asked_and_never_off() {
     );
 }
 
-/// The two swipes are configured in one `gestures` block and reach the taps as two settings.
+/// rini taps no trackpad gestures (`specs/input.md`), so the swipes Kai's file configured are names
+/// it no longer knows, refused where they are written.
 #[test]
-fn input_settings_are_assembled_from_both_swipes() {
-    let config = parse(concat!(
+fn the_old_swipe_nodes_are_refused_naming_the_line() {
+    let report = refused(concat!(
         "gestures {\n",
-        "    swipe-workspace-switch {\n        on\n        fingers 4\n        haptics \"off\"\n    }\n",
-        "    swipe-view-scroll {\n        on\n        fingers 2\n        trigger-distance 0.2\n",
-        "    }\n",
-        "    pass-through\n",
-        "    visit-empty-workspaces\n",
-        "    drag-swap-overlap 0.4\n",
+        "    swipe-workspace-switch {\n        on\n        fingers 3\n    }\n",
+        "    swipe-view-scroll {\n        on\n        fingers 3\n",
+        "        switch-workspace-on-overscroll\n    }\n",
         "}\n",
     ));
-    let input = InputSettings::from(&config);
-    assert!(input.gestures.enabled);
-    assert_eq!(input.gestures.fingers, 4);
-    assert!(!input.gestures.haptics_enabled);
-    assert!(!input.gestures.consume_dock_swipe);
-    assert!(!input.gestures.skip_empty);
-    assert!(input.strip_scroll.enabled);
-    assert_eq!(input.strip_scroll.fingers, 2);
-    assert_eq!(input.strip_scroll.distance_pct, 0.2);
-    assert_eq!(config.settings.window_snapping.drag_swap_fraction, 0.4);
-    let report = refused(concat!(
-        "gestures {\n    swipe-view-scroll {\n",
-        "        switch-workspace-on-overscroll\n    }\n}\n",
-    ));
-    assert!(
-        report.contains(
-            "unknown node `switch-workspace-on-overscroll` in `gestures › swipe-view-scroll`"
-        ),
-        "{report}"
-    );
-}
-
-#[test]
-fn on_and_off_together_is_an_error() {
-    assert!(
-        refused("gestures {\n    swipe-view-scroll {\n        on\n        off\n    }\n}\n")
-            .contains("`on` and `off` are both written")
-    );
+    assert!(report.contains("unknown node `swipe-workspace-switch` in `gestures`"), "{report}");
+    assert!(report.contains("test.kdl:2:5"), "{report}");
+    assert!(report.contains("unknown node `swipe-view-scroll` in `gestures`"), "{report}");
+    assert!(report.contains("test.kdl:6:5"), "{report}");
 }
 
 #[test]

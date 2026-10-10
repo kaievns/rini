@@ -61,11 +61,13 @@ recorded in `src/workspaces/docs/workspaces-and-displays.md`.
 
 ### 1.2 Two event taps, one lifecycle, written twice
 
-**DONE — `tap::Recovery` and `tap::on_recovery` are shared, with 6 tests on the generation rules (`06da288`).**
+**DONE — `tap::Recovery` and `tap::on_recovery` were shared, with 6 tests on the generation rules
+(`06da288`). The HID gesture tap then went with the trackpad swipes (2026-10-10), so the session tap
+is the one tap left.**
 
-`src/input/platform/gesture_tap.rs:202` `run` and
-`src/input/platform/input_tap.rs:278` `run` are 0.83 similar over 63 and 79 lines.
-Both own: a recovery channel, a `tap::ReEnableGovernor`, a cooldown
+The gesture tap's `run` (`gesture_tap.rs:202`) and
+`src/input/platform/input_tap.rs:278` `run` were 0.83 similar over 63 and 79 lines.
+Both owned: a recovery channel, a `tap::ReEnableGovernor`, a cooldown
 `RepeatingTimer`, and the same `select!` arm handling `TapDisabled`, checking the
 generation, and branching on `ReEnableDecision`.
 
@@ -350,7 +352,7 @@ The recent batches moved the opposite way deliberately — pure decisions to
 |---|---|---|
 | `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. Needs a fake `AXUIElement` seam. PARTLY: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`) |
 | `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
-| `src/input/platform/gesture_tap.rs` | 657 | DONE: the phase machine is `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`) |
+| `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
 | `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
 | `src/main.rs` | 430 | one 317-line `main`; composition root |
 | `src/app/hotkeys/mod.rs` | 404 | DONE: the alias lowering is `hotkeys/lower.rs` with 7 tests |

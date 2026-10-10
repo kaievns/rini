@@ -11,9 +11,7 @@ use crate::app::startup::StartupCommand;
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Bind;
 use crate::input::domain::key::{HotkeySpec, ModKey};
-use crate::input::settings::{
-    GestureSettings, InputSettings, ScrollGestureSettings, WindowSnappingSettings,
-};
+use crate::input::settings::{InputSettings, WindowSnappingSettings};
 pub use crate::layout::settings::{Edges, LayoutSettings};
 pub use crate::windows::domain::rules::{RuleMatch, WindowRule};
 pub use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
@@ -62,7 +60,6 @@ pub struct Settings {
     /// The modifier `Mod` stands for in a key.
     pub mod_key: ModKey,
     pub layout: LayoutSettings,
-    pub gestures: GestureSettings,
     pub switcher: crate::switcher::settings::SwitcherSettings,
     pub bar: crate::bar::settings::BarSettings,
     /// `animations › journal`: whether every transition's journal is written, and each lift's handover
@@ -95,7 +92,6 @@ impl Default for Settings {
             auto_focus_denylist: Vec::new(),
             mod_key: ModKey::default(),
             layout: LayoutSettings::default(),
-            gestures: GestureSettings::default(),
             switcher: Default::default(),
             bar: Default::default(),
             journal: Default::default(),
@@ -166,19 +162,10 @@ impl Config {
 impl From<&Config> for InputSettings {
     fn from(config: &Config) -> Self {
         let s = &config.settings;
-        let g = &s.layout.scrolling.gestures;
         InputSettings {
             mouse_hides_on_focus: s.mouse_hides_on_focus,
             focus_follows_mouse: s.focus_follows_mouse,
             focus_follows_mouse_disable_hotkey: s.focus_follows_mouse_disable_hotkey.clone(),
-            gestures: s.gestures.clone(),
-            strip_scroll: ScrollGestureSettings {
-                enabled: g.enabled,
-                invert_horizontal: g.invert_horizontal,
-                vertical_tolerance: g.vertical_tolerance,
-                fingers: g.fingers,
-                distance_pct: g.distance_pct,
-            },
         }
     }
 }

@@ -20,9 +20,8 @@
   exception, and a file that writes none has none, as in niri. So is `layout › border`'s `on`: a
   `border` block that writes neither `on` nor `off` turns the border on, as niri's does.
 - An empty section MUST mean exactly what an absent one does, but for `layout › border`, whose empty
-  block `border {}` turns the border on, as above. Two TOML settings broke this: a workspace swipe
-  skipped empty workspaces when its table was absent and not when it was empty, and the drag-swap
-  overlap was 0 with no table, 0.3 with one, and 0.5 after any reload.
+  block `border {}` turns the border on, as above. The TOML broke this: the drag-swap overlap was 0
+  with no table, 0.3 with one, and 0.5 after any reload.
 
 > **Reported 2026-10-06.** Kai's decision D2: a `layout › border` with neither `on` nor `off` means
 > on, exactly as niri. niri reads it so because its default config's wording led users to write

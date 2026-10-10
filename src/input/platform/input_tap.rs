@@ -11,7 +11,6 @@
 //!   config/layout changes, read by the callback.
 //!
 //! Requests from the main thread arrive via the actor channel (`Receiver`).
-//! The main thread's `GestureTap` is a separate `ListenOnly` tap for gestures.
 
 use std::cell::{Cell, RefCell};
 use std::panic::AssertUnwindSafe;

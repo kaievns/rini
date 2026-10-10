@@ -11,7 +11,7 @@ use crate::app::{channels, hotkeys as wm_controller};
 use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::displays::platform::window_notify;
 use crate::input::domain::drag_swap::DragManager as DragSwapManager;
-use crate::input::platform::{gesture_tap, input_tap as event_tap};
+use crate::input::platform::input_tap as event_tap;
 use crate::input::settings::WindowSnappingSettings;
 use crate::windows::domain::raise as raise_manager;
 use crate::workspaces::LayoutEngine;
@@ -163,7 +163,6 @@ impl RefreshQuarantineManager {
 /// Manages communication channels to other actors
 pub struct CommunicationManager {
     pub event_tap_tx: Option<event_tap::Sender>,
-    pub gesture_tap_tx: Option<gesture_tap::Sender>,
     pub cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
     pub transitions_tx: Option<crate::transitions::platform::engine::Sender>,
     pub pictures: Option<crate::pictures::platform::service::Pictures>,

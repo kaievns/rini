@@ -1,65 +1,15 @@
-//! `gestures` and `animations`: the two trackpad swipes, dragging one window onto another, how the
-//! movements are drawn, and whether their journal is written and each lift's handover measured.
+//! `gestures` and `animations`: dragging one window onto another, how the movements are drawn, and
+//! whether their journal is written and each lift's handover measured.
 
 use knus::span::Span;
 
-use super::value::{
-    Fingers, Flag, Haptics, Number, Proportion, Slowdown, Tolerance, TriggerDistance,
-};
+use super::value::{Flag, Number, Proportion, Slowdown};
 
 #[derive(knus::Decode, Debug, Default)]
 #[knus(span_type = Span)]
 pub struct GesturesPart {
-    #[knus(child)]
-    pub swipe_workspace_switch: Option<SwipeWorkspaceSwitchPart>,
-    #[knus(child)]
-    pub swipe_view_scroll: Option<SwipeViewScrollPart>,
-    #[knus(child)]
-    pub pass_through: Option<Flag>,
-    #[knus(child)]
-    pub visit_empty_workspaces: Option<Flag>,
     #[knus(child, unwrap(argument))]
     pub drag_swap_overlap: Option<Number<Proportion>>,
-}
-
-#[derive(knus::Decode, Debug, Default)]
-#[knus(span_type = Span)]
-pub struct SwipeWorkspaceSwitchPart {
-    #[knus(span)]
-    pub span: Span,
-    #[knus(child)]
-    pub on: Option<Flag>,
-    #[knus(child)]
-    pub off: Option<Flag>,
-    #[knus(child, unwrap(argument))]
-    pub fingers: Option<Number<Fingers>>,
-    #[knus(child, unwrap(argument))]
-    pub trigger_distance: Option<Number<TriggerDistance>>,
-    #[knus(child, unwrap(argument))]
-    pub vertical_tolerance: Option<Number<Tolerance>>,
-    #[knus(child)]
-    pub invert: Option<Flag>,
-    #[knus(child, unwrap(argument))]
-    pub haptics: Option<Haptics>,
-}
-
-#[derive(knus::Decode, Debug, Default)]
-#[knus(span_type = Span)]
-pub struct SwipeViewScrollPart {
-    #[knus(span)]
-    pub span: Span,
-    #[knus(child)]
-    pub on: Option<Flag>,
-    #[knus(child)]
-    pub off: Option<Flag>,
-    #[knus(child, unwrap(argument))]
-    pub fingers: Option<Number<Fingers>>,
-    #[knus(child, unwrap(argument))]
-    pub trigger_distance: Option<Number<TriggerDistance>>,
-    #[knus(child, unwrap(argument))]
-    pub vertical_tolerance: Option<Number<Tolerance>>,
-    #[knus(child)]
-    pub invert: Option<Flag>,
 }
 
 #[derive(knus::Decode, Debug, Default)]

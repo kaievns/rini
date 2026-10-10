@@ -10,7 +10,7 @@
 //! src/displays/     screens, native spaces, coordinates
 //! src/layout/       the scrolling strip
 //! src/workspaces/   virtual workspaces and their persistence
-//! src/input/        keys, bindings, gestures, drags
+//! src/input/        keys, bindings, drags
 //! src/pictures/     pictures of windows, the desktop and the bar
 //! src/animation/    how things move on screen
 //! src/transitions/  when things happen in a transition

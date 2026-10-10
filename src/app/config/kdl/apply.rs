@@ -105,54 +105,6 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     }
 
     if let Some(gestures) = part.gestures {
-        if let Some(swipe) = gestures.swipe_workspace_switch {
-            let g = &mut settings.gestures;
-            if let Some(on) = on_off(swipe.on, swipe.off, &swipe.span, &mut problems) {
-                g.enabled = on;
-            }
-            if let Some(fingers) = swipe.fingers {
-                g.fingers = fingers.get() as usize;
-            }
-            if let Some(distance) = swipe.trigger_distance {
-                g.distance_pct = distance.get();
-            }
-            if let Some(tolerance) = swipe.vertical_tolerance {
-                g.swipe_vertical_tolerance = tolerance.get();
-            }
-            if let Some(Flag(invert)) = swipe.invert {
-                g.invert_horizontal_swipe = invert;
-            }
-            if let Some(haptics) = swipe.haptics {
-                g.haptics_enabled = haptics.0.is_some();
-                if let Some(pattern) = haptics.0 {
-                    g.haptic_pattern = pattern;
-                }
-            }
-        }
-        if let Some(swipe) = gestures.swipe_view_scroll {
-            let g = &mut settings.layout.scrolling.gestures;
-            if let Some(on) = on_off(swipe.on, swipe.off, &swipe.span, &mut problems) {
-                g.enabled = on;
-            }
-            if let Some(fingers) = swipe.fingers {
-                g.fingers = fingers.get() as usize;
-            }
-            if let Some(distance) = swipe.trigger_distance {
-                g.distance_pct = distance.get();
-            }
-            if let Some(tolerance) = swipe.vertical_tolerance {
-                g.vertical_tolerance = tolerance.get();
-            }
-            if let Some(Flag(invert)) = swipe.invert {
-                g.invert_horizontal = invert;
-            }
-        }
-        if let Some(Flag(pass)) = gestures.pass_through {
-            settings.gestures.consume_dock_swipe = !pass;
-        }
-        if let Some(Flag(visit)) = gestures.visit_empty_workspaces {
-            settings.gestures.skip_empty = !visit;
-        }
         if let Some(overlap) = gestures.drag_swap_overlap {
             settings.window_snapping.drag_swap_fraction = overlap.get();
         }

@@ -58,7 +58,7 @@ and `RestoreSource`. The features' settings types carry no parsing.
 | Rule | Why |
 |---|---|
 | A shared concept takes niri's exact node name, nesting and value form | niri snippets and muscle memory carry over |
-| A rini-only concept is a kebab-case node in the section niri would use | `input` for focus and the pointer, `layout` for the strip, `gestures` for trackpad and drag, the top level for whole-WM flags, as niri's `prefer-no-csd` |
+| A rini-only concept is a kebab-case node in the section niri would use | `input` for focus and the pointer, `layout` for the strip, `gestures` for drag, the top level for whole-WM flags, as niri's `prefer-no-csd` |
 | A bare flag turns something on, and flags are named for the non-default behaviour | niri's convention; a flag also takes `true` or `false` |
 | An unknown node, property or argument is an error | niri's behaviour; the TOML silently accepted typos in one table |
 | Indices start at 1 | niri's `focus-workspace 1` is the first workspace (Kai's decision, `specs/input.md`) |

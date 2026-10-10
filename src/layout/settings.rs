@@ -1,4 +1,4 @@
-//! What a strip can be told about itself: gaps, column widths, insertion, the scrolling gesture.
+//! What a strip can be told about itself: gaps, column widths, insertion, how it follows focus.
 //! Plain data with defaults; the config file fills it.
 use std::collections::BTreeMap;
 
@@ -41,7 +41,6 @@ pub struct ScrollingLayoutSettings {
     /// maximised column can be stepped back down. Ratios outside `(0, 1]` are ignored.
     pub preset_column_widths: Vec<f64>,
     pub center_focused_column: CenterFocusedColumn,
-    pub gestures: ScrollingGestureSettings,
 }
 
 impl Default for ScrollingLayoutSettings {
@@ -53,7 +52,6 @@ impl Default for ScrollingLayoutSettings {
             max_column_width_ratio: 0.9,
             preset_column_widths: vec![0.33333, 0.5, 0.66667, 1.0],
             center_focused_column: CenterFocusedColumn::default(),
-            gestures: ScrollingGestureSettings::default(),
         }
     }
 }
@@ -61,30 +59,6 @@ impl Default for ScrollingLayoutSettings {
 impl ScrollingLayoutSettings {
     /// Whether the strip is pinned and only moves to reveal the focused column.
     pub fn reveals_only(&self) -> bool { self.center_focused_column == CenterFocusedColumn::Never }
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
-pub struct ScrollingGestureSettings {
-    pub enabled: bool,
-    pub invert_horizontal: bool,
-    /// How far the fingers may drift vertically and still count as a horizontal swipe: a fraction,
-    /// or a percentage above 1.
-    pub vertical_tolerance: f64,
-    pub fingers: usize,
-    /// Horizontal distance (0..1 of the trackpad) a scroll step needs.
-    pub distance_pct: f64,
-}
-
-impl Default for ScrollingGestureSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            invert_horizontal: false,
-            vertical_tolerance: 0.4,
-            fingers: 3,
-            distance_pct: 0.08,
-        }
-    }
 }
 
 /// Space at each edge of a display, in logical pixels.

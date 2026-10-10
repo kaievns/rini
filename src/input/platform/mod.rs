@@ -1,9 +1,7 @@
 #![allow(non_upper_case_globals)]
-//! CGEventTaps, Carbon hotkeys, the cursor and the haptic engine.
+//! CGEventTaps, Carbon hotkeys and the cursor.
 
 pub mod cursor;
-pub mod gesture_tap;
-pub mod haptics;
 pub mod input_tap;
 pub mod keyboard;
 pub mod tap;

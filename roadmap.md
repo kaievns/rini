@@ -29,12 +29,6 @@ current behaviour annoys me.
   happen, which is why it has survived: it looks like nothing. Needs a measured case
   before it can be acted on.
 
-## Cleanup
-- **Merge the two gesture settings.** The file has one `gestures` block, but the workspace
-  swipe (`input::settings::GestureSettings`) and the column scroll
-  (`layout::settings::ScrollingGestureSettings`) still configure one event tap from two
-  features.
-
 ## Wanted
 
 - **Per-display gaps by display name.** `output "UUID"` overrides `gaps` and `struts` per

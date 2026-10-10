@@ -150,10 +150,7 @@ impl ReEnableGovernor {
     }
 }
 
-/// A recovery message from a tap's own callbacks, on the tap's thread.
-///
-/// One type for both taps: the session tap and the HID gesture tap had an identical copy each,
-/// alongside an identical forty-line handler for it.
+/// A recovery message from the session tap's own callbacks, on the tap's thread.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Recovery {
     /// The OS disabled the tap (timeout or user input); the governor decides when to re-arm.
@@ -217,7 +214,6 @@ pub fn on_recovery(
 
 impl EventTap {
     unsafe fn create(
-        location: CGTapLoc,
         options: CGTapOpt,
         mask: CGEventMask,
         callback: TapCallback,
@@ -238,7 +234,7 @@ impl EventTap {
 
         let port = unsafe {
             CGEvent::tap_create(
-                location,
+                CGTapLoc::SessionEventTap,
                 CGTapPlace::HeadInsertEventTap,
                 options,
                 mask,
@@ -277,32 +273,6 @@ impl EventTap {
         Some(event_tap)
     }
 
-    /// Creates an event tap at `location` that reports disables and Mach-port invalidations to
-    /// its owner, which re-enables through [`EventTap::re_enable`] under its own policy.
-    pub unsafe fn new_at_location_with_options_and_recovery_callbacks(
-        location: CGTapLoc,
-        options: CGTapOpt,
-        mask: CGEventMask,
-        callback: TapCallback,
-        user_info: *mut c_void,
-        drop_ctx: Option<unsafe fn(*mut c_void)>,
-        disabled_callback: TapDisabledCallback,
-        invalidated_callback: TapInvalidatedCallback,
-    ) -> Option<Self> {
-        unsafe {
-            Self::create(
-                location,
-                options,
-                mask,
-                callback,
-                user_info,
-                drop_ctx,
-                disabled_callback,
-                invalidated_callback,
-            )
-        }
-    }
-
     /// Creates a session event tap that reports disables (`disabled_callback`) and Mach-port
     /// invalidations (`invalidated_callback`) to its owner instead of recovering in the callback.
     pub unsafe fn new_with_options_and_recovery_callbacks(
@@ -315,8 +285,7 @@ impl EventTap {
         invalidated_callback: TapInvalidatedCallback,
     ) -> Option<Self> {
         unsafe {
-            Self::new_at_location_with_options_and_recovery_callbacks(
-                CGTapLoc::SessionEventTap,
+            Self::create(
                 options,
                 mask,
                 callback,

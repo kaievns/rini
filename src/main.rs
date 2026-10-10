@@ -17,7 +17,6 @@ use rini::displays::platform::mission_control::NativeMissionControl;
 use rini::displays::platform::spaces::{Notification as SpacesNotification, SpacesActor};
 use rini::displays::platform::window_notify as window_notify_actor;
 use rini::displays::screen::displays_have_separate_spaces;
-use rini::input::platform::gesture_tap::GestureTap;
 use rini::input::platform::input_tap::InputTap;
 use rini::windows::domain::transaction::WindowTxStore;
 use rini::windows::platform::ax::permission::ensure_accessibility_permission;
@@ -247,7 +246,6 @@ fn main() {
     let (event_tap_tx, event_tap_rx) = rini::app::channels::channel();
     let (wnd_tx, wnd_rx) = rini::app::channels::channel();
     let window_tx_store = WindowTxStore::new();
-    let (gesture_tap_tx, gesture_tap_rx) = rini::app::channels::channel();
     let (cursor_warp_tx, cursor_warp_rx) = rini::app::channels::channel();
     let (transitions_tx, transitions_rx) = rini::app::channels::channel();
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
@@ -292,7 +290,6 @@ fn main() {
         Some(bar_tx.clone()),
         Some((rest_tx.clone(), following.clone())),
         Some((wnd_tx.clone(), window_tx_store.clone())),
-        Some(gesture_tap_tx.clone()),
         opt.one,
     );
     let events_tx = reactor.sender();
@@ -361,7 +358,6 @@ fn main() {
         config_tx.clone(),
         events_tx.clone(),
         event_tap_tx.clone(),
-        Some(gesture_tap_tx.clone()),
         Some(window_tx_store.clone()),
     );
 
@@ -428,11 +424,6 @@ fn main() {
         event_tap_rx,
     );
     event_tap.set_on_left_press(reactor::Event::left_press_sink(events_tx.clone()));
-    let gesture_tap = GestureTap::new(
-        input_settings,
-        Box::new(wm_controller_sender.clone()),
-        gesture_tap_rx,
-    );
 
     // Warping needs no main-thread access and no permissions, so it is just another
     // actor. It stays parked until the reactor sends it geometry for two or more displays.
@@ -560,7 +551,6 @@ fn main() {
                 notification_center.watch_for_notifications()
             ),
             supervise("spaces", spaces_actor.run()),
-            supervise("gesture_tap", gesture_tap.run()),
             supervise("window_notify", wn_actor.run()),
             supervise("mc_native", mission_control_native.run()),
             supervise("process_actor", process_actor.run()),

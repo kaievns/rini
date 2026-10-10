@@ -94,7 +94,6 @@ pub use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::screen::order_visible_spaces_by_position;
 use crate::displays::domain::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta};
-use crate::input::platform::gesture_tap;
 use crate::input::platform::input_tap as event_tap;
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
@@ -595,7 +594,6 @@ impl Reactor {
         bar_tx: Option<crate::bar::platform::actor::Sender>,
         rest: Option<(crate::decorations::platform::rest::Sender, crate::displays::event::Following)>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
-        gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
     ) -> ReactorHandle {
         let (events_tx, events) = channels::channel();
@@ -619,7 +617,6 @@ impl Reactor {
             reactor.rest.tx = Some(tx);
             reactor.rest.following = following;
         }
-        reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());
         thread::Builder::new()
@@ -694,7 +691,6 @@ impl Reactor {
             drawn_workspace: HashMap::default(),
             communication_manager: managers::CommunicationManager {
                 event_tap_tx: None,
-                gesture_tap_tx: None,
                 cursor_warp_tx: None,
                 transitions_tx: None,
                 pictures: None,
