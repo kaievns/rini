@@ -5,6 +5,8 @@
 #   spare_pan: focus <spare-app> on <spare>, 6 pans Alt+J/Alt+L alternating, 1500ms apart  -> rec-spare_pan.jsonl
 # A screen test: it posts keys and records rini's overlay. It refuses unless the machine has been idle 300s, or idle
 # since the last battery or measure.sh session ended; it aborts on any input it did not post, and puts focus back.
+# Before each pan segment's first press it checks the scene (battery.py scene): the focused window is its workspace's
+# leftmost column, and with --scene every window is where the reference had it; else it refuses (exit 2).
 # battery.sh --check [options]: resolves the windows it would fly and prints them; posts nothing.
 # README.md ("The battery") says what it records and how to read it.
 set -u
@@ -18,10 +20,11 @@ SPARE=spare; SPARE_APP=Messages
 BLUR_APP="Microsoft Outlook"
 PANE=20,140,280,900
 CHECK=0
+SCENE=""
 usage() {
   cat >&2 <<EOF
 usage: battery.sh [--check] [--out DIR] [--comms WS] [--comms-app APP] [--spare WS] [--spare-app APP]
-                  [--blur-app APP] [--pane x0,y0,x1,y1] <label>
+                  [--blur-app APP] [--pane x0,y0,x1,y1] [--scene FILE] <label>
   --out DIR        where runs go, DIR/<label> (default $ROOT)
   --comms WS       workspace of the first pans and the switches (default $COMMS)
   --comms-app APP  window focused on it before the pans (default $COMMS_APP)
@@ -29,6 +32,7 @@ usage: battery.sh [--check] [--out DIR] [--comms WS] [--comms-app APP] [--spare 
   --spare-app APP  window focused on it before the pans (default $SPARE_APP)
   --blur-app APP   the window on WS spare whose fly-ins are checked for blur (default $BLUR_APP)
   --pane BOX       the box of the overlay, in points, whose chroma the blur check reads (default $PANE)
+  --scene FILE     a run's meta.json, or a scene battery.py wrote: every window must be where it had it
 EOF
   exit 2
 }
@@ -42,6 +46,7 @@ while [ $# -gt 0 ]; do
     --spare-app) SPARE_APP=${2:?}; shift 2 ;;
     --blur-app) BLUR_APP=${2:?}; shift 2 ;;
     --pane) PANE=${2:?}; shift 2 ;;
+    --scene) SCENE=${2:?}; shift 2 ;;
     -*) usage ;;
     *) break ;;
   esac
@@ -69,6 +74,7 @@ J=$JDIR/transitions.jsonl
 GAP=1500
 
 [ -e "$OUT" ] && die "$OUT exists; pick another label"
+[ -z "$SCENE" ] || [ -f "$SCENE" ] || die "no scene at $SCENE"
 [ -f "$J" ] || die "no journal at $J: turn on animations { journal } in rini's config"
 idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {printf "%d", $NF/1e9; exit}')
 if [ "$idle" -lt 300 ]; then
@@ -108,6 +114,7 @@ grep -q listening "$OUT/inputwatch.out" || { kill $WATCH 2>/dev/null; die "input
 
 INODE=$(stat -f %i "$J"); L0=$(wc -l < "$J" | tr -d ' ')
 ABORT=""
+REFUSED=""
 RESTORED=0
 restore() {
   [ $RESTORED = 1 ] && return; RESTORED=1
@@ -119,6 +126,12 @@ restore() {
 }
 trap 'ABORT=${ABORT:-signal}; restore; exit 3' INT TERM
 check() { if [ -e "$FLAG" ]; then ABORT=$(cat "$FLAG"); return 1; fi; kill -0 $WATCH 2>/dev/null || { ABORT="inputwatch died"; return 1; }; }
+scene_check() { # scene_check <segment> <workspace> <app>: the scene the segment flies, kept as scene-<segment>.json
+  local name=$1
+  if ! ws | python3 "$HERE/battery.py" scene "$2" "$3" ${SCENE:+"$SCENE"} > "$OUT/scene-$name.json" 2> "$OUT/scene-$name.err"; then
+    REFUSED="$name: $(tr '\n' ' ' < "$OUT/scene-$name.err")"; ABORT="refused, $REFUSED"; return 1
+  fi
+}
 seq_keys() { local a=$1 b=$2 n=$3 out="" i; for ((i = 0; i < n; i++)); do if ((i % 2)); then out+="$b $GAP "; else out+="$a $GAP "; fi; done; echo $out; }
 segment() { # segment <name> <keys...>
   local name=$1; shift
@@ -129,11 +142,13 @@ segment() { # segment <name> <keys...>
 }
 run() {
   "$CLI" execute window focus --window-id "$COMMS_ID" > /dev/null; sleep 1.5
+  scene_check comms_pan "$COMMS" "$COMMS_APP" || return
   segment comms_pan $(seq_keys 38 37 8) || return
   sleep 0.5
   segment switch $(seq_keys 41 35 4) || return
   check || return
   "$CLI" execute window focus --window-id "$SPARE_ID" > /dev/null; sleep 1.5
+  scene_check spare_pan "$SPARE" "$SPARE_APP" || return
   segment spare_pan $(seq_keys 38 37 6) || return
 }
 run
@@ -146,23 +161,29 @@ else
   { tail -n +$((L0 + 1)) "$JDIR/transitions.1.jsonl"; cat "$J"; } > "$OUT/journal.slice.jsonl"
 fi
 END=$(date +%s)
-python3 - "$OUT/meta.json" "$LABEL" "$PID" "$START" "$END" "$FOCUSED" "$ABORT" \
+python3 - "$OUT/meta.json" "$OUT" "$LABEL" "$PID" "$START" "$END" "$FOCUSED" "$ABORT" \
   "$(shasum -a 256 "$RINI" | cut -c1-64)" "$(git -C "$MAIN" rev-parse --short HEAD 2>/dev/null)" "$L0" \
   "$COMMS" "$COMMS_APP" "$COMMS_ID" "$SPARE" "$SPARE_APP" "$SPARE_ID" "$BLUR_APP" "$BLUR_PID" "$PANE" <<'EOF'
-import json, sys, time
-(p, label, pid, start, end, focused, abort, sha, head, l0,
+import json, os, sys, time
+(p, out, label, pid, start, end, focused, abort, sha, head, l0,
  comms, comms_app, comms_id, spare, spare_app, spare_id, blur_app, blur_pid, pane) = sys.argv[1:]
+scene = {}
+for segment in ("comms_pan", "spare_pan"):
+    kept = os.path.join(out, f"scene-{segment}.json")
+    if os.path.exists(kept) and os.path.getsize(kept):
+        scene[segment] = json.load(open(kept))
 json.dump({"label": label, "rini_pid": int(pid), "started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(start))),
            "run_s": int(end) - int(start), "focused_at_start": focused.split("\t"), "aborted": abort or None,
            "binary_sha": sha, "repo_head": head, "journal_from_line": int(l0) + 1,
            "windows": {"comms": {"workspace": comms, "app": comms_app, "id": json.loads(comms_id)},
                        "spare": {"workspace": spare, "app": spare_app, "id": json.loads(spare_id)},
                        "blur": {"workspace": spare, "app": blur_app, "pid": int(blur_pid)}},
-           "pane": [int(v) for v in pane.split(",")]}, open(p, "w"), indent=1)
+           "pane": [int(v) for v in pane.split(",")], "scene": scene}, open(p, "w"), indent=1)
 EOF
 python3 "$HERE/journal.py" summary "$OUT/journal.slice.jsonl" > "$OUT/journal-summary.txt" 2>&1
 python3 "$HERE/journal.py" pictures --target "$OUT/journal.slice.jsonl" > "$OUT/pictures-target.txt" 2>&1
 python3 "$HERE/analyze.py" "$OUT"
 NOW=$(lookup focused | tr '\t' ' ')
 echo "restored: now $NOW (start: $(echo "$FOCUSED" | tr '\t' ' '))"
+[ -z "$REFUSED" ] || { echo "battery: $REFUSED" >&2; exit 2; }
 [ -z "$ABORT" ] || exit 3

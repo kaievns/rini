@@ -65,8 +65,16 @@ window sits on `spare`. `battery.sh --check` resolves the windows, prints them a
 The presses are Kai's binds `focus-column-left`, `-right`, `focus-workspace-down` and `-up`,
 posted as the key codes rini reads them by (QWERTY J, L, ; and P).
 
+**It refuses a run of another scene** (exit 2). Each pan segment, once its window is focused and
+before its first press, reads its workspace (`battery.py scene`): the focused window must be the
+workspace's leftmost column, so the first Alt+J bounces, and with `--scene FILE`, a run's `meta.json`
+or a scene `battery.py scene` printed, every window must be where that scene had it, by app, within
+1pt. The scene each segment flew is kept in the run. On 2026-10-10, `new-1`..`3` flew comms with its
+columns mirrored and one of them stacked, their first press a pan, and were judged against runs
+that bounced first.
+
 **It is a screen test, run only while Kai is away.** It posts key presses and focus commands, and
-the pans and switches move his windows. It refuses (exit 2) unless the HID idle time is at least
+the pans and switches move their windows. It refuses (exit 2) unless the HID idle time is at least
 300s, or no input has come since the last battery or `measure.sh` session marked the machine quiet
 (`<out>/.quiet_since`). `inputwatch` watches throughout: the first event the battery did not post,
 a cursor warp aside, stops it before its next press (exit 3). Run or stopped, it puts focus back
@@ -82,7 +90,9 @@ use into `~/Library/Caches/rini-focuslab/`, and again when their source changes.
 
 - `meta.json`: the label, rini's pid, the deployed binary's sha256 (`binary_sha`), the main
   checkout's HEAD at the start (`repo_head`, which is not the binary's commit), the windows flown
-  (`windows`), the pane box, the focus at the start and why it stopped, if it did (`aborted`);
+  (`windows`), the pane box, the focus at the start, why it stopped, if it did (`aborted`), and the
+  scene each pan segment flew (`scene`, by segment), which `--scene` takes as a reference;
+- `scene-<segment>.json` and `.err`, what `battery.py scene` printed for it;
 - `rec-<segment>.jsonl`, `rec-<segment>.out`, `inputwatch.out`;
 - `journal.slice.jsonl`: the journal lines written during the run, with `journal-summary.txt` and
   `pictures-target.txt` from `journal.py`;
@@ -119,7 +129,8 @@ after it, as `journal.py probe` does, and to the frames recorded until the next 
 `compare.py BASE... -- CAND... [--stage2 BASE... -- CAND...]` judges runs of one configuration
 against another, never warm-ups: the ring on (CAND) against the ring off (BASE) on one binary in one
 session, or a new binary's ring off against an old one's for erosion. It prints one CSV row a
-metric, 87 of them, and the verdict on stderr; exit 0 is `ACCEPTED`.
+metric, 87 of them, and the verdict on stderr; exit 0 is `ACCEPTED`, 1 not, 2 a usage error and 3
+runs of different scenes.
 
 | group | metrics | n |
 |---|---|---|
@@ -136,6 +147,19 @@ needs stage 2: 3 more runs of each, after a warm-up, given with `--stage2`, and 
 all 6 against all 6. One failing stage 2 is a regression, to be found and fixed or reported to Kai.
 With 3 against 3 and no real difference, the median lands above the max 20% of the time; the two
 stages cut that to 3.8% a metric (200k simulated trials, the ring-perf work of 2026-10-08).
+
+**It judges runs of one scene only.** Before any metric, every run given must fly what the first
+does: each segment's flights of the same kinds in press order (`flights` in `metrics.json`) and the
+same frames delivered (`delivered` in the journal slice), within 1pt. One that does not is named with
+how it differs, and `compare.py` exits 3 judging nothing. A run whose tiles wore a picture taken over
+5s before (`wears`, `taken_before_us`) is flagged on stderr with how many and the oldest, and judged
+all the same. The 5s flags every run of 2026-10-10: 24-25 pictures a run, the oldest 36.7-37.2s, on
+`old-1`..`6` and `new-4`..`6`; `new-1`..`3` wore Code's at 767-850s, which the oldest tells apart.
+
+**Two binaries are judged interleaved**, one run at a time: deploy one (`measure.sh --deploy`), run,
+deploy the other, run, and so on, every run after the first given `--scene` of the first, so drift
+in the machine through a session lands on both sides alike. Stage 1 is the first 3 of each, stage 2
+all 6 against all 6.
 
 Each row: `base_min`, `base_max`, `cand_median`, `cand_runs`, `stage1` (`pass`, `FAIL`, `missing`),
 the 6-run `stage2_base_max` and `stage2_cand_median` when stage 2 ran, and `verdict`: `pass`,
