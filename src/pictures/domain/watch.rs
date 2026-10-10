@@ -2113,8 +2113,8 @@ mod tests {
     }
 
     /// A window losing focus that ends cut by the display's edge is done with no capture: the one
-    /// ScreenCaptureKit capture a flight lets through is the target's. Forgotten, it is watched no more,
-    /// and the target still is.
+    /// ScreenCaptureKit capture a focus change lets through is the target's. Forgotten, it is
+    /// watched no more, and the target still is.
     #[test]
     fn a_window_losing_focus_ending_clipped_is_done_with_no_capture_elsewhere() {
         let start = Instant::now();

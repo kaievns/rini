@@ -1249,8 +1249,8 @@ fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
 
 /// The window focus leaves and its end, watched beside the target while its own turn is to come and
 /// can be seen, if it ends wholly on the display: SkyLight pictures only that, and the one
-/// ScreenCaptureKit capture a flight lets through is the target's. One a pass resized or opened is
-/// watched to repaint instead.
+/// ScreenCaptureKit capture a focus change lets through is the target's. One a pass resized or
+/// opened is watched to repaint instead.
 fn watched_losing(f: &Flight) -> Option<(WindowId, ScreenRect)> {
     watched_focus(f)?;
     let window = f

@@ -859,7 +859,7 @@ stand-in, the blur, and the schedule that holds background capture off while a f
 `src/pictures/domain/`, which id a window is pictured under, which windows rini does not manage are
 pictured and when those pictures go in `src/pictures/domain/identity.rs`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
 for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
-captures), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
+captures and those of a window cut by the display's edge, a focus target's or a grow's repaint), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
 Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),
 `src/animation/docs/animation-smoothness.md` (how it moves),
 `src/animation/docs/capture-overlay-research.md` (the overlay, and "The handover, measured", which a
