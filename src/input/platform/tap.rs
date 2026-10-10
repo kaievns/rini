@@ -213,7 +213,9 @@ pub fn on_recovery(
 }
 
 impl EventTap {
-    unsafe fn create(
+    /// Creates a session event tap that reports disables (`disabled_callback`) and Mach-port
+    /// invalidations (`invalidated_callback`) to its owner instead of recovering in the callback.
+    pub unsafe fn new_with_options_and_recovery_callbacks(
         options: CGTapOpt,
         mask: CGEventMask,
         callback: TapCallback,
@@ -246,14 +248,14 @@ impl EventTap {
         let source = CFMachPort::new_run_loop_source(None, Some(&port), 0)?;
         if let Some(rl) = CFRunLoop::current() {
             debug!(
-                "EventTap::create: CFRunLoop::current() returned a run loop; adding source to common modes"
+                "EventTap: CFRunLoop::current() returned a run loop; adding source to common modes"
             );
             let mode: &CFRunLoopMode = unsafe {
                 kCFRunLoopCommonModes.expect("kCFRunLoopCommonModes should be available on macOS")
             };
             rl.add_source(Some(&source), Some(mode));
         } else {
-            debug!("EventTap::create: CFRunLoop::current() returned None; run loop not present");
+            debug!("EventTap: CFRunLoop::current() returned None; run loop not present");
         }
         CGEvent::tap_enable(&port, true);
 
@@ -271,30 +273,6 @@ impl EventTap {
         }
 
         Some(event_tap)
-    }
-
-    /// Creates a session event tap that reports disables (`disabled_callback`) and Mach-port
-    /// invalidations (`invalidated_callback`) to its owner instead of recovering in the callback.
-    pub unsafe fn new_with_options_and_recovery_callbacks(
-        options: CGTapOpt,
-        mask: CGEventMask,
-        callback: TapCallback,
-        user_info: *mut c_void,
-        drop_ctx: Option<unsafe fn(*mut c_void)>,
-        disabled_callback: TapDisabledCallback,
-        invalidated_callback: TapInvalidatedCallback,
-    ) -> Option<Self> {
-        unsafe {
-            Self::create(
-                options,
-                mask,
-                callback,
-                user_info,
-                drop_ctx,
-                disabled_callback,
-                invalidated_callback,
-            )
-        }
     }
 
     /// Re-arms a tap the OS disabled. `false` means the port is dead and the tap
