@@ -195,8 +195,10 @@ shares that read; a stand-in's is its own colour, and a picture whose pixels can
 stand-in's. Each crop-drawn tile asks: a resize's, and a navigation's flying a stale cached picture
 that does not fit its frame, at the show and at each swap onto it, and a leg in two steps for its
 repaint as the leg is installed, its grid cut onto it at the corner (`cut_onto`,
-`src/animation/platform/overlay.rs`), since each new picture brings a ground not yet read; the drain
-that asks counts the read in its `crops` (`a_tree_counts_the_ground_a_corner_cut_reads`).
+`src/animation/platform/overlay.rs`,
+`a_corner_cut_returns_how_long_its_repaints_ground_took_to_read`), since each new picture brings a
+ground not yet read; the drain that asks counts the read in its `crops`
+(`a_tree_counts_the_ground_a_corner_cut_reads`).
 
 The body is drawn 40x40 into a context of the picture's own colour space and bitmap info
 (`sample_format`, `platform/measure.rs`): 8 bits a channel, alpha premultiplied first or last, in

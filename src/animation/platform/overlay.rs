@@ -2809,6 +2809,26 @@ mod tests {
         }
     }
 
+    /// A leg in two steps installed with a repaint from its corner returns how long reading the
+    /// repaint's ground took as its grid was cut onto it, the press picture's read already paid by
+    /// its dressing.
+    #[test]
+    fn a_corner_cut_returns_how_long_its_repaints_ground_took_to_read() {
+        use crate::animation::domain::motion::tile::leg;
+        use crate::pictures::platform::picture::test_picture;
+        let (from, to): (GroupRect, GroupRect) =
+            (typed(866.0, 35.0, 860.0, 1079.0), typed(3.0, 576.0, 1148.0, 538.0));
+        let track = leg(WindowId::new(1, 1), from, to, 100.0, 0.35, MOTION_CURVE);
+        let (pressed, repainted) = (test_picture(from.size), test_picture(to.size));
+        let mut tile = strip_tile(to);
+        tile.anchors = Anchors::of_leg(from, to);
+        set_tile_content(&mut tile, &pressed, ContentMode::Crop, from.size.respace(), 2.0);
+
+        let pictures = Corner { before: &pressed, after: &repainted };
+        let read = install_tile_track(&mut tile, &track, Some(pictures)).expect("a cut");
+        assert!(read > Duration::ZERO, "the repaint's ground read, unread till the cut");
+    }
+
     /// A leg in two steps flies its press picture up to the corner whatever its repaint fits: one
     /// fitting both its ends, a stand-in's, is cut onto the grid at the corner like any other, never
     /// drawn stretched over the whole leg from its start.
