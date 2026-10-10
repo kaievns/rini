@@ -2193,6 +2193,48 @@ mod tests {
         assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "and once in, pictured");
     }
 
+    /// A grow ending part off the display, its column running past the right edge: no watch sees it
+    /// repaint there, so it is neither held for nor watched, and the last capture before the lift
+    /// leaves it out.
+    #[test]
+    fn a_grow_ending_part_off_the_display_is_not_held_for() {
+        let now = Instant::now();
+        let (mut stage, _) = grow();
+        let past = r(866.0, 35.0, 1723.0, 1079.0);
+        stage.tiles[1].end = past;
+        stage.final_frames[1].1 = past;
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage.clone()), now);
+        let out = c.on(Event::FrameZero(c.generation()), now);
+        assert!(watch(&out).unwrap().awaiting.is_empty(), "{out:?}");
+        let tick = Event::Tick { settled: false, landed: false };
+        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "not held");
+        let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
+        assert_eq!(asked_final(c.on(tick, last)), Some(vec![stage.final_frames[0]]), "the lift shows it");
+    }
+
+    /// A pass growing window 2 and shrinking window 1: the shrink is never held for itself, so its
+    /// own repaint starts nothing, and it moves with the grow once the grow has repainted.
+    #[test]
+    fn a_shrink_moves_with_the_grow_its_pass_holds_for() {
+        let now = Instant::now();
+        let (mut stage, grown) = grow();
+        let shrunk = r(866.0, 35.0, 860.0, 537.0);
+        stage.tiles[0].end = shrunk;
+        stage.final_frames[0].1 = shrunk;
+        stage.repainting.push(w(1));
+        stage.kept = vec![w(1)];
+        let mut c = running(stage, now);
+        let tick = Event::Tick { settled: false, landed: false };
+        assert!(c.on(tick, now + COALESCE_WINDOW).is_empty(), "held for the grow");
+        let g = c.generation();
+        let landed = |window, frame| Event::Picture { generation: g, window, frame, why: Why::Landed };
+        let out = c.on(landed(w(1), shrunk), now + Duration::from_millis(100));
+        assert!(!has(&out, |c| *c == Command::StartMoving), "{out:?}");
+        let out = c.on(landed(w(2), grown), now + Duration::from_millis(150));
+        assert!(has(&out, |c| *c == Command::StartMoving), "{out:?}");
+    }
+
     /// A layout pass shrinking window 2, on screen, so frame zero pictures it: watched until it
     /// repaints, never held for, and kept, as `EndPicture::Kept` sorts it.
     fn shrink() -> (StageSummary, ScreenRect) {

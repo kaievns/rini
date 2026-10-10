@@ -2457,7 +2457,8 @@ mod tests {
     /// is smaller than the frame still to come on the shrinking axis: it is cut onto the crop grid on
     /// the leg's anchors and re-keyed on the tile's track, and the window's ground fills the span
     /// between its content and the moving edge's band until the frame reaches its size. A shrink's
-    /// landing is never swapped in flight; its case is the same geometry of `swap_onto` on one axis.
+    /// landing is swapped in flight only when frame zero never pictured it; its case is the same
+    /// geometry of `swap_onto` on one axis.
     #[test]
     fn a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge() {
         use crate::pictures::platform::picture::test_picture;

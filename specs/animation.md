@@ -230,52 +230,60 @@ destination for a window already moving.
 - A resizing window's content MUST NOT be stretched or squashed. Where its picture does not cover
   its frame, the picture MUST be drawn whole at its own size and the rest MUST be the window's own
   ground, its background colour with its alpha, never the desktop behind it and never the picture's
-  edge pixels drawn on. Only a picture the size of its frame at both ends of a movement, and the
-  dark stand-in of a window with no picture, MAY be scaled.
+  edge pixels drawn on. The ground MUST NOT be drawn under the picture, only where the picture does
+  not reach: a translucent window, as Ghostty at 0.95, would show it through and darken. Only a
+  picture the size of its frame at both ends of a movement, and the dark stand-in of a window with no
+  picture, MAY be scaled.
 - A resize MUST start as a strip movement does: from pictures taken at the press, the overlay up
   with them, and the windows written their new frames as it covers them. A resize that grows a
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the
   overlay standing still, until that window has repainted at its new size, up to 300ms from the
   overlay going up, and that window MUST fly its repainted picture from the motion's first frame, so
-  its growth shows its content and never a fill cut to content mid-flight. A window growing on one
-  axis as it shrinks on the other, as a fold or an unfold, has no picture covering every frame: its
-  repainted picture, short of the start on the shrinking axis, shows the window's ground there, which
-  the moving edge swallows, and the cut onto it from the picture at the press comes as the motion
-  starts, never mid-flight. A resize growing no window
-  MUST move as soon as the layout's follow-up passes are in, and MUST NOT wait for a resized window
-  to repaint. The press's sequence stays a navigation's, the overlay first and the frames written at
-  once; the only addition is the wait, and only for a window that grows. A window that has just
+  its growth shows its content and never a fill cut to content mid-flight. A grow ending part off
+  the display MUST NOT be held for: SkyLight returns only a window's visible part, so no watch sees
+  it repaint there, and it flies its picture from the press, its ground in the growth, to the lift.
+  A window growing on one axis as it shrinks on the other, as a fold or an unfold, has no picture
+  covering every frame: its repainted picture, short of the start on the shrinking axis, shows the
+  window's ground there, which the moving edge swallows, and the cut onto it from the picture at the
+  press comes as that repaint lands, on the overlay still standing, never mid-flight. A resize
+  growing no window MUST move as soon as the layout's follow-up passes are in, and MUST NOT wait for
+  a resized window to repaint. The press's sequence stays a navigation's, the overlay first and the
+  frames written at once; the only addition is the wait, and only for a window that grows. A window that has just
   opened keeps its own entrance, and a flight MAY wait for the first picture of a window it has none
   of.
-- Each window a resize grows MUST be pictured at its new size once it has repainted there. One whose
+- Each window a resize grows to end wholly on the display MUST be pictured at its new size once it
+  has repainted there. One whose
   repaint missed the 300ms flies its picture from the press, with the window's ground in its growth,
   and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
   edges as the old one, with the window's ground wherever it does not cover the frame still to come.
   A window a resize only shrinks MUST fly its picture from the press, clipped, to the lift: that
   picture covers every frame of the movement, so there is no ground to cut from, and its repainted
-  picture and the last capture before the lift MUST NOT be drawn on it. One starting clipped or off
-  the display has no picture from the press, and its repainted picture MUST replace the one it flies
-  as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
+  picture and the last capture before the lift MUST NOT be drawn on it. It is never held for itself,
+  and moves when its flight does, with the held grows when the same resize grows another window. One
+  starting clipped or off the display has no picture from the press, and its repainted picture MUST
+  replace the one it flies as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
   shrinks, and so whether the motion still waits for it. A picture taken at its
   new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
   one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
   keeps the look its picture from the press shows, the title bar and controls macOS draws focused or
   not, while its hairline, shadow, ring and border turn as any window's: a window that never settles,
-  as one streaming output, and a window a resize only shrinks turn their own look with the lift. A window MUST count as repainted at its new size only once two captures in a
-  row show the same rendering, never because a capture differs from the picture it had before.
+  as one streaming output, and a window a resize only shrinks, frame zero having pictured it, turn
+  their own look with the lift. A window MUST count as repainted at its new size only once two
+  captures in a row show the same rendering, never because a capture differs from the picture it had before.
 
 > **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
 > really. or it's clipped in an akward place slicing the content. i regularly see clipping on
 > folding/unfolding animations going in a wrong direction, like for example a bottom stack window
 > expanding up but the clipping unfolding going down", "some of the issues seem intermittent".
 > Every resize was clipped one way, the title bar held at the top and the content held against the
-> bottom, whichever edge moved. Recorded the same day on Ghostty windows of numbered rows: a top row
-> folding a window under it showed its rows from 29 down under its title bar, the rows above them
-> sliced out, and a top row maximizing unrolled its content downward from under the title bar
-> instead of revealing rows at the bottom. A bottom row maximizing, the case Kai named, recorded as
-> this requires; what was seen there is not measured. A bottom row restored from maximized had its
-> small picture cut in a tenth of the way through and stretched, its glyphs 1.5 to 2 times their
-> size on both axes.
+> bottom, whichever edge moved. Recorded the same day on Ghostty windows of numbered rows
+> (`docs/data/2026-10-09-resize`, runs s1 and s2): a top row folding a window under it showed its
+> rows from 29 down under its title bar, the rows above them sliced out, and a top row maximizing
+> unrolled its content downward from under the title bar instead of revealing rows at the bottom. A
+> bottom row maximizing, the case Kai named, was recorded holding its content against the bottom and
+> revealing rows at the top, as this requires, so what Kai saw there was not caught. A bottom row
+> restored from maximized had its small picture cut in a tenth of the way through and stretched, its
+> glyphs 1.5 to 2 times their size on both axes.
 >
 > **Reported 2026-10-09**, after the recordings above. Kai: "your rework should utilse the same
 > tooling/sequencing that we've built for navigations: skylight frame zero -> overlay -> skylight new
@@ -511,10 +519,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where it ends until its look changes, and the window losing focus with it, in the same rounds, until
   its own look changes, if it ends wholly on a display and no pass opened or resized it: one a pass
   opened or grew is pictured once it has repainted instead, its own look coming only with that
-  picture, and one a pass only shrinks keeps its picture from the press, its hairline and its shadow
-  turning once it has repainted, or just before the window gaining focus when it loses focus, and its
-  own look with the lift (Resizing). A look a window already had when it landed
-  counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
+  picture, and one a pass only shrinks, frame zero having pictured it, keeps its picture from the
+  press, its hairline and its shadow turning once it has repainted, or just before the window gaining
+  focus when it loses focus, and its own look with the lift (Resizing). One a pass only shrinks that
+  started clipped or off the display turns with its repainted picture, as a grow does. A look a
+  window already had when it landed counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
   shadow turning with it: the window losing focus unfocused, the window gaining focus focused. Its
   focus ring and its border wear where the flight ends from the show (`decorations.md`).
 - The window losing focus MUST turn first, as macOS draws it. The turned picture of the window gaining
@@ -525,9 +534,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   turn. A window losing focus whose turn has not shown by then, one ending clipped or parked, one a
   pass opened or resized, or one whose watch ran out, MUST be drawn unfocused just before the window
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
-  the same, old then new, while the flight still moves, but for one a pass only shrinks, or one a pass
-  opened or grew that has not repainted where it ends: it is not pictured then, only its hairline and
-  its shadow turn, and its own look turns with the lift. Until its turn the window losing focus MUST be
+  the same, old then new, while the flight still moves, but for one a pass only shrinks that frame
+  zero pictured, or one a pass opened, grew or shrank that has not repainted where it ends: it is
+  not pictured then, only its hairline and its shadow turn, and its own look turns with the lift. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
   keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its look turns at
   rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on

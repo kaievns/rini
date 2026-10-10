@@ -132,10 +132,10 @@ border and focus ring rini draws around it at rest when it wears either where it
 state is watched. A layout pass then waits for the reactor's follow-up passes (25ms); one that grows a
 window, or draws one with no picture of its own, a reserved entrance or a stand-in, waits instead for
 that window to repaint (up to `HOLD_CAP`, and no longer for one whose picture the pictures service
-reports will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a window
-it only shrinks flies the picture it has at once and keeps it to the lift ("A grow waits for its
-repaint"); a strip movement
-moves at once.
+reports will not come, `Lost`, or one ending where no watch can see it repaint, part off the display
+or sent there by a merged pass); a window it only shrinks is never held for itself and moves when
+the flight does, keeping its picture from the press to the lift when frame zero took one ("A grow
+waits for its repaint"); a strip movement moves at once.
 
 The coordinator hears every tile and frame in the window server's points (`Screen`), and says its
 holes and snaps in the overlay's (`Overlay`), converted over `StageSummary.display`: the bounds of the
@@ -396,7 +396,8 @@ change watch then never saw change. The window losing focus is the watch's secon
 resized or opened is watched only to repaint: a `Change` capture at its new size would show it half
 painted, and a band print taken at another width never matches, so the first capture there would
 count as its turn. Its macOS-drawn look turns with its repainted picture, or with the lift when none
-settles or when the pass only shrank it, its tile keeping its picture from the press. The
+settles or when the pass only shrank it and frame zero pictured it, its tile keeping that picture.
+The
 window losing focus, when watched, is captured in
 the same rounds, in the same call as the target where their kinds and frames allow, and done at its
 own change from its own frame-zero picture, out of its own tries, or at a refusal; the watch is done
@@ -807,8 +808,9 @@ an unfold (859x1081 to 1148x538 on n1), has no picture covering every frame: the
 short of the start frame on the shrinking axis, so posing it cuts that span from the press picture's
 content to the window's ground while the overlay still stands, and the moving edge then swallows the
 ground. Flying the press picture instead would keep the ground in the growth and, at a 0.5% stretch
-tolerance, cut it to content no earlier than the lift: the cut Kai reported. *Which of the two reads
-better on a fold is not seen yet.* On the build that flew grows at once (journal n1, 2026-10-09, 6 flights)
+tolerance, cut it to content no earlier than the lift: the cut Kai reported. Holding a fold follows
+Kai's 2026-10-09 choice of a lag over a flicker; the cut it makes on a fold was not put to Kai. On the
+build that flew grows at once (journal n1 in `docs/data/2026-10-09-resize`, 6 flights)
 the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
 after the show: held, the motion starts about 160-225ms after the press. A window the pass only
 shrinks is `EndPicture::Kept`, in `StageSummary::kept` as well: never held for itself, it moves
@@ -829,8 +831,9 @@ only moving it leaves it as it was.
 
 Until its repainted picture lands, a tile flies the picture it has, crop-drawn on the leg's anchors,
 all of it 1:1, with the window's own ground where it does not cover the frame ("Resizes through the
-overlay" in `src/animation/docs/animation-smoothness.md`): a grow only once its hold ran out, its
-growth the ground, and a shrink to the lift, its picture covering every frame. A repainted picture landing in motion is
+overlay" in `src/animation/docs/animation-smoothness.md`): a grow only once its hold ran out, or
+ending part off the display, where it is never held, its growth the ground; a shrink frame zero
+pictured to the lift, its picture covering every frame. A repainted picture landing in motion is
 a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its content stands
 against the edges that move less, and where it does not cover the frame still to come, as a
 mixed-axis grow's on its shrinking axis, the ground fills the span by the moving edge
