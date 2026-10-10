@@ -515,13 +515,12 @@ changes is how the picture maps onto it (`content_mode` in
   the grid jumps there, and a discrete keyframe cuts each piece's `contents`
   and the ground's `backgroundColor` at that key time; the model is the
   repainted picture's grid, which the leg ends on
-  (`a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner`).
-  The repainted picture is put on there as a swap puts one on (`land` in
-  `overlay.rs`), judged against the leg, so one fitting both its ends is drawn
-  stretched over all of it with nothing to cut
-  (`a_leg_in_two_steps_given_a_picture_fitting_both_its_ends_draws_it_stretched`),
-  and its ground, read as the leg is installed, counts in the drain's `crops`
-  (`a_tree_counts_the_ground_a_corner_cut_reads`).
+  (`a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner`),
+  whatever the repainted picture fits, so the before picture always flies up
+  to the corner
+  (`a_leg_in_two_steps_cuts_to_its_repaint_at_the_corner_whatever_the_repaint_fits`);
+  when its ground is read is in "A picture's ground is read only when a
+  crop-drawn tile asks for it" in `src/pictures/docs/README.md`.
   Flown in one movement, the repainted picture left the ground in the span
   it falls short on the shrinking axis, and the before picture in the
   growth. A shrink whose tile starts with a picture covering its start,

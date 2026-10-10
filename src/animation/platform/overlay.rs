@@ -501,10 +501,9 @@ struct Corner<'a> {
 /// the grid of each against its own picture and region: the tile's picture, its region and its
 /// ground become `after`'s, what the leg ends with, and each piece's picture and the ground's
 /// colour are held at `before`'s up to the corner and cut to `after`'s there, so the cut lands on
-/// the corner's frame. `after` is put on as a swap puts a picture on (`land`), judged against the
-/// leg: one fitting both its ends is drawn stretched over all of it, with nothing to cut. Any other
-/// leg, or a tile drawn stretched, takes away a cut an earlier one installed. Returns how long the
-/// ground `after` is cut onto took to read.
+/// the corner's frame, whatever `after` fits (`cut_onto`). Any other leg, or a tile drawn stretched,
+/// takes away a cut an earlier one installed. Returns how long the ground `after` is cut onto took
+/// to read.
 fn install_crop_grid(tile: &mut Tile, track: &Track, corner: Option<Corner>) -> Option<Duration> {
     let grid = tile.crop_grid.as_ref()?;
     for layer in grid.layers() {
@@ -513,8 +512,7 @@ fn install_crop_grid(tile: &mut Tile, track: &Track, corner: Option<Corner>) -> 
     let turn = corner.zip(tile::corner_key(track)).filter(|_| tile.crop_of.is_some());
     let ground = turn.and_then(|(corner, _)| {
         let end = track.keys()[track.keys().len() - 1].1;
-        let scale = tile.picture.contentsScale();
-        land(tile, corner.after, as_frame(end).size.respace(), Some(track), scale)
+        cut_onto(tile, corner.after, as_frame(end).size.respace())
     });
     let (Some(grid), Some(picture)) = (&tile.crop_grid, tile.crop_of) else {
         return ground;
@@ -1202,7 +1200,7 @@ impl Tree {
     /// its content mode again against them, setting it only when it changes, while the leg it is on
     /// with its end moved keeps the tile drawn as it was. A tile carrying a picture from the corner
     /// of its leg in two steps flies its own up to the corner and that one from it, clipped if either
-    /// is.
+    /// is, and how long the ground that one is cut onto took to read counts in `crops`.
     fn install(&mut self, track: &Track, tiles: &[OverlayTile], new_leg: bool) {
         match track.node() {
             Node::Container(key) => {
@@ -2811,13 +2809,13 @@ mod tests {
         }
     }
 
-    /// A leg in two steps given from its corner a picture fitting both its ends, a stand-in's, puts
-    /// it on as a swap does: drawn stretched over the whole leg on its picture layer, its grid
-    /// hidden, nothing cut at the corner and no ground read.
+    /// A leg in two steps flies its press picture up to the corner whatever its repaint fits: one
+    /// fitting both its ends, a stand-in's, is cut onto the grid at the corner like any other, never
+    /// drawn stretched over the whole leg from its start.
     #[test]
-    fn a_leg_in_two_steps_given_a_picture_fitting_both_its_ends_draws_it_stretched() {
+    fn a_leg_in_two_steps_cuts_to_its_repaint_at_the_corner_whatever_the_repaint_fits() {
         use crate::animation::domain::motion::tile::leg;
-        use crate::pictures::platform::picture::{Pixels, stand_in_picture, test_bitmap, test_picture};
+        use crate::pictures::platform::picture::{stand_in_picture, test_bitmap, test_picture};
         let (from, to): (GroupRect, GroupRect) =
             (typed(866.0, 35.0, 860.0, 1079.0), typed(3.0, 576.0, 1148.0, 538.0));
         let track = leg(WindowId::new(1, 1), from, to, 100.0, 0.35, MOTION_CURVE);
@@ -2828,16 +2826,11 @@ mod tests {
         set_tile_content(&mut tile, &pressed, ContentMode::Crop, from.size.respace(), 2.0);
 
         let pictures = Corner { before: &pressed, after: &stand_in };
-        assert_eq!(install_tile_track(&mut tile, &track, Some(pictures)), None, "no ground read");
-        assert_eq!(tile.crop_of, None, "stretched");
-        let grid = tile.crop_grid.as_ref().expect("the grid stays pooled");
-        assert!(grid.layers().all(|layer| layer.isHidden()), "none of the grid shows");
+        assert!(install_tile_track(&mut tile, &track, Some(pictures)).is_some(), "its ground read");
+        assert!(tile.crop_of.is_some(), "still crop-drawn");
+        let grid = tile.crop_grid.as_ref().expect("a crop grid");
         let cut = |layer: &Retained<CALayer>| animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY);
-        assert!(!grid.pieces.iter().any(cut), "nothing to cut to");
-        let Pixels::Bitmap(image) = &stand_in.image else { unreachable!("a bitmap stand-in") };
-        // SAFETY: a read of the layer's own property.
-        let shown = unsafe { tile.picture.contents() }.map(|object| Retained::as_ptr(&object) as usize);
-        assert_eq!(shown, Some(&**image as *const _ as usize), "on the picture layer");
+        assert!(grid.pieces.iter().all(cut), "every piece cut at the corner");
     }
 
     /// A stretched tile stays stretched for a picture fitting both ends of its leg, so a pan draws
