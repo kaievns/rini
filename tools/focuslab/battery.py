@@ -79,6 +79,19 @@ def same_frame(a, b):
     return all(abs(x - y) <= FRAME_SLACK for x, y in zip(a, b))
 
 
+# Below every row a tiled window is laid at on Kai's 1117pt display, above every park: macOS clamps a
+# parked window's corner to y 1085-1116, and where depends on the launch, so a park is matched by size.
+PARK_TOP = 1000
+
+
+def same_place(a, b):
+    """Whether two frames put a window in the same place: equal within a point, or both parked with
+    the same size."""
+    if a[1] >= PARK_TOP and b[1] >= PARK_TOP:
+        return same_frame(a[2:], b[2:])
+    return same_frame(a, b)
+
+
 def scene_problems(found, reference=None):
     """Why a segment would not fly the scene it should: `app`'s window not the leftmost column, so its
     first press, Alt+J, pans rather than bounces; and, given `reference`, any window missing, added or
@@ -97,7 +110,7 @@ def scene_problems(found, reference=None):
         unmatched = list(reference["windows"])
         for w in found["windows"]:
             match = next((r for r in unmatched if r["app"] == w["app"] and r["floating"] == w["floating"]
-                          and same_frame(r["frame"], w["frame"])), None)
+                          and same_place(r["frame"], w["frame"])), None)
             if match is None:
                 problems.append(f"{w['app'] or '?'} at {w['frame']} is not in the reference")
             else:

@@ -353,6 +353,19 @@ class Setup(unittest.TestCase):
         self.assertEqual(battery.reference_scene(meta, "comms"), reference, "a run's meta.json holds its scenes")
         self.assertIsNone(battery.reference_scene(meta, "spare"))
 
+    def test_a_parked_window_is_matched_by_its_size_wherever_macos_clamped_its_corner(self):
+        parked = json.loads(json.dumps(COMMS))
+        parked[0]["windows"][1]["frame"]["origin"] = {"x": 1727, "y": 1085}
+        reference = battery.scene(parked, "comms", "Code")
+        moved = json.loads(json.dumps(parked))
+        moved[0]["windows"][1]["frame"]["origin"] = {"x": 1727, "y": 1116}
+        self.assertEqual(battery.scene_problems(battery.scene(moved, "comms", "Code"), reference), [])
+        resized = json.loads(json.dumps(moved))
+        resized[0]["windows"][1]["frame"]["size"]["width"] = 860
+        self.assertEqual(battery.scene_problems(battery.scene(resized, "comms", "Code"), reference),
+                         ["Ghostty at [1727, 1116, 860, 1079] is not in the reference",
+                          "Ghostty at [1727, 1085, 1148, 1079] is missing"])
+
     def test_the_scene_command_prints_the_scene_and_exits_one_naming_why_it_is_refused(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as file:
             json.dump({"scene": {"comms_pan": battery.scene(COMMS, "comms", "Code")}}, file)

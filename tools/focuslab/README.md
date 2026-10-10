@@ -69,7 +69,8 @@ posted as the key codes rini reads them by (QWERTY J, L, ; and P).
 before its first press, reads its workspace (`battery.py scene`): the focused window must be the
 workspace's leftmost column, so the first Alt+J bounces, and with `--scene FILE`, a run's `meta.json`
 or a scene `battery.py scene` printed, every window must be where that scene had it, by app, within
-1pt. The scene each segment flew is kept in the run. On 2026-10-10, `new-1`..`3` flew comms with its
+1pt, a parked one by its size alone: macOS clamps a park's corner anywhere from y 1085 to 1116, and
+where depends on the launch. The scene each segment flew is kept in the run. On 2026-10-10, `new-1`..`3` flew comms with its
 columns mirrored and one of them stacked, their first press a pan, and were judged against runs
 that bounced first.
 
