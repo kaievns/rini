@@ -7,6 +7,7 @@ use objc2_quartz_core::CALayer;
 use rini_geometry::space::ToCg;
 
 use crate::pictures::domain::ground::Ground;
+use crate::pictures::platform::measure::ground_space;
 use crate::pictures::platform::picture::{Picture, Pixels};
 
 /// Hands a captured picture to a layer, whichever kind of pixels it holds: a region as its whole
@@ -30,12 +31,12 @@ pub fn set_contents(layer: &CALayer, picture: &CFType) {
     unsafe { layer.setContents(Some(picture.as_ref())) }
 }
 
-/// Fills `layer` with `picture`'s ground, in the device RGB its body samples were read in
-/// (`crate::pictures::platform::measure`), so the fill matches the pixels drawn beside it. The first
-/// fill of a picture reads its ground (`Picture::ground`).
+/// Fills `layer` with `picture`'s ground, in the colour space its body samples were read in
+/// (`ground_space`), so the fill matches the pixels drawn beside it. The first fill of a picture
+/// reads its ground (`Picture::ground`).
 pub fn set_layer_ground(layer: &CALayer, picture: &Picture) {
     let Ground { r, g, b, a } = picture.ground();
-    let space = CGColorSpace::new_device_rgb();
+    let space = ground_space(&picture.image).or_else(CGColorSpace::new_device_rgb);
     let components = [r, g, b, a];
     // SAFETY: the four components an RGB space with alpha takes, read during the call.
     let colour = unsafe { CGColor::new(space.as_deref(), components.as_ptr()) };
@@ -95,6 +96,34 @@ mod tests {
         // SAFETY: the colour's own four components, read while it is held.
         let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
         assert_eq!(got, [0.1, 0.2, 0.3, 0.95]);
+    }
+
+    /// A Display P3 picture's ground fills its layer in P3, with the ground's own components: filled
+    /// in device RGB, P3 components would show a tinted seam beside the picture.
+    #[test]
+    fn a_p3_pictures_ground_is_filled_in_p3() {
+        use objc2_core_graphics::{CGBitmapInfo, CGImageAlphaInfo, CGImageByteOrderInfo};
+
+        use crate::pictures::platform::bitmap::bitmap_context;
+        // SAFETY: Core Graphics' own colour space name.
+        let p3 = unsafe { objc2_core_graphics::kCGColorSpaceDisplayP3 };
+        let space = CGColorSpace::with_name(Some(p3)).expect("Display P3");
+        let bgra = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
+        let ctx = bitmap_context(4, 4, &space, CGBitmapInfo(bgra)).expect("a context");
+        let image = objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)).expect("an image");
+        let picture = Picture {
+            image: Pixels::Bitmap(image),
+            ground: LazyGround::known(Ground { r: 0.2, g: 0.5, b: 0.8, a: 1.0 }),
+            ..test_picture(ScreenSize::new(2.0, 2.0))
+        };
+        let layer = CALayer::layer();
+        set_layer_ground(&layer, &picture);
+        let colour = layer.backgroundColor().expect("filled");
+        let filled_in = CGColor::color_space(Some(&colour)).expect("a space");
+        assert_eq!(CGColorSpace::name(Some(&filled_in)).as_deref(), Some(p3), "in P3");
+        // SAFETY: the colour's own four components, read while it is held.
+        let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
+        assert_eq!(got, [0.2, 0.5, 0.8, 1.0]);
     }
 
     /// Either kind of picture reaches the layer, under the debug assertions every test build has.

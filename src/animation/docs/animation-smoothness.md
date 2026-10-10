@@ -491,7 +491,10 @@ changes is how the picture maps onto it (`content_mode` in
   stretches: past the picture's side the middle shows all of the picture, and
   the gap between it and the moving edge's band is the window's ground, a fill
   of its own background colour with its alpha (`Picture::ground`, read off its
-  body samples as the tile is first filled, `src/pictures/domain/ground.rs`), in
+  body samples as the tile is first filled, `src/pictures/domain/ground.rs`, in
+  the picture's own colour space and pixel format and filled in that space: "A
+  picture's ground is read only when a crop-drawn tile asks for it" in
+  `src/pictures/docs/README.md`), in
   layers under the picture layer so the corner clip covers them
   (`a_crop_drawn_tile_is_grounded_where_its_picture_ends`). The ground
   covers only what the picture does not, a column and the row either side of

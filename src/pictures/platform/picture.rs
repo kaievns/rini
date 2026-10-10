@@ -106,8 +106,9 @@ impl Picture {
     }
 
     /// The colour its content sits on: read off its body samples the first time it is asked for, on
-    /// the asking thread, the stand-in's when they cannot be read. Only a crop-drawn tile asks, so a
-    /// navigation's pictures are never read for it.
+    /// the asking thread, in the colour space `ground_space` names, the stand-in's when they cannot
+    /// be read. Only a crop-drawn tile asks: a resize's, and a navigation's flying a picture that does
+    /// not fit its frame.
     pub fn ground(&self) -> Ground {
         *self.ground.0.get_or_init(|| ground_of(&self.image).unwrap_or(STAND_IN_GROUND))
     }
