@@ -337,8 +337,9 @@ enum LayoutCommands {
     /// Toggle centering of the selected column in scrolling layout.
     /// If invoked again on the same selection, centering is removed.
     CenterSelection,
-    /// Cycle the selected column through the configured preset widths, full
-    /// width included (scrolling layout only)
+    /// Cycle the selected column through the configured preset widths, the
+    /// whole viewport included (a width, not full-width mode; scrolling layout
+    /// only)
     CyclePresetColumnWidth,
 }
 

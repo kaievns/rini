@@ -75,7 +75,7 @@ mod tests {
     /// The reported defect. A column the viewport wide, at 100% or maximised, has nothing wider to
     /// grow into, so the cycle starts over at the narrowest rather than standing still.
     #[test]
-    fn a_full_width_column_wraps_to_the_narrowest() {
+    fn a_column_the_viewport_wide_wraps_to_the_narrowest() {
         assert_eq!(next_preset(1.0, &PRESETS), Some(PresetWidth::Ratio(0.33333)));
     }
 
@@ -96,7 +96,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_of_one_is_full_width_rather_than_a_ratio() {
+    fn a_preset_of_one_is_the_whole_viewport_rather_than_a_ratio() {
         assert_eq!(next_preset(0.9, &[1.0]), Some(PresetWidth::Full));
         assert_eq!(next_preset(0.5, &[0.9995]), Some(PresetWidth::Full));
     }

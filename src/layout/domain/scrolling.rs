@@ -4814,6 +4814,45 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 572.0);
     }
 
+    /// A column the whole viewport wide, by `Mod+R`'s 100% or a stacked column dragged across it,
+    /// takes no width from its app however far the app resizes itself, as a full-width column takes
+    /// none.
+    #[test]
+    fn an_app_resizing_a_column_the_viewport_wide_leaves_it_the_viewport_wide() {
+        let (mut system, layout, w) = column_of(preset_settings(), 2);
+        assert!(system.select_window(layout, w[1]));
+        system.cycle_preset_column_width(layout);
+        system.cycle_preset_column_width(layout);
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+        app_sizes(&mut system, layout, w[1], 800.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "Mod+R's 100%");
+
+        let (mut system, layout, w) = kai_s_stack();
+        assert!(system.select_window(layout, w[1]));
+        let from = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
+        drag(&mut system, layout, w[1], from, CGRect::new(from.origin, CGSize::new(1722.0, from.size.height)));
+        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
+        app_sizes(&mut system, layout, w[1], 800.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "dragged across");
+    }
+
+    /// `Mod+R`'s 100% is above `max-column-width`: a grow key does nothing, and a shrink key starts
+    /// from the 1722pt the column has, landing on the bound, and keeps the stack.
+    #[test]
+    fn a_resize_key_on_mod_r_s_100_percent_starts_from_its_width() {
+        let (mut system, layout, w) = column_of(preset_settings(), 2);
+        assert!(system.select_window(layout, w[1]));
+        system.cycle_preset_column_width(layout);
+        system.cycle_preset_column_width(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "fixture");
+
+        system.resize_selection_by(layout, 0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "a grow");
+        system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0, "a shrink");
+        assert_eq!(shape(&system, layout), vec![w.clone()]);
+    }
+
     #[test]
     fn the_cycle_steps_from_the_full_viewport_to_the_narrowest_preset() {
         let (mut system, layout, w) = column_of(preset_settings(), 2);
@@ -5357,6 +5396,34 @@ mod tests {
     }
 
     #[test]
+    fn a_focus_moved_by_key_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        for direction in [Direction::Left, Direction::Right] {
+            system.move_focus(layout, direction);
+            kai_s_frames(&system, layout);
+        }
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
+    }
+
+    #[test]
+    fn a_centring_while_full_width_restores_by_the_reveal() {
+        let (mut system, layout, w) = kai_s_thirds();
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        system.center_selected_column(layout);
+        kai_s_frames(&system, layout);
+        assert!(system.toggle_full_width(layout, w[1]));
+
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
+    }
+
+    #[test]
     fn a_strip_scroll_while_full_width_restores_by_the_reveal() {
         let (mut system, layout, w) = kai_s_thirds();
 
@@ -5565,6 +5632,38 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
 
         assert_eq!(laid_out_xw(&system, layout, b[1]), (435.0, 860.0));
+    }
+
+    #[test]
+    fn a_focus_moved_by_key_between_the_folds_folds_back_by_the_reveal() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        for direction in [Direction::Left, Direction::Right] {
+            system.move_focus(layout, direction);
+            kai_s_frames(&system, layout);
+        }
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0));
+    }
+
+    #[test]
+    fn a_centring_between_the_folds_folds_back_by_the_reveal() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        system.center_selected_column(layout);
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0));
     }
 
     /// Out by `Mod+Comma`, in by `Mod+Period`: the second key undoes nothing the first did, so the
@@ -5795,6 +5894,26 @@ mod tests {
             assert_eq!(shape(&system, layout), ids(&[&[2], &[1, 3]]), "{swapped:?}");
             assert_full_width_alone(&system, layout);
         }
+    }
+
+    /// [1][2,3,4][5] with 1 full width and 4 folded out to the left: a swap of 1 into the stack ends
+    /// its full width as a width given does, and so the fold back reveals 4 rather than returning
+    /// the view the fold out kept.
+    #[test]
+    fn a_swap_ending_full_width_drops_the_view_a_fold_back_returns_to() {
+        let (mut system, layout) = a_strip(&[&[1], &[2, 3, 4], &[5]]);
+        assert!(system.toggle_full_width(layout, wid(1, 1)));
+        kai_s_frames(&system, layout);
+        assert!(system.select_window(layout, wid(1, 4)));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+
+        assert!(system.swap_windows(layout, wid(1, 1), wid(1, 2)));
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(laid_out_xw(&system, layout, wid(1, 4)), (3.0, 860.0));
     }
 
     /// B1 out of a right stack with `Mod+Comma`, `Mod+Period` from the last column does nothing,

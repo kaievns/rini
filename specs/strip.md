@@ -32,7 +32,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > the edges. Raising it to 4 in the config left a full-width column two columns along the strip at
 > left 6 / right 2, because the scroll position is kept in points and each column's start includes
 > the gaps before it.
-- `ctrl-R` steps through the configured preset widths in order and wraps: a third, a half, two thirds,
+- `Mod+R` steps through the configured preset widths in order and wraps: a third, a half, two thirds,
   the whole viewport, then a third again. A column at a width that is no preset — what the incremental resize keys
   leave behind — MUST join the cycle at the first preset above it rather than at the start.
 - The configured widths (`layout › preset-column-widths`) MAY be any proportions in `(0, 1]`; anything
@@ -41,14 +41,21 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 ## Full width and height
 
-- `ctrl-F` toggles a window to the full usable space and back. The window STAYS on the strip with
-  everything else; it is not a separate mode and there is no fullscreen state.
+- `Mod+F` toggles a window to the full usable space and back. The window STAYS on the strip with
+  everything else, and there is no macOS fullscreen state: full width is rini's one maximise mode,
+  and the only state that keeps a way back.
 - A full-width column occupies the whole viewport, gap included. It MUST NOT leave a band of
   background down its side.
 - When the window is in a column stack, `Mod+F` MUST pull it out of the stack and maximise both
   width and height. The full-width column MUST take the stack's place, the stack one column right,
   so a stack at the left of the screen does not scroll the strip. Pressing again MUST put it back
   where it was, if that place still exists, and the move MUST be animated both ways.
+
+> **Reported 2026-10-09.** "going full-size and back moves surrounding windows out incosistently".
+> Part of it was where the full-width column went: right of the stack, so the siblings it left and
+> the column after it moved off in opposite directions, and a stack at the left of the screen
+> scrolled the strip. Measured in "Maximizing a stacked window pulls it out of the stack"
+> (`src/layout/docs/strip.md`).
 - **Pressing again MUST put the strip back too**, for a stacked window or a lone one: its column at
   the screen x it left, and a centred column centred again. Anything else that scrolls the strip in
   between wins: focus moving to another column, a strip scroll or snap, a window opening or closing,
@@ -68,35 +75,35 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   band, keeping the stack, its heights and its place on the strip — even though 100% is above
   `max-column-width`, which deliberately stops the incremental resize keys, and not a mouse drag,
   from crawling to 100%. No window is pulled out of its stack and nothing is kept to return to: a
-  later `Mod+F` maximises afresh, and its toggle back returns to the 100% column. The app settling
-  its window short of the viewport MUST leave the column 100%, and the next `Mod+R` MUST wrap to the
-  narrowest preset. A 100% column MUST come back a 100% width after a restart, not
-  full width.
+  later `Mod+F` maximises afresh, and its toggle back returns to the 100% column. The app resizing
+  its window, however far short of the viewport, MUST leave the column 100%, as it leaves a
+  full-width one, and the next `Mod+R` MUST wrap to the narrowest preset. A 100% column MUST come
+  back a 100% width after a restart, not full width.
 - **Only `Mod+F`, the title-bar zoom, a lone window's drag across the viewport and a restart
   restoring one enter full width**, the mode that remembers the width, height and place to go back
   to. `Mod+R` MUST size a full-width window like any other, from 100%.
-- **Being given a width is what ends full width.** A window sized by `ctrl-R` or by a resize key MUST
-  stay where it is and MUST NOT be returned to the stack `ctrl-F` pulled it out of. It becomes an
-  ordinary column with nowhere to return to, and the next `ctrl-F` MAY maximise it afresh.
+- **Being given a width is what ends full width.** A window sized by `Mod+R` or by a resize key MUST
+  stay where it is and MUST NOT be returned to the stack `Mod+F` pulled it out of. It becomes an
+  ordinary column with nowhere to return to, and the next `Mod+F` MAY maximise it afresh.
 - **A resize key MUST NOT move a width against its own direction.** A grow at or above
   `max-column-width`, and a shrink at or below `min-column-width`, MUST do nothing: the bound would
   pull the width back across itself. So growing a full-width column does nothing, where a "grow"
-  landing on `max-column-width` would make the window smaller. A shrink from above the bound, out of
-  full width, a dragged width or `Mod+R`'s 100%, MUST end full width and start from the width the
-  column HAS, not the width it had before being maximised.
+  landing on `max-column-width` would make the window smaller. A shrink from above the bound, from
+  full width, a dragged width or `Mod+R`'s 100%, MUST start from the width the column HAS, not the
+  width it had before being maximised, and from full width MUST end it.
 - **A window the user zooms from its title bar MUST become the full-width column**, the same one
-  `ctrl-F` makes, whatever size the app zooms it to: the screen, or its content as Safari and Finder
+  `Mod+F` makes, whatever size the app zooms it to: the screen, or its content as Safari and Finder
   do. It MUST end exactly at rini's full-width frame, inside the viewport by the border's width with
   a border on, and stay there when it is clicked again. Zooming
   it again from its title bar MUST restore the width and the stack it had, whatever size the app
-  reports on the way back. The two are one toggle, so `ctrl-F` MUST undo a zoom and a zoom MUST undo
-  `ctrl-F`.
+  reports on the way back. The two are one toggle, so `Mod+F` MUST undo a zoom and a zoom MUST undo
+  `Mod+F`.
 - One double-click MUST toggle once. The frames the app reports after its zoom MUST NOT become the
   column's width, and MUST NOT keep rini's frame off the window.
 - Only a double-click on that window's own title bar makes its resize a zoom, and only for 1 second
   after the click. A double-click in a window's content or on another window, a drag that starts after
   the double-click, native fullscreen, and a floating window MUST each be handled exactly as with no
-  double-click at all. `ctrl-F` or `ctrl-R` pressed after a double-click MUST keep the width it gave.
+  double-click at all. `Mod+F` or `Mod+R` pressed after a double-click MUST keep the width it gave.
 
 > **Reported 2026-10-10.** "when i alt-r a stacked colum to change it's width, when it reaches 100 the
 > currently active window goes full size mode and breaks the colum. the alt-r supposed to change width
@@ -170,9 +177,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   keys and the default width. A dragged column takes the dragged width, held only by its windows'
   own limits and the viewport, and keeps its right edge; a centred column's doubled width likewise.
   The width MUST stay unbounded while the app settles its own size, when the window moves to another
-  workspace or display, and across a restart, until a resize key or a `ctrl-R` step below 100% gives
-  the column a width the bounds hold again. `ctrl-R`'s 100% is held only to the viewport too. A drag that moves neither the left nor the right edge leaves the
-  column as bounded as it was.
+  workspace or display, and across a restart, until a resize key or a `Mod+R` step below 100% gives
+  the column a width the bounds hold again. `Mod+R`'s 100% is held only to the viewport too. A drag
+  that moves neither the left nor the right edge leaves the column as bounded as it was.
 - The kept edge belongs to the window dragged. When focus moves to another column, or the dragged
   window closes, before the strip is laid out again, the column focused next MUST be placed as any
   focus change places it.
@@ -199,10 +206,12 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A stacked edge dragged back to where it started MUST give the window across it its height back.
 - A window that resizes itself MUST keep its column where it was: the app's new width is taken, laid
   out at the width the app reported, and its origin is not. Its new height is taken from the other
-  windows in its column, in their proportions. A report within 1pt of the place rini gave the window
-  on an axis is the app answering rini's own write: it MUST change nothing on that axis, and a report
-  that changes neither axis MUST NOT scroll the strip, so a centred column stays centred and a fold
-  or full width still comes back to the view it left.
+  windows in its column, in their proportions. A column rini holds to the viewport, full width or
+  the whole viewport wide by `Mod+R`'s 100% or a drag across it, MUST take no width from its app,
+  however far short of the viewport the app resizes it. A report within 1pt of the place rini gave
+  the window on an axis is the app answering rini's own write: it MUST change nothing on that axis,
+  and a report that changes neither axis MUST NOT scroll the strip, so a centred column stays centred
+  and a fold or full width still comes back to the view it left.
 
 > **Found 2026-10-09, not reported.** An app answering rini's write 1pt off on one axis had the other
 > axis read again with it. A half column's 860pt was read back as 860/1722 of the viewport and laid
