@@ -134,6 +134,13 @@ class Analyze(unittest.TestCase):
         self.assertIn("0/2 pass", text)
         self.assertIn("presses not beginning a flight: comms_pan#2 alt+j (joined), comms_pan#3 alt+l (unmatched)", text)
 
+    def test_the_crop_drawn_tiles_of_the_joined_flights_are_counted_with_their_ground_reads(self):
+        self.assertEqual(self.metrics["crops"], {"drains": 1, "tiles": 1, "ground": {
+            "n": 1, "p50": 7.91, "p90": 7.91, "p99": 7.91, "max": 7.91}})
+        self.assertEqual(self.metrics["drains_all"]["ground"]["max"], 7.91)
+        with open(os.path.join(self.run, "summary.txt")) as file:
+            self.assertIn("crop-drawn tiles 1 in 1 drains, their grounds read 7.9/7.9/7.9 n=1", file.read())
+
     def test_compare_reads_87_metrics_from_a_run(self):
         read = compare.metrics(self.run)
         self.assertEqual(len(read), 87)

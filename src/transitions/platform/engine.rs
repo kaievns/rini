@@ -1150,8 +1150,8 @@ impl FlightEngine {
     /// sent since draws nothing either.
     fn rendered(&mut self, answer: crate::animation::event::Event) {
         match answer {
-            crate::animation::event::Event::Committed { seq, overlay, shown, places, sent, began, flushed } => {
-                self.flights.drawn(self.now(), seq, (shown, places), (sent, began, flushed));
+            crate::animation::event::Event::Committed { seq, overlay, shown, places, crops, sent, began, flushed } => {
+                self.flights.drawn(self.now(), seq, (shown, places, crops), (sent, began, flushed));
                 if overlay.is_some() {
                     self.overlay = overlay;
                 }
@@ -3789,6 +3789,7 @@ mod tests {
 
         use super::*;
         use crate::animation::domain::motion::score::Score;
+        use crate::animation::event::Crops;
         use crate::animation::event::Event::{Committed, Unavailable};
         use crate::pictures::platform::service::Command as Asked;
         use crate::transitions::domain::journal::{Burst, Mark, Stamped};
@@ -3935,7 +3936,8 @@ mod tests {
             /// The renderer's answer that every batch up to `seq` is committed, at once.
             fn committed(&self, seq: u64, overlay: Option<WindowServerId>) -> Event {
                 let now = self.at();
-                Event::Rendered(Committed { seq, overlay, shown: None, places: false, sent: now, began: now, flushed: now })
+                let crops = Crops::default();
+                Event::Rendered(Committed { seq, overlay, shown: None, places: false, crops, sent: now, began: now, flushed: now })
             }
 
             /// The renderer committed every batch up to `seq`.
@@ -5203,7 +5205,8 @@ mod tests {
             h.advance(Duration::from_micros(1_500));
             let heard = h.at();
             let at = |us| handed + Duration::from_micros(us);
-            let answer = Committed { seq: shown, overlay: Some(OVERLAY), shown: Some(true), places: false, sent: handed, began: at(400), flushed: at(700) };
+            let crops = Crops { tiles: 1, ground: Duration::from_micros(7_910) };
+            let answer = Committed { seq: shown, overlay: Some(OVERLAY), shown: Some(true), places: false, crops, sent: handed, began: at(400), flushed: at(700) };
             assert_eq!(placed(&h.step(Event::Rendered(answer))), [vec![(wid(1), end())]]);
             assert_eq!(h.at(), heard + Duration::from_millis(3), "the writes took their time");
 
@@ -5215,7 +5218,7 @@ mod tests {
             let drawn: Vec<_> = burst.marks.iter().filter(|stamped| matches!(stamped.mark, Mark::Drawn { seq, .. } if seq == shown)).collect();
             assert_eq!(drawn.len(), 1, "{:?}", burst.marks);
             assert_eq!(drawn[0].at, heard, "before the writes it released");
-            let mark = Mark::Drawn { seq: shown, shown: Some(true), places: false, queued_us: 400, applied_us: 300, flushed_before_us: 800 };
+            let mark = Mark::Drawn { seq: shown, shown: Some(true), places: false, crops: 1, ground_us: 7_910, queued_us: 400, applied_us: 300, flushed_before_us: 800 };
             assert_eq!(drawn[0].mark, mark);
         }
 

@@ -61,7 +61,7 @@ sends none, so a tick is no transaction. The renderer (`Renderer::run`) wakes on
 every batch queued behind it, plays them in order as one drain in one `CATransaction`, flushed, and
 answers once, with the highest number (`Event::Rendered`): a busy main thread costs one late commit,
 never a backlog of them. The answer is `Committed`, with the overlay's window number once the window
-server has numbered it, whether it showed, lifted or placed, and the drain's times, which the journal marks (`drawn` in `journal.md`)
+server has numbered it, whether it showed, lifted or placed, what it spent on crop-drawn tiles, and the drain's times, which the journal marks (`drawn` in `journal.md`)
 before what the commit releases goes out, or `Unavailable` when the drain dressed or posed a flight
 and there is no overlay to draw it on. Nothing in that drain will ever be drawn, so what it covers
 releases what waited for it all the same: a lift that went out before the answer still writes its

@@ -131,6 +131,15 @@ class Summary(unittest.TestCase):
             (0.2, 0.4, 0.2), (0.3, 0.3, 0.3), (0.2, 1.3, 0.3), (0.2, 0.3, 0.3), (0.4, 0.5, 0.4), (0.2, 0.4, 0.3),
         ])
 
+    def test_each_drain_drawn_carries_its_crop_drawn_tiles_and_their_ground_reads(self):
+        rows = journal.drains(self.flights)
+        self.assertEqual([(row["crops"], row["ground"]) for row in rows],
+                         [(0, 0.0), (1, 7.91), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)], "the show drew one cropped")
+        old = {"mark": "drawn", "queued_us": 200, "applied_us": 400, "flushed_before_us": 200}
+        flight = type("Flight", (), {"marks": [old]})()
+        self.assertEqual([(row["crops"], row["ground"]) for row in journal.drains([flight])], [(0, 0.0)],
+                         "a journal written before drains carried them")
+
     def test_nearest_rank_percentiles(self):
         values = list(range(1, 11))
         self.assertEqual([journal.percentile(values, p) for p in (50, 90, 99)], [5, 9, 10])

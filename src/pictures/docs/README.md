@@ -221,7 +221,8 @@ The colour space alone is not enough: an RGBA context in the picture's own space
 1148x1079pt in P3, still swizzling the whole picture from BGRA. Read on the pictures thread for every
 capture, before it was read lazily, the device RGB draw held up every round (a Swift copy of it took
 3.6-5.6ms a picture at 3000x2000px). *What a crop-drawn tile's read costs on real captures is not
-measured yet.*
+measured yet:* each `drawn` mark carries the drain's `crops` and their `ground_us`
+(`src/transitions/docs/journal.md`) for the next battery to say.
 
 **Two routes, chosen by visibility.** SkyLight is fresh and cheap but captures only what is on screen;
 ScreenCaptureKit captures a window anywhere but costs about 40ms, so it fills the cache in the
