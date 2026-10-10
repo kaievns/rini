@@ -1885,9 +1885,11 @@ impl ScrollingLayoutSystem {
             return;
         }
         let stacked = state.columns[col_idx].windows.len() > 1;
+        let unbounded = state.columns[col_idx].width_unbounded;
         let (width_kept, height_kept) = match state.laid_out_slot_of(wid).filter(|_| drag.is_none()) {
             Some(slot) => (
-                answers_slot(new_frame.size.width, slot.width),
+                answers_slot(new_frame.size.width, slot.width)
+                    || (unbounded && answers_slot(slot.width, tiling.size.width)),
                 !stacked || answers_slot(new_frame.size.height, slot.height),
             ),
             None => (false, false),
@@ -4826,6 +4828,25 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[2]), (1728.0, w2_width), "right neighbour");
         assert_eq!(scroll_offset(&system, layout), 597.0);
         assert!(!system.is_window_full_width(layout, folded));
+    }
+
+    /// An app that settles 20pt short of the viewport, past the 1% the cycle reads as the same
+    /// width. Read back, the column would sit at 0.988, the next `ctrl-R` would find 100% above it
+    /// again, and every later press would stand still.
+    #[test]
+    fn an_app_settling_short_of_the_full_viewport_leaves_it_and_the_cycle_still_wraps() {
+        let (mut system, layout, w) = column_of(preset_settings(), 2);
+        assert!(system.select_window(layout, w[1]));
+        system.cycle_preset_column_width(layout);
+        system.cycle_preset_column_width(layout);
+        let full = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
+        let short = CGRect::new(full.origin, CGSize::new(1702.0, full.size.height));
+
+        system.on_window_resized(layout, w[1], None, short, 0.0, KAI_SCREEN, &kai_s_gaps());
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "kept");
+
+        system.cycle_preset_column_width(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]).1, 572.0);
     }
 
     #[test]

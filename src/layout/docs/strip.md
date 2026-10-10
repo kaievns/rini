@@ -16,14 +16,18 @@ is borrowed.
   the whole column, its stack kept, the viewport wide; it pulls no window out
   and records nothing to return to, which only the full-width mode does, entered
   by `ctrl-F` or its title-bar zoom, a lone window's drag across the viewport or
-  a restart restoring one. Entering the mode there split a stacked window out and broke the column (Kai, 2026-10-10). It
-  cannot be a bounded ratio like the others — `max-column-width` is below 1.0,
-  0.9 by default, so a preset of 1.0 asked for as one comes back clamped to it —
-  so `preset_width::next_preset` answers `Full` or `Ratio`, and `Full` is given
-  `width_unbounded`, the representation a drag across the viewport already
-  gives a stacked column. A maximized window still takes its turn: `ratio_of`
-  reads it as 1.0, where the stored `width_offset` the cycle used to read made
-  `ctrl-R` look dead on it.
+  a restart restoring one. Entering the mode there split a stacked window out
+  and broke the column (Kai, 2026-10-10). It cannot be a bounded ratio like the
+  others — `max-column-width` is below 1.0, 0.9 by default, so a preset of 1.0
+  asked for as one comes back clamped to it — so `preset_width::next_preset`
+  answers `Full` or `Ratio`, and `Full` is given `width_unbounded`, the
+  representation a drag across the viewport already gives a stacked column. The
+  app settling its window short of the viewport under such a column leaves it
+  the viewport wide, as under the mode: read back, a window 20pt short sat at
+  0.988, over the 1% `next_preset` reads as the same width, so the next `ctrl-R`
+  found 1.0 above it again and stood still. A maximized window still takes its
+  turn: `ratio_of` reads it as 1.0, where the stored `width_offset` the cycle
+  used to read made `ctrl-R` look dead on it.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
   keys both do it, and the window stays where it is rather than going back to
   the stack `ctrl-F` pulled it out of: its `full_width_origins` entry is
@@ -456,7 +460,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   `constraints::ratio_of_column_width`, the inverse of `column_width`, so it is laid out as
   reported: 982pt lands at 982, not 981. A drag is the user's, so it takes even a 1pt change. Not built: research suggested also ignoring
   a report smaller than the slot by less than the window's own size step. rini reads no size step,
-  and it would undo a terminal settling 3pt under a dragged width, which is taken today.
+  and it would undo a terminal settling 3pt under a dragged width narrower than the viewport, which
+  is taken today.
 - **Full width and a drag.** A drag on a full-width column's left or right edge ends full width at
   the dragged width, through `leave_full_width_in_place`; anything else under full width, the app
   settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in

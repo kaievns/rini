@@ -68,8 +68,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   band, keeping the stack, its heights and its place on the strip — even though 100% is above
   `max-column-width`, which deliberately stops the incremental resize keys, and not a mouse drag,
   from crawling to 100%. No window is pulled out of its stack and nothing is kept to return to: a
-  later `Mod+F` maximises afresh, and its toggle back returns to the 100% column. The next `Mod+R`
-  MUST wrap to the narrowest preset. A 100% column MUST come back a 100% width after a restart, not
+  later `Mod+F` maximises afresh, and its toggle back returns to the 100% column. The app settling
+  its window short of the viewport MUST leave the column 100%, and the next `Mod+R` MUST wrap to the
+  narrowest preset. A 100% column MUST come back a 100% width after a restart, not
   full width.
 - **Only `Mod+F`, the title-bar zoom, a lone window's drag across the viewport and a restart
   restoring one enter full width**, the mode that remembers the width, height and place to go back
