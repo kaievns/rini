@@ -236,8 +236,9 @@ destination for a window already moving.
   with them, and the windows written their new frames as it covers them. A resize that grows a
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the
   overlay standing still, until that window has repainted at its new size, up to 300ms from the
-  overlay going up, and that window MUST fly its repainted picture from the motion's first frame, so
-  its growth shows its content and never a fill cut to content mid-flight. A window growing on one
+  overlay going up or from the latest press growing it before the motion starts, and 600ms in all
+  from the overlay going up, and that window MUST fly its repainted picture from the motion's first
+  frame, so its growth shows its content and never a fill cut to content mid-flight. A window growing on one
   axis as it shrinks on the other, as a fold or an unfold, has no picture covering every frame: its
   repainted picture, short of the start on the shrinking axis, shows the window's ground there, which
   the moving edge swallows, and the cut onto it from the picture at the press comes as the motion
@@ -247,8 +248,25 @@ destination for a window already moving.
   once; the only addition is the wait, and only for a window that grows. A window that has just
   opened keeps its own entrance, and a flight MAY wait for the first picture of a window it has none
   of.
+- A pass that grows a window on either axis while a flight is already moving, a press arriving
+  before the flight of the one before it has ended, MUST hold that window the same way: the flight
+  MUST play on as it was, its tiles going on to the ends they had and resting there with the overlay
+  up, and the pass MUST merge into it only once that window has repainted where the pass ends it,
+  up to 300ms from the pass's arrival. The tiles then MUST set off from where each is drawn at that
+  moment, the grown window flying its repainted picture, so its growth shows its content. A merged
+  pass grows a window when it ends it wider or taller than the picture its tile carries, whatever its
+  own sizes: a press shrinking a window whose earlier grow has not repainted yet still grows it past
+  the picture on its tile, and a pass moving a window a held pass grows is judged so too; a move of
+  any other window stays a navigation. A pass arriving while one is held replaces what the flight
+  waits for, its own grows from its own arrival, up to 600ms in all from the first one's, and the
+  repainted picture where the latest one ends the window MUST go onto its tile as they merge. A
+  pass that grows no window, a strip movement included, MUST merge at once, with any pass held
+  before it. Each held pass MUST write its windows as it is held, and their merging MUST NOT write
+  a window again, least of all back where an earlier held pass sent it. A held pass whose window misses the 300ms, or the 600ms of a burst, merges with the
+  picture its tile has, the window's ground in the growth, and the repainted picture replaces that
+  one when it comes.
 - Each window a resize grows MUST be pictured at its new size once it has repainted there. One whose
-  repaint missed the 300ms flies its picture from the press, with the window's ground in its growth,
+  repaint missed the hold flies its picture from the press, with the window's ground in its growth,
   and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
   edges as the old one, with the window's ground wherever it does not cover the frame still to come.
   A window a resize only shrinks MUST fly its picture from the press, clipped, to the lift: that
@@ -256,7 +274,8 @@ destination for a window already moving.
   picture and the last capture before the lift MUST NOT be drawn on it. One starting clipped or off
   the display has no picture from the press, and its repainted picture MUST replace the one it flies
   as it comes. Where passes merge, the latest one resizing a window decides whether it grows or only
-  shrinks, and so whether the motion still waits for it. A picture taken at its
+  shrinks, against the picture its tile carries, and so whether the motion still waits for it,
+  before the motion starts as once it moves. A picture taken at its
   new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
   one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
   keeps the look its picture from the press shows, the title bar and controls macOS draws focused or
@@ -294,6 +313,14 @@ destination for a window already moving.
 > window content than see a flicker." Each grow flew its growth as the window's flat ground until
 > its repainted picture was cut in mid-flight: that cut was the flicker, and each shrink had its
 > repainted picture cut in too. Measured in "A grow waits for its repaint"
+> (`src/transitions/docs/coordination.md`).
+>
+> **Reported 2026-10-10**, after trying the change the report above led to. Kai: "alt-r is fixed i
+> can confirm. resizing still intermittently produces black sections flicker when a window size
+> increases. easiest way to reproduce is to trigger alt-r rapidly on one of those rainbow terminals
+> you made." Only a flight's start waited for a grow's repaint: a press reaching a flight already
+> moving merged into it at once, so its grow flew the old picture with the window's ground in the
+> growth until the repaint was cut in mid-flight. Measured in "Mid-flight passes"
 > (`src/transitions/docs/coordination.md`).
 
 ## Correctness the user can see

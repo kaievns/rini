@@ -46,6 +46,7 @@ until it has a mark.
 | a request's first drive, ahead of that event's own marks | `press`, stamped when the reactor took the event the request answers | `what` |
 | `Event::Begin(stage)` | `begin` | `kind`, `coalesced` (the stage waits for the reactor's follow-up passes), `tiles`, `awaiting`, `repainting`, `focus`, `losing_focus`, `key`, `duration_ms` |
 | `Event::Merge { stage, moved }` | `merge` | `kind`, `moved`, `tiles`, `awaiting`, `repainting`, `focus`, `focused_look`, `duration_ms` |
+| `Event::HoldMerge { grows, writes }` | `hold_merge` | `grows`, `writes` (counts) |
 | `Event::Extend(d)` / `Abandon` / `Quiet(g)` | `extend` / `abandon` / `quiet` | `ms` / none / `of` |
 | `Event::Tick { settled, landed }`, from `FRAME_INTERVAL` before the clock runs out, or from its end with nothing drawn at rest | `at_rest`, `landed`: each once a generation, at its first `true` | |
 | `Event::Lost { generation, window }` | `lost` | `of`, `window` |
@@ -56,6 +57,7 @@ until it has a mark.
 | `Hold` / `Settle` / `Release` | `hold` / `settle` / `release` | |
 | `AskFrameZero` | `ask_frame_zero` | `strip`, `background`, `behind` (counts) |
 | `Show` / `StartMoving` / `StopWatches` / `PlaceRest` | `show` / `start_moving` / `stop_watches` / `place_rest` | |
+| `Retarget { held }` | `retarget` | `waited_ms`, since the latest pass held for a grow arrived |
 | `Write` / `Holes` / `Warm` / `Refresh` | `write` / `holes` / `warm` / `refresh` | `windows` (a count) |
 | `Watch(EndWatch)` | `watch` | `landing`, `awaiting`, `background` (counts), `focus`, `losing_focus` |
 | `AskFinal` | `ask_final` | `windows`, `behind` (counts) |
@@ -76,6 +78,17 @@ How to read them:
 
 - **`g` is the generation after the event.** A merge that starts a generation is marked in it. `of`
   is the generation a delivery, a loss, a swap, a quiet or a handover was under; `of != g` is stale.
+- **A held merge is a `hold_merge`, then a `retarget`, then the `merge` it led to.** A pass that
+  grows a window once the flight moves, and any pass while one is held, is a `hold_merge` in the
+  generation running, with the `write`, `holes` and `watch` that hold it after it unless it merges
+  at once. The `retarget` comes once the grows have repainted, been given up on or waited
+  `HOLD_CAP` since the latest `hold_merge` that held or `BURST_HOLD_CAP` since the first: its
+  `waited_ms` is the wait since the latest `hold_merge` that held, 0 when none did. A pass growing
+  nothing that arrives while others are held merges them at once and reports that wait, not its
+  own, which is none. The `merge` of each pass held follows the `retarget`, each starting the next
+  generation. A `swap`
+  after the latest of them, with `of` the generation the passes were held in, is the held repaint
+  going on.
 - **A delivery carries its times as ages,** in microseconds before its own `t`: `sent_before_us` is
   when the service sent it, and each `delivered`'s `taken_before_us` when that picture's capture
   started (below).

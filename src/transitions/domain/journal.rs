@@ -68,6 +68,17 @@ pub enum Mark {
         focused_look: Option<WindowId>,
         duration_ms: u32,
     },
+    /// A pass reaching a flight whose motion runs, not merged yet: how many windows it grows, and how
+    /// many real windows it sends somewhere.
+    HoldMerge {
+        grows: u16,
+        writes: u16,
+    },
+    /// The passes held since the motion ran merge, `waited_ms` after the latest of them held for a
+    /// grow arrived.
+    Retarget {
+        waited_ms: u32,
+    },
     Extend {
         ms: u32,
     },
@@ -428,6 +439,9 @@ impl Journal {
                 focused_look: stage.focused_look,
                 duration_ms: millis(stage.duration),
             }),
+            Event::HoldMerge { grows, writes } => {
+                Pending::One(Mark::HoldMerge { grows: count(grows.len()), writes: count(writes.len()) })
+            }
             Event::FrameZero(_) | Event::Picture { .. } => Pending::Nothing,
             Event::Lost { generation, window } => Pending::One(Mark::Lost { of: *generation, window: *window }),
             Event::Extend(needs) => Pending::One(Mark::Extend { ms: millis(*needs) }),
@@ -488,6 +502,7 @@ impl Journal {
             },
             Command::StopWatches => Mark::StopWatches,
             Command::StartMoving => Mark::StartMoving,
+            Command::Retarget { held } => Mark::Retarget { waited_ms: millis(*held) },
             Command::AskFinal { windows, behind, .. } => {
                 Mark::AskFinal { windows: count(windows.len()), behind: count(behind.len()) }
             }
@@ -873,6 +888,7 @@ mod tests {
             (Command::Watch(watch.clone()), "watch"),
             (Command::StopWatches, "stop_watches"),
             (Command::StartMoving, "start_moving"),
+            (Command::Retarget { held: Duration::from_millis(140) }, "retarget"),
             (Command::AskFinal { generation: g, windows: frames.clone(), behind: Vec::new() }, "ask_final"),
             (Command::Swap { generation: g, window: w(1) }, "swap"),
             (Command::Snap { window: w(1), frame: snap }, "snap"),
@@ -893,6 +909,10 @@ mod tests {
             Mark::Watch { landing: 1, awaiting: 0, background: 0, focus: Some(w(2)), losing_focus: Some(w(1)) }
         );
         assert_eq!(Journal::mark(&Command::Lift { generation: g }, (true, false)), Mark::Lift { at_rest: true, landed: false });
+        assert_eq!(
+            Journal::mark(&Command::Retarget { held: Duration::from_micros(140_900) }, (false, false)),
+            Mark::Retarget { waited_ms: 140 }
+        );
     }
 
     #[test]
@@ -901,6 +921,10 @@ mod tests {
         let frame = r(0.0, 0.0, 200.0, 200.0);
         assert_eq!(marks_of(Event::Begin(pan())), ["begin"]);
         assert_eq!(marks_of(Event::Merge { stage: pan(), moved: true }), ["merge"]);
+        let hold = Event::HoldMerge { grows: vec![(w(2), frame)], writes: vec![(w(1), frame), (w(2), frame)] };
+        assert_eq!(marks_of(hold.clone()), ["hold_merge"]);
+        let Pending::One(held) = Journal::before(&hold, false) else { panic!() };
+        assert_eq!(held, Mark::HoldMerge { grows: 1, writes: 2 });
         assert_eq!(marks_of(Event::Lost { generation: g, window: w(1) }), ["lost"]);
         assert_eq!(marks_of(Event::Extend(Duration::from_millis(5))), ["extend"]);
         assert_eq!(marks_of(Event::Tick { settled: true, landed: true }), ["at_rest", "landed"]);
@@ -950,6 +974,28 @@ mod tests {
         let before = held(&flights).len();
         flights.drive(Event::Tick { settled: true, landed: true }, now + Duration::from_millis(10));
         assert_eq!(held(&flights).len(), before, "the engine read nothing, whatever the tick says");
+    }
+
+    /// A pass growing a window while the flight moves is marked as it is held, and again as it merges,
+    /// with how long it waited, in the generation it was held in.
+    #[test]
+    fn a_held_merge_is_marked_held_then_merged_with_its_wait() {
+        let now = Instant::now();
+        let mut flights = Journalled::default();
+        let mut stage = pan();
+        stage.kind = Kind::LayoutPass;
+        flights.drive(Event::Begin(stage), now);
+        flights.drive(Event::FrameZero(flights.coordinator().generation()), now);
+        let g = flights.coordinator().generation();
+        let before = held(&flights).len();
+        let grown = r(3.0, 35.0, 1723.0, 1079.0);
+        let arrives = now + Duration::from_millis(100);
+        flights.drive(Event::HoldMerge { grows: vec![(w(2), grown)], writes: vec![(w(2), grown)] }, arrives);
+        flights.drive(Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed }, arrives + Duration::from_millis(137));
+        let marks = held(&flights);
+        assert_eq!(names(&marks[before..]), ["hold_merge", "write", "holes", "watch", "retarget"]);
+        assert_eq!(marks[before].mark, Mark::HoldMerge { grows: 1, writes: 1 });
+        assert_eq!(marks.last().map(|stamped| (stamped.mark, stamped.generation)), Some((Mark::Retarget { waited_ms: 137 }, g)));
     }
 
     #[test]

@@ -99,6 +99,20 @@ pub(in crate::transitions) enum EndPicture {
 }
 
 impl EndPicture {
+    /// Every sort.
+    const ALL: [Self; 5] = [Self::Awaited, Self::Held, Self::Kept, Self::Repainting, Self::Lands];
+
+    /// Which of `Waits`' lists a window so sorted is in: `awaiting`, `repainting` and `kept`.
+    const fn lists(self) -> (bool, bool, bool) {
+        match self {
+            Self::Awaited => (true, false, false),
+            Self::Held => (true, true, false),
+            Self::Kept => (false, true, true),
+            Self::Repainting => (false, true, false),
+            Self::Lands => (false, false, false),
+        }
+    }
+
     /// A window going from `from` to `to`, drawn from a picture taken `source`: a stand-in, which is
     /// no picture of the window, is awaited; a resize growing on either axis is held for its repaint;
     /// one that only shrinks flies the picture it has at once and keeps it; a move lands.
@@ -112,6 +126,16 @@ impl EndPicture {
         } else {
             Self::Lands
         }
+    }
+
+    /// A merged pass's sort of a window, judged against the running tile it lands on, whose picture is
+    /// `carried` big: a shrink, or a move of a window a pass held before it grows (`held`), ending at
+    /// `to` wider or taller than that picture is a grow; every other sort stands. A first pass is
+    /// judged on its own sizes alone, and so is a move of a window nothing held grows, however small
+    /// its cached picture. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
+    fn against_tile(self, carried: ScreenSize, to: ScreenSize, held: bool) -> Self {
+        let judged = self == Self::Kept || held && self == Self::Lands;
+        if judged && grows(carried, to) { Self::Held } else { self }
     }
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
@@ -139,14 +163,43 @@ pub(in crate::transitions) struct Waits {
 }
 
 impl Waits {
+    /// The grows: held for and pictured where they end only once repainted, what a pass merged while
+    /// the motion runs is held for, a merged pass's judged against its tiles (`against_tiles`).
+    pub(in crate::transitions) fn grows(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.awaiting.iter().copied().filter(|window| self.of(*window) == EndPicture::Held)
+    }
+
+    /// A merged pass's windows sorted again against the flight it reaches (`EndPicture::against_tile`):
+    /// each of `ends`, where the pass ends a window, against the size of the picture its running tile
+    /// carries (`carried`, none for a window joining), and whether a pass held before it grows it
+    /// (`held`).
+    pub(in crate::transitions) fn against_tiles(
+        &mut self,
+        ends: impl IntoIterator<Item = (WindowId, ScreenSize)>,
+        carried: impl Fn(WindowId) -> Option<ScreenSize>,
+        held: impl Fn(WindowId) -> bool,
+    ) {
+        for (window, to) in ends {
+            let Some(carried) = carried(window) else { continue };
+            let end = self.of(window);
+            let judged = end.against_tile(carried, to, held(window));
+            if judged != end {
+                for sorted in [&mut self.awaiting, &mut self.repainting, &mut self.kept] {
+                    sorted.retain(|w| *w != window);
+                }
+                self.push(window, judged);
+            }
+        }
+    }
+
+    /// How `push` sorted `window`: a window in none of the lists lands.
+    fn of(&self, window: WindowId) -> EndPicture {
+        let lists = (self.awaiting.contains(&window), self.repainting.contains(&window), self.kept.contains(&window));
+        EndPicture::ALL.into_iter().find(|end| end.lists() == lists).unwrap_or(EndPicture::Lands)
+    }
+
     pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
-        let (holds, repaints, keeps) = match end {
-            EndPicture::Awaited => (true, false, false),
-            EndPicture::Held => (true, true, false),
-            EndPicture::Kept => (false, true, true),
-            EndPicture::Repainting => (false, true, false),
-            EndPicture::Lands => (false, false, false),
-        };
+        let (holds, repaints, keeps) = end.lists();
         for (sorted, into) in [(holds, &mut self.awaiting), (repaints, &mut self.repainting), (keeps, &mut self.kept)] {
             if sorted {
                 into.push(window);
@@ -416,8 +469,7 @@ mod tests {
     #[test]
     fn a_grow_is_held_for_a_shrink_kept_and_both_watched_until_repainted() {
         let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
-        let ends = [EndPicture::Awaited, EndPicture::Held, EndPicture::Kept, EndPicture::Repainting, EndPicture::Lands];
-        let waits: Waits = (1..).map(window).zip(ends).collect();
+        let waits: Waits = (1..).map(window).zip(EndPicture::ALL).collect();
         assert_eq!(
             waits,
             Waits {
@@ -426,6 +478,70 @@ mod tests {
                 kept: vec![window(3)],
             }
         );
+        assert_eq!(waits.grows().collect::<Vec<_>>(), [window(2)], "the grow alone");
+    }
+
+    /// Every sort pushed reads back as itself, so each is in its own lists.
+    #[test]
+    fn each_sort_reads_back_as_it_was_pushed() {
+        let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
+        let waits: Waits = (1..).map(window).zip(EndPicture::ALL).collect();
+        for (idx, end) in (1..).zip(EndPicture::ALL) {
+            assert_eq!(waits.of(window(idx)), end);
+        }
+    }
+
+    /// Kai's rapid Alt-R: a press shrinking the column on its own sizes, 1148 to 860, superseding a
+    /// held grow whose repaint has not come, so its tile still carries the 572 picture, grows past
+    /// that picture and is held; one ending within it stays kept.
+    #[test]
+    fn a_shrink_ending_wider_than_its_tiles_picture_is_held() {
+        let (carried, to) = (ScreenSize::new(572.0, 1079.0), ScreenSize::new(860.0, 1079.0));
+        assert_eq!(EndPicture::Kept.against_tile(carried, to, false), EndPicture::Held);
+        assert_eq!(EndPicture::Kept.against_tile(ScreenSize::new(1148.0, 1079.0), to, false), EndPicture::Kept);
+        assert_eq!(EndPicture::Kept.against_tile(ScreenSize::new(859.0, 1079.0), to, false), EndPicture::Kept, "rounding");
+    }
+
+    /// A move of a window a held pass grows ends where that grow's repaint is still to come: past
+    /// the picture its tile carries it is held too. A move of any other window stays a navigation,
+    /// however small its cached picture, and a grow, a stand-in and an entrance keep their sorts.
+    #[test]
+    fn only_a_move_of_a_window_a_held_pass_grows_is_judged_against_its_tiles_picture() {
+        let (carried, to) = (ScreenSize::new(572.0, 1079.0), ScreenSize::new(1148.0, 1079.0));
+        assert_eq!(EndPicture::Lands.against_tile(carried, to, true), EndPicture::Held);
+        assert_eq!(EndPicture::Lands.against_tile(to, to, true), EndPicture::Lands, "its picture covers it");
+        assert_eq!(EndPicture::Lands.against_tile(carried, to, false), EndPicture::Lands);
+        for end in [EndPicture::Held, EndPicture::Awaited, EndPicture::Repainting] {
+            assert_eq!(end.against_tile(carried, to, true), end);
+        }
+    }
+
+    /// Re-sorted, a window leaves the lists it was in for a grow's: out of `kept`, in `awaiting` and
+    /// `repainting`. A window joining has no tile to judge against and keeps its sort, as does every
+    /// window whose sort stands.
+    #[test]
+    fn a_pass_sorted_again_against_its_tiles_moves_only_the_outgrown_windows() {
+        let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
+        let mut waits: Waits =
+            [(window(1), EndPicture::Kept), (window(2), EndPicture::Kept), (window(3), EndPicture::Lands), (window(4), EndPicture::Kept)]
+                .into_iter()
+                .collect();
+        let to = ScreenSize::new(860.0, 1079.0);
+        let carried = |w: WindowId| match w.idx.get() {
+            1 | 3 => Some(ScreenSize::new(572.0, 1079.0)),
+            2 => Some(ScreenSize::new(1148.0, 1079.0)),
+            _ => None,
+        };
+        waits.against_tiles((1..=4).map(|idx| (window(idx), to)), carried, |w| w == window(3));
+        assert_eq!(
+            waits,
+            Waits {
+                awaiting: vec![window(1), window(3)],
+                repainting: vec![window(2), window(4), window(1), window(3)],
+                kept: vec![window(2), window(4)],
+            }
+        );
+        assert_eq!(waits.grows().collect::<Vec<_>>(), [window(1), window(3)]);
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one

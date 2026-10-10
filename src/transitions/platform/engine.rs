@@ -243,6 +243,9 @@ struct RunningAnimation {
     score: FlightScore,
     /// The press frame zero shows: the latest folded into it.
     cue: Cue,
+    /// Passes that reached the flight while it moved, oldest first, not merged until the coordinator
+    /// says (`Command::Retarget`).
+    held: Vec<Composed>,
 }
 
 /// What a swapped-in picture became.
@@ -1046,6 +1049,12 @@ impl FlightEngine {
             }
             Command::StopWatches => self.watches.stop(&self.pictures),
             Command::StartMoving => self.start_moving(now),
+            Command::Retarget { .. } => {
+                let held = self.running.as_mut().map(|running| std::mem::take(&mut running.held)).unwrap_or_default();
+                for pass in held {
+                    self.merge_now(pass);
+                }
+            }
             Command::AskFinal { generation, windows, behind } => self
                 .pictures
                 .ask_on_screen(on_screen(self.tag(generation), Moment::Final, &windows, &[], &behind)),
@@ -1723,6 +1732,7 @@ impl FlightEngine {
             flown: false,
             score,
             cue: pass.cue,
+            held: Vec::new(),
         };
         if let Some(accent) = pass.accent {
             running.score.wait(accent);
@@ -1787,10 +1797,40 @@ impl FlightEngine {
         }
     }
 
-    /// One later pass folded into the flight running: bent by its look from the score once the plan
-    /// plays, folded into frame zero and posed again before. A pass moving focus to a target parked
-    /// off the display flies its focused look, as the first pass's does.
-    fn merge_group(&mut self, pass: Composed) {
+    /// One later pass reaching the flight running, its windows judged against the pictures their
+    /// tiles carry and the grows of the passes held (`Waits::against_tiles`): once the plan plays, one
+    /// growing a window, and any while one is held, waits for the coordinator to say when it merges
+    /// (`Event::HoldMerge`); any other merges now. See "Mid-flight passes" in
+    /// `src/transitions/docs/coordination.md`.
+    fn merge_group(&mut self, mut pass: Composed) {
+        let Some(running) = self.running.as_mut() else { return };
+        let held: Vec<WindowId> = running.held.iter().flat_map(|held| held.shape.waits.grows()).collect();
+        pass.shape.waits.against_tiles(
+            pass.tiles.iter().map(|tile| (tile.window, tile.to.size.respace())),
+            |window| running.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.snapshot.coverage.covered),
+            |window| held.contains(&window),
+        );
+        let grows: Vec<(WindowId, OverlayRect)> = pass
+            .shape
+            .waits
+            .grows()
+            .filter_map(|window| pass.tiles.iter().find(|tile| tile.window == window).map(|tile| (window, tile.to)))
+            .collect();
+        if !running.flown || (grows.is_empty() && running.held.is_empty()) {
+            return self.merge_now(pass);
+        }
+        let writes = pass.final_frames.clone();
+        running.held.push(pass);
+        let Some((display, _)) = self.display else { return };
+        let grows = grows.into_iter().map(|(window, to)| (window, from_overlay_space(to, display))).collect();
+        self.drive(lifecycle::Event::HoldMerge { grows, writes });
+    }
+
+    /// One later pass folded into the flight running: bent by its look from the score, from where
+    /// each tile is drawn now, once the plan plays, folded into frame zero and posed again before. A
+    /// pass moving focus to a target parked off the display flies its focused look, as the first
+    /// pass's does.
+    fn merge_now(&mut self, pass: Composed) {
         let now = self.now();
         let at = self.media.at(now);
         let left = self.flights.coordinator().remaining(now).unwrap_or_default();
@@ -2410,6 +2450,7 @@ mod tests {
             flown: false,
             score: FlightScore::new(Look::default()),
             cue: Cue::Plain,
+            held: Vec::new(),
         }
     }
 
@@ -4399,7 +4440,14 @@ mod tests {
         /// A layout pass of `wid(1)` from `start` to `end` and of each of `others` from and to its
         /// own frame.
         fn pass_of(h: &Harness, others: &[(u32, ScreenRect, ScreenRect)]) -> Event {
-            let request = |id: u32, from, to| AnimationRequest {
+            let mut windows = vec![(1, start(), end())];
+            windows.extend_from_slice(others);
+            resize_of(h, &windows)
+        }
+
+        /// A layout pass moving each of `windows` from its frame to the next, pressed now.
+        fn resize_of(h: &Harness, windows: &[(u32, ScreenRect, ScreenRect)]) -> Event {
+            let request = |&(id, from, to): &(u32, ScreenRect, ScreenRect)| AnimationRequest {
                 worn: Default::default(),
                 window: wid(id),
                 server_id: WindowServerId::new(id),
@@ -4409,10 +4457,8 @@ mod tests {
                 strip_before: None,
                 strip_after: None,
             };
-            let mut windows = vec![request(1, start(), end())];
-            windows.extend(others.iter().map(|&(id, from, to)| request(id, from, to)));
             Event::Animate {
-                windows,
+                windows: windows.iter().map(request).collect(),
                 focus: None,
                 focused_before: None,
                 key: None,
@@ -4540,6 +4586,204 @@ mod tests {
             assert!(joined.iter().all(|tile| tile.radius == Some(26.0)), "{:?}", joined.iter().map(|t| t.radius).collect::<Vec<_>>());
             crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
             report_corners(2, None);
+        }
+
+        /// `windows`' repaints where they end, delivered under the flight's generation now.
+        fn repainted(h: &Harness, windows: &[(u32, ScreenRect)]) -> Event {
+            Event::Pictures(crate::pictures::event::Event::Delivered {
+                tag: Tag { client: CLIENT, generation: h.generation() },
+                why: Why::Landed,
+                sent: h.at(),
+                pictures: windows.iter().map(|&(id, frame)| (wid(id), test_picture(frame.size), frame)).collect(),
+            })
+        }
+
+        /// A layout pass moving `wid(1)` as `pass_of` does, and `wid(2)` beside it, shown and moving,
+        /// the window server reporting each where the pass starts it.
+        fn moving_pair() -> Harness {
+            let mut h = Harness::new();
+            h.engine.pictures.insert(wid(2), test_picture(end().size));
+            let beside = rect(867.0, 0.0, 859.0, 1081.0);
+            for (id, frame) in [(1, start()), (2, beside)] {
+                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(id), Some(frame.to_cg()));
+            }
+            let press = pass_of(&h, &[(2, beside, beside.translate(ScreenVector::new(-10.0, 0.0)))]);
+            h.step(press);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            h.advance(COALESCE_WINDOW);
+            let ticked = h.step(Event::Tick);
+            assert!(kinds(only_batch(&ticked)).contains(&"play"), "moving");
+            h.advance(Duration::from_millis(60));
+            for id in [1, 2] {
+                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(id), None);
+            }
+            h
+        }
+
+        fn plays(sent: &[Sent]) -> bool { batches(sent).iter().any(|batch| kinds(batch).contains(&"play")) }
+
+        /// Where the running flight ends `window`'s tile.
+        fn tile_to(h: &Harness, window: u32) -> Option<OverlayRect> {
+            h.engine.running.as_ref().and_then(|running| running.tiles.iter().find(|tile| tile.window == wid(window)).map(|tile| tile.to))
+        }
+
+        /// A pass growing a window while the flight moves writes it at once and draws nothing of it
+        /// until its repaint lands: then, in one drain, the tile is bent from where it is drawn at that
+        /// moment and the repaint goes onto it.
+        #[test]
+        fn a_grow_merged_while_the_flight_moves_retargets_once_it_repaints_from_where_its_tile_is_drawn() {
+            let mut h = moving_pair();
+            let grown = rect(0.0, 0.0, 1300.0, 1081.0);
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            let sent = h.step(press);
+            assert!(!plays(&sent), "held");
+            assert_eq!(placed(&sent), [vec![(wid(1), grown)]], "written at once");
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, grown)]);
+            let sent = h.step(landed);
+            let batch = only_batch(&sent);
+            let order = kinds(batch);
+            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
+            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            let at = h.media.at(h.at());
+            let begins = begins(&sent);
+            assert!(!begins.is_empty() && begins.iter().all(|begin| (begin - at).abs() < 1e-9), "{begins:?} from {at}");
+            let to = tile_to(&h, 1);
+            assert_eq!(to, Some(on(grown)));
+        }
+
+        /// A pass that only shrinks or moves a window while the flight moves bends the flight at once.
+        #[test]
+        fn a_shrink_merged_while_the_flight_moves_retargets_at_once() {
+            let mut h = moving_pair();
+            let press = resize_of(&h, &[(1, end(), rect(0.0, 0.0, 600.0, 1081.0))]);
+            assert!(plays(&h.step(press)));
+        }
+
+        /// The repaint of one of two windows a held pass grows is kept until the other's lands, and
+        /// both go onto their tiles as it merges.
+        #[test]
+        fn a_held_passs_first_repaint_is_kept_until_it_merges() {
+            let mut h = moving_pair();
+            let (first, second) = (rect(0.0, 0.0, 1000.0, 1081.0), rect(700.0, 0.0, 1000.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), first), (2, rect(857.0, 0.0, 859.0, 1081.0), second)]);
+            h.step(press);
+            h.advance(Duration::from_millis(80));
+            let one = repainted(&h, &[(1, first)]);
+            assert!(!plays(&h.step(one)), "still held");
+            h.advance(Duration::from_millis(40));
+            let other = repainted(&h, &[(2, second)]);
+            let sent = h.step(other);
+            assert_eq!(swapped(&sent, wid(1)).len(), 1, "kept for the merge");
+            assert_eq!(swapped(&sent, wid(2)).len(), 1);
+        }
+
+        /// Kai's rapid Alt-R: a press shrinking `wid(1)` on its own sizes, superseding a held grow
+        /// whose repaint has not come, ends wider than the picture its tile still carries from the
+        /// press: it is held too, and the repaint where it ends goes onto the tile as both merge.
+        #[test]
+        fn a_shrink_superseding_a_held_grow_ending_wider_than_its_tiles_picture_waits_for_its_repaint() {
+            let mut h = moving_pair();
+            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(1, grown, narrower)]);
+            let sent = h.step(press);
+            assert!(!plays(&sent), "held");
+            assert_eq!(placed(&sent), [vec![(wid(1), narrower)]], "written at once");
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, narrower)]);
+            let sent = h.step(landed);
+            let order = kinds(only_batch(&sent));
+            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
+            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            let to = tile_to(&h, 1);
+            assert_eq!(to, Some(on(narrower)));
+        }
+
+        /// A pass growing nothing that reaches a held one merges with it at once, the held one first:
+        /// a window both send somewhere ends where the latest sends it, and stays there as the held
+        /// grow's repaint lands.
+        #[test]
+        fn a_pass_growing_nothing_merges_after_the_one_held_before_it() {
+            let mut h = moving_pair();
+            let (grown, beside) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(857.0, 0.0, 859.0, 1081.0));
+            let (sent, latest) = (rect(869.0, 0.0, 859.0, 1081.0), rect(807.0, 0.0, 859.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown), (2, beside, sent)]);
+            assert!(!plays(&h.step(press)), "held");
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(2, sent, latest)]);
+            assert!(plays(&h.step(press)), "at once");
+            assert!(h.engine.running.as_ref().is_some_and(|running| running.held.is_empty()), "with the held one");
+            assert_eq!((tile_to(&h, 1), tile_to(&h, 2)), (Some(on(grown)), Some(on(latest))));
+            h.advance(Duration::from_millis(80));
+            let landed = repainted(&h, &[(1, grown)]);
+            h.step(landed);
+            assert_eq!(tile_to(&h, 2), Some(on(latest)), "not sent back where the held one ends it");
+        }
+
+        /// A pass only moving a window a held pass grows ends it wider than the picture its tile
+        /// carries: held too, and merged once its repaint lands where it moves, onto the moved tile.
+        #[test]
+        fn a_move_of_a_window_a_held_pass_grows_waits_for_its_repaint() {
+            let mut h = moving_pair();
+            let (grown, moved) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(100.0, 0.0, 1300.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(1, grown, moved)]);
+            assert!(!plays(&h.step(press)), "held");
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, moved)]);
+            let sent = h.step(landed);
+            let order = kinds(only_batch(&sent));
+            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
+            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            assert_eq!(tile_to(&h, 1), Some(on(moved)));
+        }
+
+        /// The same shrink once the grow's repaint is on the tile ends inside that picture, and bends
+        /// the flight at once.
+        #[test]
+        fn a_shrink_after_the_grows_repaint_landed_retargets_at_once() {
+            let mut h = moving_pair();
+            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            let press = resize_of(&h, &[(1, end(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(120));
+            let landed = repainted(&h, &[(1, grown)]);
+            assert_eq!(swapped(&h.step(landed), wid(1)).len(), 1, "on the tile");
+            h.advance(Duration::from_millis(40));
+            let press = resize_of(&h, &[(1, grown, narrower)]);
+            assert!(plays(&h.step(press)));
+        }
+
+        /// Before the motion, the same shrink merged into a hold for the grow keeps the overlay holding,
+        /// now for the repaint where the shrink ends it, and the motion starts once that lands.
+        #[test]
+        fn a_shrink_merged_before_the_motion_ending_wider_than_its_tiles_picture_keeps_the_hold() {
+            let mut h = Harness::new();
+            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(1), Some(start().to_cg()));
+            let press = resize_of(&h, &[(1, start(), grown)]);
+            h.step(press);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(1), None);
+            h.advance(Duration::from_millis(10));
+            let press = resize_of(&h, &[(1, grown, narrower)]);
+            assert!(!plays(&h.step(press)));
+            h.advance(COALESCE_WINDOW);
+            assert!(!plays(&h.step(Event::Tick)), "still holding");
+            h.advance(Duration::from_millis(100));
+            let landed = repainted(&h, &[(1, narrower)]);
+            assert!(plays(&h.step(landed)), "its repaint in, the motion starts");
         }
 
         #[test]

@@ -17,11 +17,20 @@ pub(in crate::transitions) const COALESCE_WINDOW: Duration = Duration::from_mill
 pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 
 /// How long a flight stands still with the overlay up for a grow's repaint, or the first picture of a
-/// window it has none of, a reserved entrance or a stand-in, whatever the flight's duration, and how
-/// long a window watched to repaint where it ends is waited for there before it is lost; once there, it
-/// is captured until it settles. See "A grow waits for its repaint" in
-/// `src/transitions/docs/coordination.md`.
+/// window it has none of, a reserved entrance or a stand-in, whatever the flight's duration, from the
+/// overlay going up or the arrival of the latest pass merged before the motion holding for one; how long
+/// a pass merged while the flight moves waits, from its arrival, for the windows it grows to repaint;
+/// and how long a window watched to repaint where it ends is waited for there before it is lost; once
+/// there, it is captured until it settles. See "A grow waits for its repaint" and "Mid-flight passes"
+/// in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
+
+/// How long, in all, passes merged before the motion can hold the overlay still, from its going up,
+/// and passes held once it moves can keep from merging, from the first one's arrival: twice
+/// `HOLD_CAP`, so presses 115ms apart whose window repaints 140ms after each set off on the third
+/// one's repaint, and a burst cannot stall the flight. See "A grow waits for its repaint" and
+/// "Mid-flight passes" in `src/transitions/docs/coordination.md`.
+pub(in crate::transitions) const BURST_HOLD_CAP: Duration = Duration::from_millis(600);
 
 /// How long after a lift the flight's owed captures wait for the user to stop pressing.
 /// See "Capture work in flight" in `src/transitions/docs/coordination.md`.
@@ -39,6 +48,12 @@ mod tests {
     #[test]
     fn the_hold_is_capped_at_a_blink() {
         assert_eq!(HOLD_CAP, Duration::from_millis(300));
+    }
+
+    /// See "A grow waits for its repaint" in `src/transitions/docs/coordination.md`.
+    #[test]
+    fn a_burst_holds_at_most_two_blinks() {
+        assert_eq!(BURST_HOLD_CAP, 2 * HOLD_CAP);
     }
 
     #[test]

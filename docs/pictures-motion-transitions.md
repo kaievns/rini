@@ -105,7 +105,11 @@ The coordinator is one lifecycle for every kind, as a pure state machine (`on(ev
 
 ```
 Idle ─request─▶ Preparing ─frame-zero pictures, or 80ms─▶ (Coalescing, Holding) ─▶ Playing ─clock done─▶ Landing ─tiles and windows where they end, or 350ms─▶ lift ─▶ Settling ─quiet─▶ Idle
+(Playing, Landing) ─a pass growing a window─▶ MergeHeld ─repaints, Lost, or 300ms from the latest pass held (600ms from the first)─▶ Playing
 ```
+
+While a merge is held (`Phase::MergeHeld`) the tiles rest where they end, with no last capture, place,
+landing read or lift; clock done moves the flight to Landing only once the held passes have merged.
 
 It owns generations: every tag carries one, a press merging in flight starts the next, and a picture
 is swapped in only if it was taken for the end its tile has now, under a generation no older than the

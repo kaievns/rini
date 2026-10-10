@@ -19,7 +19,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, and how each window's picture where it ends is waited for (`EndPicture`) |
 | **A flight's score** | `domain/flight_score.rs` — `FlightScore`: the score the flight's look composes and bends, every edit it hands the renderer folded into it first, the accents waiting for the motion, and the clock and the lift's settle read from it |
 | **What a flight is** | `domain/flight.rs` — the handover report, when a pass is worth an overlay |
-| **When** | `domain/timing.rs` — the tick, the coalesce window, the hold for a grow's repaint and for a window with no picture of its own, and how long a repaint watch waits for its window to arrive, the lift's grace and the quiet after it |
+| **When** | `domain/timing.rs` — the tick, the coalesce window, the hold for a grow's repaint and for a window with no picture of its own, with its bound over a burst of passes merged before the motion, and how long a repaint watch waits for its window to arrive, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for |
 | **What waits for the screen** | `domain/drawn.rs` — `Drawn`: the batches of render commands handed to the renderer by number, the last it committed, and what waits for one (`Owed`): the real frames for the `Show`'s, the bar's picture and the quiet for the `Lift`'s, by the flight that owes it; a new flight's hold drops the last lift's, an undrawn batch releases what waited for it, and an abandoned flight's own are dropped |
@@ -38,7 +38,8 @@ the coordinator's holes and snaps in `Overlay`. The reactor converts at the door
 
 **One actor, one flight at a time.** Every transition goes through `FlightEngine`. A pass arriving
 while a flight runs merges into it instead of starting another, which is how a burst of presses reads
-as one movement.
+as one movement; one growing a window past the picture its tile carries once the flight moves
+merges only once that window has repainted ("Mid-flight passes" in `coordination.md`).
 
 **The reactor asks, and hears back only the frames.** It sends a layout pass (`Event::Animate`), a strip
 movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as
