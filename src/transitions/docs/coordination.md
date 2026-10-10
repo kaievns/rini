@@ -368,12 +368,14 @@ frames at once, so the app repaints, watches each
 grow ending wholly on the display to repaint there, the watches retargeted under the same
 generation (`HeldMerge`), and holds (`Phase::MergeHeld`): the flight plays on, its tiles going on to
 the ends they had and resting there, with no last capture, no place, no lift and no landing read. A
-repaint delivered there, under the hold's generation, is held for the merge (`Coordinator::holds`);
+repaint delivered there, under the hold's generation or later, is held for the merge (`Coordinator::holds`);
 a picture of the window anywhere else releases nothing and goes on only as a landing `Flight::takes`
 allows (`only_the_repaint_where_a_held_merge_ends_a_window_merges_it`). The hold starts no
 generation, so the earlier watch's capture sent before the retarget arrives under the same tag: on
 altr1 that let two holds go at once (g9, g10), the second flying lab-A's growth from 860 to 1148 as
-ground for 129ms (`docs/data/2026-10-10-rapid-altr`). Once each grow has repainted,
+ground for 129ms (`docs/data/2026-10-10-rapid-altr`). A `Lost` the earlier watch sent before the
+retarget still lets the hold go: it arrives under the same generation and carries no frame to tell
+it apart (not seen on altr1). Once each grow has repainted,
 is given up on (`Lost`) or `HOLD_CAP` has passed since the latest pass arrived, the coordinator says
 `Command::Retarget`: the engine merges every pass it held, oldest first, from where each tile is
 drawn then (`FlightEngine::merge_now`, the path any other pass takes at once), and tells it

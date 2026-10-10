@@ -35,7 +35,8 @@ its neighbour `[66254, 26567]`. Times below are milliseconds from the first fram
 | 1929.5 | g10 | 1 | 1929.5 | 0 | lab-A's picture at 860, the end before the press, taken 47.3ms before it was handled |
 
 2 of the 5 merges went at once on a picture of the end before. At g9 the tile was kept
-(`Flight::keeps`), the 572 picture already on it, so no `swap` followed. At g10 the 860 picture
+(`Flight::keeps`), still wearing the 1148 picture swapped on at 1498.3 (journal line 134), so the
+572 picture (line 177) was not swapped on and no `swap` followed. At g10 the 860 picture
 was swapped on and the motion set off toward 1148 with it; the repaint at 1148 came under g11 at
 2066.1, 137ms later.
 
@@ -43,6 +44,7 @@ was swapped on and the motion set off toward 1148 with it; the repaint at 1148 c
 
 Every frame with nothing moving reads 17 blocks. One stretch reads above it by more than a block,
 1954.2-2083.3ms, 55 rising to 197: a dark band by lab-A's moving right edge, up to 180 blocks over the baseline, about
-170pt wide down its whole height (inferred: 180 blocks over 34 block rows of 32pt). It ends after
+170pt wide down its whole height (inferred: 180 blocks over 34 block rows of 32pt, a block
+being 1/54 of the width of the 1728x1117pt built-in display, whose height lab-A's frame fills). It ends after
 the g11 swap at 2066.1: the two frames after it still read 197, and 2100.0 reads 17. One other
 frame, 2858.3ms, reads 18.

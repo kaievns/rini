@@ -9,10 +9,10 @@ where one press's frames sit in a screenrec movie; and how much of each frame is
 
 PRESS counts from 1. The crop is in points, read at the movie's `scale`; the frames are scaled to
 WIDTH pixels wide, 576 by default. `blank` reads MOV.json beside the movie and decodes it with ffmpeg
-to grey at 432 pixels wide, where a block of 8x8 pixels is 32pt on a 2x display; a block is flat
-dark when its mean is under 60 and its variance under 6, and the top 2 block rows, the bar, are
-skipped. A frame with nothing moving counts the screen's own dark blocks, a baseline to read
-against.
+to grey at 432 pixels wide, where a block of 8x8 pixels is 1/54 of the frame's width whatever its
+scale, 32pt on a 1728pt-wide display; a block is flat dark when its mean is under 60 and its
+variance under 6, and the top 2 block rows, the bar, are skipped. A frame with nothing moving
+counts the screen's own dark blocks, a baseline to read against.
 """
 import json
 import subprocess
