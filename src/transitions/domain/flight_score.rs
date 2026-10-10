@@ -13,7 +13,7 @@ use rini_geometry::space::{OverlayRect, OverlayVector};
 use crate::animation::domain::choreography::{Choreography, Cue, Look, Pass, Retarget, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::plan::{Banding, FlightPlan, ReflowPlan};
-use crate::animation::domain::motion::score::{Edit, Score};
+use crate::animation::domain::motion::score::{Channel, Edit, Node, Score};
 use crate::animation::domain::motion::tile;
 
 #[derive(Debug)]
@@ -89,6 +89,19 @@ impl FlightScore {
         let edits = tile::snap(&self.score, window, real, now);
         self.fold_in(&edits);
         edits
+    }
+
+    /// When `window`'s tile turns the corner of its leg in two steps, on the media clock; none for a
+    /// tile on one movement or with no leg.
+    pub fn corner_at(&self, window: WindowId) -> Option<f64> {
+        let track = self.score.track(Node::Tile(window), Channel::Base)?;
+        Some(track.begin() + tile::corner_key(track)? * track.seconds())
+    }
+
+    /// `window`'s tile's leg added again as it plays, so the renderer installs it with the pictures
+    /// the tile carries now; nothing for a tile with no leg. The score is as it was.
+    pub fn again(&self, window: WindowId) -> Vec<Edit> {
+        self.score.track(Node::Tile(window), Channel::Base).cloned().map(Edit::Add).into_iter().collect()
     }
 
     /// The depths a look's edits are drawn at, appended after them.
@@ -269,6 +282,24 @@ mod tests {
             })
             .collect();
         reflow_plan(&requests, DISPLAY)
+    }
+
+    /// A tile folding is on a leg in two steps, which turns its corner at its middle key's time on
+    /// the media clock and plays again exactly as it was; a strip window on one movement has no
+    /// corner, and a window with no tile no leg.
+    #[test]
+    fn a_folds_corner_is_when_its_leg_turns_and_its_leg_plays_again_as_it_was() {
+        let fold = (wid(9), rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0), false);
+        let mut requests = strip(1, 1, 3.0, -863.0);
+        requests.push(fold);
+        let mut flight = Flight::posed(&requests);
+        flight.start();
+        let track = flight.score.score().track(Node::Tile(wid(9)), Channel::Base).expect("a leg").clone();
+        let key = tile::corner_key(&track).expect("two steps");
+        assert_eq!(flight.score.corner_at(wid(9)), Some(BEGIN + key * PLAIN));
+        assert_eq!(flight.score.again(wid(9)), [Edit::Add(track)]);
+        assert_eq!(flight.score.corner_at(wid(1)), None, "one movement");
+        assert!(flight.score.again(wid(42)).is_empty(), "no tile");
     }
 
     /// A merge bends the flight from its own score: every window is drawn where it was, the strip's

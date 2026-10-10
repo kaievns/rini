@@ -35,7 +35,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
-| **Layers** | `platform/layer.rs` — handing a picture to a layer, and a region through `contentsRect`; filling a layer with a picture's ground |
+| **Layers** | `platform/layer.rs` — handing a picture to a layer, and a region through `contentsRect`, and what a layer takes as its contents for it (`contents_of`); filling a layer with a picture's ground, and that ground as a colour (`ground_colour`) |
 
 The stretch tolerance a fit is judged by is `rini_geometry::stretch`, shared with `animation`'s "is
 this a resize" so the two agree.

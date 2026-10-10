@@ -2,7 +2,8 @@
 
 The journal, press list and block counts behind the fold1 finding: the last 2026-10-10 Reported
 line of `specs/animation.md` "Resizing", and a shrink starting off the display keeping its cached
-picture in "A grow waits for its repaint" (`src/transitions/docs/coordination.md`). The movie is not
+picture and a fold flying in two steps in "A grow waits for its repaint"
+(`src/transitions/docs/coordination.md`). The movie is not
 kept: it shows Kai's screen.
 
 The run is three files. `fold1.journal.jsonl` holds the 365 lines rini's transitions journal wrote
@@ -43,7 +44,8 @@ lab-C's 1154 and lab-A's -285 are inferred from the landings and the 3pt gap.
 | 3874.7 | 225 | `lift` |
 
 lab-C goes from 860x1079 to 1148x538, growing on one axis and shrinking on the other: held, its
-repaint swapped on before the motion. lab-A only shrinks, 1148x1079 to 1148x538, moving right 288pt.
+repaint swapped on before the motion, its ground above that 538-tall picture on the 1079-tall start
+until the height caught up. lab-A only shrinks, 1148x1079 to 1148x538, moving right 288pt.
 Frame zero never asked for it, so its tile flew the cache's picture, 1148x1079 (inferred from the
 quiet's warm after g16), and its 538-tall landing was swapped on at 3491.4.
 
@@ -70,7 +72,7 @@ one before it, 3483.3, reads 17.
 
 | Frames (ms) | Blocks | Read as (inferred) |
 |---|---|---|
-| 3508.3-3625.0 | 422 falling to 53 | lab-A's ground under its 538-tall landing, on the 1079-tall start, shrinking away |
+| 3508.3-3625.0 | 422 falling to 53 | lab-A's ground under its 538-tall landing, on the 1079-tall start, from before the motion; from the motion's start at 3510.2 lab-C's as well, above its 538-tall repaint on its 1079-tall start, seen by eye on the movie's frames at 3520 and 3540; both shrinking away |
 | 3725.0-3783.3 | 35-46 | not attributed |
 | 5400.0-5725.0 | 213 rising to 422 from 5550.0 to the lift | lab-A's ground in its growth |
 

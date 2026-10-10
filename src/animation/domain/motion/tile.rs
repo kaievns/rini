@@ -1,15 +1,17 @@
-//! How one tile fits its picture to the frame it is drawn in, how its frame interpolates, and when
-//! and how it snaps onto its window's real frame, as the score's edits. Sizes and rects only; the
-//! layers that realise these live in the overlay.
+//! How one tile fits its picture to the frame it is drawn in, how its frame interpolates, a leg in
+//! one movement or two steps, and when and how it snaps onto its window's real frame, as the score's
+//! edits. Sizes and rects only; the layers that realise these live in the overlay.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{
-    ContentsRect, OverlayPoint, OverlayRect, Point, PointSpace, Rect, ScreenRect, ScreenSize, Size,
-    TileRect, TileSize,
+    ContentsRect, GroupRect, OverlayPoint, OverlayRect, Point, PointSpace, Rect, ScreenRect,
+    ScreenSize, Size, TileRect, TileSize,
 };
+use rini_geometry::stretch::MIN_STRETCH;
 
+use super::easing::CubicBezier;
 use super::plan::group_relative;
-use super::score::{Channel, Edit, Node, Score, Value};
+use super::score::{Channel, Curve, Edit, Form, Node, Score, Track, Value};
 use crate::pictures::domain::coverage::fits_frame;
 use crate::pictures::domain::route::Route;
 use crate::pictures::domain::watch::{END_SLACK, near};
@@ -92,6 +94,72 @@ impl Anchors {
             y: anchor(from.min_y(), from.max_y(), to.min_y(), to.max_y()),
         }
     }
+}
+
+/// Where a leg growing its tile on one axis as it shrinks it on the other turns, as a fold or an
+/// unfold: no picture covers every frame of such a leg, the one at its start short of its end on the
+/// growing axis and the one at its end short of its start on the shrinking one, so it flies in two
+/// steps, each covered by one of them.
+pub struct TwoSteps<U> {
+    /// On the shrinking axis the end's origin and size, on the growing axis the start's: the first
+    /// step shrinks, the second grows.
+    pub corner: Rect<U>,
+    /// The first step's share of the leg's edge travel, the four edges' distances summed.
+    pub share: f64,
+}
+
+/// The two steps of a leg from `from` to `to` growing on one axis and shrinking on the other, each
+/// past the stretch tolerance; none for any other leg, a pure grow, a pure shrink and a move among
+/// them.
+pub fn two_steps<U>(from: Rect<U>, to: Rect<U>) -> Option<TwoSteps<U>> {
+    let (a, b) = (from.size, to.size);
+    if a.width <= 0.0 || a.height <= 0.0 || b.width <= 0.0 || b.height <= 0.0 {
+        return None;
+    }
+    let short = |of: f64, against: f64| of / against < MIN_STRETCH;
+    let travel = |a0: f64, a1: f64, b0: f64, b1: f64| (b0 - a0).abs() + (b1 - a1).abs();
+    let x = travel(from.min_x(), from.max_x(), to.min_x(), to.max_x());
+    let y = travel(from.min_y(), from.max_y(), to.min_y(), to.max_y());
+    let (corner, shrinking) = if short(b.width, a.width) && short(a.height, b.height) {
+        (Rect::new(Point::new(to.min_x(), from.min_y()), Size::new(b.width, a.height)), x)
+    } else if short(b.height, a.height) && short(a.width, b.width) {
+        (Rect::new(Point::new(from.min_x(), to.min_y()), Size::new(a.width, b.height)), y)
+    } else {
+        return None;
+    };
+    Some(TwoSteps { corner, share: shrinking / (x + y) })
+}
+
+/// `window`'s tile carried from `from` to `to` on `curve`, from `begin` for `seconds`: in one
+/// movement, or, for a leg in two steps (`two_steps`), on three keys turning at the corner, the
+/// curve cut where its progress reaches the first step's share (`CubicBezier::split`), so the edges
+/// run on as fast through the corner and the two steps read as one movement.
+pub fn leg(
+    window: WindowId,
+    from: GroupRect,
+    to: GroupRect,
+    begin: f64,
+    seconds: f64,
+    curve: CubicBezier,
+) -> Track {
+    let node = Node::Tile(window);
+    let steps = two_steps(from, to);
+    let (from, to) = (Value::Rect(from), Value::Rect(to));
+    let Some(steps) = steps else {
+        return Track::between(node, Channel::Base, from, to, begin, seconds, Curve::Bezier(curve));
+    };
+    let (at, first, second) = curve.split(steps.share);
+    let keys = vec![(0.0, from), (at, Value::Rect(steps.corner)), (1.0, to)];
+    let curves = vec![Curve::Bezier(first), Curve::Bezier(second)];
+    Track::keyframes(node, Channel::Base, keys, curves, begin, seconds)
+}
+
+/// When a tile's leg in two steps turns its corner, as a share of its length: its middle key's
+/// time. None for a leg in one movement.
+pub fn corner_key(track: &Track) -> Option<f64> {
+    let keys = track.keys();
+    (matches!(track.node(), Node::Tile(_)) && track.form() == Form::Keyframes && keys.len() == 3)
+        .then(|| keys[1].0)
 }
 
 /// One piece of a crop-drawn tile: where it sits in the tile, and which part of the picture it
@@ -634,6 +702,115 @@ mod tests {
             None,
             "half a point across but 30 taller: judged by the furthest edge"
         );
+    }
+
+    /// fold1's lab-C (`docs/data/2026-10-10-fold`): folded under the window beside it from 866,35
+    /// 860x1079 to 3,576 1148x538, and unfolded back.
+    fn fold<U>() -> (Rect<U>, Rect<U>) {
+        (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0))
+    }
+
+    /// A fold turns where its shrinking axis has reached its end and its growing one has not moved,
+    /// an unfold at the same corner, and the first step takes its share of the four edges' travel.
+    #[test]
+    fn a_fold_turns_where_its_shrinking_axis_has_ended_and_its_growing_one_has_not_moved() {
+        let (column, folded) = fold::<Overlay>();
+        let corner = rect(866.0, 576.0, 860.0, 538.0);
+        let (x, y) = (863.0 + 575.0, 541.0);
+        let of = |steps: Option<TwoSteps<Overlay>>| steps.map(|steps| (steps.corner, steps.share));
+        assert_eq!(of(two_steps(column, folded)), Some((corner, y / (x + y))), "fold");
+        assert_eq!(of(two_steps(folded, column)), Some((corner, x / (x + y))), "unfold");
+        let (_, up_from, up_to, _) = legs()[8];
+        assert_eq!(two_steps(up_from, up_to).map(|steps| steps.corner), Some(rect(4.0, 542.0, 859.0, 535.0)));
+    }
+
+    /// A leg changing one axis, or the other only within the stretch tolerance, is one movement.
+    #[test]
+    fn a_grow_a_shrink_a_move_and_a_resize_of_one_axis_are_one_movement() {
+        let column = rect::<Overlay>(4.0, 3.0, 859.0, 1074.0);
+        for (case, to) in [
+            ("a grow", rect(4.0, 3.0, 1148.0, 1074.0)),
+            ("a shrink", rect(4.0, 542.0, 859.0, 535.0)),
+            ("a move", rect(866.0, 3.0, 859.0, 1074.0)),
+            ("a point narrower as it grows", rect(4.0, 3.0, 858.0, 1200.0)),
+            ("a point wider as it shrinks", rect(4.0, 3.0, 860.0, 535.0)),
+        ] {
+            assert!(two_steps(column, to).is_none(), "{case}");
+        }
+        assert!(two_steps(column, rect(4.0, 3.0, 0.0, 1200.0)).is_none(), "nothing to turn at");
+    }
+
+    /// Each step of a fold and an unfold is covered at every frame by the picture it flies: the
+    /// first by the one at the leg's start, the second by the one at its end, on the leg's anchors,
+    /// which are each step's own on the axis it moves. Flown in one movement, either picture leaves
+    /// ground somewhere on the way.
+    #[test]
+    fn each_step_of_a_leg_in_two_steps_is_covered_by_the_picture_it_flies() {
+        let (column, folded) = fold::<Overlay>();
+        let (_, up_from, up_to, _) = legs()[8];
+        for (from, to) in [(column, folded), (folded, column), (up_from, up_to)] {
+            let corner = two_steps(from, to).expect("two steps").corner;
+            let anchors = Anchors::of_leg(from, to);
+            let (first, second) = (Anchors::of_leg(from, corner), Anchors::of_leg(corner, to));
+            for (moved, step, whole) in [
+                (from.size.width != corner.size.width, first.x, anchors.x),
+                (from.size.height != corner.size.height, first.y, anchors.y),
+                (corner.size.width != to.size.width, second.x, anchors.x),
+                (corner.size.height != to.size.height, second.y, anchors.y),
+            ] {
+                assert!(!moved || step == whole, "{from:?} to {to:?}: a step's own anchor");
+            }
+            for (start, end, picture) in [(from, corner, from.size), (corner, to, to.size)] {
+                let picture: TileSize = picture.respace();
+                assert_flies(picture, start, end, anchors);
+                for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let frame = lerp_rect(start, end, t).size.respace();
+                    assert_eq!(grounded(&crop(picture, frame, anchors)), 0.0, "{start:?} to {end:?} at {t}");
+                }
+            }
+            for picture in [from.size.respace(), to.size.respace()] {
+                let bare = [0.0, 0.25, 0.5, 0.75, 1.0]
+                    .map(|t| grounded(&crop(picture, lerp_rect(from, to, t).size.respace(), anchors)));
+                assert!(bare.iter().any(|ground| *ground > 0.0), "{picture:?} in one movement");
+            }
+        }
+    }
+
+    /// A leg in two steps is three keys turning at the corner, the curve cut where its progress
+    /// reaches the first step's share, so the corner comes as one movement on the whole curve would
+    /// have its edges that far; any other leg is one movement on the curve.
+    #[test]
+    fn a_leg_in_two_steps_turns_at_its_corner_on_the_curve_cut_there() {
+        use crate::animation::domain::motion::easing::MOTION_CURVE;
+        let window = WindowId::new(1, 1);
+        let (from, to) = fold::<rini_geometry::space::Group>();
+        let steps = two_steps(from, to).expect("two steps");
+        let track = leg(window, from, to, 100.0, 0.35, MOTION_CURVE);
+        let at = corner_key(&track).expect("a corner");
+        assert_eq!(track.form(), Form::Keyframes);
+        assert_eq!(track.keys(), [(0.0, Value::Rect(from)), (at, Value::Rect(steps.corner)), (1.0, Value::Rect(to))]);
+        assert!((MOTION_CURVE.ease(at) - steps.share).abs() < 1e-6, "{at}");
+        let Some(Value::Rect(turning)) = track.at(100.0 + 0.35 * at) else { panic!("playing") };
+        assert!(close(turning, steps.corner, 1e-6), "{turning:?} at the corner");
+        let Some(Value::Rect(first)) = track.at(100.0 + 0.35 * at / 2.0) else { panic!("playing") };
+        let x_waits = Rect::new(
+            Point::new(from.origin.x, first.origin.y),
+            Size::new(from.size.width, first.size.height),
+        );
+        assert!(close(first, x_waits, 1e-6), "x waits");
+        let Some(Value::Rect(second)) = track.at(100.0 + 0.35 * (at + 1.0) / 2.0) else { panic!("playing") };
+        let y_done = Rect::new(
+            Point::new(second.origin.x, to.origin.y),
+            Size::new(second.size.width, to.size.height),
+        );
+        assert!(close(second, y_done, 1e-6), "y is done");
+
+        let grown: GroupRect = rect(866.0, 35.0, 1148.0, 1079.0);
+        let one = leg(window, from, grown, 100.0, 0.35, MOTION_CURVE);
+        let (from, grown) = (Value::Rect(from), Value::Rect(grown));
+        let curve = Curve::Bezier(MOTION_CURVE);
+        assert_eq!(one, Track::between(Node::Tile(window), Channel::Base, from, grown, 100.0, 0.35, curve));
+        assert_eq!(corner_key(&one), None);
     }
 
     mod snaps {

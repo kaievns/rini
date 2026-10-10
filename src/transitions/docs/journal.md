@@ -27,7 +27,8 @@ when the engine heard it, so the real frames, the bar's picture and the quiet a 
 out at its `t`. And each picture a tile takes goes to `Journalled::wears` as the engine puts it on
 (`FlightEngine::journal_wears`): every tile a pass composes, a later pass's only for the windows it
 brings, with the cache's picture or the stand-in; frame zero's, worn before the show; the focused look a
-parked focus target flies; and each picture swapped onto a tile or an entrance joining with its first.
+parked focus target flies; each picture swapped onto a tile or an entrance joining with its first;
+and each repaint a tile's leg in two steps holds for its corner, flown from there.
 A `wears` mark each, stamped when the engine put it on. And each turn of the main thread's run loop
 over 8ms, one frame at 120Hz, goes to `Journalled::main_turn` as the engine hears it
 (`Event::MainTurn`): a `main_turn` mark, then a `turn_actor` for each actor polled in it and a
@@ -63,7 +64,7 @@ until it has a mark.
 | `AskFinal` | `ask_final` | `windows`, `behind` (counts) |
 | `Swap` / `KeepFocusedLook` | `swap` / `keep_focused_look` | `of`, `window` |
 | `Snap { window, frame }` | `snap` | `window`, `frame` (overlay points) |
-| a picture a tile takes, after the marks of the drive or delivery it came with | `wears` | `window`, `at` (`compose`, `frame_zero`, `focused_look` or `swap`), `route` (`skylight`, the window alone; `baked`, SkyLight's baked call; `screencapturekit`; `stand_in`), `blur` (it carries its window's blur), `taken_before_us` |
+| a picture a tile takes, after the marks of the drive or delivery it came with | `wears` | `window`, `at` (`compose`, `frame_zero`, `focused_look`, `swap` or `corner`), `route` (`skylight`, the window alone; `baked`, SkyLight's baked call; `screencapturekit`; `stand_in`), `blur` (it carries its window's blur), `taken_before_us` |
 | `Focus { window, focused }` | `focus` | `window`, `focused` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |

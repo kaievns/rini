@@ -240,15 +240,23 @@ destination for a window already moving.
   overlay standing still, until that window has repainted at its new size, up to 300ms from the
   overlay going up or from the latest press growing it before the motion starts, and 600ms in all
   from the overlay going up, and that window MUST fly its repainted picture from the motion's first
-  frame, so its growth shows its content and never a fill cut to content mid-flight. A grow ending
+  frame, or for a fold or an unfold from its corner (below), so its growth shows its content and
+  never a fill cut to content mid-flight. A grow ending
   part off the display MUST be held for the same way: SkyLight returns only a window's visible part,
   so its repaint there MUST be watched through ScreenCaptureKit, which returns the window whole, and
   counted on two of its captures in a row. A grow ending wholly off the display, or showing no more
   of itself there than a parked window's sliver, MUST NOT be held for: no watch sees it repaint. A
-  window growing on one axis as it shrinks on the other, as a fold or an unfold, has no
-  picture covering every frame: its repainted picture, short of the start on the shrinking axis,
-  shows the window's ground there, which the moving edge swallows, and the cut onto it from the
-  picture at the press comes as that repaint lands, on the overlay still standing, never mid-flight.
+  window growing on one axis as it shrinks on the other, as a fold or an unfold, has no picture
+  covering every frame, and MUST fly in two steps, never showing its ground: first the shrinking
+  axis to its end, flying its picture from the press, which covers every frame of that step, then
+  the growing axis, flying its repainted picture, which covers every frame of that one. Its picture
+  MUST be cut from the one to the other at the corner between the steps, a cut between two
+  renderings of the window, and its repainted picture MUST NOT be drawn before the corner: one
+  landing before the motion or in the first step waits for it. One not landed by the corner leaves
+  the second step its picture from the press, the window's ground in the growth, until it is cut in
+  as it lands. The two steps MUST read as one movement, on the flight's one curve and length, its
+  edges as fast through the corner as either side of it, and a leg a merge bends from where the
+  tile is drawn MUST fly in two steps the same way.
   A resize growing no window MUST move as soon as the layout's follow-up passes are in, and MUST NOT
   wait for a resized window to repaint. The press's sequence stays a navigation's, the overlay first
   and the frames written at once; the only addition is the wait, and only for a window that grows. A
@@ -341,8 +349,10 @@ destination for a window already moving.
 > about 170pt wide, for 129ms (frames 1954-2083ms) until its repaint was cut in. A fold and an
 > unfold recorded the same evening (`docs/data/2026-10-10-fold`, run fold1) showed up to 422 flat
 > dark blocks, about a quarter of the screen: a window starting part off the display shrank with its
-> landing swapped on before the motion, its ground under it, and grew back to end part off it with
-> its ground in the growth, never held for, for the 359ms from the motion's start to the lift.
+> landing swapped on before the motion, its ground under it; the window folding under it flew its
+> repainted picture, 538 tall, over its 1079-tall start, its ground above it until its height caught
+> up; and the first grew back to end part off the display with its ground in the growth, never held
+> for, for the 359ms from the motion's start to the lift.
 
 ## Correctness the user can see
 

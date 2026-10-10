@@ -861,7 +861,8 @@ it has repainted where it ends (`EndPicture::of_request`, sorted into the stage'
 coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show. That picture goes onto
 the tile before the motion starts, `FlightEngine::swap` posing frame zero again with it (`reinstall`),
 so the flight starts with it on the crop grid on the leg's anchors and a grow's moving edge reveals
-real content from its first frame. A pass merged before
+real content from its first frame; a fold's or an unfold's is held for the corner of its leg instead
+(below). A pass merged before
 the motion holding for a window, a re-grow of one held included, holds `HOLD_CAP` from its own
 arrival instead (`hold_again`), never past `BURST_HOLD_CAP` (600ms) from the show, so a burst cannot
 stall the flight: holding only to the show's cap, presses every 115ms repainting 140ms after each set
@@ -869,11 +870,34 @@ off at 300ms with 572 on the tile and 1722 its end, the 1722 repaint due at 370m
 (`a_grow_merged_before_the_motion_holds_from_its_own_arrival`). A pass merged then holding for
 nothing leaves the hold as it was. A window growing on one axis as it shrinks on the other, a fold or
 an unfold (859x1081 to 1148x538 on n1), has no picture covering every frame: the repainted one falls
-short of the start frame on the shrinking axis, so posing it cuts that span from the press picture's
-content to the window's ground while the overlay still stands, and the moving edge then swallows the
-ground. Flying the press picture instead would keep the ground in the growth and, at a 0.5% stretch
-tolerance, cut it to content no earlier than the lift: the cut Kai reported. Holding a fold follows
-Kai's 2026-10-09 choice of a lag over a flicker; the cut it makes on a fold was not put to Kai. On the
+short of the start on the shrinking axis, the press picture short of the end on the growing one. Posed
+at frame zero, the repaint showed the window's ground over that span until the moving edge swallowed
+it: on fold1 (`docs/data/2026-10-10-fold`) lab-C's 538-tall repaint flew its 1079-tall start, its
+ground above it, read by eye off the movie's frames at 3520 and 3540ms. So its leg flies in two steps
+(`tile::leg`, which `Making::move_tile` makes every tile's leg with, a flight's first and a merge's
+alike): the shrinking axis first, to the corner where it has reached its end and the growing one has
+not moved (lab-C's 866,576 860x538, between 866,35 860x1079 and 3,576 1148x538), flying the press
+picture, which covers every frame of it; then the growing axis, flying the repaint, which covers
+every frame of it. One `MOTION_CURVE` runs the whole leg, cut where its progress reaches the first
+step's share of the four edges' travel (`CubicBezier::split`), so the edges run on as fast through the
+corner and the two steps read as one movement; on the curve's fast start lab-C's fold turns 4.8% of
+its time in, 17ms of a 350ms flight, and its unfold 18.6%, 65ms (computed, not measured). The hold
+still waits for the repaint, which the second step flies, but holds it for the corner rather than
+posing it (`RunningAnimation::take_picture`, the tile's `OverlayTile::from_corner`): the overlay lays
+the crop grid against the press picture up to the corner and the repaint from it, and cuts each
+piece's picture and the ground's colour to the repaint's on the corner's key time with a discrete
+keyframe installed with the leg, so the drain at the corner carries nothing
+(`a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner`). The engine's alternative,
+a swap sent at the corner's media time, would land up to a frame, 8.3ms at 120Hz, off it. A repaint
+landing in the first step, its hold run out, waits for the corner too, the leg installed again as it
+plays with the repaint on the tile (`FlightScore::again`); one landing past the corner is cut in as
+any landing in motion, and one not landed by then leaves the second step the press picture with the
+ground in its growth (`a_folds_late_repaint_waits_for_the_corner_until_it_is_past`). A picture
+fitting where the tile starts, frame zero's delivered after the show, goes on at once. A merge bending
+the leg from where the tile is drawn splits it the same way, and the repaint held becomes the tile's
+own picture as a new leg is made with no corner of its own ahead or past the old one's
+(`RunningAnimation::turn_corners`). A stand-in, stretched with no crop grid, takes its repaint at
+once. Holding a fold follows Kai's 2026-10-09 choice of a lag over a flicker. On the
 build that flew grows at once (journal n1 in `docs/data/2026-10-09-resize`, 6 flights)
 the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
 after the show: held, the motion starts about 160-225ms after the press. A window the pass only
@@ -912,8 +936,8 @@ overlay" in `src/animation/docs/animation-smoothness.md`): a grow only once its 
 growth the ground; a kept shrink to the
 lift, its picture, frame zero's or the cache's fitting its start, covering every frame. A repainted
 picture landing in motion is a landing like a navigation's, hard-cut onto the crop grid as it is mid-run: its content stands
-against the edges that move less, and where it does not cover the frame still to come, as a
-mixed-axis grow's on its shrinking axis, the ground fills the span by the moving edge
+against the edges that move less, and where it does not cover the frame still to come, as a shrink's
+swapped in on a tile with no picture covering its start, the ground fills the span by the moving edge
 (`a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge`). On a grow that cut, from
 the ground to content, is the flicker Kai reported (the third Reported line of `specs/animation.md`
 "Resizing"): the hold leaves it to a grow that misses the cap.

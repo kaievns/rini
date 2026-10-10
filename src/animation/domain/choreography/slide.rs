@@ -23,9 +23,8 @@ use crate::animation::domain::motion::plan::{
     AnimationTarget, FlightPlan, GroupKey, Member, Presented, ReflowPlan, animation_targets,
     group_relative, merge_plans, on_overlay, stale_overlay_layers,
 };
-use crate::animation::domain::motion::score::{
-    Channel, Curve, Edit, Node, SAMPLE_STEP, Score, Track, Value,
-};
+use crate::animation::domain::motion::score::{Channel, Edit, Node, SAMPLE_STEP, Score, Value};
+use crate::animation::domain::motion::tile;
 
 /// The default look, and the legs its containers are on.
 #[derive(Debug, Default)]
@@ -70,7 +69,9 @@ impl Making {
     }
 
     /// `window`'s tile placed at `to` in its container and carried there from `from` on
-    /// `MOTION_CURVE`, from `begin` for `seconds`; one of no length is placed only.
+    /// `MOTION_CURVE`, from `begin` for `seconds`, in one movement or, growing it on one axis as it
+    /// shrinks it on the other, in two steps (`tile::leg`); one of no length is placed only. Every
+    /// tile's leg is made here, a flight's first and a merge's alike.
     fn move_tile(
         &mut self,
         window: WindowId,
@@ -79,18 +80,9 @@ impl Making {
         begin: f64,
         seconds: f64,
     ) {
-        let node = Node::Tile(window);
-        self.push(Edit::Place(node, Value::Rect(to)));
+        self.push(Edit::Place(Node::Tile(window), Value::Rect(to)));
         if seconds > 0.0 {
-            self.push(Edit::Add(Track::between(
-                node,
-                Channel::Base,
-                Value::Rect(from),
-                Value::Rect(to),
-                begin,
-                seconds,
-                Curve::Bezier(MOTION_CURVE),
-            )));
+            self.push(Edit::Add(tile::leg(window, from, to, begin, seconds, MOTION_CURVE)));
         }
     }
 }
@@ -491,6 +483,7 @@ mod tests {
     use crate::animation::domain::motion::easing::EASE_IN_OUT;
     use crate::animation::domain::motion::nudge::nudge_track;
     use crate::animation::domain::motion::plan::{entrance_from, installed, reflow_plan};
+    use crate::animation::domain::motion::score::{Curve, Track};
     use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT, rect};
 
     const PLAIN: f64 = 0.35;
@@ -993,6 +986,27 @@ mod tests {
         assert_eq!(track.begin(), now);
         assert_eq!(track.keys()[1].1, Value::Rect(held(column(0.0, 1200.0))));
         assert_eq!(flight.score.sample(node, now), Some(drawn));
+    }
+
+    /// fold1's lab-C folding under the window beside it flies its leg in two steps, from where it
+    /// starts as the flight's first leg and from where its tile is drawn as a merge unfolding it bends
+    /// it: every tile's leg is `tile::leg`'s.
+    #[test]
+    fn a_fold_flies_in_two_steps_as_composed_and_as_bent() {
+        let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
+        let mut flight = Flight::posed(&[(wid(1), column, folded, false)]);
+        let edits = flight.start(PLAIN, &[]);
+        let node = Node::Tile(wid(1));
+        let track = track_on(&edits, node, Channel::Base).expect("a leg");
+        assert_eq!(track, tile::leg(wid(1), held(column), held(folded), BEGIN, PLAIN, MOTION_CURVE));
+        assert!(tile::corner_key(&track).is_some(), "in two steps");
+        let now = BEGIN + 0.05;
+        let Some(Value::Rect(drawn)) = flight.score.sample(node, now) else { panic!("drawn") };
+        let unfolded = reflow_plan(&[(wid(1), folded, column, false)], DISPLAY);
+        let bent = flight.merge(&unfolded, None, None, now);
+        let track = track_on(&bent.edits, node, Channel::Base).expect("bent");
+        assert_eq!(track, tile::leg(wid(1), drawn, held(column), now, PLAIN, MOTION_CURVE));
+        assert!(tile::corner_key(&track).is_some(), "in two steps from where it is drawn");
     }
 
     /// A column a second pan brings mid-leg starts beside the column it sits beside in the layout,
