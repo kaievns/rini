@@ -555,11 +555,11 @@ mod tests {
         }
     }
 
-    /// Sorted against its tiles, a window outgrowing its tile's picture is in a grow's lists: out of
-    /// `kept`, in `awaiting` and `repainting`. A window joining has no tile to judge against and keeps
-    /// its sort, as does every window whose sort stands.
+    /// Sorted with the landing its tile gives, a window outgrowing its tile's picture is in a grow's
+    /// lists, `awaiting` and `repainting`, not `kept`. A window joining has no tile to judge against
+    /// and keeps its own sort, as does every window whose sort stands.
     #[test]
-    fn a_pass_sorted_again_against_its_tiles_moves_only_the_outgrown_windows() {
+    fn a_merged_pass_sorts_only_the_windows_outgrowing_their_tiles_pictures_as_grows() {
         use rini_core::ids::WindowServerId;
         let to = ScreenSize::new(860.0, 1079.0);
         let request = |idx, from: ScreenSize| AnimationRequest {
