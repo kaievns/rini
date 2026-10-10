@@ -105,8 +105,11 @@ changes timing as well as coverage, so two different "confirmed" causes both
 turned out to be sampling noise. Single-threaded runs never reproduced it across
 88 runs.
 
-`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it. The suite goes
-from about 0.4s to 1.25s, which is not a trade worth thinking about. The tests
+`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it, at a cost. On
+2026-10-10 the lib suite's 2687 tests took 60.0s on one thread and 11.5s on 8,
+and two 8-thread runs failed besides: 8 and then 9 of the Core Animation tests
+in `animation::platform::overlay` and `decorations::platform::layers`, which are
+not safe in parallel either, for a reason not looked into. The tests
 that build capture fixtures also avoid `IOSurface` entirely for the same reason
 and use a CPU bitmap instead.
 
