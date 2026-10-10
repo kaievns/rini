@@ -368,7 +368,12 @@ frames at once, so the app repaints, watches each
 grow ending wholly on the display to repaint there, the watches retargeted under the same
 generation (`HeldMerge`), and holds (`Phase::MergeHeld`): the flight plays on, its tiles going on to
 the ends they had and resting there, with no last capture, no place, no lift and no landing read. A
-repaint delivered there is held for the merge (`Coordinator::holds`). Once each grow has repainted,
+repaint delivered there, under the hold's generation, is held for the merge (`Coordinator::holds`);
+a picture of the window anywhere else releases nothing and goes on only as a landing `Flight::takes`
+allows (`only_the_repaint_where_a_held_merge_ends_a_window_merges_it`). The hold starts no
+generation, so the earlier watch's capture sent before the retarget arrives under the same tag: on
+altr1 that let two holds go at once (g9, g10), the second flying lab-A's growth from 860 to 1148 as
+ground for 129ms (`docs/data/2026-10-10-rapid-altr`). Once each grow has repainted,
 is given up on (`Lost`) or `HOLD_CAP` has passed since the latest pass arrived, the coordinator says
 `Command::Retarget`: the engine merges every pass it held, oldest first, from where each tile is
 drawn then (`FlightEngine::merge_now`, the path any other pass takes at once), and tells it
@@ -388,7 +393,8 @@ cannot keep the tiles resting at the ends they had for as long as they come (Kai
 measure merges at once with every pass held. Missing the cap, the merge flies the picture the tile
 has with the ground, and the repaint, still watched, is cut in when it lands. The
 journal marks each pass held (`hold_merge`) and each merge it led to (`retarget`, `waited_ms` since
-the latest pass held for a grow, which a pass growing nothing that merges them at once reports too). *How long a held press waits on screen is not measured yet.*
+the latest pass held for a grow, which a pass growing nothing that merges them at once reports too). On altr1 the three holds that waited took 119, 120 and 149ms (`waited_ms`); *how long a held press
+waits on screen is not measured yet.*
 
 A tile the pass retargets keeps the picture it has and how focus is drawn on it: a pass is composed
 from the cache, and copied over it erased frame zero's picture, a picture the flight took or a parked

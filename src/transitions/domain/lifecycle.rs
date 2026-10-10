@@ -405,10 +405,12 @@ struct HeldMerge {
     /// The generation the grows were watched under, since their real frames were written.
     generation: Generation,
     /// Every window they grow, where the latest of them sends it, while that is on the display:
-    /// watched there until it repaints.
+    /// watched there until it repaints. Only that repaint, under `generation` or later, lets the hold
+    /// go for it: a picture of it anywhere else, or under an older generation, goes on only as a
+    /// landing `Flight::takes` allows.
     ends: Vec<(WindowId, ScreenRect)>,
-    /// The repainted pictures delivered there, held for the latest pass's merge: under their
-    /// generation, at their frame, and why.
+    /// The repainted pictures delivered there under `generation` or later, held for the latest
+    /// pass's merge: under their generation, at their frame, and why.
     repainted: Vec<(Generation, WindowId, ScreenRect, Why)>,
 }
 
@@ -908,6 +910,7 @@ impl Coordinator {
             f.turned.retain(|(w, _)| *w != window);
         }
         if let Some(held) = f.held_merge.as_mut()
+            && generation >= held.generation
             && held.ends.iter().any(|(w, end)| *w == window && near(frame, *end, END_SLACK))
         {
             held.repainted.retain(|(_, w, _, _)| *w != window);
@@ -977,7 +980,9 @@ impl Coordinator {
             f.unfocus_losing(out);
             f.swap_held_change(out);
         }
-        hold_no_longer(f, window, now, out);
+        if !f.held_merge.as_ref().is_some_and(|held| held.ends.iter().any(|(w, _)| *w == window)) {
+            hold_no_longer(f, window, now, out);
+        }
     }
 
     fn tick(&mut self, settled: bool, landed: bool, now: Instant, out: &mut Vec<Command>) {
@@ -2758,6 +2763,55 @@ mod tests {
         assert_eq!(c.on(nothing, later + Duration::from_millis(30)), vec![Command::Retarget { held: Duration::from_millis(30) }]);
     }
 
+    /// Kai's rapid Alt-R on lab-A: a hold for window 2 to 1148 while its tile ends at 860 lets go only
+    /// on the repaint at 1148 under the hold's generation, the one the merge swaps on. The watch's
+    /// own capture at 860, sent before the hold retargeted it, lands as an ordinary landing; with a
+    /// second held pass to `grown`, the display wide, nothing but the repaint there lets it go; and a picture at 1148
+    /// delivered under the generation before the hold's lets nothing go.
+    #[test]
+    fn only_the_repaint_where_a_held_merge_ends_a_window_merges_it() {
+        let now = Instant::now();
+        let (flying, grown, _) = grown_mid_flight();
+        let (before, wider) = (flying.tiles[1].end, r(3.0, 35.0, 1148.0, 1079.0));
+        let arrives = now + Duration::from_millis(100);
+        let picture = |generation, frame| Event::Picture { generation, window: w(2), frame, why: Why::Landed };
+
+        let mut c = running(flying.clone(), now);
+        let g = c.generation();
+        c.on(hold(&[(w(2), wider)]), arrives);
+        assert_eq!(retargets(&c.on(picture(g, before), arrives + Duration::from_millis(20))), None, "where the flight ended it");
+        assert!(!c.holds(w(2), g, before));
+        let repainted = arrives + Duration::from_millis(140);
+        assert_eq!(retargets(&c.on(picture(g, wider), repainted)), Some(Duration::from_millis(140)));
+        assert!(c.holds(w(2), g, wider));
+        let mut merged = flying.clone();
+        (merged.tiles[1].end, merged.final_frames[1].1) = (wider, wider);
+        (merged.awaiting, merged.repainting) = (vec![w(2)], vec![w(2)]);
+        let out = c.on(Event::Merge { stage: merged, moved: true }, repainted);
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+
+        let mut c = running(flying.clone(), now);
+        let g = c.generation();
+        c.on(hold(&[(w(2), wider)]), arrives);
+        c.on(hold(&[(w(2), grown)]), arrives + Duration::from_millis(60));
+        for (what, frame) in [("where the flight ended it", before), ("where the first held pass sent it", wider)] {
+            assert_eq!(retargets(&c.on(picture(g, frame), arrives + Duration::from_millis(80))), None, "{what}");
+        }
+        assert!(retargets(&c.on(picture(g, grown), arrives + Duration::from_millis(200))).is_some());
+
+        let mut c = running(flying.clone(), now);
+        let g = c.generation();
+        let mut moved = flying;
+        let neighbour = r(1000.0, 35.0, 860.0, 1079.0);
+        (moved.tiles[0].end, moved.final_frames[0].1) = (neighbour, neighbour);
+        c.on(Event::Merge { stage: moved, moved: true }, now + Duration::from_millis(50));
+        assert!(c.generation() > g);
+        c.on(hold(&[(w(2), wider)]), arrives);
+        assert_eq!(retargets(&c.on(picture(g, wider), arrives + Duration::from_millis(20))), None, "under the generation before");
+        assert!(!c.holds(w(2), g, wider));
+        assert!(retargets(&c.on(picture(c.generation(), wider), arrives + Duration::from_millis(140))).is_some());
+    }
+
     /// A pass growing nothing that arrives while two are held merges all three at once: the repaint
     /// held where the first ends window 2 waits through the first two merges, which write nothing
     /// again, and goes onto its tile with the third's only while that one still ends it there.
@@ -2953,7 +3007,8 @@ mod tests {
     /// where it ends: every time its tile sets off for an end, as the motion starts or as passes
     /// merge, the picture on it covers that end, unless a hold ran out, and the passes held merging
     /// never write it anywhere but where the latest ends it. Each pass reaches the coordinator as the
-    /// engine sends it.
+    /// engine sends it, and each one held is followed by a picture of the window where its tile ends,
+    /// which lets no hold go.
     #[test]
     fn rapid_resizes_never_fly_a_grown_tile_with_ground_unless_a_hold_runs_out() {
         let widths = [572.0, 860.0, 1148.0, 1722.0];
@@ -2976,7 +3031,9 @@ mod tests {
 
     /// Window 2 resized through `widths`, a press every `gap` ms, and the pictures service delivering
     /// its repaint `delay` ms after it is first watched where it ends, as the engine and the service
-    /// carry the coordinator's commands out: where its tile ends and how wide its picture is.
+    /// carry the coordinator's commands out: where its tile ends and how wide its picture is. Right
+    /// after each pass held, the watch's own capture of it where its tile ends, sent before the hold
+    /// retargeted it, arrives under the same generation, as on altr1: it lands, and lets no hold go.
     struct Rapid {
         widths: Vec<f64>,
         gap: u64,
@@ -3131,7 +3188,10 @@ mod tests {
                         }
                         self.queued.push(stage);
                         let grows = if grows { vec![(w(2), Self::frame(to))] } else { Vec::new() };
+                        let (generation, end) = (self.c.generation(), self.end);
                         self.on(Event::HoldMerge { grows, writes: vec![(w(2), Self::frame(to))] }, false);
+                        self.delivered = Some((generation, end));
+                        self.on(Event::Picture { generation, window: w(2), frame: Self::frame(end), why: Why::Landed }, false);
                     } else {
                         let moving = self.c.is_moving();
                         self.on(Event::Merge { stage, moved: true }, false);

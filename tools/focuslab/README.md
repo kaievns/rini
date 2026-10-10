@@ -181,7 +181,7 @@ saves no window state.
 
 **The movie shows Kai's screen.** It stays out of the repo; what a run is read for, the journal
 and the `.mov.json`, goes in `docs/data/`. The 2026-10-09 runs are in
-`docs/data/2026-10-09-resize/`.
+`docs/data/2026-10-09-resize/`, the 2026-10-10 rapid Alt-R run in `docs/data/2026-10-10-rapid-altr/`.
 
 ## Reading rini's journal
 

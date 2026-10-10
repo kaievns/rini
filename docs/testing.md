@@ -140,4 +140,5 @@ real window at the lift, is seen only on a film of the whole display, which the 
 take. `tools/focuslab/screenrec.sh` takes one of Ghostty lab windows full of a numbered ruler
 while posting the resize keys, and `sheet.sh` cuts each press into a contact sheet
 (`tools/focuslab/README.md`, "Watching a resize"). It is a screen test with the battery's guard, run
-only while Kai is away. The 2026-10-09 runs are in `docs/data/2026-10-09-resize/`.
+only while Kai is away. The 2026-10-09 runs are in `docs/data/2026-10-09-resize/`, the 2026-10-10
+rapid Alt-R run in `docs/data/2026-10-10-rapid-altr/`.

@@ -256,7 +256,8 @@ destination for a window already moving.
   before the flight of the one before it has ended, MUST hold that window the same way: the flight
   MUST play on as it was, its tiles going on to the ends they had and resting there with the overlay
   up, and the pass MUST merge into it only once that window has repainted where the pass ends it,
-  up to 300ms from the pass's arrival. The tiles then MUST set off from where each is drawn at that
+  up to 300ms from the pass's arrival. Only that repaint merges it: a picture of the window taken
+  anywhere else, as where the flight ended it before the pass, MUST NOT. The tiles then MUST set off from where each is drawn at that
   moment, the grown window flying its repainted picture, so its growth shows its content. A merged
   pass grows a window when it ends it wider or taller than the picture its tile carries, whatever its
   own sizes: a press shrinking a window whose earlier grow has not repainted yet still grows it past
@@ -329,7 +330,11 @@ destination for a window already moving.
 > you made." Only a flight's start waited for a grow's repaint: a press reaching a flight already
 > moving merged into it at once, so its grow flew the old picture with the window's ground in the
 > growth until the repaint was cut in mid-flight. Measured in "Mid-flight passes"
-> (`src/transitions/docs/coordination.md`).
+> (`src/transitions/docs/coordination.md`). Recorded the same evening on the build holding merged
+> grows (`docs/data/2026-10-10-rapid-altr`, run altr1, 12 presses): 2 of 5 merges of held passes
+> went at once on a picture of the window at the end the flight had for it before the press, taken
+> before the press. After the second, lab-A's growth from 860 to 1148 showed its ground, up to
+> about 170pt wide, for 129ms (frames 1954-2083ms) until its repaint was cut in.
 
 ## Correctness the user can see
 
