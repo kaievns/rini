@@ -71,9 +71,9 @@ Both owned: a recovery channel, a `tap::ReEnableGovernor`, a cooldown
 `RepeatingTimer`, and the same `select!` arm handling `TapDisabled`, checking the
 generation, and branching on `ReEnableDecision`.
 
-The *decision* is already shared (`tap::ReEnableGovernor`, which is what stopped
-the input freeze recorded in `docs/permissions-and-the-launch-agent.md`). The loop
-that drives it is not.
+The *decision* was already shared (`tap::ReEnableGovernor`, which is what stopped
+the input freeze recorded in `docs/permissions-and-the-launch-agent.md`). `06da288`
+shared the recovery step of the loop, and with the gesture tap gone there is one loop.
 
 ### 1.3 Three parallel KVO observer pairs
 
