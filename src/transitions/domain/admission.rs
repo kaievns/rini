@@ -139,6 +139,12 @@ pub(in crate::transitions) struct Waits {
 }
 
 impl Waits {
+    /// The grows: held for and pictured where they end only once repainted, what a pass merged while
+    /// the motion runs is held for.
+    pub(in crate::transitions) fn grows(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.awaiting.iter().copied().filter(|window| self.repainting.contains(window))
+    }
+
     pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
         let (holds, repaints, keeps) = match end {
             EndPicture::Awaited => (true, false, false),
@@ -426,6 +432,7 @@ mod tests {
                 kept: vec![window(3)],
             }
         );
+        assert_eq!(waits.grows().collect::<Vec<_>>(), [window(2)], "the grow alone");
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one

@@ -17,10 +17,11 @@ pub(in crate::transitions) const COALESCE_WINDOW: Duration = Duration::from_mill
 pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 
 /// How long a flight stands still with the overlay up for a grow's repaint, or the first picture of a
-/// window it has none of, a reserved entrance or a stand-in, whatever the flight's duration, and how
-/// long a window watched to repaint where it ends is waited for there before it is lost; once there, it
-/// is captured until it settles. See "A grow waits for its repaint" in
-/// `src/transitions/docs/coordination.md`.
+/// window it has none of, a reserved entrance or a stand-in, whatever the flight's duration; how long
+/// a pass merged while the flight moves waits, from its arrival, for the windows it grows to repaint;
+/// and how long a window watched to repaint where it ends is waited for there before it is lost; once
+/// there, it is captured until it settles. See "A grow waits for its repaint" and "Mid-flight passes"
+/// in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
 
 /// How long after a lift the flight's owed captures wait for the user to stop pressing.

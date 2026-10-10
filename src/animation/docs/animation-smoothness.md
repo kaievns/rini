@@ -497,7 +497,8 @@ changes is how the picture maps onto it (`content_mode` in
   covers only what the picture does not, a column and the row either side of
   it meeting without overlap, since a fill under the whole tile would darken a
   translucent window. A grow is held for its repainted picture and flies it
-  from frame zero, one shrinking on its other axis with the ground in the
+  from frame zero, or, merged once the flight moves, from where its tile is
+  drawn as that picture lands, one shrinking on its other axis with the ground in the
   span that picture leaves short there, swallowed by the moving edge; one
   whose hold ran out flies its before picture with the ground in the growth
   until the repainted one lands mid-run, cut onto the grid on the leg's

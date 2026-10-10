@@ -247,6 +247,16 @@ destination for a window already moving.
   once; the only addition is the wait, and only for a window that grows. A window that has just
   opened keeps its own entrance, and a flight MAY wait for the first picture of a window it has none
   of.
+- A pass that grows a window on either axis while a flight is already moving, a press arriving
+  before the flight of the one before it has ended, MUST hold that window the same way: the flight
+  MUST play on as it was, its tiles going on to the ends they had and resting there with the overlay
+  up, and the pass MUST merge into it only once that window has repainted where the pass ends it,
+  up to 300ms from the pass's arrival. The tiles then MUST set off from where each is drawn at that
+  moment, the grown window flying its repainted picture, so its growth shows its content. A pass
+  arriving while one is held replaces what the flight waits for, its own grows from its own
+  arrival. A pass that grows no window, a strip movement included, MUST merge at once, with any pass
+  held before it. A held pass whose window misses the 300ms merges with the picture its tile has,
+  the window's ground in the growth, and the repainted picture replaces that one when it comes.
 - Each window a resize grows MUST be pictured at its new size once it has repainted there. One whose
   repaint missed the 300ms flies its picture from the press, with the window's ground in its growth,
   and its repainted picture MUST replace that one mid-flight once it comes, laid against the same
@@ -294,6 +304,14 @@ destination for a window already moving.
 > window content than see a flicker." Each grow flew its growth as the window's flat ground until
 > its repainted picture was cut in mid-flight: that cut was the flicker, and each shrink had its
 > repainted picture cut in too. Measured in "A grow waits for its repaint"
+> (`src/transitions/docs/coordination.md`).
+>
+> **Reported 2026-10-10**, after trying the change the report above led to. Kai: "alt-r is fixed i
+> can confirm. resizing still intermittently produces black sections flicker when a window size
+> increases. easiest way to reproduce is to trigger alt-r rapidly on one of those rainbow terminals
+> you made." Only a flight's start waited for a grow's repaint: a press reaching a flight already
+> moving merged into it at once, so its grow flew the old picture with the window's ground in the
+> growth until the repaint was cut in mid-flight. Measured in "Mid-flight passes"
 > (`src/transitions/docs/coordination.md`).
 
 ## Correctness the user can see
