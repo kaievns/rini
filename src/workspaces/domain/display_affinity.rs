@@ -68,38 +68,38 @@ pub enum ColumnWidth {
     FullWidth,
     /// A deliberate width, as an offset from the configured `column_width_ratio`.
     Offset(f64),
-    /// A width given by a mouse drag, an offset as `Offset` is, but unlike it held by no display's
-    /// `min-column-width` or `max-column-width`.
-    Dragged(f64),
+    /// An offset as `Offset` is, but unlike it held by no display's `min-column-width` or
+    /// `max-column-width`: the width a mouse drag gives.
+    Unbounded(f64),
 }
 
 impl ColumnWidth {
-    /// The record of a column's offset, by whether a drag gave it.
-    pub fn from_offset(offset: f64, dragged: bool) -> Self {
-        if dragged { Self::Dragged(offset) } else { Self::Offset(offset) }
+    /// The record of a column's offset, by whether it is unbounded.
+    pub fn from_offset(offset: f64, unbounded: bool) -> Self {
+        if unbounded { Self::Unbounded(offset) } else { Self::Offset(offset) }
     }
 
-    /// The width as a file holds it, and whether a drag gave it.
+    /// The width as a file holds it, and whether it is unbounded.
     pub fn stored(self) -> (StoredWidth, bool) {
         match self {
             Self::FullWidth => (StoredWidth::FullWidth, false),
             Self::Offset(offset) => (StoredWidth::Offset(offset), false),
-            Self::Dragged(offset) => (StoredWidth::Offset(offset), true),
+            Self::Unbounded(offset) => (StoredWidth::Offset(offset), true),
         }
     }
 
-    /// A width read from a file, given whether a drag gave it.
-    pub fn from_stored(width: StoredWidth, dragged: bool) -> Self {
+    /// A width read from a file, given whether it is unbounded.
+    pub fn from_stored(width: StoredWidth, unbounded: bool) -> Self {
         match width {
             StoredWidth::FullWidth => Self::FullWidth,
-            StoredWidth::Offset(offset) => Self::from_offset(offset, dragged),
+            StoredWidth::Offset(offset) => Self::from_offset(offset, unbounded),
         }
     }
 }
 
-/// A `ColumnWidth` as a file holds it: the two variants every rini reads. A dragged width is held
-/// as its offset, and the drag beside it in a field an older rini skips, so going back to one keeps
-/// every width rather than refusing the file and the machine's memory with it.
+/// A `ColumnWidth` as a file holds it: the two variants every rini reads. An unbounded width is
+/// held as its offset, and the mark beside it in a field an older rini skips, so going back to one
+/// keeps every width rather than refusing the file and the machine's memory with it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum StoredWidth {
     FullWidth,
@@ -109,41 +109,41 @@ pub enum StoredWidth {
 /// Widths per display and window, as a file holds them.
 pub type StoredWidths = HashMap<String, HashMap<WindowId, StoredWidth>>;
 
-/// The windows on each display whose stored width a drag gave.
-pub type DraggedWidths = HashMap<String, HashSet<WindowId>>;
+/// The windows on each display whose stored width is unbounded.
+pub type UnboundedWidths = HashMap<String, HashSet<WindowId>>;
 
 /// `widths` as a file holds them.
 pub fn store_widths(
     widths: &HashMap<String, HashMap<WindowId, ColumnWidth>>,
-) -> (StoredWidths, DraggedWidths) {
+) -> (StoredWidths, UnboundedWidths) {
     let mut stored = StoredWidths::default();
-    let mut dragged = DraggedWidths::default();
+    let mut unbounded = UnboundedWidths::default();
     for (display, windows) in widths {
         for (&window, &width) in windows {
-            let (width, by_drag) = width.stored();
+            let (width, is_unbounded) = width.stored();
             stored.entry(display.clone()).or_default().insert(window, width);
-            if by_drag {
-                dragged.entry(display.clone()).or_default().insert(window);
+            if is_unbounded {
+                unbounded.entry(display.clone()).or_default().insert(window);
             }
         }
     }
-    (stored, dragged)
+    (stored, unbounded)
 }
 
 /// Widths read from a file.
 pub fn read_widths(
     stored: StoredWidths,
-    dragged: &DraggedWidths,
+    unbounded: &UnboundedWidths,
 ) -> HashMap<String, HashMap<WindowId, ColumnWidth>> {
     stored
         .into_iter()
         .map(|(display, windows)| {
-            let by_drag = dragged.get(&display);
+            let marked = unbounded.get(&display);
             let windows = windows
                 .into_iter()
                 .map(|(window, width)| {
-                    let dragged = by_drag.is_some_and(|set| set.contains(&window));
-                    (window, ColumnWidth::from_stored(width, dragged))
+                    let unbounded = marked.is_some_and(|set| set.contains(&window));
+                    (window, ColumnWidth::from_stored(width, unbounded))
                 })
                 .collect();
             (display, windows)
@@ -242,7 +242,7 @@ impl DisplayAffinity {
             display_strip: std::mem::take(&mut self.legacy_display_strip),
             window_width: read_widths(
                 std::mem::take(&mut self.legacy_window_width),
-                &DraggedWidths::default(),
+                &UnboundedWidths::default(),
             ),
             // A file written before arrangements existed recorded no distinction between a home the
             // user chose and one rini inferred. Treating them all as CHOSEN would make every display
@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(affinity.window_width("third", win(1)), None);
     }
 
-    /// A dragged width comes back dragged, so no display's bounds clamp it after a restart. Every
+    /// A dragged width comes back unbounded, so no display's bounds clamp it after a restart. Every
     /// width is written as an `Offset` or `FullWidth`, as it was before a drag had a record, so an old
     /// file reads unchanged.
     #[test]
@@ -840,11 +840,11 @@ mod tests {
         let written = ron::ser::to_string(&affinity).unwrap();
         assert!(written.contains("Offset(0.25)"), "{written}");
         assert!(written.contains("Offset(0.33797)"), "{written}");
-        assert!(!written.contains("Dragged("), "{written}");
+        assert!(!written.contains("Unbounded("), "{written}");
         let read: DisplayAffinity = ron::from_str(&written).unwrap();
         assert_eq!(
             read.window_width("built-in", win(1)),
-            Some(ColumnWidth::Dragged(0.33797))
+            Some(ColumnWidth::Unbounded(0.33797))
         );
         assert_eq!(read.window_width("built-in", win(2)), Some(ColumnWidth::Offset(0.25)));
     }

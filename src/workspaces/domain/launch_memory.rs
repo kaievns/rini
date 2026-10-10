@@ -38,7 +38,7 @@ pub struct Slot {
     pub width: Option<ColumnWidth>,
 }
 
-/// A `Slot` as a file holds it, its width a `StoredWidth` with the drag beside it.
+/// A `Slot` as a file holds it, its width a `StoredWidth` with whether it is unbounded beside it.
 #[derive(Serialize, Deserialize)]
 struct SlotRecord {
     #[serde(default)]
@@ -47,8 +47,8 @@ struct SlotRecord {
     workspace_index: usize,
     #[serde(default)]
     width: Option<StoredWidth>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    width_dragged: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not", rename = "width_dragged")]
+    width_unbounded: bool,
 }
 
 impl From<SlotRecord> for Slot {
@@ -57,7 +57,9 @@ impl From<SlotRecord> for Slot {
             title: record.title,
             display_uuid: record.display_uuid,
             workspace_index: record.workspace_index,
-            width: record.width.map(|width| ColumnWidth::from_stored(width, record.width_dragged)),
+            width: record
+                .width
+                .map(|width| ColumnWidth::from_stored(width, record.width_unbounded)),
         }
     }
 }
@@ -70,7 +72,7 @@ impl From<Slot> for SlotRecord {
             display_uuid: slot.display_uuid,
             workspace_index: slot.workspace_index,
             width: stored.map(|(width, _)| width),
-            width_dragged: stored.is_some_and(|(_, dragged)| dragged),
+            width_unbounded: stored.is_some_and(|(_, unbounded)| unbounded),
         }
     }
 }
@@ -261,10 +263,11 @@ mod tests {
     #[test]
     fn a_dragged_slot_width_is_written_so_a_rini_from_before_it_reads_the_file() {
         let dragged = Slot {
-            width: Some(ColumnWidth::Dragged(0.33797)),
+            width: Some(ColumnWidth::Unbounded(0.33797)),
             ..slot("~/projects/rini", BUILT_IN, 1)
         };
         let written = ron::ser::to_string(&dragged).unwrap();
+        assert!(written.contains("width_dragged:true"), "{written}");
 
         let old: before_dragged_widths::Slot = ron::from_str(&written).expect("an older rini reads it");
         assert_eq!(old.title, dragged.title);

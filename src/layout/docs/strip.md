@@ -37,10 +37,10 @@ is borrowed.
 - **One place applies the width bounds.** `constraints::column_ratio`, read by
   the layout pass, by the scroll-gesture arithmetic, by the default width, by the
   resize keys and by a resize report, each with a `ColumnKind`: full width,
-  dragged, or bounded. The layout pass and the gesture pass the column's own. The
+  unbounded, or bounded. The layout pass and the gesture pass the column's own. The
   default width and the keys always pass `Bounded`, which is how a key bounds a
-  dragged width again. A report passes `Dragged` for a side drag or a column
-  already dragged, and `Bounded` otherwise.
+  dragged width again. A report passes `Unbounded` for a side drag or a column
+  already unbounded, and `Bounded` otherwise.
   The gesture used to compute its own and did not know about maximized columns,
   so it stepped the strip by two thirds of a screen for a column occupying all
   of it and one swipe left the next column part-way on.
@@ -424,14 +424,15 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   and a strip scrolled by less than the shrink keeps the right edge only until the offset reaches 0.
 - **A drag passes the width bounds.** `min-column-width` and `max-column-width` keep the resize keys
   from crawling to 100%, and they snapped a drag back: presses 15 and 16 reached 1413 and 1443pt and
-  landed at 1148. A drag that moves the left or right edge marks its column `width_dragged`, and
-  `column_ratio` holds a `ColumnKind::Dragged` column only to the viewport and a twentieth of it; the
-  windows' own limits still apply in `column_width`. niri has neither key: its interactive resize is
-  held only by the window and the working area. A centred column's width is doubled, then held the
-  same way. A stacked edge's drag leaves the mark as it was. The app's own resize keeps it, because
-  an app reports its own size after rini's write, as a terminal snapping to its cell grid does, and a
-  clamp there would undo the drag. The mark is saved with the column and carried with the width
-  (`ColumnWidth::Dragged`, which the file holds as an `Offset` with the drag beside it, as
+  landed at 1148. A drag that moves the left or right edge marks its column `width_unbounded`, and
+  `column_ratio` holds a `ColumnKind::Unbounded` column only to the viewport and a twentieth of it;
+  the windows' own limits still apply in `column_width`. niri has neither key: its interactive
+  resize is held only by the window and the working area. A centred column's width is doubled, then
+  held the same way. A stacked edge's drag leaves the mark as it was. The app's own resize keeps it,
+  because an app reports its own size after rini's write, as a terminal snapping to its cell grid
+  does, and a clamp there would undo the drag. The mark is saved with the column, under the file
+  key `width_dragged`, which older rinis read too, and carried with the width
+  (`ColumnWidth::Unbounded`, which the file holds as an `Offset` with the mark beside it, as
   `src/workspaces/docs/launch-memory.md` says); a key or a preset clears it.
 - **An app answering rini's write changes nothing.** The reactor drops a report within 0.1pt of
   rini's write before the layout sees it (`same_as`). A report off on one axis, a terminal snapping
@@ -456,7 +457,7 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   settling or a top-edge drag, leaves it. A drag across the whole viewport makes a window alone in
   its column full width, with the drag's start width to go back to, so one width has one record. A
   stacked window stays a column at 1.0, because the mode would pull it out of its stack.
-- **A dragged width is whole.** `column_width` takes no gap share from a `ColumnKind::Dragged`
+- **A dragged width is whole.** `column_width` takes no gap share from a `ColumnKind::Unbounded`
   column. It took one, so a drag to a width two of which fit abreast landed 1.5pt narrower, rounded
   to 1-2pt, and with the right edge kept the left edge moved by that much at the release. In Kai's
   38 Ghostty releases journalled on 2026-10-07, 18 of the 19 drags to a width with a share that

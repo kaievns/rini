@@ -23,7 +23,7 @@ use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::workspaces::domain::display_affinity::{
-    ColumnWidth, DraggedWidths, StoredWidths, read_widths, store_widths,
+    ColumnWidth, StoredWidths, UnboundedWidths, read_widths, store_widths,
 };
 
 /// The set of displays attached at one moment, as a durable name.
@@ -82,7 +82,7 @@ pub struct Setup {
     pub home_by_intent: HashSet<WindowId>,
 }
 
-/// A `Setup` as a file holds it, its widths as `StoredWidth`s with the dragged ones beside them.
+/// A `Setup` as a file holds it, its widths as `StoredWidth`s with the unbounded ones beside them.
 #[derive(Serialize, Deserialize)]
 struct SetupRecord {
     #[serde(default)]
@@ -91,8 +91,8 @@ struct SetupRecord {
     display_strip: HashMap<String, Vec<WindowId>>,
     #[serde(default)]
     window_width: StoredWidths,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    dragged_width: DraggedWidths,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", rename = "dragged_width")]
+    unbounded_width: UnboundedWidths,
     #[serde(default)]
     home_by_intent: HashSet<WindowId>,
 }
@@ -102,7 +102,7 @@ impl From<SetupRecord> for Setup {
         Self {
             window_home: record.window_home,
             display_strip: record.display_strip,
-            window_width: read_widths(record.window_width, &record.dragged_width),
+            window_width: read_widths(record.window_width, &record.unbounded_width),
             home_by_intent: record.home_by_intent,
         }
     }
@@ -110,12 +110,12 @@ impl From<SetupRecord> for Setup {
 
 impl From<Setup> for SetupRecord {
     fn from(setup: Setup) -> Self {
-        let (window_width, dragged_width) = store_widths(&setup.window_width);
+        let (window_width, unbounded_width) = store_widths(&setup.window_width);
         Self {
             window_home: setup.window_home,
             display_strip: setup.display_strip,
             window_width,
-            dragged_width,
+            unbounded_width,
             home_by_intent: setup.home_by_intent,
         }
     }
@@ -313,9 +313,10 @@ mod tests {
         setup.home_by_intent.insert(win(1));
         setup.display_strip.insert("built-in".to_owned(), vec![win(1), win(2)]);
         let widths = setup.window_width.entry("built-in".to_owned()).or_default();
-        widths.insert(win(1), ColumnWidth::Dragged(0.33797));
+        widths.insert(win(1), ColumnWidth::Unbounded(0.33797));
         widths.insert(win(2), ColumnWidth::Offset(0.25));
         let written = ron::ser::to_string(&setup).unwrap();
+        assert!(written.contains("dragged_width:"), "{written}");
 
         let old: before_dragged_widths::Setup = ron::from_str(&written).expect("an older rini reads it");
         assert_eq!(old.window_home, setup.window_home);
@@ -326,7 +327,7 @@ mod tests {
         assert_eq!(old_widths[&win(2)], before_dragged_widths::ColumnWidth::Offset(0.25));
 
         let read: Setup = ron::from_str(&written).unwrap();
-        assert_eq!(read.window_width["built-in"][&win(1)], ColumnWidth::Dragged(0.33797));
+        assert_eq!(read.window_width["built-in"][&win(1)], ColumnWidth::Unbounded(0.33797));
         assert_eq!(read.window_width["built-in"][&win(2)], ColumnWidth::Offset(0.25));
     }
 

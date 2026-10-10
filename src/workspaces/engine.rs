@@ -1158,8 +1158,8 @@ impl LayoutEngine {
             if tree.is_window_full_width(layout, window) {
                 return Some(Some(ColumnWidth::FullWidth));
             }
-            if let Some((offset, dragged)) = tree.column_width_offset(layout, window) {
-                return Some(Some(ColumnWidth::from_offset(offset, dragged)));
+            if let Some((offset, unbounded)) = tree.column_width_offset(layout, window) {
+                return Some(Some(ColumnWidth::from_offset(offset, unbounded)));
             }
             consulted |= tree.contains_window(layout, window);
         }
@@ -1362,8 +1362,8 @@ impl LayoutEngine {
             return;
         }
         match tree.column_width_offset(layout, window) {
-            Some((offset, dragged)) => {
-                let width = ColumnWidth::from_offset(offset, dragged);
+            Some((offset, unbounded)) => {
+                let width = ColumnWidth::from_offset(offset, unbounded);
                 memory.affinity.set_window_width(&display, window, width);
             }
             // Toggled back to the default. Forget rather than pin, so the window follows
@@ -1424,7 +1424,7 @@ impl LayoutEngine {
                 self.workspace_tree_mut(workspace_id)
                     .set_column_width_offset(layout, window, offset, false);
             }
-            ColumnWidth::Dragged(offset) => {
+            ColumnWidth::Unbounded(offset) => {
                 self.workspace_tree_mut(workspace_id)
                     .set_column_width_offset(layout, window, offset, true);
             }

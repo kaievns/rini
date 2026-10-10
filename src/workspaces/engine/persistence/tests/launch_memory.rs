@@ -585,7 +585,7 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
     engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
     let topology = topology_key(&[DISPLAY.to_owned()]);
-    let dragged = Some(ColumnWidth::Dragged(0.33797));
+    let dragged = Some(ColumnWidth::Unbounded(0.33797));
     assert_eq!(memory.launch.slots("com.mitchellh.ghostty", &topology)[0].width, dragged);
 
     let path =

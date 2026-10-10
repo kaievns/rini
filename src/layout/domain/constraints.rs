@@ -45,8 +45,9 @@ pub fn column_limits(windows: impl IntoIterator<Item = (WindowLayoutConstraints,
 pub enum ColumnKind {
     /// Maximised: the whole viewport, whatever its stored ratio.
     FullWidth,
-    /// Last sized by a mouse drag, which `min-column-width` and `max-column-width` do not hold.
-    Dragged,
+    /// Held only to the viewport, not to `min-column-width` and `max-column-width`: the width a
+    /// mouse drag gave it.
+    Unbounded,
     /// Held to `min-column-width` and `max-column-width`.
     Bounded,
 }
@@ -56,8 +57,8 @@ pub enum ColumnKind {
 /// Full width is a MODE rather than a wider ratio: a bounded column is clamped to
 /// `max-column-width` — below 1.0, deliberately, so that the incremental resize keys and the
 /// default width cannot crawl to 100% — so a maximised column cannot be expressed as a
-/// ratio at all and has to be asked for separately. The bounds are for the keys, not a drag: a
-/// dragged column is held only to the viewport.
+/// ratio at all and has to be asked for separately. The bounds are for the keys, not a drag: an
+/// unbounded column is held only to the viewport.
 ///
 /// Both the layout pass and the scroll-gesture arithmetic read this, because they used to disagree:
 /// the gesture computed a maximised column at `max-column-width` of the viewport, so it
@@ -66,7 +67,7 @@ pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, ma
     let ratio = base_ratio + offset;
     match kind {
         ColumnKind::FullWidth => 1.0,
-        ColumnKind::Dragged => ratio.clamp(0.05, 1.0),
+        ColumnKind::Unbounded => ratio.clamp(0.05, 1.0),
         ColumnKind::Bounded => ratio.clamp(min, max).max(0.05),
     }
 }
@@ -83,7 +84,7 @@ pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, ma
 ///
 /// The gap comes out of the column rather than out of the space between columns, which is what keeps
 /// two columns at ratio 0.5 adding up to the viewport instead of overflowing it by one gap. It is
-/// skipped when it would take the column below a pixel, and for a dragged column, whose width is
+/// skipped when it would take the column below a pixel, and for an unbounded column, whose width is
 /// the one the window was let go at.
 pub fn column_width(
     kind: ColumnKind,
@@ -100,7 +101,7 @@ pub fn column_width(
 
     width = width.min(viewport_width.max(1.0));
 
-    if kind == ColumnKind::Dragged {
+    if kind == ColumnKind::Unbounded {
         return width;
     }
     let shrunk = width - crate::layout::domain::strip::gap_share(ratio, gap);
@@ -120,7 +121,7 @@ pub fn ratio_of_column_width(kind: ColumnKind, width: f64, viewport_width: f64, 
     let plain = width / viewport_width;
     match kind {
         ColumnKind::FullWidth => return 1.0,
-        ColumnKind::Dragged => return plain,
+        ColumnKind::Unbounded => return plain,
         ColumnKind::Bounded if gap <= 0.0 || plain <= 0.0 => return plain,
         ColumnKind::Bounded => {}
     }
@@ -338,10 +339,10 @@ mod tests {
     /// A drag is not a key: neither bound holds it, and the viewport and the twentieth still do.
     #[test]
     fn a_dragged_ratio_ignores_min_and_max_column_width() {
-        assert_eq!(column_ratio(ColumnKind::Dragged, 0.5, 0.33797, MIN, MAX), 0.83797);
-        assert_eq!(column_ratio(ColumnKind::Dragged, 0.5, -0.21719, MIN, MAX), 0.28281);
-        assert_eq!(column_ratio(ColumnKind::Dragged, 0.5, 0.7, MIN, MAX), 1.0);
-        assert_eq!(column_ratio(ColumnKind::Dragged, 0.0, 0.0, MIN, MAX), 0.05);
+        assert_eq!(column_ratio(ColumnKind::Unbounded, 0.5, 0.33797, MIN, MAX), 0.83797);
+        assert_eq!(column_ratio(ColumnKind::Unbounded, 0.5, -0.21719, MIN, MAX), 0.28281);
+        assert_eq!(column_ratio(ColumnKind::Unbounded, 0.5, 0.7, MIN, MAX), 1.0);
+        assert_eq!(column_ratio(ColumnKind::Unbounded, 0.0, 0.0, MIN, MAX), 0.05);
     }
 
     /// A config with a zero or inverted minimum must not produce a column nothing can be seen in.
@@ -619,7 +620,7 @@ mod column_tests {
     #[test]
     fn a_dragged_column_keeps_its_dragged_width_whole() {
         let ratio = 809. / 1722.;
-        assert_eq!(column_width(ColumnKind::Dragged, ratio, 1722., 3., free()), 809.0);
+        assert_eq!(column_width(ColumnKind::Unbounded, ratio, 1722., 3., free()), 809.0);
         assert_eq!(column_width(ColumnKind::Bounded, ratio, 1722., 3., free()), 807.5);
     }
 
@@ -772,7 +773,7 @@ mod column_tests {
 
     #[test]
     fn a_dragged_width_reads_back_whole() {
-        let back = ratio_of_column_width(ColumnKind::Dragged, 809., 1722., 3.);
-        assert_eq!(column_width(ColumnKind::Dragged, back, 1722., 3., free()), 809.0);
+        let back = ratio_of_column_width(ColumnKind::Unbounded, 809., 1722., 3.);
+        assert_eq!(column_width(ColumnKind::Unbounded, back, 1722., 3., free()), 809.0);
     }
 }

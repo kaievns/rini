@@ -72,10 +72,10 @@ struct Column {
     width_offset: f64,
     #[serde(default)]
     width_overridden: bool,
-    /// The width was last given by a mouse drag, which `min-column-width` and `max-column-width`
-    /// do not hold.
-    #[serde(default)]
-    width_dragged: bool,
+    /// The width is held only to the viewport, not to `min-column-width` and `max-column-width`,
+    /// as a mouse drag gives it.
+    #[serde(default, rename = "width_dragged")]
+    width_unbounded: bool,
     #[serde(default)]
     height_weights: Vec<f64>,
     /// Whether `height_weights` are DESIRED PIXEL HEIGHTS from a deliberate vertical resize, rather
@@ -86,11 +86,11 @@ struct Column {
 }
 
 impl Column {
-    /// A width of its own, as an offset from the default ratio, and whether a drag gave it.
-    fn give_width(&mut self, offset: f64, dragged: bool) {
+    /// A width of its own, as an offset from the default ratio, and whether the bounds hold it.
+    fn give_width(&mut self, offset: f64, unbounded: bool) {
         self.width_offset = offset;
         self.width_overridden = true;
-        self.width_dragged = dragged;
+        self.width_unbounded = unbounded;
     }
 
     fn ensure_height_weights(&mut self) {
@@ -295,7 +295,7 @@ impl LayoutState {
                 windows: vec![wid],
                 width_offset: 0.0,
                 width_overridden: false,
-                width_dragged: false,
+                width_unbounded: false,
                 height_weights: vec![weight],
                 height_overridden: false,
             },
@@ -364,8 +364,8 @@ impl LayoutState {
     fn column_kind(&self, col: &Column) -> ColumnKind {
         if self.is_full_width_column(col) {
             ColumnKind::FullWidth
-        } else if col.width_dragged {
-            ColumnKind::Dragged
+        } else if col.width_unbounded {
+            ColumnKind::Unbounded
         } else {
             ColumnKind::Bounded
         }
@@ -424,11 +424,11 @@ impl LayoutState {
         }
     }
 
-    /// Give `wid`'s column an explicit ratio, by a drag or not, leaving full width if it was
+    /// Give `wid`'s column an explicit ratio, unbounded or not, leaving full width if it was
     /// maximised.
-    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64, dragged: bool) {
+    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64, unbounded: bool) {
         self.leave_full_width_in_place(wid);
-        self.columns[col_idx].give_width(ratio - self.column_width_ratio, dragged);
+        self.columns[col_idx].give_width(ratio - self.column_width_ratio, unbounded);
     }
 
     fn locate(&self, wid: WindowId) -> Option<(usize, usize)> {
@@ -647,7 +647,7 @@ impl LayoutState {
             windows: vec![wid],
             width_offset: 0.0,
             width_overridden: false,
-            width_dragged: false,
+            width_unbounded: false,
             height_weights: vec![1.0],
             height_overridden: false,
         };
@@ -662,7 +662,7 @@ impl LayoutState {
             windows: vec![wid],
             width_offset: 0.0,
             width_overridden: false,
-            width_dragged: false,
+            width_unbounded: false,
             height_weights: vec![1.0],
             height_overridden: false,
         });
@@ -692,7 +692,7 @@ impl LayoutState {
                     windows: vec![window],
                     width_offset: 0.0,
                     width_overridden: false,
-                    width_dragged: false,
+                    width_unbounded: false,
                     height_weights: vec![1.0],
                     height_overridden: false,
                 });
@@ -1126,7 +1126,7 @@ impl ScrollingLayoutSystem {
                     windows: vec![wid],
                     width_offset: 0.0,
                     width_overridden: false,
-                    width_dragged: false,
+                    width_unbounded: false,
                     height_weights: vec![weight],
                     height_overridden: false,
                 },
@@ -1662,7 +1662,7 @@ impl ScrollingLayoutSystem {
     }
 
     /// The width a window's column carries, if it has been sized away from the default, and
-    /// whether a mouse drag gave it, which the bounds do not hold.
+    /// whether it is unbounded, held only to the viewport.
     ///
     /// Needed so moving a window between workspaces or displays keeps the width the user gave
     /// it; a fresh column otherwise starts at the default ratio and the window appeared to
@@ -1673,7 +1673,7 @@ impl ScrollingLayoutSystem {
         let column = state.columns.get(col_idx)?;
         // Only a deliberately sized column is worth carrying. An untouched one should adopt
         // the destination's default, which may differ (a wider display, a different config).
-        column.width_overridden.then_some((column.width_offset, column.width_dragged))
+        column.width_overridden.then_some((column.width_offset, column.width_unbounded))
     }
 
     /// Re-apply a width carried from another column.
@@ -1682,7 +1682,7 @@ impl ScrollingLayoutSystem {
         layout: LayoutId,
         wid: WindowId,
         offset: f64,
-        dragged: bool,
+        unbounded: bool,
     ) {
         let Some(state) = self.layout_state_mut(layout) else {
             return;
@@ -1691,7 +1691,7 @@ impl ScrollingLayoutSystem {
             return;
         };
         if let Some(column) = state.columns.get_mut(col_idx) {
-            column.give_width(offset, dragged);
+            column.give_width(offset, unbounded);
         }
     }
 
@@ -1905,8 +1905,8 @@ impl ScrollingLayoutSystem {
             let centred = centres(col_idx, state.columns.len(), center, has_override);
             dragged_width(start.size.width, new_frame.size.width, centred)
         });
-        let kind = if side_drag.is_some() || state.columns[col_idx].width_dragged {
-            ColumnKind::Dragged
+        let kind = if side_drag.is_some() || state.columns[col_idx].width_unbounded {
+            ColumnKind::Unbounded
         } else {
             ColumnKind::Bounded
         };
@@ -1923,7 +1923,7 @@ impl ScrollingLayoutSystem {
                 state.enter_full_width(wid);
             }
         } else if !width_kept {
-            state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Dragged);
+            state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Unbounded);
         }
 
         let col = &mut state.columns[col_idx];
@@ -2422,7 +2422,7 @@ mod tests {
             windows: vec![w1, w2],
             width_offset: 0.0,
             width_overridden: false,
-            width_dragged: false,
+            width_unbounded: false,
             height_weights: vec![1.0, 1.0],
             height_overridden: false,
         }];
@@ -2502,7 +2502,7 @@ mod tests {
             windows: vec![locked, capped],
             width_offset: 0.0,
             width_overridden: false,
-            width_dragged: false,
+            width_unbounded: false,
             height_weights: vec![1.0, 1.0],
             height_overridden: false,
         }];
@@ -4837,11 +4837,12 @@ mod tests {
             windows: vec![wid(1, 1)],
             width_offset: 0.33797,
             width_overridden: true,
-            width_dragged: true,
+            width_unbounded: true,
             ..Column::default()
         };
-        let old: ColumnBeforeDragged =
-            ron::from_str(&ron::ser::to_string(&column).unwrap()).expect("an older rini reads it");
+        let written = ron::ser::to_string(&column).unwrap();
+        assert!(written.contains("width_dragged:true"), "{written}");
+        let old: ColumnBeforeDragged = ron::from_str(&written).expect("an older rini reads it");
         assert_eq!(old.windows, column.windows);
         assert_eq!(old.width_offset, 0.33797);
         assert!(old.width_overridden);
