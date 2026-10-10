@@ -261,7 +261,8 @@ destination for a window already moving.
   waits for, its own grows from its own arrival, up to 600ms in all from the first one's, and the
   repainted picture where the latest one ends the window MUST go onto its tile as they merge. A
   pass that grows no window, a strip movement included, MUST merge at once, with any pass held
-  before it. A held pass whose window misses the 300ms, or the 600ms of a burst, merges with the
+  before it. Each held pass MUST write its windows as it is held, and their merging MUST NOT write
+  a window again, least of all back where an earlier held pass sent it. A held pass whose window misses the 300ms, or the 600ms of a burst, merges with the
   picture its tile has, the window's ground in the growth, and the repainted picture replaces that
   one when it comes.
 - Each window a resize grows MUST be pictured at its new size once it has repainted there. One whose

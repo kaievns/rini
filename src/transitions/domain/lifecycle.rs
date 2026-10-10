@@ -836,11 +836,17 @@ impl Coordinator {
         extend_unique(&mut f.holds_for, stage.awaiting.iter().copied());
         f.kept.retain(|w| !resized(w));
         extend_unique(&mut f.kept, stage.kept.iter().copied());
-        let changed = changed_frames(&f.stage.final_frames, &stage.final_frames);
+        let held = latest_held(&mut f.held_merge);
+        // Every held pass was written as it was held: an earlier one's merge writes nothing, and keeps
+        // the frames written for the latest one's to be compared with.
+        let overtaken = held.is_none() && f.held_merge.is_some();
+        let changed = if overtaken { Vec::new() } else { changed_frames(&f.stage.final_frames, &stage.final_frames) };
         let focus_moved = f.stage.focus != stage.focus;
         let newcomers = stage.awaiting.clone();
         let before = std::mem::replace(&mut f.stage, stage);
-        let held = latest_held(&mut f.held_merge);
+        if overtaken {
+            f.stage.final_frames.clone_from(&before.final_frames);
+        }
         if matches!(f.phase, Phase::Preparing { .. }) {
             // Nothing is shown or written yet: the show takes the merged stage as it is, and waits for
             // frame zero to picture what the merge brought on screen too.
@@ -2812,7 +2818,8 @@ mod tests {
     /// Kai's rapid Alt-R: a press shrinking window 2 on its own sizes, superseding a held grow whose
     /// repaint has not come, ends wider than the picture its tile carries, and the engine sends it as
     /// a grow: it waits for the repaint where it ends, which is held through the first pass's merge,
-    /// ending the window elsewhere, and goes onto the tile with the latest one's.
+    /// ending the window elsewhere, and goes onto the tile with the latest one's. Neither merge writes
+    /// the window again, back where the first sent it or where it already is.
     #[test]
     fn a_shrink_superseding_a_held_grow_waits_and_its_repaint_goes_on_with_the_latest_merge() {
         let now = Instant::now();
@@ -2834,9 +2841,11 @@ mod tests {
 
         let out = c.on(Event::Merge { stage: merged, moved: true }, repainted);
         assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "the first ends it elsewhere: {out:?}");
+        assert!(writes(&out).is_empty(), "not written back where the first sent it: {out:?}");
         assert!(c.holds(w(2), g, narrower), "kept for the latest");
         let out = c.on(Event::Merge { stage: narrowed, moved: true }, repainted);
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        assert!(writes(&out).is_empty(), "written as it was held: {out:?}");
         assert!(!c.holds(w(2), g, narrower));
     }
 
@@ -2844,8 +2853,9 @@ mod tests {
     /// to 150ms apart through the cycle, back and forth, twice round and skipping steps, so that some
     /// merges take two held grows at once, each window repainting 40 to 140ms after it is watched
     /// where it ends: every time its tile sets off for an end, as the motion starts or as passes
-    /// merge, the picture on it covers that end, unless a hold ran out. Each pass reaches the
-    /// coordinator as the engine sends it.
+    /// merge, the picture on it covers that end, unless a hold ran out, and the passes held merging
+    /// never write it anywhere but where the latest ends it. Each pass reaches the coordinator as the
+    /// engine sends it.
     #[test]
     fn rapid_resizes_never_fly_a_grown_tile_with_ground_unless_a_hold_runs_out() {
         let widths = [572.0, 860.0, 1148.0, 1722.0];
@@ -2888,6 +2898,8 @@ mod tests {
         grew: u64,
         /// When the first of the passes held since the motion ran arrived.
         first_held: u64,
+        /// While the passes held merge, the width the latest of them ends it at.
+        merging_to: Option<f64>,
         /// Merges that waited.
         held: usize,
         /// Merges of two held passes growing it or more.
@@ -2898,7 +2910,7 @@ mod tests {
         fn new(widths: Vec<f64>, gap: u64, delay: u64) -> Rapid {
             let (end, picture) = (widths[0], widths[0]);
             let c = Coordinator::default();
-            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, grew: 0, first_held: 0, held: 0, held_together: 0 }
+            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, grew: 0, first_held: 0, merging_to: None, held: 0, held_together: 0 }
         }
 
         fn frame(width: f64) -> ScreenRect { r(3.0, 35.0, width, 1079.0) }
@@ -2962,15 +2974,22 @@ mod tests {
                         }
                     }
                     Command::Show => self.shown = self.at,
+                    Command::Write(frames) => {
+                        if let Some(latest) = self.merging_to {
+                            assert!(frames.iter().all(|(_, f)| f.size.width == latest), "{}: written {frames:?} on the way to {latest}", self.case());
+                        }
+                    }
                     Command::StartMoving => {
                         self.sets_off(ticked && (self.past(self.grew, HOLD_CAP) || self.past(self.shown, BURST_HOLD_CAP)))
                     }
                     Command::Retarget { held } => {
                         self.held += usize::from(!held.is_zero());
                         self.held_together += usize::from(self.queued.iter().filter(|stage| Self::grows(stage)).count() > 1);
+                        self.merging_to = self.queued.last().map(|stage| stage.tiles[0].end.size.width);
                         for stage in std::mem::take(&mut self.queued) {
                             self.on(Event::Merge { stage, moved: true }, false);
                         }
+                        self.merging_to = None;
                         self.sets_off(ticked && (held >= HOLD_CAP || self.past(self.first_held, BURST_HOLD_CAP)));
                     }
                     _ => {}

@@ -366,7 +366,11 @@ repaint delivered there is held for the merge (`Coordinator::holds`). Once each 
 is given up on (`Lost`) or `HOLD_CAP` has passed since the latest pass arrived, the coordinator says
 `Command::Retarget`: the engine merges every pass it kept, oldest first, from where each tile is
 drawn then (`FlightEngine::merge_now`, the path any other pass takes at once), and tells it
-`Event::Merge` for each, each starting the next generation. The latest one's merge takes the held
+`Event::Merge` for each, each starting the next generation. Each pass kept was written as it was
+held, so an earlier one's merge writes nothing, which would send a window back where that pass ended
+it, and keeps the frames written (`Flight::stage`'s `final_frames`) for the latest one's to be
+compared with: that one writes only what no kept pass did, a pass growing nothing that merges them
+at once. The latest one's merge takes the held
 repaint onto the retargeted tile as a picture watched there since the hold (`watched_since`), so the
 moving edge reveals content; an earlier one's tile ends elsewhere, so `HeldMerge` counts the passes
 kept and lasts until the latest has merged (`latest_held`).
