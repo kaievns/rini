@@ -1,10 +1,11 @@
 //! Pictures read on the service's thread: a picture's band print and its body samples, which say
-//! whether it shows anything new (`crate::pictures::domain::print`) and what its ground is
-//! (`crate::pictures::domain::ground`), its thumbprint, which says whether its window's rendering
-//! has settled (`crate::pictures::domain::settle`), and what a window's first picture says of it
-//! (`crate::pictures::domain::knowledge`), each drawing only as much of the picture as it needs;
-//! and the overlay and the screen drawn whole for a handover check
-//! (`crate::pictures::domain::handover`).
+//! whether it shows anything new (`crate::pictures::domain::print`), its thumbprint, which says
+//! whether its window's rendering has settled (`crate::pictures::domain::settle`), and what a
+//! window's first picture says of it (`crate::pictures::domain::knowledge`), each drawing only as
+//! much of the picture as it needs; and the overlay and the screen drawn whole for a handover check
+//! (`crate::pictures::domain::handover`). What a picture's ground is
+//! (`crate::pictures::domain::ground`) and the space it is filled in are read on the thread that
+//! asks (`ground_of`, `ground_space`), the overlay's main thread as it fills a crop-drawn tile.
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
