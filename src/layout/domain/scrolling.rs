@@ -5865,7 +5865,7 @@ mod tests {
         assert!(system.toggle_full_width(layout, wid));
     }
 
-    /// Kai's report of 2026-10-09 on their display: Z a half, A and B a third, the view reached by
+    /// Kai's report of 2026-10-09 on their display: Z a half, A and B a third, the strip reached by
     /// walking focus right and back, so A sits at x=578 with the strip at 287.48852.
     fn kai_s_thirds() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
         let mut system = ScrollingLayoutSystem::new(&preset_settings());
@@ -5961,7 +5961,7 @@ mod tests {
 
     /// The window's own focus event, which the raise after the toggle sends.
     #[test]
-    fn refocusing_the_full_width_window_keeps_the_view_it_returns_to() {
+    fn refocusing_the_full_width_window_keeps_the_place_it_returns_to() {
         let (mut system, layout, w) = kai_s_thirds();
         let before = kai_s_frames(&system, layout);
 
@@ -6057,7 +6057,7 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 572.0));
     }
 
-    /// A title-bar zoom of B while the last pass had A selected: there is no view of B's column to
+    /// A title-bar zoom of B while the last pass had A selected: no place of B's column is kept to
     /// go back to.
     #[test]
     fn a_toggle_on_a_window_the_last_pass_did_not_select_restores_by_the_reveal() {
@@ -6707,7 +6707,7 @@ mod tests {
 
     /// A on Kai's thirds, given a new id while full width, or between the toggle back and its pass.
     #[test]
-    fn a_full_width_window_given_a_new_id_restores_to_the_view_it_left() {
+    fn a_full_width_window_given_a_new_id_restores_to_the_place_it_left() {
         for before_the_pass in [false, true] {
             let (mut system, layout, w) = kai_s_thirds();
             let new = wid(2, 1);
