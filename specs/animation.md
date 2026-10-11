@@ -314,10 +314,12 @@ destination for a window already moving.
   turn their own look with the lift. A window MUST count as repainted at its new size only once two
   captures in a row show the same rendering, never because a capture differs from the picture it had before.
 
-> **Reported 2026-10-09.** Kai: "window content being squashed/stretched, where it should be clipped
-> really. or it's clipped in an akward place slicing the content. i regularly see clipping on
-> folding/unfolding animations going in a wrong direction, like for example a bottom stack window
-> expanding up but the clipping unfolding going down", "some of the issues seem intermittent".
+> **Reported 2026-10-09.** Kai: "there are multiple issues during stacking/unstacking windows into
+> columns. both on windows that are making space and the one that is being tucked under or pulled
+> out.", "window content being squashed/stretched, where it should be clipped really. or it's
+> clipped in an akward place slicing the content. i regularly see clipping on folding/unfolding
+> animations going in a wrong direction, like for example a bottom stack window expanding up but the
+> clipping unfolding going down", "some of the issues seem intermittent".
 > Every resize was clipped one way, the title bar held at the top and the content held against the
 > bottom, whichever edge moved. Recorded the same day on Ghostty windows of numbered rows
 > (`docs/data/2026-10-09-resize`, runs s1 and s2): a top row folding a window under it showed its
