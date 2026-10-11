@@ -17,7 +17,7 @@ knows the features and converts what they emit.
 | `reactor/query.rs` | Answers from a borrowed `StateView` |
 | `reactor/present.rs` | The frame-writing capability: record a destination, number the write; and `instant_requests`, what a pass that does not fly sends one application |
 | `reactor/bar.rs` | The bar's half here: its model built from the stores after every batch and sent only when it changed, and what a click on it asks for |
-| `reactor/managers.rs` | The handles: eight manager structs plus the layout manager |
+| `reactor/managers.rs` | The handles: eleven manager structs plus the layout manager |
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
 | `config/` | `config.kdl`: `config/kdl/` decodes each section into a part type and `kdl/apply.rs` lays the parts over each feature's settings, with the checks that span sections; then watching and reload. The format's decisions are [`docs/config.md`](../../../docs/config.md) |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
@@ -68,6 +68,7 @@ file you open to change one is the size of that subject rather than of the react
 | `lifecycle.rs` | windows and apps appearing, disappearing, dying, and surviving a restart |
 | `windows.rs` | which windows rini takes on and which it refuses |
 | `bar.rs` | what each display's bar is sent after a batch, and what a click on it does |
+| `decorations.rs` | what the rest windows are sent after a batch: each window's ring and border, whether it holds focus or asks for attention, and the rules that dress it |
 | `fixtures.rs` | the reactors, apps and windows the cases are built on |
 
 `tiling.rs` is not `layout.rs` because a module named `layout` inside `tests` shadows the
@@ -84,5 +85,5 @@ all assembled.
 
 ## Known debt
 
-`reactor/mod.rs` is the largest file in the tree with four functions over 250 lines,
+`reactor/mod.rs` is the largest file in `src/app/`, with four functions over 250 lines,
 tracked in [`docs/implementation-audit.md`](../../../docs/implementation-audit.md).

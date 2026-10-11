@@ -52,8 +52,8 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - Width MUST be remembered per (window, display), not per window. Half of 2338pt is comfortable and
   half of 1728pt is cramped; one number cannot serve both. This is what lets a browser be full-width
   when the laptop is alone and half-width on the external.
-- Width MUST be remembered as the layout means it — a mode, a ratio, or a dragged ratio, which no
-  display's width bounds hold — never in points, because the record is consulted exactly when the
+- Width MUST be remembered as the layout means it — a mode, a bounded ratio, or an unbounded ratio,
+  which no display's width bounds hold, as a drag or `Mod+R`'s 100% gives — never in points, because the record is consulted exactly when the
   display size differs.
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
