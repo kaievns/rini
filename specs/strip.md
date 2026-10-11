@@ -46,10 +46,10 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   the strip's start leaves it. A column part off screen counts from where the reveal shows it; one
   that fills the viewport takes its end of the strip, flush left as the first or only column, flush
   right as the last, centred between. A centred column MUST stay centred. Where it stood is taken
-  when a width key first finds the column focused, and MUST be forgotten when focus moves to another
-  column or anything else scrolls the strip: a strip scroll or snap, a window opening or closing, a
-  move, centring, a fold, the full-width toggle, a mouse drag, or the app sizing its window to a width
-  other than the one rini wrote. So nothing sticks between visits: the same column reached from the
+  when a width key or `Mod+F` first finds the column focused, and MUST be forgotten when focus moves
+  to another column or anything else scrolls the strip: a strip scroll or snap, a window opening or
+  closing, a move, centring, a fold, a mouse drag, or the app sizing its window to a width other than
+  the one rini wrote. `Mod+F` keeps it both ways (see "Full width and height"). So nothing sticks between visits: the same column reached from the
   other side grows from the other side. Under `"always"` the centring places the column at every
   width.
 
@@ -94,14 +94,25 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > the column after it moved off in opposite directions, and a stack at the left of the screen
 > scrolled the strip. Measured in "Maximizing a stacked window pulls it out of the stack"
 > (`src/layout/docs/strip.md`).
-- **Pressing again MUST put the strip back too**, for a stacked window or a lone one: its column at
-  the screen x it left, and a centred column centred again. Anything else that scrolls the strip in
-  between wins: focus moving to another column, a strip scroll or snap, a window opening or closing,
-  a move, centring, or a width given. The strip then scrolls only as far as it must to show the
-  column. So does it for a window that reached full width another way (a restart, a drag across the
-  screen) or was zoomed from its title bar without having focus. Once the strip is back,
-  focusing the window again MUST show it as it shows any column, even where the strip put it back
-  off screen.
+- **Pressing again MUST put the strip back too**, for a stacked window or a lone one, by the same
+  place a width given by key keeps ("Columns and widths"): going full width is a width change to the
+  whole viewport about where the column stood, and pressing again MUST land the column where it
+  stood, at the width it returns to, and a centred column centred again. `Mod+R` or a resize key on
+  a full-width window MUST step from the whole viewport about that same place, so stepping back to
+  the width it had puts it where it stood. A column part or wholly off screen when maximised comes
+  back where the reveal shows it. Anything else that scrolls the strip in between wins: focus moving
+  to another column, a strip scroll or snap, a window opening or closing, a move, or centring. The
+  strip then scrolls only as far as it must to show the column. So does it for a window that reached
+  full width another way (a restart, a drag across the screen) or was zoomed from its title bar
+  without having focus.
+
+> **Reported 2026-10-11.** "i think alt-f is the same mechanics actually and should behave the same
+> way, it just have extra animations and height conversion, but as far as remembering where to go
+> back both should be identical and work as i just described; ideally run on the same code". The way
+> back kept a record of its own, the column's start against the scroll offset, beside the place the
+> width keys keep, and the two disagreed: `Mod+R` on a full-width window stepped from where a
+> viewport-wide column stands at its end of the strip, not from where the column had stood, and a
+> column scrolled off screen came back off screen. Both now run on the one place.
 - **A full-width window MUST be alone in its column.** A fold key on it MUST end full width where it
   is and fold it as it folds any lone window; with no column on that side it MUST change nothing. A
   window that comes to share a full-width column, by a fold, `toggle-stack` or a drag swap, MUST end
@@ -312,8 +323,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - **A fold out and back in with the same key MUST put the strip back too**: the column at the screen
   x it left, and a centred column centred again. Anything else that scrolls the strip in between
   wins, as for full width, and so does folding back with the other key. The strip then scrolls only
-  as far as it must to show the column. Once back, focusing the window again MUST show it, as for
-  full width.
+  as far as it must to show the column. Once back, focusing the window again MUST show it, even
+  where the strip put it back off screen.
 - **A fold-in MUST return a window to the row it was folded out of only from the column it left**,
   the neighbour on the key's side. Folded into any other column, it MUST join it at the bottom, as a
   window that was never folded out does. A fold that has no column on its side MUST change nothing,

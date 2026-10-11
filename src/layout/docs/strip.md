@@ -182,8 +182,8 @@ is borrowed.
   the key looked dead until a focus nudge forced a reveal. The neutral reveal
   that cured that kept the left edge on a shrink: a column at the right edge
   grew leftward and shrank from the right (Kai, 2026-10-11). Under `"never"`,
-  `cycle_preset_column_width` and `resize_selection_by` keep a `Place` for the
-  selection (`LayoutState::kept_place`): `Centred` under a centre override, or
+  `cycle_preset_column_width`, `resize_selection_by` and `toggle_full_width`
+  keep a `Place` for the selection (`LayoutState::kept_place`): `Centred` under a centre override, or
   else the column's share of the viewport's free space on its left, which each
   pass records for its selection (`last_selected_share`, `strip::place_share`,
   revealed first, a viewport-wide column by its end of the strip). It is read
@@ -197,27 +197,31 @@ is borrowed.
   key keeps it (`holds_scroll_for`), and without that a step from the whole
   viewport would take the pass's end-of-strip share. With no place, or under
   `"always"`, the width change reveals or aligns as before.
-- **The way back from full width puts the strip back instead.** Both ways the
-  toggle ran the one neutral reveal from wherever the strip was, so a column
-  came back flush left whatever x it had left, and a centred column lost its
-  centring to the reveal: Kai's thirds on 2026-10-09 had A at x=578, back at
-  x=3 with 575pt empty on the right. Under `"never"`, entering full width keeps
-  how the last pass showed the column (`View`, in a `KeptView` naming the
-  toggle that took it, as a fold-out does; see "Joining"): centred, or its
-  start against the scroll offset, read from `last_selected_rel_px` only when
-  that pass had the window selected (`last_selected_rel_of`), because a
-  title-bar zoom can name a window that was not. For a window pulled out of a
-  stack that is the stack's column. The way back restores the centre override,
-  or pins the start (`Pin::Start`), which the next pass applies where it applies
-  a kept right edge (see "Mouse resize"). A start rather than a scroll offset, so the column keeps
-  its x through a width change elsewhere in the strip that scrolls nothing. Any
-  scroll drops it (`LayoutState::unpin`): the four scroll requests, a strip
-  scroll or snap, a window closing, a width given. Refocusing the window keeps
-  it, as the app's own resize while full width does by returning before any
-  request. Once a pass has spent the pin, refocusing reveals as for any column:
-  a restore can put the column back off screen, and the spent pin still named
-  the window, so the click that should show it did nothing. Only the toggle keeps a view for full width: the startup restore and
-  a drag across the viewport come back by the reveal.
+- **The way back from full width lands the column by the same place.** Both
+  ways the toggle ran the one neutral reveal from wherever the strip was, so a
+  column came back flush left whatever x it had left, and a centred column lost
+  its centring to the reveal: Kai's thirds on 2026-10-09 had A at x=578, back
+  at x=3 with 575pt empty on the right. A view of its own, the column's start
+  against the scroll offset, cured that, but it was a second record beside the
+  width keys' place, and the two disagreed: `Mod+R` on a full-width window
+  stepped from a viewport-wide column's end-of-strip share, not where the
+  column had stood, and a column scrolled off screen came back off screen.
+  Kai asked for one mechanism (2026-10-11). Under `"never"`, entering full width
+  is a width change to the whole viewport about the column's `Place`, taken
+  through `place_of` as a width key takes it, only when the last pass had the
+  window selected, because a title-bar zoom can name a window that was not. For
+  a window pulled out of a stack that is the stack's column, and the full-width
+  column takes the stack's place, so the place carries over. The way back puts
+  the column at `strip::place_x` for the width it returns to, `w0` when nothing
+  else changed, so it lands at `x0`; a `Mod+R` or resize key in between ends
+  full width in place and steps about the same place. The way back reads only a
+  kept place (`kept_place_of`) and takes no fresh one, so with none, after any
+  scroll (`LayoutState::unpin`), the startup restore, a drag across the
+  viewport or a zoom of a window the last pass did not select, it reveals. The
+  place is taken revealed, so a column scrolled off screen comes back on screen
+  where the reveal shows it. Refocusing the window keeps the place
+  (`holds_scroll_for`), as the app's own resize while full width does by
+  returning before any request.
 
 ## Navigation
 
@@ -289,11 +293,19 @@ lands the fold-out right of the stack and the reveal scrolls one column, 0 to
 862.5 on Kai's halves. The fold back revealed from there, so A1 stayed at
 x=-860 with half the viewport empty. `Mod+Period` lands it in the stack's
 place and scrolls nothing, and the same rule holds for it. Under `"never"` the
-fold-out keeps the stack's view as the full-width toggle does (`KeptView`, by
-`Toggle::Fold` with the key's side, read before the fold's own reveal), and only
-the fold-in of that window by the same key spends it. Refocusing the window
-keeps it, as for full width. The other key, or any scroll in between, drops it,
-and the fold back reveals as before. The other key folding into a column that is
+fold-out keeps how the last pass showed the stack (`View` in a `KeptView` naming
+the key's side, read before the fold's own reveal): centred, or its start
+against the scroll offset from `last_selected_rel_px`, which the fold back pins
+(`Pin::Start`) where the pass applies a kept right edge (see "Mouse resize"). A
+start rather than a scroll offset, so the column keeps its x through a width
+change elsewhere in the strip that scrolls nothing. Only the fold-in of that
+window by the same key spends it. The fold keeps a view rather than full
+width's `Place`: the fold-out's own reveal would drop a place, and a column
+folded out and back off screen is put back off screen where it stood.
+Refocusing the window keeps the view, as for full width; once a pass has spent
+the pin, refocusing reveals as for any column, because the spent pin still named
+the window and the click that should show it did nothing. The other key, or any
+scroll in between, drops the view, and the fold back reveals as before. The other key folding into a column that is
 not the row's drops it by that fold's own scroll; into the row, which a drag swap
 can bring beside the window without scrolling, by the key the view names.
 
@@ -410,7 +422,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   event ahead of its passes. After a resize it names the session's window, not the hit test's: the
   cursor lets go on the edge, where the column behind can answer. `select_window` on the window
   already selected issues no scroll request while a pin no pass has spent names it, as it keeps a
-  centre override and the view a toggle back returns to; the request would have cleared the pin
+  centre override, the view a fold back returns to and the place a width key or the full-width
+  toggle keeps; the request would have cleared the pin
   before the only pass that reads it.
 - **A centred column takes twice the travel.** Centring moves both edges by half of any change, so
   the column takes the start width plus twice the dragged edge's travel (`edge_drag::dragged_width`)
@@ -473,7 +486,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   read as `width / viewport`, and `column_width` took the gap share out of that again, so Kai's
   860pt half came back as 858.5, drawn at 859, a point narrower each time; the row's height became
   pixel weights with `height_overridden` set; and the report's scroll request dropped the centre
-  override and the view a toggle back returns to. Now, with no drag, an axis within 1pt of the slot
+  override, the view a fold back returns to and the place a width key or the full-width toggle
+  keeps. Now, with no drag, an axis within 1pt of the slot
   the last pass gave the window changes nothing (a lone column's height is no row's), and a report
   that changes neither returns before its scroll request. The pass records that slot for its
   selection as it wrote it, after the windows' own limits (`last_selected_width_px`,

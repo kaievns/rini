@@ -38,15 +38,16 @@ struct StackOrigin {
 enum Pin {
     /// Its right edge at that x, in display coordinates: a left-edge drag keeps the right one.
     RightEdge,
-    /// Its start that far right of the scroll offset: where a toggle found the column.
+    /// Its start that far right of the scroll offset: where a fold-out found the column.
     Start,
     /// That share of the viewport's free space on its left, at whatever width it now has: where a
-    /// width change by key keeps it (`Place::Share`).
+    /// width change by key or the full-width toggle keeps it (`Place::Share`).
     Place,
 }
 
-/// Where a column stood when a width change by key first took it, kept through the ones after so
-/// each grows and shrinks it about the same place.
+/// Where a column stood when a width change by key or the full-width toggle first took it, kept
+/// through the ones after so each grows and shrinks it about the same place and the way back from
+/// full width lands it there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Place {
     /// Centred by a centre override.
@@ -55,7 +56,7 @@ enum Place {
     Share(f64),
 }
 
-/// How the strip showed a column when a toggle took its window, for the toggle back.
+/// How the strip showed a column when a fold-out took its window, for the fold back.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum View {
     /// Centred by a centre override.
@@ -64,19 +65,12 @@ enum View {
     StartingAt(f64),
 }
 
-/// The toggle whose way back returns to a kept view.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Toggle {
-    FullWidth,
-    /// The fold key for this side.
-    Fold(Direction),
-}
-
-/// The view `window`'s column had before `by` took it, kept until any other scroll.
+/// The view the stack `window` was folded out of had before the fold key for `side` took it, kept
+/// until any other scroll.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct KeptView {
     window: WindowId,
-    by: Toggle,
+    side: Direction,
     view: View,
 }
 
@@ -196,8 +190,8 @@ struct LayoutState {
     pending_pin_of: Option<(WindowId, Pin)>,
     #[serde(skip)]
     kept_view: Option<KeptView>,
-    /// The place the width changes by key keep the named window's column at, until any other
-    /// scroll.
+    /// The place the width changes by key and the full-width toggle keep the named window's column
+    /// at, until any other scroll.
     #[serde(skip)]
     kept_place: Option<(WindowId, Place)>,
     center_override_window: Option<WindowId>,
@@ -537,8 +531,8 @@ impl LayoutState {
         self.pending_pin_of = Some((wid, pin));
     }
 
-    /// Any scroll replaces what is held for a later pass: the pin, the view a restore takes, and the
-    /// place a width change by key keeps or would take from the last pass.
+    /// Any scroll replaces what is held for a later pass: the pin, the view a fold back takes, and
+    /// the place a width change or the full-width toggle keeps or would take from the last pass.
     fn unpin(&mut self) {
         self.pending_pin.store(f64::NAN.to_bits(), Ordering::Relaxed);
         self.pending_pin_of = None;
@@ -548,8 +542,8 @@ impl LayoutState {
     }
 
     /// Whether a scroll request for `wid` would drop something held for it: its centring, a pin no
-    /// pass has spent yet, the view a toggle back returns to, or the place a width change by key
-    /// keeps.
+    /// pass has spent yet, the view a fold back returns to, or the place a width change or the
+    /// full-width toggle keeps.
     fn holds_scroll_for(&self, wid: WindowId) -> bool {
         let pin_pending = !f64::from_bits(self.pending_pin.load(Ordering::Relaxed)).is_nan();
         self.center_override_window == Some(wid)
@@ -558,12 +552,10 @@ impl LayoutState {
             || self.kept_place.is_some_and(|(of, _)| of == wid)
     }
 
-    /// Where a width change by key keeps `wid`'s column: the place kept for it, or else where the
-    /// last pass showed it, if `wid` was that pass's selection.
+    /// Where a width change keeps `wid`'s column: the place kept for it, or else where the last pass
+    /// showed it, if `wid` was that pass's selection.
     fn place_of(&self, wid: WindowId) -> Option<Place> {
-        if let Some((of, place)) = self.kept_place
-            && of == wid
-        {
+        if let Some(place) = self.kept_place_of(wid) {
             return Some(place);
         }
         if unpacked(self.last_selected_rel_of.load(Ordering::Relaxed)) != Some(wid) {
@@ -576,7 +568,12 @@ impl LayoutState {
         share.is_finite().then_some(Place::Share(share))
     }
 
-    /// Rescroll after a width change by key: back to `place`, or, with none, as far as it takes to
+    /// The place kept for `wid`'s column, if any.
+    fn kept_place_of(&self, wid: WindowId) -> Option<Place> {
+        self.kept_place.filter(|&(of, _)| of == wid).map(|(_, place)| place)
+    }
+
+    /// Rescroll after a width change: back to `place`, or, with none, as far as it takes to
     /// keep the column visible, every column start after it having moved.
     fn rescroll_after_width(&mut self, wid: WindowId, place: Option<Place>, reveals_only: bool) {
         match place {
@@ -589,21 +586,30 @@ impl LayoutState {
     /// Hold the selected `wid`'s column at `place`, for the next pass and the width changes after
     /// it.
     fn keep_place(&mut self, wid: WindowId, place: Place) {
+        let pin = match place {
+            Place::Centred => None,
+            Place::Share(share) => Some((Pin::Place, share)),
+        };
+        self.hold_selected(wid, pin);
+        self.kept_place = Some((wid, place));
+    }
+
+    /// Hold the selected `wid`'s column for the next pass: centred by its override, or by `pin`.
+    fn hold_selected(&mut self, wid: WindowId, pin: Option<(Pin, f64)>) {
         self.unpin();
         self.pending_align.store(false, Ordering::Relaxed);
         self.pending_reveal_direction.store(0, Ordering::Relaxed);
-        match place {
-            Place::Centred => {
+        match pin {
+            None => {
                 self.center_override_window = Some(wid);
                 self.pending_center_align.store(true, Ordering::Relaxed);
             }
-            Place::Share(share) => {
+            Some((pin, value)) => {
                 self.center_override_window = None;
                 self.pending_center_align.store(false, Ordering::Relaxed);
-                self.pin(wid, Pin::Place, share);
+                self.pin(wid, pin, value);
             }
         }
-        self.kept_place = Some((wid, place));
     }
 
     /// How the last pass showed `wid`'s column, if `wid` was its selection.
@@ -628,38 +634,20 @@ impl LayoutState {
         (width.is_finite() && height.is_finite()).then(|| CGSize::new(width, height))
     }
 
-    /// The view `by`'s way back returns `wid` to, if it kept one. Any other kept view goes too.
-    fn take_kept_view(&mut self, wid: WindowId, by: Toggle) -> Option<View> {
+    /// The view the fold back by the key for `side` returns `wid` to, if it kept one. Any other
+    /// kept view goes too.
+    fn take_kept_view(&mut self, wid: WindowId, side: Direction) -> Option<View> {
         let kept = self.kept_view.take()?;
-        (kept.window == wid && kept.by == by).then_some(kept.view)
-    }
-
-    /// Rescroll so a toggled column stays visible, as the resize path does, unless it is going back
-    /// to a view nothing has scrolled away from since.
-    fn rescroll_after_toggle(&mut self, wid: WindowId, back_to: Option<View>, reveals_only: bool) {
-        match back_to {
-            Some(view) => self.return_to_view(wid, view),
-            None if reveals_only => self.reveal_selected_without_direction(),
-            None => self.align_scroll_to_selected(),
-        }
+        (kept.window == wid && kept.side == side).then_some(kept.view)
     }
 
     /// Show the selected `wid`'s column the way `view` says the strip showed it.
     fn return_to_view(&mut self, wid: WindowId, view: View) {
-        self.unpin();
-        self.pending_align.store(false, Ordering::Relaxed);
-        self.pending_reveal_direction.store(0, Ordering::Relaxed);
-        match view {
-            View::Centred => {
-                self.center_override_window = Some(wid);
-                self.pending_center_align.store(true, Ordering::Relaxed);
-            }
-            View::StartingAt(rel) => {
-                self.center_override_window = None;
-                self.pending_center_align.store(false, Ordering::Relaxed);
-                self.pin(wid, Pin::Start, rel);
-            }
-        }
+        let pin = match view {
+            View::Centred => None,
+            View::StartingAt(rel) => Some((Pin::Start, rel)),
+        };
+        self.hold_selected(wid, pin);
     }
 
     fn clamp_scroll_offset(&mut self) {
@@ -1881,8 +1869,8 @@ impl ScrollingLayoutSystem {
         if state.locate(wid).is_some() {
             // Refocusing the selected window keeps what is held for it: its centring, the right
             // edge a left-edge drag keeps, which the release refocuses before its pass, the view a
-            // toggle back returns to, a full width's or a fold's, and the place a width change by
-            // key keeps, which the raise after each refocuses.
+            // fold back returns to, and the place a width change or the full-width toggle keeps,
+            // which the raise after each refocuses.
             if state.selected == Some(wid) && state.holds_scroll_for(wid) {
                 return true;
             }
@@ -2123,12 +2111,15 @@ impl ScrollingLayoutSystem {
             }
         }
 
-        let by = Toggle::Fold(side);
-        let back_to = state.take_kept_view(selected, by).filter(|_| !folding_out);
+        let back_to = state.take_kept_view(selected, side).filter(|_| !folding_out);
         state.selected = Some(selected);
-        state.rescroll_after_toggle(selected, back_to, reveals_only);
+        match back_to {
+            Some(view) => state.return_to_view(selected, view),
+            None if reveals_only => state.reveal_selected_without_direction(),
+            None => state.align_scroll_to_selected(),
+        }
         if let Some(view) = view_before {
-            state.kept_view = Some(KeptView { window: selected, by, view });
+            state.kept_view = Some(KeptView { window: selected, side, view });
         }
         vec![selected]
     }
@@ -2136,9 +2127,11 @@ impl ScrollingLayoutSystem {
     /// Maximise `wid`, or put it back to the width and stack it had before, and select it.
     ///
     /// The one toggle: `ctrl-F` asks it of the selection, a title-bar zoom of the window zoomed.
-    /// Under `"never"` the way back also puts the strip back, its column at the screen x it left or
-    /// centred again, unless any other scroll came in between. `false` when the window is not a
-    /// column of this layout.
+    /// Under `"never"` both ways are a width change about the column's place, as
+    /// `cycle_preset_column_width`'s is: entering takes the place as a width key does, and the way
+    /// back lands the column where it stood, unless any other scroll came in between. Leaving takes
+    /// no place of its own, so with none kept it reveals. `false` when the window is not a column of
+    /// this layout.
     pub fn toggle_full_width(&mut self, layout: LayoutId, wid: WindowId) -> bool {
         let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
@@ -2149,19 +2142,20 @@ impl ScrollingLayoutSystem {
         }
 
         let entering = !state.fullscreen_within_gaps.contains(&wid);
-        // Read before this toggle's own scroll request, which drops the centre override.
-        let view_before = (entering && reveals_only).then(|| state.laid_out_view_of(wid)).flatten();
-        let back_to = state.take_kept_view(wid, Toggle::FullWidth).filter(|_| !entering);
+        let place = if !reveals_only {
+            None
+        } else if entering {
+            state.place_of(wid)
+        } else {
+            state.kept_place_of(wid)
+        };
         if entering {
             state.enter_full_width(wid);
         } else {
             state.leave_full_width_restoring(wid);
         }
         state.selected = Some(wid);
-        state.rescroll_after_toggle(wid, back_to, reveals_only);
-        if let Some(view) = view_before {
-            state.kept_view = Some(KeptView { window: wid, by: Toggle::FullWidth, view });
-        }
+        state.rescroll_after_width(wid, place, reveals_only);
         true
     }
 
@@ -5726,7 +5720,7 @@ mod tests {
         }
     }
 
-    // ── the view full width returns to ──────────────────────────────────────
+    // ── the place full width returns to ─────────────────────────────────────
 
     fn kai_s_frames(system: &ScrollingLayoutSystem, layout: LayoutId) -> Vec<(WindowId, CGRect)> {
         render(system, layout, KAI_SCREEN, &kai_s_gaps())
@@ -5957,10 +5951,10 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[2]), (3.0, 572.0));
     }
 
-    /// Z scrolled off screen, maximized and restored there: focusing it again shows it, as it does
-    /// with no toggle. The restore's spent pin still named it, and the refocus kept that.
+    /// Z scrolled off screen and maximized: its place is taken where the reveal shows it, flush left,
+    /// so the restore brings it back on screen there, and refocusing it keeps it.
     #[test]
-    fn refocusing_a_window_restored_off_screen_reveals_it() {
+    fn a_window_maximized_off_screen_comes_back_where_the_reveal_shows_it() {
         let (mut system, layout, w) = kai_s_thirds();
         assert!(system.select_window(layout, w[0]));
         kai_s_frames(&system, layout);
@@ -5970,10 +5964,119 @@ mod tests {
         assert!(off_screen.0 + off_screen.1 < 0.0, "{off_screen:?}");
 
         maximize_and_restore(&mut system, layout, w[0]);
-        assert_eq!(laid_out_xw(&system, layout, w[0]), off_screen);
+        assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 860.0));
         assert!(system.select_window(layout, w[0]));
 
         assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 860.0));
+    }
+
+    /// `ctrl-F` as the reactor runs it, the raise's refocus after.
+    fn mod_f(system: &mut ScrollingLayoutSystem, layout: LayoutId) -> Vec<(WindowId, CGRect)> {
+        press(system, layout, |system, layout| {
+            let selected = system.selected_window(layout).expect("a selection");
+            assert!(system.toggle_full_width(layout, selected));
+        })
+    }
+
+    /// Kai's 2026-10-11 columns through full width and back: each lands where it stood, as it
+    /// would stepping back to its width by `Mod+R`.
+    #[test]
+    fn full_width_and_back_lands_a_column_where_it_stood() {
+        type Setup = fn() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>);
+        let cases: [(&str, Setup, usize); 3] = [
+            ("the right third", kai_s_two_thirds_and_a_third, 1),
+            ("the left two thirds", kai_s_two_thirds_and_a_third, 0),
+            ("the middle of three thirds", kai_s_three_thirds, 1),
+        ];
+        for (case, setup, col) in cases {
+            let (mut system, layout, w) = setup();
+            assert!(system.select_window(layout, w[col]));
+            let before = kai_s_frames(&system, layout);
+
+            assert_eq!(xw_in(&mod_f(&mut system, layout), w[col]), (3.0, 1722.0), "{case}");
+            assert_same_frames(&mod_f(&mut system, layout), &before);
+        }
+    }
+
+    /// Kai's case with the right third a stack: each row goes full width in the stack's place and
+    /// back into its row, the stack flush right again.
+    #[test]
+    fn a_stacked_window_back_from_full_width_lands_its_column_where_it_stood() {
+        for row in 0..2 {
+            let (mut system, layout, w) = kai_s_widths(&[0.66667, 0.33333, 0.33333], 2);
+            system.toggle_fold_of_selection(layout, Direction::Left);
+            assert!(system.select_window(layout, w[0]));
+            kai_s_frames(&system, layout);
+            let stack = vec![w[1], w[2]];
+            assert!(system.select_window(layout, stack[row]));
+            let before = kai_s_frames(&system, layout);
+            assert_eq!(shape(&system, layout), vec![vec![w[0]], stack.clone()]);
+            assert_eq!(laid_out_xw(&system, layout, stack[row]), (1153.0, 572.0), "row {row}");
+
+            let full = mod_f(&mut system, layout);
+            assert_eq!(xw_in(&full, stack[row]), (3.0, 1722.0), "row {row}");
+            let rest = vec![stack[1 - row]];
+            assert_eq!(shape(&system, layout), vec![vec![w[0]], vec![stack[row]], rest], "row {row}");
+
+            assert_same_frames(&mod_f(&mut system, layout), &before);
+            assert_eq!(shape(&system, layout), vec![vec![w[0]], stack], "row {row}");
+        }
+    }
+
+    /// `Mod+R` on a full-width window steps from the whole viewport about the place `ctrl-F` took:
+    /// back at its width the column stands where it stood. The second of four unequal columns has
+    /// three times the free space on its left as on its right, which the end-of-strip share of a
+    /// viewport-wide column would not keep.
+    #[test]
+    fn mod_r_from_full_width_steps_about_the_place_full_width_took() {
+        type Setup = fn() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>);
+        let off_centre: Setup = || kai_s_widths(&[0.5, 0.33333, 0.5, 0.33333], 1);
+        let cases: [(&str, Setup, (f64, f64)); 2] = [
+            ("Kai's right third", kai_s_two_thirds_and_a_third, (1153.0, 572.0)),
+            ("an off-centre third", off_centre, (866.0, 572.0)),
+        ];
+        for (case, setup, third) in cases {
+            let (mut system, layout, w) = setup();
+            let before = kai_s_frames(&system, layout);
+            assert_eq!(xw_in(&before, w[1]), third, "{case}");
+
+            assert_eq!(xw_in(&mod_f(&mut system, layout), w[1]), (3.0, 1722.0), "{case}");
+            assert_same_frames(&mod_r(&mut system, layout), &before);
+            let half = mod_r(&mut system, layout);
+            let (x, width) = xw_in(&half, w[1]);
+            assert_eq!(width, 860.0, "{case}");
+            let (left0, right0) = (third.0 - 3.0, 1725.0 - third.0 - third.1);
+            let kept = 3.0 + (1722.0 - width) * left0 / (left0 + right0);
+            assert!((x - kept).abs() <= 1.0, "{case}: {x}, not {kept}");
+        }
+    }
+
+    /// `ctrl-F` and back after `Mod+R` stepped the column: it comes back at that width where the
+    /// width keys kept it, and the next step goes on about the same place.
+    #[test]
+    fn full_width_after_a_width_key_returns_to_the_place_the_width_keys_keep() {
+        let (mut system, layout, w) = kai_s_two_thirds_and_a_third();
+        let half = mod_r(&mut system, layout);
+        assert_eq!(xw_in(&half, w[1]), (866.0, 860.0));
+
+        mod_f(&mut system, layout);
+        assert_same_frames(&mod_f(&mut system, layout), &half);
+        let two_thirds = mod_r(&mut system, layout);
+        assert_eq!(xw_in(&two_thirds, w[1]).1, 1148.0);
+        assert!((right_edge(&two_thirds, w[1]) - 1725.0).abs() <= 1.0, "{two_thirds:?}");
+    }
+
+    /// Under `"always"` the centring places the column both ways, as it does for a width key.
+    #[test]
+    fn always_brings_a_full_width_column_back_to_the_centring() {
+        for col in 0..3 {
+            let (mut system, layout, w) = kai_s_centred_strip();
+            assert!(system.select_window(layout, w[col]));
+            let before = kai_s_frames(&system, layout);
+
+            assert_eq!(xw_in(&mod_f(&mut system, layout), w[col]), (3.0, 1722.0), "column {col}");
+            assert_same_frames(&mod_f(&mut system, layout), &before);
+        }
     }
 
     // ── the view a fold returns to ──────────────────────────────────────────
