@@ -5418,6 +5418,10 @@ mod tests {
         })
     }
 
+    fn kept_place(system: &ScrollingLayoutSystem, layout: LayoutId) -> Option<(WindowId, super::Place)> {
+        system.layout_state(layout).expect("layout").kept_place
+    }
+
     fn xw_in(frames: &[(WindowId, CGRect)], wid: WindowId) -> (f64, f64) {
         let frame = frame_for(frames, wid);
         (frame.origin.x, frame.size.width)
@@ -5648,6 +5652,87 @@ mod tests {
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1148.0));
     }
 
+    /// The half of the middle third, then a window opening after it (focus going to the new window
+    /// and coming back), a move right, a fold into the first column, or a left-edge drag: each
+    /// drops the place, and the next key takes it from where the column then stands, not at the
+    /// half's share, which would put two thirds at 290.
+    #[test]
+    fn an_opening_a_move_a_fold_or_a_drag_drops_the_place_and_the_next_key_takes_it_afresh() {
+        type Event = fn(&mut ScrollingLayoutSystem, LayoutId, &[(WindowId, CGRect)], WindowId);
+        let events: [(&str, Event, (f64, f64), (f64, f64)); 4] = [
+            (
+                "an opening",
+                |system, layout, _, _| system.add_window_after_selection(layout, wid(1, 9)),
+                (3.0, 860.0),
+                (3.0, 1148.0),
+            ),
+            (
+                "a move",
+                |system, layout, _, _| assert!(system.move_selection(layout, Direction::Right)),
+                (866.0, 860.0),
+                (577.0, 1148.0),
+            ),
+            (
+                "a fold",
+                |system, layout, _, _| {
+                    system.toggle_fold_of_selection(layout, Direction::Left);
+                },
+                (3.0, 572.0),
+                (3.0, 860.0),
+            ),
+            (
+                "a drag",
+                |system, layout, frames, window| {
+                    let from = frame_for(frames, window);
+                    let to = CGRect::new(
+                        CGPoint::new(from.origin.x - 100.0, from.origin.y),
+                        CGSize::new(from.size.width + 100.0, from.size.height),
+                    );
+                    drag(system, layout, window, from, to);
+                },
+                (334.0, 960.0),
+                (252.0, 1148.0),
+            ),
+        ];
+        for (how, event, after, next) in events {
+            let (mut system, layout, w) = kai_s_three_thirds();
+            let half = mod_r(&mut system, layout);
+            assert_eq!(xw_in(&half, w[1]), (434.0, 860.0), "{how}");
+            event(&mut system, layout, &half, w[1]);
+            kai_s_frames(&system, layout);
+            assert_eq!(kept_place(&system, layout), None, "{how}");
+            assert!(system.select_window(layout, w[1]), "{how}");
+            assert_eq!(laid_out_xw(&system, layout, w[1]), after, "{how}");
+
+            assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), next, "{how}");
+        }
+    }
+
+    /// A viewport-wide column focus reached with no place kept takes its end of the strip: among
+    /// five thirds the middle one steps to a third in the middle, the first at the left, the last
+    /// at the right.
+    #[test]
+    fn a_viewport_wide_column_reached_by_focus_steps_about_its_end_of_the_strip() {
+        for (col, third) in [(0, 3.0), (2, 578.0), (4, 1153.0)] {
+            let (mut system, layout, w) = kai_s_widths(&[0.33333; 5], col);
+            for _ in 0..3 {
+                mod_r(&mut system, layout);
+            }
+            let (away, back) = if col == 4 {
+                (Direction::Left, Direction::Right)
+            } else {
+                (Direction::Right, Direction::Left)
+            };
+            system.move_focus(layout, away);
+            kai_s_frames(&system, layout);
+            system.move_focus(layout, back);
+            assert_eq!(laid_out_xw(&system, layout, w[col]), (3.0, 1722.0), "column {col}");
+            assert_eq!(kept_place(&system, layout), None, "column {col}");
+
+            assert_eq!(xw_in(&mod_r(&mut system, layout), w[col]), (third, 572.0), "column {col}");
+        }
+    }
+
     /// Kai's right third, centred after its first step: the next steps keep it centred.
     #[test]
     fn centring_drops_the_place_and_the_next_key_keeps_the_column_centred() {
@@ -5742,6 +5827,7 @@ mod tests {
                 };
                 let (x, width) = xw_in(&frames, w[col]);
                 let case = format!("column {col}, step {step}: {x}, {width}");
+                assert_eq!(kept_place(&system, layout), None, "{case}");
                 match col {
                     0 => assert_eq!(x, 3.0, "{case}"),
                     1 => assert!((x + width / 2.0 - 864.0).abs() <= 1.0, "{case}"),
@@ -6106,7 +6192,9 @@ mod tests {
             let before = kai_s_frames(&system, layout);
 
             assert_eq!(xw_in(&mod_f(&mut system, layout), w[col]), (3.0, 1722.0), "column {col}");
+            assert_eq!(kept_place(&system, layout), None, "column {col}");
             assert_same_frames(&mod_f(&mut system, layout), &before);
+            assert_eq!(kept_place(&system, layout), None, "column {col}");
         }
     }
 
