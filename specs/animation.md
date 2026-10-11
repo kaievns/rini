@@ -45,8 +45,8 @@ only the transitions are missing.
   again from wherever it is drawn: it MUST NOT be dropped, and MUST NOT start the bounce over from
   rest. A burst at the wall holds the view there, and the view is home within one bounce of the last
   press, never later. A push arriving before the motion begins, up to 300ms behind a window opening,
-  MUST wait for it, and the pushes of that wait show once, however many arrive: a CSS animation
-  restarted twice before its first frame shows once.
+  450ms for one ending part off the display, MUST wait for it, and the pushes of that wait show once,
+  however many arrive: a CSS animation restarted twice before its first frame shows once.
 
 > **Reported 2026-10-03.** "the only thing that still mildly bugs me is the end of strip/stack
 > animation, it throttles rapid key presses and it feels like a bug. if you can make it react to

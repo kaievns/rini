@@ -2560,6 +2560,29 @@ mod tests {
         assert_eq!(c.on(tick, now + ELSEWHERE_HOLD_CAP), vec![Command::StartMoving], "the cut end's, from the show");
     }
 
+    /// A pass merged before the motion growing window 2 to end cut by the display's edge, over a
+    /// hold for window 1 that SkyLight watches, holds `ELSEWHERE_HOLD_CAP` from its arrival, and
+    /// no longer than `BURST_HOLD_CAP` from the show.
+    #[test]
+    fn a_merge_before_the_motion_growing_a_cut_end_holds_the_longer_cap_from_its_arrival() {
+        let tick = Event::Tick { settled: false, landed: false };
+        for (arrival, ends) in [(100, 550), (200, 600)] {
+            let now = Instant::now();
+            let at = |ms| now + Duration::from_millis(ms);
+            let (mut first, _, _) = unfold_cut();
+            first.awaiting = vec![w(1)];
+            first.repainting = vec![w(1)];
+            let mut newcomer = first.clone();
+            newcomer.awaiting = vec![w(2)];
+            newcomer.repainting = vec![w(2)];
+            let mut c = running(first, now);
+            c.on(Event::Merge { stage: newcomer, moved: true }, at(arrival));
+            assert!(c.on(tick.clone(), at(arrival) + HOLD_CAP).is_empty(), "{arrival}: not the SkyLight cap");
+            assert!(c.on(tick.clone(), at(ends - 1)).is_empty(), "{arrival}");
+            assert_eq!(c.on(tick.clone(), at(ends)), vec![Command::StartMoving], "{arrival}: the hold runs out");
+        }
+    }
+
     /// A pass held while the motion runs growing window 2 to end cut by the display's edge waits
     /// `ELSEWHERE_HOLD_CAP` from its arrival, not `HOLD_CAP`, and its watch waits as long.
     #[test]
