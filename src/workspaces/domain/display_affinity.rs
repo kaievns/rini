@@ -62,7 +62,7 @@ pub struct DisplayAffinity {
 /// widths, which is exactly when this record is consulted. A file holds it as a `StoredWidth`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColumnWidth {
-    /// Full viewport width, as `ctrl-F` produces. Kept distinct from `Offset` because it is a
+    /// Full viewport width, as `Mod+F` produces. Kept distinct from `Offset` because it is a
     /// MODE, not a ratio: it must stay full width on a display of any size, and it round-trips
     /// back to the width it had when toggled off.
     FullWidth,

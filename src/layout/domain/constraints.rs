@@ -46,7 +46,7 @@ pub enum ColumnKind {
     /// Maximised: the whole viewport, whatever its stored ratio.
     FullWidth,
     /// Held only to the viewport, not to `min-column-width` and `max-column-width`: the width a
-    /// mouse drag gave it, or `ctrl-R`'s 100%.
+    /// mouse drag gave it, or `Mod+R`'s 100%.
     Unbounded,
     /// Held to `min-column-width` and `max-column-width`.
     Bounded,
@@ -58,7 +58,7 @@ pub enum ColumnKind {
 /// `max-column-width` — below 1.0, deliberately, so that the incremental resize keys and the
 /// default width cannot crawl to 100% — so a maximised column cannot be expressed as a
 /// ratio at all and has to be asked for separately. The bounds are for the resize keys and the
-/// presets below 100%, not a drag or `ctrl-R`'s 100%: an unbounded column is held only to the
+/// presets below 100%, not a drag or `Mod+R`'s 100%: an unbounded column is held only to the
 /// viewport.
 ///
 /// Both the layout pass and `scroll-strip`'s step read this, because they used to disagree:
@@ -74,7 +74,7 @@ pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, ma
 }
 
 /// Whether a column of `kind` at `ratio` is held to the whole viewport: full width, or unbounded to
-/// within a point of it, as `ctrl-R`'s 100% or a drag across the viewport leaves one.
+/// within a point of it, as `Mod+R`'s 100% or a drag across the viewport leaves one.
 pub fn holds_viewport(kind: ColumnKind, ratio: f64, viewport_width: f64) -> bool {
     match kind {
         ColumnKind::FullWidth => true,
@@ -97,7 +97,7 @@ pub fn holds_viewport(kind: ColumnKind, ratio: f64, viewport_width: f64) -> bool
 /// The gap comes out of the column rather than out of the space between columns, which is what keeps
 /// two columns at ratio 0.5 adding up to the viewport instead of overflowing it by one gap. It is
 /// skipped when it would take the column below a pixel, and for an unbounded column, whose width is
-/// the one a drag let go at or, from `ctrl-R`'s 100%, the viewport's whole width.
+/// the one a drag let go at or, from `Mod+R`'s 100%, the viewport's whole width.
 pub fn column_width(
     kind: ColumnKind,
     ratio: f64,
@@ -330,7 +330,7 @@ mod tests {
         assert_eq!(column_ratio(ColumnKind::FullWidth, 0.5, 0.0, MIN, MAX), 1.0);
     }
 
-    /// Its stored offset is untouched while it is maximised, which is what lets `ctrl-F` hand the
+    /// Its stored offset is untouched while it is maximised, which is what lets `Mod+F` hand the
     /// column back its old width without having had to remember one.
     #[test]
     fn a_maximised_column_ignores_the_width_it_will_go_back_to() {
@@ -685,7 +685,7 @@ mod column_tests {
             ..AxisConstraints::default()
         };
         assert_eq!(column_width(ColumnKind::FullWidth, 1.0, 1722., 0., limits), 1722.0, "full width");
-        assert_eq!(column_width(ColumnKind::Unbounded, 1.0, 1722., 3., limits), 1722.0, "ctrl-R's 100%");
+        assert_eq!(column_width(ColumnKind::Unbounded, 1.0, 1722., 3., limits), 1722.0, "Mod+R's 100%");
         assert_eq!(column_width(ColumnKind::Unbounded, 1721.5 / 1722., 1722., 3., limits), 1721.5, "a point short");
         assert_eq!(column_width(ColumnKind::Unbounded, 0.9, 1722., 3., limits), 1408.0, "dragged short of it");
         assert_eq!(column_width(ColumnKind::Bounded, 1.0, 1722., 0., limits), 1408.0, "bounded");

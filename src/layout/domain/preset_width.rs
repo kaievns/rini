@@ -1,4 +1,4 @@
-//! Which width the next `ctrl-R` asks for.
+//! Which width the next `Mod+R` asks for.
 //!
 //! Lifted out of `scrolling.rs` so the rule can be exercised without a layout, a column or a
 //! selection. The whole content is "given the width a column has now, which preset comes next" —
@@ -79,7 +79,7 @@ mod tests {
         assert_eq!(next_preset(1.0, &PRESETS), Some(PresetWidth::Ratio(0.33333)));
     }
 
-    /// A width that is not a preset at all — what `ctrl-+` leaves behind — joins the cycle at the
+    /// A width that is not a preset at all — what a resize key leaves behind — joins the cycle at the
     /// first preset above it rather than at the start.
     #[test]
     fn an_arbitrary_width_joins_the_cycle_above_itself() {

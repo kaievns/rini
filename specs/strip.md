@@ -321,7 +321,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 ## Folding
 
-- `ctrl-,` folds and unfolds toward the column on the LEFT. `ctrl-.` does the same toward the column on
+- `Mod+Comma` folds and unfolds toward the column on the LEFT. `Mod+Period` does the same toward the column on
   the RIGHT. The two MUST be symmetric.
 - Folding MUST act on the focused window. It MUST NOT switch focus to another window and fold that one
   instead.

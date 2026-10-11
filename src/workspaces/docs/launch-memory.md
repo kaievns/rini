@@ -91,13 +91,13 @@ sending full-width windows back at half size. A width has three states, not two,
 | state | meaning | what `remember` stores |
 |---|---|---|
 | `Known(Some(w))` | the layout holding the window says `w` | `w` |
-| `Known(None)` | the layout holds the window at the display default | nothing, so ctrl-F can be undone across a relaunch |
+| `Known(None)` | the layout holds the window at the display default | nothing, so Mod+F can be undone across a relaunch |
 | `Unknown` | no layout holding the window could be consulted | whatever is already remembered |
 
 Collapsing `Unknown` into `Known(None)` is a data-destroying bug rather than a missed
 optimisation: the autosave runs every few seconds, so ONE projection that could not read
 the layout overwrote `FullWidth` with nothing, permanently. The window then relaunched at
-the default width and no record survived to say otherwise, which is why pressing ctrl-F
+the default width and no record survived to say otherwise, which is why pressing Mod+F
 again was the only fix and why the same report came back three times.
 `resolve_width` inherits by title first, then by position, matching `slot_for_window`.
 

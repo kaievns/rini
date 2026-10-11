@@ -81,7 +81,7 @@ struct Column {
     #[serde(default)]
     width_overridden: bool,
     /// The width is held only to the viewport, not to `min-column-width` and `max-column-width`,
-    /// as a mouse drag or `ctrl-R`'s 100% gives it.
+    /// as a mouse drag or `Mod+R`'s 100% gives it.
     #[serde(default, rename = "width_dragged")]
     width_unbounded: bool,
     #[serde(default)]
@@ -363,7 +363,7 @@ impl LayoutState {
     ///
     /// 1.0 while maximised, whatever the column's stored offset says. Every rule that asks "how wide
     /// is this now" has to read it this way: the stored offset is the width the column will go BACK
-    /// to, and answering with it made `ctrl-R` and the resize keys compute their next width from a
+    /// to, and answering with it made `Mod+R` and the resize keys compute their next width from a
     /// size the window had not been for some time.
     fn ratio_of(&self, wid: WindowId, col_idx: usize) -> f64 {
         if self.fullscreen_within_gaps.contains(&wid) {
@@ -415,7 +415,7 @@ impl LayoutState {
     ///
     /// The window becomes an ordinary column with nowhere to return to, so the origin is FORGOTTEN
     /// rather than kept for later: the maximise that recorded it is over. Leaving it recorded meant a
-    /// later `ctrl-F` — which records no new origin, the window being alone in its column by then —
+    /// later `Mod+F` — which records no new origin, the window being alone in its column by then —
     /// toggled off into a stack the user had not touched since.
     fn leave_full_width_in_place(&mut self, wid: WindowId) {
         self.fullscreen_within_gaps.remove(&wid);
@@ -894,7 +894,7 @@ impl ScrollingLayoutSystem {
         // absolute width after the default changes in config: the offset is
         // faithfully re-applied against a new base. Moving the ratio from 0.49 to 0.5
         // left every restored window at the old 842pt instead of the new 859pt — a
-        // width matching no preset, so ctrl-R could never return a window to it and
+        // width matching no preset, so Mod+R could never return a window to it and
         // every window looked subtly wrong.
         //
         // Columns the user deliberately resized (width_overridden) keep their chosen
@@ -2121,7 +2121,7 @@ impl ScrollingLayoutSystem {
 
     /// Maximise `wid`, or put it back to the width and stack it had before, and select it.
     ///
-    /// The one toggle: `ctrl-F` asks it of the selection, a title-bar zoom of the window zoomed.
+    /// The one toggle: `Mod+F` asks it of the selection, a title-bar zoom of the window zoomed.
     /// Under `"never"` both ways are a width change about the column's place, as
     /// `cycle_preset_column_width`'s is: entering takes the place as a width key does, and the way
     /// back lands the column where it stood, unless any other scroll came in between. Leaving takes
@@ -2415,7 +2415,7 @@ mod tests {
         (system, layout, w1, w2)
     }
 
-    /// What `ctrl-F` asks of the layout: the toggle, on the selection.
+    /// What `Mod+F` asks of the layout: the toggle, on the selection.
     fn toggle_selection(system: &mut ScrollingLayoutSystem, layout: LayoutId) {
         let selected = system.selected_window(layout).expect("a selection to toggle");
         assert!(system.toggle_full_width(layout, selected));
@@ -3444,7 +3444,7 @@ mod tests {
 
     // ── preset column widths ────────────────────────────────────────────────
 
-    /// ctrl-R cycles 1/3 -> 1/2 -> 2/3 and wraps back to 1/3.
+    /// Mod+R cycles 1/3 -> 1/2 -> 2/3 and wraps back to 1/3.
     #[test]
     fn cycle_preset_column_width_walks_presets_and_wraps() {
         let mut settings = niri_settings(0.33333);
@@ -3490,8 +3490,8 @@ mod tests {
         );
     }
 
-    /// The bounds the shipped config uses: a maximum well below 1.0, so that `ctrl-+` cannot crawl
-    /// to the full viewport, which only the cycle's 1.0, `ctrl-F` and a drag across it give.
+    /// The bounds the shipped config uses: a maximum well below 1.0, so that the resize keys cannot crawl
+    /// to the full viewport, which only the cycle's 1.0, `Mod+F` and a drag across it give.
     fn preset_settings() -> ScrollingLayoutSettings {
         let mut settings = niri_settings(0.5);
         settings.min_column_width_ratio = 0.33333;
@@ -3500,9 +3500,9 @@ mod tests {
         settings
     }
 
-    /// The reported defect. `ctrl-F` maximised the window and `ctrl-R` then appeared dead: it wrote a
+    /// The reported defect. `Mod+F` maximised the window and `Mod+R` then appeared dead: it wrote a
     /// width the layout pass ignored, because a maximised column is 1.0 whatever its stored width
-    /// says. The step has to UNMAXIMISE, which is the only way out of full width besides `ctrl-F`.
+    /// says. The step has to UNMAXIMISE, which is the only way out of full width besides `Mod+F`.
     #[test]
     fn a_step_off_full_width_actually_resizes_the_window() {
         let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
@@ -3648,7 +3648,7 @@ mod tests {
         let _ = positions(&system);
         let first = positions(&system);
 
-        // Alternate focus with move_focus, which is what ctrl-J / ctrl-L invoke and
+        // Alternate focus with move_focus, which is what Mod+J / Mod+L invoke and
         // what triggers reveal-on-demand. select_window does NOT take that path, so
         // it cannot reproduce the shift.
         for i in 0..3 {
@@ -3700,7 +3700,7 @@ mod tests {
 
     // ── stacking direction ──────────────────────────────────────────────────
 
-    /// ctrl-, moves the SELECTED window into the PREVIOUS column.
+    /// Mod+Comma moves the SELECTED window into the PREVIOUS column.
     #[test]
     fn stacking_moves_selected_window_into_previous_column() {
         let settings = niri_settings(0.33333);
@@ -4053,8 +4053,8 @@ mod tests {
 
     /// A window given a width has nowhere to return to.
     ///
-    /// `ctrl-R` off full width leaves the window where it is, so the stack it was pulled out of stops
-    /// being its destination and is forgotten. Keeping the record made the NEXT `ctrl-F` pair a
+    /// `Mod+R` off full width leaves the window where it is, so the stack it was pulled out of stops
+    /// being its destination and is forgotten. Keeping the record made the NEXT `Mod+F` pair a
     /// teleport: maximising records no new origin (the window is alone in its column by then), so the
     /// press that unmaximised it read the stale one and dropped the window into a stack the user had
     /// not touched since.
@@ -4074,7 +4074,7 @@ mod tests {
         assert_eq!(
             shape(&system, layout),
             vec![vec![w[1]], vec![w[0], w[2]]],
-            "it stays the ordinary column ctrl-R made it"
+            "it stays the ordinary column Mod+R made it"
         );
     }
 
@@ -4702,7 +4702,7 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0);
     }
 
-    /// `ctrl-F` gives back the width the drag started from, 860pt, whole, as a dragged width lands.
+    /// `Mod+F` gives back the width the drag started from, 860pt, whole, as a dragged width lands.
     /// A stacked window stays in its stack, a column the whole viewport wide.
     #[test]
     fn a_drag_to_the_full_viewport_makes_a_lone_window_full_width() {
@@ -4785,7 +4785,7 @@ mod tests {
     /// A preset below 1.0 is a width given by a key, so the bounds hold it again. 1.0 is held only
     /// to the viewport.
     #[test]
-    fn ctrl_r_on_it_takes_the_first_preset_above() {
+    fn mod_r_on_it_takes_the_first_preset_above() {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
         system.cycle_preset_column_width(layout);
@@ -4875,7 +4875,7 @@ mod tests {
     }
 
     /// An app that settles 20pt short of the viewport, past the 1% the cycle reads as the same
-    /// width. Read back, the column would sit at 0.988, the next `ctrl-R` would find 100% above it
+    /// width. Read back, the column would sit at 0.988, the next `Mod+R` would find 100% above it
     /// again, and every later press would stand still.
     #[test]
     fn an_app_settling_short_of_the_full_viewport_leaves_it_and_the_cycle_still_wraps() {
@@ -5002,10 +5002,10 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[0]).1, 572.0);
     }
 
-    /// `ctrl-F` maximises afresh from the 100% column and gives that column back: a stacked window
+    /// `Mod+F` maximises afresh from the 100% column and gives that column back: a stacked window
     /// rejoins its stack with the heights it had, the column still the viewport wide.
     #[test]
-    fn ctrl_f_from_the_cycle_s_full_viewport_restores_to_it() {
+    fn mod_f_from_the_cycle_s_full_viewport_restores_to_it() {
         for rows in [1, 3] {
             let (mut system, layout, w) = column_of(preset_settings(), rows);
             let heights = heights_dragged_apart(&mut system, layout, &w);
@@ -5162,7 +5162,7 @@ mod tests {
 
     /// A request for the dragged window made after its report and before the pass wins over the
     /// pin, which would put its right edge back at 1482 and its x at 336: centring, the reveal a key
-    /// or `ctrl-F` asks for, and the alignment a focus move that finds no window asks for.
+    /// or `Mod+F` asks for, and the alignment a focus move that finds no window asks for.
     #[test]
     fn a_scroll_request_after_a_left_edge_report_wins_over_the_kept_edge() {
         let (mut system, layout, w) = kai_s_strip();
@@ -5178,7 +5178,7 @@ mod tests {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
         assert!(system.toggle_full_width(layout, w[1]));
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "ctrl-F, revealed");
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "Mod+F, revealed");
 
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
@@ -5884,7 +5884,7 @@ mod tests {
         }
     }
 
-    /// `ctrl-F` on `wid` twice, with the pass after each.
+    /// `Mod+F` on `wid` twice, with the pass after each.
     fn maximize_and_restore(system: &mut ScrollingLayoutSystem, layout: LayoutId, wid: WindowId) {
         assert!(system.toggle_full_width(layout, wid));
         kai_s_frames(system, layout);
@@ -6113,7 +6113,7 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[0]), (3.0, 860.0));
     }
 
-    /// `ctrl-F` as the reactor runs it, the raise's refocus after.
+    /// `Mod+F` as the reactor runs it, the raise's refocus after.
     fn mod_f(system: &mut ScrollingLayoutSystem, layout: LayoutId) -> Vec<(WindowId, CGRect)> {
         press(system, layout, |system, layout| {
             let selected = system.selected_window(layout).expect("a selection");
@@ -6166,7 +6166,7 @@ mod tests {
         }
     }
 
-    /// `Mod+R` on a full-width window steps from the whole viewport about the place `ctrl-F` took:
+    /// `Mod+R` on a full-width window steps from the whole viewport about the place `Mod+F` took:
     /// back at its width the column stands where it stood. The second of four unequal columns has
     /// three times the free space on its left as on its right, which the end-of-strip share of a
     /// viewport-wide column would not keep.
@@ -6194,7 +6194,7 @@ mod tests {
         }
     }
 
-    /// `ctrl-F` and back after `Mod+R` stepped the column: it comes back at that width where the
+    /// `Mod+F` and back after `Mod+R` stepped the column: it comes back at that width where the
     /// width keys kept it, and the next step goes on about the same place.
     #[test]
     fn full_width_after_a_width_key_returns_to_the_place_the_width_keys_keep() {

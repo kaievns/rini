@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(resolve_width(&new, 0, &old), Some(ColumnWidth::FullWidth));
     }
 
-    // The other half: toggling back to the default has to be recorded, or ctrl-F could never be
+    // The other half: toggling back to the default has to be recorded, or Mod+F could never be
     // undone across a relaunch. `Known(None)` is a deliberate answer and overwrites.
     #[test]
     fn a_width_read_as_the_default_overwrites_a_remembered_one() {

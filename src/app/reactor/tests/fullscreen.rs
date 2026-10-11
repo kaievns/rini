@@ -1,6 +1,6 @@
 //! Full width and height, and macOS taking a window fullscreen itself.
 //!
-//! Two different things that used to be one. `ctrl-F` sizes a window to the usable space and leaves
+//! Two different things that used to be one. `Mod+F` sizes a window to the usable space and leaves
 //! it on the strip; a native fullscreen window leaves the strip and stops being managed.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::{WindowServerId, pid_t};

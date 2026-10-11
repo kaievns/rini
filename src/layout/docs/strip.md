@@ -10,12 +10,12 @@ is borrowed.
   viewport, which made a window's size depend on how many *other* windows the
   workspace held: a full-size window moved from workspace 1 to 2 to 3 went
   half-size on 2 and full on 3 with nothing about the window changing. niri
-  does the same; full width is asked for, by `ctrl-F`, and that mode is
+  does the same; full width is asked for, by `Mod+F`, and that mode is
   remembered per display.
-- **The widest preset is a width, not the mode.** `ctrl-R` reaching 1.0 makes
+- **The widest preset is a width, not the mode.** `Mod+R` reaching 1.0 makes
   the whole column, its stack kept, the viewport wide; it pulls no window out
   and records nothing to return to, which only the full-width mode does, entered
-  by `ctrl-F` or its title-bar zoom, a lone window's drag across the viewport or
+  by `Mod+F` or its title-bar zoom, a lone window's drag across the viewport or
   a restart restoring one. Entering the mode there split a stacked window out
   and broke the column (Kai, 2026-10-10). It cannot be a bounded ratio like the
   others — `max-column-width` is below 1.0, 0.9 by default, so a preset of 1.0
@@ -34,11 +34,11 @@ is borrowed.
   settling 20pt short sat at 0.988, over the 1% `next_preset` reads as the same
   width, so the next `Mod+R` found 1.0 above it again and stood still. A maximized window still takes its
   turn: `ratio_of` reads it as 1.0, where the stored `width_offset` the cycle
-  used to read made `ctrl-R` look dead on it.
-- **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
+  used to read made `Mod+R` look dead on it.
+- **Being given a width is what unmaximizes a window.** `Mod+R` and the resize
   keys both do it, and the window stays where it is rather than going back to
-  the stack `ctrl-F` pulled it out of: its `full_width_origins` entry is
-  FORGOTTEN, not kept. A kept one turned the next `ctrl-F` pair into a teleport —
+  the stack `Mod+F` pulled it out of: its `full_width_origins` entry is
+  FORGOTTEN, not kept. A kept one turned the next `Mod+F` pair into a teleport —
   maximizing an already lone window records no new origin, so the press that
   unmaximized it read the stale one and dropped the window into a stack untouched
   since.
@@ -76,7 +76,7 @@ is borrowed.
   wrote the column back. Nothing in the report marks a zoom, so a double-click
   (`kCGMouseEventClickState` 2 on a left press) on the window's title bar is the
   evidence. That window's first resize within a second of the click toggles
-  full width through the same path as `ctrl-F`, whatever size the app chose: a
+  full width through the same path as `Mod+F`, whatever size the app chose: a
   column becomes full width, and a full-width window goes back to the width and
   stack it had. Every later frame the app reports in that second is the rest of
   the zoom: none becomes a width, the window is not left out of layout passes,
@@ -98,7 +98,7 @@ is borrowed.
   overtake it; why the direct path cannot lose that race is in
   `src/input/docs/README.md`. Any later press spends the double-click, so a drag
   started after it is a drag, and so does any rini layout command: what a window
-  does after `ctrl-F` or `ctrl-R` answers rini. A third or fourth click of the
+  does after `Mod+F` or `Mod+R` answers rini. A third or fourth click of the
   same run is a later press too, so if AppKit zooms again on the fourth, that
   zoom goes unanswered (not measured). The second runs from the press's own
   timestamp. Not measured: how long an app's zoom animates, which the second has
@@ -235,7 +235,7 @@ is borrowed.
 - **Floating windows are not strip members.** Left/right from a floating window
   goes to the strip and resumes at the strip's own selection; left/right at the
   strip's end stops there. Both branches used to walk the floating set: with
-  Zoom and System Settings floating, ctrl-J/L cycled those two instead of the
+  Zoom and System Settings floating, Mod+J/L cycled those two instead of the
   columns, the escape landed on the *first* column, and walking off the last
   column stepped onto Settings and bounced back. Floating windows are still in
   the workspace and reachable with cmd-tab and `switch-focus-between-floating-and-tiling`. A
@@ -289,7 +289,7 @@ mechanisms:
   from the neighbour on the key's side, the column the fold-out left: anywhere
   else the window joins that neighbour at the bottom, as a window that was never
   folded does. Fold and full width shared one record before, so a window folded
-  out of [A1,A2] and maximized went back into A1 on the second `ctrl-F`, and one
+  out of [A1,A2] and maximized went back into A1 on the second `Mod+F`, and one
   folded out of [A1,A2][B1][C1] and moved two columns right jumped back past C1
   and B1 into A1 on the left key. Each now keeps its own, and a fold-in spends
   only the fold's. A fold with no column on its side changes nothing, the record

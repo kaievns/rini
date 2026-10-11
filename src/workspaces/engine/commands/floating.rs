@@ -1,4 +1,4 @@
-//! Maximising a column: `ctrl-F`, and an app zooming its window from the title bar, which means the
+//! Maximising a column: `Mod+F`, and an app zooming its window from the title bar, which means the
 //! same and goes the same way.
 //!
 //! `impl LayoutEngine` across modules is the pattern `engine/persistence/` already uses.
@@ -154,7 +154,7 @@ mod tests {
                 .response
         }
 
-        fn ctrl_f(&mut self) -> EventResponse {
+        fn mod_f(&mut self) -> EventResponse {
             self.engine.handle_command(
                 &mut self.store,
                 &mut self.memory,
@@ -196,21 +196,21 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_f_and_a_zoom_are_the_same_toggle() {
+    fn mod_f_and_a_zoom_are_the_same_toggle() {
         let mut strip = Strip::new();
         let [_, selected] = strip.windows;
 
-        assert_eq!(strip.ctrl_f().raise_windows, vec![selected]);
+        assert_eq!(strip.mod_f().raise_windows, vec![selected]);
         assert_eq!(strip.full_width(selected), Some(true));
         assert!(strip.zoomed(selected).changed);
         assert_eq!(
             strip.full_width(selected),
             Some(false),
-            "the zoom takes ctrl-F back out"
+            "the zoom takes Mod+F back out"
         );
         assert!(strip.zoomed(selected).changed);
-        assert!(strip.ctrl_f().changed);
-        assert_eq!(strip.full_width(selected), Some(false), "and ctrl-F a zoom");
+        assert!(strip.mod_f().changed);
+        assert_eq!(strip.full_width(selected), Some(false), "and Mod+F a zoom");
     }
 
     #[test]

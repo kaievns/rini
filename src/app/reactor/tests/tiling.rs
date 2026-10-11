@@ -689,7 +689,7 @@ fn diagnostics_report_windows_missing_from_the_layout_tree() {
 
 /// Strip navigation never walks the floating set, and returns to where the strip was.
 ///
-/// Reported: with Zoom and System Settings floating, ctrl-J/L cycled those two rather than
+/// Reported: with Zoom and System Settings floating, Mod+J/L cycled those two rather than
 /// the columns, and leaving them landed on the FIRST column instead of the one that had been
 /// selected. Floating windows belong to a workspace but are not strip members; cmd-tab and
 /// `switch-focus-between-floating-and-tiling` reach them.
@@ -2147,9 +2147,9 @@ mod title_bar_zoom {
         }
     }
 
-    // From the default 0.7, the next preset `ctrl-R` reaches is 1.0: a width, not the mode.
+    // From the default 0.7, the next preset `Mod+R` reaches is 1.0: a width, not the mode.
     #[test]
-    fn ctrl_f_or_ctrl_r_after_a_double_click_keeps_the_width_it_gave() {
+    fn mod_f_or_mod_r_after_a_double_click_keeps_the_width_it_gave() {
         for (command, maximised) in [
             (LayoutCommand::ToggleFullscreenWithinGaps, true),
             (LayoutCommand::CyclePresetColumnWidth, false),
@@ -2424,7 +2424,7 @@ fn every_alt_r_on_the_last_column_flies() {
     use crate::layout::settings::CenterFocusedColumn;
     let space = SpaceId::new(1);
     for columns in 1..=4 {
-        for start in ["a third", "a half", "two thirds", "ctrl-F", "ratio 1.0"] {
+        for start in ["a third", "a half", "two thirds", "Mod+F", "ratio 1.0"] {
             let case = format!("{columns} columns from {start}");
             let (mut apps, mut reactor, mut rx) = moving_strip_with(0.5, columns, |scrolling| {
                 scrolling.min_column_width_ratio = 0.33333;
@@ -2442,14 +2442,14 @@ fn every_alt_r_on_the_last_column_flies() {
                 "a third" => reactor.handle_test_layout_command(resize_by(0.33333 - 0.5)),
                 "two thirds" => reactor.handle_test_layout_command(resize_by(0.66667 - 0.5)),
                 "ratio 1.0" => reactor.handle_test_layout_command(resize_by(0.5)),
-                "ctrl-F" => {
+                "Mod+F" => {
                     reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps)
                 }
                 _ => {}
             }
             land_layout_passes(&mut apps, &mut reactor, &mut rx);
             let full = reactor.layout_manager.layout_engine.full_width_of_column(space, last);
-            assert_eq!(full, Some(start == "ctrl-F"), "{case}");
+            assert_eq!(full, Some(start == "Mod+F"), "{case}");
 
             for press in 0..5 {
                 let case = format!("{case}, press {press}");

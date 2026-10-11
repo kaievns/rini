@@ -699,9 +699,9 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
     assert!(!engine.workspace_tree(ws_id).is_window_full_width(layout, after_relaunch));
 }
 
-/// The bug that came back three times. ctrl-F, quit rini, start it again: the window relaunched at the
+/// The bug that came back three times. Mod+F, quit rini, start it again: the window relaunched at the
 /// default half width, and the next autosave then overwrote `FullWidth` with nothing, so the record was
-/// gone for good and ctrl-F had to be pressed again.
+/// gone for good and Mod+F had to be pressed again.
 ///
 /// The projection could not read the width here — this fixture withholds the topology, as a startup
 /// where windows are discovered before the first authoritative space snapshot does — and "could not
@@ -778,7 +778,7 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
     assert_eq!(
         memory.launch.slots(APP, &topology)[0].width,
         Some(ColumnWidth::FullWidth),
-        "ctrl-F is what gets remembered"
+        "Mod+F is what gets remembered"
     );
 
     // rini restarts, and the window is discovered before the topology is known.
