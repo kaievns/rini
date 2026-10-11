@@ -273,10 +273,6 @@ impl DisplayAffinity {
         self.setups.entry(self.current.clone()).or_default()
     }
 
-    /// Whether the arrangement in force remembers anything about the windows.
-    pub fn current_setup_is_empty(&self) -> bool {
-        self.setup().is_empty()
-    }
     /// Record that `display` currently owns `space`, evicting any other claimant: a native space
     /// has one display, and two claimants make the affinity pass move windows forever.
     pub fn set_display_space(&mut self, display: &str, space: SpaceId) {

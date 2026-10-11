@@ -2,12 +2,9 @@ use std::cmp::Ordering;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
-use super::{
-    Direction, FloatingManager, LayoutId, ResizeOrientation, ScrollingLayoutSystem,
-    WorkspaceLayouts,
-};
+use super::{Direction, FloatingManager, LayoutId, ScrollingLayoutSystem, WorkspaceLayouts};
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::boundary::{strip_edge, workspace_stack_direction};
 use crate::layout::domain::edge_drag::Drag;
@@ -455,19 +452,6 @@ impl LayoutEngine {
         window: Option<WindowId>,
     ) -> Option<WindowId> {
         window.filter(|wid| self.is_window_in_active_workspace(window_store, space, *wid))
-    }
-
-    pub fn resize_selection(
-        &mut self,
-        ws_id: VirtualWorkspaceId,
-        layout: LayoutId,
-        resize_amount: f64,
-    ) {
-        self.workspace_tree_mut(ws_id).resize_selection_by(
-            layout,
-            resize_amount,
-            ResizeOrientation::Horizontal,
-        );
     }
 
     fn apply_focus_response(
@@ -3121,13 +3105,6 @@ impl LayoutEngine {
         self.virtual_workspace_manager.windows_in_active_workspace(window_store, space)
     }
 
-    pub fn get_workspace_stats(
-        &self,
-        window_store: &WindowStore,
-    ) -> crate::workspaces::domain::virtual_workspace::WorkspaceStats {
-        self.virtual_workspace_manager.get_stats(window_store)
-    }
-
     /// Whether `window` is at full width, or `None` when it is not a column of the strip `space` is
     /// showing.
     pub fn full_width_of_column(&self, space: SpaceId, window: WindowId) -> Option<bool> {
@@ -3267,46 +3244,6 @@ impl LayoutEngine {
                 space_id: space_id.get(),
                 display_uuid: None,
             });
-        }
-    }
-
-    pub fn debug_log_workspace_stats(&self, window_store: &WindowStore) {
-        let stats = self.virtual_workspace_manager.get_stats(window_store);
-        info!(
-            "Workspace Stats: {} workspaces, {} windows, {} active spaces",
-            stats.total_workspaces, stats.total_windows, stats.active_spaces
-        );
-
-        for (workspace_id, window_count) in &stats.workspace_window_counts {
-            info!("  - '{:?}': {} windows", workspace_id, window_count);
-        }
-    }
-
-    pub fn debug_log_workspace_state(&self, window_store: &WindowStore, space: SpaceId) {
-        if let Some(active_workspace) = self.virtual_workspace_manager.active_workspace(space) {
-            if let Some(workspace) =
-                self.virtual_workspace_manager.workspace_info(space, active_workspace)
-            {
-                let active_windows =
-                    self.virtual_workspace_manager.windows_in_active_workspace(window_store, space);
-                let inactive_windows = self
-                    .virtual_workspace_manager
-                    .windows_in_inactive_workspaces(window_store, space);
-
-                info!(
-                    "Space {:?}: Active workspace '{}' with {} windows",
-                    space,
-                    workspace.name,
-                    active_windows.len()
-                );
-                info!("  Active windows: {:?}", active_windows);
-                info!("  Inactive windows: {} total", inactive_windows.len());
-                if !inactive_windows.is_empty() {
-                    info!("  Inactive window IDs: {:?}", inactive_windows);
-                }
-            }
-        } else {
-            warn!("Space {:?}: No active workspace set", space);
         }
     }
 

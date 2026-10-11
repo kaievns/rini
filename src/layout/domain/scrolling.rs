@@ -1850,12 +1850,6 @@ impl ScrollingLayoutSystem {
         }
     }
 
-    pub fn has_windows_for_app(&self, layout: LayoutId, pid: pid_t) -> bool {
-        self.layout_state(layout)
-            .map(|state| state.columns.iter().flat_map(|c| c.windows.iter()).any(|w| w.pid == pid))
-            .unwrap_or(false)
-    }
-
     pub fn contains_window(&self, layout: LayoutId, wid: WindowId) -> bool {
         self.layout_state(layout)
             .map(|state| state.locate(wid).is_some())
