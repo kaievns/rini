@@ -94,16 +94,11 @@ pub fn offset_keeping_right_edge(
 /// The share of the viewport's free space on a column's left, where it stands at `x`, `width` wide:
 /// the place a width change by key keeps it at (`place_x`). A column part off the viewport counts
 /// from where the reveal would show it. One that fills the viewport, within a point, has no free
-/// space to share and takes its end of the strip: 0 as the first or only column, 1 as the last, a
-/// half between.
-pub fn place_share(tiling: CGRect, x: f64, width: f64, col_idx: usize, column_count: usize) -> f64 {
+/// space to share and takes a half; the strip's clamps hold the first or last column at its end.
+pub fn place_share(tiling: CGRect, x: f64, width: f64) -> f64 {
     let free = tiling.size.width - width;
     if free < 1.0 {
-        return match () {
-            _ if col_idx == 0 => 0.0,
-            _ if col_idx + 1 == column_count => 1.0,
-            _ => 0.5,
-        };
+        return 0.5;
     }
     (x - tiling.origin.x).clamp(0.0, free) / free
 }
@@ -328,42 +323,38 @@ mod tests {
 
     #[test]
     fn a_column_at_an_edge_takes_all_or_none_of_the_free_space() {
-        assert_eq!(place_share(kai_s_tiling(), 3.0, 572.0, 0, 2), 0.0, "flush left");
-        assert_eq!(place_share(kai_s_tiling(), 1153.0, 572.0, 1, 2), 1.0, "flush right");
+        assert_eq!(place_share(kai_s_tiling(), 3.0, 572.0), 0.0, "flush left");
+        assert_eq!(place_share(kai_s_tiling(), 1153.0, 572.0), 1.0, "flush right");
     }
 
     #[test]
     fn the_middle_of_three_thirds_takes_half_the_free_space() {
-        assert_eq!(place_share(kai_s_tiling(), 578.0, 572.0, 1, 3), 0.5);
+        assert_eq!(place_share(kai_s_tiling(), 578.0, 572.0), 0.5);
     }
 
     #[test]
     fn an_off_centre_column_takes_its_share_of_the_free_space() {
-        assert_eq!(place_share(kai_s_tiling(), 103.0, 722.0, 1, 4), 0.1);
-        assert_eq!(place_share(kai_s_tiling(), 803.0, 722.0, 2, 4), 0.8);
+        assert_eq!(place_share(kai_s_tiling(), 103.0, 722.0), 0.1);
+        assert_eq!(place_share(kai_s_tiling(), 803.0, 722.0), 0.8);
     }
 
     #[test]
     fn a_column_part_off_the_viewport_counts_from_where_the_reveal_shows_it() {
-        assert_eq!(place_share(kai_s_tiling(), -200.0, 572.0, 1, 3), 0.0, "off the left");
-        assert_eq!(place_share(kai_s_tiling(), 1400.0, 572.0, 1, 3), 1.0, "off the right");
+        assert_eq!(place_share(kai_s_tiling(), -200.0, 572.0), 0.0, "off the left");
+        assert_eq!(place_share(kai_s_tiling(), 1400.0, 572.0), 1.0, "off the right");
     }
 
     #[test]
-    fn a_column_filling_the_viewport_takes_its_end_of_the_strip() {
-        let share = |col_idx, count| place_share(kai_s_tiling(), 3.0, 1722.0, col_idx, count);
-        assert_eq!(share(0, 1), 0.0, "lone");
-        assert_eq!(share(0, 3), 0.0, "first");
-        assert_eq!(share(2, 3), 1.0, "last");
-        assert_eq!(share(1, 3), 0.5, "between");
-        assert_eq!(place_share(kai_s_tiling(), 3.4, 1721.4, 2, 3), 1.0, "within a point");
+    fn a_column_filling_the_viewport_takes_half_the_free_space_it_has_none_of() {
+        assert_eq!(place_share(kai_s_tiling(), 3.0, 1722.0), 0.5);
+        assert_eq!(place_share(kai_s_tiling(), 3.4, 1721.4), 0.5, "within a point");
     }
 
     #[test]
     fn a_column_back_at_its_width_stands_where_it_was_and_the_viewport_wide_at_its_left() {
         let tiling = kai_s_tiling();
         for (x, width) in [(3.0, 572.0), (1153.0, 572.0), (578.0, 572.0), (103.0, 722.0)] {
-            let share = place_share(tiling, x, width, 1, 3);
+            let share = place_share(tiling, x, width);
             assert!((place_x(tiling, share, width) - x).abs() < 1e-9, "{x}, {width}");
             assert_eq!(place_x(tiling, share, 1722.0), 3.0, "{x}, {width} at the viewport");
         }

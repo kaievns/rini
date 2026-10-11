@@ -186,7 +186,8 @@ is borrowed.
   keep a `Place` for the selection (`LayoutState::kept_place`): `Centred` under a centre override, or
   else the column's share of the viewport's free space on its left, which each
   pass records for its selection (`last_selected_share`, `strip::place_share`,
-  revealed first, a viewport-wide column by its end of the strip). It is read
+  revealed first, a viewport-wide column at a half, which the clamps hold to its
+  end of the strip as the first or last column). It is read
   only when that pass had the window selected and no scroll request has come
   since, which is what makes it the place focus left the column at. The next
   pass scrolls the strip to stand the column at `strip::place_x` for its new

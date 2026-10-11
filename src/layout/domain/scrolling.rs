@@ -1451,8 +1451,7 @@ impl ScrollingLayoutSystem {
         let selected_rel = column_starts.get(selected_col_idx).copied().unwrap_or(0.0) - clamped;
         state.last_selected_rel_px.store(selected_rel.to_bits(), Ordering::Relaxed);
         let selected_x = anchor_x + selected_rel;
-        let share =
-            place_share(tiling, selected_x, selected_width, selected_col_idx, state.columns.len());
+        let share = place_share(tiling, selected_x, selected_width);
         state.last_selected_share.store(share.to_bits(), Ordering::Relaxed);
         let measured_for = state.selected_location().and(state.selected);
         state.last_selected_rel_of.store(packed(measured_for), Ordering::Relaxed);
