@@ -13,7 +13,8 @@ use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::domain::edge_drag::{Drag, End, Side, dragged_side, dragged_width, trade_height};
 use crate::layout::domain::tile;
 use crate::layout::domain::strip::{
-    Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, reveal_offset,
+    Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, place_share, place_x,
+    reveal_offset,
 };
 use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
@@ -39,6 +40,19 @@ enum Pin {
     RightEdge,
     /// Its start that far right of the scroll offset: where a toggle found the column.
     Start,
+    /// That share of the viewport's free space on its left, at whatever width it now has: where a
+    /// width change by key keeps it (`Place::Share`).
+    Place,
+}
+
+/// Where a column stood when a width change by key first took it, kept through the ones after so
+/// each grows and shrinks it about the same place.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Place {
+    /// Centred by a centre override.
+    Centred,
+    /// This share of the viewport's free space on its left (`strip::place_share`).
+    Share(f64),
 }
 
 /// How the strip showed a column when a toggle took its window, for the toggle back.
@@ -182,6 +196,10 @@ struct LayoutState {
     pending_pin_of: Option<(WindowId, Pin)>,
     #[serde(skip)]
     kept_view: Option<KeptView>,
+    /// The place the width changes by key keep the named window's column at, until any other
+    /// scroll.
+    #[serde(skip)]
+    kept_place: Option<(WindowId, Place)>,
     center_override_window: Option<WindowId>,
     #[serde(skip, default = "default_atomic")]
     last_screen_width: AtomicU64,
@@ -194,6 +212,11 @@ struct LayoutState {
     /// The selection `last_selected_rel_px` and the slot below were measured for, `packed`.
     #[serde(skip)]
     last_selected_rel_of: AtomicU64,
+    /// That selection's column's share of the viewport's free space on its left after the last
+    /// layout (`strip::place_share`), or NaN before the first and once a scroll request since has
+    /// made it stale.
+    #[serde(skip, default = "default_atomic_unset")]
+    last_selected_share: AtomicU64,
     /// The slot size the last layout gave that selection, after its own limits: what the app
     /// answering rini's write reports back.
     #[serde(skip, default = "default_atomic_unset")]
@@ -230,11 +253,13 @@ impl LayoutState {
             pending_pin: default_atomic_unset(),
             pending_pin_of: None,
             kept_view: None,
+            kept_place: None,
             center_override_window: None,
             last_screen_width: AtomicU64::new(0.0f64.to_bits()),
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
             last_selected_rel_px: default_atomic_unset(),
             last_selected_rel_of: AtomicU64::new(packed(None)),
+            last_selected_share: default_atomic_unset(),
             last_selected_width_px: default_atomic_unset(),
             last_selected_height_px: default_atomic_unset(),
             last_strip_origin_px: default_atomic_unset(),
@@ -512,20 +537,73 @@ impl LayoutState {
         self.pending_pin_of = Some((wid, pin));
     }
 
-    /// Any scroll replaces what is held for a later pass: the pin, and the view a restore takes.
+    /// Any scroll replaces what is held for a later pass: the pin, the view a restore takes, and the
+    /// place a width change by key keeps or would take from the last pass.
     fn unpin(&mut self) {
         self.pending_pin.store(f64::NAN.to_bits(), Ordering::Relaxed);
         self.pending_pin_of = None;
         self.kept_view = None;
+        self.kept_place = None;
+        self.last_selected_share.store(f64::NAN.to_bits(), Ordering::Relaxed);
     }
 
     /// Whether a scroll request for `wid` would drop something held for it: its centring, a pin no
-    /// pass has spent yet, or the view a toggle back returns to.
+    /// pass has spent yet, the view a toggle back returns to, or the place a width change by key
+    /// keeps.
     fn holds_scroll_for(&self, wid: WindowId) -> bool {
         let pin_pending = !f64::from_bits(self.pending_pin.load(Ordering::Relaxed)).is_nan();
         self.center_override_window == Some(wid)
             || (pin_pending && self.pending_pin_of.is_some_and(|(of, _)| of == wid))
             || self.kept_view.is_some_and(|kept| kept.window == wid)
+            || self.kept_place.is_some_and(|(of, _)| of == wid)
+    }
+
+    /// Where a width change by key keeps `wid`'s column: the place kept for it, or else where the
+    /// last pass showed it, if `wid` was that pass's selection.
+    fn place_of(&self, wid: WindowId) -> Option<Place> {
+        if let Some((of, place)) = self.kept_place
+            && of == wid
+        {
+            return Some(place);
+        }
+        if unpacked(self.last_selected_rel_of.load(Ordering::Relaxed)) != Some(wid) {
+            return None;
+        }
+        if self.center_override_window == Some(wid) {
+            return Some(Place::Centred);
+        }
+        let share = f64::from_bits(self.last_selected_share.load(Ordering::Relaxed));
+        share.is_finite().then_some(Place::Share(share))
+    }
+
+    /// Rescroll after a width change by key: back to `place`, or, with none, as far as it takes to
+    /// keep the column visible, every column start after it having moved.
+    fn rescroll_after_width(&mut self, wid: WindowId, place: Option<Place>, reveals_only: bool) {
+        match place {
+            Some(place) => self.keep_place(wid, place),
+            None if reveals_only => self.reveal_selected_without_direction(),
+            None => self.align_scroll_to_selected(),
+        }
+    }
+
+    /// Hold the selected `wid`'s column at `place`, for the next pass and the width changes after
+    /// it.
+    fn keep_place(&mut self, wid: WindowId, place: Place) {
+        self.unpin();
+        self.pending_align.store(false, Ordering::Relaxed);
+        self.pending_reveal_direction.store(0, Ordering::Relaxed);
+        match place {
+            Place::Centred => {
+                self.center_override_window = Some(wid);
+                self.pending_center_align.store(true, Ordering::Relaxed);
+            }
+            Place::Share(share) => {
+                self.center_override_window = None;
+                self.pending_center_align.store(false, Ordering::Relaxed);
+                self.pin(wid, Pin::Place, share);
+            }
+        }
+        self.kept_place = Some((wid, place));
     }
 
     /// How the last pass showed `wid`'s column, if `wid` was its selection.
@@ -733,11 +811,13 @@ impl Clone for LayoutState {
             pending_pin: AtomicU64::new(self.pending_pin.load(Ordering::Relaxed)),
             pending_pin_of: self.pending_pin_of,
             kept_view: self.kept_view,
+            kept_place: self.kept_place,
             center_override_window: self.center_override_window,
             last_screen_width: AtomicU64::new(self.last_screen_width.load(Ordering::Relaxed)),
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
             last_selected_rel_px: AtomicU64::new(self.last_selected_rel_px.load(Ordering::Relaxed)),
             last_selected_rel_of: AtomicU64::new(self.last_selected_rel_of.load(Ordering::Relaxed)),
+            last_selected_share: AtomicU64::new(self.last_selected_share.load(Ordering::Relaxed)),
             last_selected_width_px: AtomicU64::new(self.last_selected_width_px.load(Ordering::Relaxed)),
             last_selected_height_px: AtomicU64::new(self.last_selected_height_px.load(Ordering::Relaxed)),
             last_strip_origin_px: AtomicU64::new(self.last_strip_origin_px.load(Ordering::Relaxed)),
@@ -1330,6 +1410,10 @@ impl ScrollingLayoutSystem {
                     offset_keeping_right_edge(anchor_x, start, width, pinned)
                 }
                 Pin::Start => start - pinned,
+                Pin::Place => {
+                    let width = column_widths.get(col_idx).copied().unwrap_or(0.0);
+                    anchor_x + start - place_x(tiling, pinned, width)
+                }
             };
             state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
         }
@@ -1376,6 +1460,10 @@ impl ScrollingLayoutSystem {
         state.scroll_offset_px.store(clamped.to_bits(), Ordering::Relaxed);
         let selected_rel = column_starts.get(selected_col_idx).copied().unwrap_or(0.0) - clamped;
         state.last_selected_rel_px.store(selected_rel.to_bits(), Ordering::Relaxed);
+        let selected_x = anchor_x + selected_rel;
+        let share =
+            place_share(tiling, selected_x, selected_width, selected_col_idx, state.columns.len());
+        state.last_selected_share.store(share.to_bits(), Ordering::Relaxed);
         let measured_for = state.selected_location().and(state.selected);
         state.last_selected_rel_of.store(packed(measured_for), Ordering::Relaxed);
         let origin = anchor_x - tiling.origin.x - clamped;
@@ -1604,6 +1692,11 @@ impl ScrollingLayoutSystem {
             {
                 *of = to;
             }
+            if let Some((of, _)) = &mut state.kept_place
+                && *of == from
+            {
+                *of = to;
+            }
             if state.fullscreen_within_gaps.remove(&from) {
                 state.fullscreen_within_gaps.insert(to);
             }
@@ -1787,8 +1880,9 @@ impl ScrollingLayoutSystem {
         };
         if state.locate(wid).is_some() {
             // Refocusing the selected window keeps what is held for it: its centring, the right
-            // edge a left-edge drag keeps, which the release refocuses before its pass, and the
-            // view a toggle back returns to, a full width's or a fold's, which the raise refocuses.
+            // edge a left-edge drag keeps, which the release refocuses before its pass, the view a
+            // toggle back returns to, a full width's or a fold's, and the place a width change by
+            // key keeps, which the raise after each refocuses.
             if state.selected == Some(wid) && state.holds_scroll_for(wid) {
                 return true;
             }
@@ -2082,7 +2176,8 @@ impl ScrollingLayoutSystem {
     /// held only to it, as a drag across the viewport does, and enters no full-width mode. A
     /// maximised column takes its turn from 1.0, and the step is what ends the mode, in place. The
     /// rule is [`next_preset`]; what a width does to a maximised column is
-    /// `LayoutState::set_column_ratio`.
+    /// `LayoutState::set_column_ratio`. Under `"never"` the column grows and shrinks about where it
+    /// stood when focus came to it (`LayoutState::place_of`).
     pub fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let presets = self.settings.preset_column_widths.clone();
         let reveals_only = self.settings.reveals_only();
@@ -2097,21 +2192,15 @@ impl ScrollingLayoutSystem {
             return Vec::new();
         };
 
-        match next_preset(state.ratio_of(selected, col_idx), &presets) {
-            Some(PresetWidth::Full) => state.set_column_ratio(selected, col_idx, 1.0, true),
-            Some(PresetWidth::Ratio(ratio)) => state.set_column_ratio(selected, col_idx, ratio, false),
+        let (ratio, unbounded) = match next_preset(state.ratio_of(selected, col_idx), &presets) {
+            Some(PresetWidth::Full) => (1.0, true),
+            Some(PresetWidth::Ratio(ratio)) => (ratio, false),
             None => return Vec::new(),
-        }
+        };
+        let place = reveals_only.then(|| state.place_of(selected)).flatten();
+        state.set_column_ratio(selected, col_idx, ratio, unbounded);
         state.selected = Some(selected);
-
-        // A width change moves every column start after it, so the strip has to be
-        // rescrolled or a column at the viewport edge grows off-screen. Same
-        // reasoning as the fullscreen toggle above.
-        if reveals_only {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
-        }
+        state.rescroll_after_width(selected, place, reveals_only);
 
         vec![selected]
     }
@@ -2193,6 +2282,9 @@ impl ScrollingLayoutSystem {
         state.columns[col_idx].windows.len() > 1
     }
 
+    /// The incremental resize keys: the selected column's width by `amount` of the viewport, held
+    /// to the bounds, or in a stack under `Vertical` or `Smart` its row's height. A width grows and
+    /// shrinks about the column's place, as `cycle_preset_column_width`'s does.
     pub fn resize_selection_by(
         &mut self,
         layout: LayoutId,
@@ -2254,12 +2346,9 @@ impl ScrollingLayoutSystem {
             return;
         }
         let clamped = column_ratio(ColumnKind::Bounded, current, amount, min_ratio, max_ratio);
+        let place = reveals_only.then(|| state.place_of(selected)).flatten();
         state.set_column_ratio(selected, col_idx, clamped, false);
-        if reveals_only {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
-        }
+        state.rescroll_after_width(selected, place, reveals_only);
     }
 }
 
@@ -5301,6 +5390,342 @@ mod tests {
         assert_eq!(rows, [(3.0, 368.0), (374.0, 368.0), (746.0, 368.0)]);
     }
 
+    // ── the place a width change by key keeps ───────────────────────────────
+
+    /// A width key as the reactor runs it: the key, its pass, the raise's refocus of the same
+    /// window and the pass after it.
+    fn press(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        key: impl FnOnce(&mut ScrollingLayoutSystem, LayoutId),
+    ) -> Vec<(WindowId, CGRect)> {
+        let selected = system.selected_window(layout).expect("a selection");
+        key(system, layout);
+        kai_s_frames(system, layout);
+        assert!(system.select_window(layout, selected));
+        kai_s_frames(system, layout)
+    }
+
+    fn mod_r(system: &mut ScrollingLayoutSystem, layout: LayoutId) -> Vec<(WindowId, CGRect)> {
+        press(system, layout, |system, layout| {
+            system.cycle_preset_column_width(layout);
+        })
+    }
+
+    fn resize_key(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        amount: f64,
+    ) -> Vec<(WindowId, CGRect)> {
+        press(system, layout, |system, layout| {
+            system.resize_selection_by(layout, amount, ResizeOrientation::Horizontal);
+        })
+    }
+
+    fn xw_in(frames: &[(WindowId, CGRect)], wid: WindowId) -> (f64, f64) {
+        let frame = frame_for(frames, wid);
+        (frame.origin.x, frame.size.width)
+    }
+
+    /// Where `wid` ends on screen; each of x and width is rounded, so it can stand a point past.
+    fn right_edge(frames: &[(WindowId, CGRect)], wid: WindowId) -> f64 {
+        let (x, width) = xw_in(frames, wid);
+        x + width
+    }
+
+    /// Columns of these widths on Kai's display, `selected` selected after the pass that shows it.
+    fn kai_s_widths(
+        ratios: &[f64],
+        selected: usize,
+    ) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+        let mut system = ScrollingLayoutSystem::new(&preset_settings());
+        let layout = system.create_layout();
+        let w: Vec<WindowId> = (1..=ratios.len() as u32).map(|idx| wid(1, idx)).collect();
+        for (&window, &ratio) in w.iter().zip(ratios) {
+            system.add_window_after_selection(layout, window);
+            system.set_column_width_offset(layout, window, ratio - 0.5, false);
+        }
+        assert!(system.select_window(layout, w[0]));
+        kai_s_frames(&system, layout);
+        assert!(system.select_window(layout, w[selected]));
+        kai_s_frames(&system, layout);
+        (system, layout, w)
+    }
+
+    /// Kai's report of 2026-10-11: two thirds on the left, a third on the right and selected. The
+    /// strip is 1722.99pt, so the reveal leaves the third flush with the right edge.
+    fn kai_s_two_thirds_and_a_third() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+        let (system, layout, w) = kai_s_widths(&[0.66667, 0.33333], 1);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (1153.0, 572.0));
+        (system, layout, w)
+    }
+
+    /// Three thirds, the middle one selected with 575pt free on each side.
+    fn kai_s_three_thirds() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+        let (system, layout, w) = kai_s_widths(&[0.33333, 0.33333, 0.33333], 1);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (578.0, 572.0));
+        (system, layout, w)
+    }
+
+    /// Each step keeps the right edge and pushes the left column out, or pulls it back in, on its
+    /// own side; the third again is the strip as it began, and the cycle goes on from there.
+    #[test]
+    fn kai_s_right_third_grows_and_shrinks_from_its_left_edge() {
+        let (mut system, layout, w) = kai_s_two_thirds_and_a_third();
+        let before = kai_s_frames(&system, layout);
+
+        let mut steps = Vec::new();
+        for _ in 0..5 {
+            let frames = mod_r(&mut system, layout);
+            let (x, _) = xw_in(&frames, w[1]);
+            assert!((right_edge(&frames, w[1]) - 1725.0).abs() <= 1.0, "{frames:?}");
+            let pushed = right_edge(&frames, w[0]) + 3.0 - x;
+            assert!(pushed.abs() <= 1.0, "the left column, {frames:?}");
+            steps.push(frames);
+        }
+
+        let widths: Vec<f64> = steps.iter().map(|frames| xw_in(frames, w[1]).1).collect();
+        assert_eq!(widths, [860.0, 1148.0, 1722.0, 572.0, 860.0]);
+        assert_same_frames(&steps[3], &before);
+        assert_same_frames(&steps[4], &steps[0]);
+    }
+
+    #[test]
+    fn kai_s_left_two_thirds_grows_and_shrinks_from_its_right_edge() {
+        let (mut system, layout, w) = kai_s_two_thirds_and_a_third();
+        assert!(system.select_window(layout, w[0]));
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(xw_in(&before, w[0]), (3.0, 1148.0));
+
+        for width in [1722.0, 572.0, 860.0] {
+            assert_eq!(xw_in(&mod_r(&mut system, layout), w[0]), (3.0, width));
+        }
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+    }
+
+    /// The half lands at 434.25, 143.75pt left of the third's x, and each neighbour moves 143.75pt
+    /// out on its own side.
+    #[test]
+    fn the_middle_of_three_thirds_grows_and_shrinks_from_both_sides() {
+        let (mut system, layout, w) = kai_s_three_thirds();
+        let before = kai_s_frames(&system, layout);
+
+        let half = mod_r(&mut system, layout);
+        assert_eq!(xw_in(&half, w[1]), (434.0, 860.0));
+        let moved = |wid: WindowId| xw_in(&half, wid).0 - xw_in(&before, wid).0;
+        assert!((moved(w[0]) + 143.75).abs() <= 0.5, "left neighbour {}", moved(w[0]));
+        assert!((moved(w[2]) - 143.75).abs() <= 0.5, "right neighbour {}", moved(w[2]));
+
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (290.0, 1148.0));
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1722.0));
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+    }
+
+    /// The second of a half, a third, a half and a third, with 862.5pt free on its left and 287.5pt
+    /// on its right: every width keeps the free space three to one.
+    #[test]
+    fn an_off_centre_column_grows_and_shrinks_in_proportion_to_the_space_beside_it() {
+        let (mut system, layout, w) = kai_s_widths(&[0.5, 0.33333, 0.5, 0.33333], 1);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(xw_in(&before, w[1]), (866.0, 572.0));
+
+        for width in [860.0, 1148.0] {
+            let frames = mod_r(&mut system, layout);
+            let (x, got) = xw_in(&frames, w[1]);
+            assert_eq!(got, width);
+            let (left, right) = (x - 3.0, 1725.0 - x - width);
+            assert!((left - 3.0 * right).abs() <= 2.0, "{width}: {left} against {right}");
+        }
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1722.0));
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+    }
+
+    /// A stack on the right, each of its rows selected: the column moves as one and keeps its rows.
+    /// As a third the strip is narrower than the viewport, and the stack stays where the strip's
+    /// start leaves it.
+    #[test]
+    fn a_stacked_column_grows_and_shrinks_about_its_place_as_one() {
+        for rows in [2, 3] {
+            for row in 0..rows as usize {
+                let (mut system, layout, _, b) = a_stack_on_the_right(rows);
+                assert!(system.select_window(layout, b[row]));
+                let before = kai_s_frames(&system, layout);
+                let case = format!("row {row} of {rows}");
+                let heights = |frames: &[(WindowId, CGRect)]| -> Vec<(f64, f64)> {
+                    b.iter()
+                        .map(|&id| {
+                            let frame = frame_for(frames, id);
+                            (frame.origin.y, frame.size.height)
+                        })
+                        .collect()
+                };
+
+                for (width, right) in [(1148.0, 1725.0), (1722.0, 1725.0), (572.0, 1438.0)] {
+                    let frames = mod_r(&mut system, layout);
+                    for &id in &b {
+                        assert_eq!(xw_in(&frames, id), xw_in(&frames, b[0]), "{case}");
+                    }
+                    assert_eq!(xw_in(&frames, b[row]).1, width, "{case}");
+                    let off = right_edge(&frames, b[row]) - right;
+                    assert!(off.abs() <= 1.0, "{case}: {frames:?}");
+                    assert_eq!(heights(&frames), heights(&before), "{case}");
+                }
+                assert_same_frames(&mod_r(&mut system, layout), &before);
+            }
+        }
+    }
+
+    /// Two thirds, a third and two thirds: the third reached from its left lands flush right and
+    /// grows left; reached from its right it lands flush left and grows right.
+    #[test]
+    fn a_column_grows_from_where_the_focus_that_reached_it_left_it() {
+        let (mut system, layout, w) = kai_s_widths(&[0.66667, 0.33333, 0.66667], 0);
+        system.move_focus(layout, Direction::Right);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (1153.0, 572.0), "reached going right");
+        let grown = mod_r(&mut system, layout);
+        assert_eq!(xw_in(&grown, w[1]), (866.0, 860.0));
+
+        for direction in [Direction::Right, Direction::Left] {
+            system.move_focus(layout, direction);
+            kai_s_frames(&system, layout);
+        }
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 860.0), "reached going left");
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1148.0));
+    }
+
+    /// The half of the middle third with the strip scrolled or snapped back to 0 stands at 578 with
+    /// two thirds of the free space on its left, and two thirds is where its next step stands.
+    #[test]
+    fn a_strip_scroll_or_snap_drops_the_place_and_the_next_key_takes_it_afresh() {
+        let scrolls: [(&str, fn(&mut ScrollingLayoutSystem, LayoutId)); 2] = [
+            ("a scroll", |system, layout| system.scroll_by_delta(layout, -1.0)),
+            ("a snap", |system, layout| system.snap_to_nearest_column(layout)),
+        ];
+        for (how, scroll) in scrolls {
+            let (mut system, layout, w) = kai_s_three_thirds();
+            assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (434.0, 860.0), "{how}");
+            scroll(&mut system, layout);
+            assert_eq!(laid_out_xw(&system, layout, w[1]), (578.0, 860.0), "{how}");
+
+            assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (386.0, 1148.0), "{how}");
+        }
+    }
+
+    /// The first column closing leaves the half of the middle third part off the left: the next
+    /// key takes it from where the reveal shows it, flush left.
+    #[test]
+    fn a_window_closing_drops_the_place_and_the_next_key_takes_it_afresh() {
+        let (mut system, layout, w) = kai_s_three_thirds();
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (434.0, 860.0));
+        system.remove_window(w[0]);
+        kai_s_frames(&system, layout);
+
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1148.0));
+    }
+
+    /// Kai's right third, centred after its first step: the next steps keep it centred.
+    #[test]
+    fn centring_drops_the_place_and_the_next_key_keeps_the_column_centred() {
+        let (mut system, layout, w) = kai_s_two_thirds_and_a_third();
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (866.0, 860.0));
+        system.center_selected_column(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (434.0, 860.0));
+
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (290.0, 1148.0));
+    }
+
+    /// Kai's left two thirds centred, where no column but a centred one can stand: every step
+    /// keeps it in the middle, and the two thirds again is the strip as it was centred.
+    #[test]
+    fn a_centred_column_stays_centred_through_the_cycle() {
+        let (mut system, layout, w) = kai_s_two_thirds_and_a_third();
+        assert!(system.select_window(layout, w[0]));
+        system.center_selected_column(layout);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(xw_in(&before, w[0]), (290.0, 1148.0));
+
+        for want in [(3.0, 1722.0), (578.0, 572.0), (434.0, 860.0)] {
+            assert_eq!(xw_in(&mod_r(&mut system, layout), w[0]), want);
+        }
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+    }
+
+    /// `set-column-width +5%` and `-5%` on Kai's right third keep its right edge and come back to
+    /// the strip as it began; on the left two thirds, at `max-column-width`, a grow does nothing.
+    #[test]
+    fn the_resize_keys_grow_and_shrink_about_the_same_place() {
+        let (mut system, layout, w) = kai_s_two_thirds_and_a_third();
+        let before = kai_s_frames(&system, layout);
+        for amount in [0.05, 0.05, -0.05] {
+            let frames = resize_key(&mut system, layout, amount);
+            assert!((right_edge(&frames, w[1]) - 1725.0).abs() <= 1.0, "{amount}: {frames:?}");
+            assert!(xw_in(&frames, w[1]).1 > 572.0, "{amount}");
+        }
+        assert_same_frames(&resize_key(&mut system, layout, -0.05), &before);
+
+        assert!(system.select_window(layout, w[0]));
+        let left = kai_s_frames(&system, layout);
+        assert_same_frames(&resize_key(&mut system, layout, 0.05), &left);
+    }
+
+    /// The app answering each write keeps the place, so the off-centre column comes back where it
+    /// stood; an app's own width moves the column's right edge and drops the place, and the next
+    /// key takes it from there.
+    #[test]
+    fn only_an_app_s_own_width_drops_the_place() {
+        let (mut system, layout, w) = kai_s_widths(&[0.5, 0.33333, 0.5, 0.33333], 1);
+        let before = kai_s_frames(&system, layout);
+        for _ in 0..3 {
+            let width = xw_in(&mod_r(&mut system, layout), w[1]).1;
+            app_sizes(&mut system, layout, w[1], width);
+        }
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+
+        let (mut system, layout, w) = kai_s_three_thirds();
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (434.0, 860.0));
+        app_sizes(&mut system, layout, w[1], 800.0);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (434.0, 800.0));
+
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (406.0, 860.0));
+    }
+
+    /// Focus moved to the middle third with no pass since: there is nowhere it stood to keep, and
+    /// the key reveals it as before.
+    #[test]
+    fn a_key_before_any_pass_had_the_window_selected_reveals_it() {
+        let (mut system, layout, w) = kai_s_three_thirds();
+        assert!(system.select_window(layout, w[0]));
+        kai_s_frames(&system, layout);
+        assert!(system.select_window(layout, w[1]));
+
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (578.0, 860.0));
+    }
+
+    /// Under `"always"` the centring places the column at every width, as before: the first flush
+    /// left, the middle centred, the last flush right.
+    #[test]
+    fn always_places_a_resized_column_by_the_centring() {
+        for col in 0..3 {
+            let (mut system, layout, w) = kai_s_centred_strip();
+            assert!(system.select_window(layout, w[col]));
+            kai_s_frames(&system, layout);
+            for step in 0..5 {
+                let frames = if step < 4 {
+                    mod_r(&mut system, layout)
+                } else {
+                    resize_key(&mut system, layout, 0.05)
+                };
+                let (x, width) = xw_in(&frames, w[col]);
+                let case = format!("column {col}, step {step}: {x}, {width}");
+                match col {
+                    0 => assert_eq!(x, 3.0, "{case}"),
+                    1 => assert!((x + width / 2.0 - 864.0).abs() <= 1.0, "{case}"),
+                    _ => assert!((x + width - 1725.0).abs() <= 1.0, "{case}"),
+                }
+            }
+        }
+    }
+
     // ── the view full width returns to ──────────────────────────────────────
 
     fn kai_s_frames(system: &ScrollingLayoutSystem, layout: LayoutId) -> Vec<(WindowId, CGRect)> {
@@ -6041,6 +6466,21 @@ mod tests {
     #[test]
     fn a_fold_back_finds_its_row_when_the_window_it_sat_above_has_a_new_id() {
         fold_round_trip_renaming(1);
+    }
+
+    /// The off-centre column of four, given a new id at the whole viewport, where its share comes
+    /// from the place kept and not from the pass: the third again stands where it began.
+    #[test]
+    fn a_column_given_a_new_id_keeps_its_place() {
+        let (mut system, layout, w) = kai_s_widths(&[0.5, 0.33333, 0.5, 0.33333], 1);
+        let before = laid_out_xw(&system, layout, w[1]);
+        for _ in 0..3 {
+            mod_r(&mut system, layout);
+        }
+        let new = wid(2, 1);
+        system.replace_window(w[1], new);
+
+        assert_eq!(xw_in(&mod_r(&mut system, layout), new), before);
     }
 
     /// A on Kai's thirds, given a new id while full width, or between the toggle back and its pass.

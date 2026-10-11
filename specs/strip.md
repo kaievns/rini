@@ -35,6 +35,44 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - `Mod+R` steps through the configured preset widths in order and wraps: a third, a half, two thirds,
   the whole viewport, then a third again. A column at a width that is no preset — what the incremental resize keys
   leave behind — MUST join the cycle at the first preset above it rather than at the start.
+- **A width given by key MUST grow and shrink the column about where it stood**, `Mod+R` and the
+  resize keys alike, under `center-focused-column "never"`. Where it stood is its share of the
+  viewport's free space on its left: a column flush with the right edge grows and shrinks from its
+  left edge, one flush with the left edge from its right edge, the middle of three thirds equally on
+  both sides, and any other in proportion to the free space on each side. A stacked column moves as
+  one, its rows' heights unchanged. Stepping back to the width it started at MUST put it back exactly
+  where it stood, and the whole viewport fills the screen. The columns beside it are pushed out or
+  pulled in on their own sides; where the strip is narrower than the viewport the column stays where
+  the strip's start leaves it. A column part off screen counts from where the reveal shows it; one
+  that fills the viewport takes its end of the strip, flush left as the first or only column, flush
+  right as the last, centred between. A centred column MUST stay centred. Where it stood is taken
+  when a width key first finds the column focused, and MUST be forgotten when focus moves to another
+  column or anything else scrolls the strip: a strip scroll or snap, a window opening or closing, a
+  move, centring, a fold, the full-width toggle, a mouse drag, or the app sizing its window to a width
+  other than the one rini wrote. So nothing sticks between visits: the same column reached from the
+  other side grows from the other side. Under `"always"` the centring places the column at every
+  width.
+
+> **Reported 2026-10-11.** "all looks good to me. one small bug. lets sai i have 2/3 + 1/3 windows on
+> the screen the big one on the left and small one on the right. when i resize the small one one the
+> right as 33 -> 50 -> 66 -> 100 the window on the left gets pushed out as you i'd expect, but when it
+> start circling further back 100 -> 66 -> 50 ... it doesn't shrink from the left side it shrinks
+> from the right instead pulling in the window on the right, which is confusing it expanded to the
+> left but shrinking from the right. if the window was on the left side the current behaviour is
+> correct it grows to ther night and shrinks from the right. but if it was originally on the right
+> side it is correctly grows to the left but then shrinks from the right and it needs fixing. a bonus
+> point. if a window is originaly in the middle like say 3 1/3 windows it would be great it it could
+> grow and shrink from to the middle. extra bonus is to handle all sorts of awkward positions of a
+> window in the middle, like say there are more than 3 columns or columens are unequal width, it
+> would be neat if the growth would be propotional on the sides and shrink back to the column's
+> original position. obviously the original position should be capture at focus time and then
+> forgotten as i move to other windows. the same small window could land either on the right or the
+> left side depending on which way i'm navigationg so the o/g position should not get stuck. also
+> when i say window in this case i think i mean column in general, betcause it's exactly the same
+> issue with multiple windows stacked up in the same column. either way needs fixing". A width
+> change scrolled the strip only as far as it had to to show the column, so a column at the right
+> edge was scrolled back in as it grew and kept its left edge as it shrank. Kai's two thirds and a
+> third is 1722.99pt, a point past the viewport, and the focus reveal leaves the third flush right.
 - The configured widths (`layout › preset-column-widths`) MAY be any proportions in `(0, 1]`; anything
   else MUST be refused when the config is read, naming the line. A proportion of 1.0 is the whole
   viewport, gap included: a width `max-column-width` does not hold, and not the maximise mode.

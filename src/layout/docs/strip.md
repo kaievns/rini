@@ -177,9 +177,26 @@ is borrowed.
   origin included, lifted the window out of the strip's coordinate space: it
   stopped scrolling, stayed pinned at the viewport's left edge, and other
   columns slid over it (Slack made full-size, then focus moved away).
-- **Changing a width rescrolls to keep the column visible.** Every column start
-  after it moves, so a window at the right edge grew off screen and the key
-  looked dead until a focus nudge forced a reveal.
+- **A width given by key keeps the column's place.** Every column start after
+  it moves, so with no rescroll a window at the right edge grew off screen and
+  the key looked dead until a focus nudge forced a reveal. The neutral reveal
+  that cured that kept the left edge on a shrink: a column at the right edge
+  grew leftward and shrank from the right (Kai, 2026-10-11). Under `"never"`,
+  `cycle_preset_column_width` and `resize_selection_by` keep a `Place` for the
+  selection (`LayoutState::kept_place`): `Centred` under a centre override, or
+  else the column's share of the viewport's free space on its left, which each
+  pass records for its selection (`last_selected_share`, `strip::place_share`,
+  revealed first, a viewport-wide column by its end of the strip). It is read
+  only when that pass had the window selected and no scroll request has come
+  since, which is what makes it the place focus left the column at. The next
+  pass pins the column's x at `strip::place_x` for its new width (`Pin::Place`,
+  applied where a kept right edge is), then clamps. The kept share, not the
+  pass's, steps the next width, so it survives a viewport-wide step and the
+  clamp of a strip narrower than the viewport, and the old width lands at the
+  old x. `unpin` drops it with the other pins; the raise's refocus after each
+  key keeps it (`holds_scroll_for`), and without that a step from the whole
+  viewport would take the pass's end-of-strip share. With no place, or under
+  `"always"`, the width change reveals or aligns as before.
 - **The way back from full width puts the strip back instead.** Both ways the
   toggle ran the one neutral reveal from wherever the strip was, so a column
   came back flush left whatever x it had left, and a centred column lost its
