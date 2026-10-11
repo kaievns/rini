@@ -2415,11 +2415,11 @@ fn land_layout_passes(
 }
 
 /// Kai's report of 2026-10-09, "alt-R is broken now, doesn't animate anything": the strip's last
-/// column at the left edge, the columns before it parked, is resized where it stands by `alt-R` with
+/// column at the left edge, the columns before it parked, is resized where it stands by `Mod+R` with
 /// nothing else on screen moving, and the pass was placed rather than flown. Every press flies, from
 /// each width the column can be at, the app answering each write with the frame it was given.
 #[test]
-fn every_alt_r_on_the_last_column_flies() {
+fn every_mod_r_on_the_last_column_flies() {
     use crate::layout::ResizeOrientation;
     use crate::layout::settings::CenterFocusedColumn;
     let space = SpaceId::new(1);
