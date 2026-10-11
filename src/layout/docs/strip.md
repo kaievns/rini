@@ -24,10 +24,13 @@ is borrowed.
   representation a drag across the viewport already gives a stacked column. The
   app resizing its window under such a column, by however much, leaves it the
   viewport wide, as under the mode: `on_window_resized` reads any report under
-  an unbounded column the viewport wide as answering rini. A maximum the window
-  server reports narrower than the viewport is the one width it does take:
-  `constraints::column_width` lays every column kind out at it, and the next
-  report answers that slot (Kai's rule, 2026-10-11, in `specs/strip.md`). Read back, a window
+  a column `constraints::holds_viewport` names as answering rini. Nor does a
+  maximum narrow it: `constraints::column_width` skips the windows' maximum for
+  a column held to the viewport, so the window sits at its maximum inside a
+  viewport-wide column and the gap shows the app's limit (Kai, 2026-10-11, in
+  `specs/strip.md`). Narrowed to it, the column's own slot was the window's,
+  so the exemption missed it and any report short of that slot was taken as
+  the column's width. Read back, a window
   settling 20pt short sat at 0.988, over the 1% `next_preset` reads as the same
   width, so the next `Mod+R` found 1.0 above it again and stood still. A maximized window still takes its
   turn: `ratio_of` reads it as 1.0, where the stored `width_offset` the cycle
@@ -124,13 +127,13 @@ is borrowed.
   `space_resolution` still answered with its old assignment, so the rest of the
   reactor thought it was somewhere it was not. A window macOS has taken is not a
   claim rini's bookkeeping gets to veto.
-- **A maximized window never outgrows the space reserved for it.** The column's
-  reserved width is clamped to what its windows accept; the frame was not, so a
-  window with a maximum width was handed the whole tiling width and the next
-  column was laid out on top of it. Both sides read
-  `constraints::clamp_to_constraints` now. A minimum larger than the slot does
-  not grow the window past it — overlap is worse than a window smaller than it
-  asked for.
+- **A maximized window never outgrows the space reserved for it.** The column
+  reserves the whole viewport and the frame is held to what the window accepts
+  (`constraints::clamp_to_constraints`), so a window with a maximum width sits at
+  it inside the column. The frame used to be handed the whole tiling width while
+  the reservation was clamped, and the next column was laid out on top of it. A
+  minimum larger than the slot does not grow the window past it — overlap is
+  worse than a window smaller than it asked for.
 - **Maximizing a stacked window pulls it out of the stack.** It fills the tiling
   area, which would otherwise cover the siblings sharing its column while the
   tree still claimed they were abreast. It becomes its own column in the

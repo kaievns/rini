@@ -73,12 +73,23 @@ pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, ma
     }
 }
 
+/// Whether a column of `kind` at `ratio` is held to the whole viewport: full width, or unbounded to
+/// within a point of it, as `ctrl-R`'s 100% or a drag across the viewport leaves one.
+pub fn holds_viewport(kind: ColumnKind, ratio: f64, viewport_width: f64) -> bool {
+    match kind {
+        ColumnKind::FullWidth => true,
+        ColumnKind::Unbounded => viewport_width * (1.0 - ratio) <= 1.0,
+        ColumnKind::Bounded => false,
+    }
+}
+
 /// How wide one column of the strip is.
 ///
 /// `ratio` of the viewport, then widened to whatever the windows in it require, then narrowed to what
 /// they accept — in that order, because a minimum beats a maximum. A column whose windows demand more
 /// than they allow is given the minimum: a window clipped at the edge is recoverable, a window too
-/// small to use is not.
+/// small to use is not. A column held to the viewport is not narrowed: it stays the viewport wide and
+/// its window sits at its maximum inside it, the gap beside it showing the app can go no wider.
 ///
 /// Clamped to the viewport last of all. This layout scrolls BETWEEN column starts and does not pan
 /// within one column, so a column wider than the screen has a region nothing can ever scroll to.
@@ -96,7 +107,7 @@ pub fn column_width(
 ) -> f64 {
     let required = limits.fixed.unwrap_or(limits.min).max(limits.min);
     let mut width = (viewport_width * ratio).max(1.0).max(required);
-    if let Some(max) = limits.max {
+    if let Some(max) = limits.max.filter(|_| !holds_viewport(kind, ratio, viewport_width)) {
         width = width.min(max).max(required);
     }
 
@@ -662,6 +673,22 @@ mod column_tests {
             ..AxisConstraints::default()
         };
         assert_eq!(column_width(ColumnKind::Bounded, 0.5, 1000., 0., limits), 700.0);
+    }
+
+    /// A column held to the viewport keeps it past its windows' maximum, so the gap beside the
+    /// window shows its app can go no wider; a column short of the viewport is narrowed to it.
+    #[test]
+    fn a_column_held_to_the_viewport_is_not_narrowed_to_its_windows_maximum() {
+        let limits = AxisConstraints {
+            min: 1.,
+            max: Some(1408.),
+            ..AxisConstraints::default()
+        };
+        assert_eq!(column_width(ColumnKind::FullWidth, 1.0, 1722., 0., limits), 1722.0, "full width");
+        assert_eq!(column_width(ColumnKind::Unbounded, 1.0, 1722., 3., limits), 1722.0, "ctrl-R's 100%");
+        assert_eq!(column_width(ColumnKind::Unbounded, 1721.5 / 1722., 1722., 3., limits), 1721.5, "a point short");
+        assert_eq!(column_width(ColumnKind::Unbounded, 0.9, 1722., 3., limits), 1408.0, "dragged short of it");
+        assert_eq!(column_width(ColumnKind::Bounded, 1.0, 1722., 0., limits), 1408.0, "bounded");
     }
 
     /// A lock raises the column's FLOOR and does not cap it.

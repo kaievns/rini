@@ -207,21 +207,21 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A window that resizes itself MUST keep its column where it was: the app's new width is taken, laid
   out at the width the app reported, and its origin is not. Its new height is taken from the other
   windows in its column, in their proportions. A column rini holds to the viewport, full width or
-  the whole viewport wide by `Mod+R`'s 100% or a drag across it, MUST be laid out at its windows'
-  maximum width when the window server reports one narrower than the viewport, so the column ends
-  where its app can reach, and MUST take no other width from its app, however far short of the
-  viewport the app resizes it. A report within 1pt of the place rini gave the window on an axis is the
-  app answering rini's own write: it MUST change nothing on that axis, and a report that changes
-  neither axis MUST NOT scroll the strip, so a centred column stays centred and a fold or full width
-  still comes back to the view it left.
+  the whole viewport wide by `Mod+R`'s 100% or a drag across it, MUST stay the viewport wide and
+  take no width from its app, however far short of the viewport the app resizes it. A window in it
+  whose app can go no wider, a maximum the window server reports included, MUST sit at that width
+  inside the column, the gap beside it showing the limit, and the next column MUST NOT move in. A
+  report within 1pt of the place rini gave the window on an axis is the app answering rini's own
+  write: it MUST change nothing on that axis, and a report that changes neither axis MUST NOT scroll
+  the strip, so a centred column stays centred and a fold or full width still comes back to the view
+  it left.
 
 > **Reported 2026-10-11**, asked whether a column rini holds to the viewport should take a width its
 > app sets itself: "if an app can't go wider ignore it will make it visible, otherwise it'll feel
-> like resizing bug". A maximum the window server reports already narrowed such a column to it. A
-> width its app reports is not taken as a maximum: an app snapping a point or 20pt short of every
-> write answers the same short width each time, and a maximum learnt from it would narrow the column,
-> the resizing bug Kai rules out. No app is known that refuses a wider write without reporting a
-> maximum; not verified on screen.
+> like resizing bug". Before it, a maximum the window server reports narrowed such a column to it,
+> 1722 to 1408 for an app capped at 1400 under a 4pt border, the next column moving in beside it,
+> and an app under that narrowed column resizing itself was taken as the column's width. The
+> resize then reads as not taking.
 
 > **Found 2026-10-09, not reported.** An app answering rini's write 1pt off on one axis had the other
 > axis read again with it. A half column's 860pt was read back as 860/1722 of the viewport and laid

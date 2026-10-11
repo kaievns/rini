@@ -7,7 +7,7 @@ use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
     AxisConstraints, ColumnKind, clamp_to_constraints, column_limits, column_ratio, column_width,
-    ratio_of_column_width, solve_axis_lengths,
+    holds_viewport, ratio_of_column_width, solve_axis_lengths,
 };
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::domain::edge_drag::{Drag, End, Side, dragged_side, dragged_width, trade_height};
@@ -1850,11 +1850,11 @@ impl ScrollingLayoutSystem {
             return;
         }
         let stacked = state.columns[col_idx].windows.len() > 1;
-        let unbounded = state.columns[col_idx].width_unbounded;
+        let (kind, ratio) = Self::laid_out_ratio(state, &state.columns[col_idx], min_ratio, max_ratio);
+        let held_to_viewport = holds_viewport(kind, ratio, tiling.size.width);
         let (width_kept, height_kept) = match state.laid_out_slot_of(wid).filter(|_| drag.is_none()) {
             Some(slot) => (
-                answers_slot(new_frame.size.width, slot.width)
-                    || (unbounded && answers_slot(slot.width, tiling.size.width)),
+                answers_slot(new_frame.size.width, slot.width) || held_to_viewport,
                 !stacked || answers_slot(new_frame.size.height, slot.height),
             ),
             None => (false, false),
@@ -4044,7 +4044,7 @@ mod tests {
 
     /// The reservation and the frame have to agree. The strip reserved the CLAMPED width for the
     /// column while the window was handed the whole tiling width, so the next column was laid out
-    /// on top of it.
+    /// on top of it. The column keeps the viewport and the window sits at its maximum inside it.
     #[test]
     fn a_maximized_window_that_cannot_fill_the_viewport_does_not_overlap_the_next_column() {
         let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
@@ -4072,6 +4072,7 @@ mod tests {
         let maximized = frame_for(&frames, narrow);
         let neighbour = frame_for(&frames, next);
         assert_eq!(maximized.size.width, 400.0, "it cannot be wider than it says");
+        assert!(neighbour.origin.x >= 1000.0, "the column keeps the viewport, the next at {neighbour:?}");
         assert!(
             maximized.origin.x + maximized.size.width <= neighbour.origin.x + 1.0,
             "maximized {maximized:?} runs into the next column at {neighbour:?}"
@@ -4836,11 +4837,13 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "dragged across");
     }
 
-    /// A column the viewport wide whose app the window server reports cannot go past 1400pt is laid
-    /// out 1400pt wide plus its border, so no gap shows beside it, and the app answering that changes
-    /// nothing: `Mod+R` from it still wraps to a third.
+    /// A column the viewport wide keeps the viewport when the window server reports its app cannot
+    /// go past 1400pt: the capped window sits at 1400pt plus its border inside it, its stack-mate
+    /// the viewport wide, so the gap shows the app can go no wider. The app answering that, settling
+    /// 20pt short of it or resizing itself to 1000pt takes no width, and `Mod+R` still wraps to a
+    /// third.
     #[test]
-    fn a_column_the_viewport_wide_is_laid_out_at_its_apps_maximum() {
+    fn a_column_the_viewport_wide_keeps_it_past_its_apps_maximum() {
         let border = 4.0;
         let borders = tile::Borders::every(border);
         let capped = |w: &[WindowId]| -> HashMap<WindowId, WindowLayoutConstraints> {
@@ -4849,42 +4852,46 @@ mod tests {
                 max_width: 1400.0,
                 ..Default::default()
             };
-            w.iter().map(|&id| (id, limit)).collect()
+            HashMap::from_iter([(w[1], limit)])
         };
         let slot_xw = |system: &ScrollingLayoutSystem, layout, w: &[WindowId], id| {
             let frames = system.calculate_layout(layout, KAI_SCREEN, &capped(w), &borders, &kai_s_gaps());
             let slot = tile::slot_of(frame_for(&frames, id), border);
             (slot.origin.x, slot.size.width)
         };
-        let answers = |system: &mut ScrollingLayoutSystem, layout, w: &[WindowId], id| {
+        let reports = |system: &mut ScrollingLayoutSystem, layout, w: &[WindowId], width: Option<f64>| {
             let frames = system.calculate_layout(layout, KAI_SCREEN, &capped(w), &borders, &kai_s_gaps());
-            let frame = frame_for(&frames, id);
+            let frame = frame_for(&frames, w[1]);
             assert_eq!(frame.size.width, 1400.0, "the window at its maximum");
-            system.on_window_resized(layout, id, None, frame, border, KAI_SCREEN, &kai_s_gaps());
+            let frame = CGRect::new(frame.origin, CGSize::new(width.unwrap_or(frame.size.width), frame.size.height));
+            system.on_window_resized(layout, w[1], None, frame, border, KAI_SCREEN, &kai_s_gaps());
+        };
+        let held = |system: &mut ScrollingLayoutSystem, layout, w: &[WindowId], how: &str| {
+            assert_eq!(slot_xw(system, layout, w, w[1]), (3.0, 1408.0), "{how}: the capped window");
+            assert_eq!(slot_xw(system, layout, w, w[0]), (3.0, 1722.0), "{how}: the column");
+            for width in [None, Some(1380.0), Some(1000.0)] {
+                reports(system, layout, w, width);
+                assert_eq!(slot_xw(system, layout, w, w[1]), (3.0, 1408.0), "{how}: {width:?} taken");
+                assert_eq!(slot_xw(system, layout, w, w[0]), (3.0, 1722.0), "{how}: {width:?} narrowed it");
+            }
+            system.cycle_preset_column_width(layout);
+            assert_eq!(slot_xw(system, layout, w, w[0]).1, 572.0, "{how}: Mod+R wraps");
         };
 
         let (mut system, layout, w) = column_of(preset_settings(), 2);
         assert!(system.select_window(layout, w[1]));
         system.cycle_preset_column_width(layout);
         system.cycle_preset_column_width(layout);
-        assert_eq!(slot_xw(&system, layout, &w, w[1]).1, 1408.0, "Mod+R's 100%");
-        answers(&mut system, layout, &w, w[1]);
-        assert_eq!(slot_xw(&system, layout, &w, w[1]).1, 1408.0, "answered");
-        system.cycle_preset_column_width(layout);
-        assert_eq!(slot_xw(&system, layout, &w, w[1]).1, 572.0, "Mod+R wraps");
+        held(&mut system, layout, &w, "Mod+R's 100%");
 
-        let (mut system, layout, w) = kai_s_stack();
+        let (mut system, layout, w) = column_of(preset_settings(), 2);
         assert!(system.select_window(layout, w[1]));
         let frames = system.calculate_layout(layout, KAI_SCREEN, &capped(&w), &borders, &kai_s_gaps());
         let from = frame_for(&frames, w[1]);
         let to = CGRect::new(from.origin, CGSize::new(1722.0 - 2.0 * border, from.size.height));
         let drag = Drag::report(from, to, None);
         system.on_window_resized(layout, w[1], Some(drag), to, border, KAI_SCREEN, &kai_s_gaps());
-        assert_eq!(slot_xw(&system, layout, &w, w[1]).1, 1408.0, "dragged across");
-        answers(&mut system, layout, &w, w[1]);
-        assert_eq!(slot_xw(&system, layout, &w, w[1]).1, 1408.0, "answered");
-        system.cycle_preset_column_width(layout);
-        assert_eq!(slot_xw(&system, layout, &w, w[1]).1, 572.0, "Mod+R wraps");
+        held(&mut system, layout, &w, "dragged across");
     }
 
     /// `Mod+R`'s 100% is above `max-column-width`: a grow key does nothing, and a shrink key starts
