@@ -5139,6 +5139,27 @@ mod tests {
         assert_eq!(laid_out_xw(&restored, layout, w[1]).1, 1443.0);
     }
 
+    /// `Mod+R`'s 100% is a width, so the layout file carries it as one: the column comes back the
+    /// viewport wide and held only to it, not maximised.
+    #[test]
+    fn a_column_mod_r_made_the_viewport_wide_survives_a_save_and_restore_as_a_width() {
+        let (mut system, layout, w) = kai_s_three_thirds();
+        mod_r(&mut system, layout);
+        mod_r(&mut system, layout);
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1722.0));
+
+        let mut restored: ScrollingLayoutSystem =
+            ron::from_str(&ron::ser::to_string(&system).unwrap()).unwrap();
+        restored.settings = system.settings.clone();
+        let state = restored.layout_state(layout).expect("layout");
+        let (col_idx, _) = state.locate(w[1]).expect("column");
+        let column = &state.columns[col_idx];
+        assert!(column.width_overridden && column.width_unbounded, "{column:?}");
+        assert_near(state.column_width_ratio + column.width_offset, 1.0, "ratio");
+        assert!(!restored.is_window_full_width(layout, w[1]));
+        assert_eq!(laid_out_xw(&restored, layout, w[1]).1, 1722.0);
+    }
+
     #[test]
     fn a_window_resizing_itself_keeps_its_column_where_it_was() {
         let (mut system, layout, w) = kai_s_strip();
