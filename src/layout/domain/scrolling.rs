@@ -6777,6 +6777,19 @@ mod tests {
         }
     }
 
+    /// A workspace meeting a display size it has no layout for takes a copy of its last one: a
+    /// full-width window in the copy restores to the place it left in the original.
+    #[test]
+    fn a_full_width_window_in_a_cloned_layout_restores_to_the_place_it_left() {
+        let (mut system, layout, w) = kai_s_thirds();
+        assert!(system.toggle_full_width(layout, w[1]));
+        kai_s_frames(&system, layout);
+        let cloned = system.clone_layout(layout);
+
+        assert!(system.toggle_full_width(cloned, w[1]));
+        assert_eq!(laid_out_xw(&system, cloned, w[1]), (578.0, 572.0));
+    }
+
     /// A layout file from before the two maps holds one `stack_origins`: it loads, its strip intact
     /// and the old origins dropped.
     #[test]
