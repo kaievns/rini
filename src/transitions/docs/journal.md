@@ -83,7 +83,8 @@ How to read them:
   grows a window once the flight moves, and any pass while one is held, is a `hold_merge` in the
   generation running, with the `write`, `holes` and `watch` that hold it after it unless it merges
   at once. The `retarget` comes once the grows have repainted, been given up on or waited
-  `HOLD_CAP` since the latest `hold_merge` that held or `BURST_HOLD_CAP` since the first: its
+  `HOLD_CAP` since the latest `hold_merge` that held, `ELSEWHERE_HOLD_CAP` when one of its grows
+  ends cut by the display's edge, or `BURST_HOLD_CAP` since the first: its
   `waited_ms` is the wait since the latest `hold_merge` that held, 0 when none did. A pass growing
   nothing that arrives while others are held merges them at once and reports that wait, not its
   own, which is none. The `merge` of each pass held follows the `retarget`, each starting the next

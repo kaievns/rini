@@ -246,13 +246,14 @@ destination for a window already moving.
   with them, and the windows written their new frames as it covers them. A resize that grows a
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the
   overlay standing still, until that window has repainted at its new size, up to 300ms from the
-  overlay going up or from the latest press growing it before the motion starts, and 600ms in all
-  from the overlay going up, and that window MUST fly its repainted picture from the motion's first
+  overlay going up or from the latest press growing it before the motion starts, 450ms for a window
+  ending part off the display, and 600ms in all from the overlay going up, and that window MUST fly its repainted picture from the motion's first
   frame, or for a fold or an unfold from its corner (below), so its growth shows its content and
   never a fill cut to content mid-flight. A grow ending
-  part off the display MUST be held for the same way: SkyLight returns only a window's visible part,
-  so its repaint there MUST be watched through ScreenCaptureKit, which returns the window whole, and
-  counted on two of its captures in a row. A grow ending wholly off the display, or showing no more
+  part off the display MUST be held for the same way, up to 450ms in place of 300ms: SkyLight returns
+  only a window's visible part, so its repaint there MUST be watched through ScreenCaptureKit, which
+  returns the window whole, and counted on two of its captures in a row, which takes longer. A press
+  growing another window MUST NOT cut that hold short. A grow ending wholly off the display, or showing no more
   of itself there than a parked window's sliver, MUST NOT be held for: no watch sees it repaint. A
   window growing on one axis as it shrinks on the other, as a fold or an unfold, has no picture
   covering every frame, and MUST fly in two steps, never showing its ground: first the shrinking
@@ -274,7 +275,8 @@ destination for a window already moving.
   before the flight of the one before it has ended, MUST hold that window the same way: the flight
   MUST play on as it was, its tiles going on to the ends they had and resting there with the overlay
   up, and the pass MUST merge into it only once that window has repainted where the pass ends it,
-  up to 300ms from the pass's arrival. Only that repaint merges it: a picture of the window taken
+  up to 300ms from the pass's arrival, 450ms for a window ending part off the display. Only that
+  repaint merges it: a picture of the window taken
   anywhere else, as where the flight ended it before the pass, MUST NOT. The tiles then MUST set off from where each is drawn at that
   moment, the grown window flying its repainted picture, so its growth shows its content. A merged
   pass grows a window when it ends it wider or taller than the picture its tile carries, whatever its
@@ -285,7 +287,8 @@ destination for a window already moving.
   from the first one's, and the repainted picture where the latest one ends the window MUST go onto
   its tile as they merge. A pass that grows no window MUST merge at once, with any pass held before
   it. Each held pass MUST write its windows as it is held, and their merging MUST NOT write
-  a window again, least of all back where an earlier held pass sent it. A held pass whose window misses the 300ms, or the 600ms of a burst, merges with the
+  a window again, least of all back where an earlier held pass sent it. A held pass whose window misses the 300ms, the 450ms of one ending part off the display, or the
+  600ms of a burst, merges with the
   picture its tile has, the window's ground in the growth, and the repainted picture replaces that
   one when it comes.
 - Each window a resize grows to end on the display, wholly or cut by its edge, MUST be pictured at
@@ -361,6 +364,15 @@ destination for a window already moving.
 > repainted picture, 538 tall, over its 1079-tall start, its ground above it until its height caught
 > up; and the first grew back to end part off the display with its ground in the growth, never held
 > for, for the 359ms from the motion's start to the lift.
+>
+> **Reported 2026-10-11**, on the unfold recorded after the change the report above led to. Kai:
+> "unfold flash take longer wait". Recorded on 2026-10-10 (`docs/data/2026-10-10-fold`, run fold2):
+> lab-A grew back to end part off the display, held for its repaint, which came through
+> ScreenCaptureKit 364ms after the overlay went up. The hold let go at 300ms, so 3 frames, 4033 to
+> 4067ms, flew its growth with its ground, 67, 156 and 266 flat dark blocks, until the repaint was cut
+> in 64ms into the motion. The hold for a window ending part off the display became 450ms, chosen
+> above that one sample: such an unfold sets off on its repaint, 64ms later on fold2 and at most
+> 150ms later than before, with no ground.
 
 ## Correctness the user can see
 

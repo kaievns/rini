@@ -3,9 +3,9 @@
 The journals, press lists and block counts behind two findings. fold1's: the last 2026-10-10
 Reported line of `specs/animation.md` "Resizing", and a shrink starting off the display keeping its
 cached picture and a fold flying in two steps in "A grow waits for its repaint"
-(`src/transitions/docs/coordination.md`). fold2's: the 450ms cap on a hold waiting for a grow that
-ends cut by the display's edge, in the same two sections. The movies are not kept: they show Kai's
-screen.
+(`src/transitions/docs/coordination.md`). fold2's: the 2026-10-11 Reported line in the same spec,
+and `ELSEWHERE_HOLD_CAP`, the 450ms cap on a hold waiting for a grow that ends cut by the display's
+edge, in the same section. The movies are not kept: they show Kai's screen.
 
 Each run is three files. `fold1.journal.jsonl` holds the 365 lines rini's transitions journal wrote
 while the run recorded, g15 to g19, read with `tools/focuslab/journal.py`; g19, at 8559.9ms, is

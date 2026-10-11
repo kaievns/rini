@@ -133,7 +133,8 @@ border and focus ring rini draws around it at rest when it wears either where it
 state is watched. A layout pass then waits for the reactor's follow-up passes (25ms); one that grows a
 window, or draws one with no picture of its own, a reserved entrance or a stand-in, waits instead for
 that window to repaint (up to `HOLD_CAP` from the show or from the latest pass merged before the
-motion holding for one, `BURST_HOLD_CAP` in all, and no longer for one whose picture the pictures service
+motion holding for one, `ELSEWHERE_HOLD_CAP` for a window ending cut by the display's edge,
+`BURST_HOLD_CAP` in all, and no longer for one whose picture the pictures service
 reports will not come, `Lost`, or one ending where no watch can see it repaint, wholly off the
 display or showing no more than a parked window's sliver, or sent there by a merged pass); a window it only shrinks is never held for itself and moves when
 the flight does, keeping the picture its tile starts with to the lift when that covers its start
@@ -377,7 +378,8 @@ altr1 that let two holds go at once (g9, g10), the second flying lab-A's growth 
 ground for 129ms (`docs/data/2026-10-10-rapid-altr`). A `Lost` the earlier watch sent before the
 retarget still lets the hold go: it arrives under the same generation and carries no frame to tell
 it apart (not seen on altr1). Once each grow has repainted,
-is given up on (`Lost`) or `HOLD_CAP` has passed since the latest pass arrived, the coordinator says
+is given up on (`Lost`) or its grows' cap has passed since the latest pass arrived, `HOLD_CAP`, or
+`ELSEWHERE_HOLD_CAP` when any of them ends cut by the display's edge (`hold_cap`), the coordinator says
 `Command::Retarget`: the engine merges every pass it held, oldest first, from where each tile is
 drawn then (`FlightEngine::merge_now`, the path any other pass takes at once), and tells it
 `Event::Merge` for each, each starting the next generation. Each held pass was written as it was
@@ -815,7 +817,8 @@ has repainted there, taken within 20pt of the slot, admits it
 (`RunningAnimation::admit`): before the motion starts the zero-width tile
 joins frame zero, posed again with it, and the flight starts when the
 last awaited picture lands, is reported lost or is sent off the display by a merged pass, or
-`HOLD_CAP` passes, so every tile starts in the one
+the hold's cap passes (`HOLD_CAP`, `ELSEWHERE_HOLD_CAP` for one ending cut by the display's edge),
+so every tile starts in the one
 transaction the motion starts in; after, it is merged in as a pass holding it alone and joins the
 flight in `GroupKey::Loose` on a track of its own for what is left of the clock
 (`a_late_entrance_joins_on_a_track_of_its_own`). One admitted once the clock has run out, while the
@@ -859,13 +862,17 @@ it has repainted where it ends (`EndPicture::of_request`, sorted into the stage'
 `StageSummary::repainting`, `Settle::Repainted`). A window the pass grows on either axis, judged on the request's own sizes
 (`stretch::grows`) and a merged pass's against its tile's picture as well ("Mid-flight passes"), a fold widening a window as it shortens it included, is `EndPicture::Held`: in
 `StageSummary::awaiting` as well, so the overlay stands still at frame zero, in place of the 25ms
-coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show. That picture goes onto
+coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show, or `ELSEWHERE_HOLD_CAP`
+when a window it holds for ends cut by the display's edge (below). That picture goes onto
 the tile before the motion starts, `FlightEngine::swap` posing frame zero again with it (`reinstall`),
 so the flight starts with it on the crop grid on the leg's anchors and a grow's moving edge reveals
 real content from its first frame; a fold's or an unfold's is held for the corner of its leg instead
 (below). A pass merged before
-the motion holding for a window, a re-grow of one held included, holds `HOLD_CAP` from its own
-arrival instead (`hold_again`), never past `BURST_HOLD_CAP` (600ms) from the show, so a burst cannot
+the motion holding for a window, a re-grow of one held included, holds its own windows' cap from
+its own arrival instead (`hold_again`), never less than the hold already runs, so a newcomer that SkyLight
+watches never cuts short a hold for a cut end
+(`a_skylight_newcomer_never_shortens_a_hold_for_a_cut_end`), and never past `BURST_HOLD_CAP` (600ms)
+from the show, so a burst cannot
 stall the flight: holding only to the show's cap, presses every 115ms repainting 140ms after each set
 off at 300ms with 572 on the tile and 1722 its end, the 1722 repaint due at 370ms
 (`a_grow_merged_before_the_motion_holds_from_its_own_arrival`). A pass merged then holding for
@@ -972,9 +979,10 @@ the lift shows the real window.
 
 The watch reads the window's server frame every 1ms until it is within 20pt of where it ends, a cheap
 window-server read, and reports it lost if it is not there `HOLD_CAP` (300ms) after the watch asking
-for it, at the show or a merge. Once
+for it, at the show or a merge, or `ELSEWHERE_HOLD_CAP` (450ms) when any window it watches to repaint
+ends cut by the display's edge, as long as a hold for them runs. Once
 there, it captures it every 8ms, 125 times at most, about a second, until a capture settles or the
-lift stops the watch: `HOLD_CAP` bounds the hold for a grow, not the captures. The frame resizes instantly while the app's pixels lag behind, and a
+lift stops the watch: the caps bound the hold for a grow, not the captures. The frame resizes instantly while the app's pixels lag behind, and a
 capture taken between the two is a half-painted surface: delivering one flew the whole reveal with
 garbage. So a capture counts only when settled (`repaint_settled`): it matches the previous print
 (`renderings_match` on 32x32 RGBA thumbprints, a sample differing when any channel moves by more than
@@ -990,12 +998,18 @@ returns its surface whole: one capture after another, each listed afresh, throug
 `Priority::Repaint`, judged by the same rule on 32x32 thumbprints read off the surface, 20 times at
 most (`ELSEWHERE_TRIES`). On fold1's unfold (`docs/data/2026-10-10-fold`, g18) lab-A, ending at about
 -285, was never watched and flew its growth as the ground for the 359ms from the motion's start to the
-lift, up to 422 blocks. A hole is cut over a grow ending cut by the display's right edge, whose left
+lift, up to 422 blocks. On fold2's unfold (g17) lab-A, ending at -286 and watched so, repainted
+364.5ms after the show, past `HOLD_CAP`: the motion set off at 300ms and flew its growth as the ground
+for 3 frames, 67, 156 and 266 blocks at 4033 to 4067ms, until the repaint was swapped in 64ms after
+the motion's start. So a hold, and the watch it waits on, any of whose windows ends cut by the edge
+runs up to `ELSEWHERE_HOLD_CAP`, 450ms, chosen above that one sample, while one for windows wholly on
+the display keeps `HOLD_CAP` (`hold_cap`;
+`a_grow_ending_cut_by_the_display_edge_holds_to_its_repaint_past_the_skylight_cap`). A hole is cut over a grow ending cut by the display's right edge, whose left
 edge it sits 1pt in from, and none over one cut by its left edge, as lab-A is, its hole off the display
 (`holes`); a measured lift compares neither (`EndWatch::compared`). *Whether a
 half-painted surface can hold still for 8ms and pass, what the watch's captures cost the motion
-they now run beside, how long the ScreenCaptureKit captures of a cut end keep the hold (38-56ms a
-capture, `src/pictures/docs/capture-research.md`, so two inferred to fit `HOLD_CAP`), and whether a
+they now run beside, how long a cut end's repaint keeps the hold beyond fold2's one sample (38-56ms
+a ScreenCaptureKit capture, `src/pictures/docs/capture-research.md`), and whether a
 grow cut by the left edge, which the overlay covers on the display with no hole over it, keeps
 painting, are not measured yet.*
 
@@ -1016,9 +1030,11 @@ pass grows that window.
 `HOLD_CAP` bounds the hold for a grow, from the show or the latest pass merged before the motion
 holding for one, `BURST_HOLD_CAP` bounding those in all, a held merge's wait for its grows from its
 arrival, `BURST_HOLD_CAP` from the first pass held ("Mid-flight passes"), the hold for a window with no picture of its own ("The reservation
-fallback"), and how long a repaint watch waits for its window to arrive; a 150ms cap was
+fallback"), and how long a repaint watch waits for its window to arrive, each for windows ending
+wholly on the display; `ELSEWHERE_HOLD_CAP` bounds each in its place once one ends cut by the
+display's edge (above). A 150ms cap was
 tried and raised back to 300ms, since a watch waits for the real frame to reach its end before it
-captures. *How often 300ms is enough is not
+captures. *How often 300ms, and 450ms for a cut end, is enough is not
 measured yet.*
 
 ## Structural findings

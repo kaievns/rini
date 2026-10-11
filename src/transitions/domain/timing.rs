@@ -21,9 +21,15 @@ pub(in crate::transitions) const HANDOVER_THRESHOLD_PT: f64 = 2.0;
 /// overlay going up or the arrival of the latest pass merged before the motion holding for one; how long
 /// a pass merged while the flight moves waits, from its arrival, for the windows it grows to repaint;
 /// and how long a window watched to repaint where it ends is waited for there before it is lost; once
-/// there, it is captured until it settles. See "A grow waits for its repaint" and "Mid-flight passes"
-/// in `src/transitions/docs/coordination.md`.
+/// there, it is captured until it settles. All of it for windows ending wholly on the display, which
+/// SkyLight captures; one cut by its edge waits `ELSEWHERE_HOLD_CAP`. See "A grow waits for its
+/// repaint" and "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) const HOLD_CAP: Duration = Duration::from_millis(300);
+
+/// `HOLD_CAP` for a hold or a watch any of whose windows ends cut by the display's edge, captured
+/// through ScreenCaptureKit there. Chosen above the one repaint of such an end measured, 364ms from the
+/// show (fold2, `docs/data/2026-10-10-fold`), not measured beyond it.
+pub(in crate::transitions) const ELSEWHERE_HOLD_CAP: Duration = Duration::from_millis(450);
 
 /// How long, in all, passes merged before the motion can hold the overlay still, from its going up,
 /// and passes held once it moves can keep from merging, from the first one's arrival: twice
@@ -54,6 +60,12 @@ mod tests {
     #[test]
     fn a_burst_holds_at_most_two_blinks() {
         assert_eq!(BURST_HOLD_CAP, 2 * HOLD_CAP);
+    }
+
+    /// See "A grow waits for its repaint" in `src/transitions/docs/coordination.md`.
+    #[test]
+    fn a_cut_end_holds_longer_than_a_blink_and_inside_a_burst() {
+        assert!(HOLD_CAP < ELSEWHERE_HOLD_CAP && ELSEWHERE_HOLD_CAP < BURST_HOLD_CAP);
     }
 
     #[test]

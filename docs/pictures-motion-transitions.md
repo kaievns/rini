@@ -106,7 +106,7 @@ The coordinator is one lifecycle for every kind, as a pure state machine (`on(ev
 
 ```
 Idle ─request─▶ Preparing ─frame-zero pictures, or 80ms─▶ (Coalescing, Holding) ─▶ Playing ─clock done─▶ Landing ─tiles and windows where they end, or 350ms─▶ lift ─▶ Settling ─quiet─▶ Idle
-(Playing, Landing) ─a pass growing a window─▶ MergeHeld ─the grows repainted where the latest held pass ends them, Lost, or 300ms from the latest pass held (600ms from the first)─▶ Playing
+(Playing, Landing) ─a pass growing a window─▶ MergeHeld ─the grows repainted where the latest held pass ends them, Lost, or 300ms from the latest pass held, 450ms for a grow cut by the display's edge (600ms from the first)─▶ Playing
 ```
 
 While a merge is held (`Phase::MergeHeld`) the tiles rest where they end, with no last capture, place,

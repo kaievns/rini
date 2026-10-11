@@ -18,7 +18,7 @@ use crate::animation::domain::motion::tile::snap_to;
 use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
 
 use super::request::SurfaceWindow;
-use super::timing::{BURST_HOLD_CAP, COALESCE_WINDOW, FRAME_INTERVAL, HOLD_CAP, LIFT_GRACE};
+use super::timing::{BURST_HOLD_CAP, COALESCE_WINDOW, ELSEWHERE_HOLD_CAP, FRAME_INTERVAL, HOLD_CAP, LIFT_GRACE};
 
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
 pub const FRAME_ZERO_PATIENCE: Duration = Duration::from_millis(80);
@@ -357,7 +357,8 @@ pub struct EndWatch {
     pub compared: Vec<(WindowId, ScreenRect)>,
     /// A window of `landing` not there by then is lost...
     pub landing_until: Instant,
-    /// ... and one of `awaiting` when a hold would run out, held for or not.
+    /// ... and one of `awaiting` when a hold for all of them would run out (`hold_cap`), held for or
+    /// not.
     pub awaiting_until: Instant,
     /// The focus target and where it ends, watched until its look changes: only while focus is moving
     /// to it and its focused look is still to come, never for a window `awaiting` watches, and never
@@ -382,13 +383,14 @@ enum Phase {
     /// Overlay up, waiting for the follow-up passes.
     Coalescing { until: Instant },
     /// Overlay up, waiting for the awaited windows' first pictures, or to hear they will not come:
-    /// `HOLD_CAP` from the latest pass holding for one, `BURST_HOLD_CAP` from the overlay going up at
-    /// most.
+    /// each pass holding for one holds its windows' `hold_cap` from its arrival, `BURST_HOLD_CAP` from
+    /// the overlay going up at most.
     Holding { deadline: Instant },
     /// The motion playing what it played before a pass that grows windows reached it, its tiles going
     /// on to where they ended and resting there, until those windows have repainted where the pass
     /// sends them, or the coordinator hears they will not: no last capture, no place, no lift.
-    /// `HOLD_CAP` from the latest pass held, `BURST_HOLD_CAP` from the first at most.
+    /// The latest pass held's grows' `hold_cap` from its arrival, `BURST_HOLD_CAP` from the first at
+    /// most.
     MergeHeld { deadline: Instant },
     Playing,
     /// The clock is done; waiting for the tiles and the windows to be where they end.
@@ -565,6 +567,11 @@ impl Flight {
     /// The windows the overlay can hold for: those a pass holds for that a watch can see repaint.
     fn holdable(&self) -> Vec<WindowId> {
         self.end_windows().0.into_iter().map(|(w, _)| w).filter(|w| self.holds_for.contains(w)).collect()
+    }
+
+    /// How long a hold for `windows` runs, from where each is watched to repaint.
+    fn hold_cap(&self, windows: &[WindowId]) -> Duration {
+        hold_cap(self.end_windows().0.iter().filter(|(w, _)| windows.contains(w)), self.stage.display)
     }
 
     /// The end windows the last capture before the lift pictures: never one resized or opened that
@@ -877,9 +884,10 @@ impl Coordinator {
         let holdable = f.holdable();
         // Until the motion starts, a newcomer is held for too, from its own arrival; once moving, it
         // joins as it lands.
-        if f.clock.is_none() && newcomers.iter().any(|w| holdable.contains(w)) {
-            extend_unique(&mut f.held, newcomers.into_iter().filter(|w| holdable.contains(w)));
-            hold_again(f, now);
+        let newcomers: Vec<_> = newcomers.into_iter().filter(|w| holdable.contains(w)).collect();
+        if f.clock.is_none() && !newcomers.is_empty() {
+            extend_unique(&mut f.held, newcomers.iter().copied());
+            hold_again(f, &newcomers, now);
         }
         if f.stage.kind.writes() && !changed.is_empty() {
             f.placed = None;
@@ -1103,22 +1111,31 @@ fn refresh(turned: Vec<(WindowId, ScreenRect)>, out: &mut Vec<Command>) {
     }
 }
 
-/// Holds for the awaited windows, up to `HOLD_CAP` unless a merge holds again (`hold_again`), or
-/// starts the motion when there are none.
+/// Holds for the awaited windows, up to their `hold_cap` unless a merge holds again (`hold_again`),
+/// or starts the motion when there are none.
 fn hold_or_move(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     if f.held.is_empty() {
         start_moving(f, now, out);
     } else {
-        f.phase = Phase::Holding { deadline: now + HOLD_CAP };
+        f.phase = Phase::Holding { deadline: now + f.hold_cap(&f.held) };
     }
 }
 
-/// A pass merged before the motion holding for a window, holding the overlay `HOLD_CAP` from its own
-/// arrival, but no longer than `BURST_HOLD_CAP` from the overlay going up, so a burst cannot stall it.
-fn hold_again(f: &mut Flight, now: Instant) {
+/// A pass merged before the motion holding for `newcomers`, holding the overlay their `hold_cap`
+/// from its own arrival, never less than it already holds, but no longer than `BURST_HOLD_CAP` from
+/// the overlay going up, so a burst cannot stall it.
+fn hold_again(f: &mut Flight, newcomers: &[WindowId], now: Instant) {
+    let cap = f.hold_cap(newcomers);
     if let (Phase::Holding { deadline }, Some(shown)) = (&mut f.phase, f.shown) {
-        *deadline = (now + HOLD_CAP).min(shown + BURST_HOLD_CAP);
+        *deadline = (*deadline).max(now + cap).min(shown + BURST_HOLD_CAP);
     }
+}
+
+/// How long a hold for windows ending at `ends`, each on `display`, and a watch for them to repaint
+/// there run: `ELSEWHERE_HOLD_CAP` once any is cut by its edge, captured through ScreenCaptureKit,
+/// else `HOLD_CAP`.
+fn hold_cap<'a>(ends: impl IntoIterator<Item = &'a (WindowId, ScreenRect)>, display: ScreenRect) -> Duration {
+    if ends.into_iter().any(|(_, end)| !wholly_on(*end, display)) { ELSEWHERE_HOLD_CAP } else { HOLD_CAP }
 }
 
 /// `window` is held for no longer, its picture in or never to come: once the hold waits for nothing,
@@ -1136,8 +1153,8 @@ fn hold_no_longer(f: &mut Flight, window: WindowId, now: Instant, out: &mut Vec<
 }
 
 /// A pass reaching the flight while its motion runs, its real windows written at once: held, up to
-/// `HOLD_CAP` from now, until each window it grows that ends on the display, wholly or cut by its
-/// edge, has repainted where it ends, watched there; merged at once when it grows none. A pass held
+/// its grows' `hold_cap` from now, until each window it grows that ends on the display, wholly or cut
+/// by its edge, has repainted where it ends, watched there; merged at once when it grows none. A pass held
 /// after another replaces what the hold waits for, its own grows from its own arrival, but no longer
 /// than `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched where the
 /// latest sends it.
@@ -1170,8 +1187,9 @@ fn hold_merge(
     }
     held.ends.retain(|(_, end)| shows_on(*end, display));
     extend_latest(&mut held.ends, seen.iter().copied());
+    let deadline = (now + hold_cap(&seen, display)).min(held.first + BURST_HOLD_CAP);
     f.held = seen.into_iter().map(|(window, _)| window).collect();
-    f.phase = Phase::MergeHeld { deadline: (now + HOLD_CAP).min(held.first + BURST_HOLD_CAP) };
+    f.phase = Phase::MergeHeld { deadline };
     let changed = changed_frames(&f.stage.final_frames, &writes);
     if !changed.is_empty() {
         f.placed = None;
@@ -1224,13 +1242,14 @@ fn start_moving(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
 fn end_watch(f: &Flight, now: Instant) -> EndWatch {
     let (awaiting, landing) = f.end_windows();
     let compared = landing.iter().chain(&awaiting).filter(|(_, end)| wholly_inside(*end, f.stage.display)).copied().collect();
+    let awaiting_until = now + hold_cap(&awaiting, f.stage.display);
     EndWatch {
         generation: f.generation,
         compared,
         landing,
         awaiting,
         landing_until: now + LANDING_PATIENCE,
-        awaiting_until: now + HOLD_CAP,
+        awaiting_until,
         focus: watched_focus(f),
         losing_focus: watched_losing(f),
         background: f.stage.background(),
@@ -2460,6 +2479,103 @@ mod tests {
             assert!(watch(&out).unwrap().awaiting.is_empty(), "{what}: {out:?}");
             assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "{what}: not held");
         }
+    }
+
+    /// fold2's g17 (`docs/data/2026-10-10-fold`): window 1, focused, unfolds out of window 2's column
+    /// from 3,576 1148x538 to 865,35 860x1079, wholly on the display, and window 2 grows from 3,35
+    /// 1148x538 to end part off the left edge, at -286,35 1148x1079; both repaint. With where each ends.
+    fn unfold_cut() -> (StageSummary, ScreenRect, ScreenRect) {
+        let (whole, cut) = (r(865.0, 35.0, 860.0, 1079.0), r(-286.0, 35.0, 1148.0, 1079.0));
+        let mut stage = pan();
+        stage.kind = Kind::LayoutPass;
+        stage.start = Start::Coalesced;
+        stage.tiles[0] = tile(w(1), r(3.0, 576.0, 1148.0, 538.0), whole);
+        stage.tiles[1] = tile(w(2), r(3.0, 35.0, 1148.0, 538.0), cut);
+        stage.final_frames = vec![(w(1), whole), (w(2), cut)];
+        stage.focus = Some(w(1));
+        stage.losing_focus = None;
+        stage.key = Some(w(1));
+        stage.awaiting = vec![w(1), w(2)];
+        stage.repainting = vec![w(1), w(2)];
+        (stage, whole, cut)
+    }
+
+    /// fold2's g17: window 1's repaint through SkyLight 214ms after the show lets nothing go, nor does
+    /// `HOLD_CAP`; window 2's, through ScreenCaptureKit at 364ms, is swapped onto frame zero and sets
+    /// the motion off, inside `ELSEWHERE_HOLD_CAP`.
+    #[test]
+    fn a_grow_ending_cut_by_the_display_edge_holds_to_its_repaint_past_the_skylight_cap() {
+        let now = Instant::now();
+        let at = |ms| now + Duration::from_millis(ms);
+        let (stage, whole, cut) = unfold_cut();
+        let mut c = running(stage, now);
+        let g = c.generation();
+        let tick = Event::Tick { settled: false, landed: false };
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: whole, why: Why::Landed }, at(214));
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(1) }), "{out:?}");
+        assert!(!has(&out, |c| *c == Command::StartMoving), "window 2 still held");
+        assert!(c.on(tick.clone(), now + HOLD_CAP).is_empty(), "past the SkyLight cap");
+        assert!(c.on(tick, at(363)).is_empty());
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: cut, why: Why::Landed }, at(364));
+        let at = |command: Command| out.iter().position(|c| *c == command);
+        let swapped = at(Command::Swap { generation: g, window: w(2) }).expect("swapped in");
+        assert!(at(Command::StartMoving).is_some_and(|moved| swapped < moved), "onto frame zero: {out:?}");
+    }
+
+    /// A hold for a window watched through SkyLight beside one ending cut by the display's edge, and
+    /// the watch for both, run to `ELSEWHERE_HOLD_CAP` when neither repaints.
+    #[test]
+    fn a_skylight_hold_beside_a_cut_one_runs_to_the_longer_cap() {
+        let now = Instant::now();
+        let (stage, _, _) = unfold_cut();
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage), now);
+        let shown = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
+        assert_eq!(shown.awaiting.len(), 2);
+        assert_eq!(shown.awaiting_until, now + ELSEWHERE_HOLD_CAP, "watched as long as it is held for");
+        let tick = Event::Tick { settled: false, landed: false };
+        assert!(c.on(tick.clone(), now + HOLD_CAP).is_empty(), "not the SkyLight cap");
+        assert!(c.on(tick.clone(), now + ELSEWHERE_HOLD_CAP - Duration::from_millis(1)).is_empty());
+        assert_eq!(c.on(tick, now + ELSEWHERE_HOLD_CAP), vec![Command::StartMoving], "the hold runs out");
+    }
+
+    /// A pass merged before the motion growing only a window SkyLight watches, 50ms after the show,
+    /// holds it `HOLD_CAP` from its arrival, which ends sooner than the hold for window 2 cut by the
+    /// edge: the hold still runs to `ELSEWHERE_HOLD_CAP` from the show.
+    #[test]
+    fn a_skylight_newcomer_never_shortens_a_hold_for_a_cut_end() {
+        let now = Instant::now();
+        let (mut first, _, _) = unfold_cut();
+        first.awaiting = vec![w(2)];
+        first.repainting = vec![w(2)];
+        let mut newcomer = first.clone();
+        newcomer.awaiting = vec![w(1)];
+        newcomer.repainting = vec![w(1)];
+        let mut c = running(first, now);
+        let arrives = now + Duration::from_millis(50);
+        c.on(Event::Merge { stage: newcomer, moved: true }, arrives);
+        let tick = Event::Tick { settled: false, landed: false };
+        assert!(c.on(tick.clone(), arrives + HOLD_CAP).is_empty(), "the newcomer's own cap");
+        assert!(c.on(tick.clone(), now + ELSEWHERE_HOLD_CAP - Duration::from_millis(1)).is_empty());
+        assert_eq!(c.on(tick, now + ELSEWHERE_HOLD_CAP), vec![Command::StartMoving], "the cut end's, from the show");
+    }
+
+    /// A pass held while the motion runs growing window 2 to end cut by the display's edge waits
+    /// `ELSEWHERE_HOLD_CAP` from its arrival, not `HOLD_CAP`, and its watch waits as long.
+    #[test]
+    fn a_held_merge_growing_a_window_cut_by_the_edge_waits_the_longer_cap() {
+        let now = Instant::now();
+        let (flying, _, _) = grown_mid_flight();
+        let cut = r(-286.0, 35.0, 1148.0, 1079.0);
+        let arrives = now + Duration::from_millis(100);
+        let mut c = running(flying, now);
+        let watched = watch(&c.on(hold(&[(w(2), cut)]), arrives)).expect("watched");
+        assert!(watched.awaiting.contains(&(w(2), cut)), "{watched:?}");
+        assert_eq!(watched.awaiting_until, arrives + ELSEWHERE_HOLD_CAP);
+        let tick = Event::Tick { settled: false, landed: false };
+        assert_eq!(retargets(&c.on(tick.clone(), arrives + HOLD_CAP)), None, "not the SkyLight cap");
+        assert_eq!(retargets(&c.on(tick.clone(), arrives + ELSEWHERE_HOLD_CAP - Duration::from_millis(1))), None);
+        assert_eq!(retargets(&c.on(tick, arrives + ELSEWHERE_HOLD_CAP)), Some(ELSEWHERE_HOLD_CAP), "the cap runs out");
     }
 
     /// A pass growing window 2 and shrinking window 1: the shrink is never held for itself, so its
