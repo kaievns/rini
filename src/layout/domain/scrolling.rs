@@ -6404,6 +6404,26 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0));
     }
 
+    #[test]
+    fn a_width_key_between_the_folds_folds_back_by_the_reveal() {
+        for key in ["Mod+R", "+5%"] {
+            let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+            assert!(system.select_window(layout, b[1]));
+            kai_s_frames(&system, layout);
+
+            system.toggle_fold_of_selection(layout, Direction::Left);
+            kai_s_frames(&system, layout);
+            if key == "Mod+R" {
+                mod_r(&mut system, layout);
+            } else {
+                resize_key(&mut system, layout, 0.05);
+            }
+            system.toggle_fold_of_selection(layout, Direction::Left);
+
+            assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0), "{key}");
+        }
+    }
+
     /// Out by `Mod+Comma`, in by `Mod+Period`: the second key undoes nothing the first did, so the
     /// window joins the column on the right and the strip only scrolls as far as it must.
     #[test]
