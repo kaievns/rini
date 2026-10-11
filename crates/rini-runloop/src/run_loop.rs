@@ -20,7 +20,7 @@ use crate::turns::{self, MainTurn};
 /// can be used for signaling code that blocks on a run loop.
 ///
 /// More information is available in the Apple documentation at
-/// https://developer.apple.com/documentation/corefoundation/cfrunloopsource-rhr.
+/// <https://developer.apple.com/documentation/corefoundation/cfrunloopsource-rhr>.
 #[derive(Clone, PartialEq)]
 pub struct WakeupHandle(CFRetained<CFRunLoopSource>, CFRetained<CFRunLoop>);
 

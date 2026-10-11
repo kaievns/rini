@@ -90,7 +90,7 @@ impl Kind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
     Immediate,
-    /// After [`COALESCE_WINDOW`], for the reactor's follow-up passes.
+    /// After `COALESCE_WINDOW`, for the reactor's follow-up passes.
     Coalesced,
 }
 
