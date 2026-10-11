@@ -13,7 +13,7 @@ use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::domain::edge_drag::{Drag, End, Side, dragged_side, dragged_width, trade_height};
 use crate::layout::domain::tile;
 use crate::layout::domain::strip::{
-    Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, place_share, place_x,
+    Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, place_offset, place_share,
     reveal_offset,
 };
 use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
@@ -1400,7 +1400,9 @@ impl ScrollingLayoutSystem {
                 Pin::Start => start - pinned,
                 Pin::Place => {
                     let width = column_widths.get(col_idx).copied().unwrap_or(0.0);
-                    anchor_x + start - place_x(tiling, pinned, width)
+                    let strip_end = column_starts.last().copied().unwrap_or(0.0)
+                        + column_widths.last().copied().unwrap_or(0.0);
+                    place_offset(tiling, anchor_x, start, width, pinned, strip_end)
                 }
             };
             state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
@@ -5566,6 +5568,35 @@ mod tests {
                 }
                 assert_same_frames(&mod_r(&mut system, layout), &before);
             }
+        }
+    }
+
+    /// Two thirds side by side, the right one selected, leave the viewport empty past the strip's
+    /// end: the third grows into it with the left column where it stands, and only the strip filling
+    /// the viewport pushes the left column out. The default half and a third grow the same way by
+    /// the resize keys.
+    #[test]
+    fn a_column_in_a_strip_narrower_than_the_viewport_grows_into_the_empty_side() {
+        let (mut system, layout, w) = kai_s_widths(&[0.33333, 0.33333], 1);
+        let before = kai_s_frames(&system, layout);
+        assert_eq!(xw_in(&before, w[1]), (578.0, 572.0));
+
+        let half = mod_r(&mut system, layout);
+        assert_eq!(xw_in(&half, w[0]), (3.0, 572.0));
+        assert_eq!(xw_in(&half, w[1]), (578.0, 860.0));
+        let two_thirds = mod_r(&mut system, layout);
+        assert_eq!(xw_in(&two_thirds, w[1]).1, 1148.0);
+        assert!((right_edge(&two_thirds, w[1]) - 1725.0).abs() <= 1.0, "{two_thirds:?}");
+        assert!(xw_in(&two_thirds, w[0]).0 >= 2.0, "{two_thirds:?}");
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1722.0));
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+
+        let (mut system, layout, w) = kai_s_widths(&[0.5, 0.33333], 1);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (866.0, 572.0));
+        for _ in 0..3 {
+            let frames = resize_key(&mut system, layout, 0.05);
+            assert_eq!(xw_in(&frames, w[0]).0, 3.0, "{frames:?}");
+            assert_eq!(xw_in(&frames, w[1]).0, 866.0, "{frames:?}");
         }
     }
 

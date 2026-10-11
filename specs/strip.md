@@ -42,8 +42,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   both sides, and any other in proportion to the free space on each side. A stacked column moves as
   one, its rows' heights unchanged. Stepping back to the width it started at MUST put it back exactly
   where it stood, and the whole viewport fills the screen. The columns beside it are pushed out or
-  pulled in on their own sides; where the strip is narrower than the viewport the column stays where
-  the strip's start leaves it. A column part off screen counts from where the reveal shows it; one
+  pulled in on their own sides, but a column MUST NOT be pushed off the left while the viewport stands
+  empty past the strip's end: in a strip narrower than the viewport the column grows into the empty
+  side, and only once the strip fills the viewport are the columns before it pushed out. A column part off screen counts from where the reveal shows it; one
   that fills the viewport takes its end of the strip, flush left as the first or only column, flush
   right as the last, centred between. A centred column MUST stay centred. Where it stood is taken
   when a width key or `Mod+F` first finds the column focused, and MUST be forgotten when focus moves

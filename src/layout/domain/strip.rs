@@ -114,6 +114,23 @@ pub fn place_x(tiling: CGRect, share: f64, width: f64) -> f64 {
     tiling.origin.x + (tiling.size.width - width) * share
 }
 
+/// The scroll offset that stands the column starting `start` along the strip, `width` wide, at
+/// `share` (`place_x`), held where the strip's end, `strip_end` along it, meets the viewport's right
+/// edge: a column is never pushed off the left while the viewport stands empty past the strip's
+/// end, so a strip narrower than the viewport stays at its start.
+pub fn place_offset(
+    tiling: CGRect,
+    anchor_x: f64,
+    start: f64,
+    width: f64,
+    share: f64,
+    strip_end: f64,
+) -> f64 {
+    let at_place = anchor_x + start - place_x(tiling, share, width);
+    let end_at_right = anchor_x + strip_end - (tiling.origin.x + tiling.size.width);
+    at_place.min(end_at_right.max(0.0))
+}
+
 /// Which way the strip is being scrolled to bring the selected column into view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reveal {
@@ -354,6 +371,24 @@ mod tests {
 
     // A column wider than the viewport is off BOTH edges, and only the direction decides which edge
     // the user is shown. This is the one case the reveal direction exists for.
+    #[test]
+    fn a_column_in_a_strip_wider_than_the_viewport_stands_at_its_place() {
+        let at = |start, width, share, strip_end| {
+            place_offset(kai_s_tiling(), 3.0, start, width, share, strip_end)
+        };
+        assert_eq!(at(575.0, 860.0, 0.5, 2010.0), 144.0, "the middle of three, a half");
+        assert_eq!(at(575.0, 1722.0, 1.0, 2297.0), 575.0, "the last, the viewport wide");
+    }
+
+    #[test]
+    fn a_strip_narrower_than_the_viewport_stays_at_its_start() {
+        let at = |start, width, share, strip_end| {
+            place_offset(kai_s_tiling(), 3.0, start, width, share, strip_end)
+        };
+        assert_eq!(at(575.0, 860.0, 0.5, 1435.0), 0.0, "the second of two thirds, a half");
+        assert_eq!(at(575.0, 1148.0, 0.5, 1723.0), 1.0, "its end held at the right edge");
+    }
+
     #[test]
     fn an_oversized_column_shows_the_edge_it_is_approached_from() {
         let wide = 1400.0;

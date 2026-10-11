@@ -189,8 +189,13 @@ is borrowed.
   revealed first, a viewport-wide column by its end of the strip). It is read
   only when that pass had the window selected and no scroll request has come
   since, which is what makes it the place focus left the column at. The next
-  pass pins the column's x at `strip::place_x` for its new width (`Pin::Place`,
-  applied where a kept right edge is), then clamps. The kept share, not the
+  pass scrolls the strip to stand the column at `strip::place_x` for its new
+  width (`strip::place_offset`, by `Pin::Place`, applied where a kept right edge
+  is), then clamps. The share counts the empty desktop past the end of a strip
+  narrower than the viewport as free space, so `place_offset` holds the strip's
+  end at the right edge: without that, the right one of two thirds took share
+  0.5 and its half pushed the left third 141pt off screen with 431pt empty on
+  the right. The kept share, not the
   pass's, steps the next width, so it survives a viewport-wide step and the
   clamp of a strip narrower than the viewport, and the old width lands at the
   old x. `unpin` drops it with the other pins; the raise's refocus after each
