@@ -142,3 +142,9 @@ while posting the resize keys, and `sheet.sh` cuts each press into a contact she
 (`tools/focuslab/README.md`, "Watching a resize"). It is a screen test with the battery's guard, run
 only while Kai is away. The 2026-10-09 runs are in `docs/data/2026-10-09-resize/`, the 2026-10-10
 rapid Alt-R run in `docs/data/2026-10-10-rapid-altr/`.
+
+## Clippy runs to the end, and its warnings are not a check
+
+`cargo clippy --all-targets --workspace` completes with no errors, so its lints reach every crate.
+Its warnings, mostly style lints such as a collapsible `if`, are not held at zero. The checks a
+change passes are a build with no warnings, `cargo test` and `tests/architecture.rs`.

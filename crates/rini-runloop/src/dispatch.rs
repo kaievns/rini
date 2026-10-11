@@ -101,14 +101,18 @@ fn dispatch_source_type_proc() -> DSrcTy {
 }
 
 pub trait DispatchExt {
-    fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void));
+    /// # Safety
+    /// `context` must stay valid for `work` until the queue runs it.
+    unsafe fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void));
     fn after_f_s<T>(&self, when: Time, context: T, work: fn(T));
-    fn set_context(&self, context: *mut c_void);
+    /// # Safety
+    /// `context` must stay valid for every handler that reads it until the object is released.
+    unsafe fn set_context(&self, context: *mut c_void);
     fn set_timer(&self, start: Time, interval: i64, leeway: i64);
 }
 
 impl DispatchExt for Unmanaged {
-    fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void)) {
+    unsafe fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void)) {
         unsafe { dispatch_after_f(when, self, context, work) }
     }
 
@@ -119,10 +123,10 @@ impl DispatchExt for Unmanaged {
             work(context);
         }
         let ctx = Box::into_raw(Box::new((context, work))) as *mut c_void;
-        self.after_f(when, ctx, trampoline::<T>);
+        unsafe { self.after_f(when, ctx, trampoline::<T>) };
     }
 
-    fn set_context(&self, context: *mut c_void) {
+    unsafe fn set_context(&self, context: *mut c_void) {
         unsafe { dispatch_set_context(self as *const _ as *mut c_void, context) }
     }
 
@@ -134,7 +138,7 @@ impl DispatchExt for Unmanaged {
 }
 
 impl DispatchExt for DSource {
-    fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void)) {
+    unsafe fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void)) {
         unsafe {
             dispatch_after_f(when, self.deref() as *const _ as *const Unmanaged, context, work)
         }
@@ -147,10 +151,10 @@ impl DispatchExt for DSource {
             work(context);
         }
         let ctx = Box::into_raw(Box::new((context, work))) as *mut c_void;
-        self.after_f(when, ctx, trampoline::<T>);
+        unsafe { self.after_f(when, ctx, trampoline::<T>) };
     }
 
-    fn set_context(&self, context: *mut c_void) {
+    unsafe fn set_context(&self, context: *mut c_void) {
         unsafe { dispatch_set_context(self.deref() as *const _ as *mut c_void, context) }
     }
 
@@ -230,7 +234,7 @@ pub fn reap_on_exit_proc(pid: pid_t) {
         }
     }
 
-    src.set_context(ctx);
+    unsafe { src.set_context(ctx) };
     src.set_event_handler_f(proc_event_handler);
     src.resume();
     sources_map().lock().insert(pid, src);

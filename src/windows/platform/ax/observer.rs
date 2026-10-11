@@ -199,11 +199,13 @@ impl Observer {
                 notification,
                 callback_ctx,
             });
-            queue::main().after_f(
-                Time::NOW.new_after(10_000_000),
-                Box::into_raw(ctx) as *mut c_void,
-                add_notif_retry,
-            );
+            unsafe {
+                queue::main().after_f(
+                    Time::NOW.new_after(10_000_000),
+                    Box::into_raw(ctx) as *mut c_void,
+                    add_notif_retry,
+                )
+            };
             return Ok(());
         }
         make_result(first)

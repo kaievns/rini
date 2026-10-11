@@ -958,7 +958,7 @@ fn tags_match_app_window_role(tags: SLSWindowTags) -> bool {
 
 /// Returns whether the iterator points at a top-level application window.
 #[cfg_attr(test, allow(dead_code))]
-pub fn iterator_window_suitable(iterator: *mut CFType) -> bool {
+fn iterator_window_suitable(iterator: *mut CFType) -> bool {
     let tags = iterator_window_tags(iterator);
     let parent_wid = unsafe { SLSWindowIteratorGetParentID(iterator) };
     parent_wid == 0 && tags_match_app_window_role(tags)
