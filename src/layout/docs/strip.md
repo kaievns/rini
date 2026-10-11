@@ -24,7 +24,10 @@ is borrowed.
   representation a drag across the viewport already gives a stacked column. The
   app resizing its window under such a column, by however much, leaves it the
   viewport wide, as under the mode: `on_window_resized` reads any report under
-  an unbounded column the viewport wide as answering rini. Read back, a window
+  an unbounded column the viewport wide as answering rini. A maximum the window
+  server reports narrower than the viewport is the one width it does take:
+  `constraints::column_width` lays every column kind out at it, and the next
+  report answers that slot (Kai's rule, 2026-10-11, in `specs/strip.md`). Read back, a window
   settling 20pt short sat at 0.988, over the 1% `next_preset` reads as the same
   width, so the next `Mod+R` found 1.0 above it again and stood still. A maximized window still takes its
   turn: `ratio_of` reads it as 1.0, where the stored `width_offset` the cycle
