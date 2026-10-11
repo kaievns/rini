@@ -433,6 +433,17 @@ destination for a window already moving.
 > window frame is moving during the animation. i've seen plenty of those during your automated testing
 > too". Over four restarts no picture landed for the first 11s, and 49% of the flights in the first
 > 30s were missing a window; after 2 minutes, 5%. The replays ran seconds after each restart.
+- A change to what a flight does at its show, in flight or at its lift MUST NOT slow navigation.
+  Before it is called done, the timing battery flies the build before it against the build with it,
+  the pans and the workspace switch, and every measure of what is seen MUST pass the battery's
+  two-stage rule, or fail it no more than the rule fails one build against itself. The ring and the
+  border are the case "Through a flight" in `specs/decorations.md` holds against both off.
+
+> **Reported 2026-10-09**, closing Kai's report on the resize animations: "make sure you don't cause
+> regressions in navigation animations again". The resize work flown against the build before it
+> on 2026-10-11 passed 81 of 87 measures and failed 6 at the second stage, none by more than 3ms,
+> within what the rule fails one build against itself
+> (`docs/data/2026-10-11-resize-battery/readings.md`).
 
 ## Windows with no picture yet
 

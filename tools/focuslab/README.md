@@ -154,8 +154,9 @@ does: each segment's flights of the same kinds in press order (`flights` in `met
 same frames delivered (`delivered` in the journal slice), within 1pt. One that does not is named with
 how it differs, and `compare.py` exits 3 judging nothing. A run whose tiles wore a picture taken over
 5s before (`wears`, `taken_before_us`) is flagged on stderr with how many and the oldest, and judged
-all the same. The 5s flags every run of 2026-10-10: 24-25 pictures a run, the oldest 36.7-37.2s, on
-`old-1`..`6` and `new-4`..`6`; `new-1`..`3` wore Code's at 767-850s, which the oldest tells apart.
+all the same. The 5s flags every run of 2026-10-11 (`docs/data/2026-10-11-resize-battery/`): 25-37
+pictures a run on either build, the switch flying other workspaces' windows from the cache; `n1`, the
+first after a launch, wore one 211s old, which the oldest tells apart.
 
 **Two binaries are judged interleaved**, one run at a time: deploy one (`measure.sh --deploy`), run,
 deploy the other, run, and so on, every run after the first given `--scene` of the first, so drift
@@ -165,7 +166,10 @@ all 6 against all 6.
 Each row: `base_min`, `base_max`, `cand_median`, `cand_runs`, `stage1` (`pass`, `FAIL`, `missing`),
 the 6-run `stage2_base_max` and `stage2_cand_median` when stage 2 ran, and `verdict`: `pass`,
 `needs stage 2`, `regression` or `missing`. The verdict counts each and names every metric not
-passing. The 2026-10-08 runs and their verdicts are in `docs/data/2026-10-08-ring-perf/`.
+passing. The 2026-10-08 runs and their verdicts are in `docs/data/2026-10-08-ring-perf/`. The
+2026-10-11 runs, the resize work against the build before it, are in
+`docs/data/2026-10-11-resize-battery/`: 81 of 87 measures pass and 6 fail stage 2, none by more
+than 3ms, within what the rule fails one build against itself.
 
 ### Measuring a binary
 
@@ -210,7 +214,9 @@ saves no window state.
 
 **The movie shows Kai's screen.** It stays out of the repo; what a run is read for, the journal
 and the `.mov.json`, goes in `docs/data/`. The 2026-10-09 runs are in
-`docs/data/2026-10-09-resize/`, the 2026-10-10 rapid Alt-R run in `docs/data/2026-10-10-rapid-altr/`.
+`docs/data/2026-10-09-resize/`, the 2026-10-10 rapid Alt-R run in `docs/data/2026-10-10-rapid-altr/`,
+and the 2026-10-10 fold and unfold runs, `fold1` on e050e168 and `fold2` on d9461781, in
+`docs/data/2026-10-10-fold/`.
 
 ## Reading rini's journal
 

@@ -118,7 +118,7 @@ and use a CPU bitmap instead.
 The suite cannot say whether a change slows a flight or flies a blurred window flat: that takes the
 live service, the window server and Kai's windows. The timing battery does, and any change to what
 a flight or the rest windows do at a show, in flight or at a lift is measured with it before it is
-called done (`specs/decorations.md`, "Through a flight"). It is a screen test: it posts key
+called done (`specs/animation.md`, "Correctness the user can see"). It is a screen test: it posts key
 presses, so it runs only while Kai is away, and it refuses otherwise.
 
 ```bash
@@ -129,8 +129,8 @@ python3 tools/focuslab/compare.py /tmp/rini-focuslab/<prefix>-off-{1,2,3} -- /tm
 
 What it presses and records, the 87 metrics, the acceptance rule and its second stage are in
 `tools/focuslab/README.md` ("The battery"). Its tests (`tools/focuslab/test_battery.py`) run inside
-`tests/focuslab.rs`, so `cargo test` counts them as one test. The 2026-10-08 runs are in
-`docs/data/2026-10-08-ring-perf/`.
+`tests/focuslab.rs`, so `cargo test` counts them as one test. The runs so far and their verdicts are
+listed there too.
 
 ## How a resize looks is watched on the screen, by a recording of the lab
 
@@ -140,8 +140,7 @@ real window at the lift, is seen only on a film of the whole display, which the 
 take. `tools/focuslab/screenrec.sh` takes one of Ghostty lab windows full of a numbered ruler
 while posting the resize keys, and `sheet.sh` cuts each press into a contact sheet
 (`tools/focuslab/README.md`, "Watching a resize"). It is a screen test with the battery's guard, run
-only while Kai is away. The 2026-10-09 runs are in `docs/data/2026-10-09-resize/`, the 2026-10-10
-rapid Alt-R run in `docs/data/2026-10-10-rapid-altr/`.
+only while Kai is away. The recordings so far are listed there too.
 
 ## Clippy runs to the end, and its warnings are not a check
 
