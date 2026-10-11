@@ -207,11 +207,12 @@ is borrowed.
   column came back flush left whatever x it had left, and a centred column lost
   its centring to the reveal: Kai's thirds on 2026-10-09 had A at x=578, back
   at x=3 with 575pt empty on the right. A view of its own, the column's start
-  against the scroll offset, cured that, but it was a second record beside the
-  width keys' place, and the two disagreed: `Mod+R` on a full-width window
-  stepped from a viewport-wide column's end-of-strip share, not where the
-  column had stood, and a column scrolled off screen came back off screen.
-  Kai asked for one mechanism (2026-10-11). Under `"never"`, entering full width
+  against the scroll offset (`View`, pinned by `Pin::Start`), cured that for
+  the toggle alone: a `Mod+R` or resize key on a full-width window left full
+  width and ran the neutral reveal with no record of where the column had
+  stood, and a column scrolled off screen came back off screen. Kai asked for
+  the width keys and the toggle to remember the way back by one mechanism
+  (2026-10-11). Under `"never"`, entering full width
   is a width change to the whole viewport about the column's `Place`, taken
   through `place_of` as a width key takes it, only when the last pass had the
   window selected, because a title-bar zoom can name a window that was not. For
