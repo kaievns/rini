@@ -400,14 +400,16 @@ fn every_documented_path_resolves() {
     let mut check = |text: &str, source: &str| {
         for candidate in text.split(['`', '(', ')', ' ', '\n', ',', ';', '"']) {
             let candidate = candidate.trim_end_matches(['.', ':', '\'']);
-            let is_path = (candidate.starts_with("src/")
-                || candidate.starts_with("crates/")
-                || candidate.starts_with("tests/")
-                || candidate.starts_with("docs/"))
-                && (candidate.ends_with(".rs")
-                    || candidate.ends_with(".md")
-                    || candidate.ends_with(".toml")
-                    || candidate.ends_with(".kdl"));
+            let is_path = ["src/", "crates/", "tests/", "docs/", "specs/", "tools/"]
+                .iter()
+                .any(|root| candidate.starts_with(root))
+                && (candidate.ends_with('/')
+                    || [
+                        ".rs", ".md", ".toml", ".kdl", ".py", ".sh", ".swift", ".json", ".jsonl",
+                        ".csv", ".txt",
+                    ]
+                    .iter()
+                    .any(|extension| candidate.ends_with(extension)));
             // `<feature>` in a diagram is not a path, and a crate's own docs are named relative
             // to its root, so `docs/x.md` inside `crates/y/` means `crates/y/docs/x.md`.
             if !is_path || candidate.contains('<') {
@@ -422,12 +424,24 @@ fn every_documented_path_resolves() {
             broken.push(format!("{source}: {candidate}"));
         }
     };
-    let mut files: Vec<PathBuf> = rust_files(Path::new("src"));
-    files.extend(rust_files(Path::new("crates")));
+    // This file's own paths are examples of what it checks.
+    let mut files: Vec<PathBuf> = ["src", "crates", "tests"]
+        .iter()
+        .flat_map(|dir| rust_files(Path::new(dir)))
+        .filter(|path| path != Path::new("tests/architecture.rs"))
+        .collect();
     // The reference config is read by users, and points them at the docs.
     files.push(PathBuf::from("rini.default.kdl"));
-    for dir in ["docs", "specs", "src", "crates"] {
+    for dir in ["docs", "specs", "src", "crates", "tools"] {
         collect_markdown(Path::new(dir), &mut files);
+    }
+    for (dir, extensions) in [(".", &["md"][..]), ("tools/focuslab", &["py", "sh", "swift"])] {
+        for entry in fs::read_dir(dir).expect("readable directory") {
+            let path = entry.expect("readable entry").path();
+            if path.extension().is_some_and(|e| extensions.iter().any(|x| e == *x)) {
+                files.push(path.strip_prefix("./").unwrap_or(&path).to_path_buf());
+            }
+        }
     }
     for path in files {
         let text = fs::read_to_string(&path).expect("readable file");

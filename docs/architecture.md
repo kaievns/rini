@@ -246,6 +246,7 @@ folder moves both.
 
 Three tests in `tests/architecture.rs` hold this rather than good intentions:
 `every_feature_and_crate_documents_itself` requires the READMEs to exist,
-`every_documented_path_resolves` fails on any path mentioned anywhere that no longer exists, and
+`every_documented_path_resolves` fails on any path into `src/`, `crates/`, `tests/`, `docs/`,
+`specs/` or `tools/` that the docs, the code or the tools mention and that no longer exists, and
 `every_spec_is_listed_in_the_index` stops a spec nothing links to. A stale sentence reads exactly like
 a current one, which is why none of this is left to discipline.
