@@ -5799,6 +5799,39 @@ mod tests {
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (406.0, 860.0));
     }
 
+    /// At `Mod+R`'s 100% rini holds the column to the viewport and takes no width from its app, so
+    /// an app's 800pt there keeps the place and the cycle comes back where the column stood.
+    #[test]
+    fn an_app_s_width_on_a_column_held_to_the_viewport_keeps_the_place() {
+        let (mut system, layout, w) = kai_s_widths(&[0.5, 0.33333, 0.5, 0.33333], 1);
+        let before = kai_s_frames(&system, layout);
+        for _ in 0..3 {
+            mod_r(&mut system, layout);
+        }
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0));
+        app_sizes(&mut system, layout, w[1], 800.0);
+        assert!(kept_place(&system, layout).is_some());
+
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+    }
+
+    /// rini takes no height from a column's only window, so its app answering every width with a
+    /// height of its own keeps the place through the cycle.
+    #[test]
+    fn an_app_s_height_on_a_column_s_only_window_keeps_the_place() {
+        let (mut system, layout, w) = kai_s_widths(&[0.5, 0.33333, 0.5, 0.33333], 1);
+        let before = kai_s_frames(&system, layout);
+        for _ in 0..3 {
+            let width = xw_in(&mod_r(&mut system, layout), w[1]).1;
+            let report = CGRect::new(CGPoint::new(0.0, 3.0), CGSize::new(width, 1061.0));
+            system.on_window_resized(layout, w[1], None, report, 0.0, KAI_SCREEN, &kai_s_gaps());
+            kai_s_frames(&system, layout);
+            assert!(kept_place(&system, layout).is_some(), "{width}");
+        }
+
+        assert_same_frames(&mod_r(&mut system, layout), &before);
+    }
+
     /// Focus moved to the middle third with no pass since: there is nowhere it stood to keep, and
     /// the key reveals it as before.
     #[test]

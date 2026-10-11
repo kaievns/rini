@@ -50,8 +50,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   when a width key or `Mod+F` first finds the column focused, and MUST be forgotten when focus moves
   to another column or anything else scrolls the strip: a strip scroll or snap, a window opening or
   closing, a move, centring, a fold, a mouse drag, or the app sizing its window more than 1pt from
-  the place rini gave it on either axis (see "a window that resizes itself"), a column rini holds to
-  the viewport taking no width from its app. `Mod+F` keeps it both ways (see "Full width and height"). So nothing sticks between visits: the same column reached from the
+  the place rini gave it on an axis rini takes from it (see "a window that resizes itself"). rini
+  takes no width from a column it holds to the viewport and no height from a column's only window,
+  so a report on those MUST keep the place. `Mod+F` keeps it both ways (see "Full width and height"). So nothing sticks between visits: the same column reached from the
   other side grows from the other side. Under `"always"` the centring places the column at every
   width.
 
