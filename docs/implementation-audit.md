@@ -350,7 +350,7 @@ The recent batches moved the opposite way deliberately — pure decisions to
 
 | file | code | why it resists |
 |---|---|---|
-| `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. Needs a fake `AXUIElement` seam. PARTLY: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`) |
+| `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. PARTLY: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`), and the fake `AXUIElement` seam it needed (`FakeAx`, `9ea1079`) carries 12 tests in the file itself |
 | `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
 | `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
 | `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |

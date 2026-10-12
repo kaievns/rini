@@ -23,8 +23,11 @@ moves along the strip within one workspace.
 
 ## Moving between workspaces
 
-- Moving a window to another workspace MUST NOT follow it. The user asked to send the window away, not
-  to go with it. Following is available to the CLI, which asks explicitly.
+- The default binds MUST move a window to another workspace without following it. The user asked to
+  send the window away, not to go with it.
+- The config's move actions MUST follow the window unless told `focus=false`, because niri's do and a
+  niri config has to mean the same thing here. The shipped binds say `focus=false`.
+- The CLI MUST NOT follow unless asked, with `--follow`.
 - A move acts on the space the window is actually on, not the space the command named.
 - `next` and `prev` are matched as workspace NAMES before the name lookup, so a workspace actually
   named "next" cannot be selected by name. This is a known limitation, not an accident.

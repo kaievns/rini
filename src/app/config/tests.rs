@@ -981,6 +981,42 @@ fn workspace_indices_start_at_one() {
     assert!(report.contains("start at 1"), "{report}");
 }
 
+/// specs/workspaces.md: niri's default is to follow, and the shipped binds send the window away.
+#[test]
+fn a_move_to_a_workspace_follows_unless_focus_false_and_the_default_binds_do_not_follow() {
+    let config = parse(concat!(
+        "binds {\n",
+        "    Mod+1 { move-window-to-workspace 1; }\n",
+        "    Mod+2 { move-window-to-workspace 2 focus=false; }\n",
+        "    Mod+3 { move-window-to-workspace-down; }\n",
+        "    Mod+4 { move-window-to-workspace-up; }\n",
+        "}\n",
+    ));
+    let actions: Vec<Action> = config.binds.into_iter().map(|bind| bind.action).collect();
+    assert_eq!(
+        actions,
+        [
+            Action::MoveWindowToWorkspace(WorkspaceReference::Index(1), true),
+            Action::MoveWindowToWorkspace(WorkspaceReference::Index(2), false),
+            Action::MoveWindowToWorkspaceDown(true),
+            Action::MoveWindowToWorkspaceUp(true),
+        ]
+    );
+
+    let shipped: Vec<(String, bool)> = Config::default()
+        .binds
+        .into_iter()
+        .filter_map(|bind| match bind.action {
+            Action::MoveWindowToWorkspace(_, follow)
+            | Action::MoveWindowToWorkspaceDown(follow)
+            | Action::MoveWindowToWorkspaceUp(follow) => Some((bind.key, follow)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shipped.len(), 4, "{shipped:?}");
+    assert!(shipped.iter().all(|(_, follow)| !follow), "{shipped:?}");
+}
+
 #[test]
 fn a_bind_naming_a_workspace_that_is_not_declared_is_refused() {
     let report =

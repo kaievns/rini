@@ -1026,6 +1026,38 @@ mod tests {
         }
     }
 
+    /// The CLI's workspace numbers go to the wire as given, from 0, and a move follows only when
+    /// asked: specs/workspaces.md and this crate's README.
+    #[test]
+    fn a_workspace_number_goes_as_given_and_a_move_follows_only_with_follow() {
+        use rini_ipc::protocol::LayoutCommand as LC;
+        let wire = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["rini-cli", "execute", "workspace"].iter().chain(args))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            let Commands::Execute { command } = cli.command else {
+                panic!("{args:?} is not an execute subcommand");
+            };
+            serde_json::to_value(build_execute_request(command).unwrap()).unwrap()
+        };
+        let layout = |command: LC| {
+            serde_json::to_value(RiniRequest::ExecuteCommand {
+                command: into_protocol_command(CliCommand::Reactor(reactor::Command::Layout(
+                    command,
+                )))
+                .unwrap(),
+            })
+            .unwrap()
+        };
+        let moved = |follow| LC::MoveWindowToWorkspace {
+            workspace: WorkspaceSelector::Index(2),
+            follow,
+            window_id: None,
+        };
+        assert_eq!(wire(&["switch", "0"]), layout(LC::SwitchToWorkspace(0)));
+        assert_eq!(wire(&["move-window", "2"]), layout(moved(false)));
+        assert_eq!(wire(&["move-window", "2", "--follow"]), layout(moved(true)));
+    }
+
     /// Every window subcommand has to map to a DISTINCT wire command. The arms are 33 lines of
     /// near-identical shape, which is exactly where a copy-paste sends two keys to one command and
     /// nothing complains.

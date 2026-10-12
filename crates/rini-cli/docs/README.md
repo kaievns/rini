@@ -22,10 +22,14 @@ so must the three resize orientations.
 form (`WindowId { pid: 123, idx: 456 }`), because the second is what appears in logs and
 diagnostics output, so it is what a user has to hand.
 
+**Workspace numbers count from 0.** `workspace switch` and `workspace move-window` pass the
+index to the wire as given, while the config counts from 1, so `workspace switch 0` is the
+config's `focus-workspace 1`.
+
 ## Usage
 
 ```sh
 rini-cli query diagnostics                 # whole-topology dump
-rini-cli execute workspace switch 2
+rini-cli execute workspace switch 1        # the second workspace: the CLI counts from 0
 rini-cli execute window toggle-fold left
 ```

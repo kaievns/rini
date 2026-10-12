@@ -88,8 +88,8 @@ because they are long, which was the wrong reason.
 
 ## 2. `windows/platform/app_actor.rs` — 1,369 lines, 0 tests
 
-**Partly.** Two rules out to `windows/domain/ax_events.rs` with 12 tests. The file is 1,331 lines and
-still has no in-file tests, because the AX seam is not done — see below.
+**Partly.** Two rules out to `windows/domain/ax_events.rs` with 12 tests. The file was then 1,331 lines
+with no in-file tests; the AX seam below gave it its first.
 
 - `handling` / `is_gone` — whether a failed Accessibility request means the window is GONE. Only an
   invalid element does. `AppBusy` (macOS's `CannotComplete`) explicitly does not: an application slow

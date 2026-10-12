@@ -131,9 +131,10 @@ the move deliberate (`check_binary_move`).
 
 rini runs as the launchd agent, deployed with `target/release/rini service restart`, with its
 own Accessibility and Screen Recording grants keyed to the signed binary at that path
-(`docs/signing.md`). The CLI and sketchybar hooks reach it. Whether the grants
-survive a reboot has not been measured since the signing identity was
-introduced.
+(`docs/signing.md`). `rini-cli` reaches it, and so does any `rini-cli subscribe cli`
+hook the config starts; `rini.default.kdl` starts none, and rini draws its own bar
+(`specs/bar.md`). Whether the grants survive a reboot has not been measured since
+the signing identity was introduced.
 
 ## A revoked screen-recording grant froze all input
 
