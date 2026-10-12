@@ -30,7 +30,8 @@ the strip fresh.
 ## Restoring
 
 - Restore is ON by default, so a restart or a redeploy keeps window sizes, workspaces and strip
-  positions.
+  positions. Not yet met: the scroll offset is not saved, so a column as wide as the viewport comes
+  back at its width but not where it stood.
 - A saved identity MUST NOT be matched to the wrong live window. Both identities are unreliable —
   rini's own dies with the process, the window server's is recycled — so a match needs evidence
   specific to the window: its title and size within a known application.
