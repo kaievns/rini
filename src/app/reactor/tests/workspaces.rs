@@ -1921,6 +1921,25 @@ fn the_first_switch_after_start_slides() {
     );
 }
 
+/// A switch reads Low Power Mode from the reactor's reads, so in it the switch cuts rather than
+/// slides.
+#[test]
+fn in_low_power_mode_a_workspace_switch_does_not_slide() {
+    let (_apps, mut reactor, mut rx) = started(test_reactor_with_workspace_count(4));
+
+    reactor.reads.low_power = || true;
+    reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
+    assert!(strip_movements(&mut rx).is_empty(), "no slide in Low Power Mode");
+
+    reactor.reads.low_power = || false;
+    reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
+    assert_eq!(
+        strip_movements(&mut rx).len(),
+        1,
+        "the switch back slides out of it"
+    );
+}
+
 /// A switch claims the destination strip's layout with its origin, so the next pan starts a parked
 /// window where the switch drew it, not where an older pass on that workspace last had it.
 #[test]

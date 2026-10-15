@@ -212,3 +212,81 @@ fn the_animation_overlay_spans_the_display_bounds_its_reads_give() {
         other => panic!("expected SetDisplay, got {other:?}"),
     }
 }
+
+/// A layout pass reads Low Power Mode from the reactor's reads, so no window flies in it.
+#[test]
+fn in_low_power_mode_a_layout_pass_flies_no_window() {
+    use crate::transitions::platform::engine::Event as Anim;
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.animate = true;
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let layout = |reactor: &Reactor, by: f64| -> Vec<(WindowId, CGRect)> {
+        [(1, by), (2, -by)]
+            .map(|(idx, dx)| {
+                let wid = WindowId::new(1, idx);
+                let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+                (
+                    wid,
+                    CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y), frame.size),
+                )
+            })
+            .to_vec()
+    };
+    let flew = |rx: &mut channels::Receiver<Anim>| {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|(_, event)| matches!(event, Anim::Animate { .. }))
+    };
+
+    reactor.reads.low_power = || true;
+    let moved = layout(&reactor, 120.);
+    animation::AnimationManager::animate_layout(&mut reactor, space, &moved, false, None);
+    assert!(!flew(&mut animation_rx));
+
+    reactor.reads.low_power = || false;
+    let moved = layout(&reactor, 120.);
+    animation::AnimationManager::animate_layout(&mut reactor, space, &moved, false, None);
+    assert!(flew(&mut animation_rx), "the same pass flies out of it");
+}
+
+/// A frame report that carries no mouse state takes the pointer from the reactor's reads: held
+/// down, a report after rini's own write is the user's drag, and rini's target for it is dropped.
+#[test]
+fn a_frame_report_with_no_mouse_state_reads_the_pointer_from_the_reads() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
+    let wid = WindowId::new(1, 1);
+    let wsid = reactor.test_window_server_id(wid);
+    let report = |reactor: &mut Reactor| {
+        let target = CGRect::new(CGPoint::new(200., 200.), CGSize::new(600., 400.));
+        let txid = reactor.transaction_manager.generate_next_txid(wsid);
+        reactor.transaction_manager.store_txid(wsid, txid, target);
+        let elsewhere = CGRect::new(CGPoint::new(260., 230.), CGSize::new(600., 400.));
+        reactor.handle_event(Event::WindowFrameChanged(
+            wid,
+            elsewhere,
+            Some(txid),
+            Requested(false),
+            None,
+        ));
+        reactor.transaction_manager.get_target_frame(wsid)
+    };
+
+    assert!(
+        report(&mut reactor).is_some(),
+        "the pointer unknown, rini's write still stands"
+    );
+    reactor.reads.mouse = || Some(MouseState::Down);
+    assert_eq!(
+        report(&mut reactor),
+        None,
+        "held down, the report is the user's drag"
+    );
+}
