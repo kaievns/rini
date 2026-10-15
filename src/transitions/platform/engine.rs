@@ -38,7 +38,6 @@ use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout
 use crate::animation::platform::renderer::{Batch, Render};
 use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::handover::HandoverCheck;
-use crate::pictures::domain::route::Route;
 use crate::pictures::domain::schedule::{Ask, Display, Hold, Priority};
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{Client, Moment, Tag, Why};
@@ -56,7 +55,7 @@ use crate::transitions::domain::lifecycle::{
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::running::{
-    Composed, RunningAnimation, Shape, Took, restack, summary,
+    Composed, RunningAnimation, Shape, StageFocus, Took, WornPicture, restack, summary,
 };
 use crate::transitions::domain::timing::*;
 use crate::transitions::platform::journal::Writer;
@@ -783,7 +782,7 @@ impl FlightEngine {
         let radius = || self.window_server.corner_radius(server_id);
         let took = running.take_picture(window, &picture, clipped, radius, at);
         let flown = running.flown;
-        let worn = vec![(window, picture.source, picture.carries_blur, picture.taken)];
+        let worn = vec![worn_picture(window, &picture)];
         match took {
             Took::Nothing => return,
             Took::Entrance(tile) => {
@@ -895,10 +894,12 @@ impl FlightEngine {
         let stage = summary(
             tiles(),
             final_frames.to_vec(),
-            focus,
-            losing_focus(focus, focused_before),
-            None,
-            key,
+            StageFocus {
+                focus,
+                losing_focus: losing_focus(focus, focused_before),
+                focused_face: None,
+                key,
+            },
             shape.clone(),
             (display, self.rests),
             &|window| self.pictures.knowledge(WindowServerId::from(window)).is_opaque(),
@@ -1021,7 +1022,7 @@ impl FlightEngine {
     fn fly_focused_face(&mut self, target: WindowId) -> bool {
         let face = self.pictures.focused(target);
         let clipped = face.as_ref().is_some_and(|face| face.source.clips());
-        let worn = face.as_ref().map(|face| (target, face.source, face.carries_blur, face.taken));
+        let worn = face.as_ref().map(|face| worn_picture(target, face));
         let flown = self
             .running
             .as_mut()
@@ -1034,9 +1035,9 @@ impl FlightEngine {
 
     /// The journal's record of each picture a tile took `at` that moment of the flight: its route,
     /// whether it carries its window's blur, and when it was taken.
-    fn journal_wears(&mut self, at: Wearing, worn: Vec<(WindowId, Route, bool, Instant)>) {
+    fn journal_wears(&mut self, at: Wearing, worn: Vec<WornPicture>) {
         let now = self.now();
-        for (window, route, blur, taken) in worn {
+        for WornPicture { window, route, blur, taken } in worn {
             self.flights.wears(now, window, at, route, blur, taken);
         }
     }
@@ -1418,6 +1419,16 @@ impl FlightEngine {
     }
 }
 
+/// What the journal records of `picture` worn on `window`'s tile.
+fn worn_picture(window: WindowId, picture: &Picture) -> WornPicture {
+    WornPicture {
+        window,
+        route: picture.source,
+        blur: picture.carries_blur,
+        taken: picture.taken,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rini_geometry::space::{ScreenSize, ScreenVector, SurfaceRect, ToCg};
@@ -1457,6 +1468,7 @@ mod tests {
         use crate::animation::domain::motion::score::Score;
         use crate::animation::event::Crops;
         use crate::animation::event::Event::{Committed, Unavailable};
+        use crate::pictures::domain::route::Route;
         use crate::pictures::platform::service::Command as Asked;
         use crate::transitions::domain::journal::{Burst, Mark, Stamped};
         use crate::windows::domain::info::WindowServerInfo;

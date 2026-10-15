@@ -197,19 +197,40 @@ pub(in crate::transitions) struct Composed<P> {
     pub(in crate::transitions) accent: Option<Accent>,
 }
 
+/// Who a stage draws focused, each as `StageSummary`'s field of the same name.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::transitions) struct StageFocus {
+    pub(in crate::transitions) focus: Option<WindowId>,
+    pub(in crate::transitions) losing_focus: Option<WindowId>,
+    pub(in crate::transitions) focused_face: Option<WindowId>,
+    pub(in crate::transitions) key: Option<WindowId>,
+}
+
+/// The picture a tile wears, as the journal records it: its route, whether it carries its window's
+/// blur, and when it was taken.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::transitions) struct WornPicture {
+    pub(in crate::transitions) window: WindowId,
+    pub(in crate::transitions) route: Route,
+    pub(in crate::transitions) blur: bool,
+    pub(in crate::transitions) taken: Instant,
+}
+
 /// What the coordinator is told of a stage.
-#[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
 pub(in crate::transitions) fn summary(
     tiles: Vec<TileSummary>,
     final_frames: Vec<(WindowId, ScreenRect)>,
-    focus: Option<WindowId>,
-    losing_focus: Option<WindowId>,
-    focused_face: Option<WindowId>,
-    key: Option<WindowId>,
+    faces: StageFocus,
     shape: Shape,
     (display, rests): (ScreenRect, bool),
     opaque: &dyn Fn(WindowId) -> bool,
 ) -> StageSummary {
+    let StageFocus {
+        focus,
+        losing_focus,
+        focused_face,
+        key,
+    } = faces;
     let opaque = tiles.iter().map(|t| t.window).filter(|w| opaque(*w)).collect();
     StageSummary {
         kind: shape.kind,
@@ -256,10 +277,12 @@ impl<P: TilePicture> RunningAnimation<P> {
         summary(
             self.tile_summaries(display),
             self.final_frames.clone(),
-            self.focus,
-            losing_focus(self.focus, self.shown_focus),
-            self.focused_face,
-            self.key,
+            StageFocus {
+                focus: self.focus,
+                losing_focus: losing_focus(self.focus, self.shown_focus),
+                focused_face: self.focused_face,
+                key: self.key,
+            },
             shape,
             (display, rests),
             opaque,
@@ -284,20 +307,15 @@ impl<P: TilePicture> RunningAnimation<P> {
     }
 
     /// What the journal records of the picture each of `windows`' tiles wears now.
-    pub(in crate::transitions) fn worn(
-        &self,
-        windows: &[WindowId],
-    ) -> Vec<(WindowId, Route, bool, Instant)> {
+    pub(in crate::transitions) fn worn(&self, windows: &[WindowId]) -> Vec<WornPicture> {
         self.tiles
             .iter()
             .filter(|tile| windows.contains(&tile.window))
-            .map(|tile| {
-                (
-                    tile.window,
-                    tile.snapshot.source(),
-                    tile.snapshot.carries_blur(),
-                    tile.snapshot.taken(),
-                )
+            .map(|tile| WornPicture {
+                window: tile.window,
+                route: tile.snapshot.source(),
+                blur: tile.snapshot.carries_blur(),
+                taken: tile.snapshot.taken(),
             })
             .collect()
     }
