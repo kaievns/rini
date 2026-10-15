@@ -735,6 +735,7 @@ impl WindowCatalogue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2_core_foundation::{CGRect, CGSize};
     #[test]
     fn authoritative_space_only_record_is_not_pruned() {
         let mut window_store = WindowCatalogue::default();
@@ -970,12 +971,29 @@ mod tests {
 
     #[test]
     fn any_single_field_is_enough_to_keep_a_window_server_record() {
-        let holding: [(&str, fn(&mut WindowServerRecord)); 5] = [
+        let holding: [(&str, fn(&mut WindowServerRecord)); 7] = [
             ("window_id", |r| r.window_id = Some(WindowId::new(1, 1))),
             ("visible", |r| r.visible = true),
             ("observed", |r| r.observed = true),
             ("space", |r| r.space = Some(SpaceId::new(1))),
+            ("info", |r| {
+                r.info = Some(WindowServerInfo {
+                    id: WindowServerId::new(1),
+                    pid: 1,
+                    layer: 0,
+                    frame: CGRect::default(),
+                    min_frame: CGSize::default(),
+                    max_frame: CGSize::default(),
+                })
+            }),
             ("recent_at", |r| r.recent_at = Some(Instant::now())),
+            ("pending_native_fullscreen", |r| {
+                r.pending_native_fullscreen = Some(PendingNativeFullscreenState {
+                    pid: 1,
+                    last_known_user_space: None,
+                    fullscreen_space: SpaceId::new(1),
+                })
+            }),
         ];
         for (name, set) in holding {
             let mut record = WindowServerRecord::default();

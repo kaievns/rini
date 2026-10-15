@@ -82,7 +82,8 @@ as visible rather than absent. The reverse — an id the server does not report 
   cannot say whether a window still exists globally.
 - A record of a window MUST NOT be forgotten while it still holds anything: its Accessibility state,
   a window-server id or a rule decision. The record of a window-server id MUST NOT be forgotten while
-  it holds an observed space, a visibility or the window it belongs to.
+  it holds anything: the window it belongs to, a visibility, an observation, a space, what the server
+  reported of it, a recent sighting or a native-fullscreen record still waiting on a window.
 - A window that leaves MUST take its pictures with it, once, whichever way it leaves: closed, closed
   while minimised or unmanaged, found gone when its application's windows are looked at again, left
   behind by its application quitting, or found again under a new identity for the same window-server
