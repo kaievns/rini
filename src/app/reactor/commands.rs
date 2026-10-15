@@ -9,12 +9,13 @@
 
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::centered_in;
-use rini_ipc::protocol::{DisplaySelector, LayoutCommand};
+use rini_ipc::protocol::DisplaySelector;
 use tracing::warn;
 
 use super::Reactor;
 use super::events::{EventOutcome, command as command_workflow};
 use crate::displays::domain::screen::ScreenInfo;
+use crate::workspaces::EngineCommand;
 
 impl Reactor {
     pub(super) fn on_toggle_space_activated(&mut self) -> anyhow::Result<EventOutcome> {
@@ -103,7 +104,7 @@ impl Reactor {
 
     pub(super) fn on_layout_command(
         &mut self,
-        command: LayoutCommand,
+        command: EngineCommand,
     ) -> anyhow::Result<EventOutcome> {
         let command_space = self.command_context_space();
         self.on_layout_command_in(command, command_space)
@@ -113,7 +114,7 @@ impl Reactor {
     /// from.
     pub(super) fn on_layout_command_in(
         &mut self,
-        command: LayoutCommand,
+        command: EngineCommand,
         command_space: Option<rini_core::ids::SpaceId>,
     ) -> anyhow::Result<EventOutcome> {
         // What a window does after a command answers rini, not a double-click before it.

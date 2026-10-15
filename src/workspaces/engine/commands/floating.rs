@@ -1,40 +1,53 @@
-//! Maximising a column: `Mod+F`, and an app zooming its window from the title bar, which means the
-//! same and goes the same way.
+//! The floating layer, and maximising a column: `Mod+F`, and an app zooming its window from the
+//! title bar, which means the same and goes the same way.
+//!
+//! A window is taken off the strip, and a floating one maximised, before any target is resolved: a
+//! floating window has no layout to resolve one against.
 //!
 //! `impl LayoutEngine` across modules is the pattern `engine/persistence/` already uses.
 
 use rini_core::ids::{SpaceId, WindowId};
 
 use super::CommandTarget;
+use crate::workspaces::domain::command::FloatingCommand;
 use crate::workspaces::domain::display_memory::DisplayMemory;
-use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine};
+use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
 use crate::workspaces::{LayoutId, VirtualWorkspaceId};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_floating_command(
         &mut self,
+        window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
-        target: CommandTarget,
-        command: LayoutCommand,
+        space: Option<SpaceId>,
+        is_floating: bool,
+        command: FloatingCommand,
     ) -> EventResponse {
-        let CommandTarget {
-            space,
-            workspace: workspace_id,
-            layout,
-        } = target;
         match command {
-            LayoutCommand::ToggleFullscreenWithinGaps => {
-                match self.workspace_tree(workspace_id).selected_window(layout) {
+            FloatingCommand::ToggleWindowFloating => {
+                self.toggle_window_floating(window_store, space, is_floating)
+            }
+            FloatingCommand::Maximize if is_floating => {
+                self.toggle_floating_maximized(window_store, space)
+            }
+            FloatingCommand::Maximize => self.with_target(space, |engine, target| {
+                let CommandTarget { space, workspace, layout } = target;
+                match engine.workspace_tree(workspace).selected_window(layout) {
                     Some(window) => {
-                        self.toggle_full_width(memory, space, workspace_id, layout, window)
+                        engine.toggle_full_width(memory, space, workspace, layout, window)
                     }
                     None => EventResponse::default(),
                 }
-            }
-            other => {
-                debug_assert!(false, "{other:?} is not a floating command");
-                EventResponse::default()
-            }
+            }),
+            FloatingCommand::ToggleFocusFloating => self.with_target(space, |engine, target| {
+                engine.toggle_focus_floating(
+                    window_store,
+                    target.space,
+                    target.workspace,
+                    target.layout,
+                    is_floating,
+                )
+            }),
         }
     }
 
@@ -70,9 +83,9 @@ mod tests {
     use crate::layout::settings::LayoutSettings;
     use crate::windows::domain::info::WindowInfo;
     use crate::windows::domain::state::WindowState;
+    use crate::workspaces::LayoutEvent;
     use crate::workspaces::domain::display_affinity::ColumnWidth;
     use crate::workspaces::settings::VirtualWorkspaceSettings;
-    use crate::workspaces::{LayoutEvent, WindowStore};
 
     const DISPLAY: &str = "display-a";
 
@@ -159,7 +172,7 @@ mod tests {
                 Some(self.space),
                 &[self.space],
                 &HashMap::default(),
-                LayoutCommand::ToggleFullscreenWithinGaps,
+                FloatingCommand::Maximize.into(),
             )
         }
 
@@ -221,7 +234,7 @@ mod tests {
             Some(strip.space),
             &[strip.space],
             &HashMap::default(),
-            LayoutCommand::ToggleWindowFloating,
+            FloatingCommand::ToggleWindowFloating.into(),
         );
         assert!(strip.engine.is_window_floating(selected));
 

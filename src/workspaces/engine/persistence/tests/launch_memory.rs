@@ -227,15 +227,18 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
     // membership really moves. Reassigning it in the store alone leaves it in the active workspace's tree,
     // where the old lookup could still find it and the test would prove nothing.
     let parked_index = 2usize;
-    let _ = engine.handle_virtual_workspace_command(
+    let _ = engine.handle_command(
         &mut window_store,
         &mut memory,
-        space,
-        &crate::workspaces::LayoutCommand::MoveWindowToWorkspace {
+        Some(space),
+        &[space],
+        &HashMap::default(),
+        crate::workspaces::WorkspaceCommand::MoveWindow {
             workspace: rini_ipc::protocol::WorkspaceSelector::Index(parked_index),
             follow: false,
             window_id: Some(window.idx.get()),
-        },
+        }
+        .into(),
     );
     let workspaces: Vec<_> = engine
         .virtual_workspace_manager
@@ -748,7 +751,7 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
         Some(space),
         &[space],
         &HashMap::default(),
-        LayoutCommand::ToggleFullscreenWithinGaps,
+        LayoutCommand::ToggleFullscreenWithinGaps.into(),
     );
     engine.remember_launch_slots(&store, &mut memory, &[DISPLAY.to_owned()]);
 

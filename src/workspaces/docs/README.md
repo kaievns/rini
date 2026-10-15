@@ -8,7 +8,7 @@ a restart. Sits above `windows`, `displays` and `layout`.
 
 | | |
 |---|---|
-| `engine.rs` | `LayoutEngine`: the orchestrator. Holds the workspaces, the per-display layouts, floating state, app rules and the persistence journal, and answers each `LayoutEvent` (`handle_event`) and `LayoutCommand` (`handle_command`), which workspace a display shows and who takes focus there. Display affinity and launch memory left for `domain/display_memory.rs`, owned by the reactor; each of its other jobs is one file under `engine/` |
+| `engine.rs` | `LayoutEngine`: the orchestrator. Holds the workspaces, the per-display layouts, floating state, app rules and the persistence journal, and answers each `LayoutEvent` (`handle_event`) and `EngineCommand` (`handle_command`, the one entry point for every command), which workspace a display shows and who takes focus there. Display affinity and launch memory left for `domain/display_memory.rs`, owned by the reactor; each of its other jobs is one file under `engine/` |
 | `engine/discovery.rs` | What an application reports of its windows on a space: each admitted under its rules (`admit_window`), whether its constraints change a layout (`constraints_change_layout`), and the strip's membership reconciled with the report (`sync_tiled_windows_for_app`); a window added or removed one at a time |
 | `engine/rules.rs` | A window's app rules: the decision, the workspace and layer it gives the window, a relaunched window's remembered slot taken first when no rule matches, and the size a tiled rule asks for |
 | `engine/navigation.rs` | Focus moving along a strip, out of the floating layer into it, and to the display above or below, where a strip ends: `move_focus_internal`, which crosses with `focus_adjacent_space` and stops with `focus_strip_end` |
@@ -16,7 +16,8 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `engine/launch.rs` | Launch memory's projection, every live window's slot recorded under the attached displays before each save (`remember_launch_slots`), and its lookup, the slot a relaunched window takes (`launch_slot_for_new_window`) |
 | `engine/frames.rs` | The frames a layout pass writes for one space: the strip's columns, a column off the strip parked in the corner on its side, the floating layer kept where it is usable and centred where not, maximized floating windows over the tiling area, and every window of a workspace not showing parked bottom-right; `calculate_layout_for_workspace` for the reactor's passes spends what the strip held, and `preview_layout_for_workspace` for a query leaves it |
 | `engine/moves.rs` | A window moved to another workspace, to another display's space, and between the strip and the floating layer: all three take it out of its layer (`detach`) and put it into another (`attach`), and the two moves to a workspace go through `take_window` and `place_window`, which also reassign its workspace and put it back where it was when the destination cannot be assigned |
-| `engine/commands/` | One module per family of `LayoutCommand`: `focus`, `arrange`, `resize`, `strip`, `floating`. `commands.rs` holds `resolve_target`, which is the space, active workspace and active layout every arm needs |
+| `engine/commands/` | One dispatcher per family of `EngineCommand`, each matching only its own enum: `focus`, `arrange`, `resize`, `strip`, `floating`, `workspace`. `commands.rs` holds `resolve_target`, which is the space, active workspace and active layout every family but `workspace` needs |
+| `domain/command.rs` | `EngineCommand`: the wire's flat `LayoutCommand` sorted into one enum per family (`FocusCommand`, `ArrangeCommand`, `ResizeCommand`, `StripCommand`, `FloatingCommand`, `WorkspaceCommand`) by one exhaustive `From`, and which workspace commands switch the workspace shown (`switches_workspace`) |
 | `domain/virtual_workspace.rs` | `WorkspaceStore`, `VirtualWorkspace`: one global workspace list, each display showing one independently |
 | `domain/assignment.rs` | `WorkspaceAssignments`: window → workspace and workspace → windows, one index kept both ways so they cannot disagree |
 | `domain/display_affinity.rs` | What belongs to a display and survives a replug: home, column width, strip order. Keyed by display UUID |
@@ -52,8 +53,8 @@ because collapsing those two erased remembered widths on the next autosave.
 
 ## Reading order
 
-`domain/virtual_workspace.rs` → `domain/assignment.rs` → `engine.rs::handle_command`, which
-resolves a target and hands off to `engine/commands/`
+`domain/virtual_workspace.rs` → `domain/assignment.rs` → `domain/command.rs` →
+`engine.rs::handle_command`, which hands each family to its dispatcher in `engine/commands/`
 → `engine/persistence/` when you need the file format.
 
 ## Detail

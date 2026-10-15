@@ -65,6 +65,6 @@ moves along the strip within one workspace.
 workspace a selector names and how names compare, `src/workspaces/domain/launch_memory.rs` the
 relaunch records, `src/workspaces/engine/launch.rs` what is recorded in them and the slot a relaunched
 window takes, `src/workspaces/engine/rules.rs` and `src/workspaces/engine/discovery.rs` where it takes
-it, `src/workspaces/engine/affinity.rs` the width it arrives at, and `src/workspaces/engine.rs` the
-orchestration. Measurements are in
+it, `src/workspaces/engine/affinity.rs` the width it arrives at, `src/workspaces/engine/commands/workspace.rs`
+the switches and moves to a workspace, and `src/workspaces/engine.rs` the orchestration. Measurements are in
 `src/workspaces/docs/launch-memory.md` and `src/workspaces/docs/workspaces-and-displays.md`.

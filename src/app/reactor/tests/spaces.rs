@@ -8,7 +8,7 @@ use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::displays::domain::snapshot::SpaceKinds;
-use crate::workspaces::LayoutCommand;
+use crate::workspaces::WorkspaceCommand;
 
 #[test]
 fn it_manages_windows_on_enabled_spaces() {
@@ -92,8 +92,8 @@ fn queries_prefer_authoritative_active_space_over_stale_command_space() {
     let space2 = SpaceId::new(2);
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space1)]));
-    reactor.handle_test_workspace_command(space1, &LayoutCommand::SwitchToWorkspace(0));
-    reactor.handle_test_workspace_command(space2, &LayoutCommand::SwitchToWorkspace(1));
+    reactor.handle_test_workspace_command(space1, WorkspaceCommand::SwitchTo(0));
+    reactor.handle_test_workspace_command(space2, WorkspaceCommand::SwitchTo(1));
 
     reactor.handle_event(space_state_event_with(
         vec![screen],

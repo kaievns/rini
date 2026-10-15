@@ -7,7 +7,7 @@ use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::state::RiniState;
 use crate::app::reactor::{DragState, LayoutEvent};
-use crate::workspaces::{LayoutCommand, LayoutEngine};
+use crate::workspaces::{ArrangeCommand, LayoutEngine};
 
 #[derive(Debug, Clone)]
 pub struct MouseUpPayload {
@@ -37,7 +37,7 @@ pub fn handle_mouse_up(
                 payload.swap_space,
                 &payload.visible_spaces,
                 &payload.visible_space_centers,
-                LayoutCommand::SwapWindows(dragged.into(), target.into()),
+                ArrangeCommand::Swap(dragged, target).into(),
             );
             outcome = outcome.with_layout_response(response, None);
         }

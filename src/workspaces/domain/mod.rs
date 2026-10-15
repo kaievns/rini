@@ -2,6 +2,7 @@
 
 pub mod app_rules;
 pub mod assignment;
+pub mod command;
 pub mod display_affinity;
 pub mod display_memory;
 pub mod display_pin;

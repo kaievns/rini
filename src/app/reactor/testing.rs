@@ -24,7 +24,7 @@ use crate::windows::platform::window_server::{FakeWindowServer, Listed};
 use crate::workspaces::domain::display_affinity::DisplayAffinity;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::window_store::WindowStore;
-use crate::workspaces::{LayoutCommand, LayoutEngine};
+use crate::workspaces::{LayoutCommand, LayoutEngine, WorkspaceCommand};
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {
@@ -186,12 +186,14 @@ impl Reactor {
             .set_active_workspace(space, workspace)
     }
 
-    pub fn handle_test_workspace_command(&mut self, space: SpaceId, command: &LayoutCommand) {
-        let _ = self.layout_engine.handle_virtual_workspace_command(
+    pub fn handle_test_workspace_command(&mut self, space: SpaceId, command: WorkspaceCommand) {
+        let _ = self.layout_engine.handle_command(
             &mut self.state.windows,
             &mut self.state.display_memory,
-            space,
-            command,
+            Some(space),
+            &[space],
+            &HashMap::default(),
+            command.into(),
         );
     }
 

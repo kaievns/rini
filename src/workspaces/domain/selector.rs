@@ -40,7 +40,7 @@ pub fn resolve_workspace(
 /// anything.
 ///
 /// Workspaces stack downward: `Next` is below, `Prev` above. The same orientation
-/// `handle_virtual_workspace_command` reports when a switch has nowhere to go.
+/// `handle_workspace_command` reports when a switch has nowhere to go.
 pub fn workspace_stack_direction(selector: &WorkspaceSelector) -> Option<Direction> {
     match selector {
         WorkspaceSelector::Relative(RelativeWorkspace::Next) => Some(Direction::Down),

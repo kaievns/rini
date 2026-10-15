@@ -10,7 +10,8 @@ use tracing::debug;
 
 use super::CommandTarget;
 use crate::layout::domain::boundary::strip_edge;
-use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine, WindowStore};
+use crate::workspaces::domain::command::ArrangeCommand;
+use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_arrange_command(
@@ -19,7 +20,7 @@ impl LayoutEngine {
         visible_spaces: &[SpaceId],
         visible_space_centers: &HashMap<SpaceId, CGPoint>,
         target: CommandTarget,
-        command: LayoutCommand,
+        command: ArrangeCommand,
     ) -> EventResponse {
         let CommandTarget {
             space,
@@ -27,14 +28,12 @@ impl LayoutEngine {
             layout,
         } = target;
         match command {
-            LayoutCommand::SwapWindows(a, b) => {
-                let a = rini_core::ids::WindowId::new(a.pid, a.idx);
-                let b = rini_core::ids::WindowId::new(b.pid, b.idx);
+            ArrangeCommand::Swap(a, b) => {
                 let _ = self.workspace_tree_mut(workspace_id).swap_windows(layout, a, b);
 
                 EventResponse::default()
             }
-            LayoutCommand::MoveNode(direction) => {
+            ArrangeCommand::MoveNode(direction) => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 let tree = self.workspace_tree(workspace_id);
                 let swapping =
@@ -91,21 +90,17 @@ impl LayoutEngine {
                 }
                 EventResponse::default()
             }
-            LayoutCommand::ToggleFold(side) => {
+            ArrangeCommand::ToggleFold(side) => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 let raise_windows =
                     self.workspace_tree_mut(workspace_id).toggle_fold_of_selection(layout, side);
                 Self::response_for_raised_windows(raise_windows)
             }
-            LayoutCommand::ExplodeColumn => {
+            ArrangeCommand::ExplodeColumn => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 let raise_windows =
                     self.workspace_tree_mut(workspace_id).explode_column_of_selection(layout);
                 Self::response_for_raised_windows(raise_windows)
-            }
-            other => {
-                debug_assert!(false, "{other:?} is not a arrange command");
-                EventResponse::default()
             }
         }
     }

@@ -11,7 +11,7 @@ use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::request::Request;
-use crate::workspaces::{LayoutCommand, LayoutEvent};
+use crate::workspaces::{LayoutCommand, LayoutEvent, WorkspaceCommand};
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
@@ -225,8 +225,8 @@ fn workspace_queries_are_isolated_per_macos_space() {
         Some(space2),
     ]));
 
-    reactor.handle_test_workspace_command(space1, &LayoutCommand::SwitchToWorkspace(0));
-    reactor.handle_test_workspace_command(space2, &LayoutCommand::SwitchToWorkspace(1));
+    reactor.handle_test_workspace_command(space1, WorkspaceCommand::SwitchTo(0));
+    reactor.handle_test_workspace_command(space2, WorkspaceCommand::SwitchTo(1));
 
     let space1_workspaces = reactor.query_workspaces(Some(space1));
     let space2_workspaces = reactor.query_workspaces(Some(space2));
