@@ -304,7 +304,7 @@ fn rini_taps_no_trackpad_gesture() {
             }
         }
     }
-    for name in ["build.rs", "Cargo.toml"] {
+    for name in ["crates/rini-skylight-sys/build.rs", "Cargo.toml"] {
         let text = fs::read_to_string(name).expect("readable build file");
         for (n, line) in text.lines().enumerate() {
             for surface in TRACKPAD {
