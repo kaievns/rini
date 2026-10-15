@@ -13,15 +13,6 @@ use crate::workspaces::domain::display_affinity::SetupChange;
 use crate::workspaces::domain::display_pin::display_for_role;
 
 impl Reactor {
-    /// Re-observe display affinity and strip order for every attached display.
-    ///
-    /// Affinity was originally written once per window and never revised, so it went stale
-    /// the moment anything was rearranged: a window dragged from the external to the
-    /// built-in kept its old home and was hauled back on the next replug. Reported as a
-    /// Chrome and an editor window following the two terminals across.
-    ///
-    /// Cheap enough to run on every settled layout because it only walks the active
-    /// workspace of each screen, which is what the layout pass just computed anyway.
     /// Put the arrangement the attached displays form in force, and say what that turned out to be.
     ///
     /// Called on every settled topology. An arrangement nobody has seen answers `New`, which is the
@@ -87,6 +78,13 @@ impl Reactor {
         }
     }
 
+    /// Re-observe display affinity and strip order for every attached display.
+    ///
+    /// A home written once and never revised goes stale the moment anything is rearranged: a
+    /// window dragged from the external to the built-in would be hauled back on the next replug.
+    ///
+    /// Cheap enough to run on every settled layout because it only walks the active
+    /// workspace of each screen, which is what the layout pass just computed anyway.
     pub(super) fn sync_display_affinity_from_live_layout(&mut self) {
         if (self.reads.display_churn)() {
             return;
