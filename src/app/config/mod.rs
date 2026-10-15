@@ -109,15 +109,13 @@ impl Settings {
     }
 }
 
-impl Default for Config {
+impl Config {
     /// The embedded `rini.default.kdl`. A test parses it by name, so a broken one fails there first.
-    fn default() -> Config {
+    pub fn reference() -> Config {
         Self::parse("rini.default.kdl", DEFAULT_KDL)
             .unwrap_or_else(|error| panic!("{}", error.render()))
     }
-}
 
-impl Config {
     /// What every setting is when nothing says otherwise: no binds, no window rules.
     pub fn code_defaults() -> Config {
         Config {

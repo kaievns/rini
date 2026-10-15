@@ -51,12 +51,12 @@ pub enum Commands {
 /// A missing file means the defaults, unless the TOML config sits beside it (`leftover_toml`).
 pub fn config_or_default(path: &Path) -> (Config, Option<String>) {
     if !path.exists() {
-        return (Config::default(), leftover_toml(path));
+        return (Config::reference(), leftover_toml(path));
     }
     match Config::read(path) {
         Ok(config) => (config, None),
         Err(error) => (
-            Config::default(),
+            Config::reference(),
             Some(format!(
                 "Could not use the config at {}; starting on the built-in defaults, \
                  rini.default.kdl. Fix the config and it is read again as soon as it is saved.\n{}",
@@ -154,7 +154,7 @@ mod tests {
             assert!(complaint.contains(&named), "{named} missing: {complaint}");
         }
         assert!(complaint.contains("docs/config.md"), "{complaint}");
-        assert_eq!(config.settings, Config::default().settings);
+        assert_eq!(config.settings, Config::reference().settings);
 
         let report = validate_config(&kdl).unwrap_err();
         assert!(report.contains("config.toml"), "{report}");
@@ -176,7 +176,7 @@ mod tests {
         );
         assert_eq!(
             config.settings.animate,
-            Config::default().settings.animate,
+            Config::reference().settings.animate,
             "the defaults, not a half-read file"
         );
     }
@@ -243,7 +243,7 @@ mod tests {
     }
 
     fn settings(animate: bool) -> Settings {
-        let mut settings = Config::default().settings;
+        let mut settings = Config::reference().settings;
         settings.animate = animate;
         settings
     }

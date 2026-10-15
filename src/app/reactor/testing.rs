@@ -28,7 +28,7 @@ use crate::workspaces::{LayoutCommand, LayoutEngine, WorkspaceCommand};
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {
-        let mut config = Config::default();
+        let mut config = Config::reference();
         config.settings.default_disable = false;
         config.settings.animate = false;
         let reads = SystemReads::fake(Arc::new(FakeWindowServer::default()));

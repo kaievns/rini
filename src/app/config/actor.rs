@@ -106,7 +106,7 @@ mod tests {
     fn actor(path: PathBuf) -> (ConfigActor, std::sync::mpsc::Receiver<Change>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let actor = ConfigActor {
-            config: Config::default(),
+            config: Config::reference(),
             on_change: Box::new(move |config| tx.send(config).unwrap()),
             config_path: path,
         };
@@ -127,7 +127,7 @@ mod tests {
         assert!(changes.try_recv().is_err(), "a fragment is not the file");
         assert_eq!(
             actor.config.binds,
-            Config::default().binds,
+            Config::reference().binds,
             "everything the fragment leaves out stays"
         );
     }

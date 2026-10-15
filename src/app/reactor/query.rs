@@ -780,7 +780,7 @@ mod tests {
                 memory,
                 spaces: screens(space_ids),
                 apps: apps(pids),
-                config: crate::app::config::Config::default(),
+                config: crate::app::config::Config::reference(),
                 active: space_ids.iter().map(|&s| SpaceId::new(s)).collect(),
             }
         }

@@ -396,7 +396,7 @@ mod tests {
         let (events_tx, mut events_rx) = channels::channel();
         let (event_tap_tx, _event_tap_rx) = channels::channel();
         let (mut controller, _sender) = WmController::new(
-            crate::app::config::Config::default(),
+            crate::app::config::Config::reference(),
             config_tx,
             events_tx,
             event_tap_tx,

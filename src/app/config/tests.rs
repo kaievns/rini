@@ -52,12 +52,12 @@ fn the_embedded_default_parses() {
 #[test]
 fn the_reference_means_the_same_settings_and_workspaces_as_an_empty_file() {
     assert_eq!(
-        settings_and_workspaces(&Config::default()),
+        settings_and_workspaces(&Config::reference()),
         settings_and_workspaces(&parse(""))
     );
     assert!(parse("").binds.is_empty(), "a file with no binds has none");
     assert!(parse("").virtual_workspaces.app_rules.is_empty());
-    assert!(!Config::default().binds.is_empty());
+    assert!(!Config::reference().binds.is_empty());
 }
 
 /// Under `"Shift"` each Mod+Shift bind is its Mod bind, as the reference's comment says.
@@ -76,7 +76,7 @@ fn the_reference_is_usable_under_every_mod_key_it_offers() {
         let report = file.as_ref().err().map(ConfigError::render).unwrap_or_default();
         assert_eq!(file.is_ok(), usable, "{name}:\n{report}");
         let fragment =
-            Config::default().with("config set", &format!("input {{\n    {written}\n}}\n"));
+            Config::reference().with("config set", &format!("input {{\n    {written}\n}}\n"));
         assert_eq!(fragment.is_ok(), usable, "config set {written}");
     }
 }
@@ -114,7 +114,7 @@ fn the_drag_swap_overlap_has_one_default() {
 
 #[test]
 fn the_config_serialises_for_config_get() {
-    let json = serde_json::to_value(Config::default()).expect("serialises");
+    let json = serde_json::to_value(Config::reference()).expect("serialises");
     assert_eq!(json["settings"]["mod_key"], "Alt");
     assert_eq!(json["binds"][0]["key"], "Mod+Z");
     assert_eq!(json["binds"][0]["action"], "toggle-space-activated");
@@ -123,7 +123,7 @@ fn the_config_serialises_for_config_get() {
 
 #[test]
 fn the_bar_keeps_its_band_clear_until_it_is_turned_off() {
-    let mut settings = Config::default().settings;
+    let mut settings = Config::reference().settings;
     assert!(settings.bar.enabled);
     assert_eq!(settings.top_band(), crate::bar::domain::layout::HEIGHT);
     settings.bar.enabled = false;
@@ -1260,7 +1260,7 @@ fn a_move_to_a_workspace_follows_unless_focus_false_and_the_default_binds_do_not
         Action::MoveWindowToWorkspaceUp(true),
     ]);
 
-    let shipped: Vec<(String, bool)> = Config::default()
+    let shipped: Vec<(String, bool)> = Config::reference()
         .binds
         .into_iter()
         .filter_map(|bind| match bind.action {
@@ -1634,7 +1634,7 @@ fn refused_somewhere(path: &str, name: &str) -> bool {
 
 #[test]
 fn a_fragment_changes_what_it_names_and_keeps_the_rest() {
-    let running = Config::default();
+    let running = Config::reference();
     let changed = running.with("config set", "layout {\n    gaps 8\n}\n").expect("applies");
     assert_eq!(changed.settings.layout.gaps.gaps, 8.0);
     assert_eq!(
@@ -1646,7 +1646,7 @@ fn a_fragment_changes_what_it_names_and_keeps_the_rest() {
 
 #[test]
 fn a_fragments_binds_replace_the_binds_for_their_keys() {
-    let running = Config::default();
+    let running = Config::reference();
     let changed = running
         .with("config set", "binds {\n    Mod+H { close-window; }\n}\n")
         .expect("applies");
