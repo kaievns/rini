@@ -411,7 +411,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 `src/layout/domain/scrolling.rs` is the layout, `src/layout/domain/scrolling/pass.rs` its pass and
 `src/layout/domain/scrolling/width.rs` its width keys, full width and the presets among them,
-`src/layout/domain/constraints.rs` the widths, `src/layout/domain/strip.rs` the geometry,
+`src/layout/domain/constraints.rs` the widths, `src/layout/domain/column_width.rs` the width a column
+holds and a window carries, `src/layout/domain/strip.rs` the geometry,
 `src/workspaces/engine/commands/` the commands.
 Which edge a mouse drag moves, and what it asks of the column, is `src/layout/domain/edge_drag.rs`.
 A title-bar zoom is told from a resize by `src/windows/domain/zoom.rs`, and the full-width toggle both
