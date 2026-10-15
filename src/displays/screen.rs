@@ -598,8 +598,8 @@ mod test {
     use objc2_core_graphics::CGError;
 
     use super::{
-        CGScreenInfo, Chrome, Dock, DockEdge, NSScreenInfo, ScreenCache, ScreenId, SpaceId, System,
-        main_first,
+        CGScreenInfo, Chrome, DisplayUuid, Dock, DockEdge, NSScreenInfo, ScreenCache, ScreenId,
+        SpaceId, System, main_first,
     };
 
     /// What a stub machine answers beside its screens: the menu bar hidden, no Dock shown, no
@@ -855,6 +855,21 @@ mod test {
         assert!(screens.is_empty());
         assert!(cache.uuids.is_empty());
         assert!(converter.convert_point(CGPoint::new(0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn a_display_with_no_uuid_is_named_by_its_fallback() {
+        let system = SequenceSystem::new(
+            vec![vec![cg(7, rect(0.0, 0.0, 1440.0, 900.0))]],
+            vec![vec![ns(7, 2.0)]],
+            vec![CFString::from_str("")],
+        );
+
+        let (screens, _) = ScreenCache::new_with(system).refresh().unwrap();
+
+        let fallback = DisplayUuid::fallback(ScreenId::new(7));
+        assert_eq!(screens[0].display_uuid, fallback);
+        assert_eq!(screens[0].display_uuid_opt(), Some(&fallback));
     }
 
     /// The external keeps nothing clear with the menu bar hidden, so a band reserved for a bar has to
