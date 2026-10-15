@@ -69,8 +69,8 @@ pub fn reactor_with_window_moved_to_space2()
 
     assert!(reactor.assign_test_window_to_workspace(space1, wid, space1_workspace));
     assert!(reactor.assign_test_window_to_workspace(space2, wid, space2_workspace));
-    let txid = reactor.transaction_manager.generate_next_txid(wsid);
-    reactor.transaction_manager.store_txid(wsid, txid, moved_frame);
+    let txid = reactor.transactions.next_txid(wsid);
+    reactor.transactions.insert(wsid, txid, moved_frame);
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)

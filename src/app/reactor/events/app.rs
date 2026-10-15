@@ -8,7 +8,7 @@ use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::state::RiniState;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
-use crate::windows::domain::transaction::TransactionManager;
+use crate::windows::domain::transaction::WindowTxStore;
 use crate::workspaces::LayoutEvent;
 
 #[derive(Debug)]
@@ -62,7 +62,7 @@ pub fn handle_application_terminated(
 pub fn handle_application_thread_terminated(
     apps: &mut HashMap<pid_t, AppState>,
     state: &mut RiniState,
-    transactions: &TransactionManager,
+    transactions: &WindowTxStore,
     drag: &mut DragManager,
     pid: i32,
 ) -> anyhow::Result<EventOutcome> {

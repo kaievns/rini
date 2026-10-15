@@ -77,8 +77,8 @@ fn matching_rini_frame_clears_pending_target() {
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
     );
-    let txid = reactor.transaction_manager.generate_next_txid(wsid);
-    reactor.transaction_manager.store_txid(wsid, txid, target_frame);
+    let txid = reactor.transactions.next_txid(wsid);
+    reactor.transactions.insert(wsid, txid, target_frame);
 
     reactor.handle_event(Event::WindowFrameChanged(
         wid,
@@ -89,7 +89,7 @@ fn matching_rini_frame_clears_pending_target() {
     ));
 
     assert_eq!(
-        reactor.transaction_manager.get_target_frame(wsid),
+        reactor.transactions.target(&wsid),
         None,
         "a confirmed Rini frame must clear the pending target"
     );
@@ -106,8 +106,8 @@ fn matching_rini_frame_clears_pending_target() {
     // AX may adjust a requested frame; cache the accepted geometry but keep the target pending.
     let adjusted_target = CGRect::new(CGPoint::new(80.0, 40.0), frame.size);
     let accepted = CGRect::new(CGPoint::new(81.0, 40.0), frame.size);
-    let txid = reactor.transaction_manager.generate_next_txid(wsid);
-    reactor.transaction_manager.store_txid(wsid, txid, adjusted_target);
+    let txid = reactor.transactions.next_txid(wsid);
+    reactor.transactions.insert(wsid, txid, adjusted_target);
     let outcome = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
             wid,
@@ -118,10 +118,7 @@ fn matching_rini_frame_clears_pending_target() {
         ))
         .unwrap();
     assert!(reactor.state.windows.window(wid).unwrap().frame_monotonic.same_as(accepted));
-    assert_eq!(
-        reactor.transaction_manager.get_target_frame(wsid),
-        Some(adjusted_target)
-    );
+    assert_eq!(reactor.transactions.target(&wsid), Some(adjusted_target));
     assert!(!outcome.arrange.requested);
 
     // A user drag beginning during the transaction clears it instead of accepting it blindly.
@@ -132,7 +129,7 @@ fn matching_rini_frame_clears_pending_target() {
         Requested(true),
         Some(MouseState::Down),
     ));
-    assert_eq!(reactor.transaction_manager.get_target_frame(wsid), None);
+    assert_eq!(reactor.transactions.target(&wsid), None);
 }
 
 #[test]
@@ -142,8 +139,8 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
     );
-    let txid = reactor.transaction_manager.generate_next_txid(wsid);
-    reactor.transaction_manager.store_txid(wsid, txid, target_frame);
+    let txid = reactor.transactions.next_txid(wsid);
+    reactor.transactions.insert(wsid, txid, target_frame);
 
     let acknowledgement = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
@@ -212,8 +209,8 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
     );
-    let txid = reactor.transaction_manager.generate_next_txid(wsid);
-    reactor.transaction_manager.store_txid(wsid, txid, target_frame);
+    let txid = reactor.transactions.next_txid(wsid);
+    reactor.transactions.insert(wsid, txid, target_frame);
     let acknowledgement = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
             wid,
@@ -237,8 +234,8 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
     assert!(!duplicate.arrange.requested);
 
     // Stale transaction notification while a newer target is pending.
-    let current_txid = reactor.transaction_manager.generate_next_txid(wsid);
-    reactor.transaction_manager.store_txid(wsid, current_txid, target_frame);
+    let current_txid = reactor.transactions.next_txid(wsid);
+    reactor.transactions.insert(wsid, current_txid, target_frame);
     let stale = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
             wid,
@@ -254,7 +251,7 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
     assert!(!stale.arrange.requested);
 
     // Geometry on an inactive native space.
-    reactor.transaction_manager.clear_target_for_window(wsid);
+    reactor.transactions.clear_target(&wsid);
     reactor.set_active_spaces(&[]);
     let inactive = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
@@ -531,7 +528,7 @@ fn authoritative_destruction_removes_window_server_backed_state() {
 
     let outcome = window_workflow::handle_window_destroyed(
         &mut reactor.state,
-        &reactor.transaction_manager,
+        &reactor.transactions,
         &mut reactor.drag_manager,
         window_workflow::WindowDestroyedPayload { window: wid },
     )
@@ -2395,7 +2392,7 @@ mod title_bar_zoom {
             before.origin,
             CGSize::new(before.size.width - 3.0, before.size.height),
         );
-        strip.reactor.transaction_manager.store_txid(wsid, txid, pending);
+        strip.reactor.transactions.insert(wsid, txid, pending);
 
         strip.zoom(VISIBLE);
         strip.assert_ends_at_full_width("over a pending write");

@@ -407,8 +407,8 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
         .map(|(_, frame)| frame)
         .expect("inactive-workspace window should still be laid out to a hidden position");
 
-    let txid = reactor.transaction_manager.generate_next_txid(wsid);
-    reactor.transaction_manager.store_txid(wsid, txid, hidden_target);
+    let txid = reactor.transactions.next_txid(wsid);
+    reactor.transactions.insert(wsid, txid, hidden_target);
 
     assert!(!reactor.update_layout(false, true, None));
     assert!(

@@ -11,7 +11,7 @@ use crate::layout::domain::edge_drag::Drag;
 use crate::windows::domain::info::{WindowInfo as Window, WindowServerInfo};
 use crate::windows::domain::manageable::{Facts, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
-use crate::windows::domain::transaction::{TransactionId, TransactionManager};
+use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server::WindowServer;
@@ -26,7 +26,7 @@ pub struct WindowCreatedPayload {
 
 pub fn handle_window_created(
     state: &mut crate::app::reactor::state::RiniState,
-    transactions: &TransactionManager,
+    transactions: &WindowTxStore,
     window_server: &dyn WindowServer,
     payload: WindowCreatedPayload,
 ) -> anyhow::Result<EventOutcome> {
@@ -53,11 +53,7 @@ pub fn handle_window_created(
     ));
     window_state.is_manageable = is_manageable;
     if let Some(wsid) = window_state.info.sys_id {
-        transactions.store_txid(
-            wsid,
-            transactions.get_last_sent_txid(wsid),
-            window_state.frame_monotonic,
-        );
+        transactions.insert(wsid, transactions.last_txid(&wsid), window_state.frame_monotonic);
     }
 
     state.windows.insert_window(wid, window_state);
@@ -77,7 +73,7 @@ pub struct WindowDestroyedPayload {
 
 pub fn handle_window_destroyed(
     state: &mut crate::app::reactor::state::RiniState,
-    transactions: &TransactionManager,
+    transactions: &WindowTxStore,
     drag: &mut DragManager,
     payload: WindowDestroyedPayload,
 ) -> anyhow::Result<EventOutcome> {
@@ -88,7 +84,7 @@ pub fn handle_window_destroyed(
     };
 
     if let Some(ws_id) = window_server_id {
-        transactions.remove_for_window(ws_id);
+        transactions.remove(&ws_id);
         state.windows.remove_window_server_state(ws_id);
     } else {
         debug!(?wid, "Received WindowDestroyed for unknown window - ignoring");
@@ -216,7 +212,7 @@ pub enum FrameChangeDisposition {
 #[allow(clippy::too_many_arguments, reason = "P4.8")]
 pub fn classify_window_frame_change(
     state: &mut crate::app::reactor::state::RiniState,
-    transactions: &TransactionManager,
+    transactions: &WindowTxStore,
     drag: &mut DragManager,
     wid: WindowId,
     new_frame: CGRect,
@@ -243,16 +239,16 @@ pub fn classify_window_frame_change(
     // A zoom answers the double-click, not rini's last write, whatever write the report follows.
     if zoom {
         if let Some(server) = server_id {
-            transactions.clear_target_for_window(server);
+            transactions.clear_target(&server);
         }
         return FrameChangeDisposition::NeedsGeometryAnalysis;
     }
 
     if let Some(server) = server_id
-        && let Some(target) = transactions.get_target_frame(server)
+        && let Some(target) = transactions.target(&server)
         && let Some(seen) = last_seen
     {
-        if seen != transactions.get_last_sent_txid(server) {
+        if seen != transactions.last_txid(&server) {
             query_mouse_for_active_drag(drag, mouse_state, pointer);
             return FrameChangeDisposition::Handled;
         }
@@ -260,10 +256,10 @@ pub fn classify_window_frame_change(
             *mouse_state = pointer;
         }
         if *mouse_state == Some(MouseState::Down) {
-            transactions.clear_target_for_window(server);
+            transactions.clear_target(&server);
         } else {
             if new_frame.same_as(target) {
-                transactions.clear_target_for_window(server);
+                transactions.clear_target(&server);
             }
             if let Some(window) = state.windows.window_mut(wid) {
                 window.frame_monotonic = new_frame;
@@ -277,7 +273,7 @@ pub fn classify_window_frame_change(
             window.frame_monotonic = new_frame;
         }
         if let Some(server) = server_id {
-            transactions.clear_target_for_window(server);
+            transactions.clear_target(&server);
         }
         return FrameChangeDisposition::Handled;
     }
@@ -561,7 +557,6 @@ mod tests {
     use crate::app::reactor::state::RiniState;
     use crate::app::reactor::testing::make_window_info;
     use crate::windows::domain::state::WindowState;
-    use crate::windows::domain::transaction::WindowTxStore;
 
     const WSID: u32 = 7;
 
@@ -591,7 +586,7 @@ mod tests {
     #[allow(clippy::too_many_arguments, reason = "P4.8")]
     fn classify(
         state: &mut RiniState,
-        transactions: &TransactionManager,
+        transactions: &WindowTxStore,
         drag: &mut DragManager,
         new_frame: CGRect,
         last_seen: Option<TransactionId>,
@@ -615,7 +610,7 @@ mod tests {
     #[allow(clippy::too_many_arguments, reason = "P4.8")]
     fn classify_zoom(
         state: &mut RiniState,
-        transactions: &TransactionManager,
+        transactions: &WindowTxStore,
         drag: &mut DragManager,
         new_frame: CGRect,
         last_seen: Option<TransactionId>,
@@ -645,7 +640,7 @@ mod tests {
     #[test]
     fn a_frame_report_for_an_unknown_window_is_nothing_to_analyse() {
         let mut empty = RiniState::default();
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let d = classify(
             &mut empty,
             &tx,
@@ -662,7 +657,7 @@ mod tests {
     #[test]
     fn mission_control_ends_any_drag_and_swallows_the_report() {
         let mut s = state();
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let mut dr = drag();
         dr.skip_layout_for_window = Some(wid());
         let d = classify(
@@ -689,12 +684,12 @@ mod tests {
     fn a_report_from_a_superseded_write_is_discarded_without_moving_the_window() {
         let mut s = state();
         let wsid = WindowServerId::new(WSID);
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         // One record per window holds both the txid and the target, so the write rini is waiting for
         // is stored last and the report claims an earlier one.
         let stale = TransactionId::default().next();
         let current = stale.next();
-        tx.store_txid(wsid, current, rect(50.0, 50.0));
+        tx.insert(wsid, current, rect(50.0, 50.0));
 
         let d = classify(
             &mut s,
@@ -718,9 +713,9 @@ mod tests {
     fn a_report_acknowledging_rinis_own_write_lands_and_clears_the_target() {
         let mut s = state();
         let wsid = WindowServerId::new(WSID);
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let txid = TransactionId::default().next();
-        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+        tx.insert(wsid, txid, rect(50.0, 50.0));
 
         let d = classify(
             &mut s,
@@ -737,7 +732,7 @@ mod tests {
             s.windows.window(wid()).unwrap().frame_monotonic,
             rect(50.0, 50.0)
         );
-        assert_eq!(tx.get_target_frame(wsid), None, "the write is acknowledged");
+        assert_eq!(tx.target(&wsid), None, "the write is acknowledged");
     }
 
     // A held mouse means the user is dragging, so rini's pending target is abandoned rather than
@@ -746,9 +741,9 @@ mod tests {
     fn a_held_mouse_abandons_rinis_pending_target_and_analyses_the_move() {
         let mut s = state();
         let wsid = WindowServerId::new(WSID);
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let txid = TransactionId::default().next();
-        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+        tx.insert(wsid, txid, rect(50.0, 50.0));
 
         let d = classify(
             &mut s,
@@ -761,11 +756,7 @@ mod tests {
             false,
         );
         assert!(!handled(&d), "the user's drag is real geometry");
-        assert_eq!(
-            tx.get_target_frame(wsid),
-            None,
-            "rini stops waiting for its own write"
-        );
+        assert_eq!(tx.target(&wsid), None, "rini stops waiting for its own write");
     }
 
     /// A report that carries no mouse state takes the pointer's, which the reducer is handed.
@@ -773,9 +764,9 @@ mod tests {
     fn a_report_with_no_mouse_state_takes_the_pointer_it_is_handed() {
         let mut s = state();
         let wsid = WindowServerId::new(WSID);
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let txid = TransactionId::default().next();
-        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+        tx.insert(wsid, txid, rect(50.0, 50.0));
         let mut reported = None;
 
         let d = classify_window_frame_change(
@@ -793,13 +784,13 @@ mod tests {
         );
         assert!(!handled(&d), "the held pointer makes it the user's drag");
         assert_eq!(reported, Some(MouseState::Down));
-        assert_eq!(tx.get_target_frame(wsid), None);
+        assert_eq!(tx.target(&wsid), None);
     }
 
     #[test]
     fn a_frame_rini_asked_for_lands_without_analysis() {
         let mut s = state();
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let d = classify(
             &mut s,
             &tx,
@@ -820,7 +811,7 @@ mod tests {
     #[test]
     fn an_unprompted_move_needs_geometry_analysis() {
         let mut s = state();
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let d = classify(
             &mut s,
             &tx,
@@ -845,9 +836,9 @@ mod tests {
     fn a_zoom_is_analysed_even_while_rini_waits_on_its_own_write() {
         let mut s = state();
         let wsid = WindowServerId::new(WSID);
-        let tx = TransactionManager::new(WindowTxStore::new());
+        let tx = WindowTxStore::new();
         let txid = TransactionId::default().next();
-        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+        tx.insert(wsid, txid, rect(50.0, 50.0));
 
         let d = classify_zoom(
             &mut s,
@@ -861,7 +852,7 @@ mod tests {
             true,
         );
         assert!(!handled(&d), "the zoom is the app's, not an echo");
-        assert_eq!(tx.get_target_frame(wsid), None, "nothing is waited for any more");
+        assert_eq!(tx.target(&wsid), None, "nothing is waited for any more");
 
         let d = classify_zoom(
             &mut s,

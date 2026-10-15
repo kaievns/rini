@@ -237,8 +237,9 @@ loop, `dispatch_workflow` and `apply_event_outcome`, and each file beside it is 
 `impl Reactor` (`src/app/docs/README.md`, "What it owns"). No in-file tests. Direct field
 reaches, as counted when this was found: `state` 112, the layout engine 61, `space_state` 43,
 `drag_manager` 18, `communication_manager` 17, `refresh_quarantine_manager` 14,
-`transaction_manager` 11. The one-field wrappers are gone: the layout engine, the applications,
-the menu state, the notification ids and the pending space change are plain `Reactor` fields.
+`transactions` 11. The one-field wrappers are gone: the layout engine, the applications, the menu
+state, the notification ids, the pending space change and the transaction store (`WindowTxStore`)
+are plain `Reactor` fields.
 Six multi-field managers remain in `reactor/managers.rs`, plus `RiniState`.
 
 Largest methods, and what each one turned out to be:
@@ -264,7 +265,7 @@ that kept the two statements in that order. The function now takes both lists as
 arguments.
 
 `apply_event_outcome` gave up three rules: `ArrangeRequest::passes_to_run`,
-`EventOutcome::focus_landed` and `NotificationManager::notification_ids_to_publish`,
+`EventOutcome::focus_landed` and `notification_ids_to_publish` (`src/app/reactor/managers.rs`),
 with 14 tests. What is left is a drain of 35 outcome fields in one deliberate order, and
 it stays one function on purpose: it takes `outcome` BY VALUE, so partial moves make the
 compiler prove every field is consumed exactly once. Splitting it into phase methods

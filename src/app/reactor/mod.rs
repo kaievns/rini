@@ -95,7 +95,7 @@ use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise::RaiseManager;
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
-use crate::windows::domain::transaction::{TransactionId, TransactionManager, WindowTxStore};
+use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{Direction, LayoutEngine, LayoutEvent};
@@ -524,7 +524,7 @@ pub struct Reactor {
     drawn_workspace: HashMap<SpaceId, crate::workspaces::VirtualWorkspaceId>,
     /// The window-server ids rini last asked to be told about, sorted.
     last_sls_notification_ids: Vec<u32>,
-    transaction_manager: TransactionManager,
+    transactions: WindowTxStore,
     menu_state: MenuState,
     mission_control_manager: managers::MissionControlManager,
     refocus_manager: managers::RefocusManager,
@@ -670,7 +670,7 @@ impl Reactor {
                 events_tx: None,
             },
             last_sls_notification_ids: Vec::new(),
-            transaction_manager: TransactionManager::new(window_tx_store),
+            transactions: window_tx_store,
             menu_state: MenuState::Closed,
             mission_control_manager: managers::MissionControlManager {
                 mission_control_state: MissionControlState::Inactive,
@@ -704,7 +704,7 @@ impl Reactor {
             windows: &self.state.windows,
             spaces: &self.space_state,
             engine: &self.layout_engine,
-            transactions: &self.transaction_manager,
+            transactions: &self.transactions,
             active_spaces: &self.active_spaces,
             space_kinds: self.reads.space_kinds,
             window_server: &*self.reads.window_server,
@@ -921,7 +921,7 @@ impl Reactor {
                 return application_workflow::handle_application_thread_terminated(
                     &mut self.apps,
                     &mut self.state,
-                    &self.transaction_manager,
+                    &self.transactions,
                     &mut self.drag_manager,
                     pid,
                 );
@@ -1260,8 +1260,8 @@ impl Reactor {
             let window_server_id =
                 self.state.windows.window(write.window).and_then(|window| window.info.sys_id);
             let transaction = if let Some(window_server_id) = window_server_id {
-                let transaction = self.transaction_manager.generate_next_txid(window_server_id);
-                self.transaction_manager.store_txid(window_server_id, transaction, write.frame);
+                let transaction = self.transactions.next_txid(window_server_id);
+                self.transactions.insert(window_server_id, transaction, write.frame);
                 transaction
             } else {
                 TransactionId::default()

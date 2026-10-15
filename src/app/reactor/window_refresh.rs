@@ -184,7 +184,7 @@ impl Reactor {
         );
         let mut outcome = match window_discovery::cleanup_stale_windows(
             &mut self.state,
-            &self.transaction_manager,
+            &self.transactions,
             &mut self.drag_manager,
             &mut self.mission_control_manager,
             pid,

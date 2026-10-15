@@ -282,7 +282,7 @@ impl Reactor {
                 continue;
             }
             if let Some(wsid) = window.info.sys_id {
-                self.transaction_manager.clear_target_for_window(wsid);
+                self.transactions.clear_target(&wsid);
             }
         }
     }
@@ -294,7 +294,7 @@ impl Reactor {
     ) {
         if self.affinity().pending_target_space_for_window_server_id(wsid) == Some(confirmed_space)
         {
-            self.transaction_manager.clear_target_for_window(wsid);
+            self.transactions.clear_target(&wsid);
         }
     }
 

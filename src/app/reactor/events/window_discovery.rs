@@ -11,7 +11,7 @@ use crate::windows::domain::focus::MainWindowTracker;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::domain::manageable::{Facts, looks_gone, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
-use crate::windows::domain::transaction::TransactionManager;
+use crate::windows::domain::transaction::WindowTxStore;
 use crate::windows::platform::window_server::WindowServer;
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
@@ -245,7 +245,7 @@ pub(crate) fn identify_stale_windows(
 /// Remove stale windows and send events.
 pub(crate) fn cleanup_stale_windows(
     state: &mut crate::app::reactor::state::RiniState,
-    transactions: &TransactionManager,
+    transactions: &WindowTxStore,
     drag: &mut crate::app::reactor::managers::DragManager,
     mission_control: &mut crate::app::reactor::managers::MissionControlManager,
     pid: pid_t,

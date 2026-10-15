@@ -175,9 +175,9 @@ fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pend
 
     assert!(reactor.assign_test_window_to_workspace(space1, wid, space1_workspace));
     reactor.state.windows.set_window_server_space(wsid, Some(space1));
-    let txid = reactor.transaction_manager.generate_next_txid(wsid);
+    let txid = reactor.transactions.next_txid(wsid);
     let target_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(800., 600.));
-    reactor.transaction_manager.store_txid(wsid, txid, target_frame);
+    reactor.transactions.insert(wsid, txid, target_frame);
 
     window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
 

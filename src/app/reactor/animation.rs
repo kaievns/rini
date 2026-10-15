@@ -55,7 +55,7 @@ impl Reactor {
                     current: ScreenRect::from_cg(window.frame_monotonic),
                     target: ScreenRect::from_cg(target),
                     pending: server_id
-                        .and_then(|wsid| self.transaction_manager.get_target_frame(wsid))
+                        .and_then(|wsid| self.transactions.target(&wsid))
                         .map(ScreenRect::from_cg),
                     in_active_workspace: in_active(wid),
                     floating: engine.is_window_floating(wid),
@@ -71,8 +71,7 @@ impl Reactor {
     /// The narrow borrows are `present::Present`, which is also where the batching rule and its
     /// tests live.
     fn commit_move(&mut self, m: &Move) -> crate::windows::domain::transaction::TransactionId {
-        Present::new(&mut self.state.windows, &self.transaction_manager)
-            .commit(m.window, m.to.to_cg())
+        Present::new(&mut self.state.windows, &self.transactions).commit(m.window, m.to.to_cg())
     }
 
     pub(super) fn animate_layout(
@@ -333,7 +332,7 @@ impl Reactor {
             };
             let destinations: Vec<(WindowId, CGRect)> =
                 frames.iter().map(|&(wid, to, _)| (wid, to)).collect();
-            let txid = Present::new(&mut self.state.windows, &self.transaction_manager)
+            let txid = Present::new(&mut self.state.windows, &self.transactions)
                 .commit_app_batch(&destinations);
             for request in instant_requests(frames, txid, position_only) {
                 if let Err(e) = handle.send(request) {

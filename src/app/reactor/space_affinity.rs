@@ -10,7 +10,7 @@ use super::space_resolution::{self as resolve, Candidates};
 use crate::displays::domain::snapshot::SpaceKinds;
 use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::windows::domain::state::WindowState;
-use crate::windows::domain::transaction::TransactionManager;
+use crate::windows::domain::transaction::WindowTxStore;
 use crate::windows::platform::window_server::WindowServer;
 use crate::workspaces::{LayoutEngine, WindowStore};
 
@@ -46,7 +46,7 @@ pub(crate) struct SpaceAffinity<'a> {
     pub(crate) windows: &'a WindowStore,
     pub(crate) spaces: &'a ForwardedSpaceState,
     pub(crate) engine: &'a LayoutEngine,
-    pub(crate) transactions: &'a TransactionManager,
+    pub(crate) transactions: &'a WindowTxStore,
     pub(crate) active_spaces: &'a HashSet<SpaceId>,
     pub(crate) space_kinds: SpaceKinds,
     pub(crate) live_spaces: &'a LiveSpaces,
@@ -154,7 +154,7 @@ impl SpaceAffinity<'_> {
         wsid: WindowServerId,
     ) -> Option<SpaceId> {
         let wid = self.windows.tracked_window_id(wsid)?;
-        let target_frame = self.transactions.get_target_frame(wsid)?;
+        let target_frame = self.transactions.target(&wsid)?;
         let assigned_space = self.assigned_space_for_window_id(wid)?;
         let target_space = self
             .hidden_assigned_space_for_window_server_id(Some(wsid))
@@ -293,7 +293,6 @@ mod tests {
 
     use super::*;
     use crate::displays::domain::screen::ScreenInfo;
-    use crate::windows::domain::transaction::WindowTxStore;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -325,7 +324,7 @@ mod tests {
             &crate::app::config::VirtualWorkspaceSettings::default(),
             &crate::app::config::LayoutSettings::default(),
         );
-        let transactions = TransactionManager::new(WindowTxStore::new());
+        let transactions = WindowTxStore::new();
         let active_spaces: HashSet<SpaceId> = spaces.iter_known_spaces().collect();
         let live_spaces = LiveSpaces::default();
         let window_server = crate::windows::platform::window_server::FakeWindowServer::default();

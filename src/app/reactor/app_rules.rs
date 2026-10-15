@@ -104,8 +104,8 @@ impl Reactor {
 
             let window_server_id = window.info.sys_id;
             let transaction = if let Some(window_server_id) = window_server_id {
-                let transaction = self.transaction_manager.generate_next_txid(window_server_id);
-                self.transaction_manager.store_txid(window_server_id, transaction, frame);
+                let transaction = self.transactions.next_txid(window_server_id);
+                self.transactions.insert(window_server_id, transaction, frame);
                 transaction
             } else {
                 TransactionId::default()

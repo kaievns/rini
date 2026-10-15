@@ -48,7 +48,7 @@ pub struct WindowServerAppearedObservations {
 
 pub fn handle_window_server_destroyed(
     state: &mut RiniState,
-    transactions: &crate::windows::domain::transaction::TransactionManager,
+    transactions: &crate::windows::domain::transaction::WindowTxStore,
     drag: &mut DragManager,
     payload: WindowServerLifecyclePayload,
     observations: WindowServerDestroyedObservations,

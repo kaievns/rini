@@ -59,11 +59,9 @@ impl Reactor {
             };
             let wsid = window.info.sys_id;
             window.frame_monotonic = frame;
-            let txid = wsid
-                .map(|wsid| self.transaction_manager.generate_next_txid(wsid))
-                .unwrap_or_default();
+            let txid = wsid.map(|wsid| self.transactions.next_txid(wsid)).unwrap_or_default();
             if let Some(wsid) = wsid {
-                self.transaction_manager.update_txid_entries([(wsid, txid, frame)]);
+                self.transactions.insert(wsid, txid, frame);
             }
             if let Some(app) = self.apps.get(&wid.pid) {
                 _ = app.handle.send(crate::windows::domain::request::Request::SetWindowFrame(

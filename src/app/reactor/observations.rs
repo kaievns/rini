@@ -131,7 +131,7 @@ impl Reactor {
         };
         topology_workflow::handle_window_server_destroyed(
             &mut self.state,
-            &self.transaction_manager,
+            &self.transactions,
             &mut self.drag_manager,
             topology_workflow::WindowServerLifecyclePayload {
                 window_server_id: wsid,
@@ -243,7 +243,7 @@ impl Reactor {
         };
         let disposition = window_workflow::classify_window_frame_change(
             &mut self.state,
-            &self.transaction_manager,
+            &self.transactions,
             &mut self.drag_manager,
             window,
             new_frame,
@@ -327,10 +327,7 @@ impl Reactor {
         let report = zoom::SizeReport {
             from: state.frame_monotonic,
             to: new_frame,
-            pending: state
-                .info
-                .sys_id
-                .and_then(|server| self.transaction_manager.get_target_frame(server)),
+            pending: state.info.sys_id.and_then(|server| self.transactions.target(&server)),
             display: self.space_state.screen_by_space(space).map(|screen| screen.bounds),
             column: self.layout_engine.full_width_of_column(space, window).is_some(),
         };
@@ -494,7 +491,7 @@ impl Reactor {
     ) -> anyhow::Result<EventOutcome> {
         let mut outcome = window_workflow::handle_window_created(
             &mut self.state,
-            &self.transaction_manager,
+            &self.transactions,
             &*self.reads.window_server,
             payload,
         )?;
@@ -515,7 +512,7 @@ impl Reactor {
         }
         let mut outcome = window_workflow::handle_window_destroyed(
             &mut self.state,
-            &self.transaction_manager,
+            &self.transactions,
             &mut self.drag_manager,
             window_workflow::WindowDestroyedPayload { window },
         )?;

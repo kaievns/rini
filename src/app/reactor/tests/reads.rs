@@ -266,8 +266,8 @@ fn a_frame_report_with_no_mouse_state_reads_the_pointer_from_the_reads() {
     let wsid = reactor.test_window_server_id(wid);
     let report = |reactor: &mut Reactor| {
         let target = CGRect::new(CGPoint::new(200., 200.), CGSize::new(600., 400.));
-        let txid = reactor.transaction_manager.generate_next_txid(wsid);
-        reactor.transaction_manager.store_txid(wsid, txid, target);
+        let txid = reactor.transactions.next_txid(wsid);
+        reactor.transactions.insert(wsid, txid, target);
         let elsewhere = CGRect::new(CGPoint::new(260., 230.), CGSize::new(600., 400.));
         reactor.handle_event(Event::WindowFrameChanged(
             wid,
@@ -276,7 +276,7 @@ fn a_frame_report_with_no_mouse_state_reads_the_pointer_from_the_reads() {
             Requested(false),
             None,
         ));
-        reactor.transaction_manager.get_target_frame(wsid)
+        reactor.transactions.target(&wsid)
     };
 
     assert!(
