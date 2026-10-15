@@ -390,8 +390,6 @@ binds {
     //   quit                                          save the layout and exit
     //   save-layout "path" / restore-layout "path" scope="workspace"|"space" source="saved-active-space"|"current-space"
     //   redistribute-windows                          spread windows back across workspaces by where they belong
-    //   serialize, debug, debug-warm-snapshots, show-timing,
-    //   debug-overlay-slide dx=-400 dy=0 duration-ms=250
     // The switcher's next-window and previous-window go in recent-windows' binds.
 
     Mod+Z { toggle-space-activated; }
@@ -442,8 +440,5 @@ binds {
 
     Mod+Return { spawn "/usr/bin/open" "-a" "/System/Applications/Utilities/Terminal.app"; }
 
-    // Prints the layout tree.
-    Mod+Shift+D { debug; }
-    Mod+Ctrl+S { serialize; }
     Mod+Ctrl+Q { quit; }
 }

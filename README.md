@@ -240,7 +240,6 @@ The default binds, with `Mod` as Alt (`input › mod-key`):
 | `Mod+Shift+Equal` / `Mod+Shift+Minus` | width 5% up or down |
 | `Mod+Z` | manage this Space, or stop |
 | `Mod+Return` | open Terminal |
-| `Mod+Shift+D` / `Mod+Ctrl+S` | print the layout tree / the state as JSON |
 | `Mod+Ctrl+Q` | save the layout and quit |
 
 Not bound by default: `switch-preset-column-width` (the `Mod+R` the specs name),

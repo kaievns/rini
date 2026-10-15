@@ -370,7 +370,7 @@ mod tests {
     }
 
     const BINDS: &str = concat!(
-        "binds {\n    Mod+J { focus-column-left; }\n    Alt+K { debug; }\n}\n",
+        "binds {\n    Mod+J { focus-column-left; }\n    Alt+K { close-window; }\n}\n",
         "recent-windows {\n    binds {\n        Mod+Tab { next-window; }\n    }\n}\n",
     );
 

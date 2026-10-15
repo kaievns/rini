@@ -116,7 +116,6 @@ impl<B: Backend> MachHandler<B> {
                     },
                 },
                 RiniCommand::Layout(command) => self.execute(Command::Layout(command)),
-                RiniCommand::Metrics(command) => self.execute(Command::Metrics(command)),
                 RiniCommand::Reactor(command) => self.execute(Command::Reactor(command)),
             },
         }

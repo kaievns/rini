@@ -10,7 +10,6 @@ pub mod cache;
 pub mod coverage;
 pub mod ground;
 pub mod handover;
-pub mod identity;
 pub mod knowledge;
 pub mod print;
 pub mod refresh;

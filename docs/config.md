@@ -111,7 +111,7 @@ columns, a stacked one leaves as a new column, which niri's `move-column-left` n
 `toggle-fold-left` and `-right` (niri's `consume-or-expel-window-left` never round-tripped:
 `src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `scroll-strip`,
 `snap-strip`, `create-workspace`, `move-mouse-to-monitor-…`, `switch-space-left` and `-right`,
-`toggle-space-activated`, the layout save and restore, and the debug actions. Every action and the
+`toggle-space-activated`, and the layout save and restore. Every action and the
 wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 
 ## What went with the TOML

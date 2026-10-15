@@ -30,8 +30,7 @@ use crate::pictures::domain::handover::{HandoverCheck, HandoverDiff, compare};
 use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
-use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Owed, Priority, Schedule};
-use crate::pictures::domain::identity::{is_synthetic, managed_server_ids, unwanted, warm_targets};
+use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Owed, Schedule};
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     Capture, CapturedElsewhere, Hint, Look, OnScreen, Outcome, Prints, Seen, Set, Tag, Watch, WatchId, Why,
@@ -59,8 +58,6 @@ pub enum Command {
     Hold(Hold),
     Forget(WindowId),
     SetDisplay { display: Display, picture_bar: bool },
-    /// The warm of the display the overlay flies on (`Pictures::warm_visible`): the debug command's.
-    WarmVisible,
     CheckHandover(HandoverCheck),
 }
 
@@ -507,11 +504,6 @@ impl Pictures {
         self.commands.send(Command::SetDisplay { display, picture_bar })
     }
 
-    /// Every window on the display the overlay flies on that rini does not manage and that shows
-    /// enough of itself there, pictured in the background under its synthetic id
-    /// (`crate::pictures::domain::identity::warm_targets`), for the debug slide.
-    pub fn warm_visible(&self) { self.commands.send(Command::WarmVisible) }
-
     /// Measures a lift: the overlay alone as the next SkyLight call, its client told `OverlayTaken`,
     /// then the screen `AFTER_LIFT` later, and each window compared, told as `Handover`.
     pub fn check_handover(&self, check: HandoverCheck) { self.commands.send(Command::CheckHandover(check)) }
@@ -735,51 +727,15 @@ impl Service {
                 let Shared { schedule, display: held, .. } = &mut *shared;
                 set_display(schedule, held, display, picture_bar, now);
             }
-            Command::WarmVisible => {
-                let display = shared.schedule.display();
-                drop(shared);
-                match display {
-                    Some(display) => self.warm_visible(display),
-                    None => warn!("no display geometry yet; cannot warm the snapshot cache"),
-                }
-            }
             Command::CheckHandover(check) => shared.schedule.check_handover(check),
         }
     }
 
-    /// What no transition holding the service allows: the synthetic pictures no window needs let go
-    /// of, regions kept as copies, and focused looks compared with what was captured since.
+    /// What no transition holding the service allows: regions kept as copies, and focused looks
+    /// compared with what was captured since.
     fn at_rest(&mut self) {
-        self.let_go_unwanted();
         self.keep_copies();
         self.check_focused();
-    }
-
-    /// Lets go of each synthetic picture whose window the window server no longer has, with all that
-    /// is known of it, and of each a managed window is pictured under its own id as well
-    /// (`crate::pictures::domain::identity::unwanted`). The window server is asked off the lock.
-    fn let_go_unwanted(&mut self) {
-        let held = self.shared.lock().unwrap().windows();
-        let synthetic: Vec<WindowServerId> =
-            held.iter().filter(|window| is_synthetic(**window)).map(|window| WindowServerId::from(*window)).collect();
-        if synthetic.is_empty() {
-            return;
-        }
-        let Some(alive) = crate::windows::platform::window_server::existing_windows(&synthetic) else {
-            return;
-        };
-        let unwanted = unwanted(&held, &alive);
-        if unwanted.gone.is_empty() && unwanted.twice.is_empty() {
-            return;
-        }
-        debug!(gone = unwanted.gone.len(), twice = unwanted.twice.len(), "letting go of synthetic pictures");
-        let mut shared = self.shared.lock().unwrap();
-        for window in unwanted.gone {
-            forget_window(&mut shared, &mut self.looks_checked, window);
-        }
-        for window in unwanted.twice {
-            forget_pictures(&mut shared, &mut self.looks_checked, window);
-        }
     }
 
     /// Every region the cache holds, as a picture or a focused look, replaced by a copy of its own: a
@@ -835,30 +791,6 @@ impl Service {
                 self.shared.lock().unwrap().cache.drop_focused_if(window, |held| held.taken == taken);
             }
         }
-    }
-
-    /// The warm of `display`: see `Pictures::warm_visible`. A managed window is told by a picture held
-    /// or owed under its own id; one with neither yet, as at boot, is pictured and let go of at rest.
-    fn warm_visible(&self, display: Display) {
-        let listed: Vec<(WindowServerId, ScreenRect)> =
-            crate::windows::platform::window_server::visible_windows_on_display(display.frame.to_cg())
-                .into_iter()
-                .map(|(server_id, frame)| (server_id, ScreenRect::from_cg(frame)))
-                .collect();
-        let mut shared = self.shared.lock().unwrap();
-        let managed = managed_server_ids(shared.windows().into_iter());
-        let targets = warm_targets(&listed, display.frame, &managed);
-        if targets.is_empty() {
-            return;
-        }
-        debug!(count = targets.len(), "warming the snapshot cache");
-        shared.schedule.ask(
-            Ask {
-                priority: Priority::Background,
-                targets,
-            },
-            Instant::now(),
-        );
     }
 
     /// Makes every call the schedule has ready until a command is queued; how long nothing is due
@@ -1127,6 +1059,7 @@ mod tests {
 
     use super::*;
     use crate::pictures::domain::handover::AFTER_LIFT;
+    use crate::pictures::domain::schedule::Priority;
     use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Moment, Settle};
     use crate::pictures::platform::picture::test_picture;
 
@@ -1532,8 +1465,7 @@ mod tests {
         assert!(held.desktop.is_none() && held.bar.is_none() && held.desktop_windows.is_none());
     }
 
-    /// Only the debug slide flies a picture of a window rini does not manage, so a change of display
-    /// pictures none of them.
+    /// A change of display asks no pictures of its own.
     #[test]
     fn a_display_change_warms_nothing() {
         let (mut service, shared) = detached_service();
@@ -1689,52 +1621,6 @@ mod tests {
         assert!(shared.cache.focused(wid(1)).is_none());
         assert!(shared.delivered.under(tag(1), wid(1)).is_none());
         assert_eq!(shared.learned.get(WindowServerId::from(wid(1))), Knowledge::default());
-    }
-
-    /// A managed window warmed before its own picture was held, as at boot, is pictured twice until the
-    /// release lets go of the synthetic one, and of nothing known of the window; a window rini does
-    /// not manage keeps its synthetic picture while the window server has it.
-    #[test]
-    fn a_release_lets_go_of_a_synthetic_picture_of_a_window_pictured_under_its_own_id() {
-        use crate::pictures::domain::identity::synthetic_window_id;
-        let (mut service, shared) = detached_service();
-        let twice = synthetic_window_id(WindowServerId::from(wid(102682)));
-        let unmanaged = synthetic_window_id(WindowServerId::new(9001));
-        {
-            let mut shared = shared.lock().unwrap();
-            for window in [wid(102682), twice, unmanaged] {
-                shared.cache.insert(window, sized(859.0, 1081.0));
-            }
-            shared.learned.saw_alpha(WindowServerId::from(wid(102682)), true);
-        }
-        service.apply(Command::Hold(Hold::Released));
-        let shared = shared.lock().unwrap();
-        assert!(shared.cache.get(twice).is_none());
-        assert!(shared.cache.get(wid(102682)).is_some());
-        assert!(shared.cache.get(unmanaged).is_some());
-        assert_ne!(shared.learned.get(WindowServerId::from(wid(102682))), Knowledge::default());
-    }
-
-    /// A release lets go of a synthetic picture whose window the window server no longer has, and of
-    /// all that is known of it.
-    #[test]
-    fn a_release_lets_go_of_a_synthetic_picture_of_a_window_gone_and_what_is_known_of_it() {
-        use crate::pictures::domain::identity::synthetic_window_id;
-        use crate::windows::platform::window_server::set_window_gone_override;
-        let (mut service, shared) = detached_service();
-        let server_id = WindowServerId::new(9002);
-        let gone = synthetic_window_id(server_id);
-        {
-            let mut shared = shared.lock().unwrap();
-            shared.cache.insert(gone, sized(400.0, 30.0));
-            shared.learned.saw_alpha(server_id, true);
-        }
-        set_window_gone_override(server_id, true);
-        service.apply(Command::Hold(Hold::Released));
-        set_window_gone_override(server_id, false);
-        let shared = shared.lock().unwrap();
-        assert!(shared.cache.get(gone).is_none());
-        assert_eq!(shared.learned.get(server_id), Knowledge::default());
     }
 
     /// A focused look that is a region is kept as a copy at a release too.

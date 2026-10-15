@@ -22,7 +22,7 @@ or layout: everything else depends on it and it depends on nothing.
 | **Title-bar zoom** | `domain/zoom.rs` — which window's title bar a double-click landed on, and what that window's resizes in the next second mean: the zoom, which toggles full width once, or the rest of it, which rini overrules |
 | **The port into a window** | `domain/request.rs` — `Request`/`Quiet`, what the per-app thread accepts |
 | **Attention** | `domain/attention.rs` — which applications ask for attention (`Attention`), per application as macOS asks it |
-| **What a listing names** | `domain/listing.rs` — which of the window server's windows a listing of what is on a display names: layer 0, another process's, 100pt or more each way, overlapping it; so the warm and the debug slide never picture rini's own rest windows |
+| **Overlap** | `domain/listing.rs` — whether a window's rect and a display's share an area |
 
 Two questions about raising and admission that were closed on evidence rather than code are in
 `admission-and-raise-findings.md`.

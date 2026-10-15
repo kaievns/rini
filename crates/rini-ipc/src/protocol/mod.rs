@@ -11,7 +11,7 @@ mod selectors;
 mod transport;
 
 pub use commands::{
-    Command, ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand, SwitchScope,
+    Command, ConfigCommand, LayoutCommand, ReactorCommand, RiniCommand, SwitchScope,
 };
 pub use layout::{Direction, LayoutKind, ResizeOrientation};
 pub use queries::{

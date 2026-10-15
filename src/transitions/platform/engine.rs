@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
     FromCg, GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, PointSpace, Respace,
-    ScreenRect, ScreenSize, ScreenVector, Size, SurfacePoint, ToCg,
+    ScreenRect, ScreenSize, Size, SurfacePoint,
 };
 use rini_geometry::stretch::grows;
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
@@ -43,7 +43,6 @@ use crate::animation::platform::renderer::{Batch, Render};
 use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
-use crate::pictures::domain::identity::picture_id;
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
@@ -99,14 +98,6 @@ pub enum Event {
         /// Whether anything is drawn at rest on it, which a landed flight places under the overlay a
         /// tick ahead of its lift.
         rests: bool,
-    },
-    /// Slide every currently visible window in from an offset, purely to evaluate animation quality
-    /// by eye. Does not touch any real window, so it is safe to fire at any time.
-    DebugSlide {
-        dx: f64,
-        dy: f64,
-        duration: Duration,
-        cause: Cause,
     },
     /// Move the whole strip surface by one travel, as one rigid group; a leaving window animates
     /// off screen while its real frame parks, and the columns a move swapped cross the surface from
@@ -176,8 +167,7 @@ impl Event {
         match self {
             Event::Animate { cause, .. }
             | Event::AnimateSurface { cause, .. }
-            | Event::Bounce { cause, .. }
-            | Event::DebugSlide { cause, .. } => Some(cause.at),
+            | Event::Bounce { cause, .. } => Some(cause.at),
             _ => None,
         }
     }
@@ -1045,10 +1035,6 @@ impl FlightEngine {
             } => {
                 self.take_request(cause);
                 self.start_bounce(windows, overshoot, final_frames, focus, duration, (look, cue))
-            }
-            Event::DebugSlide { dx, dy, duration, cause } => {
-                self.take_request(cause);
-                self.debug_slide(dx, dy, duration)
             }
             Event::Tick => self.tick(),
             Event::Quiet(generation) => {
@@ -2449,40 +2435,6 @@ impl FlightEngine {
         debug!(count = frames.len(), "placing real windows behind the overlay");
         (self.place_frames)(frames);
     }
-
-    /// Slides every window on screen in from an offset; touches no real window.
-    fn debug_slide(&mut self, dx: f64, dy: f64, duration: Duration) {
-        let Some((display_frame, _)) = self.display else {
-            warn!("no display geometry yet; cannot run the debug slide");
-            return;
-        };
-        let windows =
-            crate::windows::platform::window_server::visible_windows_on_display(display_frame.to_cg());
-        if windows.is_empty() {
-            warn!("no visible windows found for the debug slide");
-            return;
-        }
-        let pictured = self.pictures.windows();
-        let requests: Vec<AnimationRequest> = windows
-            .into_iter()
-            .map(|(server_id, frame)| {
-                let frame = ScreenRect::from_cg(frame);
-                AnimationRequest {
-                    window: picture_id(server_id, &pictured),
-                    server_id,
-                    // The debug slide knows nothing about the layout; everything is on the strip.
-                    floating: false,
-                    from: frame.translate(ScreenVector::new(dx, dy)),
-                    to: frame,
-                    worn: Worn::default(),
-                    strip_before: None,
-                    strip_after: None,
-                }
-            })
-            .collect();
-        debug!(count = requests.len(), dx, dy, "running debug slide");
-        self.start(requests, (None, None), None, duration, Look::default());
-    }
 }
 
 /// The frame the window server reports for a window, if it reports a real one: the reactor's
@@ -2529,7 +2481,7 @@ fn log_dressing(
 
 #[cfg(test)]
 mod tests {
-    use rini_geometry::space::{Respace, ScreenSize, SurfaceRect};
+    use rini_geometry::space::{Respace, ScreenSize, ScreenVector, SurfaceRect, ToCg};
 
     use super::*;
     use crate::animation::domain::motion::surface::viewport;

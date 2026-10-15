@@ -145,7 +145,7 @@ mod tests {
     fn a_key_the_layout_cannot_resolve_is_left_out_and_named() {
         let binds = vec![Bind {
             key: "Mystery".into(),
-            action: Action::Debug,
+            action: Action::CloseWindow,
             repeat: false,
         }];
         let (table, unresolved) = HotkeyTable::build(&binds, |_| None);

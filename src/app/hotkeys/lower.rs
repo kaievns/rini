@@ -131,15 +131,6 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
             source: source.unwrap_or_default(),
         }),
         Action::RedistributeWindows => reactor(R::RedistributeWindows),
-        Action::Serialize => reactor(R::Serialize),
-        Action::Debug => reactor(R::Debug),
-        Action::DebugWarmSnapshots => reactor(R::DebugWarmSnapshots),
-        Action::DebugOverlaySlide { dx, dy, duration_ms } => {
-            reactor(R::DebugOverlaySlide { dx, dy, duration_ms })
-        }
-        Action::ShowTiming => Lowered::Command(reactor::Command::Metrics(
-            rini_ipc::protocol::MetricsCommand::ShowTiming,
-        )),
         Action::NextWindow { scope, filter } => switch(false, scope, filter),
         Action::PreviousWindow { scope, filter } => switch(true, scope, filter),
     }

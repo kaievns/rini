@@ -1485,25 +1485,6 @@ impl Reactor {
                     new_cfg,
                 );
             }
-            Event::Command(Command::Metrics(cmd)) => {
-                return command_workflow::handle_command_metrics(cmd);
-            }
-            Event::Command(Command::Reactor(ReactorCommand::DebugOverlaySlide {
-                dx,
-                dy,
-                duration_ms,
-            })) => {
-                return self.on_debug_overlay_slide(dx, dy, duration_ms);
-            }
-            Event::Command(Command::Reactor(ReactorCommand::DebugWarmSnapshots)) => {
-                return self.on_debug_warm_snapshots();
-            }
-            Event::Command(Command::Reactor(ReactorCommand::Debug)) => {
-                return command_workflow::handle_command_reactor_debug(
-                    &self.layout_manager,
-                    &self.space_state,
-                );
-            }
             Event::Command(Command::Reactor(ReactorCommand::SaveAndExit)) => {
                 let active_space = self.active_display_space();
                 return command_workflow::handle_command_reactor_save_and_exit(
@@ -1527,10 +1508,6 @@ impl Reactor {
                 source,
             })) => {
                 return self.on_restore_layout(path, scope, source);
-            }
-            Event::Command(Command::Reactor(ReactorCommand::Serialize)) => {
-                let serialized = self.serialize_state();
-                return command_workflow::handle_command_reactor_serialize(serialized);
             }
             Event::Command(Command::Reactor(ReactorCommand::SwitchSpace(direction))) => {
                 return command_workflow::handle_switch_native_space(direction);
@@ -4300,7 +4277,7 @@ impl Reactor {
             self.focus_desktop_if_active_workspace_empty(space);
         }
         for space in self.space_state.iter_known_spaces() {
-            self.layout_manager.layout_engine.debug_tree_desc(space, "after event", false);
+            self.layout_manager.layout_engine.debug_tree_desc(space, "after event");
         }
     }
 

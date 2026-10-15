@@ -1521,23 +1521,13 @@ impl LayoutEngine {
     }
 
     pub fn debug_tree(&self, space: SpaceId) {
-        self.debug_tree_desc(space, "", false);
+        self.debug_tree_desc(space, "");
     }
 
-    pub fn debug_tree_desc(&self, space: SpaceId, desc: &'static str, print: bool) {
+    pub fn debug_tree_desc(&self, space: SpaceId, desc: &'static str) {
         if let Some(workspace_id) = self.virtual_workspace_manager.active_workspace(space) {
             if let Some(layout) = self.workspace_layouts.active(space, workspace_id) {
-                if print {
-                    println!(
-                        "Tree {desc}\n{}",
-                        self.workspace_tree(workspace_id).draw_tree(layout).trim()
-                    );
-                } else {
-                    debug!(
-                        "Tree {desc}\n{}",
-                        self.workspace_tree(workspace_id).draw_tree(layout).trim()
-                    );
-                }
+                debug!("Tree {desc}\n{}", self.workspace_tree(workspace_id).draw_tree(layout).trim());
             } else {
                 debug!("No layout for workspace {workspace_id:?} on space {space:?}");
             }

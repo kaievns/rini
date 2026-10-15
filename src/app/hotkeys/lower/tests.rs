@@ -1,6 +1,4 @@
-use rini_ipc::protocol::{
-    MetricsCommand, RestoreScope, RestoreSource, SwitchScope, WorkspaceSelector,
-};
+use rini_ipc::protocol::{RestoreScope, RestoreSource, SwitchScope, WorkspaceSelector};
 use strum::VariantNames;
 
 use super::*;
@@ -206,25 +204,6 @@ fn table() -> Vec<(Action, Lowered)> {
             }),
         ),
         (Action::RedistributeWindows, reactor(R::RedistributeWindows)),
-        (Action::Serialize, reactor(R::Serialize)),
-        (Action::Debug, reactor(R::Debug)),
-        (Action::DebugWarmSnapshots, reactor(R::DebugWarmSnapshots)),
-        (
-            Action::DebugOverlaySlide {
-                dx: -400,
-                dy: 0,
-                duration_ms: 250,
-            },
-            reactor(R::DebugOverlaySlide {
-                dx: -400,
-                dy: 0,
-                duration_ms: 250,
-            }),
-        ),
-        (
-            Action::ShowTiming,
-            Lowered::Command(Command::Metrics(MetricsCommand::ShowTiming)),
-        ),
         (
             Action::NextWindow { scope: None, filter: None },
             switch(false, SwitchScope::Everything),

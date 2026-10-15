@@ -17,10 +17,9 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::CGRectExt;
 use rini_skylight_sys::*;
 #[cfg(test)]
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::windows::domain::info::{WindowServerInfo, reported_radius};
-use crate::windows::domain::listing::listed;
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 use crate::windows::platform::cg_ok;
 #[cfg(not(test))]
@@ -64,7 +63,6 @@ thread_local! {
     static TEST_WINDOW_SPACES_OVERRIDE: RefCell<HashMap<u32, Vec<u64>>> = RefCell::new(HashMap::default());
     static TEST_WINDOW_ORDERED_IN_OVERRIDE: RefCell<HashMap<u32, bool>> = RefCell::new(HashMap::default());
     static TEST_FRONT_TO_BACK_OVERRIDE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
-    static TEST_WINDOWS_GONE_OVERRIDE: RefCell<HashSet<u32>> = RefCell::new(HashSet::default());
     static TEST_WINDOW_UNDER_CURSOR_OVERRIDE: Cell<Option<u32>> = const { Cell::new(None) };
     static TEST_WINDOW_FRAMES_OVERRIDE: RefCell<HashMap<u32, CGRect>> = RefCell::new(HashMap::default());
     static TEST_CORNER_RADII_OVERRIDE: RefCell<HashMap<u32, Vec<f64>>> = RefCell::new(HashMap::default());
@@ -590,8 +588,8 @@ fn describe(ids: &[u32], titles: bool) -> Vec<Listed> {
 
 /// Every window on screen, front to back, the desktop's included.
 ///
-/// A test lists no windows: every listing the desktop, the bar, the menu extras, the warm and the
-/// debug slide are read from answers none. See "A unit test must not read the live window server" in
+/// A test lists no windows: every listing the desktop, the bar and the menu extras are read from
+/// answers none. See "A unit test must not read the live window server" in
 /// `docs/testing.md`.
 pub fn on_screen_windows(titles: bool) -> Vec<Listed> {
     #[cfg(test)]
@@ -673,37 +671,6 @@ pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
         }
     }
     out
-}
-
-/// Which of `ids` the window server still has a window for, wherever it is, or `None` when it could
-/// not be asked.
-#[cfg(not(test))]
-pub fn existing_windows(ids: &[WindowServerId]) -> Option<std::collections::HashSet<u32>> {
-    let query = WindowIterator::new(ids)?;
-    let mut existing = std::collections::HashSet::new();
-    while query.advance().is_some() {
-        existing.insert(query.window_id());
-    }
-    Some(existing)
-}
-
-/// Every id a test asks about exists, as for `get_windows`, unless `set_window_gone_override` says not.
-#[cfg(test)]
-pub fn existing_windows(ids: &[WindowServerId]) -> Option<std::collections::HashSet<u32>> {
-    let gone = TEST_WINDOWS_GONE_OVERRIDE.with(|gone| gone.borrow().clone());
-    Some(ids.iter().map(|id| id.as_u32()).filter(|id| !gone.contains(id)).collect())
-}
-
-#[cfg(test)]
-pub fn set_window_gone_override(id: WindowServerId, gone: bool) {
-    TEST_WINDOWS_GONE_OVERRIDE.with(|override_gone| {
-        let mut override_gone = override_gone.borrow_mut();
-        if gone {
-            override_gone.insert(id.as_u32());
-        } else {
-            override_gone.remove(&id.as_u32());
-        }
-    });
 }
 
 #[cfg(test)]
@@ -802,24 +769,6 @@ pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) 
         Some(corners) => radii.borrow_mut().insert(id.as_u32(), corners),
         None => radii.borrow_mut().remove(&id.as_u32()),
     });
-}
-
-/// The windows on screen a listing names as on `display` (`listing::listed`), with their frames.
-pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRect)> {
-    let own = std::process::id() as pid_t;
-    on_screen_windows(false)
-        .into_iter()
-        .filter(|window| {
-            listed(
-                Some(window.level as i64),
-                Some(window.pid),
-                own,
-                window.bounds,
-                display,
-            )
-        })
-        .map(|window| (window.id, window.bounds))
-        .collect()
 }
 
 #[cfg_attr(test, allow(dead_code))]

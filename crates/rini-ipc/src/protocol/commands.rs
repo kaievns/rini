@@ -65,21 +65,6 @@ pub enum LayoutCommand {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ReactorCommand {
-    Debug,
-    /// Slide every visible window in from an offset using the capture-based overlay.
-    ///
-    /// A debugging aid for judging animation quality by eye. It draws pictures of the windows and
-    /// never moves a real one, so it is safe to run at any time and leaves no state behind.
-    DebugOverlaySlide {
-        dx: i32,
-        dy: i32,
-        duration_ms: u64,
-    },
-    /// Picture every window on screen that rini does not manage.
-    ///
-    /// Background work only. Nothing is drawn and no window is touched.
-    DebugWarmSnapshots,
-    Serialize,
     SaveLayout {
         path: PathBuf,
     },
@@ -140,12 +125,6 @@ pub enum SwitchScope {
     App,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricsCommand {
-    ShowTiming,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigCommand {
@@ -160,7 +139,6 @@ pub enum ConfigCommand {
 #[serde(rename_all = "snake_case")]
 pub enum RiniCommand {
     Layout(LayoutCommand),
-    Metrics(MetricsCommand),
     Reactor(ReactorCommand),
     Config(ConfigCommand),
 }
@@ -171,7 +149,6 @@ pub enum RiniCommand {
 #[serde(untagged)]
 pub enum Command {
     Layout(LayoutCommand),
-    Metrics(MetricsCommand),
     Reactor(ReactorCommand),
 }
 

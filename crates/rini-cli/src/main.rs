@@ -121,33 +121,6 @@ enum ExecuteCommands {
         #[arg(long, value_enum, default_value_t = CliRestoreScope::Workspace)]
         scope: CliRestoreScope,
     },
-    /// Print layout tree debugging output in the running rini instance
-    Debug,
-    /// Picture every window on screen that rini does not manage
-    ///
-    /// Background work only. Nothing is drawn and no window is moved. A window rini manages is
-    /// pictured under its own id already, and a parked one is never pictured through its sliver.
-    DebugWarmSnapshots,
-    /// Slide every visible window in from an offset, using the capture-based overlay
-    ///
-    /// For judging animation quality by eye. Draws the pictures rini holds of the windows, capturing
-    /// any it has none of, and never moves a real one, so it is safe to run at any time and leaves
-    /// nothing behind.
-    DebugOverlaySlide {
-        /// Horizontal offset in points to slide in from. Negative comes from the left.
-        #[arg(long, default_value_t = -400)]
-        dx: i32,
-        /// Vertical offset in points to slide in from. Negative comes from above.
-        #[arg(long, default_value_t = 0)]
-        dy: i32,
-        /// Animation duration in milliseconds.
-        #[arg(long, default_value_t = 250)]
-        duration_ms: u64,
-    },
-    /// Serialize and print runtime state
-    Serialize,
-    /// Show timing metrics
-    ShowTiming,
     /// Move every window back to the display it belongs to, keeping its workspace.
     ///
     /// Recovery for a layout where windows have piled onto one display. Does nothing when
@@ -486,17 +459,6 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
                 CliRestoreScope::Space => rini_ipc::protocol::RestoreScope::Space,
             };
             RiniCommand::Reactor(reactor::ReactorCommand::RestoreLayout { path, scope, source })
-        }
-        ExecuteCommands::Debug => RiniCommand::Reactor(reactor::ReactorCommand::Debug),
-        ExecuteCommands::DebugWarmSnapshots => {
-            RiniCommand::Reactor(reactor::ReactorCommand::DebugWarmSnapshots)
-        }
-        ExecuteCommands::DebugOverlaySlide { dx, dy, duration_ms } => {
-            RiniCommand::Reactor(reactor::ReactorCommand::DebugOverlaySlide { dx, dy, duration_ms })
-        }
-        ExecuteCommands::Serialize => RiniCommand::Reactor(reactor::ReactorCommand::Serialize),
-        ExecuteCommands::ShowTiming => {
-            RiniCommand::Metrics(rini_ipc::protocol::MetricsCommand::ShowTiming)
         }
         ExecuteCommands::Redistribute => {
             RiniCommand::Reactor(reactor::ReactorCommand::RedistributeWindows)
