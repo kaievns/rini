@@ -25,8 +25,8 @@ windows are on this space" is a window-server query over window ids.
 ## The shape that matters
 
 **A snapshot is never partial.** The spaces actor drops every refresh during sleep, display
-churn and lock/login rather than forwarding a half-formed picture, resamples after, and waits for two
-identical topology samples plus a quiet window server before it speaks. Treating an
+churn and lock/login rather than forwarding a half-formed picture, resamples after, and waits for
+two identical topology samples plus a quiet window server before it speaks. Treating an
 unstable snapshot as authoritative is what made rini remap every window onto fresh
 default workspaces.
 
@@ -51,7 +51,8 @@ so the ordering is in the signature rather than in a comment.
 ## Reading order
 
 `domain/topology.rs` → `domain/screen.rs` → `domain/snapshot.rs` → `domain/settling.rs` →
-`domain/authority.rs` → `platform/spaces.rs`, which wires those rules to the lifecycle signals and is worth reading last.
+`domain/authority.rs` → `platform/spaces.rs`, which wires those rules to the lifecycle signals and
+is worth reading last.
 
 ## Detail
 
