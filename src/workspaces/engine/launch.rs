@@ -31,14 +31,13 @@ impl LayoutEngine {
         memory: &mut DisplayMemory,
         connected: &[DisplayUuid],
     ) {
-        use crate::workspaces::domain::launch_memory::{
-            ProjectedSlot, ProjectedWidth, topology_key,
-        };
+        use crate::workspaces::domain::display_setup::SetupId;
+        use crate::workspaces::domain::launch_memory::{ProjectedSlot, ProjectedWidth};
 
-        if connected.is_empty() {
+        let topology = SetupId::of(connected);
+        if topology.is_empty() {
             return;
         }
-        let topology = topology_key(connected);
 
         // Grouped by bundle identifier, ordered by window server id, which is creation order. A
         // relaunched application creates its windows in the same order, so the Nth window can find the
@@ -143,7 +142,8 @@ impl LayoutEngine {
         app_id: &str,
         title: Option<&str>,
     ) -> Option<crate::workspaces::domain::launch_memory::Slot> {
-        use crate::workspaces::domain::launch_memory::{slot_for_window, topology_key};
+        use crate::workspaces::domain::display_setup::SetupId;
+        use crate::workspaces::domain::launch_memory::slot_for_window;
 
         // Identity comes from the caller, not from the window store. The first sighting of a launching
         // application's window happens while the rules are being applied, and the window is not in the
@@ -151,7 +151,8 @@ impl LayoutEngine {
         // Every way of giving up here is logged. The first three times a remembered full width was
         // lost, the reason had to be reconstructed from the layout file, because this returned `None`
         // for four different reasons without saying which.
-        if self.connected_displays.is_empty() {
+        let topology = SetupId::of(&self.connected_displays);
+        if topology.is_empty() {
             warn!(
                 idx = window.idx.get(),
                 app_id,
@@ -160,12 +161,11 @@ impl LayoutEngine {
             );
             return None;
         }
-        let topology = topology_key(&self.connected_displays);
         let slots = memory.launch.slots(app_id, &topology);
         if slots.is_empty() {
             debug!(
                 idx = window.idx.get(),
-                app_id, topology, "nothing remembered for this application under this topology"
+                app_id, %topology, "nothing remembered for this application under this topology"
             );
             return None;
         }

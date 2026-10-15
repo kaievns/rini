@@ -134,7 +134,8 @@ permission, builds every actor and joins them.
    (CGWindowID) and `SpaceId` (CGSSpaceID) are the window server's, declared in
    `rini-skylight-sys` and re-exported; `ScreenId` is the CGDirectDisplayID, and
    `DisplayUuid` the display's identity across reconnects, which every map keyed by
-   display uses. `rini-ipc` has wire twins and `From` impls.
+   one display uses; a map keyed by an arrangement of displays uses the set of them,
+   `workspaces::domain::display_setup::SetupId`. `rini-ipc` has wire twins and `From` impls.
 6. **No re-export shims.** When a type moves, its importers change.
 7. **A change leaves nothing behind.** Moving functionality means the old path is
    gone, not unreachable: no branch that can no longer be taken, no helper with

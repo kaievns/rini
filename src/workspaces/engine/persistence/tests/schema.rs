@@ -392,6 +392,11 @@ fn a_schema_6_layout_file_writes_back_the_bytes_schema_6_writes() {
         loaded.memory.affinity.space_for_display(&display),
         Some(SpaceId::new(52))
     );
+    let alone = crate::workspaces::domain::display_setup::SetupId::of([&display]);
+    assert_eq!(
+        loaded.memory.launch.slots("com.mitchellh.ghostty", &alone).len(),
+        6
+    );
     assert_eq!(
         rewritten.matches(r#""37D8832A-2D66-02CA-B9F7-8F30A301B230""#).count(),
         16

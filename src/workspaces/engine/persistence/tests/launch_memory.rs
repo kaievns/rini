@@ -14,14 +14,15 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 #[test]
 fn launch_memory_survives_a_save_and_load() {
     use crate::layout::ColumnWidth;
-    use crate::workspaces::domain::launch_memory::{Slot, topology_key};
+    use crate::workspaces::domain::display_setup::SetupId;
+    use crate::workspaces::domain::launch_memory::Slot;
 
     let engine = test_engine();
     let _memory = DisplayMemory::default();
 
     let mut memory = DisplayMemory::default();
-    let docked = topology_key(&["built-in".into(), "external".into()]);
-    let alone = topology_key(&["built-in".into()]);
+    let docked = SetupId::of(&["built-in".into(), "external".into()]);
+    let alone = SetupId::of(&["built-in".into()]);
     memory.launch.remember("com.mitchellh.ghostty", &docked, vec![
         Slot {
             title: Some("~/projects/rini".into()),
@@ -259,7 +260,7 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
     engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
     let topology =
-        crate::workspaces::domain::launch_memory::topology_key(&[DisplayUuid::new(DISPLAY)]);
+        crate::workspaces::domain::display_setup::SetupId::of(&[DisplayUuid::new(DISPLAY)]);
     let slots = memory.launch.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "a parked window still has a slot");
     assert_eq!(
@@ -324,7 +325,7 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
     engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
     let topology =
-        crate::workspaces::domain::launch_memory::topology_key(&[DisplayUuid::new(DISPLAY)]);
+        crate::workspaces::domain::display_setup::SetupId::of(&[DisplayUuid::new(DISPLAY)]);
     let slots = memory.launch.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "remembered even with no home of its own");
     assert_eq!(
@@ -343,7 +344,8 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
 #[test]
 fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
     use crate::layout::ColumnWidth;
-    use crate::workspaces::domain::launch_memory::{Slot, topology_key};
+    use crate::workspaces::domain::display_setup::SetupId;
+    use crate::workspaces::domain::launch_memory::Slot;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
@@ -383,7 +385,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
         ignore_app_rule: false,
     });
 
-    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
     memory.launch.remember("com.apple.TextEdit", &topology, vec![
         Slot {
             title: Some("Untitled".into()),
@@ -438,7 +440,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
 #[test]
 fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
     use crate::layout::ColumnWidth;
-    use crate::workspaces::domain::launch_memory::topology_key;
+    use crate::workspaces::domain::display_setup::SetupId;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
@@ -500,7 +502,7 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
 
     engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
     let slots = memory.launch.slots("app.zen-browser.zen", &topology);
     assert_eq!(slots.len(), 1);
     assert_eq!(
@@ -516,7 +518,7 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
 #[test]
 fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save() {
     use crate::layout::ColumnWidth;
-    use crate::workspaces::domain::launch_memory::topology_key;
+    use crate::workspaces::domain::display_setup::SetupId;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
@@ -570,7 +572,7 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
 
     engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
     let dragged = Some(ColumnWidth::Unbounded(0.33797));
     assert_eq!(
         memory.launch.slots("com.mitchellh.ghostty", &topology)[0].width,
@@ -592,7 +594,7 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
 fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
     use crate::layout::ColumnWidth;
     use crate::layout::domain::area::compute_tiling_area;
-    use crate::workspaces::domain::launch_memory::topology_key;
+    use crate::workspaces::domain::display_setup::SetupId;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     const APP: &str = "com.mitchellh.ghostty";
@@ -652,7 +654,7 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
 
     engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
     let unbounded = |width: Option<ColumnWidth>| matches!(width, Some(ColumnWidth::Unbounded(offset)) if (offset - 0.3).abs() < 1e-9);
     let remembered = memory.launch.slots(APP, &topology)[0].width;
     assert!(unbounded(remembered), "{remembered:?}");
@@ -768,7 +770,7 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
     engine.remember_launch_slots(&store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
     let topology =
-        crate::workspaces::domain::launch_memory::topology_key(&[DisplayUuid::new(DISPLAY)]);
+        crate::workspaces::domain::display_setup::SetupId::of(&[DisplayUuid::new(DISPLAY)]);
     assert_eq!(
         memory.launch.slots(APP, &topology)[0].width,
         Some(ColumnWidth::FullWidth),

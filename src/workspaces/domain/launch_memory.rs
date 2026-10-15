@@ -14,16 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::ColumnWidth;
 use crate::workspaces::domain::display_affinity::StoredWidth;
-
-/// The set of displays connected, as a name that can key a map.
-///
-/// Sorted, so the same set of displays always produces the same key however the window server happens
-/// to enumerate them.
-pub fn topology_key(display_uuids: &[DisplayUuid]) -> String {
-    let mut sorted: Vec<&str> = display_uuids.iter().map(DisplayUuid::as_str).collect();
-    sorted.sort_unstable();
-    sorted.join("+")
-}
+use crate::workspaces::domain::display_setup::SetupId;
 
 /// Where one window of an application was, the last time this topology was connected. A file holds
 /// it as a `SlotRecord`.
@@ -140,9 +131,9 @@ pub fn resolve_width(
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct LaunchMemory {
-    /// Slots per application, per display topology.
+    /// Slots per application, per arrangement of displays.
     #[serde(default)]
-    apps: HashMap<String, HashMap<String, Vec<Slot>>>,
+    apps: HashMap<String, HashMap<SetupId, Vec<Slot>>>,
 }
 
 impl LaunchMemory {
@@ -160,7 +151,7 @@ impl LaunchMemory {
     /// The same rule applies per FIELD, not just per application: a slot whose width the projection
     /// could not work out keeps the width already remembered (`resolve_width`). Replacing the set
     /// wholesale with `width: None` is how a full-width window came back half sized.
-    pub fn remember(&mut self, app_id: &str, topology: &str, projected: Vec<ProjectedSlot>) {
+    pub fn remember(&mut self, app_id: &str, topology: &SetupId, projected: Vec<ProjectedSlot>) {
         if projected.is_empty() {
             return;
         }
@@ -175,13 +166,10 @@ impl LaunchMemory {
                 width: resolve_width(slot, index, &remembered),
             })
             .collect();
-        self.apps
-            .entry(app_id.to_owned())
-            .or_default()
-            .insert(topology.to_owned(), slots);
+        self.apps.entry(app_id.to_owned()).or_default().insert(topology.clone(), slots);
     }
 
-    pub fn slots(&self, app_id: &str, topology: &str) -> &[Slot] {
+    pub fn slots(&self, app_id: &str, topology: &SetupId) -> &[Slot] {
         self.apps
             .get(app_id)
             .and_then(|topologies| topologies.get(topology))
@@ -239,6 +227,12 @@ mod tests {
     const BUILT_IN: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     const EXTERNAL: &str = "B9F7-8F30A301B230-37D8832A-2D66";
 
+    fn alone() -> SetupId { SetupId::of(&[DisplayUuid::new(BUILT_IN)]) }
+
+    fn docked() -> SetupId {
+        SetupId::of(&[DisplayUuid::new(BUILT_IN), DisplayUuid::new(EXTERNAL)])
+    }
+
     /// A `Slot` as rini wrote and read it before a drag's width had a record.
     mod before_dragged_widths {
         use serde::Deserialize;
@@ -291,19 +285,23 @@ mod tests {
         assert_eq!(ron::from_str::<Slot>(&written).unwrap(), offset);
     }
 
+    /// Launch memory as schema 6 wrote it for two displays: keyed by their UUIDs, sorted and joined
+    /// by `+`.
+    const TWO_DISPLAYS: &str = r#"(apps:{"app":{"37D8832A-2D66-02CA-B9F7-8F30A301B230+B9F7-8F30A301B230-37D8832A-2D66":[(title:Some("t"),display_uuid:"B9F7-8F30A301B230-37D8832A-2D66",workspace_index:1,width:None)]}})"#;
+
     #[test]
-    fn the_same_displays_in_any_order_are_one_topology() {
-        let one = topology_key(&[DisplayUuid::new(BUILT_IN), DisplayUuid::new(EXTERNAL)]);
-        let other = topology_key(&[DisplayUuid::new(EXTERNAL), DisplayUuid::new(BUILT_IN)]);
-        assert_eq!(one, other);
+    fn launch_memory_schema_6_wrote_for_two_displays_loads_under_their_arrangement_and_writes_back()
+    {
+        let memory: LaunchMemory = ron::from_str(TWO_DISPLAYS).expect("the bytes parse");
+        assert_eq!(memory.slots("app", &docked()), [slot("t", EXTERNAL, 1)]);
+        assert_eq!(ron::ser::to_string(&memory).unwrap(), TWO_DISPLAYS);
     }
 
     /// The case the whole thing exists for: half width on the external while it is plugged in, full width
     /// on the built-in when it is not, and the answer depends on which is connected.
     #[test]
     fn each_topology_remembers_its_own_answer() {
-        let docked = topology_key(&[DisplayUuid::new(BUILT_IN), DisplayUuid::new(EXTERNAL)]);
-        let alone = topology_key(&[DisplayUuid::new(BUILT_IN)]);
+        let (docked, alone) = (docked(), alone());
         let mut memory = LaunchMemory::default();
 
         memory.remember("com.mitchellh.ghostty", &docked, vec![
@@ -337,9 +335,9 @@ mod tests {
     #[test]
     fn a_topology_that_was_never_seen_remembers_nothing() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one-display", vec![slot("t", BUILT_IN, 0).into()]);
-        assert!(memory.slots("app", "two-displays").is_empty());
-        assert!(memory.slots("other-app", "one-display").is_empty());
+        memory.remember("app", &alone(), vec![slot("t", BUILT_IN, 0).into()]);
+        assert!(memory.slots("app", &docked()).is_empty());
+        assert!(memory.slots("other-app", &alone()).is_empty());
     }
 
     /// Titles are what identify a particular window of a multi-window application, so they are tried
@@ -405,12 +403,12 @@ mod tests {
     #[test]
     fn remembering_replaces_rather_than_accumulates() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one", vec![
+        memory.remember("app", &alone(), vec![
             slot("a", BUILT_IN, 0).into(),
             slot("b", BUILT_IN, 1).into(),
         ]);
-        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into()]);
-        assert_eq!(memory.slots("app", "one").len(), 1);
+        memory.remember("app", &alone(), vec![slot("a", BUILT_IN, 0).into()]);
+        assert_eq!(memory.slots("app", &alone()).len(), 1);
     }
 
     /// The projection of an application whose windows are all in unseen workspaces produced
@@ -418,10 +416,10 @@ mod tests {
     #[test]
     fn remembering_nothing_leaves_what_is_known_alone() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into()]);
-        memory.remember("app", "one", Vec::new());
+        memory.remember("app", &alone(), vec![slot("a", BUILT_IN, 0).into()]);
+        memory.remember("app", &alone(), Vec::new());
         assert_eq!(
-            memory.slots("app", "one").len(),
+            memory.slots("app", &alone()).len(),
             1,
             "the entry survives an empty projection"
         );
@@ -499,17 +497,17 @@ mod tests {
     #[test]
     fn repeated_saves_that_cannot_read_the_layout_never_erase_a_width() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one", vec![projected(
+        memory.remember("app", &alone(), vec![projected(
             Some("term"),
             ProjectedWidth::Known(Some(ColumnWidth::FullWidth)),
         )]);
         for _ in 0..5 {
-            memory.remember("app", "one", vec![projected(
+            memory.remember("app", &alone(), vec![projected(
                 Some("term"),
                 ProjectedWidth::Unknown,
             )]);
             assert_eq!(
-                memory.slots("app", "one")[0].width,
+                memory.slots("app", &alone())[0].width,
                 Some(ColumnWidth::FullWidth),
                 "an unreadable projection must not erase the width"
             );

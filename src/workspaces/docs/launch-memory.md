@@ -39,7 +39,9 @@ app_id  ->  topology  ->  [ Slot { title, display_uuid, workspace_index, width }
 - **`app_id`** is the bundle identifier. It is the only application-level name that is
   stable across launches; the pid and the window server id are not, and the executable
   path is not always available.
-- **`topology`** is the set of display UUIDs currently connected, sorted. This is what
+- **`topology`** is the set of display UUIDs currently connected, as the `SetupId` display
+  affinity keys its setups by (`src/workspaces/domain/display_setup.rs`): sorted, each UUID once, and none not
+  reported yet. A two-display key is the two UUIDs joined by `+`. This is what
   makes "50% on the external, 100% on the built-in" expressible: the same application
   gets a different answer depending on what is plugged in, and the answer for a
   topology is only consulted when that topology is present again. The precedent is
