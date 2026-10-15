@@ -167,6 +167,9 @@ are gone.
 
 ### 2.2 `TODO`s naming known-wrong heuristics
 
+**DONE — none of the five remains in `src/` or `crates/`. The last, `Rewrite it`, named no defect and
+went on 2026-10-15.**
+
 ```
 src/windows/platform/window_server.rs:441  cgwindowlistcopywindowinfo does not order windows properly
 src/windows/platform/app_actor.rs:1221     improve this heuristic using ideas from AeroSpace

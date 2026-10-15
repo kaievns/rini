@@ -145,7 +145,6 @@ the window is not on screen. So `register_window` needs a `WindowServerInfo` hin
 `peer()` helper in the test module is for.
 
 Still untested in there: `handle_notification` (166), `handle_request`'s other arms, and
-`handle_raise_request` (134), which is async and drives activation waits. The three worst TODOs are
-also still live — the window-matching heuristic (`:1210`), the missing frontmost retry (`:941`), and
-`FIXME: ?elem here can change system behavior` (`:1554`). The seam is what makes any of them
-testable; none of them is done.
+`handle_raise_request` (134), which is async and drives activation waits. No `TODO` or `FIXME` is
+left in `app_actor.rs`; two of the questions they asked are answered on evidence in
+`src/windows/docs/admission-and-raise-findings.md`.
