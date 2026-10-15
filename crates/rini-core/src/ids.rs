@@ -173,9 +173,6 @@ impl DisplayUuid {
         DisplayUuid(format!("cgdisplay-{}", screen.as_u32()))
     }
 
-    /// Whether this is a [`DisplayUuid::fallback`] rather than a UUID CoreGraphics reported.
-    pub fn is_fallback(&self) -> bool { self.0.starts_with("cgdisplay-") }
-
     pub fn as_str(&self) -> &str { &self.0 }
 
     pub fn is_empty(&self) -> bool { self.0.is_empty() }
@@ -319,11 +316,8 @@ mod tests {
     }
 
     #[test]
-    fn a_fallback_uuid_names_the_screen_and_says_it_is_one() {
-        let fallback = DisplayUuid::fallback(ScreenId::new(2));
-        assert_eq!(fallback.as_str(), "cgdisplay-2");
-        assert!(fallback.is_fallback());
-        assert!(!DisplayUuid::new(UUID).is_fallback());
+    fn a_fallback_uuid_names_the_screen() {
+        assert_eq!(DisplayUuid::fallback(ScreenId::new(2)).as_str(), "cgdisplay-2");
         assert!(DisplayUuid::default().is_empty());
     }
 
