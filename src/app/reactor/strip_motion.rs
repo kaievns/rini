@@ -713,9 +713,8 @@ impl Reactor {
 /// Says so when the window a switch focuses is off the destination row's viewport.
 ///
 /// The switch's claim on the destination strip suppresses the pan that would otherwise reveal the
-/// target, so if the destination row
-/// was NOT drawn scrolled to it, the target stays off screen. That would be a layout problem rather
-/// than an animation one, and it is silent, so say so.
+/// target, so if the destination row was NOT drawn scrolled to it, the target stays off screen.
+/// That would be a layout problem rather than an animation one, and it is silent, so say so.
 fn report_target_out_of_view(
     focused: Option<WindowId>,
     windows: &[SurfaceWindow],

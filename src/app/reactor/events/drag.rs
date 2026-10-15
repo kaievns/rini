@@ -98,15 +98,8 @@ fn drop_on_space(
         state.windows.set_window_server_space(server_id, Some(space));
         state.windows.mark_window_visible(server_id);
     }
-    // Keep the window in ITS OWN workspace, changing only which display's strip
-    // holds it.
-    //
-    // This used to assign it to the destination display's ACTIVE workspace. If
-    // that display was showing something else, the window silently changed
-    // workspace and vanished from view — reported when tearing a Chrome tab into
-    // its own window, and when dragging a window across displays. A drag moves a
-    // window between strips; only an explicit move-to-workspace command may move
-    // it between workspaces.
+    // A drag moves a window between strips, never between workspaces: only an explicit
+    // move-to-workspace command does that (`src/workspaces/docs/workspaces-and-displays.md`).
     let workspace = layout
         .virtual_workspace_manager()
         .workspace_info_for_window_any(&state.windows, window)
@@ -122,9 +115,8 @@ fn drop_on_space(
     {
         warn!(?window, ?workspace, "failed to assign dragged window");
     }
-    // Dragging a window to another display is the user choosing where it
-    // lives, so it becomes the window's home. Without this a later replug
-    // would repatriate it back to the display it was dragged off.
+    // Dragging a window to another display is the user choosing where it lives, so it becomes
+    // the window's home, and a later replug does not repatriate it to the one it left.
     layout.set_window_display_home(&mut state.display_memory, window, space);
 }
 

@@ -460,21 +460,10 @@ fn validate_and_exit(config_path: &std::path::Path) -> ! {
 /// The layout to start from and the display memory it was saved with: the saved one unless
 /// `no_restore`, and a fresh one when there is none or it cannot be read.
 ///
-/// Restore is ON by default, so a restart or redeploy keeps window sizes, workspaces
-/// and strip positions.
-///
-/// It was opt-in for a while because enabling it exposed two latent bugs in a code
-/// path nothing had exercised. Restored workspaces kept a stale layout MODE, and
-/// windows belonging to a display that had since been unplugged were restored at
-/// that display's coordinates — measured at x=-1680 with no display there — and
-/// stranded, with nothing to migrate them back. A single dock/undock cycle then
-/// produced a layout only fixable by deleting ~/.rini/layout.ron.
-///
-/// Both are handled now. The layout mode is migrated on restore, and
-/// release_windows_saved_on_absent_displays gives up the saved slots of any display
-/// that is not attached while keeping each window's display affinity, so those
-/// windows lay out fresh on a live display and return to their own display when it
-/// is plugged back in.
+/// Restore is on by default, so a restart or redeploy keeps window sizes, workspaces and strip
+/// positions. A display that is not attached has its saved slots released, its windows keeping
+/// their display affinity (`release_windows_saved_on_absent_displays`,
+/// `src/workspaces/docs/workspaces-and-displays.md`).
 fn restored_layout(config: &Config, no_restore: bool) -> (LayoutEngine, DisplayMemory) {
     let fresh = || LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout);
     if !no_restore {
