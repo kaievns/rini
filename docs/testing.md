@@ -27,10 +27,12 @@ without checking. Both are in `docs/implementation-audit.md` under 4.4 and 4.4.1
 The test for it: if the thing behind the `#[cfg]` is a QUERY — something the operating system
 answers — a fake is fine, and it belongs at the boundary with the other fakes. If it is a RULE —
 something rini decides — take what the rule reads as a value and let the test name it.
-`manageable(Facts)` in `src/windows/domain/manageable.rs` is what that looks like. Where a thread
-both decides and makes the calls, the calls are a port it is generic over: the pictures service is
-`Service<C: Capturer>` (`src/pictures/platform/capturer.rs`), and its tests run its rounds against
-`FakeCapturer`, which answers from the frames a test gives it and records every call made
+`manageable(Facts)` in `src/windows/domain/manageable.rs` is what that looks like, and so is
+`KeyRouter` in `src/input/domain/router.rs`: the tap reads each CGEvent into a `Keystroke`, and a
+test builds one by hand. Where a thread both decides and makes the calls, the calls are a port it is
+generic over: the pictures service is `Service<C: Capturer>` (`src/pictures/platform/capturer.rs`),
+and its tests run its rounds against `FakeCapturer`, which answers from the frames a test gives it
+and records every call made
 (`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`). A fake gives only answers
 the real calls can: its misshapen call is the baked one, so it yields no picture and its windows are
 opaque, as in `skylight::capture_on_screen`.
@@ -273,7 +275,6 @@ else in the repo cites an id; a comment or a doc names the work in words
 
 | Id | Task | Done when |
 |---|---|---|
-| P2.9 | Pure `KeyRouter` in `input/domain` | `handle_keyboard_event` under 25 lines; 10+ router tests; no `RefCell<State>` in the tap |
 | P3.8 | `EngineFixture` over the production layout fn; delete the `cfg(test)` `calculate_layout` and the test-only `create_workspace`/`test_app_rules` | engine test average under 30 lines; `virtual_workspace.rs` has one `cfg(test)` |
 | P4.1 | Named structs for positional tuples: the `OnScreenEntry` 9-tuple, `Request::SetWindowFrame(.., bool)`, `Event::WindowFrameChanged`, `ReactorParts` for an 11-parameter `spawn` | no tuple over 3 in an enum variant or pub fn type at these sites |
 | P4.8 | Small enums: `Pass` for `update_layout(bool, bool, ..)`, `Press`, `Axis`, the repaint subsets in `StageSummary`/`Flight` | no fn with 2+ bool parameters (`clippy::fn_params_excessive_bools` denied) |

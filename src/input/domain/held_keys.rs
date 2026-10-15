@@ -12,7 +12,9 @@
 
 use rustc_hash::FxHashSet as HashSet;
 
-use crate::input::domain::key::{KeyCode, is_modifier_key, modifier_key_is_active};
+use crate::input::domain::key::{
+    KeyCode, MOD_FAMILIES, Modifiers, is_modifier_key, modifier_key_is_active,
+};
 
 /// The keys currently held, as far as the tap can tell.
 #[derive(Debug, Default)]
@@ -26,7 +28,6 @@ pub struct HeldKeys {
 
 impl HeldKeys {
     /// The modifier mask last seen.
-    #[cfg(test)]
     pub fn flags(&self) -> u64 { self.flags }
 
     /// The keys seen down and not yet up.
@@ -81,6 +82,29 @@ impl HeldKeys {
         self.flags = flags;
     }
 
+    /// The modifiers held, each on the side it was pressed.
+    ///
+    /// The mask says whether a family is held. The side comes from the key set, or from the mask's
+    /// side bit when an edge was missed, and is the left one when neither names a side.
+    pub fn modifiers(&self) -> Modifiers {
+        let mut modifiers = Modifiers::empty();
+        for family in MOD_FAMILIES {
+            if !family.is_active(self.flags) {
+                continue;
+            }
+            let left = self.pressed.contains(&family.left_key) || family.left_is_active(self.flags);
+            let right =
+                self.pressed.contains(&family.right_key) || family.right_is_active(self.flags);
+            if left || !right {
+                modifiers.insert(family.left);
+            }
+            if right {
+                modifiers.insert(family.right);
+            }
+        }
+        modifiers
+    }
+
     /// Whether this specific key is held.
     ///
     /// A modifier is answered from the flags, because that is the authoritative source and the cache
@@ -99,11 +123,43 @@ impl HeldKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::domain::key::MOD_FAMILIES;
+
+    fn family(name: &str) -> &'static crate::input::domain::key::ModFamily {
+        MOD_FAMILIES.iter().find(|f| f.name == name).expect("a family")
+    }
 
     /// Ctrl's family mask and its two side bits, straight from the table.
-    fn ctrl() -> &'static crate::input::domain::key::ModFamily {
-        MOD_FAMILIES.iter().find(|f| f.name == "Ctrl").expect("Ctrl is a family")
+    fn ctrl() -> &'static crate::input::domain::key::ModFamily { family("Ctrl") }
+
+    /// After a missed edge the key set is empty, and the mask's side bit is all that says which Alt.
+    #[test]
+    fn the_side_bit_names_the_side_when_the_key_set_has_none() {
+        let alt = family("Alt");
+        let mut held = HeldKeys::default();
+        held.observe_flags(alt.mask | alt.right_mask);
+        assert_eq!(held.modifiers(), Modifiers::ALT_RIGHT);
+    }
+
+    #[test]
+    fn the_key_set_names_the_side_the_mask_does_not() {
+        let mut held = HeldKeys::default();
+        held.key_down(KeyCode::ControlRight);
+        held.observe_flags(ctrl().mask);
+        assert_eq!(held.modifiers(), Modifiers::CONTROL_RIGHT);
+    }
+
+    #[test]
+    fn a_family_held_with_no_side_named_is_the_left_one() {
+        let mut held = HeldKeys::default();
+        held.observe_flags(ctrl().mask);
+        assert_eq!(held.modifiers(), Modifiers::CONTROL_LEFT);
+    }
+
+    #[test]
+    fn a_key_set_entry_without_the_family_in_the_mask_holds_nothing() {
+        let mut held = HeldKeys::default();
+        held.key_down(KeyCode::ControlLeft);
+        assert_eq!(held.modifiers(), Modifiers::empty());
     }
 
     #[test]

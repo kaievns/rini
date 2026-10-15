@@ -318,6 +318,55 @@ fn rini_taps_no_trackpad_gesture() {
     );
 }
 
+/// What `KeyRouter` owns and asks in order. A tap holding one of them decides a key event outside
+/// the router, where no router test sees the order (src/input/domain/router.rs).
+const KEY_RULES: [&str; 4] = [
+    "HeldKeys",
+    "SwitchSession",
+    "HotkeyTable",
+    "modifiers_satisfy",
+];
+
+/// Whether `code` names `name` whole, not as part of a longer identifier.
+fn names_identifier(code: &str, name: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    code.match_indices(name)
+        .any(|(at, _)| !code[..at].ends_with(word) && !code[at + name.len()..].starts_with(word))
+}
+
+#[test]
+fn an_identifier_is_named_only_whole() {
+    assert!(names_identifier(
+        "let s = SwitchSession::default();",
+        "SwitchSession"
+    ));
+    assert!(!names_identifier(
+        "Request::EndSwitchSession => {",
+        "SwitchSession"
+    ));
+    assert!(!names_identifier("HeldKeysCache", "HeldKeys"));
+}
+
+#[test]
+fn the_tap_decides_a_key_event_only_through_the_key_router() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src/input/platform")) {
+        let source = fs::read_to_string(&path).expect("readable source");
+        for (line, code) in production_lines_in(&source) {
+            for name in KEY_RULES {
+                if names_identifier(&code, name) {
+                    broken.push(format!("{}:{line}: {name} in {}", slash(&path), code.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "the tap reads a key event into a Keystroke and does what KeyRouter decides:\n{}",
+        broken.join("\n")
+    );
+}
+
 /// A module only a test builds: the 1-based lines of one written inline, or the name of one in a
 /// file of its own.
 #[derive(Debug, PartialEq)]

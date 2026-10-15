@@ -12,12 +12,10 @@ use std::sync::LazyLock;
 
 use anyhow::anyhow;
 use objc2_core_foundation::CFData;
-use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags};
+use objc2_core_graphics::{CGEvent, CGEventField};
 use parking_lot::Mutex;
 
-use crate::input::domain::key::{
-    F_KEYS, Hotkey, KeyCode, MOD_FAMILIES, Modifiers, normalize_token,
-};
+use crate::input::domain::key::{F_KEYS, Hotkey, KeyCode, Modifiers, normalize_token};
 
 impl FromStr for KeyCode {
     type Err = anyhow::Error;
@@ -125,38 +123,6 @@ impl FromStr for Hotkey {
         let key_code = key_opt.ok_or_else(|| anyhow!("No key specified in hotkey: {}", s))?;
         Ok(Hotkey::new(mods, key_code))
     }
-}
-
-pub fn modifiers_from_flags_with_keys<S: std::hash::BuildHasher>(
-    flags: CGEventFlags,
-    pressed_keys: &std::collections::HashSet<KeyCode, S>,
-) -> Modifiers {
-    let mut mods = Modifiers::empty();
-
-    for m in MOD_FAMILIES {
-        if !m.is_active(flags.bits()) {
-            continue;
-        }
-
-        // Prefer the tracked key set during normal event processing, while
-        // retaining side information directly from the event flags when
-        // recovering after a dropped event or re-enabled tap.
-        let has_left = pressed_keys.contains(&m.left_key) || m.left_is_active(flags.bits());
-        let has_right = pressed_keys.contains(&m.right_key) || m.right_is_active(flags.bits());
-
-        if has_left {
-            mods.insert(m.left);
-        }
-        if has_right {
-            mods.insert(m.right);
-        }
-
-        if !has_left && !has_right {
-            mods.insert(m.left);
-        }
-    }
-
-    mods
 }
 
 pub fn key_code_from_event(event: &CGEvent) -> Option<KeyCode> {
@@ -514,18 +480,6 @@ mod tests {
     }
 
     #[test]
-    fn modifier_recovery_preserves_right_alt_from_flags() {
-        let right_alt = CGEventFlags::from_bits_retain(
-            CGEventFlags::MaskAlternate.bits() | MOD_FAMILIES[1].right_mask,
-        );
-        let pressed_keys = std::collections::HashSet::new();
-
-        let modifiers = modifiers_from_flags_with_keys(right_alt, &pressed_keys);
-
-        assert!(modifiers.contains(Modifiers::ALT_RIGHT));
-        assert!(!modifiers.contains(Modifiers::ALT_LEFT));
-    }
-    #[test]
     fn a_binding_string_parses_modifiers_in_any_order_and_spelling() {
         let a: Hotkey = "Alt + Shift + H".parse().unwrap();
         let b: Hotkey = "shift+option + h".parse().unwrap();
@@ -595,7 +549,9 @@ mod tests {
 
 #[cfg(test)]
 mod mask_tests {
-    use super::*;
+    use objc2_core_graphics::CGEventFlags;
+
+    use crate::input::domain::key::MOD_FAMILIES;
 
     /// `crate::input::domain::key` holds each family's mask as a bit pattern so its table needs no
     /// CoreGraphics. This is what stops a wrong literal going unnoticed.
