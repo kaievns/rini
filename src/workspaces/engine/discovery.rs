@@ -75,16 +75,7 @@ impl LayoutEngine {
         let mut focus_request = None;
 
         for entry in windows_with_titles {
-            let wid = entry.wid;
-            self.observe_window_for_persistence(
-                window_store,
-                memory,
-                space,
-                wid,
-                entry.title.as_deref(),
-                entry.size,
-                app_bundle_id,
-            );
+            self.observe_window_for_persistence(window_store, memory, space, &entry, app_bundle_id);
             constraints_changed |= self.note_constraints(&entry);
 
             let Some(admitted) =

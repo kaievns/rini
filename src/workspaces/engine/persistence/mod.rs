@@ -4,12 +4,11 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use objc2_core_foundation::CGSize;
 use rini_core::ids::{DisplayUuid, SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
-use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
+use super::{FloatingManager, LayoutEngine, OnScreenEntry, WorkspaceLayouts};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleEngine;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -139,17 +138,16 @@ impl PersistenceState {
 }
 
 impl LayoutEngine {
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
+    /// Records `entry` as the window its app `app_id` lists, under the title and size it reports.
     pub(super) fn observe_window_for_persistence(
         &mut self,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         space: SpaceId,
-        window: WindowId,
-        title: Option<&str>,
-        size: CGSize,
+        entry: &OnScreenEntry,
         app_id: Option<&str>,
     ) {
+        let (window, title, size) = (entry.wid, entry.title.as_deref(), entry.size);
         let fingerprint = WindowFingerprint {
             window_server_id: window_store
                 .window(window)
