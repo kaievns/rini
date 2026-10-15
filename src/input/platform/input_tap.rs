@@ -79,31 +79,8 @@ unsafe impl Send for InputTap {}
 
 #[derive(Debug, Clone, Copy)]
 struct MouseSettings {
-    focus_follows_mouse_config_enabled: bool,
-    event_processing_enabled: bool,
-    focus_follows_mouse_enabled: bool,
+    switches: pointer::MouseMoveSwitches,
     low_power_mode: bool,
-}
-
-impl MouseSettings {
-    fn mouse_move_switches(&self) -> pointer::MouseMoveSwitches {
-        pointer::MouseMoveSwitches {
-            processing: self.event_processing_enabled,
-            configured: self.focus_follows_mouse_config_enabled,
-            live: self.focus_follows_mouse_enabled,
-        }
-    }
-}
-
-impl Default for MouseSettings {
-    fn default() -> Self {
-        Self {
-            focus_follows_mouse_config_enabled: false,
-            event_processing_enabled: false,
-            focus_follows_mouse_enabled: true,
-            low_power_mode: false,
-        }
-    }
 }
 
 pub type Sender = channel::Sender<Request>;
@@ -126,7 +103,7 @@ impl InputTap {
     }
 
     fn mouse_move_handlers_enabled(&self) -> bool {
-        pointer::wants_mouse_move_events(self.mouse.get().mouse_move_switches())
+        pointer::wants_mouse_move_events(self.mouse.get().switches)
     }
 
     fn desired_event_mask(&self) -> CGEventMask {
@@ -229,13 +206,16 @@ impl InputTap {
         requests_rx: Receiver,
     ) -> Self {
         let mouse = MouseSettings {
+            switches: pointer::MouseMoveSwitches {
+                processing: false,
+                configured: settings.focus_follows_mouse,
+                live: true,
+            },
             low_power_mode,
-            focus_follows_mouse_config_enabled: settings.focus_follows_mouse,
-            ..MouseSettings::default()
         };
         let event_mask = build_event_mask(Asks {
             keys: pointer::wants_keyboard_events(0),
-            mouse_moves: pointer::wants_mouse_move_events(mouse.mouse_move_switches()),
+            mouse_moves: pointer::wants_mouse_move_events(mouse.switches),
         });
         let mouse_move_min_interval_ns = mouse_move_sampling_profile(mouse.low_power_mode);
         InputTap {
@@ -352,7 +332,7 @@ impl InputTap {
                 }
             }
             Request::SetEventProcessing(enabled) => {
-                mouse.event_processing_enabled = enabled;
+                mouse.switches.processing = enabled;
                 if enabled {
                     self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
@@ -364,7 +344,7 @@ impl InputTap {
                     "focus_follows_mouse temporarily {}",
                     if enabled { "enabled" } else { "disabled" }
                 );
-                mouse.focus_follows_mouse_enabled = enabled;
+                mouse.switches.live = enabled;
                 if enabled {
                     self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
@@ -391,8 +371,8 @@ impl InputTap {
                 should_rebuild_mask = true;
             }
             Request::SettingsUpdated(settings) => {
-                if mouse.focus_follows_mouse_config_enabled != settings.focus_follows_mouse {
-                    mouse.focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
+                if mouse.switches.configured != settings.focus_follows_mouse {
+                    mouse.switches.configured = settings.focus_follows_mouse;
                     self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
                 }
@@ -470,7 +450,7 @@ impl InputTap {
             _ => {}
         }
 
-        if !self.mouse.get().event_processing_enabled {
+        if !self.mouse.get().switches.processing {
             trace!("Mouse event processing disabled, ignoring {:?}", event_type);
             return true;
         }
@@ -513,7 +493,7 @@ impl InputTap {
     /// keyboard and flags-changed events already maintain modifier state.
     fn on_mouse_moved(&self, event: &CGEvent) -> bool {
         let mouse = self.mouse.get();
-        if !mouse.event_processing_enabled {
+        if !mouse.switches.processing {
             return true;
         }
         let loc = CGEvent::location(Some(event));
@@ -521,7 +501,7 @@ impl InputTap {
         // Resolve and deduplicate the window on the input thread. The application
         // only needs to see transitions; it must not receive a message for
         // every sampled point while the cursor remains in one window.
-        if mouse.focus_follows_mouse_config_enabled && mouse.focus_follows_mouse_enabled {
+        if mouse.switches.configured && mouse.switches.live {
             let hint = mouse_window_hint(event);
             let previous = self.mouse_window.get();
             let window = self.resolve_mouse_window(hint, loc, previous);
