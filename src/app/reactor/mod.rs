@@ -1407,7 +1407,11 @@ impl Reactor {
                 );
             }
             Event::ApplicationTerminated(pid) => {
-                return application_workflow::handle_application_terminated(pid);
+                return application_workflow::handle_application_terminated(
+                    &self.app_manager,
+                    &mut self.state,
+                    pid,
+                );
             }
             Event::ApplicationThreadTerminated(pid) => {
                 self.clear_menu_state_for_pid(pid);
@@ -2637,6 +2641,7 @@ impl Reactor {
         let (new_windows, process_outcome) = window_discovery::process_window_list(
             &mut self.state,
             &mut self.layout_manager,
+            &mut self.main_window_tracker,
             observed_windows,
             &app_info,
         );

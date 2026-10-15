@@ -4,17 +4,12 @@
 //! the two can never disagree.
 use std::ops::{Deref, DerefMut};
 
-use crate::windows::domain::catalogue::{
-    NativeFullscreenRecord, NativeFullscreenTransition, WindowCatalogue,
-};
+use crate::windows::domain::catalogue::{NativeFullscreenRecord, WindowCatalogue};
 use crate::windows::domain::state::WindowState;
 use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, WindowServerId, pid_t};
+use rini_core::ids::{WindowId, WindowServerId};
 
-pub use crate::windows::domain::catalogue::{
-    PendingNativeFullscreenRecord, PendingWindowOperation, WindowPlacement, WindowRecord,
-    WindowVisibility,
-};
+pub use crate::windows::domain::catalogue::{PendingNativeFullscreenRecord, WindowRecord};
 
 use crate::workspaces::VirtualWorkspaceId;
 pub use crate::workspaces::domain::assignment::{WindowWorkspaceInfo, WorkspaceAssignments};
@@ -97,10 +92,6 @@ impl WindowStore {
         self.assignments.window_count(space, workspace_id)
     }
 
-    pub fn has_workspace_assignments_in_space(&self, space: SpaceId) -> bool {
-        self.assignments.has_assignments_in_space(space)
-    }
-
     pub fn iter_workspace_assignments(
         &self,
     ) -> impl Iterator<Item = (WindowId, WindowWorkspaceInfo)> + '_ {
@@ -138,7 +129,6 @@ impl WindowStore {
         window_server_id: Option<WindowServerId>,
         fallback_last_known_user_space: Option<SpaceId>,
         fullscreen_space: SpaceId,
-        transition: NativeFullscreenTransition,
     ) -> NativeFullscreenRecord {
         let assigned_space = self.assignments.info_for_window(window_id).map(|a| a.space);
         self.catalogue.suspend_window_to_native_fullscreen(
@@ -147,7 +137,6 @@ impl WindowStore {
             assigned_space,
             fallback_last_known_user_space,
             fullscreen_space,
-            transition,
         )
     }
 
@@ -167,11 +156,6 @@ impl WindowStore {
     pub fn remove_window(&mut self, window_id: WindowId) {
         self.assignments.remove(window_id);
         self.catalogue.remove_window(window_id);
-    }
-
-    pub fn remove_windows_for_app(&mut self, pid: pid_t) {
-        self.assignments.remove_all_for_pid(pid);
-        self.catalogue.remove_windows_for_app(pid);
     }
 
     pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
@@ -198,7 +182,6 @@ impl WindowStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::windows::domain::catalogue::NativeFullscreenTransition;
     use crate::workspaces::domain::virtual_workspace::WorkspaceStore;
 
     #[test]
@@ -261,7 +244,6 @@ mod tests {
             Some(wsid),
             Some(space),
             fullscreen_space,
-            NativeFullscreenTransition::Suspended,
         );
 
         window_store.transfer_persistent_window_metadata(from, to);
@@ -283,32 +265,5 @@ mod tests {
                 .current_window_id,
             to
         );
-    }
-
-    #[test]
-    fn app_cleanup_removes_all_indexes_and_pending_operations() {
-        let mut store = WindowStore::default();
-        let wid = WindowId::new(4, 1);
-        let wsid = WindowServerId::new(55);
-        let mut workspaces = WorkspaceStore::new();
-        let workspace_id = workspaces
-            .create_workspace(SpaceId::new(9), Some("Cleanup".to_string()))
-            .expect("workspace");
-        store.track_window_server_id(wsid, wid);
-        store.assign_window_to_workspace(
-            wid,
-            WindowWorkspaceInfo {
-                space: SpaceId::new(9),
-                workspace_id,
-            },
-        );
-        store.begin_operation(wid, None, Some(SpaceId::new(9)));
-
-        store.remove_windows_for_app(wid.pid);
-
-        assert!(store.record(wid).is_none());
-        assert_eq!(store.tracked_window_id(wsid), None);
-        assert!(store.window_ids_for_pid(wid.pid).next().is_none());
-        store.debug_assert_invariants();
     }
 }

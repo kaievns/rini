@@ -80,17 +80,21 @@ as visible rather than absent. The reverse — an id the server does not report 
   during launch and under load, and retiring on it deletes live windows.
 - A window absent from `kAXWindowsAttribute` MUST NOT be retired: that attribute is space-filtered and
   cannot say whether a window still exists globally.
-- A record of a window MUST NOT be forgotten while it still holds anything — a pending frame write, an
-  observed space, a rule decision.
+- A record of a window MUST NOT be forgotten while it still holds anything: its Accessibility state,
+  a window-server id or a rule decision. The record of a window-server id MUST NOT be forgotten while
+  it holds anything: the window it belongs to, a visibility, an observation, a space, what the server
+  reported of it, a recent sighting or a native-fullscreen record still waiting on a window.
 - A window that leaves MUST take its pictures with it, once, whichever way it leaves: closed, closed
   while minimised or unmanaged, found gone when its application's windows are looked at again, left
   behind by its application quitting, or found again under a new identity for the same window-server
-  window. An application that quits MUST take its windows' records too. A window whose Accessibility
-  destruction is reported during a refresh quarantine MUST keep its pictures: its element can be
-  replaced while the window lives.
+  window. An application that quits MUST take its windows' records too, native-fullscreen ones
+  included, whether bound to a window or still waiting on one, and whether or not rini ever watched
+  it: macOS hands the window-server ids they are keyed by to other windows. A window whose
+  Accessibility destruction is reported during a refresh quarantine MUST keep its pictures: its
+  element can be replaced while the window lives.
 
 > **Found 2026-09-23, not reported.** The prune check tested four of a record's nine fields. A record
-> holding only a pending frame write was pruned and the write forgotten.
+> holding only one of the other five was pruned and what it held forgotten.
 
 > **Reported 2026-10-06.** "fix that runaway thread and stale cache cleaning". Fixed.
 >
@@ -101,6 +105,10 @@ as visible rather than absent. The reverse — an id the server does not report 
 > until rini restarted; a quitting application also kept its windows' records. The log of the running
 > build showed "Application terminated without notification" 3 times across its runs. How often the
 > other ways ran is not logged.
+
+> **Found 2026-10-15, not reported.** That fix dropped a quitting application's windows one at a
+> time, and dropping one window keeps its native-fullscreen record on purpose, so those records, and
+> any still waiting on a window, outlived the application.
 
 ## Writing a frame
 

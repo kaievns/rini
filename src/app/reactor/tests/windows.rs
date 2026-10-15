@@ -412,6 +412,62 @@ fn an_application_that_quits_forgets_each_of_its_windows_once() {
     assert!(reactor.state.windows.window(WindowId::new(2, 1)).is_some());
 }
 
+/// An application that quits with a window in native fullscreen, or one macOS has put there before
+/// rini knew the window, takes those records too: macOS hands the window-server ids they are keyed
+/// by to other windows.
+#[test]
+fn an_application_that_quits_takes_its_native_fullscreen_records() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let fullscreen_space = SpaceId::new(0x400000001);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
+    apps.requests();
+    let wid = WindowId::new(1, 1);
+    let wsid = reactor.test_window_server_id(wid);
+    let unbound = WindowServerId::new(4242);
+    let _ = reactor.state.windows.suspend_window_to_native_fullscreen(
+        wid,
+        Some(wsid),
+        Some(space),
+        fullscreen_space,
+    );
+    let _ = reactor.state.windows.suspend_window_server_to_native_fullscreen(
+        1,
+        unbound,
+        Some(space),
+        fullscreen_space,
+    );
+
+    reactor.handle_event(Event::ApplicationThreadTerminated(1));
+
+    let windows = &reactor.state.windows;
+    assert!(windows.native_fullscreen_record_for_window(wid).is_none());
+    assert!(!windows.is_window_server_id_native_fullscreen_suspended(wsid));
+    assert_eq!(windows.pending_native_fullscreen_pid_for_window_server_id(unbound), None);
+}
+
+/// An application rini never watched has no thread to answer its quit, and the native-fullscreen
+/// record the window server alone gave it still goes.
+#[test]
+fn an_unwatched_application_that_quits_takes_its_native_fullscreen_records() {
+    let (_apps, mut reactor) = test_context();
+    let unbound = WindowServerId::new(4242);
+    let _ = reactor.state.windows.suspend_window_server_to_native_fullscreen(
+        7,
+        unbound,
+        Some(SpaceId::new(1)),
+        SpaceId::new(0x400000001),
+    );
+
+    reactor.handle_event(Event::ApplicationTerminated(7));
+
+    assert_eq!(
+        reactor.state.windows.pending_native_fullscreen_pid_for_window_server_id(unbound),
+        None
+    );
+}
+
 /// A window the application no longer lists and the window server has ordered out is retired by
 /// discovery, and forgotten once.
 #[test]
@@ -472,6 +528,27 @@ fn a_rekeyed_window_forgets_its_old_id_once() {
     reactor.handle_event(Event::WindowDestroyed(old));
 
     assert_eq!(forgotten(&mut pictures), vec![old]);
+}
+
+/// A window found again under a new id keeps its place in the order the switchers go by, rather
+/// than dropping behind windows not touched since.
+#[test]
+fn a_rekeyed_window_keeps_its_place_in_the_focus_order() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(3));
+    apps.requests();
+    for idx in 1..=3 {
+        reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(1, idx), space));
+    }
+    let (old, new) = (WindowId::new(1, 2), WindowId::new(1, 99));
+
+    rekey_window(&mut reactor, old, new);
+
+    let order = reactor.main_window_tracker.focus_order();
+    assert_eq!(order.position(new), Some(1), "second, where the old id was");
+    assert_eq!(order.position(old), None);
 }
 
 /// An Accessibility destruction during a refresh quarantine can be an element replaced while the

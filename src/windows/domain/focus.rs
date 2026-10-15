@@ -309,8 +309,26 @@ impl MainWindowTracker {
         &self.focus_order
     }
 
-    /// Carry a window's place in the focus order across an identity change.
-    pub fn rekey_focus_order(&mut self, from: WindowId, to: WindowId) {
+    /// Carry every record of a window across an identity change: no destruction comes for the old
+    /// id, so a record left on it names a window that is gone.
+    pub fn rekey_window(&mut self, from: WindowId, to: WindowId) {
+        let carry = |slot: &mut Option<WindowId>| {
+            if *slot == Some(from) {
+                *slot = Some(to);
+            }
+        };
+        carry(&mut self.window_server_focus);
+        for app in self.apps.values_mut() {
+            carry(&mut app.main_window);
+        }
+        if let Some((_, remembered)) = &mut self.pending_activation {
+            carry(remembered);
+        }
+        for window in self.last_focused_by_app.values_mut() {
+            if *window == from {
+                *window = to;
+            }
+        }
         self.focus_order.rekey(from, to);
     }
 
@@ -410,6 +428,45 @@ mod tests {
             assert_eq!(looks_turned(None, Some(b)), vec![b]);
             assert_eq!(looks_turned(Some(a), None), vec![a]);
             assert!(looks_turned(Some(a), Some(a)).is_empty());
+        }
+    }
+
+    mod rekey {
+        use super::super::{FocusEvent, MainWindowTracker};
+        use rini_core::ids::WindowId;
+
+        fn launched_in_front(main_window: WindowId) -> MainWindowTracker {
+            let mut tracker = MainWindowTracker::default();
+            let _ = tracker.handle_event(FocusEvent::ApplicationLaunched {
+                pid: main_window.pid,
+                is_frontmost: true,
+                main_window: Some(main_window),
+            });
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(main_window.pid));
+            tracker
+        }
+
+        /// No destruction comes for the old id of a window found again under a new one, so the
+        /// focused window is named by its new id from the rekey on.
+        #[test]
+        fn the_window_server_focus_follows_a_rekey() {
+            let (old, new) = (WindowId::new(1, 1), WindowId::new(1, 99));
+            let mut tracker = launched_in_front(old);
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(old));
+
+            tracker.rekey_window(old, new);
+
+            assert_eq!(tracker.main_window(), Some(new));
+        }
+
+        #[test]
+        fn the_applications_main_window_follows_a_rekey() {
+            let (old, new) = (WindowId::new(1, 1), WindowId::new(1, 99));
+            let mut tracker = launched_in_front(old);
+
+            tracker.rekey_window(old, new);
+
+            assert_eq!(tracker.main_window(), Some(new));
         }
     }
 

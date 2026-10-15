@@ -7,7 +7,6 @@ use crate::app::reactor::state::RiniState;
 use crate::app::reactor::{DragState, LayoutEvent, MissionControlState};
 use crate::displays::domain::space_activation::SpaceActivationPolicy;
 use crate::displays::domain::topology::SpaceEventKind;
-use crate::windows::domain::catalogue::NativeFullscreenTransition;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::request::Request;
 use rini_core::ids::SpaceId;
@@ -433,7 +432,6 @@ fn record_fullscreen_window(
             window_server_id,
             last_known_user_space,
             sid,
-            NativeFullscreenTransition::Suspended,
         );
     } else if let (Some(pid), Some(wsid)) = (pid, window_server_id) {
         let _ = state.windows.suspend_window_server_to_native_fullscreen(
@@ -441,7 +439,6 @@ fn record_fullscreen_window(
             wsid,
             last_known_user_space,
             sid,
-            NativeFullscreenTransition::Suspended,
         );
     }
 }

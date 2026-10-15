@@ -17,10 +17,7 @@ pub use domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 pub use domain::virtual_workspace::{
     VirtualWorkspace, VirtualWorkspaceId, WorkspaceStats, WorkspaceStore,
 };
-pub use domain::window_store::{
-    PendingWindowOperation, WindowPlacement, WindowRecord, WindowStore, WindowVisibility,
-    WindowWorkspaceInfo,
-};
+pub use domain::window_store::{WindowRecord, WindowStore, WindowWorkspaceInfo};
 pub use domain::workspaces::WorkspaceLayouts;
 pub use engine::{
     EventResponse, LayoutCommand, LayoutEngine, LayoutEvent, LayoutEventOutcome, RestoreReport,

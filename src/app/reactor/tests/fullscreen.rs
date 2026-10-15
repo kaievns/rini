@@ -11,7 +11,6 @@ use super::fixtures::*;
 use crate::app::config::Edges;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
-use crate::windows::domain::catalogue::NativeFullscreenTransition;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::request::{AppThreadHandle, Request};
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
@@ -322,7 +321,6 @@ fn forwarded_space_state_does_not_clear_existing_fullscreen_tracks_when_snapshot
         Some(WindowServerId::new(1)),
         Some(tracked_user_space),
         fullscreen_space,
-        NativeFullscreenTransition::Suspended,
     );
 
     reactor.handle_event(space_state_event_with(
@@ -551,7 +549,6 @@ fn unfullscreen_restores_window_tracking() {
         Some(WindowServerId::new(1)),
         Some(user_space),
         fullscreen_space,
-        NativeFullscreenTransition::Suspended,
     );
 
     // Transition to fullscreen space.
@@ -601,7 +598,6 @@ fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
         Some(wsid),
         Some(user_space),
         fullscreen_space,
-        NativeFullscreenTransition::Suspended,
     );
     reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(old_wid));
 
@@ -669,7 +665,7 @@ fn a_window_back_from_fullscreen_is_still_offered_when_its_fullscreen_space_repo
         has_window_in_layout(&mut reactor, user_space, frame, call),
         "leaving a fullscreen space is not entering one"
     );
-    assert!(!reactor.state.windows.is_window_native_fullscreen_suspended(call));
+    assert!(reactor.state.windows.native_fullscreen_record_for_window(call).is_none());
 
     let offered: Vec<WindowId> = reactor
         .probe_switch_candidates(SwitchScope::Everything)

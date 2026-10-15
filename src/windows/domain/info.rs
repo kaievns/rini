@@ -46,7 +46,6 @@ pub struct WindowInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]
-#[allow(unused)]
 pub struct WindowServerInfo {
     pub id: WindowServerId,
     pub pid: pid_t,

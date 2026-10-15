@@ -7,12 +7,10 @@ use std::ptr::{self, NonNull};
 
 use objc2_application_services::{AXError, AXUIElement as RawAXUIElement, AXValue, AXValueType};
 use objc2_core_foundation::{
-    CFArray, CFBoolean, CFData, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, ConcreteType,
+    CFArray, CFBoolean, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, ConcreteType,
 };
 
-use rini_core::ids::WindowId;
 use rini_core::ids::pid_t;
-use rini_skylight_sys::_AXUIElementCreateWithRemoteToken;
 
 pub const AX_WINDOW_ROLE: &str = "AXWindow";
 pub const AX_STANDARD_WINDOW_SUBROLE: &str = "AXStandardWindow";
@@ -60,48 +58,6 @@ impl AXUIElement {
         Self::new(inner)
     }
 
-    #[inline]
-    pub fn system_wide() -> Self {
-        // SAFETY: The returned object follows the Create rule and therefore
-        // owns +1 retain count.
-        let inner = unsafe { RawAXUIElement::new_system_wide() };
-        Self::new(inner)
-    }
-
-    // TODO: im not sure this works...
-    #[inline]
-    pub fn from_window_id(wid: WindowId) -> Self {
-        const BUFSIZE: usize = 0x14;
-        const MAGIC: u32 = 0x636f636f;
-
-        let mut data = [0u8; BUFSIZE];
-
-        let pid_bytes = (wid.pid as u32).to_ne_bytes();
-        data[0x0..0x0 + pid_bytes.len()].copy_from_slice(&pid_bytes);
-
-        let magic_bytes = MAGIC.to_ne_bytes();
-        data[0x8..0x8 + magic_bytes.len()].copy_from_slice(&magic_bytes);
-
-        let element_id = wid.idx.get() as u64;
-        let element_bytes = element_id.to_ne_bytes();
-        data[0xc..0xc + element_bytes.len()].copy_from_slice(&element_bytes);
-
-        debug_assert_eq!(data.len(), BUFSIZE);
-        let data = CFData::from_bytes(&data);
-
-        let inner = unsafe {
-            _AXUIElementCreateWithRemoteToken(CFRetained::<CFData>::as_ptr(&data).as_ptr())
-        };
-        Self::new(unsafe {
-            CFRetained::from_raw(NonNull::new(inner).expect("non-null AXUIElement pointer"))
-        })
-    }
-
-    #[inline]
-    pub fn retained(&self) -> CFRetained<RawAXUIElement> {
-        self.inner.clone()
-    }
-
     #[allow(non_snake_case)]
     #[inline]
     pub fn as_concrete_TypeRef(&self) -> &RawAXUIElement {
@@ -117,13 +73,6 @@ impl AXUIElement {
     pub unsafe fn from_get_rule(ptr: *const RawAXUIElement) -> Self {
         let ptr = NonNull::new(ptr.cast_mut()).expect("attempted to create a NULL object");
         let retained = unsafe { CFRetained::retain(ptr) };
-        Self::new(retained)
-    }
-
-    #[inline]
-    pub unsafe fn from_create_rule(ptr: *const RawAXUIElement) -> Self {
-        let ptr = NonNull::new(ptr.cast_mut()).expect("attempted to create a NULL object");
-        let retained = unsafe { CFRetained::from_raw(ptr) };
         Self::new(retained)
     }
 
@@ -212,11 +161,6 @@ impl AXUIElement {
     pub fn modal(&self) -> Result<bool> {
         self.bool_attribute("AXModal")
     }
-
-    pub fn fullscreen(&self) -> Result<bool> {
-        self.bool_attribute("AXFullscreen")
-    }
-
     pub fn title(&self) -> Result<String> {
         let value = self.copy_required_attribute("AXTitle")?;
         let string = self.downcast::<CFString>(value)?;
@@ -232,14 +176,6 @@ impl AXUIElement {
         let element = self.downcast::<RawAXUIElement>(value)?;
         Ok(AXUIElement::new(element))
     }
-
-    /// Whether this element is the "main" window (AXMain).
-    ///
-    /// This is primarily used by developer tooling and may not be supported by all elements.
-    pub fn main(&self) -> Result<bool> {
-        self.bool_attribute("AXMain")
-    }
-
     pub fn windows(&self) -> Result<Vec<AXUIElement>> {
         let Some(value) = self.copy_attribute("AXWindows")? else {
             return Ok(Vec::new());
@@ -253,15 +189,6 @@ impl AXUIElement {
         }
         Ok(out)
     }
-
-    pub fn parent(&self) -> Result<Option<AXUIElement>> {
-        let Some(value) = self.copy_attribute("AXParent")? else {
-            return Ok(None);
-        };
-        let element = self.downcast::<RawAXUIElement>(value)?;
-        Ok(Some(AXUIElement::new(element)))
-    }
-
     pub fn attribute(&self, name: &'static str) -> Result<Option<CFRetained<CFType>>> {
         self.copy_attribute(name)
     }
@@ -302,46 +229,8 @@ impl AXUIElement {
         let attr = CFString::from_static_str(name);
         self.set_attribute_value(attr.as_ref(), cf_bool.as_ref())
     }
-
-    pub fn can_move(&self) -> Result<bool> {
-        self.is_settable("AXPosition")
-    }
-
     pub fn can_resize(&self) -> Result<bool> {
         self.is_settable("AXSize")
-    }
-
-    #[allow(unused)]
-    pub fn element_at_position(point: CGPoint) -> Option<Self> {
-        let mut out_ptr: *const RawAXUIElement = std::ptr::null();
-        let status = unsafe {
-            RawAXUIElement::copy_element_at_position(
-                &*RawAXUIElement::new_system_wide(),
-                point.x as f32,
-                point.y as f32,
-                std::ptr::NonNull::new_unchecked(&mut out_ptr),
-            )
-        };
-        if status == AXError::Success && !out_ptr.is_null() {
-            let retained = unsafe {
-                CFRetained::from_raw(
-                    std::ptr::NonNull::new(out_ptr as *mut RawAXUIElement)
-                        .expect("non-null AXUIElement pointer"),
-                )
-            };
-            return Some(Self::new(retained));
-        }
-
-        None
-    }
-
-    pub fn process_id(&self) -> Result<pid_t> {
-        let pid = unsafe { NonNull::new_unchecked(&mut 0i32) };
-        if unsafe { self.inner.pid(pid) } == AXError::Success {
-            Ok(unsafe { *pid.as_ref() })
-        } else {
-            Err(Error::Ax(unsafe { self.inner.pid(pid) }))
-        }
     }
 }
 

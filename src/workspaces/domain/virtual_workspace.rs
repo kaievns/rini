@@ -806,7 +806,6 @@ impl WorkspaceStore {
     ) -> Result<VirtualWorkspaceId, WorkspaceError> {
         let default_workspace_id = self.get_default_workspace(space)?;
         if self.assign_window_to_workspace(window_store, space, window_id, default_workspace_id) {
-            window_store.clear_rule_floating(window_id);
             Ok(default_workspace_id)
         } else {
             Err(WorkspaceError::AssignmentFailed)
@@ -867,7 +866,6 @@ impl WorkspaceStore {
             self.preserved_workspace_assignment(window_store, window_id, space);
 
         if rule_decision == AppRuleDecision::Unmanaged {
-            window_store.clear_rule_floating(window_id);
             return Ok(AppRuleResult::Unmanaged);
         }
 
@@ -939,7 +937,6 @@ impl WorkspaceStore {
                     error!("Failed to preserve window workspace assignment from app rule");
                     return Err(WorkspaceError::AssignmentFailed);
                 }
-                window_store.set_rule_floating(window_id, floating);
                 return Ok(AppRuleResult::Managed(AppRuleEffects {
                     workspace_id: existing_assignment.workspace_id,
                     floating,
@@ -952,7 +949,6 @@ impl WorkspaceStore {
 
             if self.assign_window_to_workspace(window_store, space, window_id, target_workspace_id)
             {
-                window_store.set_rule_floating(window_id, floating);
                 return Ok(AppRuleResult::Managed(AppRuleEffects {
                     workspace_id: target_workspace_id,
                     floating,
@@ -975,7 +971,6 @@ impl WorkspaceStore {
                 error!("Failed to preserve existing window workspace assignment");
                 return Err(WorkspaceError::AssignmentFailed);
             }
-            window_store.clear_rule_floating(window_id);
             return Ok(AppRuleResult::Managed(AppRuleEffects {
                 workspace_id: existing_assignment.workspace_id,
                 floating: false,
@@ -988,7 +983,6 @@ impl WorkspaceStore {
 
         let default_workspace_id = self.get_default_workspace(space)?;
         if self.assign_window_to_workspace(window_store, space, window_id, default_workspace_id) {
-            window_store.clear_rule_floating(window_id);
             Ok(AppRuleResult::Managed(AppRuleEffects {
                 workspace_id: default_workspace_id,
                 floating: false,

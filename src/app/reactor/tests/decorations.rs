@@ -16,7 +16,6 @@ use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::domain::style::Ring;
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
 use crate::windows::domain::attention::Attention;
-use crate::windows::domain::catalogue::NativeFullscreenTransition;
 use crate::windows::domain::rules::RuleMatch;
 use crate::windows::platform::window_server::set_space_window_list_for_space_override;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
@@ -205,7 +204,6 @@ fn a_window_macos_takes_into_native_fullscreen_is_sent_held() {
         Some(WindowServerId::new(901)),
         Some(left),
         SpaceId::new(0x400000001),
-        NativeFullscreenTransition::Suspended,
     );
     desk.reactor.handle_test_batch(Vec::new());
     let model = models(&mut desk.rest).pop().expect("sent");

@@ -5,11 +5,10 @@
     unsafe_op_in_unsafe_fn,
     clippy::missing_safety_doc
 )]
-//! A window's sub-level, asked of SkyLight's private connection server port over Mach. The port is
-//! found by resolving a symbol out of SkyLight's Mach-O image; there is no public API for either.
+//! A window's sub-level, asked of SkyLight's private connection server port over Mach. The port
+//! comes from a Mach message to `SLSServerPort`; there is no public API for either.
 use core::mem::{size_of, zeroed};
-use std::ffi::CStr;
-use std::os::raw::{c_char, c_int, c_void};
+use std::os::raw::c_int;
 
 use rini_mach_sys::*;
 use tracing::debug;
@@ -65,163 +64,6 @@ pub fn init_window_sub_level_server_port() {
     unsafe {
         g_server_port = create_connection_server_port();
     }
-}
-const LC_SEGMENT_64: u32 = 0x19;
-const LC_SYMTAB: u32 = 0x2;
-#[repr(C)]
-struct mach_header_64 {
-    magic: u32,
-    cputype: i32,
-    cpusubtype: i32,
-    filetype: u32,
-    ncmds: u32,
-    sizeofcmds: u32,
-    flags: u32,
-    reserved: u32,
-}
-#[repr(C)]
-struct load_command {
-    cmd: u32,
-    cmdsize: u32,
-}
-#[repr(C)]
-struct segment_command_64 {
-    cmd: u32,
-    cmdsize: u32,
-    segname: [c_char; 16],
-    vmaddr: u64,
-    vmsize: u64,
-    fileoff: u64,
-    filesize: u64,
-    maxprot: i32,
-    initprot: i32,
-    nsects: u32,
-    flags: u32,
-}
-#[repr(C)]
-struct symtab_command {
-    cmd: u32,
-    cmdsize: u32,
-    symoff: u32,
-    nsyms: u32,
-    stroff: u32,
-    strsize: u32,
-}
-#[repr(C)]
-struct nlist_64 {
-    n_strx: u32,
-    n_type: u8,
-    n_sect: u8,
-    n_desc: u16,
-    n_value: u64,
-}
-unsafe extern "C" {
-    fn _dyld_image_count() -> u32;
-    fn _dyld_get_image_name(image_index: u32) -> *const c_char;
-    fn _dyld_get_image_header(image_index: u32) -> *const mach_header_64;
-    fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
-}
-fn cstr_bytes_eq(left: *const c_char, right_with_nul: &[u8]) -> bool {
-    if left.is_null() || right_with_nul.is_empty() || *right_with_nul.last().unwrap() != 0 {
-        return false;
-    }
-
-    let right = &right_with_nul[..right_with_nul.len() - 1];
-    unsafe { CStr::from_ptr(left).to_bytes() == right }
-}
-fn segname_eq(segname: &[c_char; 16], rhs: &[u8]) -> bool {
-    let end = segname.iter().position(|&c| c == 0).unwrap_or(segname.len());
-    if end != rhs.len() {
-        return false;
-    }
-
-    segname.iter().take(end).map(|&c| c as u8).eq(rhs.iter().copied())
-}
-unsafe fn macho_find_image_header(
-    target_name: &[u8],
-    slide: &mut isize,
-) -> Option<*const mach_header_64> {
-    let image_count = _dyld_image_count();
-    for index in 0..image_count {
-        let image_name = _dyld_get_image_name(index);
-        if cstr_bytes_eq(image_name, target_name) {
-            *slide = _dyld_get_image_vmaddr_slide(index);
-            return Some(_dyld_get_image_header(index));
-        }
-    }
-
-    None
-}
-unsafe fn macho_find_linkedit_segment(
-    header: *const mach_header_64,
-) -> Option<*const segment_command_64> {
-    if header.is_null() {
-        return None;
-    }
-
-    let header_ref = &*header;
-    let mut offset = size_of::<mach_header_64>();
-    for _ in 0..header_ref.ncmds {
-        let cmd = (header as *const u8).add(offset) as *const load_command;
-        if (*cmd).cmd == LC_SEGMENT_64 {
-            let segment = cmd as *const segment_command_64;
-            if segname_eq(&(*segment).segname, b"__LINKEDIT") {
-                return Some(segment);
-            }
-        }
-        offset += (*cmd).cmdsize as usize;
-    }
-
-    None
-}
-unsafe fn macho_find_symtab_command(
-    header: *const mach_header_64,
-) -> Option<*const symtab_command> {
-    if header.is_null() {
-        return None;
-    }
-
-    let header_ref = &*header;
-    let mut offset = size_of::<mach_header_64>();
-    for _ in 0..header_ref.ncmds {
-        let cmd = (header as *const u8).add(offset) as *const load_command;
-        if (*cmd).cmd == LC_SYMTAB {
-            return Some(cmd as *const symtab_command);
-        }
-        offset += (*cmd).cmdsize as usize;
-    }
-
-    None
-}
-pub unsafe fn macho_find_symbol(
-    target_image: &[u8],
-    target_symbol: &[u8],
-) -> Option<*const c_void> {
-    if target_symbol.is_empty() || *target_symbol.last().unwrap() != 0 {
-        return None;
-    }
-
-    let mut slide = 0isize;
-    let header = macho_find_image_header(target_image, &mut slide)?;
-    let linkedit_segment = macho_find_linkedit_segment(header)?;
-    let symtab_command = macho_find_symtab_command(header)?;
-    let symbol_count = (*symtab_command).nsyms as usize;
-    let linkedit_base = ((*linkedit_segment).vmaddr as isize - (*linkedit_segment).fileoff as isize
-        + slide) as usize;
-    let symbol_str = (linkedit_base + (*symtab_command).stroff as usize) as *const c_char;
-    let symbol_sym = (linkedit_base + (*symtab_command).symoff as usize) as *const nlist_64;
-    let target = &target_symbol[..target_symbol.len() - 1];
-
-    for i in 0..symbol_count {
-        let list = symbol_sym.add(i);
-        let symbol_name = symbol_str.add((*list).n_strx as usize);
-        if CStr::from_ptr(symbol_name).to_bytes() == target {
-            let sym_addr = ((*list).n_value as isize + slide) as usize;
-            return Some(sym_addr as *const c_void);
-        }
-    }
-
-    None
 }
 unsafe fn create_connection_server_port() -> mach_port_t {
     let mut msg = aligned_message_t(zeroed::<create_connection_server_port_message_t>());
@@ -356,32 +198,4 @@ pub unsafe fn mach_get_window_sub_level(wid: u32) -> c_int {
 /// The sub-level of `wid`, or 0 when the query cannot be answered.
 pub fn window_sub_level(wid: u32) -> c_int {
     unsafe { mach_get_window_sub_level(wid) }
-}
-#[cfg(test)]
-mod tests {
-    use std::ffi::CString;
-
-    use super::*;
-
-    #[test]
-    fn segname_eq_compares_up_to_the_first_nul_of_a_fixed_16_byte_name() {
-        let mut name = [0 as c_char; 16];
-        for (dst, src) in name.iter_mut().zip(b"__LINKEDIT") {
-            *dst = *src as c_char;
-        }
-        assert!(segname_eq(&name, b"__LINKEDIT"));
-        assert!(!segname_eq(&name, b"__LINKEDI"));
-        assert!(!segname_eq(&name, b"__LINKEDIT2"));
-        let full = [b'A' as c_char; 16];
-        assert!(segname_eq(&full, &[b'A'; 16]));
-    }
-
-    #[test]
-    fn cstr_bytes_eq_requires_a_nul_terminated_needle_and_a_live_haystack() {
-        let hay = CString::new("SkyLight").unwrap();
-        assert!(cstr_bytes_eq(hay.as_ptr(), b"SkyLight\0"));
-        assert!(!cstr_bytes_eq(hay.as_ptr(), b"SkyLight"));
-        assert!(!cstr_bytes_eq(hay.as_ptr(), b"Skylight\0"));
-        assert!(!cstr_bytes_eq(std::ptr::null(), b"SkyLight\0"));
-    }
 }

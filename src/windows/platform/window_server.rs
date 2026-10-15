@@ -220,12 +220,6 @@ impl WindowIterator {
     }
 
     #[inline]
-    #[allow(dead_code)]
-    pub fn tags(&self) -> u64 {
-        unsafe { SLSWindowIteratorGetTags(self.iter) }
-    }
-
-    #[inline]
     #[cfg_attr(test, allow(dead_code))]
     pub fn attributes(&self) -> u64 {
         unsafe { SLSWindowIteratorGetAttributes(self.iter) }
@@ -486,10 +480,6 @@ const ORDERED_IN_ATTRIBUTE: u64 = 1 << 1;
 /// Whether a window whose iterator attributes are `attributes` is ordered in.
 fn attributes_ordered_in(attributes: u64) -> bool {
     attributes & ORDERED_IN_ATTRIBUTE != 0
-}
-
-pub fn window_is_ordered_in(id: WindowServerId) -> bool {
-    window_ordered_in(id).unwrap_or(false)
 }
 
 /// A window as a listing of the window server names it.
@@ -884,30 +874,6 @@ pub fn get_window_at_point(mut point: CGPoint) -> Option<WindowServerId> {
     Some(WindowServerId(wid))
 }
 
-/// Returns `true` if an external application window at normal level or above
-/// occludes the given screen point.
-///
-/// Walks down the window stack at `point`, skipping all Rini-owned CGS
-/// windows (there may be more than one at the same point), until a non-Rini
-/// window is found. Desktop/wallpaper windows sit well below
-/// `NSNormalWindowLevel` and are not considered occluders.
-pub fn is_point_occluded_by_external_window(mut point: CGPoint) -> bool {
-    use objc2_app_kit::NSNormalWindowLevel;
-
-    let mut hit = find_window_at_point(&mut point, None);
-
-    // Skip past any Rini-owned windows stacked at this point.
-    while let Some((wid, cid)) = hit {
-        if !is_own_window(cid) {
-            let level = window_level(wid).unwrap_or(NSWindowLevel::MIN);
-            return level >= NSNormalWindowLevel;
-        }
-        hit = find_window_at_point(&mut point, Some(wid));
-    }
-
-    false
-}
-
 pub fn current_cursor_location() -> Result<CGPoint, CGError> {
     let mut point = CGPoint::new(0.0, 0.0);
     cg_ok(unsafe { SLSGetCurrentCursorLocation(*G_CONNECTION, &mut point) })?;
@@ -1137,10 +1103,6 @@ pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
     } else {
         Some(false)
     }
-}
-
-pub fn app_window_suitable(id: WindowServerId) -> bool {
-    app_window_suitability(id).unwrap_or(false)
 }
 
 // credit: https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468

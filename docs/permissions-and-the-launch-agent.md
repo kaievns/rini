@@ -150,8 +150,8 @@ The mechanism, in three parts:
    was observed it owned a second, the HID tap for the trackpad swipes, removed
    2026-10-10. An active tap sits in the delivery path: the window server
    holds each matching event until the tap's callback answers.
-2. The callbacks make synchronous SkyLight calls per event (hit tests,
-   occlusion checks) over the same SLS connection the capture paths use. When
+2. The callbacks make synchronous SkyLight calls per event (hit tests) over
+   the same SLS connection the capture paths use. When
    tccd re-evaluates the process after the grant change, those calls stall —
    and the callback stalls holding an event, so all input queues behind it.
 3. macOS has a safety valve: it disables an unresponsive tap

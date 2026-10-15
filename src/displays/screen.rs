@@ -323,14 +323,6 @@ fn constrain_display_bounds(did: u32, raw: CGRect, notch_height: f64, top_band: 
     usable_frame(raw, inset, shown.then_some((dock, edge)))
 }
 
-impl CoordinateConverter {
-    pub fn from_screen(screen: &NSScreen) -> Option<Self> {
-        let screen_id = screen.get_number().ok()?;
-        let bounds = CGDisplayBounds(screen_id.as_u32());
-        Some(Self::from_height(bounds.origin.y + bounds.size.height))
-    }
-}
-
 #[allow(private_interfaces)]
 pub trait System {
     fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError>;

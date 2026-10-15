@@ -69,16 +69,12 @@ pub trait AxWorld {
     fn subrole(&self, elem: &Self::Element) -> Result<String, AxError>;
     fn title(&self, elem: &Self::Element) -> Result<String, AxError>;
     fn minimized(&self, elem: &Self::Element) -> Result<bool, AxError>;
-    /// The element's parent, or `None` when Accessibility reports it has none.
-    fn parent(&self, elem: &Self::Element) -> Result<Option<Self::Element>, AxError>;
     fn raise(&self, elem: &Self::Element) -> Result<(), AxError>;
-    fn can_resize(&self, elem: &Self::Element) -> Result<bool, AxError>;
-    fn modal(&self, elem: &Self::Element) -> Result<bool, AxError>;
 
     /// Everything rini records about a window, read in one go.
     ///
-    /// A composition of the reads above plus a window-server lookup for the owning bundle, kept on the
-    /// world so a fake answers it the same way it answers the parts.
+    /// The reads above, plus whether the window is resizable or modal and a window-server lookup for
+    /// the owning bundle, kept on the world so a fake answers it the same way it answers the parts.
     fn window_info(
         &self,
         elem: &Self::Element,
@@ -154,10 +150,6 @@ impl MacAx {
             enhanced_ui: EnhancedUi::default(),
         }
     }
-
-    pub fn observer(&self) -> &Observer {
-        &self.observer
-    }
 }
 
 impl AxWorld for MacAx {
@@ -211,20 +203,8 @@ impl AxWorld for MacAx {
         elem.minimized()
     }
 
-    fn parent(&self, elem: &AXUIElement) -> Result<Option<AXUIElement>, AxError> {
-        elem.parent()
-    }
-
     fn raise(&self, elem: &AXUIElement) -> Result<(), AxError> {
         elem.raise()
-    }
-
-    fn can_resize(&self, elem: &AXUIElement) -> Result<bool, AxError> {
-        elem.can_resize()
-    }
-
-    fn modal(&self, elem: &AXUIElement) -> Result<bool, AxError> {
-        elem.modal()
     }
 
     fn window_info(
@@ -441,24 +421,12 @@ impl AxWorld for FakeAx {
         self.read(&self.minimized, elem)
     }
 
-    fn parent(&self, _elem: &u32) -> Result<Option<u32>, AxError> {
-        Ok(Some(self.app))
-    }
-
     fn raise(&self, elem: &u32) -> Result<(), AxError> {
         if !self.frames.contains_key(elem) {
             return Self::gone();
         }
         self.raised.borrow_mut().push(*elem);
         Ok(())
-    }
-
-    fn can_resize(&self, _elem: &u32) -> Result<bool, AxError> {
-        Ok(true)
-    }
-
-    fn modal(&self, _elem: &u32) -> Result<bool, AxError> {
-        Ok(false)
     }
 
     fn window_info(
