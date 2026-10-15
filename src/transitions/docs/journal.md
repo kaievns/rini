@@ -153,11 +153,13 @@ generation is a number; a `why` is `frame_zero`, `landed`, `focus_changed`, `bac
 
 Every request the reactor sends the engine (a layout pass, a strip movement, a bounce) carries its
 `Cause`: when the reactor took the event it answers and what that event was.
-`Reactor::handle_event` stamps it as it takes each event, before anything else, and puts the outer
-one back as it returns: a frame report that releases a drag handles the mouse up inside it, and the
-report's passes after it are the report's again. `what` is the event's variant, `window_frame_changed`
-or `mouse_up`, and for a layout or reactor command the command as the IPC names it, `move_focus`
-or `focus_window`. Every pass a command asks for carries the command.
+`Reactor::handle_event` stamps it as it takes each event, before anything else, and puts the one
+before back as it returns, which keeps the cause steady between top-level events. What a reducer
+hands back is carried out as part of its event and carries that event's press: a drag released
+inside a frame report is the report's press, its passes included ("Carrying out an outcome" in
+`src/app/docs/README.md`). `what` is the event's variant, `window_frame_changed` or `mouse_up`,
+and for a layout or reactor command the command as the IPC names it, `move_focus` or
+`focus_window`. Every pass a command asks for carries the command.
 
 So `press` to `begin` is the reactor's work on the event and the hop to the engine, and `press` is
 where the time from a press to the overlay up starts, as the research measured it ("ms after rini
