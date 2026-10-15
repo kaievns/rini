@@ -113,7 +113,7 @@ pub fn settle(
         return again;
     }
     let Some(hits) = stability.sample(screens) else {
-        return Settle::Again(attempt + 1);
+        return Settle::Again(attempt.saturating_add(1));
     };
     if hits < DISPLAY_STABLE_REQUIRED_HITS {
         return again;

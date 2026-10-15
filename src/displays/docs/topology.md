@@ -22,10 +22,13 @@ conservative:
 - Window enter/leave notices arriving during a quarantine are dropped and
   counted (`QuarantineStats`), because the authoritative snapshot that follows
   supersedes them.
-- Nothing is asked again for ever. A refresh retries a snapshot it cannot
-  forward `REFRESH_MAX_RETRIES` times, and starts over only while a wake or an
-  unlock is owed a snapshot; a churn checks a topology it has already seen
-  `DISPLAY_STABILIZE_MAX_ATTEMPTS` times, then ends unsettled and refreshes.
+- A refresh retries a snapshot it cannot forward `REFRESH_MAX_RETRIES` times,
+  and while a wake or an unlock is owed a snapshot it starts over until one is
+  forwarded. A churn checks a topology it has already seen
+  `DISPLAY_STABILIZE_MAX_ATTEMPTS` times, then ends unsettled and refreshes; a
+  topology that differs from the last sample is checked again whatever the
+  attempt, so one that changes between every two samples is checked until it
+  repeats.
 
 The rules are functions over values in `src/displays/domain/snapshot.rs` (what
 the snapshot holds) and `src/displays/domain/settling.rs` (when to ask again);

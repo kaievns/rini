@@ -125,11 +125,12 @@ context is arranged differently depending on what is plugged in, and rini rememb
   before anything reads them.
 - A window MUST NOT be followed onto a login or fullscreen space. Assigning one there strands it
   somewhere the user cannot reach and no layout pass will touch.
-- Asking the window server again MUST stop. A refresh MUST retry a snapshot it cannot forward at
-  most `REFRESH_MAX_RETRIES` times, and MAY start over only while a wake or an unlock is still owed
-  a snapshot, since only a forwarded one releases the reactor. A display churn MUST check a topology
-  it has already sampled at most `DISPLAY_STABILIZE_MAX_ATTEMPTS` times, then end unsettled and
-  refresh.
+- A refresh MUST retry a snapshot it cannot forward at most `REFRESH_MAX_RETRIES` times. While a
+  wake or an unlock is still owed a snapshot it MUST start over until one is forwarded, since only a
+  forwarded one releases the reactor. A display churn MUST check a topology it has already sampled
+  at most `DISPLAY_STABILIZE_MAX_ATTEMPTS` times, then end unsettled and refresh. A topology that
+  differs from the last sample MUST be checked again whatever the attempt, so a churn whose topology
+  changes between every two samples is checked until one repeats.
 - Each snapshot MUST make one visible-window refresh once every quarantine it releases is lifted,
   not one per quarantine.
 

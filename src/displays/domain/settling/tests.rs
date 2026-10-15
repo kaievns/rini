@@ -99,6 +99,17 @@ fn a_new_topology_is_checked_again_even_at_the_cap() {
 }
 
 #[test]
+fn a_new_topology_at_the_last_attempt_is_checked_again_at_that_attempt() {
+    let mut stability = Stability::default();
+    let screens = [screen("a", 0.0, Some(1))];
+
+    assert_eq!(
+        settle(&mut stability, &screens, SpaceKinds::for_tests(), QUIET, u8::MAX),
+        Settle::Again(u8::MAX)
+    );
+}
+
+#[test]
 fn a_busy_window_server_holds_a_settled_topology_until_the_cap_then_gives_up() {
     let mut stability = Stability::default();
     let screens = [screen("a", 0.0, Some(1))];
