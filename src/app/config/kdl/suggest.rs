@@ -156,6 +156,7 @@ pub const NIRI: &[(&str, &str, &str)] = &[
         "mod-key-nested",
         "rini never runs nested inside another window manager",
     ),
+    ("input", "workspace-auto-back-and-forth", NOT_IN_RINI),
     ("layout", "always-center-single-column", NOT_IN_RINI),
     (
         "layout",

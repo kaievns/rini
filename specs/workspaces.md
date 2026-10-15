@@ -23,11 +23,12 @@ moves along the strip within one workspace.
 
 ## Moving between workspaces
 
-- Switching to the workspace already shown MUST do nothing, as in niri; `focus-workspace-previous` is
-  how to go back. `input › workspace-auto-back-and-forth` MUST be refused as an unknown node.
+- Switching to the workspace already shown MUST do nothing, as in niri by default;
+  `focus-workspace-previous` is how to go back. niri's `input › workspace-auto-back-and-forth` MUST
+  be refused with the reason.
 
-> **Reported 2026-10-15.** Kai's decision: `workspace-auto-back-and-forth` goes. It was rift's,
-> niri has no such option, and neither Kai's config nor the default turned it on.
+> **Reported 2026-10-15.** Kai's decision: `workspace-auto-back-and-forth` goes. It is niri's option,
+> dropped anyway: neither Kai's config nor the default turned it on.
 
 - The default binds MUST move a window to another workspace without following it. The user asked to
   send the window away, not to go with it.

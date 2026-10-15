@@ -167,6 +167,7 @@ fn switching_to_the_shown_workspace_is_not_configurable() {
         report.contains("unknown node `workspace-auto-back-and-forth` in `input`"),
         "{report}"
     );
+    assert!(report.contains("niri has this and rini does not"), "{report}");
 }
 
 #[test]
