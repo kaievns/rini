@@ -78,8 +78,8 @@ check, then a spec or deletion:
   draw, so a busy one holds a batch the renderer waits on. The cursor warp moves first
   (`docs/architecture.md`, "What is still not where the map says").
 - **The other open rows of that table:** the `src/displays/screen.rs` split, the flight engine's
-  pure rules into `domain/`, typed geometry outside the animation features, `broadcast.rs` into
-  `app/api/`, the `src/workspaces/engine.rs` split, and the reactor's stores owned by their features
+  pure rules into `domain/`, typed geometry outside the animation features, the
+  `src/workspaces/engine.rs` split, and the reactor's stores owned by their features
   (`docs/audit-progress.md`, item 3). The config hub, the hotkeys' lowering and the notifications
   demultiplexer stay, for the reasons their rows give.
 - **A fake element seam for the AX driver** in `src/windows/platform/app_actor.rs`, so it can be
@@ -102,8 +102,7 @@ The things most likely to look like obvious next steps. The values behind some o
 
 - **More layout modes.** There is one, deliberately.
 - **Relying on another app's tooling.** No border tool, no status bar, no companion code for one.
-  `rini-cli` and `subscribe` are rini's interface for others to call, not a dependency
-  (`specs/README.md`).
+  `rini-cli` is rini's interface for others to call, not a dependency (`specs/README.md`).
 - **Settings beyond niri's.** Where rini and niri share a concept, rini takes niri's settings and
   names. Where they differ, rini decides. No configuration GUI.
 - **Config stability.** Keys change when a better design needs them. The layout file promises only

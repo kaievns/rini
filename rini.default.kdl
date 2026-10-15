@@ -334,23 +334,6 @@ window-rule {
 // Commands run once when rini starts. spawn-at-startup runs a program with its arguments, one
 // string each, and interprets nothing. spawn-sh-at-startup hands one string to `sh -c`, so pipes,
 // $VARIABLES and quoting work.
-//
-// A command subscribed with `rini-cli subscribe` receives the event in its environment:
-//   RINI_EVENT_TYPE            "workspace_changed" | "windows_changed" | "window_title_changed" | "focused_window_changed"
-//   RINI_WORKSPACE_ID          workspace id
-//   RINI_WORKSPACE_NAME        workspace name
-//   RINI_SPACE_ID              native macOS space id
-//   RINI_DISPLAY_UUID          display UUID (absent when the display is unknown)
-//   RINI_WORKSPACE_INDEX       workspace index (window_title_changed and focused_window_changed)
-//   RINI_WINDOW_COUNT          number of windows (windows_changed only)
-//   RINI_WINDOWS               comma-separated window ids (windows_changed only)
-//   RINI_WINDOW_ID             window id (window_title_changed and focused_window_changed)
-//   RINI_PREVIOUS_WINDOW_TITLE previous title (window_title_changed only)
-//   RINI_WINDOW_TITLE          new title (window_title_changed only)
-//   RINI_EVENT_JSON            the whole event as JSON
-//
-// Example, a SketchyBar trigger:
-// spawn-sh-at-startup "rini-cli subscribe cli --event workspace_changed --command sh --args -c --args 'sketchybar --trigger rini_workspace_changed RINI_WORKSPACE_NAME=\"$RINI_WORKSPACE_NAME\" RINI_WORKSPACE_ID=\"$RINI_WORKSPACE_ID\"'"
 
 binds {
     // A key is modifiers and one key joined by +, like Mod+Shift+H. Mod is input's mod-key.

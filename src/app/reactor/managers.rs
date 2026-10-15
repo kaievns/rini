@@ -14,7 +14,6 @@ use crate::input::platform::input_tap as event_tap;
 use crate::input::settings::WindowSnappingSettings;
 use crate::windows::domain::raise as raise_manager;
 use crate::workspaces::LayoutEngine;
-use crate::workspaces::broadcast::BroadcastSender;
 
 /// Manages application state and rules
 pub struct AppManager {
@@ -166,7 +165,6 @@ pub struct CommunicationManager {
     pub transitions_tx: Option<crate::transitions::platform::engine::Sender>,
     pub pictures: Option<crate::pictures::platform::service::Pictures>,
     pub raise_manager_tx: raise_manager::Sender,
-    pub event_broadcaster: BroadcastSender,
     pub wm_sender: Option<wm_controller::Sender>,
     pub events_tx: Option<channels::Sender<Event>>,
 }

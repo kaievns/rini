@@ -274,13 +274,10 @@ Mach-port IPC, as in rift, under `git.kaievns.rini`. `rini-cli` prints compact J
 rini-cli query diagnostics             # every display, workspace, column and parked window
 rini-cli query displays
 rini-cli execute workspace switch 1    # counts from 0: the second workspace
-rini-cli subscribe cli --event workspace_changed --command sh --args -c --args 'echo "$RINI_WORKSPACE_NAME"'
 ```
 
-The CLI counts workspaces from 0, the config from 1. `subscribe` delivers four events:
-`workspace_changed`, `windows_changed`, `window_title_changed` and `focused_window_changed`, or `*`
-for all. A subscribed command gets the event in its environment; `rini.default.kdl` lists the
-variables.
+The CLI counts workspaces from 0, the config from 1. rini pushes no events: a tool that follows
+rini polls a query.
 
 ## Credits
 

@@ -115,7 +115,7 @@ fixed.
 
 ### 1.6 Two broadcast builders
 
-**DONE — both use `broadcast_context` (`45adc4b`).**
+**GONE — both went with the event subscriptions, deleted on Kai's decision of 2026-10-15.**
 
 `src/app/reactor/mod.rs:1923` `broadcast_window_title_changed` (34 lines) and
 `:1958` `broadcast_focused_window_changed` (24 lines), 0.91 similar. Same
@@ -310,9 +310,9 @@ this out and names the fix: a `present(motion)` boundary.
 because it is the only remaining rule-2 violation and the reason the ratchet has
 an exception list at all.
 
-### 3.5 `src/workspaces/broadcast.rs` sends IPC from the layout engine
+### 3.5 The workspaces feature's `broadcast.rs` sends IPC from the layout engine
 
-Named in `docs/architecture.md` as belonging to `app/api/`. Unchanged.
+**GONE — the file and the engine's outbox went with the event subscriptions on 2026-10-15.**
 
 ## 4. Testability
 

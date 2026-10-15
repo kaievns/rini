@@ -195,7 +195,6 @@ fn main() {
 
     execute_startup_commands(&config.settings.run_on_start);
 
-    let (broadcast_tx, broadcast_rx) = rini::app::channels::channel();
 
     // Restore is ON by default, so a restart or redeploy keeps window sizes, workspaces
     // and strip positions.
@@ -268,7 +267,6 @@ fn main() {
         layout,
         display_memory,
         event_tap_tx.clone(),
-        broadcast_tx.clone(),
         Some(cursor_warp_tx.clone()),
         Some(transitions_tx.clone()),
         Some(pictures.clone()),
@@ -305,35 +303,13 @@ fn main() {
 
     ConfigWatcher::spawn(config_tx.clone(), config_path.clone());
 
-    let server_state = match ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
+    if let Err(err) = ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
         reactor.clone(),
         config_tx.clone(),
     )) {
-        Ok(state) => state,
-        Err(err) => {
-            eprintln!("{}", err);
-            process::exit(1);
-        }
-    };
-
-    let mach_bridge_rx = broadcast_rx;
-
-    let server_state_for_bridge = server_state.clone();
-    std::thread::spawn(move || {
-        let mut rx = mach_bridge_rx;
-        let server_state = server_state_for_bridge;
-        loop {
-            match rx.blocking_recv() {
-                Some((_span, event)) => {
-                    let state = server_state.read();
-                    state.publish(event);
-                }
-                None => {
-                    break;
-                }
-            }
-        }
-    });
+        eprintln!("{}", err);
+        process::exit(1);
+    }
 
     let (wm_controller, wm_controller_sender) = WmController::new(
         config.clone(),

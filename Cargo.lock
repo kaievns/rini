@@ -1754,14 +1754,9 @@ name = "rini-ipc"
 version = "0.1.0"
 dependencies = [
  "continue",
- "crossbeam-channel",
  "ctrlc",
- "dashmap",
- "nix 0.30.1",
- "parking_lot",
  "rini-core",
  "rini-mach-sys",
- "rini-runloop",
  "serde",
  "serde_json",
  "strum",

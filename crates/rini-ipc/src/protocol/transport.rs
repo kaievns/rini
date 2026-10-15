@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{EventKind, RiniCommand, WindowId};
+use crate::{RiniCommand, WindowId};
 
 /// A request accepted by Rini's Mach IPC server.
 #[non_exhaustive]
@@ -34,21 +34,6 @@ pub enum RiniRequest {
     ExecuteCommand {
         command: RiniCommand,
     },
-    Subscribe {
-        event: EventKind,
-    },
-    Unsubscribe {
-        event: EventKind,
-    },
-    SubscribeCli {
-        event: EventKind,
-        command: String,
-        args: Vec<String>,
-    },
-    UnsubscribeCli {
-        event: EventKind,
-    },
-    ListCliSubscriptions,
 }
 
 /// The response envelope returned by Rini's Mach IPC server.
@@ -127,6 +112,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.into_result().unwrap()[0].name, "main");
+    }
+
+    /// rini pushes no events (`specs/README.md`), so a subscription is not a request it reads.
+    #[test]
+    fn a_subscription_is_not_a_request() {
+        for request in [
+            serde_json::json!({ "subscribe": { "event": "*" } }),
+            serde_json::json!({ "subscribe_cli": { "event": "*", "command": "sh", "args": [] } }),
+        ] {
+            assert!(serde_json::from_value::<RiniRequest>(request).is_err());
+        }
     }
 
     #[test]

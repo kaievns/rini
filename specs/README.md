@@ -64,9 +64,9 @@ layout mode, and adding one is out of scope rather than unimplemented.
 rini MUST meet every requirement here with nothing but itself and macOS. It MUST NOT need another
 application's tool to look or behave as specified, and it MUST NOT carry code that exists only to
 accommodate such a tool running beside it. What rini needs drawn, it draws. rini's own IPC and
-`rini-cli`, which other tools call (the sketchybar `subscribe` hooks), are rini's interface, not
-such code; nor is a look rini keeps from a setup it replaced, as the bar keeps sketchybar's, nor the
-niri config format.
+`rini-cli`, which other tools call to query and command rini, are rini's interface, not such code;
+nor is a look rini keeps from a setup it replaced, as the bar keeps sketchybar's, nor the niri
+config format. rini pushes no events to other tools: one that follows rini polls a query.
 
 > **Reported 2026-10-06.** Kai's decision: "yes, no external deps on apps tooling, make it general
 > requirement. rini comes with batteries out of the box". The border companions went in the same
@@ -75,6 +75,10 @@ niri config format.
 > 1.9 makes its window 2·(w+8)pt larger than the one it borders, 19pt at a 1.5pt border. Once rini
 > draws borders of its own, they would have matched rini's own border windows and flown pictures of
 > them over the borders rini draws on the tiles.
+
+> **Reported 2026-10-15.** Kai's decision on event subscriptions, whose one consumer was the
+> sketchybar setup the bar replaced on 2026-09-29: "delete". `rini-cli subscribe`, the commands it
+> ran with each event in their environment, and the Mach event stream went in the same change.
 
 Not yet met: with rini's bar off, a flight still pictures what another application draws between the
 desktop and the windows as the bar, a path that exists for sketchybar. The two requirements it

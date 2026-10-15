@@ -8,7 +8,7 @@ use rini_core::ids::WindowServerId;
 use rini_ipc::RiniMachClient;
 use rini_ipc::protocol::WorkspaceSelector;
 use rini_ipc::protocol::{self as reactor, DisplaySelector};
-use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse, SwitchScope};
+use rini_ipc::protocol::{RiniRequest, RiniResponse, SwitchScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -36,11 +36,6 @@ enum Commands {
     Execute {
         #[command(subcommand)]
         command: ExecuteCommands,
-    },
-    /// Event subscription commands
-    Subscribe {
-        #[command(subcommand)]
-        subscribe: SubscribeCommands,
     },
 }
 
@@ -401,61 +396,16 @@ enum DisplayCommands {
     },
 }
 
-#[derive(Subcommand)]
-enum SubscribeCommands {
-    /// Subscribe to Mach IPC events
-    Mach {
-        /// Event to subscribe to (workspace_changed, windows_changed, window_title_changed, focused_window_changed, *)
-        event: String,
-    },
-    /// Subscribe to events via CLI command execution
-    Cli {
-        /// Event to subscribe to (workspace_changed, windows_changed, window_title_changed, focused_window_changed, *)
-        #[arg(long)]
-        event: String,
-        /// Command to execute when event occurs
-        #[arg(long)]
-        command: String,
-        /// Arguments to pass to command (event data will be appended as JSON)
-        #[arg(long, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-    /// Unsubscribe from Mach IPC events
-    UnsubMach {
-        /// Event to unsubscribe from
-        event: String,
-    },
-    /// Unsubscribe from CLI events
-    UnsubCli {
-        /// Event to unsubscribe from
-        event: String,
-    },
-    /// List current CLI subscriptions
-    ListCli,
-}
-
 fn main() {
     sigpipe::reset();
     let cli = Cli::parse();
 
-    let request = match cli.command {
-        Commands::Subscribe {
-            subscribe: SubscribeCommands::Mach { event },
-        } => {
-            if let Err(e) = run_mach_subscription(event) {
-                eprintln!("Communication error: {}", e);
-                eprintln!("Hint: ensure the rini service is running (try `rini service start`).");
-                process::exit(1);
-            }
-            process::exit(0);
+    let request = match build_request(cli.command) {
+        Ok(req) => req,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            process::exit(1);
         }
-        command => match build_request(command) {
-            Ok(req) => req,
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                process::exit(1);
-            }
-        },
     };
 
     let client = match RiniMachClient::connect() {
@@ -502,7 +452,6 @@ fn build_request(command: Commands) -> Result<RiniRequest, String> {
     match command {
         Commands::Query { query } => build_query_request(query),
         Commands::Execute { command } => build_execute_request(command),
-        Commands::Subscribe { subscribe } => build_subscribe_request(subscribe),
     }
 }
 
@@ -524,26 +473,6 @@ fn build_query_request(query: QueryCommands) -> Result<RiniRequest, String> {
         }
         QueryCommands::Metrics => Ok(RiniRequest::GetMetrics),
         QueryCommands::Diagnostics => Ok(RiniRequest::GetDiagnostics),
-    }
-}
-
-fn build_subscribe_request(sub: SubscribeCommands) -> Result<RiniRequest, String> {
-    match sub {
-        SubscribeCommands::Mach { event } => Ok(RiniRequest::Subscribe {
-            event: parse_event_kind(&event)?,
-        }),
-        SubscribeCommands::Cli { event, command, args } => Ok(RiniRequest::SubscribeCli {
-            event: parse_event_kind(&event)?,
-            command,
-            args,
-        }),
-        SubscribeCommands::UnsubMach { event } => Ok(RiniRequest::Unsubscribe {
-            event: parse_event_kind(&event)?,
-        }),
-        SubscribeCommands::UnsubCli { event } => Ok(RiniRequest::UnsubscribeCli {
-            event: parse_event_kind(&event)?,
-        }),
-        SubscribeCommands::ListCli => Ok(RiniRequest::ListCliSubscriptions),
     }
 }
 
@@ -767,20 +696,6 @@ fn protocol_window_id(
         .ok_or_else(|| "window id index must be non-zero".to_string())
 }
 
-fn parse_event_kind(input: &str) -> Result<EventKind, String> {
-    match input.trim().to_ascii_lowercase().as_str() {
-        "workspace_changed" => Ok(EventKind::WorkspaceChanged),
-        "windows_changed" => Ok(EventKind::WindowsChanged),
-        "window_title_changed" => Ok(EventKind::WindowTitleChanged),
-        "focused_window_changed" => Ok(EventKind::FocusedWindowChanged),
-        "*" => Ok(EventKind::All),
-        other => Err(format!(
-            "Invalid event '{}'; expected workspace_changed, windows_changed, window_title_changed, focused_window_changed, or *",
-            other
-        )),
-    }
-}
-
 fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
     use rini_ipc::protocol::LayoutCommand as LC;
     match cmd {
@@ -950,24 +865,6 @@ fn write_json<T: Serialize>(value: &T, pretty: bool) -> Result<(), String> {
     }
     writer.write_all(b"\n").map_err(|e| e.to_string())?;
     writer.flush().map_err(|e| e.to_string())
-}
-
-fn run_mach_subscription(event: String) -> Result<(), String> {
-    let pretty = std::env::var("RINI_CLI_PRETTY").map(|v| v != "0").unwrap_or(false);
-    let client = RiniMachClient::connect().map_err(|e| e.to_string())?;
-    let event_kind = parse_event_kind(&event)?;
-    let subscription = client.subscribe(event_kind).map_err(|e| e.to_string())?;
-
-    loop {
-        let event_payload = subscription.recv_event().map_err(|e| e.to_string())?;
-        // Exit cleanly when output is closed by the consumer.
-        if let Err(e) = write_json(&event_payload, pretty) {
-            if e.contains("Broken pipe") {
-                return Ok(());
-            }
-            return Err(format!("Failed to write event output: {e}"));
-        }
-    }
 }
 
 #[cfg(test)]

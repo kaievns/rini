@@ -21,12 +21,10 @@ impl Reactor {
         let mut config = Config::default();
         config.settings.default_disable = false;
         config.settings.animate = false;
-        let (broadcast_tx, _) = channels::channel();
         let mut reactor = Reactor::new(
             config,
             layout,
             DisplayMemory::default(),
-            broadcast_tx,
             None,
             false,
         );

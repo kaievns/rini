@@ -99,9 +99,6 @@ use crate::windows::domain::transaction::WindowTxStore;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
 use crate::windows::platform::window_server::{StackPlace, covered_by_peer_above};
-use crate::workspaces::broadcast::{
-    BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id,
-};
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 use crate::workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
@@ -125,15 +122,6 @@ pub use crate::app::reactor::state::{
 pub(crate) use crate::windows::domain::state::WindowFilter;
 pub use crate::windows::domain::transaction::Requested;
 pub use rini_ipc::protocol::Command;
-
-/// The five answers every broadcast event needs about where a window is.
-struct BroadcastContext {
-    space: SpaceId,
-    workspace_id: crate::workspaces::VirtualWorkspaceId,
-    workspace_index: Option<u64>,
-    workspace_name: String,
-    display_uuid: Option<String>,
-}
 
 #[derive(Clone)]
 pub struct ReactorHandle {
@@ -551,7 +539,6 @@ impl Reactor {
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
         event_tap_tx: event_tap::Sender,
-        broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
         transitions_tx: Option<crate::transitions::platform::engine::Sender>,
         pictures: Option<crate::pictures::platform::service::Pictures>,
@@ -567,7 +554,6 @@ impl Reactor {
             config,
             layout_engine,
             display_memory,
-            broadcast_tx,
             window_notify,
             one_space,
         );
@@ -596,7 +582,6 @@ impl Reactor {
         config: Config,
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
-        broadcast_tx: BroadcastSender,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         one_space: bool,
     ) -> Reactor {
@@ -656,7 +641,6 @@ impl Reactor {
                 transitions_tx: None,
                 pictures: None,
                 raise_manager_tx,
-                event_broadcaster: broadcast_tx,
                 wm_sender: None,
                 events_tx: None,
             },
@@ -751,12 +735,6 @@ impl Reactor {
     #[cfg(test)]
     fn raw_spaces_for_current_screens(&self) -> Vec<Option<SpaceId>> {
         self.space_state.screens.iter().map(|s| s.space).collect()
-    }
-
-    fn display_uuid_for_space(&self, space: SpaceId) -> Option<String> {
-        self.space_state
-            .screen_by_space(space)
-            .and_then(|screen| screen.display_uuid_owned())
     }
 
     fn expose_space_if_known(&mut self, space: SpaceId) {
@@ -1251,19 +1229,10 @@ impl Reactor {
     fn handle_event(&mut self, event: Event) {
         let cause = Cause { at: std::time::Instant::now(), what: event.what() };
         let outer_cause = std::mem::replace(&mut self.cause, cause);
-        let previously_focused_window = self.main_window();
         let began = self.layout_manager.layout_engine.focused_window();
         let outer = std::mem::replace(&mut self.focused_as_event_began, began);
         match self.dispatch_workflow(event) {
-            Ok(mut outcome) => {
-                let focused_window = self.main_window();
-                if focused_window != previously_focused_window
-                    && let Some(focused_window) = focused_window
-                {
-                    outcome = outcome.with_focused_window_broadcast(focused_window);
-                }
-                self.apply_event_outcome(outcome);
-            }
+            Ok(outcome) => self.apply_event_outcome(outcome),
             Err(error) => warn!(%error, "reactor workflow failed"),
         }
         self.focused_as_event_began = outer;
@@ -1631,9 +1600,9 @@ impl Reactor {
     ///
     /// Explicit transition frames are written before layout calculation so the
     /// resulting layout remains authoritative. Focus selection follows layout
-    /// writes, then UI/platform presentation state is refreshed. Broadcast and
-    /// discovery requests made directly by a workflow are consequently observed
-    /// only after its model mutation is complete.
+    /// writes, then UI/platform presentation state is refreshed. Discovery
+    /// requests made directly by a workflow are consequently observed only after
+    /// its model mutation is complete.
     fn apply_event_outcome(&mut self, outcome: EventOutcome) {
         // Per event: what this event's regroup raises is only known to this event.
         self.regroup_raised.clear();
@@ -1879,18 +1848,8 @@ impl Reactor {
         if outcome.refresh_focus_follows_mouse {
             self.update_focus_follows_mouse_state();
         }
-        for broadcast in outcome.window_title_broadcasts {
-            self.broadcast_window_title_changed(
-                broadcast.window,
-                broadcast.previous_title,
-                broadcast.new_title,
-            );
-        }
-        if let Some(window) = outcome.focused_window_broadcast {
-            self.broadcast_focused_window_changed(window);
-        }
         // Requests which schedule fresh discovery are last so observers see
-        // the fully reconciled model, layout, UI, and broadcasts.
+        // the fully reconciled model, layout and UI.
         for (pid, request) in outcome.app_requests {
             if let Some(app) = self.app_manager.apps.get(&pid)
                 && let Err(error) = app.handle.send(request)
@@ -2091,85 +2050,8 @@ impl Reactor {
             .workspace_command_space()
             .or_else(|| spaces.iter().copied().flatten().find(|space| self.is_space_active(*space)))
         {
-            if let Some((workspace_id, workspace_name)) =
-                self.layout_manager.layout_engine.ensure_active_workspace_info(space)
-            {
-                let display_uuid = self.display_uuid_for_space(space);
-                let broadcast_event = BroadcastEvent::WorkspaceChanged {
-                    workspace_id: protocol_workspace_id(workspace_id),
-                    workspace_name,
-                    space_id: space.get(),
-                    display_uuid,
-                };
-                _ = self.communication_manager.event_broadcaster.send(broadcast_event);
-            }
+            self.layout_manager.layout_engine.ensure_active_workspace_info(space);
         }
-    }
-
-    /// Where a window is, as a broadcast event has to describe it.
-    ///
-    /// `None` when the window has no active space, no active workspace, or is on a space that is
-    /// not showing — in which case no broadcast goes out at all. Every event below needs the same
-    /// five answers and used to resolve them itself.
-    fn broadcast_context(&self, window_id: WindowId) -> Option<BroadcastContext> {
-        let space = self.affinity().best_space_for_window_id(window_id)?;
-        if !self.is_space_active(space) {
-            return None;
-        }
-        let engine = &self.layout_manager.layout_engine;
-        let workspace_id = engine.active_workspace(space)?;
-        Some(BroadcastContext {
-            space,
-            workspace_id,
-            workspace_index: engine.active_workspace_idx(space),
-            workspace_name: engine
-                .workspace_name(space, workspace_id)
-                .unwrap_or_else(|| format!("Workspace {workspace_id:?}")),
-            display_uuid: self.display_uuid_for_space(space),
-        })
-    }
-
-    fn broadcast_window_title_changed(
-        &mut self,
-        window_id: WindowId,
-        previous_title: String,
-        new_title: String,
-    ) {
-        if previous_title == new_title {
-            return;
-        }
-        let Some(at) = self.broadcast_context(window_id) else {
-            return;
-        };
-        let _ =
-            self.communication_manager
-                .event_broadcaster
-                .send(BroadcastEvent::WindowTitleChanged {
-                    window_id: protocol_window_id(window_id),
-                    workspace_id: protocol_workspace_id(at.workspace_id),
-                    workspace_index: at.workspace_index,
-                    workspace_name: at.workspace_name,
-                    previous_title,
-                    new_title,
-                    space_id: at.space.get(),
-                    display_uuid: at.display_uuid,
-                });
-    }
-
-    fn broadcast_focused_window_changed(&self, window_id: WindowId) {
-        let Some(at) = self.broadcast_context(window_id) else {
-            return;
-        };
-        let _ = self.communication_manager.event_broadcaster.send(
-            BroadcastEvent::FocusedWindowChanged {
-                window_id: protocol_window_id(window_id),
-                workspace_id: protocol_workspace_id(at.workspace_id),
-                workspace_index: at.workspace_index,
-                workspace_name: at.workspace_name,
-                space_id: at.space.get(),
-                display_uuid: at.display_uuid,
-            },
-        );
     }
 
     fn maybe_reapply_app_rules_for_window(&mut self, window_id: WindowId) {
@@ -4819,25 +4701,11 @@ impl Reactor {
         EventOutcome::no_change()
     }
 
-    fn flush_engine_broadcasts(&mut self) {
-        for mut event in self.layout_manager.layout_engine.drain_broadcasts() {
-            // The engine does not know which display owns a space; the record is here.
-            let space = SpaceId::new(event.space_id());
-            let memory = &self.state.display_memory;
-            event.name_display(|| memory.affinity.display_for_space(space).map(str::to_owned));
-            let _ = self.communication_manager.event_broadcaster.send(event);
-        }
-    }
-
     fn handle_layout_response(
         &mut self,
         response: layout::EventResponse,
         workspace_switch_space: Option<SpaceId>,
     ) {
-        // Whatever the engine wanted announced, sent from here: the engine fills an outbox and the
-        // application owns the wire. Draining at the top means every path that reaches a layout
-        // response flushes, which is every path that can change what a subscriber sees.
-        self.flush_engine_broadcasts();
         if self.is_in_drag() {
             self.workspace_switch_manager.mark_workspace_switch_inactive();
             return;

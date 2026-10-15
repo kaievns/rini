@@ -5,7 +5,6 @@
 //! implementation detail of the transport crates.
 
 mod commands;
-mod events;
 mod layout;
 mod queries;
 mod selectors;
@@ -14,7 +13,6 @@ mod transport;
 pub use commands::{
     Command, ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand, SwitchScope,
 };
-pub use events::{EventKind, RiniEvent, WorkspaceId};
 pub use layout::{Direction, LayoutKind, ResizeOrientation};
 pub use queries::{
     ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticCensusWindow,

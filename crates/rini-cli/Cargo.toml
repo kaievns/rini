@@ -2,7 +2,7 @@
 name = "rini-cli"
 version = "0.1.0"
 edition = "2024"
-description = "The command-line client for rini: commands, queries and event subscriptions over the Mach IPC"
+description = "The command-line client for rini: commands and queries over the Mach IPC"
 license = "Apache-2.0"
 publish = false
 

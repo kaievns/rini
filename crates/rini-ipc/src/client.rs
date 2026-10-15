@@ -30,7 +30,6 @@ const MACH_MSG_TYPE_MAKE_SEND: u32 = 20;
 const MACH_PORT_RIGHT_RECEIVE: c_int = 1;
 const MACH_PORT_LIMITS_INFO: c_int = 1;
 const MACH_PORT_LIMITS_INFO_COUNT: u32 = 1;
-const MACH_PORT_QLIMIT_LARGE: u32 = 1024;
 const TASK_BOOTSTRAP_PORT: c_int = 4;
 
 #[derive(Debug, Error)]
@@ -58,8 +57,6 @@ pub enum ClientError {
         #[source]
         source: serde_json::Error,
     },
-    #[error("Rini rejected the subscription: {0}")]
-    SubscriptionRejected(Value),
     #[error("Rini returned an error: {0}")]
     Server(Value),
 }
@@ -98,7 +95,7 @@ impl RiniMachClient {
         request: &RiniRequest,
     ) -> Result<RiniResponse<T>, ClientError> {
         let request_json = serde_json::to_vec(request).map_err(ClientError::Encode)?;
-        let response = unsafe { send_request(&request_json, None)? };
+        let response = unsafe { send_request(&request_json)? };
         parse_json_payload(&response, "response")
     }
 
@@ -171,52 +168,11 @@ impl RiniMachClient {
         self.execute(command)
     }
 
-    /// Subscribes to an event and returns a handle that blocks for future events.
-    pub fn subscribe(&self, event: EventKind) -> Result<RiniMachSubscription, ClientError> {
-        let reply_port = ReplyPort::allocate(MACH_PORT_QLIMIT_LARGE)?;
-        let request = RiniRequest::Subscribe { event };
-        let request_json = serde_json::to_vec(&request).map_err(ClientError::Encode)?;
-        let response = unsafe { send_request(&request_json, Some(reply_port.name))? };
-
-        match parse_json_payload::<RiniResponse>(&response, "response")? {
-            RiniResponse::Success { .. } => Ok(RiniMachSubscription { reply_port }),
-            RiniResponse::Error { error } => Err(ClientError::SubscriptionRejected(error)),
-        }
-    }
-
     fn request<T: DeserializeOwned>(&self, request: RiniRequest) -> Result<T, ClientError> {
         match self.send_typed_request(&request)? {
             RiniResponse::Success { data } => Ok(data),
             RiniResponse::Error { error } => Err(ClientError::Server(error)),
         }
-    }
-}
-
-/// A live event subscription. Dropping it releases its Mach receive right.
-#[derive(Debug)]
-pub struct RiniMachSubscription {
-    reply_port: ReplyPort,
-}
-
-impl RiniMachSubscription {
-    /// Blocks until the next event arrives on this subscription.
-    pub fn recv_event(&self) -> Result<RiniEvent, ClientError> {
-        self.recv_event_as()
-    }
-
-    /// Blocks until the next event arrives and returns its raw JSON payload.
-    ///
-    /// This is useful for compatibility with clients that intentionally handle
-    /// newer event variants without upgrading their protocol types.
-    pub fn recv_event_value(&self) -> Result<Value, ClientError> {
-        self.recv_event_as()
-    }
-
-    /// Blocks until the next event arrives and decodes it into the requested
-    /// type.
-    pub fn recv_event_as<T: DeserializeOwned>(&self) -> Result<T, ClientError> {
-        let payload = unsafe { receive_message(self.reply_port.name)? };
-        parse_json_payload(&payload, "event")
     }
 }
 
@@ -404,37 +360,21 @@ unsafe fn find_service_with_retry() -> Result<ServicePort, ClientError> {
     Err(ClientError::ServiceUnavailable)
 }
 
-unsafe fn send_request(
-    payload: &[u8],
-    subscription_port: Option<MachPort>,
-) -> Result<Vec<u8>, ClientError> {
+unsafe fn send_request(payload: &[u8]) -> Result<Vec<u8>, ClientError> {
     if payload.len() > MAX_MESSAGE_SIZE {
         return Err(ClientError::MessageTooLarge);
     }
 
     let service_port = unsafe { find_service_with_retry()? };
-    let owned_reply_port;
-    let reply_port = match subscription_port {
-        Some(port) => port,
-        None => {
-            owned_reply_port = ReplyPort::allocate(1)?;
-            owned_reply_port.name
-        }
-    };
+    let owned_reply_port = ReplyPort::allocate(1)?;
+    let reply_port = owned_reply_port.name;
 
     let aligned_len = (payload.len() + 3) & !3;
     let mut message: InlineMessage = unsafe { zeroed() };
     message.header.remote_port = service_port.name;
     message.header.local_port = reply_port;
     message.header.id = reply_port as i32;
-    message.header.bits = message_bits(
-        MACH_MSG_TYPE_COPY_SEND,
-        if subscription_port.is_some() {
-            MACH_MSG_TYPE_COPY_SEND
-        } else {
-            MACH_MSG_TYPE_MAKE_SEND
-        },
-    );
+    message.header.bits = message_bits(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND);
     message.header.size = (size_of::<MachMessageHeader>() + aligned_len) as u32;
     unsafe {
         copy_nonoverlapping(payload.as_ptr(), message.data.as_mut_ptr(), payload.len());

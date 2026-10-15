@@ -3,7 +3,6 @@
 //! persisted to `layout.ron`, remembered per app across launches, and homed per display.
 //! `WindowStore` is the catalogue from `crate::windows` plus each window's assignment.
 
-pub mod broadcast;
 pub mod domain;
 pub mod engine;
 pub mod settings;
