@@ -56,5 +56,8 @@ moves along the strip within one workspace.
 ## Where it lives
 
 `src/workspaces/domain/virtual_workspace.rs` is the store, `src/workspaces/domain/launch_memory.rs` the
-relaunch records, `src/workspaces/engine.rs` the orchestration. Measurements are in
+relaunch records, `src/workspaces/engine/launch.rs` what is recorded in them and the slot a relaunched
+window takes, `src/workspaces/engine/rules.rs` and `src/workspaces/engine/discovery.rs` where it takes
+it, `src/workspaces/engine/affinity.rs` the width it arrives at, and `src/workspaces/engine.rs` the
+orchestration. Measurements are in
 `src/workspaces/docs/launch-memory.md` and `src/workspaces/docs/workspaces-and-displays.md`.
