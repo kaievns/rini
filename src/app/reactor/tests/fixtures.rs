@@ -410,3 +410,33 @@ pub fn strip_movements(
     }
     out
 }
+
+/// The `cmd` field of every event logged while `run` runs, as the log prints it.
+pub fn logged_commands(run: impl FnOnce()) -> Vec<String> {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+    struct Commands(Arc<Mutex<Vec<String>>>);
+    struct CommandField<'a>(&'a mut Option<String>);
+    impl Visit for CommandField<'_> {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "cmd" {
+                *self.0 = Some(format!("{value:?}"));
+            }
+        }
+    }
+    impl<S: tracing::Subscriber> Layer<S> for Commands {
+        fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+            let mut command = None;
+            event.record(&mut CommandField(&mut command));
+            self.0.lock().unwrap().extend(command);
+        }
+    }
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::registry().with(Commands(seen.clone()));
+    tracing::subscriber::with_default(subscriber, run);
+    seen.lock().unwrap().clone()
+}

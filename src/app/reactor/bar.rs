@@ -4,13 +4,14 @@
 //! it makes only when that differs from the last one sent, so a burst that changes nothing on the bar
 //! costs the bar nothing. See `src/bar/docs/README.md`.
 
+use rini_ipc::protocol::LayoutCommand;
+
 use super::Reactor;
 use super::events::EventOutcome;
 use crate::bar::domain::model::{
     self, Action, BarInput, BarModel, DisplayInput, FocusInput, WindowInput,
 };
 use crate::bar::platform::actor::{Event as BarEvent, Sender};
-use crate::workspaces::WorkspaceCommand;
 
 /// Where the bars are drawn, and the model they were last sent.
 #[derive(Default)]
@@ -128,10 +129,8 @@ impl Reactor {
                     .and_then(|screen| screen.space)
                     .filter(|space| self.is_space_active(*space));
                 match space {
-                    Some(space) => self.on_layout_command_in(
-                        WorkspaceCommand::SwitchTo(index).into(),
-                        Some(space),
-                    ),
+                    Some(space) => self
+                        .on_layout_command_in(LayoutCommand::SwitchToWorkspace(index), Some(space)),
                     None => Ok(EventOutcome::no_change()),
                 }
             }

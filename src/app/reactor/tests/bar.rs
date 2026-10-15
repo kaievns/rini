@@ -156,6 +156,19 @@ fn a_numeral_click_switches_the_display_it_is_on_and_leaves_the_focused_one_alon
     assert_eq!(sent.displays[1].rows[2], Row::Shown);
 }
 
+/// A click is logged as the wire's own command, so a log read for presses finds clicks too.
+#[test]
+fn a_numeral_click_is_logged_by_its_wire_name() {
+    let mut desk = desk();
+    let logged = logged_commands(|| {
+        desk.reactor.handle_test_batch(vec![Event::BarAction(Action::ShowWorkspace {
+            display: RIGHT.into(),
+            index: 2,
+        })]);
+    });
+    assert_eq!(logged, ["SwitchToWorkspace(2)"]);
+}
+
 #[test]
 fn a_numeral_click_naming_no_known_display_does_nothing() {
     let mut desk = desk();

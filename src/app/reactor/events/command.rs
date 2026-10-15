@@ -1,6 +1,6 @@
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 use super::super::ScreenInfo;
 use crate::app::config::Config;
@@ -35,7 +35,6 @@ pub fn handle_command_layout(
         visible_spaces,
         visible_space_centers,
     } = payload;
-    info!(?cmd);
     let workspace_command = cmd.workspace();
     let is_workspace_switch = workspace_command.is_some_and(|command| command.switches_workspace());
     let is_virtual_workspace_command = workspace_command.is_some();

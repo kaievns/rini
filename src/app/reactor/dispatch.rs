@@ -344,7 +344,7 @@ impl Reactor {
 
     fn dispatch_command(&mut self, command: Command) -> anyhow::Result<EventOutcome> {
         let command = match command {
-            Command::Layout(command) => return self.on_layout_command(command.into()),
+            Command::Layout(command) => return self.on_layout_command(command),
             Command::Reactor(command) => command,
         };
         match command {
