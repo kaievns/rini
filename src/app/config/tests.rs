@@ -8,7 +8,7 @@ use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
 use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue, Paint};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
-use crate::layout::settings::{CenterFocusedColumn, Gaps, WindowInsertionPoint};
+use crate::layout::settings::{CenterFocusedColumn, Edges, Gaps, WindowInsertionPoint};
 use crate::windows::domain::rules::{
     AppRuleDecision, AppRuleEngine, FloatingPosition, RelativeTo, WindowRuleContext,
 };

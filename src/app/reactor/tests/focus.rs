@@ -6,7 +6,7 @@ use rini_geometry::space::OverlayVector;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::config::WorkspaceSelector;
+use rini_ipc::protocol::WorkspaceSelector;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::request::Request;
@@ -1084,12 +1084,12 @@ fn the_first_pass_to_lay_a_window_out_pictures_it() {
         reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
     }
     // Settled, as a restart finds it: every window already where the saved layout puts it.
-    reactor.update_layout_or_warn(false, false, None);
-    reactor.update_layout_or_warn(false, false, None);
+    reactor.update_layout(false, false, None);
+    reactor.update_layout(false, false, None);
     reactor.pictured_windows.clear();
     let mut pictures = reactor.connect_test_pictures();
     let mut warmed_by_pass = || {
-        reactor.update_layout_or_warn(false, false, None);
+        reactor.update_layout(false, false, None);
         asked_at(
             &pictures_asked(&mut pictures),
             crate::pictures::domain::schedule::Priority::Warm,
@@ -1123,17 +1123,17 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
     let mut asked = reactor.connect_test_pictures();
     let pictures = reactor.communication_manager.pictures.clone();
     add(&mut reactor, early, 901, workspaces[0]);
-    reactor.update_layout_or_warn(false, false, None);
+    reactor.update_layout(false, false, None);
 
     // The late window arrives and is settled into place with no pictures service listening.
     reactor.communication_manager.pictures = None;
     add(&mut reactor, late, 902, workspaces[1]);
-    reactor.update_layout_or_warn(false, false, None);
-    reactor.update_layout_or_warn(false, false, None);
+    reactor.update_layout(false, false, None);
+    reactor.update_layout(false, false, None);
     pictures_asked(&mut asked);
     reactor.communication_manager.pictures = pictures;
 
-    reactor.update_layout_or_warn(false, false, None);
+    reactor.update_layout(false, false, None);
     let warmed = asked_at(
         &pictures_asked(&mut asked),
         crate::pictures::domain::schedule::Priority::Warm,

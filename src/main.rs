@@ -7,7 +7,7 @@ use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
 use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
-use rini::app::hotkeys::{self as wm_controller, WmController};
+use rini::app::hotkeys::WmController;
 use rini::app::launch_agent::{ServiceCommands, handle_service_command};
 use rini::app::logging as log;
 use rini::app::notifications::NotificationCenter;
@@ -55,13 +55,6 @@ struct Cli {
     /// Check the config file and the saved layout snapshot, then exit.
     #[arg(long)]
     validate: bool,
-
-    /// Restore the saved layout on startup: window sizes, workspaces and strip
-    /// positions from the last session. On by default.
-    ///
-    /// Accepted for compatibility and as an explicit override of --no-restore.
-    #[arg(long)]
-    restore: bool,
 
     /// Start from a clean layout, ignoring the saved one.
     #[arg(long)]
@@ -219,9 +212,8 @@ fn main() {
     // that is not attached while keeping each window's display affinity, so those
     // windows lay out fresh on a live display and return to their own display when it
     // is plugged back in.
-    let want_restore = rini::app::boot::wants_restore(opt.restore, opt.no_restore);
     let fresh = || LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout);
-    let (mut layout, display_memory) = if want_restore {
+    let (mut layout, display_memory) = if !opt.no_restore {
         let path = restore_file();
         match LayoutEngine::load_for_startup_restore(path.clone()) {
             Ok(loaded) => loaded,
@@ -343,12 +335,8 @@ fn main() {
         }
     });
 
-    let wm_config = wm_controller::Config {
-        restore_file: restore_file(),
-        config: config.clone(),
-    };
     let (wm_controller, wm_controller_sender) = WmController::new(
-        wm_config,
+        config.clone(),
         config_tx.clone(),
         events_tx.clone(),
         event_tap_tx.clone(),

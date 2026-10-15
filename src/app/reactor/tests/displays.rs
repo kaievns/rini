@@ -1068,7 +1068,10 @@ fn display_churn_end_refresh_is_idempotent_without_topology_change() {
 
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
-    reactor.handle_event(Event::DisplayChurnEnd);
+    reactor.handle_event(Event::DisplayChurnBegin);
+    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(space)], |state| {
+        state.releases_display_churn_refresh_quarantine = true;
+    }));
     apps.simulate_until_quiet(&mut reactor);
 
     assert!(

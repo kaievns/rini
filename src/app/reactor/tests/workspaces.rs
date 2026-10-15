@@ -5,7 +5,7 @@ use rini_geometry::SameAs;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::config::WorkspaceSelector;
+use rini_ipc::protocol::WorkspaceSelector;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::request::Request;
@@ -429,7 +429,7 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
     let txid = reactor.transaction_manager.generate_next_txid(wsid);
     reactor.transaction_manager.store_txid(wsid, txid, hidden_target);
 
-    assert!(!reactor.update_layout_or_warn(false, true, None));
+    assert!(!reactor.update_layout(false, true, None));
     assert!(
         apps.requests().is_empty(),
         "a stale pending target suppresses the hide write before topology invalidation"
@@ -770,7 +770,10 @@ fn display_churn_end_refresh_preserves_non_default_workspace_without_app_rules()
     assert_ne!(secondary_workspace, default_workspace);
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
-    reactor.handle_event(Event::DisplayChurnEnd);
+    reactor.handle_event(Event::DisplayChurnBegin);
+    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(space)], |state| {
+        state.releases_display_churn_refresh_quarantine = true;
+    }));
     apps.simulate_until_quiet(&mut reactor);
 
     assert_eq!(

@@ -64,10 +64,6 @@ impl Reactor {
         self.test_workspace_ids(space)[index]
     }
 
-    pub fn test_window_is_standard(&self, wid: WindowId) -> bool {
-        self.window_is_standard_for_test(wid)
-    }
-
     /// Make `window` the focused window, as WindowServer focus would.
     pub fn set_test_focus(&mut self, window: WindowId) {
         self.main_window_tracker.set_focus_for_test(window);
@@ -220,13 +216,13 @@ impl Reactor {
     }
 
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
-        self.handle_event(Event::Command(crate::app::reactor::state::Command::Layout(
+        self.handle_event(Event::Command(crate::app::reactor::Command::Layout(
             command,
         )));
     }
 
     pub(crate) fn dispatch_test_layout_command(&mut self, command: LayoutCommand) -> EventOutcome {
-        self.dispatch_workflow(Event::Command(crate::app::reactor::state::Command::Layout(
+        self.dispatch_workflow(Event::Command(crate::app::reactor::Command::Layout(
             command,
         )))
         .expect("test layout command should dispatch")

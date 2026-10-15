@@ -11,7 +11,7 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::animation::domain::motion::surface::SurfaceGeometry;
-use crate::app::config::Edges;
+use crate::layout::settings::Edges;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::input::event::LeftPress;

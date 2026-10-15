@@ -16,7 +16,6 @@ use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::state::WindowFilter;
-use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::{LayoutEngine, WindowStore};
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowId;
@@ -53,12 +52,6 @@ impl ReactorQueryHandle {
     pub fn query_windows(&self, space_id: Option<SpaceId>) -> Vec<RuntimeWindowData> {
         self.send_query(|resp| QueryRequest::Windows { space_id, resp })
             .unwrap_or_default()
-    }
-
-    pub fn query_active_workspace(&self, space_id: Option<SpaceId>) -> Option<VirtualWorkspaceId> {
-        self.send_query(|resp| QueryRequest::ActiveWorkspace { space_id, resp })
-            .ok()
-            .flatten()
     }
 
     pub fn query_displays(&self) -> Vec<RuntimeDisplayData> {
@@ -119,10 +112,6 @@ pub enum QueryRequest {
         space_id: Option<SpaceId>,
         resp: SyncSender<Vec<RuntimeWindowData>>,
     },
-    ActiveWorkspace {
-        space_id: Option<SpaceId>,
-        resp: SyncSender<Option<VirtualWorkspaceId>>,
-    },
     Displays(SyncSender<Vec<RuntimeDisplayData>>),
     WorkspaceLayouts {
         space_id: Option<SpaceId>,
@@ -151,9 +140,6 @@ impl Reactor {
             }
             QueryRequest::Windows { space_id, resp } => {
                 let _ = resp.send(self.query_windows(space_id));
-            }
-            QueryRequest::ActiveWorkspace { space_id, resp } => {
-                let _ = resp.send(self.query_active_workspace(space_id));
             }
             QueryRequest::Displays(resp) => {
                 let _ = resp.send(self.query_displays());
@@ -212,10 +198,6 @@ impl Reactor {
 
     pub fn query_windows(&self, space_id: Option<SpaceId>) -> Vec<RuntimeWindowData> {
         self.view().handle_windows_query(space_id)
-    }
-
-    pub fn query_active_workspace(&self, space_id: Option<SpaceId>) -> Option<VirtualWorkspaceId> {
-        self.view().handle_active_workspace_query(space_id)
     }
 
     pub fn query_displays(&self) -> Vec<RuntimeDisplayData> {
@@ -430,14 +412,6 @@ impl StateView<'_> {
                 is_active: active_workspace == Some(*id),
             })
             .collect()
-    }
-
-    fn handle_active_workspace_query(
-        &self,
-        space_id_param: Option<SpaceId>,
-    ) -> Option<VirtualWorkspaceId> {
-        let space_id = space_id_param.or_else(|| self.default_space)?;
-        self.engine.active_workspace(space_id)
     }
 
     fn handle_displays_query(&self) -> Vec<RuntimeDisplayData> {
@@ -1214,7 +1188,8 @@ mod tests {
     #[test]
     fn the_active_workspace_of_a_space_rini_has_seen_is_reported() {
         let f = Fixture::new(&[10], &[1]);
-        assert!(f.view().handle_active_workspace_query(Some(SpaceId::new(10))).is_some());
+        let listed = f.view().handle_workspace_query(Some(SpaceId::new(10)));
+        assert_eq!(listed.iter().filter(|workspace| workspace.is_active).count(), 1);
     }
 
     /// The workspace ORDER is global and the ACTIVE workspace is per space, which is why a space rini
@@ -1232,7 +1207,9 @@ mod tests {
         let listed = f.view().handle_workspace_layouts_query(Some(unknown), None);
         assert_eq!(listed.len(), known.len(), "the workspace order is global");
 
-        assert_eq!(f.view().handle_active_workspace_query(Some(unknown)), None);
+        assert!(
+            f.view().handle_workspace_query(Some(unknown)).iter().all(|workspace| !workspace.is_active)
+        );
         assert!(
             listed.iter().all(|workspace| !workspace.is_active),
             "none of them is active on a space rini has never seen"

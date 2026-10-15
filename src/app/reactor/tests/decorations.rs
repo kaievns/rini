@@ -531,7 +531,7 @@ fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
     reactor.handle_test_batch(Vec::new());
     told(&mut rest);
     let press = |reactor: &mut Reactor, direction| {
-        let command = crate::app::reactor::state::Command::Layout(LayoutCommand::MoveFocus(direction));
+        let command = crate::app::reactor::Command::Layout(LayoutCommand::MoveFocus(direction));
         reactor.handle_test_batch(vec![Event::Command(command)]);
     };
     let flown = |rx: &mut channels::Receiver<Engine>| {

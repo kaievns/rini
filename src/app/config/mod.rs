@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-pub use rini_ipc::protocol::{ConfigCommand, WorkspaceSelector};
+pub use rini_ipc::protocol::ConfigCommand;
 use serde::Serialize;
 
 use crate::app::startup::StartupCommand;
@@ -12,8 +12,7 @@ use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Bind;
 use crate::input::domain::key::{HotkeySpec, ModKey};
 use crate::input::settings::{InputSettings, WindowSnappingSettings};
-pub use crate::layout::settings::{Edges, LayoutSettings};
-pub use crate::windows::domain::rules::{RuleMatch, WindowRule};
+pub use crate::layout::settings::LayoutSettings;
 pub use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 
 pub mod actor;

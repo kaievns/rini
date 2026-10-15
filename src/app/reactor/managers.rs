@@ -239,7 +239,7 @@ impl LayoutManager {
         is_resize: bool,
         is_workspace_switch: bool,
         space_scope: Option<SpaceId>,
-    ) -> Result<bool, crate::app::reactor::state::ReactorError> {
+    ) -> bool {
         reactor.refresh_borders();
         let layout_result = Self::calculate_layout(reactor, space_scope);
         Self::apply_layout(reactor, layout_result, is_resize, is_workspace_switch)
@@ -323,7 +323,7 @@ impl LayoutManager {
         layout_result: LayoutResult,
         is_resize: bool,
         is_workspace_switch: bool,
-    ) -> Result<bool, crate::app::reactor::state::ReactorError> {
+    ) -> bool {
         let main_window = reactor.main_window();
         trace!(?main_window);
         // Keep skipping the dragged window for as long as the drag is active.
@@ -360,7 +360,7 @@ impl LayoutManager {
             }
         }
 
-        Ok(any_frame_changed)
+        any_frame_changed
     }
 }
 

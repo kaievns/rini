@@ -128,8 +128,6 @@ pub enum PresetPart {
 #[derive(knus::Decode, Debug)]
 #[knus(span_type = Span)]
 pub struct OutputPart {
-    #[knus(span)]
-    pub span: Span,
     /// The display's UUID, as `rini-cli query displays` prints it.
     #[knus(argument)]
     pub uuid: String,

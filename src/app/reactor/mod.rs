@@ -150,10 +150,6 @@ impl ReactorHandle {
         self.sender.clone()
     }
 
-    pub fn send(&self, event: Event) {
-        self.sender.send(event)
-    }
-
     pub fn try_send(
         &self,
         event: Event,
@@ -286,7 +282,6 @@ pub enum Event {
     SessionDidBecomeActive,
 
     DisplayChurnBegin,
-    DisplayChurnEnd,
 
     MissionControlNativeEntered,
     MissionControlNativeExited,
@@ -541,7 +536,7 @@ pub struct Reactor {
     /// Where autosave writes. `None` disables it.
     ///
     /// A field rather than a call to `config::restore_file()` at the write site because
-    /// autosave fires from `update_layout_or_warn_with`, which almost every test drives.
+    /// autosave fires from `update_layout`, which almost every test drives.
     /// Resolving the real path there meant the suite overwrote the user's own
     /// ~/.rini/layout.ron with test fixtures. `Reactor::new_for_test` sets it to `None`.
     autosave_path: Option<PathBuf>,
@@ -1012,21 +1007,6 @@ impl Reactor {
             == Some("com.apple.loginwindow")
     }
 
-    // fn store_txid(&self, wsid: Option<WindowServerId>, txid: TransactionId, target: CGRect) {
-    //     self.transaction_manager.store_txid(wsid, txid, target);
-    // }
-    //
-    // fn update_txid_entries<I>(&self, entries: I)
-    // where
-    //     I: IntoIterator<Item = (WindowServerId, TransactionId, CGRect)>,
-    // {
-    //     self.transaction_manager.update_entries(entries);
-    // }
-    //
-    // fn remove_txid_for_window(&self, wsid: Option<WindowServerId>) {
-    //     self.transaction_manager.remove_for_window(wsid);
-    // }
-
     fn clear_pending_hidden_window_targets(&self) {
         for (wid, window) in self.state.windows.iter_windows() {
             if self.affinity().hidden_assigned_space_for_window_id(wid).is_none() {
@@ -1119,7 +1099,7 @@ impl Reactor {
             self.handle_loop_event(event);
         }
         if self.refresh_borders() {
-            self.update_layout_or_warn(false, false, None);
+            self.update_layout(false, false, None);
         }
         self.publish_bar();
         self.publish_rest();
@@ -1407,7 +1387,7 @@ impl Reactor {
                 return Ok(system_workflow::handle_register_wm_sender(
                     &mut self.communication_manager,
                     sender,
-                )?);
+                ));
             }
             Event::WindowsDiscovered { pid, new, known_visible } => {
                 return self.on_windows_discovered(
@@ -1490,10 +1470,10 @@ impl Reactor {
                 return Ok(EventOutcome::no_change());
             }
             Event::MenuOpened(pid) => {
-                return Ok(system_workflow::handle_menu_opened(&mut self.menu_manager, pid)?);
+                return Ok(system_workflow::handle_menu_opened(&mut self.menu_manager, pid));
             }
             Event::MenuClosed(pid) => {
-                return Ok(system_workflow::handle_menu_closed(&mut self.menu_manager, pid)?);
+                return Ok(system_workflow::handle_menu_closed(&mut self.menu_manager, pid));
             }
             Event::MouseMoved(wsid) => {
                 return self.on_mouse_moved(wsid);
@@ -1515,10 +1495,10 @@ impl Reactor {
                         window: window_id,
                         sequence: sequence_id,
                     },
-                )?);
+                ));
             }
             Event::RaiseTimeout { sequence_id } => {
-                return Ok(system_workflow::handle_raise_timeout(sequence_id)?);
+                return Ok(system_workflow::handle_raise_timeout(sequence_id));
             }
             Event::RaisesIdle { requests_seen } => {
                 self.raise_echo.idle(requests_seen, std::time::Instant::now());
@@ -1802,7 +1782,7 @@ impl Reactor {
         let mut layout_changed = false;
         if let Some(passes) = outcome.arrange.passes_to_run(self.is_in_drag()) {
             for _ in 0..passes {
-                layout_changed |= self.update_layout_or_warn(
+                layout_changed |= self.update_layout(
                     outcome.arrange.is_resize,
                     matches!(
                         self.workspace_switch_manager.workspace_switch_state,
@@ -2071,7 +2051,7 @@ impl Reactor {
             }
 
             self.refocus_manager.refocus_state = RefocusState::Pending(space);
-            self.update_layout_or_warn(false, false, None);
+            self.update_layout(false, false, None);
             self.update_focus_follows_mouse_state();
         }
     }
@@ -4345,11 +4325,6 @@ impl Reactor {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn window_is_standard_for_test(&self, id: WindowId) -> bool {
-        self.window_is_standard(id)
-    }
-
     fn window_is_standard(&self, id: WindowId) -> bool {
         self.state
             .windows
@@ -4428,7 +4403,7 @@ impl Reactor {
         self.prepare_refocus_after_layout_event(&event_clone);
         self.handle_layout_response(response, workspace_switch_space);
         if geometry_changed {
-            let layout_changed = self.update_layout_or_warn(
+            let layout_changed = self.update_layout(
                 false,
                 workspace_switch_space.is_some(),
                 workspace_switch_space.or(event_space),
@@ -5596,7 +5571,7 @@ impl Reactor {
         self.mission_control_manager.pending_mission_control_refresh.clear();
         self.force_refresh_all_windows();
         self.check_for_new_windows();
-        self.update_layout_or_warn(false, false, None);
+        self.update_layout(false, false, None);
     }
 
     // Uses the same "pending refresh" path as Mission Control recovery so a bulk
@@ -5726,33 +5701,14 @@ impl Reactor {
         }
     }
 
-    pub(crate) fn update_layout_or_warn(
+    pub(crate) fn update_layout(
         &mut self,
         is_resize: bool,
         is_workspace_switch: bool,
         space_scope: Option<SpaceId>,
-    ) -> bool {
-        self.update_layout_or_warn_with(
-            is_resize,
-            is_workspace_switch,
-            space_scope,
-            "Layout update failed",
-        )
-    }
-
-    pub(crate) fn update_layout_or_warn_with(
-        &mut self,
-        is_resize: bool,
-        is_workspace_switch: bool,
-        space_scope: Option<SpaceId>,
-        context: &'static str,
     ) -> bool {
         let changed =
-            LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope)
-                .unwrap_or_else(|e| {
-                    warn!(error = ?e, "{}", context);
-                    false
-                });
+            LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope);
         if changed {
             // Re-observe affinity before saving, so the file records the arrangement that
             // was just applied. This is the path that catches a window dragged between
@@ -5764,12 +5720,8 @@ impl Reactor {
         changed
     }
 
-    /// Persist the layout after a change, at most once every AUTOSAVE_INTERVAL.
-    ///
-    /// Saving used to be entirely manual — the menu bar item and `rini-cli save-layout`
-    /// were the only writers — so a restart or redeploy lost every window's
-    /// workspace, size and strip position, and windows fell back to the default
-    /// column width. `--restore` existed but had nothing to read.
+    /// Persist the layout after a change, at most once every AUTOSAVE_INTERVAL, so a restart or
+    /// redeploy keeps every window's workspace, size and strip position.
     ///
     /// Debounced because update_layout runs on every focus change, resize and
     /// workspace switch, and serialising the whole engine plus an fsync on each one

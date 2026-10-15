@@ -121,9 +121,15 @@ fn queries_prefer_authoritative_active_space_over_stale_command_space() {
         |state| state.command_space = Some(space1),
     ));
 
+    let active: Vec<usize> = reactor
+        .query_workspaces(None)
+        .iter()
+        .filter(|workspace| workspace.is_active)
+        .map(|workspace| workspace.index)
+        .collect();
     assert_eq!(
-        reactor.query_active_workspace(None),
-        reactor.layout_manager.layout_engine.active_workspace(space2),
+        active,
+        vec![1],
         "default queries must follow authoritative active space state, not stale command_space"
     );
 }
