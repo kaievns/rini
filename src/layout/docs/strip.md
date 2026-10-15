@@ -20,7 +20,7 @@ is borrowed.
   and broke the column (Kai, 2026-10-10). It cannot be a bounded ratio like the
   others — `max-column-width` is below 1.0, 0.9 by default, so a preset of 1.0
   asked for as one comes back clamped to it — so `preset_width::next_preset`
-  answers `Full` or `Ratio`, and `Full` is given `width_unbounded`, the
+  answers `Full` or `Ratio`, and `Full` is given `GivenWidth::Unbounded`, the
   representation a drag across the viewport already gives a stacked column. The
   app resizing its window under such a column, by however much, leaves it the
   viewport wide, as under the mode: `on_window_resized` reads any report under
@@ -33,7 +33,7 @@ is borrowed.
   the column's width. Read back, a window
   settling 20pt short sat at 0.988, over the 1% `next_preset` reads as the same
   width, so the next `Mod+R` found 1.0 above it again and stood still. A maximized window still takes its
-  turn: `ratio_of` reads it as 1.0, where the stored `width_offset` the cycle
+  turn: `ratio_of` reads it as 1.0, where the column's stored offset the cycle
   used to read made `Mod+R` look dead on it.
 - **Being given a width is what unmaximizes a window.** `Mod+R` and the resize
   keys both do it, and the window stays where it is rather than going back to
@@ -477,7 +477,7 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   and a strip scrolled by less than the shrink keeps the right edge only until the offset reaches 0.
 - **A drag passes the width bounds.** `min-column-width` and `max-column-width` keep the resize keys
   from crawling to 100%, and they snapped a drag back: presses 15 and 16 reached 1413 and 1443pt and
-  landed at 1148. A drag that moves the left or right edge marks its column `width_unbounded`, and
+  landed at 1148. A drag that moves the left or right edge gives its column a `GivenWidth::Unbounded`, and
   `column_ratio` holds a `ColumnKind::Unbounded` column only to the viewport and a twentieth of it;
   the windows' own limits still apply in `column_width`. niri has neither key: its interactive
   resize is held only by the window and the working area. A centred column's width is doubled, then
@@ -487,7 +487,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   key `width_dragged`, which older rinis read too, and carried with the width
   (`ColumnWidth::Unbounded`, which the file holds as an `Offset` with the mark beside it, as
   `src/workspaces/docs/launch-memory.md` says); a key or a preset below 1.0 clears it, and the
-  preset 1.0 sets it.
+  preset 1.0 sets it. A file column without `width_overridden` takes the default ratio, whatever
+  offset or mark it holds.
 - **An app answering rini's write changes nothing.** The reactor drops a report within 0.1pt of
   rini's write before the layout sees it (`same_as`). A report off on one axis, a terminal snapping
   its height to its cell grid for one, still carried the other, and both were taken: the width was
@@ -497,7 +498,7 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   override, the view a fold back returns to and the place a width key or the full-width toggle
   keeps. Now, with no drag, an axis within 1pt of the slot
   the last pass gave the window changes nothing (a lone column's height is no row's;
-  `tile::kept_axes`), and a report
+  `tile::LaidOut::kept_axes`), and a report
   that changes neither returns before its scroll request. The pass records that slot for its
   selection as it wrote it, after the windows' own limits (`Measured::slot`, measured for
   `Measured::selected`); a slot worked out again from the

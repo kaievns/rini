@@ -14,7 +14,7 @@ use crate::workspaces::domain::app_rules::{
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceError};
 use crate::workspaces::engine::LayoutEngine;
-use crate::workspaces::{AppRuleEffects, AppRuleResult, WindowStore};
+use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
 impl LayoutEngine {
     /// What the app rules say about a window, for a caller that only needs the decision.
@@ -178,11 +178,10 @@ impl LayoutEngine {
             );
             return Ok(AppRuleResult::Managed(AppRuleEffects {
                 workspace_id,
-                floating: self.floating.is_floating(window_id),
+                floating: RuleFloating::as_is(self.floating.is_floating(window_id)),
                 position: None,
                 size: None,
                 focus: false,
-                prev_rule_decision: false,
             }));
         }
 
@@ -229,7 +228,7 @@ impl LayoutEngine {
         self.virtual_workspace_manager_mut().set_last_rule_decision(
             window_store,
             window,
-            effects.floating,
+            effects.floating.floats(),
         );
 
         effects.focus.then_some((window, effects.workspace_id))

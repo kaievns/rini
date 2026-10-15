@@ -11,7 +11,8 @@
 use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::workspaces::domain::display_affinity::{ColumnWidth, StoredWidth};
+use crate::layout::ColumnWidth;
+use crate::workspaces::domain::display_affinity::StoredWidth;
 
 /// The set of displays connected, as a name that can key a map.
 ///
@@ -61,16 +62,14 @@ impl From<SlotRecord> for Slot {
             title: record.title,
             display_uuid: record.display_uuid,
             workspace_index: record.workspace_index,
-            width: record
-                .width
-                .map(|width| ColumnWidth::from_stored(width, record.width_unbounded)),
+            width: record.width.map(|width| width.read(record.width_unbounded)),
         }
     }
 }
 
 impl From<Slot> for SlotRecord {
     fn from(slot: Slot) -> Self {
-        let stored = slot.width.map(ColumnWidth::stored);
+        let stored = slot.width.map(StoredWidth::of);
         Self {
             title: slot.title,
             display_uuid: slot.display_uuid,

@@ -2,6 +2,7 @@
 
 pub mod app_rules;
 pub mod assignment;
+pub mod command;
 pub mod display_affinity;
 pub mod display_memory;
 pub mod display_pin;
@@ -10,6 +11,7 @@ pub mod floating;
 pub mod floating_position_store;
 pub mod hidden_window_placement;
 pub mod launch_memory;
+pub mod selector;
 pub mod virtual_workspace;
 pub mod window_store;
 pub mod workspace_focus;

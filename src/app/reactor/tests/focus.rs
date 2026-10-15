@@ -597,7 +597,9 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
 
     // And the top of the workspace stack, where there is no previous workspace to move it to.
     reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
-        workspace: rini_ipc::protocol::WorkspaceSelector::Name("prev".to_owned()),
+        workspace: rini_ipc::protocol::WorkspaceSelector::Relative(
+            rini_ipc::protocol::RelativeWorkspace::Prev,
+        ),
         follow: true,
         window_id: None,
     });

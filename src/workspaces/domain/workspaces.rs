@@ -41,7 +41,7 @@ impl WorkspaceLayouts {
         workspaces: &crate::workspaces::WorkspaceStore,
     ) -> Result<(), String> {
         for (&(_, workspace), info) in &self.map {
-            let Some(workspace_info) = workspaces.workspaces.get(workspace) else {
+            let Some(workspace_info) = workspaces.workspace_info(workspace) else {
                 return Err(format!(
                     "layout state references missing workspace {workspace:?}"
                 ));
@@ -57,7 +57,7 @@ impl WorkspaceLayouts {
                 ));
             }
             for layout in info.configurations.values().copied().chain(info.last_saved) {
-                if !workspace_info.layout_system.contains_layout(layout) {
+                if !workspace_info.layout_system().contains_layout(layout) {
                     return Err(format!(
                         "workspace {workspace:?} references missing layout {layout:?}"
                     ));

@@ -10,7 +10,7 @@
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::centered_in;
 use rini_ipc::protocol::{DisplaySelector, LayoutCommand};
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::Reactor;
 use super::events::{EventOutcome, command as command_workflow};
@@ -111,11 +111,14 @@ impl Reactor {
 
     /// `command` carried out on `command_space` rather than on whichever display the command came
     /// from.
+    ///
+    /// Logged by its wire name, `cmd=MoveFocus(Right)`, which is what a press is found by in the log.
     pub(super) fn on_layout_command_in(
         &mut self,
         command: LayoutCommand,
         command_space: Option<rini_core::ids::SpaceId>,
     ) -> anyhow::Result<EventOutcome> {
+        info!(cmd = ?command);
         // What a window does after a command answers rini, not a double-click before it.
         self.drag_manager.title_bar_click = None;
         let (visible_spaces, visible_space_centers) = self.visible_spaces_for_layout(false);
@@ -124,7 +127,7 @@ impl Reactor {
             &mut self.layout_engine,
             &mut self.workspace_switch_manager,
             command_workflow::LayoutCommandPayload {
-                command,
+                command: command.into(),
                 command_space,
                 visible_spaces,
                 visible_space_centers,

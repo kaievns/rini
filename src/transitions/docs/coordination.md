@@ -658,7 +658,7 @@ column) or of the workspace stack (next/prev at the bottom/top, which never wrap
 or nothing further to skip to) used to stop dead, which read
 as a dropped keypress. The layout reports it as `EventResponse::edge_hit`. Four
 places report it: `move_focus_internal`'s fallback (`focus_strip_end`) and `MoveNode`'s, both
-left/right only, and `handle_virtual_workspace_command` and
+left/right only, and `handle_workspace_command` and
 `move_window_to_workspace`, both up/down. Moving reports it because moving
 without a cue was indistinguishable from a stuck key — the same reason
 navigating does. A `MoveWindowToWorkspace` naming a workspace outright reports

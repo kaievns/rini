@@ -68,18 +68,21 @@ rewards keeping logic where it cannot be tested, which is the opposite of what t
 | `workspace_focus::cycle_step` | `(idx + len - 1) % len` inline | the indices are unsigned, so stepping back from 0 underflows unless the length is added first |
 | `boundary::strip_edge` (extracted as `focus_stays_on_this_display`) | two conditions inline | applies to the horizontal axis only; up and down move through the workspace stack, so applying it to all four directions would silently disable vertical navigation between displays. Later absorbed the `isolate_displays` setting, which is gone: one answer to "is this an end" and "may this cross" |
 
-`handle_command` stayed long because it is a match on a command enum where the arms delegate. Its
-40-line prelude resolving `(space, workspace_id, layout)` is the part that is not a dispatch, and
-it is shared by every arm.
+`handle_command` is one exhaustive match over the families of `EngineCommand`, each arm handing
+its family to that family's dispatcher. Resolving `(space, workspace, layout)` is `with_target`
+around `commands::resolve_target`, taken by the focus, arrange, resize and strip families and by
+floating's `ToggleFocusFloating` and tiled `Maximize`. The workspace family, `ToggleWindowFloating`
+and a floating window's `Maximize` act before any target is resolved.
 
 Named by the RULE rather than by line count this time. Four are out since: the park corner is
 `strip_frame` and the floating rescue `usable_floating_frame`, falling back to `centred_on`, each
 tested in `workspaces/engine/frames.rs`, and `op_space` collapsed to
-`space_with_window(window).unwrap_or(space)` in `workspaces/engine/moves.rs`. One is still open:
+`space_with_window(window).unwrap_or(space)` in `workspaces/engine/moves.rs`. The last one open
+is out too:
 
 | rule | where | why it is worth naming |
 |---|---|---|
-| `"next"` / `"prev"` | `move_window_to_workspace` | matched as magic NAMES before the name lookup, so a workspace a user actually names "next" cannot be selected by name. Undocumented trap |
+| `"next"` / `"prev"` | `resolve_workspace` in `src/workspaces/domain/selector.rs` | a step is `WorkspaceSelector::Relative(RelativeWorkspace::Next/Prev)`, not a magic name, so `move_window_to_workspace` and an app rule resolve it the same way. On the wire only the exact lowercase strings are steps; specs/workspaces.md states the rule |
 
 `on_windows_on_screen_updated` sequences store mutations on `was_floating` branches, which is
 orchestration; its one rule, whether a window's new constraints change a layout, is

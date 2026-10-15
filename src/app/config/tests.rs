@@ -870,6 +870,21 @@ fn a_rule_naming_a_workspace_that_is_not_declared_is_refused() {
     );
 }
 
+/// A reference finds its workspace ignoring case, as the duplicate check compares names.
+#[test]
+fn a_rule_and_a_bind_name_a_workspace_ignoring_case() {
+    let config = parse(concat!(
+        "workspace \"Main\"\nworkspace \"Tools\"\n",
+        "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"tools\"\n}\n",
+        "binds {\n    Mod+1 { focus-workspace \"main\"; }\n}\n",
+    ));
+    assert_eq!(
+        config.virtual_workspaces.app_rules[0].open_on_workspace.as_deref(),
+        Some("tools")
+    );
+    assert!(config.with("config set", "workspace \"MAIN\"\nworkspace \"TOOLS\"\n").is_ok());
+}
+
 #[test]
 fn rule_shapes_rini_cannot_honour_are_refused() {
     assert!(refused("window-rule {\n    match\n}\n").contains("names no matcher"));

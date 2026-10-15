@@ -71,9 +71,7 @@ fn completed_app_discovery_discards_a_ghost_from_a_dormant_display_size() {
     );
     let workspace = snapshot.active_workspace(space).unwrap();
     let large_layout = snapshot.workspace_layouts.active(space, workspace).unwrap();
-    let small_layout = snapshot.virtual_workspace_manager.workspaces[workspace]
-        .layout_system
-        .create_layout();
+    let small_layout = snapshot.workspace_tree_mut(workspace).create_layout();
     snapshot.workspace_layouts.insert_layout_configuration_for_test(
         space,
         workspace,

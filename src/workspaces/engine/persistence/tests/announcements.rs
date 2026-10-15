@@ -63,7 +63,7 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
         Some(space),
         &[space],
         &HashMap::default(),
-        LayoutCommand::ToggleFold(crate::layout::Direction::Left),
+        LayoutCommand::ToggleFold(crate::layout::Direction::Left).into(),
     );
 
     let response = engine.handle_command(
@@ -72,7 +72,7 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
         Some(space),
         &[space],
         &HashMap::default(),
-        LayoutCommand::ToggleFullscreenWithinGaps,
+        LayoutCommand::ToggleFullscreenWithinGaps.into(),
     );
     assert!(
         response.changed,

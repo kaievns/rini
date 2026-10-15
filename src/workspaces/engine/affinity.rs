@@ -6,7 +6,6 @@ use tracing::debug;
 
 use crate::layout::LayoutId;
 use crate::workspaces::WindowStore;
-use crate::workspaces::domain::display_affinity::ColumnWidth;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::LayoutEngine;
@@ -149,16 +148,8 @@ impl LayoutEngine {
         let Some(display) = memory.affinity.display_for_space(space).map(str::to_owned) else {
             return;
         };
-        let tree = self.workspace_tree(workspace_id);
-        if tree.is_window_full_width(layout, window) {
-            memory.affinity.set_window_width(&display, window, ColumnWidth::FullWidth);
-            return;
-        }
-        match tree.column_width_offset(layout, window) {
-            Some((offset, unbounded)) => {
-                let width = ColumnWidth::from_offset(offset, unbounded);
-                memory.affinity.set_window_width(&display, window, width);
-            }
+        match self.workspace_tree(workspace_id).carried_width(layout, window) {
+            Some(width) => memory.affinity.set_window_width(&display, window, width),
             // Toggled back to the default. Forget rather than pin, so the window follows
             // each display's configured ratio again.
             None => memory.affinity.clear_window_width(&display, window),
@@ -209,18 +200,6 @@ impl LayoutEngine {
         let Some(width) = found else {
             return;
         };
-        match width {
-            ColumnWidth::FullWidth => {
-                self.workspace_tree_mut(workspace_id).restore_window_full_width(layout, window);
-            }
-            ColumnWidth::Offset(offset) => {
-                self.workspace_tree_mut(workspace_id)
-                    .set_column_width_offset(layout, window, offset, false);
-            }
-            ColumnWidth::Unbounded(offset) => {
-                self.workspace_tree_mut(workspace_id)
-                    .set_column_width_offset(layout, window, offset, true);
-            }
-        }
+        self.workspace_tree_mut(workspace_id).set_carried_width(layout, window, width);
     }
 }

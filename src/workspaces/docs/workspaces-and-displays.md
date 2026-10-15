@@ -6,8 +6,9 @@ it wrong first; the failure is recorded so the rule is not relaxed by accident.
 ## One workspace list, shared by every display
 
 `WorkspaceStore.workspace_order` is one list. Each display records which
-workspace it is *showing* (`active_workspace_per_space`) and switches
-independently, but "coding" is one object owning one strip per display.
+workspace it is *showing* and the one it showed before (`active_workspace_per_space`,
+a `ShownWorkspace` each) and switches independently, but "coding" is one object
+owning one strip per display.
 
 Before: `HashMap<SpaceId, Vec<VirtualWorkspaceId>>`, four workspaces created
 per display. "coding" on the built-in and "coding" on the external were

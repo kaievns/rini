@@ -9,8 +9,9 @@ use rustc_hash::FxHashMap as HashMap;
 use tracing::debug;
 
 use super::CommandTarget;
+use crate::workspaces::domain::command::FocusCommand;
 use crate::workspaces::domain::workspace_focus;
-use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine, WindowStore};
+use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_focus_command(
@@ -20,7 +21,7 @@ impl LayoutEngine {
         visible_space_centers: &HashMap<SpaceId, CGPoint>,
         target: CommandTarget,
         is_floating: bool,
-        command: LayoutCommand,
+        command: FocusCommand,
     ) -> EventResponse {
         let CommandTarget {
             space,
@@ -28,8 +29,7 @@ impl LayoutEngine {
             layout,
         } = target;
         match command {
-            LayoutCommand::NextWindow | LayoutCommand::PrevWindow => {
-                let forward = matches!(command, LayoutCommand::NextWindow);
+            FocusCommand::Cycle(cycle) => {
                 let windows = if is_floating {
                     self.active_floating_windows_in_workspace(window_store, space)
                 } else {
@@ -39,18 +39,10 @@ impl LayoutEngine {
                         self.workspace_tree(workspace_id).visible_windows_in_layout(layout),
                     )
                 };
-                let step =
-                    windows.iter().position(|&w| Some(w) == self.focused_window).and_then(|idx| {
-                        workspace_focus::cycle_step(
-                            idx,
-                            windows.len(),
-                            if forward {
-                                workspace_focus::Cycle::Forward
-                            } else {
-                                workspace_focus::Cycle::Backward
-                            },
-                        )
-                    });
+                let step = windows
+                    .iter()
+                    .position(|&w| Some(w) == self.focused_window)
+                    .and_then(|idx| workspace_focus::cycle_step(idx, windows.len(), cycle));
                 if let Some(next) = step {
                     let response = EventResponse {
                         changed: true,
@@ -79,7 +71,7 @@ impl LayoutEngine {
                     response
                 }
             }
-            LayoutCommand::MoveFocus(direction) => {
+            FocusCommand::Move(direction) => {
                 debug!(
                     "MoveFocus command received, direction: {:?}, is_floating: {}",
                     direction, is_floating
@@ -92,10 +84,6 @@ impl LayoutEngine {
                     direction,
                     is_floating,
                 )
-            }
-            other => {
-                debug_assert!(false, "{other:?} is not a focus command");
-                EventResponse::default()
             }
         }
     }

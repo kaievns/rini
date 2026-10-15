@@ -12,7 +12,7 @@ use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::{EventResponse, LayoutEngine, OnScreenEntry};
-use crate::workspaces::{AppRuleEffects, AppRuleResult, WindowStore};
+use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
 /// The layout constraints `entry` reports.
 fn constraints_of(entry: &OnScreenEntry) -> WindowLayoutConstraints {
@@ -149,11 +149,10 @@ impl LayoutEngine {
         match self.virtual_workspace_manager.auto_assign_window(window_store, wid, space) {
             Ok(ws) => Some(AppRuleResult::Managed(AppRuleEffects {
                 workspace_id: ws,
-                floating: was_floating,
+                floating: RuleFloating::as_is(was_floating),
                 position: None,
                 size: None,
                 focus: false,
-                prev_rule_decision: false,
             })),
             Err(_) => {
                 warn!(
@@ -449,16 +448,14 @@ impl LayoutEngine {
         // The store may already have dropped the record (for example after
         // WindowDestroyed). Layout membership is only a projection, so scrub
         // every tree when its authoritative assignment is unavailable.
-        let ws_ids: Vec<_> = self.virtual_workspace_manager.workspaces.keys().collect();
-        for ws_id in ws_ids {
-            self.workspace_tree_mut(ws_id).remove_window(wid);
+        for (_, system) in self.virtual_workspace_manager.layout_systems_mut() {
+            system.remove_window(wid);
         }
     }
 
     pub(super) fn remove_window_from_all_tiling_trees(&mut self, wid: WindowId) {
-        let ws_ids: Vec<_> = self.virtual_workspace_manager.workspaces.keys().collect();
-        for ws_id in ws_ids {
-            self.workspace_tree_mut(ws_id).remove_window(wid);
+        for (_, system) in self.virtual_workspace_manager.layout_systems_mut() {
+            system.remove_window(wid);
         }
     }
 

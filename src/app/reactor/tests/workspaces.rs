@@ -12,7 +12,7 @@ use crate::app::reactor::*;
 use crate::displays::domain::topology::Topology;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::request::Request;
-use crate::workspaces::{LayoutCommand, LayoutEvent};
+use crate::workspaces::{LayoutCommand, LayoutEvent, WorkspaceCommand};
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
@@ -226,8 +226,8 @@ fn workspace_queries_are_isolated_per_macos_space() {
         Some(space2),
     ]));
 
-    reactor.handle_test_workspace_command(space1, &LayoutCommand::SwitchToWorkspace(0));
-    reactor.handle_test_workspace_command(space2, &LayoutCommand::SwitchToWorkspace(1));
+    reactor.handle_test_workspace_command(space1, WorkspaceCommand::SwitchTo(0));
+    reactor.handle_test_workspace_command(space2, WorkspaceCommand::SwitchTo(1));
 
     let space1_workspaces = reactor.query_workspaces(Some(space1));
     let space2_workspaces = reactor.query_workspaces(Some(space2));
@@ -279,6 +279,21 @@ fn discovery_prefers_authoritative_space_over_geometry_when_displays_overlap_wor
         Some(space1),
         "same-index workspaces on other displays must stay isolated"
     );
+}
+
+/// A layout command is logged once, by its wire name, whichever family the engine sorts it into.
+#[test]
+fn a_layout_command_is_logged_once_by_its_wire_name() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(2));
+
+    let logged = logged_commands(|| {
+        reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(1));
+    });
+
+    assert_eq!(logged, ["MoveFocus(Right)", "SwitchToWorkspace(1)"]);
 }
 
 #[test]

@@ -9,9 +9,9 @@ use rini_ipc::protocol::WorkspaceSelector;
 use tracing::{debug, warn};
 
 use crate::layout::LayoutId;
-use crate::layout::domain::boundary::workspace_stack_direction;
 use crate::workspaces::WindowStore;
 use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::domain::selector::{resolve_workspace, workspace_stack_direction};
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::{EventResponse, LayoutEngine};
 
@@ -192,18 +192,7 @@ impl LayoutEngine {
         else {
             return EventResponse::default();
         };
-        let target = match workspace {
-            WorkspaceSelector::Index(index) => workspaces.get(*index).map(|(id, _)| *id),
-            WorkspaceSelector::Name(name) if name == "next" => self
-                .virtual_workspace_manager
-                .next_workspace(window_store, space, current, None),
-            WorkspaceSelector::Name(name) if name == "prev" => self
-                .virtual_workspace_manager
-                .prev_workspace(window_store, space, current, None),
-            WorkspaceSelector::Name(name) => workspaces
-                .iter()
-                .find_map(|(id, workspace_name)| (workspace_name == name).then_some(*id)),
-        };
+        let target = resolve_workspace(workspace, Some(current), &workspaces);
         let Some(target) = target else {
             // The stack has no workspace that way, so the view bounces and the stop reads as an end
             // rather than a dropped keypress — the same answer a blocked workspace SWITCH gives. A

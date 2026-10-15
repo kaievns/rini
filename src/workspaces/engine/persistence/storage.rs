@@ -42,7 +42,7 @@ impl LayoutEngine {
             path = %path.display(),
             schema_version,
             native_spaces = engine.workspace_layouts.spaces().len(),
-            virtual_workspaces = engine.virtual_workspace_manager.workspaces.len(),
+            virtual_workspaces = engine.virtual_workspace_manager.workspace_count(),
             saved_windows = engine.persistence.windows.len(),
             restore_candidates = engine.persistence.pending_len(),
             unavailable_windows_ignored = unavailable_windows,

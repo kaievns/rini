@@ -1,4 +1,4 @@
-use rini_ipc::protocol::{SwitchScope, WorkspaceSelector};
+use rini_ipc::protocol::{RelativeWorkspace, SwitchScope, WorkspaceSelector};
 use strum::VariantNames;
 
 use super::*;
@@ -117,11 +117,11 @@ fn table() -> Vec<(Action, Lowered)> {
         ),
         (
             Action::MoveWindowToWorkspaceDown(true),
-            moved(WorkspaceSelector::Name("next".into()), true),
+            moved(WorkspaceSelector::Relative(RelativeWorkspace::Next), true),
         ),
         (
             Action::MoveWindowToWorkspaceUp(false),
-            moved(WorkspaceSelector::Name("prev".into()), false),
+            moved(WorkspaceSelector::Relative(RelativeWorkspace::Prev), false),
         ),
         (Action::FocusMonitorLeft, reactor(R::FocusDisplay(d(Left)))),
         (Action::FocusMonitorRight, reactor(R::FocusDisplay(d(Right)))),
@@ -239,6 +239,18 @@ fn a_workspace_name_becomes_its_position_in_the_configured_order() {
     assert_eq!(
         lower(
             Action::FocusWorkspace(WorkspaceReference::Name("Communication".into())),
+            &names()
+        ),
+        layout(LayoutCommand::SwitchToWorkspace(2))
+    );
+}
+
+/// Names compare ignoring case, as the config's duplicate check compares them.
+#[test]
+fn a_workspace_name_is_found_ignoring_case() {
+    assert_eq!(
+        lower(
+            Action::FocusWorkspace(WorkspaceReference::Name("communication".into())),
             &names()
         ),
         layout(LayoutCommand::SwitchToWorkspace(2))

@@ -4,8 +4,9 @@
 //! is the pattern `engine/persistence/` already uses.
 
 use super::CommandTarget;
+use crate::workspaces::domain::command::ResizeCommand;
 use crate::workspaces::domain::display_memory::DisplayMemory;
-use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine};
+use crate::workspaces::engine::{EventResponse, LayoutEngine};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_resize_command(
@@ -13,7 +14,7 @@ impl LayoutEngine {
         memory: &mut DisplayMemory,
         target: CommandTarget,
         is_floating: bool,
-        command: LayoutCommand,
+        command: ResizeCommand,
     ) -> EventResponse {
         let CommandTarget {
             space,
@@ -21,7 +22,7 @@ impl LayoutEngine {
             layout,
         } = target;
         match command {
-            LayoutCommand::ResizeWindowBy { amount, orientation } => {
+            ResizeCommand::By { amount, orientation } => {
                 if is_floating {
                     return EventResponse::default();
                 }
@@ -35,7 +36,7 @@ impl LayoutEngine {
                 self.remember_selected_column_width(memory, space, workspace_id, layout);
                 EventResponse::default()
             }
-            LayoutCommand::CyclePresetColumnWidth => {
+            ResizeCommand::CyclePresetWidth => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 let raised =
                     self.workspace_tree_mut(workspace_id).cycle_preset_column_width(layout);
@@ -43,10 +44,6 @@ impl LayoutEngine {
                     self.remember_column_width(memory, space, workspace_id, layout, *window);
                 }
                 Self::response_for_raised_windows(raised)
-            }
-            other => {
-                debug_assert!(false, "{other:?} is not a resize command");
-                EventResponse::default()
             }
         }
     }

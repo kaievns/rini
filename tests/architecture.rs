@@ -1871,3 +1871,113 @@ fn a_field_reach_is_found_across_lines_and_a_call_of_the_same_name_is_not() {
         "reactor.rest"
     ]);
 }
+
+/// Each family of `EngineCommand` and the one dispatcher under `src/workspaces/engine/commands/`
+/// that matches it.
+const COMMAND_FAMILIES: [(&str, &str); 6] = [
+    ("arrange.rs", "ArrangeCommand"),
+    ("floating.rs", "FloatingCommand"),
+    ("focus.rs", "FocusCommand"),
+    ("resize.rs", "ResizeCommand"),
+    ("strip.rs", "StripCommand"),
+    ("workspace.rs", "WorkspaceCommand"),
+];
+
+/// A dispatcher names its own family and no other, and none takes the wire's flat `LayoutCommand`:
+/// a variant added to one family is a compile error in that family's dispatcher and nowhere else.
+#[test]
+fn a_command_family_dispatcher_names_only_its_own_family() {
+    let dir = Path::new("src/workspaces/engine/commands");
+    let mut broken = Vec::new();
+    for (file, own) in COMMAND_FAMILIES {
+        let path = dir.join(file);
+        let source = fs::read_to_string(&path).expect("a dispatcher per family");
+        let lines = production_lines_in(&source);
+        if !lines.iter().any(|(_, code)| names_identifier(code, own)) {
+            broken.push(format!("{}: never names {own}", slash(&path)));
+        }
+        let others = COMMAND_FAMILIES.iter().map(|(_, family)| *family).filter(|f| *f != own);
+        for name in others.chain(["LayoutCommand", "EngineCommand"]) {
+            for (line, code) in &lines {
+                if names_identifier(code, name) {
+                    broken.push(format!("{}:{line}: {name} in {code}", slash(&path)));
+                }
+            }
+        }
+    }
+    let listed: Vec<PathBuf> = COMMAND_FAMILIES.iter().map(|(file, _)| dir.join(file)).collect();
+    for path in rust_files(dir) {
+        if !listed.contains(&path) {
+            broken.push(format!("{}: a dispatcher not in COMMAND_FAMILIES", slash(&path)));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "each dispatcher matches its own family's enum:\n{}",
+        broken.join("\n")
+    );
+}
+
+/// Whether a match arm's pattern is a bare `_` or a binding, which matches whatever is left. A
+/// constant pattern is upper case, so a lower-case identifier alone is always a binding.
+fn catches_the_rest(code: &str) -> bool {
+    let Some((pattern, _)) = code.split_once("=>") else {
+        return false;
+    };
+    let pattern = pattern.split_once(" if ").map_or(pattern, |(pattern, _)| pattern).trim();
+    !pattern.is_empty()
+        && pattern.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+        && pattern
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+#[test]
+fn a_bare_underscore_or_binding_arm_catches_the_rest_and_a_variant_does_not() {
+    for arm in [
+        "_ => EventResponse::default(),",
+        "other => {",
+        "_ if false => x,",
+        "rest if rest.ok() => y",
+    ] {
+        assert!(catches_the_rest(arm), "{arm}");
+    }
+    for arm in [
+        "StripCommand::Snap => {",
+        "Some(space) => x,",
+        "None => EventResponse::default(),",
+        "FloatingCommand::Maximize if is_floating => {",
+        "let x = 1;",
+        "MAX => 2,",
+    ] {
+        assert!(!catches_the_rest(arm), "{arm}");
+    }
+}
+
+/// The engine's command matches are exhaustive: no arm catches what another family should have
+/// had, and the reactor tells a workspace command apart by its family, not by listing variants.
+#[test]
+fn no_command_match_catches_the_rest() {
+    let engine: Vec<PathBuf> = rust_files(Path::new("src/workspaces/engine"))
+        .into_iter()
+        .chain([PathBuf::from("src/workspaces/engine.rs")])
+        .collect();
+    let tests = test_files(&engine);
+    let mut broken = Vec::new();
+    for path in engine.iter().filter(|path| !tests.contains(path)) {
+        let source = fs::read_to_string(path).expect("readable source");
+        for (line, code) in production_lines_in(&source) {
+            if code.contains("debug_assert!(false") || catches_the_rest(&code) {
+                broken.push(format!("{}:{line}: {code}", slash(path)));
+            }
+        }
+    }
+    let routing = Path::new("src/app/reactor/events/command.rs");
+    let source = fs::read_to_string(routing).expect("readable source");
+    for (line, code) in production_lines_in(&source) {
+        if code.contains("LayoutCommand::") || code.contains("WorkspaceCommand::") {
+            broken.push(format!("{}:{line}: {code}", slash(routing)));
+        }
+    }
+    assert!(broken.is_empty(), "{}", broken.join("\n"));
+}

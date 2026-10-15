@@ -15,7 +15,7 @@ use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
 use crate::windows::platform::window_server::FakeWindowServer;
 use crate::workspaces as layout;
-use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
+use crate::workspaces::{Direction, LayoutCommand, LayoutEvent, WorkspaceCommand};
 
 #[test]
 fn it_clears_screen_state_when_no_displays_are_reported() {
@@ -929,9 +929,9 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
     let expected_destination_workspace = reactor.test_workspace(inactive_space, 2);
     reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(moved));
     assert!(reactor.assign_test_window_to_workspace(active_space, moved, preserved_workspace));
-    reactor.handle_test_workspace_command(active_space, &LayoutCommand::SwitchToWorkspace(2));
+    reactor.handle_test_workspace_command(active_space, WorkspaceCommand::SwitchTo(2));
     reactor.send_layout_event(LayoutEvent::WindowAdded(active_space, moved));
-    reactor.handle_test_workspace_command(active_space, &LayoutCommand::SwitchToWorkspace(0));
+    reactor.handle_test_workspace_command(active_space, WorkspaceCommand::SwitchTo(0));
 
     reactor.mark_test_window_visible_in_space(moved_wsid, active_space);
     reactor.mark_test_window_visible_in_space(retained_wsid, active_space);

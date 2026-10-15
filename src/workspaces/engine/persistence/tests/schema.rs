@@ -332,3 +332,45 @@ fn layout_system_round_trips_through_ron() {
     );
     assert_eq!(restored.selected_window(layout), Some(second));
 }
+
+/// A file schema 6 wrote, one with a column at each width, a full-width window, a fold, the widths
+/// each display remembers and a display that showed another workspace before this one.
+const SCHEMA_6_FILE: &str = include_str!("layout-schema-6.ron");
+
+/// The file loads as the layout it describes, and writes back the same.
+#[test]
+fn a_schema_6_layout_file_loads_and_writes_back_the_same() {
+    use crate::layout::ColumnWidth;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let loaded = LayoutEngine::deserialize_file(SCHEMA_6_FILE).expect("the bytes parse");
+    let engine = loaded.layout.expect("the layout loads");
+    let space = SpaceId::new(52);
+    let w = |idx| WindowId::new(901, idx);
+    let shown = engine.virtual_workspace_manager.active_workspace(space).expect("a workspace");
+    let layout = engine.workspace_layouts.active(space, shown).expect("a layout");
+    let tree = engine.workspace_tree(shown);
+    let widths: Vec<_> = (1..=6).map(|idx| tree.carried_width(layout, w(idx))).collect();
+    assert_eq!(widths, [
+        None,
+        Some(ColumnWidth::Offset(-0.1)),
+        Some(ColumnWidth::Unbounded(0.33797)),
+        Some(ColumnWidth::FullWidth),
+        None,
+        None,
+    ]);
+    let remembered: Vec<_> = (2..=4)
+        .map(|idx| loaded.memory.affinity.window_width(DISPLAY, w(idx)))
+        .collect();
+    assert_eq!(remembered, [
+        Some(ColumnWidth::Offset(-0.1)),
+        Some(ColumnWidth::Unbounded(0.33797)),
+        Some(ColumnWidth::FullWidth),
+    ]);
+    let before = engine.virtual_workspace_manager.last_workspace(space).expect("one before");
+    assert_ne!(before, shown);
+
+    let rewritten = engine.serialize_to_string(&loaded.memory);
+    let value = |text: &str| ron::from_str::<ron::Value>(text).expect("a RON value");
+    assert_eq!(value(&rewritten), value(SCHEMA_6_FILE));
+}

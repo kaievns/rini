@@ -10,7 +10,6 @@ use rustc_hash::FxHashMap as HashMap;
 use super::{
     Column, LayoutState, Measured, Pin, ScrollIntent, ScrollingLayoutSystem, rebased_offset,
 };
-use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
     AxisConstraints, clamp_to_constraints, column_limits, column_width, solve_axis_lengths,
@@ -21,6 +20,7 @@ use crate::layout::domain::strip::{
 };
 use crate::layout::domain::tile;
 use crate::layout::settings::{Gaps, ScrollingLayoutSettings};
+use crate::layout::{Axis, WindowLayoutConstraints};
 
 /// A strip measured for one pass, before it scrolls.
 #[derive(Debug)]
@@ -326,10 +326,11 @@ impl Column {
                     .map(|c| {
                         let c = tile::slot_limits(c, borders.of(*wid));
                         (
-                            c.min_for_axis(false),
-                            c.fixed_for_axis(false),
-                            (c.max_for_axis(false) > 0.0).then(|| c.max_for_axis(false)),
-                            c.resizable_for_axis(false),
+                            c.min_for_axis(Axis::Vertical),
+                            c.fixed_for_axis(Axis::Vertical),
+                            (c.max_for_axis(Axis::Vertical) > 0.0)
+                                .then(|| c.max_for_axis(Axis::Vertical)),
+                            c.resizable_for_axis(Axis::Vertical),
                         )
                     })
                     .unwrap_or((0.0, None, None, true));

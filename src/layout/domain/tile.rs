@@ -77,28 +77,48 @@ pub fn slot_limits(window: WindowLayoutConstraints, border: f64) -> WindowLayout
 /// window's own rounding or its app's snapping takes off it.
 pub fn answers_slot(reported: f64, slot: f64) -> bool { (reported - slot.round()).abs() <= 1.0 }
 
-/// Which axes of a reported slot leave the window as the last pass laid it out, width then height:
-/// the width when it answers `slot` or the column is held to the viewport, the height when it
-/// answers `slot` or the window is alone in its column. With no `slot`, the last pass's for a
-/// report that is no drag, neither is kept.
-pub fn kept_axes(
-    slot: Option<CGSize>,
-    reported: CGSize,
-    held_to_viewport: bool,
-    stacked: bool,
-) -> (bool, bool) {
-    match slot {
-        Some(slot) => (
-            answers_slot(reported.width, slot.width) || held_to_viewport,
-            !stacked || answers_slot(reported.height, slot.height),
-        ),
-        None => (false, false),
+/// What the last pass laid a window out as, to read a report of its slot against.
+#[derive(Debug, Clone, Copy)]
+pub struct LaidOut {
+    /// The slot the last pass gave it, `None` for a report that is a drag.
+    pub slot: Option<CGSize>,
+    /// Whether its column is held to the viewport's width.
+    pub held_to_viewport: bool,
+    /// Whether it shares its column.
+    pub stacked: bool,
+}
+
+/// The axes of a report that leave a window as the last pass laid it out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeptAxes {
+    pub width: bool,
+    pub height: bool,
+}
+
+impl KeptAxes {
+    pub fn both(self) -> bool { self.width && self.height }
+}
+
+impl LaidOut {
+    /// Which axes of a `reported` slot leave the window as laid out: the width when it answers the
+    /// slot or the column is held to the viewport, the height when it answers the slot or the
+    /// window is alone in its column. With no slot neither is kept.
+    pub fn kept_axes(self, reported: CGSize) -> KeptAxes {
+        match self.slot {
+            Some(slot) => KeptAxes {
+                width: answers_slot(reported.width, slot.width) || self.held_to_viewport,
+                height: !self.stacked || answers_slot(reported.height, slot.height),
+            },
+            None => KeptAxes { width: false, height: false },
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn axes(kept: KeptAxes) -> (bool, bool) { (kept.width, kept.height) }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -117,26 +137,48 @@ mod tests {
     #[test]
     fn a_report_within_a_point_of_its_slot_keeps_both_axes_and_one_off_keeps_the_other() {
         let slot = Some(CGSize::new(859.5, 368.333));
-        let kept = |w, h| kept_axes(slot, CGSize::new(w, h), false, true);
+        let laid_out = LaidOut {
+            slot,
+            held_to_viewport: false,
+            stacked: true,
+        };
+        let kept = |w, h| axes(laid_out.kept_axes(CGSize::new(w, h)));
         assert_eq!(kept(860.0, 367.0), (true, true));
         assert_eq!(kept(858.0, 367.0), (false, true));
         assert_eq!(kept(860.0, 366.0), (true, false));
         assert_eq!(kept(900.0, 400.0), (false, false));
+        assert!(laid_out.kept_axes(CGSize::new(860.0, 367.0)).both());
+        assert!(!laid_out.kept_axes(CGSize::new(858.0, 367.0)).both());
     }
 
     #[test]
     fn a_column_held_to_the_viewport_keeps_any_width_and_a_lone_window_any_height() {
         let slot = Some(CGSize::new(859.5, 368.333));
         let far = CGSize::new(500.0, 900.0);
-        assert_eq!(kept_axes(slot, far, true, true), (true, false));
-        assert_eq!(kept_axes(slot, far, false, false), (false, true));
-        assert_eq!(kept_axes(slot, far, true, false), (true, true));
+        let kept = |held_to_viewport, stacked| {
+            axes(
+                LaidOut {
+                    slot,
+                    held_to_viewport,
+                    stacked,
+                }
+                .kept_axes(far),
+            )
+        };
+        assert_eq!(kept(true, true), (true, false));
+        assert_eq!(kept(false, false), (false, true));
+        assert_eq!(kept(true, false), (true, true));
     }
 
     #[test]
     fn with_no_slot_neither_axis_is_kept() {
         let exact = CGSize::new(859.5, 368.333);
-        assert_eq!(kept_axes(None, exact, true, false), (false, false));
+        let laid_out = LaidOut {
+            slot: None,
+            held_to_viewport: true,
+            stacked: false,
+        };
+        assert_eq!(axes(laid_out.kept_axes(exact)), (false, false));
     }
 
     #[test]

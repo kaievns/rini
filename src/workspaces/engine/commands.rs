@@ -1,9 +1,5 @@
-//! What a layout command acts on, and one module per family of commands.
-//!
-//! `handle_command` was 272 lines: a 50-line prelude resolving the space, its active workspace and
-//! that workspace's active layout, then seventeen match arms over `LayoutCommand`. The prelude is the
-//! same for every arm and three commands are answered before it finishes, which is the part worth
-//! naming; the arms are grouped by what they move.
+//! What a layout command acts on, and one module per family of `EngineCommand`, each dispatcher
+//! matching only its own family's enum.
 
 use rini_core::ids::SpaceId;
 
@@ -15,12 +11,14 @@ pub(super) mod floating;
 pub(super) mod focus;
 pub(super) mod resize;
 pub(super) mod strip;
+pub(super) mod workspace;
 
 /// The space a command acts on, its active workspace, and that workspace's active layout.
 ///
-/// Every arm of `handle_command` needs all three, and resolving them is the one thing the prelude
-/// does that can fail: a space rini has not seen has no active workspace, and a workspace that has
-/// never been laid out has no active layout. Either means the command does nothing.
+/// The focus, arrange, resize and strip families need all three, and so do `ToggleFocusFloating` and
+/// a tiled window's `Maximize`. Resolving them can fail: a space rini has not seen has no active
+/// workspace, and a workspace that has never been laid out has no active layout. Either means the
+/// command does nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CommandTarget {
     pub(super) space: SpaceId,

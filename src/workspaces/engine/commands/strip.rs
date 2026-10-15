@@ -4,13 +4,14 @@
 //! is the pattern `engine/persistence/` already uses.
 
 use super::CommandTarget;
-use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine};
+use crate::workspaces::domain::command::StripCommand;
+use crate::workspaces::engine::{EventResponse, LayoutEngine};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_strip_command(
         &mut self,
         target: CommandTarget,
-        command: LayoutCommand,
+        command: StripCommand,
     ) -> EventResponse {
         let CommandTarget {
             workspace: workspace_id,
@@ -18,18 +19,14 @@ impl LayoutEngine {
             ..
         } = target;
         match command {
-            LayoutCommand::SnapStrip => {
+            StripCommand::Snap => {
                 let system = self.workspace_tree_mut(workspace_id);
                 system.snap_to_nearest_column(layout);
                 EventResponse::default()
             }
-            LayoutCommand::CenterSelection => {
+            StripCommand::CenterSelection => {
                 let system = self.workspace_tree_mut(workspace_id);
                 system.center_selected_column(layout);
-                EventResponse::default()
-            }
-            other => {
-                debug_assert!(false, "{other:?} is not a strip command");
                 EventResponse::default()
             }
         }

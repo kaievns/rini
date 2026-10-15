@@ -1,4 +1,4 @@
-use crate::layout::WindowLayoutConstraints;
+use crate::layout::{Axis, WindowLayoutConstraints};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AxisConstraints {
@@ -28,11 +28,11 @@ pub fn column_limits(
     };
     for (window, border) in windows {
         let window = crate::layout::domain::tile::slot_limits(window, border);
-        limits.min = limits.min.max(window.min_for_axis(true));
-        if let Some(locked) = window.fixed_for_axis(true) {
+        limits.min = limits.min.max(window.min_for_axis(Axis::Horizontal));
+        if let Some(locked) = window.fixed_for_axis(Axis::Horizontal) {
             limits.fixed = Some(limits.fixed.map_or(locked, |current: f64| current.max(locked)));
         }
-        let max = window.max_for_axis(true);
+        let max = window.max_for_axis(Axis::Horizontal);
         if max > 0.0 {
             limits.max = Some(limits.max.map_or(max, |current: f64| current.min(max)));
         }
@@ -159,19 +159,19 @@ pub fn clamp_to_constraints(
     constraints: crate::layout::WindowLayoutConstraints,
 ) -> objc2_core_foundation::CGSize {
     let c = constraints.normalized();
-    let axis = |available: f64, horizontal: bool| {
-        let desired = c
-            .fixed_for_axis(horizontal)
-            .unwrap_or(available)
-            .max(c.min_for_axis(horizontal));
-        let capped = if c.max_for_axis(horizontal) > 0.0 {
-            desired.min(c.max_for_axis(horizontal))
+    let along = |available: f64, axis: Axis| {
+        let desired = c.fixed_for_axis(axis).unwrap_or(available).max(c.min_for_axis(axis));
+        let capped = if c.max_for_axis(axis) > 0.0 {
+            desired.min(c.max_for_axis(axis))
         } else {
             desired
         };
         capped.min(available).max(0.0)
     };
-    objc2_core_foundation::CGSize::new(axis(size.width, true), axis(size.height, false))
+    objc2_core_foundation::CGSize::new(
+        along(size.width, Axis::Horizontal),
+        along(size.height, Axis::Vertical),
+    )
 }
 
 /// Solve 1D segment lengths for a container axis.
