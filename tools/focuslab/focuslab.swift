@@ -90,11 +90,11 @@ func userActive() -> Bool {
 }
 
 // ---- actions
-func postKey(_ code: CGKeyCode, ctrl: Bool) {
+func postKey(_ code: CGKeyCode, option: Bool) {
     let src = CGEventSource(stateID: .hidSystemState)
     let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)!
     let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)!
-    if ctrl { d.flags = .maskControl; u.flags = .maskControl }
+    if option { d.flags = .maskAlternate; u.flags = .maskAlternate }
     lastPostNs = nowNs()
     d.post(tap: .cghidEventTap)
     usleep(15000)
@@ -257,7 +257,7 @@ func trial(mode: String, from: Target, to: Target, key: CGKeyCode, obs: Observer
     var tAct: UInt64 = 0
     switch mode {
     case "click": postClick(to.click)
-    case "key": postKey(key, ctrl: true)
+    case "key": postKey(key, option: true)
     case "makekey": makeKey(to.pid, to.wid); tAct = nowNs(); if let w = axWindow(to.pid, to.wid) { AXUIElementPerformAction(w, kAXRaiseAction as CFString) }
     case "makekey_only": makeKey(to.pid, to.wid)
     case "activate": NSRunningApplication(processIdentifier: to.pid)?.activate(options: []); tAct = nowNs(); if let w = axWindow(to.pid, to.wid) { AXUIElementPerformAction(w, kAXRaiseAction as CFString) }

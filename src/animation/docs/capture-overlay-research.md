@@ -150,8 +150,8 @@ while every foreign attempt failed.
 
 ## Phase 1 result: the overlay works
 
-Go/no-go spike for the design, run 2026-08-16. Every question passed. Spikes are
-`overlay.swift`, `hold-overlay.swift`, `overlay2.swift` and `levels.swift`.
+Go/no-go spike for the design, run 2026-08-16. Every question passed. The spike programs were not
+kept.
 
 ### Level and coverage
 

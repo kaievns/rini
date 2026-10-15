@@ -16,22 +16,18 @@ it films the whole display, for how a resize looks ("Watching a resize", below).
 
 | file | measures |
 |---|---|
-| `focuslab.swift` | one press or call per trial: the window server's front and key-focus process, watched windows' bounds (1ms poll), and the titlebar band through an `SCStream` at 120fps, timed by each frame's `displayTime`. Modes `key` (a Ctrl+key through rini's tap), `click`, `makekey`, `makekey_only`, `activate` |
-| `keys.swift` | bursts of Ctrl+key presses, for rapid-press runs |
-| `axlag.swift` | an AX position write on a parked window, and when `SLSGetWindowBounds` and `CGWindowList` show it |
+| `focuslab.swift` | one press or call per trial: the window server's front and key-focus process, watched windows' bounds (1ms poll), and the titlebar band through an `SCStream` at 120fps, timed by each frame's `displayTime`. Modes `key` (an Option+key, Kai's Mod, through rini's tap), `click`, `makekey`, `makekey_only`, `activate` |
 | `spacing.swift`, `coldsize.swift`, `gpuwarm.swift`, `qos.swift`, `keepalive.swift` | a SkyLight capture's cost against the gap since the last one, picture size, a GPU or CPU warm-up, the caller's QoS, keep-alive captures |
 | `par.swift` | SkyLight captures in parallel, on the main and on separate connections |
-| `cap1x.swift`, `ca.swift` | capture cost at 2x and with bit 9; Core Animation's commit cost for a whole composite, a crop, and copies |
-| `overlay.swift` | per Ctrl+key press, when rini's overlay window turns opaque and back (its alpha in the window list, 1ms poll): press to overlay up, and the lift, one JSON line a press (`label`, `t0_ns`, `up_ms`, `lift_ms`) for `journal.py probe`. Neither overlay probe watches for foreign input |
-| `overlayrec.swift` | rini's overlay window alone through an `SCStream` while posting presses, one PNG per frame named by its milliseconds since the first press: what the tiles show mid-flight, whatever the screen shows beneath |
+| `overlay.swift` | per Option+key press, when rini's overlay window turns opaque and back (its alpha in the window list, 1ms poll): press to overlay up, and the lift, one JSON line a press (`label`, `t0_ns`, `up_ms`, `lift_ms`) for `journal.py probe`. It does not watch for foreign input |
 | `playback.swift` | what Core Animation draws for the overlay's animations at chosen media times, against the curves `Score` evaluates; touches nothing on screen and needs no grant |
 | `rec.swift` | the battery's recorder: rini's overlay window alone (rini's window at level 18) through an `SCStream` at 60fps while posting tagged Option presses, one JSON line a press and a frame. It writes numbers only, never a picture |
 | `screenrec.swift` | the main display, rini's overlay and the real windows beneath it, through an `SCStream` at 60fps into an H.264 movie while posting tagged presses; beside it a JSON of each press's time, each frame the movie holds and each one the writer dropped. `screenrec.sh` runs it |
 | `inputwatch.swift` | the battery's guard: a listen-only tap over keys, clicks, moves and scrolls; the first event the battery did not post writes a flag file and exits |
 | `poke.swift` | posts one untagged released Option, to check that `inputwatch` stops a battery |
 
-`e2.sh` runs `focuslab` on the strip's focus change in labelled blocks, against whichever build rini
-runs, and `e1.py` reads its JSON lines.
+`e1.py` reads the JSON lines `focuslab` writes for the strip's focus change; `journal.py probe` reads
+the titlebar band through its `look`.
 
 Build one with `swiftc -O <file>.swift -o <name>`. They need Accessibility and Screen Recording for
 the terminal they run from.
@@ -41,9 +37,8 @@ the terminal they run from.
 The probes press keys, click, focus and move windows. Start a run only after the machine has been
 idle for at least five minutes (`ioreg -c IOHIDSystem`, `HIDIdleTime`), and put the workspace and
 focused window back afterwards. Posted events and rini's own cursor warp both reset the idle time, so
-`focuslab` and `keys` compare it against the time since their own last post rather than a fixed
-floor. The capture probes (`spacing`, `coldsize`, `par`, …) touch nothing on screen; `axlag` moves a
-parked, off-screen window by a point and back.
+`focuslab` compares it against the time since its own last post rather than a fixed floor. The
+capture probes (`spacing`, `coldsize`, `par`, …) touch nothing on screen.
 
 ## The battery
 
@@ -192,7 +187,7 @@ build and sign the binary in a worktree with its own `CARGO_TARGET_DIR` first.
 ## Watching a resize
 
 How a resize looks, its content against the edges, its ground and the swap to the real window at
-the lift, is seen only in a film of the whole screen: `rec` and `overlayrec` see the overlay alone.
+the lift, is seen only in a film of the whole screen: `rec` sees the overlay alone.
 The lab is a few Ghostty windows full of a ruler, recorded while posting the resize keys.
 
 | file | does |
