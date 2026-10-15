@@ -15,7 +15,7 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, trace, warn};
 
-use super::State;
+use super::{Activation, State};
 use crate::windows::domain::request::{Quiet, RaiseSequence};
 use crate::windows::event::Event;
 use crate::windows::platform::ax::element::{AX_STANDARD_WINDOW_SUBROLE, Error as AxError};
@@ -248,11 +248,13 @@ impl<W: AxWorld> State<W> {
     ) -> Result<(), RaiseError> {
         let app = this.ax.app();
         let (tx, rx) = oneshot::channel();
-        if let Some((_, _, _, prev_tx)) =
-            this.last_activated
-                .replace((Instant::now(), quiet_activation, quiet_window_change, tx))
-        {
-            let _ = prev_tx.send(());
+        if let Some(previous) = this.last_activated.replace(Activation {
+            at: Instant::now(),
+            quiet: quiet_activation,
+            quiet_window_change,
+            done: tx,
+        }) {
+            let _ = previous.done.send(());
         }
         drop(this);
         trace!("Awaiting activation");

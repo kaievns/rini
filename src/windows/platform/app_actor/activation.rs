@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use rini_core::ids::WindowId;
 use tracing::{debug, info, trace, warn};
 
-use super::State;
+use super::{Activation, State};
 use crate::windows::domain::request::Quiet;
 use crate::windows::event::Event;
 use crate::windows::platform::ax::element::Error as AxError;
@@ -75,9 +75,14 @@ impl<W: AxWorld> State<W> {
 
     fn take_activation_context(&mut self) -> (Quiet, Option<WindowId>) {
         match self.last_activated.take() {
-            Some((ts, quiet_activation, quiet_window_change, tx)) => {
-                _ = tx.send(());
-                if ts.elapsed() < Duration::from_millis(1000) {
+            Some(Activation {
+                at,
+                quiet: quiet_activation,
+                quiet_window_change,
+                done,
+            }) => {
+                _ = done.send(());
+                if at.elapsed() < Duration::from_millis(1000) {
                     trace!("by us");
                     (quiet_activation, quiet_window_change)
                 } else {

@@ -70,13 +70,23 @@ pub struct RaiseManager {
     warp: Box<dyn Fn(CGPoint)>,
 }
 
+/// The batch that holds the focus window, raised last of all: its app, its windows with the focus
+/// window last, where the mouse warps to, and whether the raise is quiet.
+#[derive(Debug)]
+struct FocusBatch {
+    pid: pid_t,
+    windows: Vec<WindowId>,
+    warp: Option<CGPoint>,
+    quiet: Quiet,
+}
+
 /// Tracks an executing sequence of raises.
 #[derive(Debug)]
 struct ActiveSequence {
     sequence_id: RaiseSequence,
     focus_window: Option<WindowId>,
     pending_raises: HashSet<WindowId>,
-    focus_batch: Option<(pid_t, Vec<WindowId>, Option<CGPoint>, Quiet)>,
+    focus_batch: Option<FocusBatch>,
     app_handles: HashMap<i32, AppThreadHandle>,
     raise_token: CancellationToken,
     started_at: Instant,
@@ -270,7 +280,12 @@ impl RaiseManager {
                 let last = wids.len() - 1;
                 wids.swap(focus_idx, last);
                 if focus_batch.is_none() {
-                    focus_batch = Some((pid, wids, focus_window.unwrap().1, focus_quiet));
+                    focus_batch = Some(FocusBatch {
+                        pid,
+                        windows: wids,
+                        warp: focus_window.unwrap().1,
+                        quiet: focus_quiet,
+                    });
                     continue;
                 }
             }
@@ -293,7 +308,12 @@ impl RaiseManager {
         if let Some((wid, warp)) = focus_window
             && focus_batch.is_none()
         {
-            focus_batch = Some((wid.pid, vec![wid], warp, focus_quiet));
+            focus_batch = Some(FocusBatch {
+                pid: wid.pid,
+                windows: vec![wid],
+                warp,
+                quiet: focus_quiet,
+            });
         }
 
         if !pending_raises.is_empty() || focus_batch.is_some() {
@@ -320,7 +340,12 @@ impl RaiseManager {
         // If all regular raises are complete but we have a focus window, send
         // the focus request.
         if sequence.pending_raises.is_empty()
-            && let Some((pid, wids, warp, quiet)) = sequence.focus_batch.take()
+            && let Some(FocusBatch {
+                pid,
+                windows: wids,
+                warp,
+                quiet,
+            }) = sequence.focus_batch.take()
         {
             changed = true;
             debug!(focus_window = ?wids);

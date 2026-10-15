@@ -47,12 +47,21 @@ struct State<W: AxWorld> {
     elem_to_wid: HashMap<W::Element, WindowId>,
     last_window_idx: u32,
     main_window: Option<WindowId>,
-    last_activated: Option<(Instant, Quiet, Option<WindowId>, oneshot::Sender<()>)>,
+    last_activated: Option<Activation>,
     pending_activation_quiet: Option<(Instant, Quiet)>,
     is_hidden: bool,
     is_frontmost: bool,
     raises_tx: channels::Sender<RaiseRequest>,
     tx_store: Option<WindowTxStore>,
+}
+
+/// An activation this thread asked for: when, whether it and the main-window change it brings are
+/// quiet, and who waits for macOS to report it.
+struct Activation {
+    at: Instant,
+    quiet: Quiet,
+    quiet_window_change: Option<WindowId>,
+    done: oneshot::Sender<()>,
 }
 
 struct AppWindowState<E> {
@@ -180,8 +189,8 @@ impl<W: AxWorld> State<W> {
 
 impl<W: AxWorld> Drop for State<W> {
     fn drop(&mut self) {
-        if let Some((_, _, _, tx)) = self.last_activated.take() {
-            let _ = tx.send(());
+        if let Some(activation) = self.last_activated.take() {
+            let _ = activation.done.send(());
         }
         self.ax.restore_enhanced_ui_if_needed();
     }
