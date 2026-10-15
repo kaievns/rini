@@ -55,40 +55,7 @@ pub fn handle_mouse_up(
                 outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(window));
             }
             if let Some(space) = payload.final_space {
-                if let Some(server_id) =
-                    state.windows.window(window).and_then(|window| window.info.sys_id)
-                {
-                    state.windows.set_window_server_space(server_id, Some(space));
-                    state.windows.mark_window_visible(server_id);
-                }
-                // Keep the window in ITS OWN workspace, changing only which display's strip
-                // holds it.
-                //
-                // This used to assign it to the destination display's ACTIVE workspace. If
-                // that display was showing something else, the window silently changed
-                // workspace and vanished from view — reported when tearing a Chrome tab into
-                // its own window, and when dragging a window across displays. A drag moves a
-                // window between strips; only an explicit move-to-workspace command may move
-                // it between workspaces.
-                let workspace = layout
-                    .virtual_workspace_manager()
-                    .workspace_info_for_window_any(&state.windows, window)
-                    .map(|assignment| assignment.workspace_id)
-                    .or_else(|| layout.active_workspace(space));
-                if let Some(workspace) = workspace
-                    && !layout.virtual_workspace_manager_mut().assign_window_to_workspace(
-                        &mut state.windows,
-                        space,
-                        window,
-                        workspace,
-                    )
-                {
-                    warn!(?window, ?workspace, "failed to assign dragged window");
-                }
-                // Dragging a window to another display is the user choosing where it
-                // lives, so it becomes the window's home. Without this a later replug
-                // would repatriate it back to the display it was dragged off.
-                layout.set_window_display_home(&mut state.display_memory, window, space);
+                drop_on_space(state, layout, window, space);
                 outcome = outcome.with_layout_event(LayoutEvent::WindowAdded(space, window));
             }
             drag.skip_layout_for_window = Some(window);
@@ -101,16 +68,8 @@ pub fn handle_mouse_up(
         if let Some(space) = payload.final_space
             && layout.is_window_floating(window)
         {
-            if session.origin_space != payload.final_space {
-                layout.remove_floating_position(window);
-            }
-            if let Some(workspace) = layout
-                .virtual_workspace_manager()
-                .workspace_for_window(&state.windows, space, window)
-                .or_else(|| layout.active_workspace(space))
-            {
-                layout.store_floating_position(space, workspace, window, session.last_frame);
-            }
+            let moved = session.origin_space != payload.final_space;
+            remember_floating_drop(state, layout, &session, space, moved);
         }
     }
 
@@ -125,4 +84,68 @@ pub fn handle_mouse_up(
         0
     };
     Ok(outcome.with_arrange_passes(passes))
+}
+
+/// A window dropped on another display's space: on that space and visible, in its own workspace
+/// on that display's strip, and homed to that display.
+fn drop_on_space(
+    state: &mut RiniState,
+    layout: &mut LayoutEngine,
+    window: WindowId,
+    space: SpaceId,
+) {
+    if let Some(server_id) = state.windows.window(window).and_then(|window| window.info.sys_id) {
+        state.windows.set_window_server_space(server_id, Some(space));
+        state.windows.mark_window_visible(server_id);
+    }
+    // Keep the window in ITS OWN workspace, changing only which display's strip
+    // holds it.
+    //
+    // This used to assign it to the destination display's ACTIVE workspace. If
+    // that display was showing something else, the window silently changed
+    // workspace and vanished from view — reported when tearing a Chrome tab into
+    // its own window, and when dragging a window across displays. A drag moves a
+    // window between strips; only an explicit move-to-workspace command may move
+    // it between workspaces.
+    let workspace = layout
+        .virtual_workspace_manager()
+        .workspace_info_for_window_any(&state.windows, window)
+        .map(|assignment| assignment.workspace_id)
+        .or_else(|| layout.active_workspace(space));
+    if let Some(workspace) = workspace
+        && !layout.virtual_workspace_manager_mut().assign_window_to_workspace(
+            &mut state.windows,
+            space,
+            window,
+            workspace,
+        )
+    {
+        warn!(?window, ?workspace, "failed to assign dragged window");
+    }
+    // Dragging a window to another display is the user choosing where it
+    // lives, so it becomes the window's home. Without this a later replug
+    // would repatriate it back to the display it was dragged off.
+    layout.set_window_display_home(&mut state.display_memory, window, space);
+}
+
+/// A floating window's drop remembered as its floating position on the space it was dropped on,
+/// the one it had elsewhere forgotten when it changed space.
+fn remember_floating_drop(
+    state: &RiniState,
+    layout: &mut LayoutEngine,
+    session: &crate::app::reactor::DragSession,
+    space: SpaceId,
+    moved: bool,
+) {
+    let window = session.window;
+    if moved {
+        layout.remove_floating_position(window);
+    }
+    if let Some(workspace) = layout
+        .virtual_workspace_manager()
+        .workspace_for_window(&state.windows, space, window)
+        .or_else(|| layout.active_workspace(space))
+    {
+        layout.store_floating_position(space, workspace, window, session.last_frame);
+    }
 }
