@@ -500,14 +500,6 @@ impl WorkspaceStore {
         window_store.workspace_for_window(space, window_id)
     }
 
-    pub fn workspace_for_window_any(
-        &self,
-        window_store: &WindowStore,
-        window_id: WindowId,
-    ) -> Option<VirtualWorkspaceId> {
-        window_store.workspace_info_for_window(window_id).map(|info| info.workspace_id)
-    }
-
     pub fn workspace_info_for_window_any(
         &self,
         window_store: &WindowStore,
@@ -681,22 +673,6 @@ impl WorkspaceStore {
             .copied()
             .filter(|id| self.workspaces.contains_key(*id))
             .collect()
-    }
-
-    pub fn rename_workspace(
-        &mut self,
-        space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-        new_name: String,
-    ) -> bool {
-        // A rename applies to the workspace itself, which every display shares.
-        let _ = space;
-        if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
-            workspace.name = new_name;
-            true
-        } else {
-            false
-        }
     }
 
     pub fn workspace_windows(

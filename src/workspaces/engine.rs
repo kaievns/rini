@@ -2141,6 +2141,9 @@ impl LayoutEngine {
         }
     }
 
+    /// The tiled positions alone, unparked; the application lays out through
+    /// `calculate_layout_with_virtual_workspaces`.
+    #[cfg(test)]
     pub fn calculate_layout(
         &mut self,
         space: SpaceId,
@@ -3077,6 +3080,7 @@ impl LayoutEngine {
         self.floating_positions.store(space, workspace, window, frame);
     }
 
+    #[cfg(test)]
     pub fn get_floating_position(
         &self,
         space: SpaceId,

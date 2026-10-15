@@ -290,10 +290,6 @@ impl DisplayAffinity {
             .find_map(|(uuid, owned)| (*owned == space).then_some(uuid.as_str()))
     }
 
-    pub fn knows_display(&self, display: &str) -> bool {
-        self.display_space.contains_key(display)
-    }
-
     /// Move every record naming `old_space` onto `new_space`.
     pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
         if old_space == new_space {
@@ -380,10 +376,6 @@ impl DisplayAffinity {
         } else {
             self.setup_mut().display_strip.insert(display.to_owned(), windows);
         }
-    }
-
-    pub fn display_strip(&self, display: &str) -> &[WindowId] {
-        self.setup().display_strip.get(display).map(Vec::as_slice).unwrap_or_default()
     }
 
     /// Remember the width `window` occupies on `display`.
@@ -734,7 +726,6 @@ mod tests {
 
         assert_eq!(affinity.space_for_display("external"), Some(SpaceId::new(552)));
         assert_eq!(affinity.display_for_space(SpaceId::new(479)), None);
-        assert!(affinity.knows_display("external"));
     }
 
     #[test]
@@ -916,7 +907,7 @@ mod tests {
         affinity.set_display_strip("external", vec![win(1), win(2)]);
         affinity.forget_window(win(1));
 
-        assert_eq!(affinity.display_strip("external"), &[win(2)]);
+        assert_eq!(affinity.setup().display_strip["external"], vec![win(2)]);
         assert_eq!(affinity.window_home(win(1)), None);
     }
 

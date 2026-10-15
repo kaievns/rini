@@ -31,6 +31,7 @@ pub struct RestoreRequest {
 
 impl RestoreRequest {
     /// Restore a portable layout file from the space that was active when it was saved.
+    #[cfg(test)]
     pub fn new(scope: RestoreScope, active_space: SpaceId) -> Self {
         Self {
             scope,
@@ -40,7 +41,8 @@ impl RestoreRequest {
     }
 
     /// Restore the saved layout file's entry for the current native space when available.
-    pub fn from_saved_file(scope: RestoreScope, active_space: SpaceId) -> Self {
+    #[cfg(test)]
+    pub fn from_current_space(scope: RestoreScope, active_space: SpaceId) -> Self {
         Self {
             scope,
             active_space,

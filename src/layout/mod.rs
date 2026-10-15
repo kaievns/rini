@@ -102,10 +102,6 @@ impl WindowLayoutConstraints {
     pub fn resizable_for_axis(self, horizontal: bool) -> bool {
         self.fixed_for_axis(horizontal).is_none()
     }
-
-    pub fn resizable_any_axis(self) -> bool {
-        self.resizable_for_axis(true) || self.resizable_for_axis(false)
-    }
 }
 
 #[cfg(test)]
@@ -153,7 +149,6 @@ mod tests {
         assert_eq!(c.fixed_for_axis(false), None);
         assert!(!c.resizable_for_axis(true));
         assert!(c.resizable_for_axis(false));
-        assert!(c.resizable_any_axis());
     }
 
     #[test]
@@ -192,7 +187,6 @@ mod tests {
         assert_eq!(c.fixed_for_axis(false), Some(360.0));
         assert!(!c.resizable_for_axis(true));
         assert!(!c.resizable_for_axis(false));
-        assert!(!c.resizable_any_axis());
     }
 
     #[test]

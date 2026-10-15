@@ -106,6 +106,7 @@ impl FloatingPositionStore {
         self.positions.entry((space, workspace, window)).or_insert(frame);
     }
 
+    #[cfg(test)]
     pub fn get(
         &self,
         space: SpaceId,
@@ -162,22 +163,6 @@ impl FloatingPositionStore {
 
     /// Replace one target workspace's saved floating frames from a snapshot.
     /// Clearing first is essential: restore is replacement, not a merge with stale target state.
-    pub fn replace_workspace_from(
-        &mut self,
-        source: &Self,
-        source_space: SpaceId,
-        source_workspace: VirtualWorkspaceId,
-        target_space: SpaceId,
-        target_workspace: VirtualWorkspaceId,
-    ) {
-        self.positions.retain(|(space, workspace, _), _| {
-            (*space, *workspace) != (target_space, target_workspace)
-        });
-        for (window, frame) in source.workspace_positions(source_space, source_workspace) {
-            self.store(target_space, target_workspace, window, frame);
-        }
-    }
-
     pub fn replace_workspace_positions(
         &mut self,
         target_space: SpaceId,
@@ -267,12 +252,10 @@ mod tests {
 
         source.store(source_space, workspace(), source_window, frame());
         target.store(target_space, workspace(), stale_target_window, frame());
-        target.replace_workspace_from(
-            &source,
-            source_space,
-            workspace(),
+        target.replace_workspace_positions(
             target_space,
             workspace(),
+            source.workspace_positions(source_space, workspace()),
         );
 
         assert_eq!(

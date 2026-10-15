@@ -58,6 +58,7 @@ impl LayoutEngine {
         Self::deserialize_file(&buf)
     }
 
+    #[cfg(test)]
     pub fn deserialize_from_str(buf: &str) -> anyhow::Result<Self> {
         Self::deserialize_file(buf)?.layout
     }

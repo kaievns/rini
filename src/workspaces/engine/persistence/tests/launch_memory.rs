@@ -159,7 +159,8 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
     assert_eq!(
         engine
             .virtual_workspace_manager
-            .workspace_for_window_any(&window_store, after_relaunch),
+            .workspace_info_for_window_any(&window_store, after_relaunch)
+            .map(|info| info.workspace_id),
         Some(elsewhere),
         "back in the workspace it was in, not the active one"
     );

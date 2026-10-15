@@ -658,16 +658,8 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
     assert_eq!(snapshot.active_workspace(space), Some(saved_t));
     // Names rather than layout modes as the marker; see the note in
     // portable_restore_uses_the_space_that_was_active_when_saved.
-    assert!(snapshot.virtual_workspace_manager.rename_workspace(
-        space,
-        saved_t,
-        "saved-t".to_string(),
-    ));
-    assert!(snapshot.virtual_workspace_manager.rename_workspace(
-        space,
-        saved_s,
-        "saved-s".to_string(),
-    ));
+    snapshot.virtual_workspace_manager.workspaces[saved_t].name = "saved-t".to_string();
+    snapshot.virtual_workspace_manager.workspaces[saved_s].name = "saved-s".to_string();
     let path = std::env::temp_dir().join(format!(
         "rini-saved-workspace-ordinal-test-{}-{}.ron",
         std::process::id(),
@@ -692,7 +684,7 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
     engine
         .restore_layout(
             path.clone(),
-            RestoreRequest::from_saved_file(RestoreScope::Workspace, space),
+            RestoreRequest::from_current_space(RestoreScope::Workspace, space),
             &mut window_store,
             &mut memory,
             &layout_settings,
@@ -787,16 +779,8 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     // These used to be given DIFFERENT layout modes so the assertions could tell which
     // snapshot won. With one mode left, name them instead — same purpose, and it survives
     // the layout modes being removed.
-    assert!(snapshot.virtual_workspace_manager.rename_workspace(
-        source_a,
-        source_a_workspace,
-        "saved-a".to_string(),
-    ));
-    assert!(snapshot.virtual_workspace_manager.rename_workspace(
-        source_b,
-        source_b_workspace,
-        "saved-b".to_string(),
-    ));
+    snapshot.virtual_workspace_manager.workspaces[source_a_workspace].name = "saved-a".to_string();
+    snapshot.virtual_workspace_manager.workspaces[source_b_workspace].name = "saved-b".to_string();
     let path = std::env::temp_dir().join(format!(
         "rini-portable-source-restore-test-{}-{}.ron",
         std::process::id(),
@@ -855,7 +839,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     saved_target
         .restore_layout(
             path.clone(),
-            RestoreRequest::from_saved_file(RestoreScope::Workspace, target_space),
+            RestoreRequest::from_current_space(RestoreScope::Workspace, target_space),
             &mut saved_store,
             &mut saved_target_memory,
             &LayoutSettings::default(),
@@ -889,11 +873,7 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
         );
         snapshot.update_space_display(&mut snapshot_memory, space, Some(display.into()));
         let workspace = snapshot.active_workspace(space).unwrap();
-        assert!(snapshot.virtual_workspace_manager.rename_workspace(
-            space,
-            workspace,
-            format!("saved-{display}"),
-        ));
+        snapshot.virtual_workspace_manager.workspaces[workspace].name = format!("saved-{display}");
     }
     let path = std::env::temp_dir().join(format!(
         "rini-saved-display-source-test-{}.ron",
@@ -922,7 +902,7 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
     engine
         .restore_layout(
             path.clone(),
-            RestoreRequest::from_saved_file(RestoreScope::Workspace, current_a),
+            RestoreRequest::from_current_space(RestoreScope::Workspace, current_a),
             &mut window_store,
             &mut engine_memory,
             &LayoutSettings::default(),
