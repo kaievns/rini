@@ -69,8 +69,8 @@ Every read and capture the thread makes goes through the `Capturer` it was start
 (`platform/capturer.rs`), so its rounds run in a test against `FakeCapturer`: a refresh that stops at a
 press asked mid-round (`a_refresh_makes_no_call_once_a_transition_is_asked_and_a_watch_round_makes_every_one`),
 what it leaves unseen (`a_window_whose_call_a_press_stopped_is_not_seen`), the calls a set is split
-into (`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`), the desktop's windows
-dropped after a misshapen call (`a_misshapen_batch_leaves_the_desktop_windows_to_be_listed_again`) and
+into (`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`), no picture and the
+desktop's windows dropped after a misshapen call (`a_misshapen_batch_leaves_the_desktop_windows_to_be_listed_again`) and
 what a round reads once (`what_a_round_knows_is_read_once_and_only_once_a_window_is_wanted`). The
 handle's own captures, the desktop and the bar `dressing` composites on the caller's thread, do not
 go through it.

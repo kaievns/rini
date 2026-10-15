@@ -31,7 +31,9 @@ something rini decides — inject what the rule reads and let the test name it. 
 decides and makes the calls, the calls are a port it is generic over: the pictures service is
 `Service<C: Capturer>` (`src/pictures/platform/capturer.rs`), and its tests run its rounds against
 `FakeCapturer`, which answers from the frames a test gives it and records every call made
-(`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`).
+(`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`). A fake gives only answers
+the real calls can: its misshapen call is the baked one, so it yields no picture and its windows are
+opaque, as in `skylight::capture_on_screen`.
 
 ## A unit test must not read the live window server
 

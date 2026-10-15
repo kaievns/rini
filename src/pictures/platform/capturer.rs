@@ -151,16 +151,17 @@ mod fake {
     use crate::pictures::platform::screencapturekit::Prepared;
     use crate::pictures::platform::skylight::{Batch, BatchCall};
 
-    /// A window server with only the frames given, and captures that always come back, each window
-    /// pictured at its frame's size and seen for the first time as translucent. Like the real one, it
-    /// asks `halt` before each call and makes none once it says stop. A listing finds nothing, and no
-    /// render or picture of the bar comes back.
+    /// A window server with only the frames given, and captures that come back unless `misshapen`,
+    /// each window pictured at its frame's size and seen for the first time as translucent. Like the
+    /// real one, it asks `halt` before each call and makes none once it says stop. A listing finds
+    /// nothing, and no render or picture of the bar comes back.
     #[derive(Default)]
     pub struct FakeCapturer {
         pub frames: HashMap<WindowServerId, CGRect>,
         pub key: Option<pid_t>,
         pub desktop: DesktopBackdrop,
-        /// Every batched call comes back another shape than its windows.
+        /// Every batched call is the baked one, the desktop listed, and comes back another shape than
+        /// its windows: no picture, the windows seen as opaque and the desktop's windows stale.
         pub misshapen: bool,
         /// Run after each batched call is made: a press asked while a round is under way.
         pub after_call: Option<Box<dyn Fn() + Send>>,
@@ -206,14 +207,16 @@ mod fake {
             let pictures = call
                 .windows
                 .iter()
-                .map(|window| {
+                .filter_map(|window| {
                     if learned.get(window.server_id).translucent.is_none() {
-                        learned.saw_alpha(window.server_id, true);
+                        learned.saw_alpha(window.server_id, !self.misshapen);
                     }
-                    (
-                        window.window,
-                        test_picture(ScreenSize::from_cg(window.frame.size)),
-                    )
+                    (!self.misshapen).then(|| {
+                        (
+                            window.window,
+                            test_picture(ScreenSize::from_cg(window.frame.size)),
+                        )
+                    })
                 })
                 .collect();
             if let Some(after_call) = &self.after_call {

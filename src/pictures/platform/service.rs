@@ -2447,14 +2447,18 @@ mod tests {
     }
 
     /// Windows that overlap go in calls of their own, set by set: one call holds no two that overlap
-    /// and no two sets' windows, however far apart.
+    /// and no two sets' windows, though window 4 overlaps only window 3 and would share window 2's
+    /// call were the sets one.
     #[test]
     fn overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own() {
         let (mut service, _shared) = capturing(&[
             (1, frame_at(4.0)),
             (2, frame_at(400.0)),
             (3, frame_at(870.0)),
-            (4, frame_at(870.0)),
+            (
+                4,
+                ScreenRect::new(ScreenPoint::new(1270.0, 32.0), ScreenSize::new(400.0, 1081.0)),
+            ),
         ]);
         service.look(vec![set_of(&[1, 2, 3]), set_of(&[4])], Looking::Watches);
         assert_eq!(*service.capturer.calls.borrow(), vec![
@@ -2464,9 +2468,9 @@ mod tests {
         ]);
     }
 
-    /// A batched call that comes back another shape than its windows leaves the desktop's windows
-    /// unheld, so the next round lists them afresh; one that comes back whole keeps them for the
-    /// rounds after.
+    /// A batched call that comes back another shape than its windows brings no picture and leaves the
+    /// desktop's windows unheld, so the next round lists them afresh; one that comes back whole keeps
+    /// them for the rounds after.
     #[test]
     fn a_misshapen_batch_leaves_the_desktop_windows_to_be_listed_again() {
         let (mut service, shared) = capturing(&[(1, frame_at(4.0))]);
@@ -2474,6 +2478,13 @@ mod tests {
         service.capturer.misshapen = true;
         service.look(vec![set_of(&[1])], Looking::Watches);
         assert!(shared.lock().unwrap().display.desktop_windows.is_none(), "stale");
+        assert!(shared.lock().unwrap().cache.get(wid(1)).is_none(), "no picture");
+        let learned = shared.lock().unwrap().learned.clone();
+        assert_eq!(
+            learned.get(WindowServerId::new(1)).translucent,
+            Some(false),
+            "baked: opaque"
+        );
 
         service.capturer.misshapen = false;
         service.look(vec![set_of(&[1])], Looking::Watches);
