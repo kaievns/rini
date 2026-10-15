@@ -1,6 +1,7 @@
 //! Moving a window: to another workspace on its display, to another display's space, and between
-//! the strip and the floating layer. Each move takes the window out of its layer with
-//! `take_window` and puts it into the destination with `place_window`.
+//! the strip and the floating layer. All three take the window out of its layer with `detach` and
+//! put it into another with `attach`; the two moves to a workspace go through `take_window` and
+//! `place_window`, which add the reassignment to the destination workspace.
 
 use objc2_core_foundation::CGSize;
 use rini_core::ids::{SpaceId, WindowId};
@@ -150,8 +151,8 @@ impl LayoutEngine {
             self.floating.remove_floating(wid);
             self.floating.set_last_focus(None);
         } else {
+            let _ = self.detach(wid);
             if let Some(space) = space {
-                let _ = self.detach(wid);
                 self.floating.add_active(space, wid.pid, wid);
             }
             self.floating.add_floating(wid);

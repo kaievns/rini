@@ -2139,6 +2139,28 @@ mod tests {
     }
 
     #[test]
+    fn floating_a_window_with_no_space_named_takes_it_out_of_its_strip() {
+        let mut fx = EngineFixture::new();
+        let home = SpaceId::new(104);
+        let wid = WindowId::new(6008, 1);
+        fx.expose(home, CGSize::new(1000.0, 1000.0));
+        let _ = fx.open(home, vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)]);
+        fx.engine.focused_window = Some(wid);
+
+        let _ = fx.engine.handle_command(
+            &mut fx.windows,
+            &mut fx.memory,
+            None,
+            &fx.visible,
+            &fx.centers,
+            LayoutCommand::ToggleWindowFloating,
+        );
+
+        assert!(fx.engine.floating.is_floating(wid));
+        assert!(fx.frames(home).is_empty());
+    }
+
+    #[test]
     fn move_window_to_workspace_can_follow_the_window() {
         let mut fx = EngineFixture::new();
         let space = SpaceId::new(96);
