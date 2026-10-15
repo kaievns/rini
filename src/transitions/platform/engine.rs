@@ -68,6 +68,7 @@ use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow
 use crate::transitions::domain::timing::*;
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 use crate::transitions::platform::journal::Writer;
+use crate::transitions::platform::logged::Whole;
 use crate::transitions::settings::JournalSettings;
 use crate::windows::platform::window_server::WindowServer;
 
@@ -1753,8 +1754,8 @@ impl FlightEngine {
                 offscreen += 1;
                 debug!(
                     wsid = request.server_id.as_u32(),
-                    from = logged(request.from),
-                    to = logged(request.to),
+                    from = %Whole(request.from),
+                    to = %Whole(request.to),
                     "skipped as off screen"
                 );
                 continue;
@@ -1833,8 +1834,8 @@ impl FlightEngine {
                             debug!(
                                 pid = request.window.pid,
                                 idx = request.window.idx.get(),
-                                spawn = logged(from),
-                                slot = logged(to),
+                                spawn = %Whole(from),
+                                slot = %Whole(to),
                                 capture_ms = captured_at.elapsed().as_millis() as u64,
                                 "entrance from spawn"
                             );
@@ -1900,7 +1901,7 @@ impl FlightEngine {
             tiles = tiles.len(),
             offscreen,
             no_snapshot = skipped,
-            display = logged(display_frame),
+            display = %Whole(display_frame),
             "overlay animation composition"
         );
 
@@ -2136,21 +2137,21 @@ impl FlightEngine {
                     };
                     debug!(
                         key = format!("{key:?}"),
-                        presented = format!("{:.0},{:.0}", drawn.x, drawn.y),
-                        to = format!("{:.0},{:.0}", to.x, to.y),
+                        presented = %Whole(drawn),
+                        to = %Whole(*to),
                         "group retargeted"
                     );
                 }
                 for (window, from_key, to_key) in &delta.reparented {
-                    let dest = running.plan.destination(*window);
+                    let dest = running.plan.destination(*window).map(Whole);
                     let from_to = running.plan.position_of(*from_key);
                     debug!(
                         pid = window.pid,
                         idx = window.idx.get(),
                         from = format!("{from_key:?}"),
                         to = format!("{to_key:?}"),
-                        group_destination = format!("{:.0},{:.0}", from_to.x, from_to.y),
-                        member_destination = dest.map(logged).unwrap_or_default(),
+                        group_destination = %Whole(from_to),
+                        member_destination = dest.map(|dest| dest.to_string()).unwrap_or_default(),
                         "member reparented"
                     );
                 }
@@ -2294,10 +2295,7 @@ impl FlightEngine {
             missing,
             misshapen,
             stand_ins,
-            travel = format!(
-                "{:.0},{:.0} -> {:.0},{:.0}",
-                from_offset.x, from_offset.y, to_offset.x, to_offset.y
-            ),
+            travel = format!("{} -> {}", Whole(from_offset), Whole(to_offset)),
             "surface group animation"
         );
 
@@ -2364,7 +2362,7 @@ impl FlightEngine {
         let remaining = running.score.remaining(at);
         self.play(edits);
         debug!(
-            overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
+            overshoot = %Whole(overshoot),
             "edge bounce"
         );
         self.drive(lifecycle::Event::Extend(remaining));
@@ -2596,15 +2594,6 @@ fn live_frame(ws: &dyn WindowServer, server_id: WindowServerId) -> Option<Screen
         .filter(|frame| frame.size.width > 0.0 && frame.size.height > 0.0)
 }
 
-/// `frame` as the log gives a frame: its origin, then its size, to the point.
-fn logged<U>(frame: rini_geometry::space::Rect<U>) -> String {
-    let (origin, size) = (frame.origin, frame.size);
-    format!(
-        "{:.0},{:.0} {:.0}x{:.0}",
-        origin.x, origin.y, size.width, size.height
-    )
-}
-
 /// Records what the overlay was dressed with; a black backdrop is only diagnosable after the fact.
 fn log_dressing(
     path: &str,
@@ -2616,20 +2605,16 @@ fn log_dressing(
         backdrop = dressing
             .desktop
             .as_ref()
-            .map(|b| format!(
-                "{:.0}x{:.0} {:?}",
-                b.coverage.covered.width, b.coverage.covered.height, b.source
-            ))
+            .map(|b| format!("{} {:?}", Whole(b.coverage.covered), b.source))
             .unwrap_or_else(|| "NONE".to_string()),
         bar = dressing
             .bar
             .as_ref()
-            .map(|b| format!(
-                "{:.0}x{:.0}",
-                b.coverage.covered.width, b.coverage.covered.height
-            ))
+            .map(|b| Whole(b.coverage.covered).to_string())
             .unwrap_or_else(|| "NONE".to_string()),
-        strip = strip.map(logged).unwrap_or_else(|| "none".to_string()),
+        strip = strip
+            .map(|strip| Whole(strip).to_string())
+            .unwrap_or_else(|| "none".to_string()),
         "overlay dressed"
     );
 }
@@ -2656,12 +2641,6 @@ mod tests {
     }
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
-
-    #[test]
-    fn a_frame_is_logged_as_its_origin_then_its_size_to_the_point() {
-        let frame: ScreenRect = rect(10.4, -3.6, 859.0, 1080.6);
-        assert_eq!(logged(frame), "10,-4 859x1081");
-    }
 
     /// A flight with nothing in it, composed and not yet moving.
     fn flight() -> RunningAnimation {

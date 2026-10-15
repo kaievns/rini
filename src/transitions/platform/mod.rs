@@ -4,3 +4,4 @@
 
 pub mod engine;
 pub mod journal;
+mod logged;
