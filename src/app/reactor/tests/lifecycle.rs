@@ -591,11 +591,12 @@ fn the_quit_save_forgets_a_space_the_display_moved_off_and_left_empty() {
     );
 }
 
-/// A discovery hands work back mid-drain, a window to add and an arrange. That work is carried out
-/// in this outcome's own steps: its window is arranged in the one arrange, after this outcome's
-/// frame write ahead of the layout, and the deferred request still goes last.
+/// A discovery hands work back mid-drain, the layout events that add its window. They are sent
+/// where it hands them back, so the pass the added window's layout event runs goes ahead of this
+/// outcome's frame write ahead of the layout, which comes after the discovery, and the deferred
+/// request still goes last.
 #[test]
-fn work_a_discovery_hands_back_is_arranged_after_the_frames_written_ahead_of_layout() {
+fn a_discovery_lays_its_window_out_where_it_hands_it_back() {
     let (mut apps, mut reactor) = test_context();
     let space = SpaceId::new(1);
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
@@ -631,8 +632,8 @@ fn work_a_discovery_hands_back_is_arranged_after_the_frames_written_ahead_of_lay
         })
         .collect();
     assert_eq!(sent, [
-        (Some(first), Some(true)),
         (Some(added), Some(false)),
+        (Some(first), Some(true)),
         (None, None)
     ]);
 }

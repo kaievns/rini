@@ -502,6 +502,61 @@ fn forwarded_space_state_is_queued_during_mission_control_and_applied_on_exit() 
     assert!(reactor.pending_space_change.is_none());
 }
 
+/// The exit's refresh pass lays out what the space change held through Mission Control did: the
+/// window it took off the space is gone before that pass, so the pass writes the frame the window
+/// left behind, before the event's own arrange.
+#[test]
+fn a_space_change_held_through_mission_control_is_laid_out_before_the_exit_refresh_pass() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(2));
+    let (kept, gone) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    let (kept_wsid, gone_wsid) = (WindowServerId::new(10_001), WindowServerId::new(10_002));
+    reactor.handle_event(Event::MissionControlNativeEntered);
+    reactor
+        .window_server()
+        .set_space_window_list(space.get(), Some(vec![kept_wsid.as_u32()]));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(space)],
+        |state| {
+            state.topology_window_delta =
+                Some(crate::displays::domain::topology::TopologyWindowDelta {
+                    disappeared: vec![(gone_wsid, space)],
+                    ..Default::default()
+                });
+        },
+    ));
+    assert!(reactor.pending_space_change.is_some());
+    apps.requests();
+
+    let exit = reactor.dispatch_workflow(Event::MissionControlNativeExited).unwrap();
+    let rest = reactor.settle_ahead_of_arrange(exit);
+
+    assert!(
+        rest.arrange.requested,
+        "the event's own arrange is still to come"
+    );
+    let written: Vec<_> = apps
+        .requests()
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::SetWindowFrame(window, frame, ..) => Some((window, frame)),
+            _ => None,
+        })
+        .collect();
+    let kept_frame = written.iter().find(|(window, _)| *window == kept).map(|(_, frame)| *frame);
+    assert!(written.iter().all(|(window, _)| *window != gone), "{written:?}");
+    reactor.apply_event_outcome(rest);
+    assert!(!has_window_in_layout(&mut reactor, space, screen, gone));
+    assert_eq!(
+        kept_frame,
+        reactor.state.windows.window(kept).map(|window| window.frame_monotonic),
+        "the refresh pass wrote the kept window's frame without the window the held change took off"
+    );
+}
+
 #[test]
 fn mission_control_exit_does_not_restore_cached_space_without_authoritative_snapshot() {
     let mut reactor = test_reactor();

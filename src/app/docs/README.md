@@ -29,7 +29,7 @@ knows the features and converts what they emit.
 | `reactor/events/command.rs` | The commands: layout commands, closing a window, a config update, saving before exit, and focusing or moving the mouse to a display |
 | `reactor/events/drag.rs` | A mouse-up ending a drag: the swap it deferred carried out, and a window dragged onto another display's space moved to that display's strip in its own workspace |
 | `reactor/events/focus.rs` | `resolve`: the space and window a workflow's focus request lands on |
-| `reactor/events/outcome.rs` | `EventOutcome`: what a reducer leaves for after its mutation, in order (window-server updates, discoveries, app requests, raises and refreshes), `absorb`, which merges two, `absorb_ahead`, which takes in work handed back mid-drain, and `take_work_before_arrange`, one round of what goes before the arrange |
+| `reactor/events/outcome.rs` | `EventOutcome`: what a reducer leaves for after its mutation, in order (window-server updates, discoveries, app requests, raises and refreshes), `absorb`, which merges two, `absorb_ahead`, which takes in what is left of work handed back mid-drain, and `take_work_before_arrange`, which splits off what goes before the arrange and keeps whether it focused a window |
 | `reactor/events/space.rs` | The window server's windows appearing and going, native Mission Control entered and left, and space lifecycle, with the fullscreen departure and last-known user space rules |
 | `reactor/events/system.rs` | Menus opening and closing, waking from sleep, a raise completing or timing out, and the WM controller's sender registering |
 | `reactor/events/window.rs` | One window's events: created, destroyed, minimized and back, its frame changing (`classify_window_frame_change`), its title, and the mouse moving over it |
@@ -95,21 +95,31 @@ a config, notifications, and the deferred application requests last.
 
 Four steps hand work back: a discovery (`on_windows_discovered_with_app_info`), a
 fullscreen restoration, the space change held while Mission Control was open
-(`repair_spaces_after_mission_control`), and a drag's release (`on_mouse_up`). Each
-outcome they return is absorbed with `absorb_ahead`, ahead of what is left of the event's,
-and `take_work_before_arrange` hands it to another round of the steps before the arrange.
-A snapshot that applies the held space change absorbs its outcome the same way. Nothing
-re-enters `apply_event_outcome` or `handle_event`, so an event has one arrange, one
+(`try_apply_pending_space_change`, from the exit's repair and from a snapshot), and a drag's
+release (`on_mouse_up`). `settle_ahead_of_arrange` carries out each returned outcome's steps
+before the arrange where it is handed back, depth-first, so they run in the order the nested
+drain ran them: the held change's layout events reach the layout before the exit's refresh
+pass and before a snapshot repatriates
+(`a_space_change_held_through_mission_control_is_laid_out_before_the_exit_refresh_pass`).
+What is left of each, its arrange and what follows it, is absorbed in the order it was
+handed back, and that is absorbed with `absorb_ahead`, ahead of what is left of the event's.
+Nothing re-enters `apply_event_outcome` or `handle_event`, so an event has one arrange, one
 regroup and one press in the transitions journal: a drag released inside a frame report is
-that report's press (`a_drag_released_inside_a_frame_report_is_the_reports_press`), and
-the window a discovery adds is arranged after the frames written ahead of the layout
-(`work_a_discovery_hands_back_is_arranged_after_the_frames_written_ahead_of_layout`).
+that report's press (`a_drag_released_inside_a_frame_report_is_the_reports_press`). A
+layout event that changes geometry still runs its own pass inside `send_layout_event`, so
+the window a discovery adds is laid out where the discovery hands it back, ahead of the
+frames written ahead of the layout that come after the discovery
+(`a_discovery_lays_its_window_out_where_it_hands_it_back`).
 
 Rejected: each of those steps carrying out its own outcome on the spot. That ran a whole
 drain inside the event's, so the nested arrange went before the frames written ahead of
 the layout, cleared the command's strip move and the workspace switch before the event's
 own arrange, forgot what the event's focus raise had lifted so its regroup could lift the
-strip again, and journalled a drag's release as a press of its own.
+strip again, and journalled a drag's release as a press of its own. Also rejected: absorbing
+what is handed back whole and carrying out its steps before the arrange in a later round.
+That put the held space change's layout events after the Mission Control exit's refresh,
+which reconciles and lays out on its own, so its pass ran over a layout the change had not
+reached.
 
 ## Where the reactor's tests are
 

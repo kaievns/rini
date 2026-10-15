@@ -266,12 +266,13 @@ arguments.
 
 `apply_event_outcome` gave up three rules: `ArrangeRequest::passes_to_run`,
 `EventOutcome::focus_landed` and `notification_ids_to_publish` (`src/app/reactor/managers.rs`),
-with 14 tests. It no longer re-enters itself: what a discovery, a fullscreen restoration,
-the held space change and a drag's release hand back is absorbed into the event's outcome
-(`absorb_ahead`), and it is 9 lines over two halves. `settle_before_arrange` is one round
-of the steps before the arrange, repeated while `take_work_before_arrange` finds work, and
-`arrange_and_follow_up` the rest. Each takes its outcome by value, and
-`settle_before_arrange` destructures its round exhaustively, so a field taken before the
+with 14 tests. It no longer re-enters itself, and it is one call for each of its two halves.
+`settle_ahead_of_arrange` carries out the steps before the arrange, split off by
+`take_work_before_arrange`, through `settle_before_arrange`, which settles what a
+discovery, a fullscreen restoration, the held space change and a drag's release hand back
+the same way, where it is handed back, and returns what is left of them for
+`absorb_ahead`. `arrange_and_follow_up` is the rest. Each takes its outcome by value, and
+`settle_before_arrange` destructures its work exhaustively, so a field taken before the
 arrange and left unused there fails the `-D warnings` build. See "Carrying out an outcome"
 in `src/app/docs/README.md`.
 

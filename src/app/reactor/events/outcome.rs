@@ -64,6 +64,8 @@ pub(crate) struct EventOutcome {
     pub(crate) layout_responses: Vec<(EventResponse, Option<SpaceId>)>,
     pub(crate) arrange: ArrangeRequest,
     pub(crate) focused_window: Option<WindowId>,
+    /// A layout event of the work already taken out before the arrange focused a window.
+    pub(crate) focus_landed_before_arrange: bool,
     pub(crate) refresh_window_notifications: bool,
     pub(crate) refresh_focus_follows_mouse: bool,
 }
@@ -105,6 +107,7 @@ impl EventOutcome {
     /// so the strip still needs regrouping over whatever the click put in front of it.
     pub(crate) fn focus_landed(&self) -> bool {
         self.focused_window.is_some()
+            || self.focus_landed_before_arrange
             || self
                 .layout_events
                 .iter()
@@ -147,6 +150,7 @@ impl EventOutcome {
             mut layout_responses,
             arrange,
             focused_window,
+            focus_landed_before_arrange,
             refresh_window_notifications,
             refresh_focus_follows_mouse,
         } = other;
@@ -191,6 +195,7 @@ impl EventOutcome {
             self.arrange.window_was_destroyed |= arrange.window_was_destroyed;
         }
         self.focused_window = focused_window.or(self.focused_window);
+        self.focus_landed_before_arrange |= focus_landed_before_arrange;
         self.refresh_window_notifications |= refresh_window_notifications;
         self.refresh_focus_follows_mouse |= refresh_focus_follows_mouse;
     }
@@ -237,6 +242,7 @@ impl EventOutcome {
             layout_responses,
             arrange: _,
             focused_window: _,
+            focus_landed_before_arrange,
             refresh_window_notifications: _,
             refresh_focus_follows_mouse: _,
         } = self;
@@ -257,7 +263,13 @@ impl EventOutcome {
             || !finalize_created_windows.is_empty()
             || !layout_events.is_empty()
             || !layout_responses.is_empty();
-        queued.then(|| Self {
+        if !queued {
+            return None;
+        }
+        *focus_landed_before_arrange |= layout_events
+            .iter()
+            .any(|event| matches!(event, LayoutEvent::WindowFocused(..)));
+        Some(Self {
             window_server_updates: take(window_server_updates),
             discoveries: take(discoveries),
             recompute_active_spaces: take(recompute_active_spaces),
@@ -315,6 +327,7 @@ impl EventOutcome {
                 space_scope: None,
             },
             focused_window: None,
+            focus_landed_before_arrange: false,
             refresh_window_notifications: false,
             refresh_focus_follows_mouse: false,
         }
@@ -728,6 +741,32 @@ mod tests {
         assert!(rest.arrange.is_resize);
     }
 
+    /// What two steps of one round leave is collected in the order they were handed back, then
+    /// taken in ahead of the rest: the first's work goes first and the second's focus beats it.
+    #[test]
+    fn work_handed_back_twice_in_a_round_keeps_the_order_it_was_handed_back_in() {
+        let (first, second, own) = (WindowId::new(1, 1), WindowId::new(2, 1), WindowId::new(3, 1));
+        let mut handed_back = EventOutcome::default();
+        handed_back.absorb(
+            EventOutcome::focus_changed(Some(first), false).with_stdout_line("first".into()),
+        );
+        handed_back.absorb(
+            EventOutcome::focus_changed(Some(second), false).with_stdout_line("second".into()),
+        );
+
+        let mut rest = EventOutcome::default().with_stdout_line("rest".into());
+        rest.absorb_ahead(handed_back);
+        assert_eq!(rest.stdout_lines, ["first", "second", "rest"]);
+        assert_eq!(rest.focused_window, Some(second));
+
+        let mut handed_back = EventOutcome::default();
+        handed_back.absorb(EventOutcome::focus_changed(Some(first), false));
+        handed_back.absorb(EventOutcome::focus_changed(Some(second), false));
+        let mut rest = EventOutcome::focus_changed(Some(own), false);
+        rest.absorb_ahead(handed_back);
+        assert_eq!(rest.focused_window, Some(own));
+    }
+
     // --- take_work_before_arrange --------------------------------------------------------------
 
     #[test]
@@ -814,6 +853,30 @@ mod tests {
         assert!(outcome.layout_events.is_empty());
         assert!(outcome.arrange.requested);
         assert_eq!(outcome.app_requests.len(), 1);
+    }
+
+    /// A focus in the work taken before the arrange still lands: the regroup after the arrange
+    /// reads it from what is left.
+    #[test]
+    fn a_focus_in_the_work_taken_before_the_arrange_still_lands() {
+        let focus = LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1));
+        let mut outcome = EventOutcome::layout_changed(false).with_layout_event(focus);
+
+        outcome.take_work_before_arrange().expect("a layout event is queued");
+
+        assert!(outcome.layout_events.is_empty());
+        assert!(outcome.focus_landed());
+        let mut rest = EventOutcome::default();
+        rest.absorb_ahead(outcome);
+        assert!(rest.focus_landed());
+    }
+
+    #[test]
+    fn work_taken_before_the_arrange_with_no_focus_lands_none() {
+        let added = LayoutEvent::WindowAdded(SpaceId::new(1), WindowId::new(1, 1));
+        let mut outcome = EventOutcome::layout_changed(false).with_layout_event(added);
+        outcome.take_work_before_arrange().expect("a layout event is queued");
+        assert!(!outcome.focus_landed());
     }
 
     // --- absorb: the arrange request -----------------------------------------------------------

@@ -272,8 +272,8 @@ impl Reactor {
         Ok(outcome)
     }
 
-    /// What applying the space change held back during Mission Control asks for, once the screens
-    /// it was taken on are back.
+    /// Applies the space change held back during Mission Control once the screens it was taken on
+    /// are back, its steps before the arrange carried out now; returns its arrange and what follows.
     fn try_apply_pending_space_change(&mut self) -> EventOutcome {
         let Some(pending) = self.pending_space_change.take() else {
             return EventOutcome::default();
@@ -285,7 +285,8 @@ impl Reactor {
         // During native Mission Control we must preserve the full forwarded snapshot,
         // not just the raw spaces vector, otherwise command-space and per-display space
         // metadata can remain stale after exit.
-        self.handle_authoritative_space_snapshot(pending).unwrap_or_default()
+        let applied = self.handle_authoritative_space_snapshot(pending).unwrap_or_default();
+        self.settle_ahead_of_arrange(applied)
     }
 
     pub(super) fn repair_spaces_after_mission_control(&mut self) -> EventOutcome {

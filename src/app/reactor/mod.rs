@@ -1161,23 +1161,29 @@ impl Reactor {
     /// its model mutation is complete.
     ///
     /// Work a step hands back (a discovery's, a fullscreen restoration's, a pending space change's,
-    /// a drag's release) is absorbed into this outcome and carried out by the next round of the
-    /// steps before the arrange: one arrange, one regroup and this event's cause for all of it. See
-    /// "Carrying out an outcome" in `src/app/docs/README.md`.
-    fn apply_event_outcome(&mut self, mut outcome: EventOutcome) {
+    /// a drag's release) has its steps before the arrange carried out where it is handed back, and
+    /// the rest absorbed into this outcome: one arrange, one regroup and this event's cause for all
+    /// of it. See "Carrying out an outcome" in `src/app/docs/README.md`.
+    fn apply_event_outcome(&mut self, outcome: EventOutcome) {
         // Per event: what this event's regroup raises is only known to this event.
         self.regroup_raised.clear();
-        let mut focus_landed = false;
-        while let Some(round) = outcome.take_work_before_arrange() {
-            focus_landed |= round.focus_landed();
-            self.settle_before_arrange(round, &mut outcome);
-        }
-        focus_landed |= outcome.focus_landed();
-        self.arrange_and_follow_up(outcome, focus_landed);
+        let outcome = self.settle_ahead_of_arrange(outcome);
+        self.arrange_and_follow_up(outcome);
     }
 
-    /// One round of the steps before the arrange, absorbing what each hands back into `outcome`.
-    fn settle_before_arrange(&mut self, round: EventOutcome, outcome: &mut EventOutcome) {
+    /// Carries out `outcome`'s steps before the arrange now, depth-first, and returns the arrange and
+    /// what follows it, with what each step handed back left over ahead of `outcome`'s own.
+    pub(super) fn settle_ahead_of_arrange(&mut self, mut outcome: EventOutcome) -> EventOutcome {
+        if let Some(work) = outcome.take_work_before_arrange() {
+            outcome.absorb_ahead(self.settle_before_arrange(work));
+        }
+        outcome
+    }
+
+    /// The steps before the arrange, each handed-back outcome settled where it is handed back;
+    /// returns what they leave for the arrange and after it, in the order they were handed back.
+    fn settle_before_arrange(&mut self, work: EventOutcome) -> EventOutcome {
+        let mut handed_back = EventOutcome::default();
         // Exhaustive so a field taken before the arrange cannot go unused here.
         let EventOutcome {
             window_server_updates,
@@ -1207,9 +1213,10 @@ impl Reactor {
             layout_responses,
             arrange: _,
             focused_window: _,
+            focus_landed_before_arrange: _,
             refresh_window_notifications: _,
             refresh_focus_follows_mouse: _,
-        } = round;
+        } = work;
         // Ahead of the layout events: a removed window's pictures go first.
         for window in forgotten_windows {
             if let Some(pictures) = &self.communication_manager.pictures {
@@ -1223,7 +1230,7 @@ impl Reactor {
             self.recompute_and_set_active_spaces_from_current_screens();
         }
         if repair_spaces_after_mission_control {
-            outcome.absorb_ahead(self.repair_spaces_after_mission_control());
+            handed_back.absorb(self.repair_spaces_after_mission_control());
         }
         if refresh_after_mission_control {
             self.refresh_windows_after_mission_control();
@@ -1234,12 +1241,13 @@ impl Reactor {
         // Discovery responses reconcile model state before layout. Requests
         // which schedule new discovery are deferred to the final phase below.
         for discovery in discoveries {
-            outcome.absorb_ahead(self.on_windows_discovered_with_app_info(
+            let discovered = self.on_windows_discovered_with_app_info(
                 discovery.pid,
                 discovery.new,
                 discovery.known_visible,
                 discovery.app_info,
-            ));
+            );
+            handed_back.absorb(self.settle_ahead_of_arrange(discovered));
         }
         for window in reapply_app_rules {
             self.maybe_reapply_app_rules_for_window(window);
@@ -1252,7 +1260,8 @@ impl Reactor {
             self.clear_pending_target_if_confirmed_space(window_server_id, space);
         }
         for (window_server_id, space, window) in fullscreen_restorations {
-            outcome.absorb_ahead(self.restore_fullscreen_window(window_server_id, space, window));
+            let restored = self.restore_fullscreen_window(window_server_id, space, window);
+            handed_back.absorb(self.settle_ahead_of_arrange(restored));
         }
         for reassignment in topology_reassignments {
             self.reassign_window_to_authoritative_space(reassignment.window, reassignment.space);
@@ -1277,10 +1286,11 @@ impl Reactor {
         // After the drag swap above, which reads the drag the release ends.
         if dispatch_mouse_up {
             match self.on_mouse_up() {
-                Ok(released) => outcome.absorb_ahead(released),
+                Ok(released) => handed_back.absorb(self.settle_ahead_of_arrange(released)),
                 Err(error) => warn!(%error, "mouse up failed"),
             }
         }
+        handed_back
     }
 
     /// Back from native fullscreen to `space`, or reassigned there when nothing is held to restore.
@@ -1353,7 +1363,8 @@ impl Reactor {
     }
 
     /// The arrange, once for everything settled before it, and what follows it.
-    fn arrange_and_follow_up(&mut self, outcome: EventOutcome, focus_landed: bool) {
+    fn arrange_and_follow_up(&mut self, outcome: EventOutcome) {
+        let focus_landed = outcome.focus_landed();
         let mut layout_changed = false;
         if let Some(passes) = outcome.arrange.passes_to_run(self.is_in_drag()) {
             for _ in 0..passes {
