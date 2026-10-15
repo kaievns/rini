@@ -257,13 +257,12 @@ Every crate takes its lints from `[workspace.lints]` in `Cargo.toml` (`[lints] w
 held by `every_crate_inherits_the_workspace_lints`): clippy's defaults, plus `redundant_lifetimes`,
 `unused_macro_rules`, `fn_params_excessive_bools` (denied, with `max-fn-params-bools = 1` in
 `clippy.toml`), `struct_excessive_bools` and `allow_attributes_without_reason`. The last means every
-`#[allow]` says why, in one of three ways. One a roadmap task removes names the quality roadmap's
-task id (`reason = "P5.1"`) and sits on the one item it covers, and only when that task's
-done-criterion takes the lint away: splitting a function or a file leaves its parameter lists as
-long. One allowed for good names what makes it right, such as a C name, a reference count Core
-Foundation drives too, or a `RefMut` dropped before the await clippy counts it across. One no task
-removes says so: a long parameter list no task groups carries
-`reason = "no roadmap task groups them"`.
+`#[allow]` says why, in one of two ways. One a roadmap task removes names the quality roadmap's task
+id (`reason = "P5.1"`) and sits on the one item it covers, and only when that task's done-criterion
+takes the lint away: splitting a function or a file leaves its parameter lists as long. One allowed
+for good names what makes it right, such as a C name, a reference count Core Foundation drives too,
+a `RefMut` dropped before the await clippy counts it across, or a struct whose `bool` fields each
+stand on their own. A long parameter list is grouped into a struct rather than allowed.
 
 An allow over a whole crate or file, `#![allow]`, is one of these, held by
 `every_file_wide_allow_is_named_in_docs_testing`:
