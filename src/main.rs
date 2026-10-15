@@ -405,7 +405,7 @@ fn bar_actor(
 /// under: a one-second Accessibility messaging timeout, no local events suppression after a warp,
 /// and no event state combining.
 fn tune_the_system(config: &Config) {
-    if config.settings.default_disable {
+    if !config.settings.activate_spaces_by_default {
         println!(
             "NOTICE: rini starts with every Space inactive. Turn a Space on with the \
              toggle-space-activated action (Mod+Z in rini.default.kdl), or write \

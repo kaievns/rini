@@ -33,9 +33,9 @@ fn it_manages_windows_on_enabled_spaces() {
 }
 
 #[test]
-fn forwarded_space_snapshot_respects_default_disable_policy() {
+fn forwarded_space_snapshot_respects_spaces_starting_inactive() {
     let mut reactor = test_reactor();
-    reactor.settings_mut().default_disable = true;
+    reactor.settings_mut().activate_spaces_by_default = false;
 
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let space = SpaceId::new(1);
@@ -44,7 +44,7 @@ fn forwarded_space_snapshot_respects_default_disable_policy() {
 
     assert!(
         !reactor.is_space_active(space),
-        "forwarded raw active spaces must still be filtered by default_disable policy"
+        "forwarded raw active spaces must still be filtered while spaces start inactive"
     );
 }
 

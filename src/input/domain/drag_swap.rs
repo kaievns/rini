@@ -65,8 +65,8 @@ impl DragSwap {
             return None;
         }
 
-        let stick_fraction = (self.config.drag_swap_fraction * STICK_RATIO)
-            .clamp(0.0, self.config.drag_swap_fraction);
+        let stick_fraction =
+            (self.config.drag_swap_overlap * STICK_RATIO).clamp(0.0, self.config.drag_swap_overlap);
         let dragged_center = new_frame.mid();
         let dragged_diag =
             f64::hypot(new_frame.size.width, new_frame.size.height).max(f64::EPSILON);
@@ -123,7 +123,7 @@ impl DragSwap {
         let active = self
             .active_candidate
             .and_then(|active| scored.iter().copied().find(|c| c.window == active.window));
-        let switches = best.overlap >= self.config.drag_swap_fraction
+        let switches = best.overlap >= self.config.drag_swap_overlap
             && active.is_none_or(|active| {
                 active.window != best.window && best.score >= active.score + SWITCH_DELTA
             });
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn selects_candidate_based_on_scored_overlap() {
-        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.3 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_overlap: 0.3 });
 
         let dragged = rect(0.0, 0.0, 100.0, 100.0);
         let wid = WindowId::new(1, 1);
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn respects_last_target_to_avoid_repeats() {
-        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.25 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_overlap: 0.25 });
         let wid = WindowId::new(1, 10);
         let dragged = rect(0.0, 0.0, 200.0, 100.0);
 
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn a_frame_change_of_another_window_starts_a_drag_of_its_own_from_where_it_is() {
-        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.25 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_overlap: 0.25 });
         let (first, second) = (WindowId::new(1, 10), WindowId::new(1, 11));
         let (first_frame, second_frame) =
             (rect(0.0, 0.0, 200.0, 100.0), rect(10.0, 0.0, 200.0, 100.0));
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn clears_active_target_when_overlap_is_lost() {
-        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.2 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_overlap: 0.2 });
         let wid = WindowId::new(1, 42);
         let dragged = rect(0.0, 0.0, 100.0, 100.0);
         let cand = (WindowId::new(1, 99), rect(0.0, 0.0, 60.0, 100.0));
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn hysteresis_keeps_candidate_when_overlap_drops_slightly() {
-        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.4 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_overlap: 0.4 });
         let wid = WindowId::new(5, 1);
         let dragged = rect(0.0, 0.0, 100.0, 100.0);
         let cand = (WindowId::new(5, 2), rect(0.0, 0.0, 50.0, 100.0)); // 50%
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn switches_only_when_new_candidate_is_meaningfully_better() {
-        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.3 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_overlap: 0.3 });
         let wid = WindowId::new(7, 1);
         let dragged = rect(0.0, 0.0, 120.0, 100.0);
 

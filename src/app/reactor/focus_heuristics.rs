@@ -224,7 +224,7 @@ impl Reactor {
         if self.focus_untracked_window_under_cursor() {
             return true;
         }
-        self.config.settings.mouse_follows_focus
+        self.config.settings.warp_mouse_to_focus
             && warp_space.is_some_and(|space| self.warp_mouse_to_space_center(space))
     }
 

@@ -34,7 +34,7 @@ impl Reactor {
 
     pub(super) fn activation_cfg(&self) -> SpaceActivationConfig {
         SpaceActivationConfig {
-            default_disable: self.config.settings.default_disable,
+            default_disable: !self.config.settings.activate_spaces_by_default,
         }
     }
 

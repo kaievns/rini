@@ -61,7 +61,7 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     if let Some(gestures) = part.gestures
         && let Some(overlap) = gestures.drag_swap_overlap
     {
-        settings.window_snapping.drag_swap_fraction = overlap.get();
+        settings.window_snapping.drag_swap_overlap = overlap.get();
     }
 
     let mut switcher_binds = None;
@@ -83,7 +83,7 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     }
 
     if let Some(Flag(on)) = part.activate_spaces_by_default {
-        settings.default_disable = !on;
+        settings.activate_spaces_by_default = on;
     }
     if let Some(Flag(on)) = part.reapply_window_rules_on_title_change {
         workspaces.reapply_app_rules_on_title_change = on;
@@ -127,7 +127,7 @@ fn apply_input(input: InputPart, settings: &mut Settings) {
         settings.focus_follows_mouse = on;
     }
     if let Some(Flag(on)) = input.warp_mouse_to_focus {
-        settings.mouse_follows_focus = on;
+        settings.warp_mouse_to_focus = on;
     }
     if let Some(warp) = input.warp_mouse_across_stacked_outputs {
         settings.warp_cursor_between_stacked_displays = warp.on;
@@ -139,7 +139,7 @@ fn apply_input(input: InputPart, settings: &mut Settings) {
         }
     }
     if !input.ignore_app_activation.is_empty() {
-        settings.auto_focus_denylist = input.ignore_app_activation;
+        settings.ignore_app_activation = input.ignore_app_activation;
     }
 }
 

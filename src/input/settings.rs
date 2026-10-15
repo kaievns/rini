@@ -5,11 +5,11 @@ use serde::Serialize;
 #[derive(Serialize, Debug, PartialEq, Clone, Copy)]
 pub struct WindowSnappingSettings {
     /// How much two windows must overlap, as intersection over union, before a drag swaps them.
-    pub drag_swap_fraction: f64,
+    pub drag_swap_overlap: f64,
 }
 
 impl Default for WindowSnappingSettings {
-    fn default() -> Self { Self { drag_swap_fraction: 0.3 } }
+    fn default() -> Self { Self { drag_swap_overlap: 0.3 } }
 }
 
 /// Everything the session tap needs, assembled by the application from the config file.

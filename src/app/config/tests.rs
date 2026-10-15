@@ -106,7 +106,7 @@ fn an_empty_section_means_the_same_as_an_absent_one() {
 /// It has one default, whether its section is written or not (`specs/config.md`).
 #[test]
 fn the_drag_swap_overlap_has_one_default() {
-    let overlap = |text: &str| parse(text).settings.window_snapping.drag_swap_fraction;
+    let overlap = |text: &str| parse(text).settings.window_snapping.drag_swap_overlap;
     assert_eq!(overlap(""), 0.3);
     assert_eq!(overlap("gestures {\n}\n"), 0.3);
     assert_eq!(overlap("gestures {\n    drag-swap-overlap 0.4\n}\n"), 0.4);
@@ -119,6 +119,10 @@ fn the_config_serialises_for_config_get() {
     assert_eq!(json["binds"][0]["key"], "Mod+Z");
     assert_eq!(json["binds"][0]["action"], "toggle-space-activated");
     assert_eq!(json["virtual_workspaces"]["workspace_names"][0], "Main");
+    assert_eq!(json["settings"]["activate_spaces_by_default"], false);
+    assert_eq!(json["settings"]["warp_mouse_to_focus"], false);
+    assert!(json["settings"]["ignore_app_activation"].is_array());
+    assert_eq!(json["settings"]["window_snapping"]["drag_swap_overlap"], 0.3);
 }
 
 #[test]
@@ -153,11 +157,14 @@ fn input_maps_onto_focus_and_the_pointer() {
     ));
     let s = &config.settings;
     assert_eq!(s.mod_key, ModKey::Ctrl);
-    assert!(s.focus_follows_mouse && s.mouse_follows_focus);
+    assert!(s.focus_follows_mouse && s.warp_mouse_to_focus);
     assert!(s.warp_cursor_between_stacked_displays);
     assert_eq!(s.stacked_display_upper_is, StackedUpperSide::Right);
     assert_eq!(s.stacked_display_lower_top_at, 0.25);
-    assert_eq!(s.auto_focus_denylist, ["com.apple.Spotlight", "com.apple.dock"]);
+    assert_eq!(s.ignore_app_activation, [
+        "com.apple.Spotlight",
+        "com.apple.dock"
+    ]);
 }
 
 #[test]
@@ -191,7 +198,7 @@ fn a_cursor_section_is_refused_with_the_reason() {
 #[test]
 fn the_two_pointer_flags_are_off_unless_written() {
     let s = parse("").settings;
-    assert!(!s.focus_follows_mouse && !s.mouse_follows_focus);
+    assert!(!s.focus_follows_mouse && !s.warp_mouse_to_focus);
 }
 
 #[test]
@@ -731,10 +738,10 @@ fn startup_commands_keep_their_order_and_their_kind() {
 #[test]
 fn the_two_top_level_flags() {
     let config = parse("activate-spaces-by-default\nreapply-window-rules-on-title-change\n");
-    assert!(!config.settings.default_disable);
+    assert!(config.settings.activate_spaces_by_default);
     assert!(config.virtual_workspaces.reapply_app_rules_on_title_change);
     assert!(
-        parse("").settings.default_disable,
+        !parse("").settings.activate_spaces_by_default,
         "spaces start inactive unless written"
     );
 }

@@ -54,7 +54,7 @@ impl Reactor {
             return EventOutcome::no_change();
         };
 
-        if self.config.settings.auto_focus_denylist.contains(&bundle_id_str) {
+        if self.config.settings.ignore_app_activation.contains(&bundle_id_str) {
             debug!(
                 "App {} is on the auto-focus denylist, ignoring activation",
                 bundle_id_str

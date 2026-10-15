@@ -44,15 +44,15 @@ pub struct Settings {
     pub animate: bool,
     /// Seconds, `BASE_ANIMATION_SECONDS` times `animations › slowdown`.
     pub animation_duration: f64,
-    pub default_disable: bool,
-    pub mouse_follows_focus: bool,
+    pub activate_spaces_by_default: bool,
+    pub warp_mouse_to_focus: bool,
     pub warp_cursor_between_stacked_displays: bool,
     pub stacked_display_upper_is: StackedUpperSide,
     /// Fraction up the upper display's height at which the lower display's top edge sits.
     pub stacked_display_lower_top_at: f64,
     pub focus_follows_mouse: bool,
     /// Bundle ids whose activation must not switch workspaces (Spotlight-style focus stealers).
-    pub auto_focus_denylist: Vec<String>,
+    pub ignore_app_activation: Vec<String>,
     /// The modifier `Mod` stands for in a key.
     pub mod_key: ModKey,
     pub layout: LayoutSettings,
@@ -75,15 +75,15 @@ impl Default for Settings {
         Self {
             animate: true,
             animation_duration: BASE_ANIMATION_SECONDS,
-            default_disable: true,
-            mouse_follows_focus: false,
+            activate_spaces_by_default: false,
+            warp_mouse_to_focus: false,
             warp_cursor_between_stacked_displays: false,
             stacked_display_upper_is: StackedUpperSide::default(),
             // The laptop's top edge a little under halfway up the larger screen, which is where a
             // laptop parked beside a big monitor tends to sit.
             stacked_display_lower_top_at: 0.4,
             focus_follows_mouse: false,
-            auto_focus_denylist: Vec::new(),
+            ignore_app_activation: Vec::new(),
             mod_key: ModKey::default(),
             layout: LayoutSettings::default(),
             switcher: Default::default(),

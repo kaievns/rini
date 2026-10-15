@@ -20,7 +20,7 @@ fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
 
     let mut updated = reactor.config().clone();
     updated.settings.focus_follows_mouse = !updated.settings.focus_follows_mouse;
-    updated.settings.mouse_follows_focus = !updated.settings.mouse_follows_focus;
+    updated.settings.warp_mouse_to_focus = !updated.settings.warp_mouse_to_focus;
 
     reactor.handle_event(Event::ConfigUpdated(Box::new(updated.clone())));
 
@@ -33,8 +33,8 @@ fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
         updated.settings.focus_follows_mouse
     );
     assert_eq!(
-        actual.settings.mouse_follows_focus,
-        updated.settings.mouse_follows_focus
+        actual.settings.warp_mouse_to_focus,
+        updated.settings.warp_mouse_to_focus
     );
 }
 

@@ -1065,10 +1065,10 @@ fn focus_warps_the_mouse_to_its_centre_and_a_switch_holds_the_warp() {
     let wid = WindowId::new(1, 1);
     let centre = reactor.test_frame(wid).mid();
 
-    reactor.settings_mut().mouse_follows_focus = false;
+    reactor.settings_mut().warp_mouse_to_focus = false;
     assert_eq!(reactor.warp_for_focus(wid), None);
 
-    reactor.settings_mut().mouse_follows_focus = true;
+    reactor.settings_mut().warp_mouse_to_focus = true;
     assert_eq!(reactor.warp_for_focus(wid), Some(centre));
     assert_eq!(reactor.workspace_switches().pending_workspace_mouse_warp, None);
 
