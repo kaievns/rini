@@ -330,8 +330,6 @@ enum LayoutCommands {
     ToggleFocusFloat,
     /// Swap two windows by window id (`WindowId { pid: ..., idx: ... }`)
     SwapWindows { a: String, b: String },
-    /// Scroll the strip by a normalized delta (scrolling layout only)
-    ScrollStrip { delta: f64 },
     /// Snap the strip to the nearest column boundary (scrolling layout only)
     SnapStrip,
     /// Toggle centering of the selected column in scrolling layout.
@@ -828,11 +826,6 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
         LayoutCommands::SwapWindows { a, b } => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::SwapWindows(parse_window_id(&a)?.into(), parse_window_id(&b)?.into()),
         ))),
-        LayoutCommands::ScrollStrip { delta } => {
-            Ok(CliCommand::Reactor(reactor::Command::Layout(LC::ScrollStrip {
-                delta,
-            })))
-        }
         LayoutCommands::SnapStrip => {
             Ok(CliCommand::Reactor(reactor::Command::Layout(LC::SnapStrip)))
         }

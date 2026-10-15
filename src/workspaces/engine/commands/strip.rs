@@ -18,11 +18,6 @@ impl LayoutEngine {
             ..
         } = target;
         match command {
-            LayoutCommand::ScrollStrip { delta } => {
-                let system = self.workspace_tree_mut(workspace_id);
-                system.scroll_by_delta(layout, delta);
-                EventResponse::default()
-            }
             LayoutCommand::SnapStrip => {
                 let system = self.workspace_tree_mut(workspace_id);
                 system.snap_to_nearest_column(layout);

@@ -2133,9 +2133,7 @@ impl LayoutEngine {
             | LayoutCommand::CyclePresetColumnWidth => {
                 self.handle_resize_command(memory, target, is_floating, command)
             }
-            LayoutCommand::ScrollStrip { .. }
-            | LayoutCommand::SnapStrip
-            | LayoutCommand::CenterSelection => self.handle_strip_command(target, command),
+            LayoutCommand::SnapStrip | LayoutCommand::CenterSelection => self.handle_strip_command(target, command),
             LayoutCommand::ToggleFullscreenWithinGaps => {
                 self.handle_floating_command(memory, target, command)
             }

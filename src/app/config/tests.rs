@@ -1049,6 +1049,12 @@ fn a_misspelt_action_gets_a_suggestion_on_its_span() {
 }
 
 #[test]
+fn scroll_strip_is_not_an_action() {
+    let report = refused("binds {\n    Mod+S { scroll-strip 0.5; }\n}\n");
+    assert!(report.contains("unknown action `scroll-strip`"), "{report}");
+}
+
+#[test]
 fn a_niri_action_rini_lacks_is_told_why() {
     let report = refused("binds {\n    Mod+J { focus-window-down; }\n}\n");
     assert!(report.contains("cross to the next display"), "{report}");
@@ -1061,7 +1067,6 @@ fn every_action_name_decodes() {
         "set-column-width" | "set-window-height" | "set-column-width-or-window-height" => {
             " \"+5%\""
         }
-        "scroll-strip" => " 0.5",
         "focus-workspace"
         | "move-window-to-workspace"
         | "focus-monitor"

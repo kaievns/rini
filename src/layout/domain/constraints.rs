@@ -60,10 +60,6 @@ pub enum ColumnKind {
 /// ratio at all and has to be asked for separately. The bounds are for the resize keys and the
 /// presets below 100%, not a drag or `Mod+R`'s 100%: an unbounded column is held only to the
 /// viewport.
-///
-/// Both the layout pass and `scroll-strip`'s step read this, because they used to disagree:
-/// `scroll-strip` computed a maximised column at `max-column-width` of the viewport, so it
-/// stepped the strip by two thirds of a screen for a column occupying all of it.
 pub fn column_ratio(kind: ColumnKind, base_ratio: f64, offset: f64, min: f64, max: f64) -> f64 {
     let ratio = base_ratio + offset;
     match kind {

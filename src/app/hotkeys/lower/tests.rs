@@ -5,7 +5,7 @@ use strum::VariantNames;
 
 use super::*;
 use crate::app::reactor::{Command, ReactorCommand as R};
-use crate::input::domain::binding::{Decimal, SizeChange};
+use crate::input::domain::binding::SizeChange;
 
 fn names() -> Vec<String> {
     ["Main", "Development", "Communication", "next"].map(String::from).to_vec()
@@ -95,10 +95,6 @@ fn table() -> Vec<(Action, Lowered)> {
         (
             Action::SetColumnWidthOrWindowHeight(SizeChange(0.1)),
             resize(0.1, ResizeOrientation::Smart),
-        ),
-        (
-            Action::ScrollStrip(Decimal(0.5)),
-            layout(LayoutCommand::ScrollStrip { delta: 0.5 }),
         ),
         (Action::SnapStrip, layout(LayoutCommand::SnapStrip)),
         (

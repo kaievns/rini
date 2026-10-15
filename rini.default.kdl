@@ -381,7 +381,6 @@ binds {
     //   set-window-height "+5%" / "-5%"               windows stacked in one column
     //   set-column-width-or-window-height "+5%"       the height in a stacked column, the width otherwise
     //   center-column
-    //   scroll-strip 0.5                              scroll the strip by that many columns
     //   snap-strip                                    align the strip to column boundaries
     //   focus-workspace N
     //   focus-workspace-up / focus-workspace-down     skip-empty=true|false; never wrap

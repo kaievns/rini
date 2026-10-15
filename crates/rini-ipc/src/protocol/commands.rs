@@ -35,9 +35,6 @@ pub enum LayoutCommand {
         #[serde(default)]
         orientation: ResizeOrientation,
     },
-    ScrollStrip {
-        delta: f64,
-    },
     SnapStrip,
     /// Cycle the selected column through the configured preset widths.
     ///
