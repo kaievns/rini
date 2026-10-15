@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types)]
+#![allow(non_camel_case_types, reason = "SkyLight's C names")]
 //! The SkyLight connection-notification port: one registration per CGS event type, fanned out to
 //! a channel per type, plus the per-window filter SkyLight needs for window-level events.
 

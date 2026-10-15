@@ -24,7 +24,7 @@ impl ProcessInfo {
 type FourCharCode = u32;
 type OSType = FourCharCode;
 
-#[allow(non_snake_case)]
+#[allow(non_snake_case, reason = "Carbon's field names")]
 #[repr(C, packed(2))]
 #[derive(Default)]
 struct ProcessInfoRec {

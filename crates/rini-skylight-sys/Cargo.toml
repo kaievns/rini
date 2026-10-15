@@ -10,6 +10,9 @@ publish = false
 [lib]
 doctest = false
 
+[lints]
+workspace = true
+
 [dependencies]
 bitflags = { workspace = true }
 objc2-application-services = { workspace = true }

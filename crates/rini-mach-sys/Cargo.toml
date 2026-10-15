@@ -9,5 +9,8 @@ publish = false
 [lib]
 doctest = false
 
+[lints]
+workspace = true
+
 [dependencies]
 tracing = { workspace = true }

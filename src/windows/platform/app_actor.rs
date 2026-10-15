@@ -1,4 +1,4 @@
-#![allow(non_upper_case_globals)]
+#![allow(non_upper_case_globals, reason = "Accessibility's notification names")]
 //! One actor per running app, on its own thread: observes the app through Accessibility and
 //! carries out the reactor's `Request`s (frames, raises, close). Emits `crate::windows::event::Event`.
 
@@ -766,7 +766,7 @@ impl<W: AxWorld> State<W> {
 }
 
 #[derive(Debug)]
-#[allow(dead_code, reason = "uesed by Debug impls")]
+#[allow(dead_code, reason = "used by Debug impls")]
 enum RaiseError {
     RaiseCancelled,
     AXError(AxError),

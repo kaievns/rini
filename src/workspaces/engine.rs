@@ -3089,7 +3089,7 @@ mod tests {
 
     /// Two displays, one window each, side by side. The side-by-side arrangement is what makes a
     /// horizontal command have somewhere it COULD go, which is the whole point of the test.
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, reason = "P3.8")]
     fn two_displays_side_by_side(
         first_space: u64,
     ) -> (
@@ -3109,7 +3109,7 @@ mod tests {
     ///
     /// The second display is BELOW the first, which is a NEGATIVE y offset: space centres are in the
     /// window server's coordinates, where y grows upward, and `directional_delta` reads them that way.
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, reason = "P3.8")]
     fn two_displays_stacked(
         first_space: u64,
     ) -> (
@@ -3125,7 +3125,7 @@ mod tests {
         two_displays(first_space, CGPoint::new(0.0, -800.0))
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, reason = "P3.8")]
     fn two_displays(
         first_space: u64,
         second_centre: CGPoint,

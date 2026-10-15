@@ -53,7 +53,7 @@ impl AXUIElement {
         Self::new(inner)
     }
 
-    #[allow(non_snake_case)]
+    #[allow(non_snake_case, reason = "core-foundation's method name")]
     #[inline]
     pub fn as_concrete_TypeRef(&self) -> &RawAXUIElement { self.deref() }
 

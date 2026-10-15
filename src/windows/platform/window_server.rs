@@ -69,7 +69,7 @@ thread_local! {
 }
 
 pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(test, allow(dead_code, reason = "test builds read a fake"))]
 const EFFECTIVELY_INVISIBLE_WINDOW_ALPHA: f32 = 0.01;
 
 impl TryFrom<&AXUIElement> for WindowServerId {
@@ -204,7 +204,7 @@ impl WindowIterator {
     pub fn alpha(&self) -> f32 { unsafe { SLSWindowIteratorGetAlpha(self.iter) } }
 
     #[inline]
-    #[cfg_attr(test, allow(dead_code))]
+    #[cfg_attr(test, allow(dead_code, reason = "test builds read a fake"))]
     pub fn attributes(&self) -> u64 { unsafe { SLSWindowIteratorGetAttributes(self.iter) } }
 
     #[inline]
@@ -742,12 +742,12 @@ pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) 
     });
 }
 
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(test, allow(dead_code, reason = "test builds read a fake"))]
 fn window_is_effectively_invisible(alpha: f32, layer: i32) -> bool {
     layer == 0 && alpha <= EFFECTIVELY_INVISIBLE_WINDOW_ALPHA
 }
 
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(test, allow(dead_code, reason = "test builds read a fake"))]
 fn window_info_from_query(query: &WindowIterator) -> Option<WindowServerInfo> {
     let layer = query.level();
     if window_is_effectively_invisible(query.alpha(), layer) {
@@ -837,19 +837,19 @@ pub fn window_level(wid: u32) -> Option<NSWindowLevel> {
 }
 
 /// Returns the typed Skylight tags exposed by a window-query iterator.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(test, allow(dead_code, reason = "test builds read a fake"))]
 fn iterator_window_tags(iterator: *mut CFType) -> SLSWindowTags {
     SLSWindowTags::from_bits_retain(unsafe { SLSWindowIteratorGetTags(iterator) })
 }
 
 /// Returns whether the tags describe a document or floating app window.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(test, allow(dead_code, reason = "test builds read a fake"))]
 fn tags_match_app_window_role(tags: SLSWindowTags) -> bool {
     tags.contains(SLSWindowTags::DOCUMENT) || tags.contains(SLSWindowTags::FLOATING)
 }
 
 /// Returns whether the iterator points at a top-level application window.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(test, allow(dead_code, reason = "test builds read a fake"))]
 fn iterator_window_suitable(iterator: *mut CFType) -> bool {
     let tags = iterator_window_tags(iterator);
     let parent_wid = unsafe { SLSWindowIteratorGetParentID(iterator) };
@@ -1020,7 +1020,7 @@ pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
 
 // credit: https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468
 pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> {
-    #[allow(non_upper_case_globals)]
+    #[allow(non_upper_case_globals, reason = "SkyLight's constant name")]
     const kCPSUserGenerated: u32 = 0x200;
 
     let mut event1 = [0u8; 0x100];

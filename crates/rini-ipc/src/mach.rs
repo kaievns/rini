@@ -1,9 +1,5 @@
-#![allow(
-    non_camel_case_types,
-    non_snake_case,
-    unsafe_op_in_unsafe_fn,
-    clippy::missing_safety_doc
-)]
+#![allow(non_camel_case_types, non_snake_case, reason = "Mach's C names")]
+#![allow(unsafe_op_in_unsafe_fn, clippy::missing_safety_doc, reason = "P5.1")]
 //! rini's Mach service: the bootstrap name, the receive port on a CFRunLoop, request dispatch and
 //! replies. Built on `rini_mach_sys`.
 use core::mem::{size_of, zeroed};
@@ -38,7 +34,7 @@ struct CFMachPortContext {
     info: *mut c_void,
     retain: Option<extern "C" fn(*const c_void) -> *const c_void>,
     release: Option<extern "C" fn(*const c_void)>,
-    #[allow(non_snake_case)]
+    #[allow(non_snake_case, reason = "CoreFoundation's field name")]
     copyDescription: Option<extern "C" fn(*const c_void) -> CFStringRef>,
 }
 type CFMachPortCallBack =
@@ -344,7 +340,7 @@ pub unsafe fn send_mach_reply(
 
     true
 }
-#[allow(static_mut_refs)]
+#[allow(static_mut_refs, reason = "P5.1")]
 pub unsafe fn mach_server_run(context: *mut c_void, handler: mach_handler) -> bool {
     static mut SERVER: mach_server = mach_server {
         is_running: false,

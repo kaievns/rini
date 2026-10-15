@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types, non_snake_case)]
+#![allow(non_camel_case_types, non_snake_case, reason = "SkyLight's C names")]
 //! A window's sub-level, asked of SkyLight's private connection server port over Mach. The port
 //! comes from a Mach message to `SLSServerPort`; there is no public API for either.
 use core::mem::{size_of, zeroed};

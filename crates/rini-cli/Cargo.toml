@@ -10,6 +10,9 @@ publish = false
 name = "rini-cli"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 rini-core = { workspace = true }
 clap = { workspace = true }

@@ -9,6 +9,9 @@ publish = false
 [lib]
 doctest = false
 
+[lints]
+workspace = true
+
 [dependencies]
 euclid = { workspace = true }
 objc2-core-foundation = { workspace = true, features = ["CFCGTypes"] }

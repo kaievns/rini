@@ -16,6 +16,9 @@ name = "rini"
 path = "src/main.rs"
 test = false
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = { workspace = true }
 arc-swap = "1"
@@ -78,6 +81,13 @@ tokio = { workspace = true, features = ["sync", "macros"] }
 members = ["crates/rini-cli", "crates/rini-core", "crates/rini-geometry", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys"]
 default-members = [".", "crates/rini-cli", "crates/rini-core", "crates/rini-geometry", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys"]
 resolver = "3"
+
+[workspace.lints.rust]
+redundant_lifetimes = "warn"
+unused_macro_rules = "warn"
+
+[workspace.lints.clippy]
+allow_attributes_without_reason = "warn"
 
 [workspace.dependencies]
 dashmap = "6.1.0"

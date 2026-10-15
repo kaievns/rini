@@ -6,6 +6,9 @@ description = "rini's shared kernel: the identity types every feature speaks, an
 license = "Apache-2.0"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 dirs = { workspace = true }
 libc = { workspace = true }

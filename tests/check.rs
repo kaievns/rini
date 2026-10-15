@@ -97,3 +97,30 @@ fn ci_runs_the_check_and_no_cargo_command_of_its_own() {
     assert_eq!(runs, ["bin/check.sh"]);
     assert!(!workflow.contains("nextest"));
 }
+
+/// Every crate in the workspace takes its lints from `[workspace.lints]`, so a lint set there
+/// reaches all of them.
+#[test]
+fn every_crate_inherits_the_workspace_lints() {
+    let manifest = fs::read_to_string(Path::new(ROOT).join("Cargo.toml")).unwrap();
+    assert!(manifest.contains("\n[workspace.lints.rust]\n"));
+    assert!(manifest.contains("\n[workspace.lints.clippy]\n"));
+    let members = manifest
+        .lines()
+        .find_map(|line| line.strip_prefix("members = ["))
+        .unwrap()
+        .trim_end_matches(']')
+        .split(',')
+        .map(|member| member.trim().trim_matches('"').to_owned());
+    let crates: Vec<String> = std::iter::once(".".to_owned()).chain(members).collect();
+    assert!(crates.len() > 1, "{crates:?}");
+    for member in crates {
+        let path = Path::new(ROOT).join(&member).join("Cargo.toml");
+        let manifest = fs::read_to_string(&path).unwrap();
+        assert!(
+            manifest.contains("\n[lints]\nworkspace = true\n"),
+            "{} does not inherit [workspace.lints]",
+            path.display()
+        );
+    }
+}

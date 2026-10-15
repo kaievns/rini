@@ -1,5 +1,5 @@
-#![allow(non_camel_case_types, non_snake_case, unsafe_op_in_unsafe_fn)]
-#![allow(clippy::missing_safety_doc)]
+#![allow(non_camel_case_types, non_snake_case, reason = "Mach's C names")]
+#![allow(unsafe_op_in_unsafe_fn, clippy::missing_safety_doc, reason = "P5.1")]
 //! Raw Mach messaging: types, constants, the `mach_msg` family, bootstrap lookup, and the one
 //! helper the IPC server's second-instance check calls. No policy.
 use std::ffi::CStr;

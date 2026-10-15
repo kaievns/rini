@@ -319,7 +319,7 @@ fn constrain_display_bounds(did: u32, raw: CGRect, notch_height: f64, top_band: 
     usable_frame(raw, inset, shown.then_some((dock, edge)))
 }
 
-#[allow(private_interfaces)]
+#[allow(private_interfaces, reason = "ScreenCache's test seam")]
 pub trait System {
     fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError>;
     fn display_uuid(&self, screen: &CGScreenInfo) -> CFRetained<CFString>;
@@ -343,7 +343,7 @@ struct NSScreenInfo {
 pub struct Actual {
     mtm: MainThreadMarker,
 }
-#[allow(private_interfaces)]
+#[allow(private_interfaces, reason = "ScreenCache's test seam")]
 impl System for Actual {
     fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError> {
         const MAX_SCREENS: usize = 64;

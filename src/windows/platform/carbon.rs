@@ -1,4 +1,4 @@
-#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::missing_safety_doc, reason = "P5.1")]
 
 use std::ffi::c_void;
 use std::ptr;
@@ -11,7 +11,7 @@ pub type EventTargetRef = *mut c_void;
 
 const NO_ERR: OSStatus = 0;
 
-#[allow(non_snake_case)]
+#[allow(non_snake_case, reason = "Carbon's field names")]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct EventType {

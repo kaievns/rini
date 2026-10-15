@@ -1,4 +1,4 @@
-#![allow(non_upper_case_globals)]
+#![allow(non_upper_case_globals, reason = "SkyLight's C names")]
 //! Raw declarations for the private SkyLight / CoreGraphics Services API. Declarations only; every
 //! caller owns its own safety argument.
 // credits
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 pub static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, reason = "SkyLight's C name")]
 pub type cid_t = i32;
 
 /// Carbon's process identity, still what SkyLight's `SLPS*` calls take.
