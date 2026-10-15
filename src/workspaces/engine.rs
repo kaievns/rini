@@ -2,14 +2,13 @@ use std::cmp::Ordering;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::{SpaceId, WindowId, pid_t};
-use rini_ipc::protocol::WorkspaceSelector;
 use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use super::{Direction, FloatingManager, LayoutId, ScrollingLayoutSystem, WorkspaceLayouts};
 use crate::layout::WindowLayoutConstraints;
-use crate::layout::domain::boundary::{strip_edge, workspace_stack_direction};
+use crate::layout::domain::boundary::strip_edge;
 use crate::layout::domain::edge_drag::Drag;
 use crate::layout::domain::tile::Borders;
 use crate::layout::settings::LayoutSettings;
@@ -26,6 +25,7 @@ use crate::workspaces::domain::workspace_focus;
 use crate::workspaces::{AppRuleEffects, AppRuleResult, FloatingPositionStore, WindowStore};
 
 mod commands;
+mod moves;
 mod persistence;
 
 use persistence::PersistenceState;
@@ -192,6 +192,14 @@ impl LayoutEngine {
         let ws_id = self.active_workspace_id(space)?;
         let layout = self.workspace_layouts.active(space, ws_id)?;
         Some((ws_id, layout))
+    }
+
+    /// Every workspace laid out on `space` at `size`, each keeping a layout per size it has had.
+    fn expose_layouts(&mut self, space: SpaceId, size: CGSize) {
+        for (id, _) in self.virtual_workspace_manager_mut().list_workspaces(space) {
+            let tree = &mut self.virtual_workspace_manager.workspaces[id].layout_system;
+            self.workspace_layouts.ensure_active_for_workspace(space, size, id, tree);
+        }
     }
 
     fn response_for_raised_windows(raise_windows: Vec<WindowId>) -> EventResponse {
@@ -1679,13 +1687,7 @@ impl LayoutEngine {
         match event {
             LayoutEvent::SpaceExposed(space, size) => {
                 self.debug_tree(space);
-
-                let workspaces =
-                    self.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
-                for (id, _) in workspaces {
-                    let tree = &mut self.virtual_workspace_manager.workspaces[id].layout_system;
-                    self.workspace_layouts.ensure_active_for_workspace(space, size, id, tree);
-                }
+                self.expose_layouts(space, size);
             }
             LayoutEvent::WindowsOnScreenUpdated(space, pid, windows_with_titles, app_info) => {
                 return self.on_windows_on_screen_updated(
@@ -1809,62 +1811,6 @@ impl LayoutEngine {
                 debug!("No active workspace for space {:?}", space);
             }
         }
-    }
-
-    /// Moves the focused window between the strip and the floating layer.
-    fn toggle_window_floating(
-        &mut self,
-        window_store: &mut WindowStore,
-        space: Option<SpaceId>,
-        is_floating: bool,
-    ) -> EventResponse {
-        let Some(wid) = self.focused_window else {
-            return EventResponse::default();
-        };
-        if is_floating {
-            if let Some(space) = space {
-                let Some(assigned_workspace) = self
-                    .virtual_workspace_manager
-                    .workspace_for_window(window_store, space, wid)
-                    .or_else(|| self.virtual_workspace_manager.active_workspace(space))
-                else {
-                    warn!(
-                        "No workspace on space {:?} to tile floating window {:?} into",
-                        space, wid
-                    );
-                    return EventResponse::default();
-                };
-
-                if let Some(layout) = self.workspace_layouts.active(space, assigned_workspace) {
-                    self.workspace_tree_mut(assigned_workspace)
-                        .add_window_after_selection(layout, wid);
-                    debug!(
-                        "Re-added floating window {:?} to tiling tree in workspace {:?}",
-                        wid, assigned_workspace
-                    );
-                }
-
-                self.floating.remove_active(space, wid.pid, wid);
-            }
-            self.floating.remove_floating(wid);
-            self.floating.set_last_focus(None);
-        } else {
-            if let Some(space) = space {
-                self.floating.add_active(space, wid.pid, wid);
-                if let Some((ws_id, _)) = self.workspace_and_layout(space) {
-                    self.workspace_tree_mut(ws_id).remove_window(wid);
-                } else {
-                    debug!(
-                        "No active workspace/layout for space {:?}; leaving window {:?} out of tiling removal",
-                        space, wid
-                    );
-                }
-            }
-            self.floating.add_floating(wid);
-            self.floating.set_last_focus(Some(wid));
-            debug!("Removed window {:?} from tiling tree, now floating", wid);
-        }
-        EventResponse::default()
     }
 
     /// Maximizes a FLOATING window to the tiling area, or takes it back out. Its pre-maximize frame
@@ -2278,192 +2224,6 @@ impl LayoutEngine {
         positions.into_iter().collect()
     }
 
-    /// Moves a window to another workspace on the same space, following it if asked.
-    ///
-    /// The window is whichever index was named, else the focused one. Following means the display
-    /// switches to the destination, which is why this cannot simply reassign and return.
-    fn move_window_to_workspace(
-        &mut self,
-        window_store: &mut WindowStore,
-        memory: &mut DisplayMemory,
-        space: SpaceId,
-        workspace: &WorkspaceSelector,
-        follow: bool,
-        maybe_id: &Option<u32>,
-    ) -> EventResponse {
-        let focused_window = if let Some(spec_u32) = maybe_id {
-            match self
-                .virtual_workspace_manager
-                .find_window_by_idx(window_store, space, *spec_u32)
-            {
-                Some(w) => w,
-                None => return EventResponse::default(),
-            }
-        } else {
-            match self.focused_window {
-                Some(wid) => wid,
-                None => return EventResponse::default(),
-            }
-        };
-
-        let inferred_space = self.space_with_window(focused_window);
-        let op_space = if inferred_space == Some(space) {
-            space
-        } else {
-            inferred_space.unwrap_or(space)
-        };
-
-        let workspaces = self.virtual_workspace_manager_mut().list_workspaces(op_space);
-        let Some(current_workspace_id) = self.virtual_workspace_manager.workspace_for_window(
-            window_store,
-            op_space,
-            focused_window,
-        ) else {
-            return EventResponse::default();
-        };
-        let target_workspace_id = match workspace {
-            WorkspaceSelector::Index(index) => workspaces.get(*index).map(|(id, _)| *id),
-            WorkspaceSelector::Name(name) if name == "next" => self
-                .virtual_workspace_manager
-                .next_workspace(window_store, op_space, current_workspace_id, None),
-            WorkspaceSelector::Name(name) if name == "prev" => self
-                .virtual_workspace_manager
-                .prev_workspace(window_store, op_space, current_workspace_id, None),
-            WorkspaceSelector::Name(name) => workspaces
-                .iter()
-                .find_map(|(id, workspace_name)| (workspace_name == name).then_some(*id)),
-        };
-        let Some(target_workspace_id) = target_workspace_id else {
-            // The stack has no workspace that way, so the view bounces and the stop reads as an end
-            // rather than a dropped keypress — the same answer a blocked workspace SWITCH gives. A
-            // selector that names a workspace outright reports no edge: not finding workspace 7 is a
-            // request that cannot be honoured, not a push against the bottom of the stack.
-            return EventResponse {
-                edge_hit: workspace_stack_direction(workspace),
-                ..EventResponse::default()
-            };
-        };
-
-        if current_workspace_id == target_workspace_id {
-            return EventResponse::default();
-        }
-
-        let is_floating = self.floating.is_floating(focused_window);
-
-        // Capture the width before the window leaves its tree, so a size the user set
-        // and never re-applied elsewhere is not lost on the way out. The destination
-        // reads it back from per-display affinity below, NOT from a value threaded
-        // through this function: the width belongs to the display, and this move keeps
-        // the window on the same display, so what it had here is what it gets there.
-        if !is_floating
-            && let Some(layout) = self.workspace_layouts.active(op_space, current_workspace_id)
-        {
-            self.remember_column_width(
-                memory,
-                op_space,
-                current_workspace_id,
-                layout,
-                focused_window,
-            );
-        }
-
-        if is_floating {
-            self.floating.remove_active_for_window(focused_window);
-        } else {
-            self.remove_window_from_all_tiling_trees(focused_window);
-        }
-
-        let assigned = self.virtual_workspace_manager.assign_window_to_workspace(
-            window_store,
-            op_space,
-            focused_window,
-            target_workspace_id,
-        );
-        if !assigned {
-            if is_floating {
-                self.floating.add_active(op_space, focused_window.pid, focused_window);
-            } else if let Some(prev_layout) =
-                self.workspace_layouts.active(op_space, current_workspace_id)
-            {
-                self.workspace_tree_mut(current_workspace_id)
-                    .add_window_after_selection(prev_layout, focused_window);
-            }
-            return EventResponse::default();
-        }
-
-        if !is_floating
-            && let Some(target_layout) =
-                self.workspace_layouts.active(op_space, target_workspace_id)
-        {
-            self.workspace_tree_mut(target_workspace_id)
-                .add_window_after_selection(target_layout, focused_window);
-            // A fresh column starts at the display's default ratio, so re-apply
-            // whatever this window last had on THIS display.
-            self.apply_remembered_column_width(
-                memory,
-                op_space,
-                target_workspace_id,
-                target_layout,
-                focused_window,
-            );
-        }
-
-        if follow {
-            return self.activate_workspace(
-                window_store,
-                op_space,
-                target_workspace_id,
-                Some(focused_window),
-            );
-        }
-
-        let active_workspace = self.virtual_workspace_manager.active_workspace(op_space);
-
-        if Some(target_workspace_id) == active_workspace {
-            if is_floating {
-                self.floating.add_active(op_space, focused_window.pid, focused_window);
-            }
-            return EventResponse {
-                changed: true,
-                focus_window: Some(focused_window),
-                raise_windows: vec![],
-                edge_hit: None,
-                moved: None,
-            };
-        } else if Some(current_workspace_id) == active_workspace {
-            self.focused_window = None;
-            self.virtual_workspace_manager.set_last_focused_window(
-                op_space,
-                current_workspace_id,
-                None,
-            );
-
-            let remaining_windows = self
-                .virtual_workspace_manager
-                .windows_in_active_workspace(window_store, op_space);
-            if let Some(&new_focus) = remaining_windows.first() {
-                return EventResponse {
-                    changed: true,
-                    focus_window: Some(new_focus),
-                    raise_windows: vec![],
-                    edge_hit: None,
-                    moved: None,
-                };
-            }
-        }
-
-        self.virtual_workspace_manager.set_last_focused_window(
-            op_space,
-            target_workspace_id,
-            Some(focused_window),
-        );
-
-        EventResponse {
-            changed: true,
-            ..EventResponse::default()
-        }
-    }
-
     pub fn handle_virtual_workspace_command(
         &mut self,
         window_store: &mut WindowStore,
@@ -2742,146 +2502,6 @@ impl LayoutEngine {
 
     pub fn active_workspace_idx(&self, space: SpaceId) -> Option<u64> {
         self.virtual_workspace_manager.active_workspace_idx(space)
-    }
-
-    pub fn move_window_to_space(
-        &mut self,
-        window_store: &mut WindowStore,
-        memory: &mut DisplayMemory,
-        source_space: SpaceId,
-        target_space: SpaceId,
-        target_screen_size: CGSize,
-        window_id: WindowId,
-    ) -> EventResponse {
-        if source_space == target_space {
-            return EventResponse {
-                changed: true,
-                raise_windows: vec![window_id],
-                focus_window: Some(window_id),
-                edge_hit: None,
-                moved: None,
-            };
-        }
-
-        let _ = self.virtual_workspace_manager.list_workspaces(source_space);
-        let _ = self.virtual_workspace_manager.list_workspaces(target_space);
-
-        let source_workspace = self
-            .virtual_workspace_manager
-            .workspace_for_window(window_store, source_space, window_id)
-            .or_else(|| self.virtual_workspace_manager.active_workspace(source_space));
-
-        let Some(source_workspace_id) = source_workspace else {
-            return EventResponse::default();
-        };
-
-        let mut target_workspace_id = self.virtual_workspace_manager.active_workspace(target_space);
-        if target_workspace_id.is_none()
-            && let Some((id, _)) =
-                self.virtual_workspace_manager.list_workspaces(target_space).first()
-        {
-            self.virtual_workspace_manager.set_active_workspace(target_space, *id);
-            target_workspace_id = Some(*id);
-        }
-
-        let Some(target_workspace_id) = target_workspace_id else {
-            return EventResponse::default();
-        };
-
-        let was_floating = self.floating.is_floating(window_id);
-
-        if was_floating {
-            self.floating.remove_active_for_window(window_id);
-        } else {
-            self.remove_window_from_all_tiling_trees(window_id);
-        }
-
-        let assigned = self.virtual_workspace_manager.assign_window_to_workspace(
-            window_store,
-            target_space,
-            window_id,
-            target_workspace_id,
-        );
-
-        if !assigned {
-            if was_floating {
-                self.floating.add_active(source_space, window_id.pid, window_id);
-            } else if let Some(src_layout) =
-                self.workspace_layouts.active(source_space, source_workspace_id)
-            {
-                self.workspace_tree_mut(source_workspace_id)
-                    .add_window_after_selection(src_layout, window_id);
-            }
-            return EventResponse::default();
-        }
-
-        if was_floating {
-            self.floating_positions.remove_window(window_id);
-        }
-
-        {
-            let workspace_ids = self.virtual_workspace_manager.list_workspaces(target_space);
-            for (id, _) in workspace_ids {
-                let tree = &mut self.virtual_workspace_manager.workspaces[id].layout_system;
-                self.workspace_layouts.ensure_active_for_workspace(
-                    target_space,
-                    target_screen_size,
-                    id,
-                    tree,
-                );
-            }
-        }
-
-        if was_floating {
-            self.floating.add_active(target_space, window_id.pid, window_id);
-            self.floating.set_last_focus(Some(window_id));
-        } else if let Some(target_layout) =
-            self.workspace_layouts.active(target_space, target_workspace_id)
-        {
-            self.workspace_tree_mut(target_workspace_id)
-                .add_window_after_selection(target_layout, window_id);
-            // Adopt the size this window last had on the DESTINATION display, not the one it
-            // had on the source. A half-width column is roomy on a 2338pt monitor and cramped
-            // on a 1728pt laptop panel, so carrying the source width across would be wrong;
-            // the whole point of keying widths by display is that each has its own answer.
-            // A window that has never been here keeps the display's configured default.
-            self.apply_remembered_column_width(
-                memory,
-                target_space,
-                target_workspace_id,
-                target_layout,
-                window_id,
-            );
-        }
-
-        if self.focused_window == Some(window_id) {
-            self.focused_window = None;
-        }
-
-        if let Some(active_ws) = self.virtual_workspace_manager.active_workspace(source_space)
-            && active_ws == source_workspace_id
-        {
-            self.virtual_workspace_manager.set_last_focused_window(
-                source_space,
-                source_workspace_id,
-                None,
-            );
-        }
-
-        self.virtual_workspace_manager.set_last_focused_window(
-            target_space,
-            target_workspace_id,
-            Some(window_id),
-        );
-        self.focused_window = Some(window_id);
-
-        EventResponse {
-            changed: true,
-            raise_windows: vec![window_id],
-            focus_window: Some(window_id),
-            edge_hit: None,
-            moved: None,
-        }
     }
 
     pub fn workspace_name(
@@ -4010,6 +3630,130 @@ mod tests {
         let _ = fx.workspace_command(space, move_window(wid, next, true));
         assert_eq!(fx.engine.active_workspace(space), Some(fx.workspaces(space)[1]));
         assert_eq!(fx.frame(space, wid).size.width, dragged);
+    }
+
+    /// The one way a placement fails is a workspace the store does not have; the window it took
+    /// out goes back to the strip it left rather than being lost from every layer.
+    #[test]
+    fn a_placement_that_cannot_be_assigned_puts_a_tiled_window_back() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(98);
+        let wid = WindowId::new(6004, 1);
+        fx.expose(space, CGSize::new(1000.0, 1000.0));
+        let _ = fx.open(space, vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)]);
+        let workspace = fx.workspace_of(space, wid).expect("assigned");
+        let before = fx.frames(space);
+        let from = moves::Slot { space, workspace };
+        let nowhere = moves::Slot {
+            space,
+            workspace: VirtualWorkspaceId::default(),
+        };
+
+        let detached = fx.engine.take_window(wid, from);
+        assert_eq!(detached.layer, moves::Layer::Tiled);
+        assert!(fx.frames(space).is_empty());
+        assert!(!fx.engine.place_window(&mut fx.windows, &fx.memory, detached, nowhere));
+
+        assert_eq!(fx.frames(space), before);
+        assert_eq!(fx.workspace_of(space, wid), Some(workspace));
+    }
+
+    #[test]
+    fn a_placement_that_cannot_be_assigned_puts_a_floating_window_back() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(99);
+        let wid = WindowId::new(6005, 1);
+        fx.expose(space, CGSize::new(1000.0, 1000.0));
+        let _ = fx.open(space, vec![OnScreenEntry::plain(wid)]);
+        let workspace = fx.workspace_of(space, wid).expect("assigned");
+        fx.float(space, wid);
+        let from = moves::Slot { space, workspace };
+        let nowhere = moves::Slot {
+            space,
+            workspace: VirtualWorkspaceId::default(),
+        };
+
+        let detached = fx.engine.take_window(wid, from);
+        assert_eq!(detached.layer, moves::Layer::Floating);
+        assert!(!fx.engine.floating.active_flat(space).contains(&wid));
+        assert!(!fx.engine.place_window(&mut fx.windows, &fx.memory, detached, nowhere));
+
+        assert!(fx.engine.floating.active_flat(space).contains(&wid));
+        assert_eq!(fx.workspace_of(space, wid), Some(workspace));
+    }
+
+    /// The floating layer holds the windows of the workspace showing, so a floating window sent to
+    /// one that is not showing leaves it, and comes back with the move home.
+    #[test]
+    fn a_floating_window_moved_to_a_hidden_workspace_leaves_the_floating_layer() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(100);
+        let wid = WindowId::new(6006, 1);
+        fx.expose(space, CGSize::new(1000.0, 1000.0));
+        let _ = fx.open(space, vec![OnScreenEntry::plain(wid)]);
+        fx.float(space, wid);
+        let workspaces = fx.workspaces(space);
+
+        let _ = fx.workspace_command(space, move_window(wid, WorkspaceSelector::Index(1), false));
+        assert_eq!(fx.workspace_of(space, wid), Some(workspaces[1]));
+        assert!(!fx.engine.floating.active_flat(space).contains(&wid));
+
+        let response =
+            fx.workspace_command(space, move_window(wid, WorkspaceSelector::Index(0), false));
+        assert_eq!(fx.workspace_of(space, wid), Some(workspaces[0]));
+        assert!(fx.engine.floating.active_flat(space).contains(&wid));
+        assert_eq!(response.focus_window, Some(wid));
+    }
+
+    #[test]
+    fn a_tiled_window_moved_to_another_space_joins_its_strip_and_keeps_focus() {
+        let TwoDisplays {
+            mut fx,
+            first,
+            second,
+            on_first,
+            on_second,
+        } = two_displays_side_by_side(101);
+        fx.engine.focused_window = Some(on_first);
+        let size = CGSize::new(1000.0, 800.0);
+
+        let response = fx.engine.move_window_to_space(
+            &mut fx.windows,
+            &mut fx.memory,
+            first,
+            second,
+            size,
+            on_first,
+        );
+
+        assert_eq!(response.focus_window, Some(on_first));
+        assert_eq!(fx.engine.focused_window, Some(on_first));
+        assert!(fx.frames(first).is_empty());
+        let on_second_strip: Vec<WindowId> =
+            fx.frames(second).into_iter().map(|(wid, _)| wid).collect();
+        assert_eq!(on_second_strip, vec![on_first, on_second]);
+        let target = fx.engine.active_workspace(second).expect("shown");
+        assert_eq!(
+            fx.engine.virtual_workspace_manager().last_focused_window(second, target),
+            Some(on_first)
+        );
+    }
+
+    /// Floating a window takes it out of every strip, also when the space the command names shows
+    /// no workspace to look the strip up by: a window both floating and tiled is laid out twice.
+    #[test]
+    fn floating_a_window_from_a_space_with_no_active_workspace_takes_it_out_of_its_strip() {
+        let mut fx = EngineFixture::new();
+        let (home, uninitialised) = (SpaceId::new(102), SpaceId::new(103));
+        let wid = WindowId::new(6007, 1);
+        fx.expose(home, CGSize::new(1000.0, 1000.0));
+        let _ = fx.open(home, vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)]);
+        fx.engine.focused_window = Some(wid);
+
+        let _ = fx.command(uninitialised, LayoutCommand::ToggleWindowFloating);
+
+        assert!(fx.engine.floating.is_floating(wid));
+        assert!(fx.frames(home).is_empty());
     }
 
     #[test]
