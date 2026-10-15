@@ -4,6 +4,7 @@ use rini_core::ids::WindowServerId;
 use test_log::test;
 
 use super::fixtures::*;
+use crate::app::reactor::events::window_discovery;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::request::Request;

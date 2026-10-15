@@ -2,12 +2,14 @@
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
 use rini_geometry::SameAs;
+use rini_geometry::space::SurfacePoint;
 use rini_ipc::protocol::{SwitchScope, WorkspaceSelector};
 use test_log::test;
 
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
 

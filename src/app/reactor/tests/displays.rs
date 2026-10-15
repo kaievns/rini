@@ -9,9 +9,11 @@ use super::fixtures::*;
 use crate::app::reactor::managers::RefreshQuarantineState;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
 use crate::windows::platform::window_server::FakeWindowServer;
+use crate::workspaces as layout;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]

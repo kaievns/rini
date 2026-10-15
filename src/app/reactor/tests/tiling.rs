@@ -7,6 +7,7 @@ use std::time::Instant;
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::{WindowServerId, pid_t};
 use rini_geometry::SameAs;
+use rini_geometry::space::{SurfacePoint, ToCg};
 use test_log::test;
 
 use super::fixtures::*;
@@ -20,6 +21,7 @@ use crate::layout::domain::tile::window_in;
 use crate::layout::settings::Edges;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::request::Request;
+use crate::workspaces as layout;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -735,7 +737,7 @@ mod strip_regroup {
     use test_log::test;
 
     use super::*;
-    use crate::app::reactor::{StackedWindow, strip_group_to_lift_for};
+    use crate::app::reactor::regroup::{StackedWindow, strip_group_to_lift_for};
     use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
     use crate::windows::domain::raise_order::AppBatch;
     use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};

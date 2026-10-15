@@ -1117,6 +1117,7 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
     ("src/app/config/kdl/apply.rs", "window_rule", 124),
     ("src/app/notifications.rs", "new", 130),
     ("src/app/reactor/animation.rs", "animate_layout", 151),
+    ("src/app/reactor/drag_swap.rs", "maybe_swap_on_drag", 111),
     ("src/app/reactor/events/command.rs", "handle_command_layout", 105),
     (
         "src/app/reactor/events/space.rs",
@@ -1133,22 +1134,21 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
         "emit_layout_events",
         147,
     ),
+    ("src/app/reactor/layout_pass.rs", "handle_layout_response", 190),
     ("src/app/reactor/mod.rs", "apply_event_outcome", 212),
     ("src/app/reactor/mod.rs", "dispatch_workflow", 274),
+    ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
     (
-        "src/app/reactor/mod.rs",
+        "src/app/reactor/space_snapshot.rs",
         "handle_authoritative_space_snapshot",
         190,
     ),
-    ("src/app/reactor/mod.rs", "handle_layout_response", 190),
-    ("src/app/reactor/mod.rs", "maybe_swap_on_drag", 111),
+    ("src/app/reactor/strip_motion.rs", "start_strip_switch", 132),
     (
-        "src/app/reactor/mod.rs",
+        "src/app/reactor/window_refresh.rs",
         "on_windows_discovered_with_app_info",
         142,
     ),
-    ("src/app/reactor/mod.rs", "start_strip_switch", 132),
-    ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
     ("src/displays/screen.rs", "refresh_snapshot", 106),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
     ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
@@ -1180,8 +1180,7 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
 ];
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
-const LONG_FILES: [(&str, usize); 4] = [
-    ("src/app/reactor/mod.rs", 4502),
+const LONG_FILES: [(&str, usize); 3] = [
     ("src/layout/domain/scrolling.rs", 1816),
     ("src/transitions/platform/engine.rs", 2187),
     ("src/workspaces/engine.rs", 2544),

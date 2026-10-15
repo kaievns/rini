@@ -2,14 +2,16 @@
 //! per-application main window.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
-use rini_geometry::space::OverlayVector;
+use rini_geometry::space::{OverlayVector, ScreenSize};
 use rini_ipc::protocol::WorkspaceSelector;
 use test_log::test;
 
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::request::Request;
+use crate::workspaces as layout;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -342,7 +344,8 @@ fn stale_menu_open_state_is_cleared_when_other_app_activates() {
 /// (parked on workspace 2, reported off screen by the window server) landed on a Ghostty window
 /// this way and remembered Ghostty for the next time.
 mod switch_focus {
-    use crate::app::reactor::{choose_switch_focus, switch_focus_within_workspace};
+    use crate::app::reactor::activation::switch_focus_within_workspace;
+    use crate::app::reactor::focus_heuristics::choose_switch_focus;
 
     /// macOS picks the app's main window on cmd-tab. When the user was last in another window of
     /// the app on the same workspace, that one is the switch's focus; otherwise the pick stands.

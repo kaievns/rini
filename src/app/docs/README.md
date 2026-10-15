@@ -8,6 +8,21 @@ knows the features and converts what they emit.
 | | |
 |---|---|
 | `reactor/` | The orchestrator. Holds every feature's store, reduces the events they emit, drives them back |
+| `reactor/mod.rs` | `Reactor` and its `Event`: the loop that takes each batch, `dispatch_workflow` handing each event to its reducer, and `apply_event_outcome` carrying out what the reducer left, in order |
+| `reactor/active_spaces.rs` | Which spaces rini is active on, recomputed from the screens, and each window's visibility and space reconciled against the active spaces' window lists |
+| `reactor/space_snapshot.rs` | A snapshot of the displays' spaces taken in: screens and spaces replaced, a departing display's windows given it as their home, the topology's window moves, windows back from a native fullscreen space, and the snapshot held while Mission Control is open |
+| `reactor/display_homes.rs` | Which display each window belongs on: the arrangement in force, display pins, homes observed from the live layout, windows moved back to a returning display or by the redistribute command |
+| `reactor/window_refresh.rs` | The applications asked for their windows again, and what they report taken in: window-server info applied, stale windows cleaned up, the refresh after Mission Control |
+| `reactor/layout_pass.rs` | A layout event handed to the engine and its response carried out, and the layout pass after it |
+| `reactor/strip_motion.rs` | The strip's motion on the overlay: overlay frames placed, a pan along the strip, an edge bounce, a workspace switch, and what the transitions engine is told about the display and its journal |
+| `reactor/regroup.rs` | The strip kept one group in front of the floating windows after focus lands on it (`strip_group_to_lift_for`), and each raise sent with the focus reports it will provoke |
+| `reactor/focus_heuristics.rs` | Where focus goes when nothing names it: the window under the cursor, an empty workspace's desktop, the window a workspace switch focuses (`choose_switch_focus`), raise on mouse over, focus follows mouse |
+| `reactor/activation.rs` | An application activating: whether its window's workspace is switched to, and which of its windows takes focus when macOS picks a parked one |
+| `reactor/app_rules.rs` | The app rules carried out: windows assigned by their rules as they appear, as their space activates and as a title changes, and the placements and resizes a rule asks for |
+| `reactor/drag_swap.rs` | A window being dragged: the drag session, and the swap with the window it is dragged over |
+| `reactor/switcher.rs` | The window switcher's session: the list snapshotted at open, the cursor over it, the popup, and the commit that focuses the chosen window wherever it is |
+| `reactor/command_space.rs` | Which space and screen a command acts on: the command space, the active display's space, the focused or main window's, and the screen a display selector names |
+| `reactor/autosave.rs` | The layout file written: debounced after a layout change, at once before exit |
 | `reactor/state.rs` | `RiniState` |
 | `reactor/events/` | The reducers, one module per event family |
 | `reactor/events/app.rs` | Applications launching, terminating, losing their thread, activating, and the windows each one reports |
@@ -58,8 +73,9 @@ reported the same way, since the defaults are not what that file configured. A b
 reload keeps the running config and says why, in the log and with a mark on every bar.
 
 **Decisions leave, orchestration stays.** Pure feature logic has been moved out to each
-feature's `domain/` over several passes. What remains in `reactor/mod.rs` reads and
-writes several stores per event, which is what the application is for.
+feature's `domain/` over several passes. What remains in `reactor/` reads and writes
+several stores per event, which is what the application is for: `reactor/mod.rs` is the
+loop and the dispatch, and each sibling file is one concern's `impl Reactor`.
 
 **A bound action is a translation, not a side effect.** `hotkeys/lower.rs` turns an
 `Action` into a `reactor::Command`, a program to spawn, a config reload, or a named
@@ -96,11 +112,12 @@ each left this module and took their tests with them.
 
 ## Reading order
 
-`reactor/state.rs` → `reactor/events/` → `reactor/mod.rs`, and `main.rs` for how it is
-all assembled.
+`reactor/state.rs` → `reactor/events/` → `reactor/mod.rs` → the concern files beside it,
+and `main.rs` for how it is all assembled.
 
 ## Known debt
 
-`reactor/mod.rs` is the largest file in `src/app/`. It and its functions past the size
-limits are held at their sizes in `LONG_FILES` and `LONG_FNS` in `tests/architecture.rs`;
-what each of them is, is in [`docs/implementation-audit.md`](../../../docs/implementation-audit.md).
+The reactor's functions past the size limit, `dispatch_workflow` and `apply_event_outcome`
+in `reactor/mod.rs` and one or two in several of the concern files, are held at their sizes
+in `LONG_FNS` in `tests/architecture.rs`; what each of them is, is in
+[`docs/implementation-audit.md`](../../../docs/implementation-audit.md).

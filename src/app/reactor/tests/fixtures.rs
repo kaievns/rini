@@ -4,6 +4,7 @@
 //! I get a reactor with a floating window" meant scrolling for it.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::{WindowServerId, pid_t};
+use rini_geometry::space::SurfacePoint;
 
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;

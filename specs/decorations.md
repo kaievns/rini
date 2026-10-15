@@ -307,11 +307,11 @@ draws each, how many rest windows are kept, what each changes to draw its look, 
 ordered again and the order every call of a draw goes in (`plan_draw`) are
 `src/decorations/domain/rest.rs`, carried out by the main-thread actor in
 `src/decorations/platform/rest.rs`, which the reactor tells of each flight's
-begin (`Reactor::send_flight` in `src/app/reactor/mod.rs`, `publish_rest` in
+begin (`Reactor::send_flight` in `src/app/reactor/strip_motion.rs`, `publish_rest` in
 `src/app/reactor/decorations.rs`) and the renderer (`src/animation/platform/renderer.rs`) covers as
 its overlay goes up, places as the coordinator's `PlaceRest` says the flight has landed
 (`src/transitions/domain/lifecycle.rs`; none while off, as the reactor's `SetDisplay` says,
-`publish_animation_display_for` in `src/app/reactor/mod.rs`) and calls before each lift. Its windows follow the window
+`publish_animation_display_for` in `src/app/reactor/strip_motion.rs`) and calls before each lift. Its windows follow the window
 server's frames, orders, levels and introductions, all read on the frames thread
 (`src/displays/platform/window_notify.rs`), and are ordered with the level and sub-level calls in
 `src/windows/platform/window_server.rs`; no listing of windows names

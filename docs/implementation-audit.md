@@ -232,8 +232,10 @@ Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_work
 
 **OPEN — deliberately. See 3.3.**
 
-`src/app/reactor/mod.rs`, 4,201 code lines, no in-file tests. Direct field
-reaches: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
+`src/app/reactor/` splits `Reactor` by concern: `mod.rs` holds the struct, its `Event`, the
+loop, `dispatch_workflow` and `apply_event_outcome`, and each file beside it is one concern's
+`impl Reactor` (`src/app/docs/README.md`, "What it owns"). No in-file tests. Direct field
+reaches, as counted when this was found: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
 `communication_manager` 17, `refresh_quarantine_manager` 14,
 `transaction_manager` 11, `pending_space_change_manager` 3. Eight "manager"
 structs plus `RiniState`.

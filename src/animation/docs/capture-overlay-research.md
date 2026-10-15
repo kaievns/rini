@@ -401,7 +401,7 @@ It decides two separate things:
   something on the strip behind it — and nothing at all when the order already obeys the
   rule — the common case, and it must cost nothing, because
   putting it back costs one Accessibility raise per window on screen. Only on-screen
-  windows are judged and raised (`strip_group_to_lift_for` in `src/app/reactor/mod.rs`),
+  windows are judged and raised (`strip_group_to_lift_for` in `src/app/reactor/regroup.rs`),
   and the judgment runs twice per focus change: once with the raise the focus move
   issues, and again after the layout pass has been applied (`regroup_after_layout`),
   because nothing raises a column when it scrolls back into view — the engine's raise
