@@ -132,7 +132,7 @@ fn sync_window_server_id_mapping(
                 previous_wid,
                 wid,
             );
-            focus.rekey_focus_order(previous_wid, wid);
+            focus.rekey_window(previous_wid, wid);
             outcome = outcome
                 .with_forgotten_window(previous_wid)
                 .with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(previous_wid));
