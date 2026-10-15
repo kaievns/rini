@@ -137,6 +137,25 @@ impl Column {
         self.height_overridden = true;
     }
 
+    /// A resized row's new `height` out of the column's `height` less its gaps: a drag by a
+    /// stacked end trades it with the row across that end, a drag that moves neither end leaves the
+    /// rows, and any other resize takes it from the rest. A lone window has no rows to share.
+    fn resize_row(&mut self, row: usize, drag: Option<Drag>, height: f64, column: f64, gap: f64) {
+        if self.windows.len() <= 1 || column <= 0.0 {
+            return;
+        }
+        self.ensure_height_weights();
+        let available = self.available_height(column, gap);
+        if available <= 0.0 {
+            return;
+        }
+        match drag {
+            Some(Drag { end: Some(end), .. }) => self.trade_row_height(row, end, height, available),
+            Some(Drag { end: None, .. }) => {}
+            None => self.take_row_height(row, height, available),
+        }
+    }
+
     /// The app's own height: `row` takes it, and the other rows share what is left in their
     /// proportions.
     fn take_row_height(&mut self, row: usize, height: f64, available: f64) {
@@ -1541,20 +1560,15 @@ impl ScrollingLayoutSystem {
             state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Unbounded);
         }
 
-        let col = &mut state.columns[col_idx];
-        if col.windows.len() > 1 && tiling.size.height > 0.0 && !height_kept {
-            col.ensure_height_weights();
-            let available_height = col.available_height(tiling.size.height, gaps.inner);
-            if available_height > 0.0 {
-                let height = new_frame.size.height;
-                match drag {
-                    Some(Drag { end: Some(end), .. }) => {
-                        col.trade_row_height(row_idx, end, height, available_height);
-                    }
-                    Some(Drag { end: None, .. }) => {}
-                    None => col.take_row_height(row_idx, height, available_height),
-                }
-            }
+        if !height_kept {
+            let height = new_frame.size.height;
+            state.columns[col_idx].resize_row(
+                row_idx,
+                drag,
+                height,
+                tiling.size.height,
+                gaps.inner,
+            );
         }
 
         if let Some((start, Side::Left)) = side_drag
@@ -1888,7 +1902,7 @@ mod tests {
 
     use super::{Column, Pin, Place, ScrollingLayoutSystem, View, answers_slot, rebased_offset};
     use crate::layout::domain::area::compute_tiling_area;
-    use crate::layout::domain::edge_drag::Drag;
+    use crate::layout::domain::edge_drag::{Drag, End};
     use crate::layout::domain::tile;
     use crate::layout::settings::{CenterFocusedColumn, Gaps, ScrollingLayoutSettings};
     use crate::layout::{Direction, LayoutId, ResizeOrientation, WindowLayoutConstraints};
@@ -4932,6 +4946,60 @@ mod tests {
         width_offset: f64,
         #[serde(default)]
         width_overridden: bool,
+    }
+
+    fn stack_of(rows: u32) -> Column {
+        Column {
+            windows: (1..=rows).map(|idx| wid(1, idx)).collect(),
+            ..Column::default()
+        }
+    }
+
+    fn a_drag(end: Option<End>) -> Option<Drag> {
+        Some(Drag {
+            from: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(500.0, 400.0)),
+            end,
+        })
+    }
+
+    #[test]
+    fn a_lone_window_s_resize_leaves_its_column_without_rows_to_share() {
+        let mut column = stack_of(1);
+        column.resize_row(0, None, 300.0, 810.0, 10.0);
+        column.resize_row(0, a_drag(Some(End::Bottom)), 300.0, 810.0, 10.0);
+        assert!(column.height_weights.is_empty());
+        assert!(!column.height_overridden);
+    }
+
+    #[test]
+    fn a_resize_with_no_column_height_leaves_the_rows() {
+        let mut column = stack_of(2);
+        column.resize_row(0, None, 300.0, 0.0, 10.0);
+        assert!(column.height_weights.is_empty());
+        assert!(!column.height_overridden);
+    }
+
+    #[test]
+    fn a_drag_that_moves_neither_end_leaves_the_rows_even() {
+        let mut column = stack_of(2);
+        column.resize_row(0, a_drag(None), 300.0, 810.0, 10.0);
+        assert_eq!(column.height_weights, vec![1.0, 1.0]);
+        assert!(!column.height_overridden);
+    }
+
+    #[test]
+    fn a_dragged_end_trades_with_the_row_across_it_and_an_app_s_height_takes_from_the_rest() {
+        let mut dragged = stack_of(3);
+        dragged.resize_row(0, a_drag(Some(End::Bottom)), 300.0, 920.0, 10.0);
+        assert_eq!(dragged.height_weights, vec![300.0, 300.0, 300.0]);
+        dragged.resize_row(0, a_drag(Some(End::Bottom)), 400.0, 920.0, 10.0);
+        assert_eq!(dragged.height_weights, vec![400.0, 200.0, 300.0]);
+        assert!(dragged.height_overridden);
+
+        let mut settled = stack_of(3);
+        settled.resize_row(0, None, 400.0, 920.0, 10.0);
+        assert_eq!(settled.height_weights, vec![400.0, 250.0, 250.0]);
+        assert!(settled.height_overridden);
     }
 
     #[test]
