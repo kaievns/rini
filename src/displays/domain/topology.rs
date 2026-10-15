@@ -31,6 +31,9 @@ pub struct ForwardedSpaceState {
     pub menu_bar_space: Option<SpaceId>,
     pub command_space: Option<SpaceId>,
     pub display_space_ids: HashMap<String, Vec<SpaceId>>,
+    /// The window server did not list the spaces, so `display_space_ids` holds each screen's
+    /// current space only.
+    pub display_space_ids_from_screens: bool,
     pub last_user_space_by_display: HashMap<String, SpaceId>,
     pub space_remaps: Vec<(SpaceId, SpaceId)>,
     pub display_set_changed: bool,
@@ -55,13 +58,17 @@ impl ForwardedSpaceState {
     }
 
     /// Every space macOS still lists on an attached display, the ones not on screen included, and
-    /// each screen's current space whether or not the list names it.
-    pub fn listed_spaces(&self) -> Vec<SpaceId> {
+    /// each screen's current space whether or not the list names it. `None` when the window server
+    /// did not list them, since the screens alone leave out every Desktop off screen.
+    pub fn listed_spaces(&self) -> Option<Vec<SpaceId>> {
+        if self.display_space_ids_from_screens {
+            return None;
+        }
         let mut listed: Vec<SpaceId> = self.iter_known_spaces().collect();
         listed.extend(self.display_space_ids.values().flatten().copied());
         listed.sort_unstable();
         listed.dedup();
-        listed
+        Some(listed)
     }
 
     pub fn screen_for_point(&self, point: CGPoint) -> Option<&ScreenInfo> {
@@ -221,6 +228,7 @@ pub fn analyze_space_snapshot(
         && current.fullscreen_spaces == incoming.fullscreen_spaces
         && current_effective_active_spaces == &effective_active_spaces
         && current.display_space_ids == incoming.display_space_ids
+        && current.display_space_ids_from_screens == incoming.display_space_ids_from_screens
         && current.last_user_space_by_display == incoming.last_user_space_by_display
         && !active_window_membership_changed;
     let invalidates_pending_targets = incoming.display_set_changed
@@ -477,8 +485,16 @@ mod tests {
         s.display_space_ids.insert("uuid-0".into(), vec![SpaceId::new(1), SpaceId::new(7)]);
         assert_eq!(
             s.listed_spaces(),
-            vec![SpaceId::new(1), SpaceId::new(2), SpaceId::new(7)]
+            Some(vec![SpaceId::new(1), SpaceId::new(2), SpaceId::new(7)])
         );
+    }
+
+    #[test]
+    fn spaces_the_window_server_did_not_list_are_not_a_listing() {
+        let mut s = state(&[rect(0., 0.)]);
+        s.display_space_ids.insert("uuid-0".into(), vec![SpaceId::new(1)]);
+        s.display_space_ids_from_screens = true;
+        assert_eq!(s.listed_spaces(), None);
     }
 
     fn snapshot(frames: &[CGRect]) -> ForwardedSpaceState {

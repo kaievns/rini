@@ -2073,6 +2073,7 @@ impl Reactor {
             menu_bar_space,
             command_space,
             display_space_ids,
+            display_space_ids_from_screens,
             last_user_space_by_display,
             space_remaps,
             display_set_changed,
@@ -2121,6 +2122,7 @@ impl Reactor {
         self.space_state.menu_bar_space = menu_bar_space;
         self.space_state.command_space = command_space;
         self.space_state.display_space_ids = display_space_ids;
+        self.space_state.display_space_ids_from_screens = display_space_ids_from_screens;
         self.space_state.last_user_space_by_display = last_user_space_by_display;
 
         if screens.is_empty() {
@@ -5558,7 +5560,7 @@ impl Reactor {
             &mut self.layout_manager,
             path,
             active_space,
-            &self.space_state.listed_spaces(),
+            self.space_state.listed_spaces().as_deref(),
         )
     }
 
@@ -5580,11 +5582,13 @@ impl Reactor {
             &mut self.state.display_memory,
             &connected,
         );
-        self.layout_manager.layout_engine.forget_vacant_spaces(
-            &self.state.windows,
-            &self.state.display_memory,
-            &self.space_state.listed_spaces(),
-        );
+        if let Some(listed) = self.space_state.listed_spaces() {
+            self.layout_manager.layout_engine.forget_vacant_spaces(
+                &self.state.windows,
+                &self.state.display_memory,
+                &listed,
+            );
+        }
         // autosave_current_layout, NOT save_current_layout: the latter also
         // normalizes floating-versus-tiled ownership and rewrites stored floating
         // frames. Running that on every layout change broke un-fullscreening a

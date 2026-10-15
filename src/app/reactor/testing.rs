@@ -460,6 +460,7 @@ pub fn forwarded_space_state(screens: Vec<ScreenInfo>) -> ForwardedSpaceState {
         menu_bar_space: command_space,
         command_space,
         display_space_ids: Default::default(),
+        display_space_ids_from_screens: false,
         last_user_space_by_display: Default::default(),
         space_remaps: Vec::new(),
         display_set_changed: false,

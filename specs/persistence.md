@@ -56,7 +56,9 @@ the strip fresh.
   saved active space, and that no window is on: its layouts, which workspace it showed and the focus
   remembered on it. macOS mints a new space id on every reconnect and never reissues one, so such a
   space is one nothing reaches again. A Desktop macOS still lists MUST stay though no screen shows
-  it, because switching back to it shows the workspace it showed. A space a display is remembered on
+  it, because switching back to it shows the workspace it showed, and a save MUST forget nothing
+  while the window server has not listed the spaces, since the screens alone leave every Desktop off
+  screen out. A space a display is remembered on
   MUST stay, windows or none, because the next start moves
   its layouts and the workspace it showed onto the display's new id; a space a window is on MUST stay,
   because that window can come back to it. Nothing is forgotten before the startup restore has moved

@@ -182,6 +182,7 @@ pub struct AuthorityState {
     display_topology_state: Option<DisplayTopologyState>,
     last_user_space_by_display: HashMap<String, SpaceId>,
     display_space_ids: HashMap<String, Vec<SpaceId>>,
+    display_space_ids_from_screens: bool,
     active_display_uuid: Option<String>,
     awaiting_space_switch_confirmation: bool,
     release_reactor_quarantine_on_next_forward: bool,
@@ -211,6 +212,7 @@ impl Default for AuthorityState {
             display_topology_state: None,
             last_user_space_by_display: HashMap::default(),
             display_space_ids: HashMap::default(),
+            display_space_ids_from_screens: false,
             active_display_uuid: None,
             awaiting_space_switch_confirmation: false,
             release_reactor_quarantine_on_next_forward: false,
@@ -628,6 +630,7 @@ impl SpacesActor {
         // list would say "this display owns no spaces", which is never true of an attached display
         // and is worse than the one space the snapshot already names.
         let mut spaces_per_display = (self.state.live.spaces_per_display)();
+        self.state.display_space_ids_from_screens = spaces_per_display.is_empty();
         if spaces_per_display.is_empty() {
             for screen in &screens {
                 if let Some(space) = screen.space {
@@ -652,6 +655,7 @@ impl SpacesActor {
             menu_bar_space,
             command_space,
             display_space_ids: self.state.display_space_ids.clone(),
+            display_space_ids_from_screens: self.state.display_space_ids_from_screens,
             last_user_space_by_display: self.state.last_user_space_by_display.clone(),
             space_remaps,
             display_set_changed,

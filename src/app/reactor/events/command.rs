@@ -199,11 +199,13 @@ pub fn save_layout_before_exit(
     layout: &mut LayoutManager,
     path: std::path::PathBuf,
     active_space: Option<SpaceId>,
-    listed: &[SpaceId],
+    listed: Option<&[SpaceId]>,
 ) -> std::io::Result<()> {
-    layout
-        .layout_engine
-        .forget_vacant_spaces(&state.windows, &state.display_memory, listed);
+    if let Some(listed) = listed {
+        layout
+            .layout_engine
+            .forget_vacant_spaces(&state.windows, &state.display_memory, listed);
+    }
     save_layout(state, layout, path, active_space)
 }
 

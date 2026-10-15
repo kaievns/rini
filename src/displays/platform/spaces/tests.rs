@@ -1314,6 +1314,7 @@ fn the_spaces_a_display_owns_come_from_the_window_server() {
         Some(&vec![SpaceId::new(ACTIVE_SPACE), SpaceId::new(99)]),
         "both spaces, including the one nothing is showing"
     );
+    assert!(!state.display_space_ids_from_screens);
 }
 
 /// With a silent window server the snapshot stands in, so a display still owns the space it is
@@ -1338,4 +1339,5 @@ fn a_silent_window_server_falls_back_to_the_snapshot() {
         panic!("expected a topology snapshot");
     };
     assert_eq!(state.display_space_ids.get("display-left"), Some(&vec![space]));
+    assert!(state.display_space_ids_from_screens, "not a listing a save may prune by");
 }

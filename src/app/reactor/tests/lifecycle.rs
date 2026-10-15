@@ -534,6 +534,57 @@ fn an_autosave_keeps_an_empty_desktop_macos_still_lists_off_screen() {
 }
 
 #[test]
+fn the_quit_save_keeps_an_empty_desktop_macos_still_lists_off_screen() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let (other, shown) = (SpaceId::new(1), SpaceId::new(2));
+    let dir = std::env::temp_dir().join(format!("rini-listed-quit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(other)]));
+    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(shown)], |state| {
+        state.display_space_ids.insert("test-display-0".into(), vec![other, shown]);
+    }));
+    let saved = reactor.save_layout_before_exit(dir.join("layout.ron"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    saved.unwrap();
+    let mut spaces =
+        reactor.layout_manager.layout_engine.virtual_workspace_manager().initialized_spaces();
+    spaces.sort_unstable();
+    assert_eq!(spaces, vec![other, shown]);
+}
+
+/// Without the window server's list only the screens' current spaces are known, and an empty
+/// Desktop off screen is not among them.
+#[test]
+fn a_save_forgets_nothing_when_the_window_server_did_not_list_the_spaces() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let (other, shown) = (SpaceId::new(1), SpaceId::new(2));
+    let dir = std::env::temp_dir().join(format!("rini-unlisted-save-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    reactor.autosave_path = Some(dir.join("autosave.ron"));
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(other)]));
+    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(shown)], |state| {
+        state.display_space_ids.insert("test-display-0".into(), vec![shown]);
+        state.display_space_ids_from_screens = true;
+    }));
+    reactor.save_layout_now();
+    let saved = reactor.save_layout_before_exit(dir.join("layout.ron"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    saved.unwrap();
+    let mut spaces =
+        reactor.layout_manager.layout_engine.virtual_workspace_manager().initialized_spaces();
+    spaces.sort_unstable();
+    assert_eq!(spaces, vec![other, shown]);
+}
+
+#[test]
 fn the_quit_save_forgets_a_space_the_display_moved_off_and_left_empty() {
     let mut reactor = test_reactor();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
