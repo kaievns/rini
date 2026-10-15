@@ -762,9 +762,9 @@ impl Service {
     /// `src/pictures/docs/README.md`.
     fn keep_copies(&self) {
         let is_region = |picture: &&Picture| matches!(picture.image, Pixels::Region { .. });
-        let (pictures, looks): (Vec<(WindowId, Picture)>, Vec<(WindowId, Picture)>) = {
+        let (pictures, looks) = {
             let shared = self.shared.lock().unwrap();
-            let regions = |held: &mut dyn Iterator<Item = (&WindowId, &Picture)>| {
+            let regions = |held: &mut dyn Iterator<Item = (&WindowId, &Picture)>| -> Vec<(WindowId, Picture)> {
                 held.filter(|(_, picture)| is_region(picture))
                     .map(|(window, picture)| (*window, picture.clone()))
                     .collect()

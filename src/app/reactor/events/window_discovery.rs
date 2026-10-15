@@ -647,12 +647,11 @@ mod tests {
     }
 
     /// The server did not answer. Not the same as answering "gone".
-    fn unanswered(wsid: u32) -> StaleWindowObservation {
+    fn unanswered() -> StaleWindowObservation {
         StaleWindowObservation {
             info: None,
             suitable: None,
             ordered_in: None,
-            ..present(wsid)
         }
     }
 
@@ -692,7 +691,7 @@ mod tests {
     #[test]
     fn an_unanswered_query_is_not_a_negative_one() {
         let state = state_with(1, 1);
-        let snap = snapshot(vec![(1, unanswered(1))]);
+        let snap = snapshot(vec![(1, unanswered())]);
         let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
         assert!(stale.is_empty(), "no server answer must not retire a window");
     }

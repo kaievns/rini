@@ -1408,6 +1408,7 @@ impl LayoutEngine {
         }
     }
 
+    #[allow(clippy::too_many_arguments, reason = "P3.9")]
     fn apply_app_rule_outcome(
         &mut self,
         window_store: &mut WindowStore,
@@ -1512,6 +1513,7 @@ impl LayoutEngine {
     /// The authoritative list: windows missing from it are gone, and windows in it rini has not
     /// placed are new. App rules are applied here, because this is where a window first arrives with
     /// its bundle id and title known.
+    #[allow(clippy::too_many_arguments, reason = "P3.9")]
     fn on_windows_on_screen_updated(
         &mut self,
         window_store: &mut WindowStore,
@@ -2099,6 +2101,7 @@ impl LayoutEngine {
             CGRect::new(origin, size)
         };
 
+        #[allow(clippy::too_many_arguments, reason = "P3.9")]
         fn ensure_visible_floating(
             engine: &mut LayoutEngine,
             positions: &mut HashMap<WindowId, CGRect>,
@@ -2672,6 +2675,7 @@ impl LayoutEngine {
         AfterRules::for_result(before, result.as_ref().map_err(|_| ()), in_layout_now)
     }
 
+    #[allow(clippy::too_many_arguments, reason = "P3.9")]
     pub fn assign_window_with_app_info(
         &mut self,
         window_store: &mut WindowStore,
@@ -3306,20 +3310,22 @@ mod tests {
 
     #[test]
     fn floating_app_rule_emits_one_shot_placement_and_switches_focus_workspace() {
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.app_rules = vec![WindowRule {
-            open_on_workspace: Some("Development".into()),
-            open_floating: Some(true),
-            default_floating_position: Some(FloatingPosition {
-                x: 40.0,
-                y: 30.0,
-                ..Default::default()
-            }),
-            default_column_width: Some(640.0),
-            default_window_height: Some(480.0),
-            open_focused: Some(true),
-            ..WindowRule::when(RuleMatch::app("com.example.Tool"))
-        }];
+        let settings = VirtualWorkspaceSettings {
+            app_rules: vec![WindowRule {
+                open_on_workspace: Some("Development".into()),
+                open_floating: Some(true),
+                default_floating_position: Some(FloatingPosition {
+                    x: 40.0,
+                    y: 30.0,
+                    ..Default::default()
+                }),
+                default_column_width: Some(640.0),
+                default_window_height: Some(480.0),
+                open_focused: Some(true),
+                ..WindowRule::when(RuleMatch::app("com.example.Tool"))
+            }],
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
         let mut memory = DisplayMemory::default();
         let mut window_store = WindowStore::default();
@@ -3405,11 +3411,13 @@ mod tests {
 
     #[test]
     fn tiled_app_rule_size_sets_scrolling_column_width() {
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.app_rules = vec![WindowRule {
-            default_column_width: Some(234.0),
-            ..WindowRule::when(RuleMatch::app("com.example.Editor"))
-        }];
+        let settings = VirtualWorkspaceSettings {
+            app_rules: vec![WindowRule {
+                default_column_width: Some(234.0),
+                ..WindowRule::when(RuleMatch::app("com.example.Editor"))
+            }],
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut layout_settings = LayoutSettings::default();
         layout_settings.scrolling.min_column_width_ratio = 0.1;
         let mut engine = LayoutEngine::new(&settings, &layout_settings);

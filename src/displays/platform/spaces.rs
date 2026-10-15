@@ -300,9 +300,11 @@ impl SpacesActor {
         events: Box<dyn EventSink>,
         space_kinds: SpaceKinds,
     ) -> (Self, Sender) {
-        let mut state = AuthorityState::default();
-        state.timers_enabled = false;
-        state.space_kinds = space_kinds;
+        let state = AuthorityState {
+            timers_enabled: false,
+            space_kinds,
+            ..AuthorityState::default()
+        };
         Self::new_with_state(events, state)
     }
 
@@ -310,9 +312,11 @@ impl SpacesActor {
     /// consults it takes its "no answer" path unless a test says otherwise.
     #[cfg(test)]
     pub fn new_for_tests_seeing(events: Box<dyn EventSink>, live: LiveDisplays) -> (Self, Sender) {
-        let mut state = AuthorityState::default();
-        state.timers_enabled = false;
-        state.live = live;
+        let state = AuthorityState {
+            timers_enabled: false,
+            live,
+            ..AuthorityState::default()
+        };
         Self::new_with_state(events, state)
     }
 

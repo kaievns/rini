@@ -1890,7 +1890,7 @@ mod tests {
     #[test]
     fn the_bar_is_drawn_over_every_tile_and_the_desktop_under_them() {
         let deepest_strip_tile = -64.0;
-        assert!(BAR_Z > 0.0);
+        const { assert!(BAR_Z > 0.0) };
         assert!(
             BACKDROP_Z < deepest_strip_tile,
             "the desktop is under every tile"

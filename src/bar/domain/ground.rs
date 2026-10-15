@@ -92,7 +92,7 @@ fn box_line(
 pub fn tint(pixels: &mut [u8], colour: Colour) {
     let (red, green, blue) = colour.rgb();
     let over = [red, green, blue].map(|channel| channel * 255.0 * BAR_GROUND_ALPHA);
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         for channel in 0..3 {
             let under = pixel[channel] as f64 * (1.0 - BAR_GROUND_ALPHA);
             pixel[channel] = (over[channel] + under).round().clamp(0.0, 255.0) as u8;
@@ -148,7 +148,7 @@ mod tests {
     fn a_blur_leaves_a_flat_picture_alone() {
         let mut pixels = picture(40, 12, [30, 60, 90, 255]);
         blur(&mut pixels, 40, 12, 40 * 4, 5);
-        assert!(pixels.chunks_exact(4).all(|pixel| pixel == [30, 60, 90, 255]));
+        assert!(pixels.as_chunks::<4>().0.iter().all(|pixel| *pixel == [30, 60, 90, 255]));
     }
 
     /// One bright pixel spreads evenly either side and keeps about its brightness in all.

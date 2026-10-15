@@ -22,7 +22,7 @@ fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
     updated.settings.focus_follows_mouse = !updated.settings.focus_follows_mouse;
     updated.settings.mouse_follows_focus = !updated.settings.mouse_follows_focus;
 
-    reactor.handle_event(Event::ConfigUpdated(updated.clone()));
+    reactor.handle_event(Event::ConfigUpdated(Box::new(updated.clone())));
 
     let (_, event) = wm_rx.try_recv().expect("config update should reach wm controller");
     let WmEvent::ConfigUpdated(actual) = event else {
@@ -64,7 +64,7 @@ fn a_config_reload_tells_the_transitions_engine_whether_to_write_its_journal() {
 
     let mut updated = reactor.config.clone();
     updated.settings.journal.write = true;
-    reactor.handle_event(Event::ConfigUpdated(updated));
+    reactor.handle_event(Event::ConfigUpdated(Box::new(updated)));
 
     let mut told = Vec::new();
     while let Ok((_, event)) = transitions_rx.try_recv() {

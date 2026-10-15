@@ -80,13 +80,13 @@ mod tests {
         use super::*;
         use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
 
-        fn measured(
-            frames: &[(WindowId, ScreenRect, ScreenRect)],
-        ) -> (
+        type Measured = (
             Vec<(WindowId, ScreenRect)>,
             Vec<WindowId>,
             HashMap<WindowId, ScreenRect>,
-        ) {
+        );
+
+        fn measured(frames: &[(WindowId, ScreenRect, ScreenRect)]) -> Measured {
             let final_frames = frames.iter().map(|(w, intended, _)| (*w, *intended)).collect();
             let tiled = frames.iter().map(|(w, _, _)| *w).collect();
             let real = frames.iter().map(|(w, _, actual)| (*w, *actual)).collect();

@@ -1801,6 +1801,7 @@ impl ScrollingLayoutSystem {
     /// for any other resize: the app's own, or a window rule's size, and then an axis within a point
     /// of the slot the last pass gave the window is the app answering rini's write, which changes
     /// nothing. See "Mouse resize" in `src/layout/docs/strip.md`.
+    #[allow(clippy::too_many_arguments, reason = "P3.7")]
     pub fn on_window_resized(
         &mut self,
         layout: LayoutId,
@@ -2605,8 +2606,10 @@ mod tests {
     /// column moves on screen by that much. The strip's origin says so; the offset alone did not.
     #[test]
     fn the_strip_origin_moves_with_the_anchor_as_well_as_the_offset() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 1.0 / 3.0;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 1.0 / 3.0,
+            ..ScrollingLayoutSettings::default()
+        };
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let windows: Vec<WindowId> = (1..=5).map(|i| wid(1, i)).collect();
@@ -2679,10 +2682,12 @@ mod tests {
 
     #[test]
     fn horizontal_focus_keeps_side_by_side_columns_visible_without_anchor_snapping() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.45;
-        settings.min_column_width_ratio = 0.2;
-        settings.max_column_width_ratio = 0.9;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.45,
+            min_column_width_ratio: 0.2,
+            max_column_width_ratio: 0.9,
+            ..ScrollingLayoutSettings::default()
+        };
         let (mut system, layout, w1, w2) = setup_two_windows(settings);
 
         let screen = screen(1000.0, 800.0);
@@ -2770,10 +2775,12 @@ mod tests {
 
     #[test]
     fn selecting_column_in_niri_mode_reveals_without_centering() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.45;
-        settings.min_column_width_ratio = 0.2;
-        settings.max_column_width_ratio = 0.9;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.45,
+            min_column_width_ratio: 0.2,
+            max_column_width_ratio: 0.9,
+            ..ScrollingLayoutSettings::default()
+        };
         let (mut system, layout, w1, _) = setup_two_windows(settings);
 
         let screen = screen(1000.0, 800.0);
@@ -2794,10 +2801,12 @@ mod tests {
 
     #[test]
     fn niri_focus_between_different_width_columns_keeps_strip_stable() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.42;
-        settings.min_column_width_ratio = 0.2;
-        settings.max_column_width_ratio = 0.9;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.42,
+            min_column_width_ratio: 0.2,
+            max_column_width_ratio: 0.9,
+            ..ScrollingLayoutSettings::default()
+        };
         let (mut system, layout, w1, _) = setup_two_windows(settings);
 
         // Make focused-left column wider so selected widths differ across focus moves.
@@ -2850,10 +2859,12 @@ mod tests {
 
     #[test]
     fn niri_rightmost_widening_increases_visible_width() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.45;
-        settings.min_column_width_ratio = 0.2;
-        settings.max_column_width_ratio = 0.95;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.45,
+            min_column_width_ratio: 0.2,
+            max_column_width_ratio: 0.95,
+            ..ScrollingLayoutSettings::default()
+        };
         let (mut system, layout, _, w2) = setup_two_windows(settings); // selected rightmost
 
         let screen = screen(1000.0, 800.0);
@@ -2996,8 +3007,10 @@ mod tests {
 
     #[test]
     fn niri_new_window_reveal_does_not_unnecessarily_push_offscreen() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.4;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.4,
+            ..ScrollingLayoutSettings::default()
+        };
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let w1 = wid(1, 1);
@@ -3073,8 +3086,10 @@ mod tests {
     /// (`toggle_fullscreen_within_gaps`), which is explicit and remembered per display.
     #[test]
     fn a_lone_column_keeps_its_configured_width() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.4;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.4,
+            ..ScrollingLayoutSettings::default()
+        };
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let w1 = wid(1, 1);
@@ -3112,8 +3127,10 @@ mod tests {
     /// alone in a workspace.
     #[test]
     fn full_width_mode_still_fills_the_viewport() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.4;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.4,
+            ..ScrollingLayoutSettings::default()
+        };
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let w1 = wid(1, 1);
@@ -3156,11 +3173,12 @@ mod tests {
     // ── full-width columns participate in the strip ─────────────────────────
 
     fn niri_settings(ratio: f64) -> ScrollingLayoutSettings {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = ratio;
-        settings.min_column_width_ratio = 0.2;
-        settings.max_column_width_ratio = 1.0;
-        settings
+        ScrollingLayoutSettings {
+            column_width_ratio: ratio,
+            min_column_width_ratio: 0.2,
+            max_column_width_ratio: 1.0,
+            ..ScrollingLayoutSettings::default()
+        }
     }
 
     /// A full-width column must keep its strip-relative x, not be pinned to the
@@ -4176,8 +4194,10 @@ mod tests {
     /// clipped, because macOS refuses the resize and keeps it at its own minimum.
     #[test]
     fn a_column_reserves_the_minimum_width_its_window_demands() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.column_width_ratio = 0.5;
+        let settings = ScrollingLayoutSettings {
+            column_width_ratio: 0.5,
+            ..ScrollingLayoutSettings::default()
+        };
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let (acme, neighbour) = (wid(1, 1), wid(1, 2));
@@ -5703,7 +5723,8 @@ mod tests {
     #[test]
     fn an_opening_a_move_a_fold_or_a_drag_drops_the_place_and_the_next_key_takes_it_afresh() {
         type Event = fn(&mut ScrollingLayoutSystem, LayoutId, &[(WindowId, CGRect)], WindowId);
-        let events: [(&str, Event, (f64, f64), (f64, f64)); 4] = [
+        type Case = (&'static str, Event, (f64, f64), (f64, f64));
+        let events: [Case; 4] = [
             (
                 "an opening",
                 |system, layout, _, _| system.add_window_after_selection(layout, wid(1, 9)),

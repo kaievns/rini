@@ -409,7 +409,7 @@ impl System for Actual {
             .flat_map(|s| {
                 let name = s.localizedName().to_string();
                 Some(NSScreenInfo {
-                    cg_id: s.get_number().ok()?,
+                    cg_id: s.get_number()?,
                     name: Some(name),
                     scale: s.backingScaleFactor(),
                 })
@@ -425,7 +425,7 @@ impl System for Actual {
         }
 
         for screen in screens {
-            if let Ok(screen_id) = screen.get_number()
+            if let Some(screen_id) = screen.get_number()
                 && screen_id.as_u32() == did
             {
                 let insets = screen.safeAreaInsets();
@@ -437,15 +437,15 @@ impl System for Actual {
 }
 
 pub trait NSScreenExt {
-    fn get_number(&self) -> Result<ScreenId, ()>;
+    fn get_number(&self) -> Option<ScreenId>;
 }
 impl NSScreenExt for NSScreen {
-    fn get_number(&self) -> Result<ScreenId, ()> {
+    fn get_number(&self) -> Option<ScreenId> {
         let desc = self.deviceDescription();
         match desc.objectForKey(ns_string!("NSScreenNumber")) {
             Some(val) if unsafe { msg_send![&*val, isKindOfClass:NSNumber::class() ] } => {
                 let number: &NSNumber = unsafe { std::mem::transmute(val) };
-                Ok(ScreenId::new(number.as_u32()))
+                Some(ScreenId::new(number.as_u32()))
             }
             val => {
                 warn!(
@@ -453,7 +453,7 @@ impl NSScreenExt for NSScreen {
                     self.localizedName(),
                     val,
                 );
-                Err(())
+                None
             }
         }
     }

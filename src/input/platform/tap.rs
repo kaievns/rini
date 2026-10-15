@@ -248,6 +248,11 @@ impl EventTap {
     /// Creates a session event tap that reports disables (`disabled_callback`) and Mach-port
     /// invalidations (`invalidated_callback`) to its owner instead of recovering in the callback.
     /// On `Err` the tap never took `user_info`, so the caller still owns it.
+    ///
+    /// # Safety
+    ///
+    /// `user_info` is what `callback` and `drop_ctx` expect, and stays valid until the tap is
+    /// dropped, which frees it with `drop_ctx`.
     pub unsafe fn new_with_options_and_recovery_callbacks(
         options: CGTapOpt,
         mask: CGEventMask,

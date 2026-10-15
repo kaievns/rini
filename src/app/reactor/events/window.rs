@@ -211,6 +211,7 @@ pub enum FrameChangeDisposition {
     NeedsGeometryAnalysis,
 }
 
+#[allow(clippy::too_many_arguments, reason = "P4.8")]
 pub fn classify_window_frame_change(
     state: &mut crate::app::reactor::state::RiniState,
     transactions: &TransactionManager,
@@ -582,6 +583,7 @@ mod tests {
     }
 
     /// `mouse_state` is always passed in, because a `None` makes the classifier read the live mouse.
+    #[allow(clippy::too_many_arguments, reason = "P4.8")]
     fn classify(
         state: &mut RiniState,
         transactions: &TransactionManager,
@@ -605,6 +607,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::too_many_arguments, reason = "P4.8")]
     fn classify_zoom(
         state: &mut RiniState,
         transactions: &TransactionManager,

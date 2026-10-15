@@ -607,7 +607,7 @@ fn reload_config(
 ) {
     let mut config = reactor.config.clone();
     change(&mut config.settings.decorations);
-    reactor.handle_test_batch(vec![Event::ConfigUpdated(config)]);
+    reactor.handle_test_batch(vec![Event::ConfigUpdated(Box::new(config))]);
 }
 
 /// Kai, 2026-10-08: "not make it transparrent, i mean disable the feature". With the ring and the

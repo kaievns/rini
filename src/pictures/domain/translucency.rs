@@ -73,7 +73,9 @@ pub fn merge(pictures: Pictures<'_>) -> Option<Merged> {
     for y in 0..height {
         let own_row = &mut own[y * own_stride..y * own_stride + row];
         let composite_row = &composite[y * composite_stride..y * composite_stride + row];
-        for (mine, theirs) in own_row.chunks_exact_mut(4).zip(composite_row.chunks_exact(4)) {
+        for (mine, theirs) in
+            own_row.as_chunks_mut::<4>().0.iter_mut().zip(composite_row.as_chunks::<4>().0)
+        {
             if mine[3] != 255 {
                 continue;
             }
@@ -188,8 +190,8 @@ mod tests {
         let (w, h) = (100, 100);
         let mut own = picture(w, h, [30, 30, 30, 255]);
         let mut composite = own.clone();
-        for pixel in composite.chunks_exact_mut(4).take(w * 5) {
-            pixel.copy_from_slice(&[70, 60, 90, 255]);
+        for pixel in composite.as_chunks_mut::<4>().0.iter_mut().take(w * 5) {
+            *pixel = [70, 60, 90, 255];
         }
 
         let merged = merge_all(&mut own, &composite, w, h);

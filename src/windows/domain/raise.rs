@@ -130,7 +130,7 @@ impl RaiseManager {
                 }
 
                 // Handle timeout - send timeout event to reactor
-                _ = timeout_timer.next() => {
+                _ = timeout_timer.tick() => {
                     // Send timeout event for the active sequence
                     if let Some(sequence) = &mut raise_manager.active_sequence
                         && sequence_timeout(sequence) <= Duration::ZERO {

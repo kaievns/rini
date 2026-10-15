@@ -46,10 +46,7 @@ impl Coverage {
 /// Never downgrades a usable capture to a clipped one, but accepts a clipped one when there is
 /// nothing better, since the caller can decline to draw it and a later refresh can upgrade it.
 pub fn should_replace(existing: Option<Coverage>, incoming: Coverage) -> bool {
-    match existing {
-        Some(existing) if existing.is_usable() && !incoming.is_usable() => false,
-        _ => true,
-    }
+    !matches!(existing, Some(existing) if existing.is_usable() && !incoming.is_usable())
 }
 
 /// How far a desktop capture may be from the display's size and still be drawable. A point or two of

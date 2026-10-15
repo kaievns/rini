@@ -131,7 +131,7 @@ mod tests {
             }
             previous = d;
         }
-        assert!(BOUNCE_TURN < 0.5, "out fast, home at leisure");
+        const { assert!(BOUNCE_TURN < 0.5, "out fast, home at leisure") };
     }
 
     /// A push mid-bounce starts the next one from exactly where the last is drawn, so nothing

@@ -43,6 +43,10 @@ impl Observer {
     ///
     /// Note that you must call [`ObserverBuilder::install`] on the result of
     /// this function and supply a callback for the observer to have any effect.
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "an observer exists once installed with its callback"
+    )]
     pub fn new<F: Fn(AXUIElement, usize) + 'static>(
         pid: pid_t,
     ) -> Result<ObserverBuilder<F>, AxError> {
@@ -164,6 +168,7 @@ impl Observer {
         })
     }
 
+    #[allow(clippy::arc_with_non_send_sync, reason = "P5.1")]
     fn subscription_context(
         &self,
         elem: &AXUIElement,

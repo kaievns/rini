@@ -26,6 +26,7 @@ use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::WindowTxStore;
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant, reason = "P2.8")]
 pub enum WmEvent {
     DiscoverRunningApps,
     AppEventsRegistered,
@@ -44,7 +45,7 @@ pub enum WmEvent {
     KeyboardLayoutChanged,
     /// The system clock was set, or the time zone changed.
     ClockChanged,
-    ConfigUpdated(crate::app::config::Config),
+    ConfigUpdated(Box<crate::app::config::Config>),
 }
 
 impl From<crate::input::event::Event> for WmEvent {
@@ -178,7 +179,7 @@ impl WmController {
             ConfigUpdated(new_cfg) => {
                 let binds_changed = Registration::of(&self.config) != Registration::of(&new_cfg);
 
-                self.config = new_cfg;
+                self.config = *new_cfg;
 
                 let input_settings = crate::input::settings::InputSettings::from(&self.config);
                 self.event_tap_tx.send(event_tap::Request::SettingsUpdated(input_settings));

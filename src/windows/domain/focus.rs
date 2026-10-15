@@ -237,9 +237,7 @@ impl MainWindowTracker {
                         Some((pid, self.last_focused_by_app.get(&pid).copied()));
                 }
                 self.global_frontmost = Some(pid);
-                let Some(app) = self.apps.get_mut(&pid) else {
-                    return None;
-                };
+                let app = self.apps.get_mut(&pid)?;
                 app.is_frontmost = true;
                 (pid, app.frontmost_is_quiet)
             }
@@ -329,9 +327,7 @@ impl MainWindowTracker {
     }
 
     pub fn main_window(&self) -> Option<WindowId> {
-        let Some(pid) = self.global_frontmost else {
-            return None;
-        };
+        let pid = self.global_frontmost?;
         if let Some(window) = self.window_server_focus.filter(|window| window.pid == pid) {
             return Some(window);
         }
@@ -878,8 +874,10 @@ mod tests {
         let ax_window = WindowId::new(7, 1);
         let server_window = WindowId::new(7, 2);
         let stale_window = WindowId::new(7, 3);
-        let mut tracker = MainWindowTracker::default();
-        tracker.global_frontmost = Some(7);
+        let mut tracker = MainWindowTracker {
+            global_frontmost: Some(7),
+            ..MainWindowTracker::default()
+        };
         tracker.apps.insert(7, AppState {
             is_frontmost: true,
             frontmost_is_quiet: Quiet::No,

@@ -561,10 +561,14 @@ mod tests {
     #[test]
     fn a_flag_either_side_set_stays_set() {
         for (outer_flag, inner_flag) in [(true, false), (false, true), (true, true)] {
-            let mut outer = EventOutcome::default();
-            outer.recompute_active_spaces = outer_flag;
-            let mut inner = EventOutcome::default();
-            inner.recompute_active_spaces = inner_flag;
+            let mut outer = EventOutcome {
+                recompute_active_spaces: outer_flag,
+                ..EventOutcome::default()
+            };
+            let inner = EventOutcome {
+                recompute_active_spaces: inner_flag,
+                ..EventOutcome::default()
+            };
 
             outer.absorb(inner);
 

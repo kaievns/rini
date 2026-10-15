@@ -550,15 +550,15 @@ mod tests {
     #[test]
     fn the_shadows_fall_downward() {
         // Flipped view: positive y is down the screen.
-        assert!(UNFOCUSED_SHADOW.offset_y > 0.0);
-        assert!(FOCUSED_SHADOW.offset_y > 0.0);
+        const { assert!(UNFOCUSED_SHADOW.offset_y > 0.0) };
+        const { assert!(FOCUSED_SHADOW.offset_y > 0.0) };
     }
 
     #[test]
     fn focus_deepens_the_shadow_in_every_dimension() {
-        assert!(FOCUSED_SHADOW.opacity > UNFOCUSED_SHADOW.opacity);
-        assert!(FOCUSED_SHADOW.radius > UNFOCUSED_SHADOW.radius);
-        assert!(FOCUSED_SHADOW.offset_y > UNFOCUSED_SHADOW.offset_y);
+        const { assert!(FOCUSED_SHADOW.opacity > UNFOCUSED_SHADOW.opacity) };
+        const { assert!(FOCUSED_SHADOW.radius > UNFOCUSED_SHADOW.radius) };
+        const { assert!(FOCUSED_SHADOW.offset_y > UNFOCUSED_SHADOW.offset_y) };
     }
 
     #[test]

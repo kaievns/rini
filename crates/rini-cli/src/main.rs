@@ -163,7 +163,7 @@ enum WindowCommands {
     /// Resize the selected window by a fractional amount.
     /// - Pass a signed floating value: positive to grow, negative to shrink.
     /// - The value is a fraction of the tiling area (e.g. `0.05` = 5%).
-    /// Examples:
+    ///   Examples:
     ///   rini-cli execute window resize-by 0.05                          # widen by 5%
     ///   rini-cli execute window resize-by -0.10 --orientation vertical  # 10% shorter
     ResizeBy {

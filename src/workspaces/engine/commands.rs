@@ -30,6 +30,7 @@ pub(super) struct CommandTarget {
 
 /// Why a command could not be given a target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names, reason = "each case names what is missing")]
 pub(super) enum Unresolved {
     /// The caller named no space, and a command with no space has nothing to act on.
     NoSpace,

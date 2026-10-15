@@ -60,6 +60,9 @@ impl AXUIElement {
     #[inline]
     pub fn raw_ptr(&self) -> NonNull<RawAXUIElement> { CFRetained::as_ptr(&self.inner) }
 
+    /// # Safety
+    ///
+    /// `ptr` is a live `AXUIElement` the caller does not own; this takes a retain of its own.
     #[inline]
     pub unsafe fn from_get_rule(ptr: *const RawAXUIElement) -> Self {
         let ptr = NonNull::new(ptr.cast_mut()).expect("attempted to create a NULL object");

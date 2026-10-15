@@ -275,6 +275,7 @@ impl InputTap {
         let mut requests_rx = self.requests_rx.take().unwrap();
         let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
 
+        #[allow(clippy::arc_with_non_send_sync, reason = "P2.9")]
         let this = Arc::new(self);
 
         let mask = this.event_mask.get();

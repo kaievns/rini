@@ -54,11 +54,7 @@ impl DragManager {
         new_frame: CGRect,
         candidates: &[(WindowId, CGRect)],
     ) -> Option<WindowId> {
-        if self.dragged_window.is_none() {
-            self.dragged_window = Some(wid);
-            self.drag_origin_frame = Some(new_frame);
-            self.active_candidate = None;
-        } else if self.dragged_window != Some(wid) {
+        if self.dragged_window != Some(wid) {
             self.dragged_window = Some(wid);
             self.drag_origin_frame = Some(new_frame);
             self.active_candidate = None;
@@ -212,6 +208,23 @@ mod tests {
 
         let chosen2 = dm.on_frame_change(wid, dragged, &[cand]);
         assert_eq!(chosen2, None);
+    }
+
+    #[test]
+    fn a_frame_change_of_another_window_starts_a_drag_of_its_own_from_where_it_is() {
+        let mut dm = DragManager::new(WindowSnappingSettings { drag_swap_fraction: 0.25 });
+        let (first, second) = (WindowId::new(1, 10), WindowId::new(1, 11));
+        let (first_frame, second_frame) =
+            (rect(0.0, 0.0, 200.0, 100.0), rect(10.0, 0.0, 200.0, 100.0));
+        let cand = (WindowId::new(1, 20), rect(0.0, 0.0, 100.0, 100.0));
+
+        assert_eq!(dm.on_frame_change(first, first_frame, &[cand]), Some(cand.0));
+        assert_eq!(dm.dragged(), Some(first));
+        assert_eq!(dm.origin_frame(), Some(first_frame));
+
+        assert_eq!(dm.on_frame_change(second, second_frame, &[cand]), Some(cand.0));
+        assert_eq!(dm.dragged(), Some(second));
+        assert_eq!(dm.origin_frame(), Some(second_frame));
     }
 
     #[test]

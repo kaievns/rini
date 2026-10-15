@@ -262,7 +262,7 @@ fn rows(pixels: &[u8], stride: usize, rect: PixelRect) -> impl Iterator<Item = &
 pub fn column_alpha(pixels: &[u8], stride: usize, rect: PixelRect) -> Vec<u8> {
     let mut out = vec![0; rect.width];
     for row in rows(pixels, stride, rect) {
-        for (alpha, pixel) in out.iter_mut().zip(row.chunks_exact(4)) {
+        for (alpha, pixel) in out.iter_mut().zip(row.as_chunks::<4>().0) {
             *alpha = (*alpha).max(pixel[3]);
         }
     }

@@ -109,6 +109,14 @@ impl Settings {
     }
 }
 
+impl Default for Config {
+    /// The embedded `rini.default.kdl`. A test parses it by name, so a broken one fails there first.
+    fn default() -> Config {
+        Self::parse("rini.default.kdl", DEFAULT_KDL)
+            .unwrap_or_else(|error| panic!("{}", error.render()))
+    }
+}
+
 impl Config {
     /// What every setting is when nothing says otherwise: no binds, no window rules.
     pub fn code_defaults() -> Config {
@@ -118,12 +126,6 @@ impl Config {
             switcher_binds: Vec::new(),
             virtual_workspaces: VirtualWorkspaceSettings::default(),
         }
-    }
-
-    /// The embedded `rini.default.kdl`. A test parses it by name, so a broken one fails there first.
-    pub fn default() -> Config {
-        Self::parse("rini.default.kdl", DEFAULT_KDL)
-            .unwrap_or_else(|error| panic!("{}", error.render()))
     }
 
     pub fn read(path: &Path) -> Result<Config, LoadError> {

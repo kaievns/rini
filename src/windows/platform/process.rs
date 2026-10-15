@@ -11,8 +11,10 @@ impl ProcessInfo {
     pub fn for_pid(pid: pid_t) -> Result<Self, CGError> {
         let psn = psn_for_pid(pid)?;
 
-        let mut info = ProcessInfoRec::default();
-        info.processInfoLength = size_of::<ProcessInfoRec>() as _;
+        let mut info = ProcessInfoRec {
+            processInfoLength: size_of::<ProcessInfoRec>() as _,
+            ..ProcessInfoRec::default()
+        };
         cg_ok(unsafe { GetProcessInformation(&psn, &mut info) })?;
 
         Ok(Self {

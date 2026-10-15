@@ -50,7 +50,7 @@ mod tests {
     /// the selection it is meant to be reporting.
     #[test]
     fn a_glide_finishes_inside_a_key_repeat() {
-        assert!(GLIDE_SECONDS < 0.5, "slower than the default repeat");
-        assert!(GLIDE_SECONDS > 0.0, "an animation with no duration is not one");
+        const { assert!(GLIDE_SECONDS < 0.5, "slower than the default repeat") };
+        const { assert!(GLIDE_SECONDS > 0.0, "an animation with no duration is not one") };
     }
 }

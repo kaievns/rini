@@ -23,6 +23,8 @@ use crate::pictures::domain::watch::{
     Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on,
 };
 
+type Frames = Vec<(WindowId, ScreenRect)>;
+
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
 pub const FRAME_ZERO_PATIENCE: Duration = Duration::from_millis(80);
 /// How long the end windows are watched to land after their frames are written.
@@ -593,7 +595,7 @@ impl Flight {
 
     /// The windows watched until they repaint, and the end windows watched only until they are there.
     /// A window a held merge grows is watched to repaint where that merge sends it.
-    fn end_windows(&self) -> (Vec<(WindowId, ScreenRect)>, Vec<(WindowId, ScreenRect)>) {
+    fn end_windows(&self) -> (Frames, Frames) {
         let held = self.held_merge.as_ref().map_or(&[][..], |merge| &merge.ends[..]);
         let elsewhere = |window: &WindowId| !held.iter().any(|(w, _)| w == window);
         let landing = self

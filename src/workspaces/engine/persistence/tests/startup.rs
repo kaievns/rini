@@ -201,8 +201,10 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
 
 #[test]
 fn startup_restore_reapplies_configured_workspace_names() {
-    let mut saved_settings = VirtualWorkspaceSettings::default();
-    saved_settings.workspace_names = vec!["Old A".into(), "Old B".into()];
+    let saved_settings = VirtualWorkspaceSettings {
+        workspace_names: vec!["Old A".into(), "Old B".into()],
+        ..VirtualWorkspaceSettings::default()
+    };
     let layout_settings = LayoutSettings::default();
     let space = SpaceId::new(608);
     let mut snapshot = LayoutEngine::new(&saved_settings, &layout_settings);

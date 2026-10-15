@@ -245,7 +245,7 @@ struct RunningAnimation {
 /// What a swapped-in picture became.
 enum Took {
     /// A reserved entrance's tile, joining the flight.
-    Entrance(OverlayTile),
+    Entrance(Box<OverlayTile>),
     /// The picture on the window's tile.
     Tile,
     /// The picture its tile's leg in two steps flies from the corner on.
@@ -397,6 +397,7 @@ struct Composed {
 }
 
 /// What the coordinator is told of a stage.
+#[allow(clippy::too_many_arguments, reason = "P3.10")]
 fn summary(
     tiles: Vec<TileSummary>,
     final_frames: Vec<(WindowId, ScreenRect)>,
@@ -527,7 +528,7 @@ impl RunningAnimation {
         at: f64,
     ) -> Took {
         if let Some(tile) = self.admit(window, picture, clipped, radius) {
-            return Took::Entrance(tile);
+            return Took::Entrance(Box::new(tile));
         }
         let waits = self.waits_for_corner(window, picture, at);
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window) else {
@@ -1469,7 +1470,7 @@ impl FlightEngine {
             Took::Nothing => return,
             Took::Entrance(tile) => {
                 self.journal_wears(Wearing::Swap, worn);
-                return self.admit_entrance(tile, now);
+                return self.admit_entrance(*tile, now);
             }
             Took::Corner => {
                 let again = running.score.again(window);
@@ -2228,6 +2229,7 @@ impl FlightEngine {
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
     /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
     /// travel. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
+    #[allow(clippy::too_many_arguments, reason = "P3.10")]
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -5471,7 +5473,8 @@ mod tests {
             report_corners(2, Some(vec![0.0; 4]));
             let parked = rect(1727.0, 1085.0, 859.0, 1081.0);
             let slot = rect(867.0, 0.0, 859.0, 1081.0);
-            let composes: [(&str, fn(&Harness, ScreenRect, ScreenRect) -> Event); 2] = [
+            type Compose = fn(&Harness, ScreenRect, ScreenRect) -> Event;
+            let composes: [(&str, Compose); 2] = [
                 ("a layout pass", |h, parked, slot| {
                     pass_of(h, &[(2, parked, slot)])
                 }),
@@ -6178,7 +6181,8 @@ mod tests {
                     rests: true,
                 })
             };
-            let hearings: [(&str, &dyn Fn(&mut Harness) -> Vec<Sent>); 3] = [
+            type Hearing<'a> = (&'a str, &'a dyn Fn(&mut Harness) -> Vec<Sent>);
+            let hearings: [Hearing<'_>; 3] = [
                 ("its picture", &taken),
                 ("the patience", &patience),
                 ("the overlay moving", &moved),

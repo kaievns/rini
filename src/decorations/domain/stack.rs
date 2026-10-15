@@ -19,6 +19,6 @@ mod tests {
     /// The tile a step deeper draws its picture at -1 and its hairline an eighth in front of it.
     #[test]
     fn the_shadow_falls_in_front_of_the_next_deeper_tiles_hairline() {
-        assert!(SHADOW_Z > -1.0 + HAIRLINE_Z);
+        const { assert!(SHADOW_Z > -1.0 + HAIRLINE_Z) };
     }
 }

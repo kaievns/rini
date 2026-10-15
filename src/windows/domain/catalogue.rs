@@ -941,7 +941,8 @@ mod tests {
     /// Every field, one at a time: a field the predicate skips is silently discarded on prune.
     #[test]
     fn any_single_field_is_enough_to_keep_a_window_record() {
-        let holding: [(&str, fn(&mut WindowRecord)); 2] = [
+        type Holding = (&'static str, fn(&mut WindowRecord));
+        let holding: [Holding; 2] = [
             ("window_server_id", |r| {
                 r.window_server_id = Some(WindowServerId::new(1))
             }),
@@ -956,7 +957,8 @@ mod tests {
 
     #[test]
     fn any_single_field_is_enough_to_keep_a_window_server_record() {
-        let holding: [(&str, fn(&mut WindowServerRecord)); 7] = [
+        type Holding = (&'static str, fn(&mut WindowServerRecord));
+        let holding: [Holding; 7] = [
             ("window_id", |r| r.window_id = Some(WindowId::new(1, 1))),
             ("visible", |r| r.visible = true),
             ("observed", |r| r.observed = true),

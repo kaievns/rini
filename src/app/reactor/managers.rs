@@ -203,7 +203,7 @@ fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
 
 fn bound_scrolling_tiled_frames_to_screen(
     reactor: &Reactor,
-    layout: &mut Vec<(WindowId, CGRect)>,
+    layout: &mut [(WindowId, CGRect)],
     screen: CGRect,
     active_workspace_windows: &HashSet<WindowId>,
 ) {
@@ -397,12 +397,13 @@ mod tests {
     /// macOS refuses to leave a window entirely outside every display.
     #[test]
     fn hidden_sliver_is_minimal_but_nonzero() {
-        assert!(
-            WINDOW_HIDDEN_THRESHOLD > 0.0 && WINDOW_HIDDEN_THRESHOLD <= 2.0,
-            "sliver must be >0 (macOS clamps fully off-screen windows back) and \
-             small enough to be visually negligible, got {}",
-            WINDOW_HIDDEN_THRESHOLD
-        );
+        const {
+            assert!(
+                WINDOW_HIDDEN_THRESHOLD > 0.0 && WINDOW_HIDDEN_THRESHOLD <= 2.0,
+                "sliver must be >0 (macOS clamps fully off-screen windows back) and \
+                 small enough to be visually negligible"
+            )
+        };
     }
 
     #[test]

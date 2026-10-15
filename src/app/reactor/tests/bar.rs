@@ -209,7 +209,7 @@ fn a_bar_turned_off_is_sent_an_empty_model() {
     let mut desk = desk();
     let mut config = desk.reactor.config.clone();
     config.settings.bar.enabled = false;
-    desk.reactor.handle_test_batch(vec![Event::ConfigUpdated(config)]);
+    desk.reactor.handle_test_batch(vec![Event::ConfigUpdated(Box::new(config))]);
     assert_eq!(models(&mut desk.bar), vec![BarModel::default()]);
 
     desk.reactor.handle_test_batch(vec![Event::Command(Command::Layout(
@@ -233,10 +233,10 @@ fn a_config_file_that_cannot_be_used_marks_every_bar_until_one_can() {
 
     let mut config = desk.reactor.config.clone();
     config.settings.mark_failed_config = false;
-    desk.reactor
-        .handle_test_batch(vec![Event::ConfigUpdated(config), Event::ConfigFileRead {
-            usable: false,
-        }]);
+    desk.reactor.handle_test_batch(vec![
+        Event::ConfigUpdated(Box::new(config)),
+        Event::ConfigFileRead { usable: false },
+    ]);
     assert!(
         models(&mut desk.bar)
             .iter()

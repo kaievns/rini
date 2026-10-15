@@ -21,7 +21,7 @@ pub enum Event {
 #[derive(Debug)]
 pub enum Change {
     /// A change was accepted: a fragment applied, or the file read again.
-    Applied(Config),
+    Applied(Box<Config>),
     /// The file was read again, and whether it could be used. One that could not left the running
     /// config as it was.
     FileRead { usable: bool },
@@ -95,7 +95,7 @@ impl ConfigActor {
     fn accept(&mut self, config: Config) {
         info!("config changed");
         self.config = config;
-        (self.on_change)(Change::Applied(self.config.clone()));
+        (self.on_change)(Change::Applied(Box::new(self.config.clone())));
     }
 }
 

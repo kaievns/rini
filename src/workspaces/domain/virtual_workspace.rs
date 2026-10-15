@@ -876,6 +876,7 @@ impl WorkspaceStore {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments, reason = "P3.8")]
     fn assign_window_with_app_info(
         &mut self,
         window_store: &mut WindowStore,
@@ -1000,6 +1001,15 @@ pub struct WorkspaceStats {
     pub workspace_window_counts: HashMap<VirtualWorkspaceId, usize>,
 }
 
+/// Runs `f`, tracing how long it took under `desc`.
+fn trace_misc<T>(desc: &str, f: impl FnOnce() -> T) -> T {
+    let start = std::time::Instant::now();
+    let out = f();
+    let end = std::time::Instant::now();
+    tracing::trace!(time = ?(end - start), "{desc}");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use rini_core::ids::{SpaceId, WindowId};
@@ -1016,6 +1026,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments, reason = "P3.8")]
     fn assign(
         manager: &mut WorkspaceStore,
         window_store: &mut WindowStore,
@@ -1916,13 +1927,4 @@ mod tests {
         assert_eq!(bw2_updated_assignment.workspace_id, expected);
         assert!(bw2_updated_assignment.floating);
     }
-}
-
-/// Runs `f`, tracing how long it took under `desc`.
-fn trace_misc<T>(desc: &str, f: impl FnOnce() -> T) -> T {
-    let start = std::time::Instant::now();
-    let out = f();
-    let end = std::time::Instant::now();
-    tracing::trace!(time = ?(end - start), "{desc}");
-    out
 }

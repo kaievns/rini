@@ -54,6 +54,7 @@ impl Timer {
     }
 
     /// `interval` of 0.0 makes a one-shot timer.
+    #[allow(clippy::arc_with_non_send_sync, reason = "P5.1")]
     fn new(fire_date: CFAbsoluteTime, interval: CFTimeInterval) -> Self {
         let inner = Arc::new(Mutex::new(TimerState {
             cf_timer: None,
@@ -152,7 +153,7 @@ impl Timer {
         }
     }
 
-    pub fn next(&mut self) -> impl Future<Output = Option<()>> {
+    pub fn tick(&mut self) -> impl Future<Output = Option<()>> {
         tokio_stream::StreamExt::next(self)
     }
 }
@@ -271,13 +272,13 @@ mod tests {
                 Duration::from_millis(10), // repeat interval
             );
 
-            timer.next().await; // First fire (after initial delay)
+            timer.tick().await; // First fire (after initial delay)
             let elapsed1 = start.elapsed();
 
-            timer.next().await; // Second fire (after repeat interval)
+            timer.tick().await; // Second fire (after repeat interval)
             let elapsed2 = start.elapsed();
 
-            timer.next().await; // Third fire
+            timer.tick().await; // Third fire
             let elapsed3 = start.elapsed();
 
             assert!(elapsed1 >= Duration::from_millis(20 - 1));

@@ -1725,7 +1725,7 @@ fn reload_with_border(reactor: &mut Reactor, width: f64) {
     let mut config = reactor.config.clone();
     config.settings.decorations.border.on = true;
     config.settings.decorations.border.band.width = width;
-    reactor.handle_event(Event::ConfigUpdated(config));
+    reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
 }
 
 /// A border takes its width out of each tiled window's slot, and a reload changing it lays the

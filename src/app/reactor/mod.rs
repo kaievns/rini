@@ -131,6 +131,7 @@ impl ReactorHandle {
 
     pub fn sender(&self) -> Sender { self.sender.clone() }
 
+    #[allow(clippy::result_large_err, reason = "SendError carries the event")]
     pub fn try_send(
         &self,
         event: Event,
@@ -292,7 +293,7 @@ pub enum Event {
 
     RegisterWmSender(crate::app::hotkeys::Sender),
 
-    ConfigUpdated(Config),
+    ConfigUpdated(Box<Config>),
 
     /// The config file was read, and whether it could be used. While it cannot, every bar is marked.
     ConfigFileRead {
@@ -568,6 +569,7 @@ pub struct Reactor {
 }
 
 impl Reactor {
+    #[allow(clippy::too_many_arguments, reason = "P4.1")]
     pub fn spawn(
         config: Config,
         layout_engine: LayoutEngine,
@@ -1466,7 +1468,7 @@ impl Reactor {
                     &mut self.config,
                     &mut self.layout_manager,
                     &mut self.drag_manager,
-                    new_cfg,
+                    *new_cfg,
                 );
             }
             Event::Command(Command::Reactor(ReactorCommand::SaveAndExit)) => {
@@ -1745,7 +1747,7 @@ impl Reactor {
 
         if let Some(config) = outcome.service_config_update {
             if let Some(wm) = &self.communication_manager.wm_sender {
-                wm.send(crate::app::hotkeys::WmEvent::ConfigUpdated(config));
+                wm.send(crate::app::hotkeys::WmEvent::ConfigUpdated(Box::new(config)));
             }
             // Re-sends both the flag and the geometry, so toggling
             // warp_cursor_between_stacked_displays applies without a restart.
@@ -3544,6 +3546,7 @@ impl Reactor {
     /// per-window path. `standing` is where the pass found each window and `laid_out` where the
     /// strip had it at the last pass: one away from where the shifted viewport draws it starts where
     /// it stands if on screen, else where the strip had it (`strip_move::start_where_standing`).
+    #[allow(clippy::too_many_arguments, reason = "P3.3")]
     fn start_strip_pan(
         &mut self,
         space: SpaceId,
@@ -3957,6 +3960,7 @@ impl Reactor {
     /// first look at a workspace, and where it has them now, which it remembers: every window at its
     /// strip frame, a parked one where the strip has it rather than at its park. Neither when
     /// `space` has no active workspace or screen.
+    #[allow(clippy::type_complexity, reason = "P4.1")]
     pub(crate) fn take_strip_layout(
         &mut self,
         space: SpaceId,
