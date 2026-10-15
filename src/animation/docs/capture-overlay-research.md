@@ -1135,8 +1135,8 @@ content below the titlebar, gives the tile the focused look at overlay-up, 48ms.
 
 ## The handover, measured: an end-state mirror
 
-Measured 2026-10-02 with a scratch prototype (branch `scratch/handover`, files `proto.rs` and the
-`lab_*` hooks), against the deployed engine, interleaved ABBA, animations on, 64 presses per
+Measured 2026-10-02 with a scratch prototype (its `proto.rs` and `lab_*` hooks, since deleted),
+against the deployed engine, interleaved ABBA, animations on, 64 presses per
 condition on the strip and 32 per swap or resize condition.
 
 **The metric:** the overlay window's own picture (one SkyLight call on the overlay) just before it

@@ -459,8 +459,7 @@ bounces as before, on top of whatever is playing.
 
 ## Resizes through the overlay
 
-A resize rides the per-window overlay path, ported
-from the parked `resize-rounds-1-2` branch onto the per-tile Core Animation
+A resize rides the per-window overlay path, on the per-tile Core Animation
 machinery. The tile travels between its two rects like any other tile; what
 changes is how the picture maps onto it (`content_mode` in
 `crate::animation::domain::motion::tile`):

@@ -100,9 +100,9 @@ one at a time. The frame-zero capture is always the cold one: 27-35 in a press.
 
 ### What the prototype's journal showed of a focus change
 
-Measured 2026-10-03 with the handover prototype on branch `scratch/handover`, from its transitions
-journal of 225 flights between 19:34 and 20:40 (`docs/data/2026-10-03-focus/transitions-1934-2040.log`
-on that branch; a flight is a group with a `proto_capture_flight` mark).
+Measured 2026-10-03 with the handover prototype, from its transitions journal of 225 flights
+between 19:34 and 20:40 (`docs/data/2026-10-03-focus/transitions-1934-2040.log`; a flight is a
+group with a `proto_capture_flight` mark).
 
 **The focus report often comes before the watch.** The reactor's focus report (`ws_focus`) came
 before the capture worker started its flight (`proto_capture_flight`) in 136 of the 225 flights. The
