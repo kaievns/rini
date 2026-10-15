@@ -31,14 +31,15 @@ something rini decides — take what the rule reads as a value and let the test 
 
 ## Which seam to use
 
-Each boundary a test crosses has one seam. Reach for the one where the read is made; a rule below it
-takes the answers as values and needs none.
+Reach for the seam where the read is made; a rule below it takes the answers as values and needs
+none. Each boundary has one seam but the window server, which has two until the frames thread moves
+onto the port: `WindowServer`, and the frames thread's narrower `Reader`.
 
 | what the code asks | seam | production | a test passes |
 |---|---|---|---|
-| the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings; `make_key_window`, `take_stack_place` | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`; every read unknown until stated |
+| the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings; `make_key_window`, `take_stack_place` | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
 | Accessibility, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`) | `MacAx` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone |
-| the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`) | `LIVE` | a `Reader` of its own fns |
+| the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
 | displays and spaces, from the spaces actor | `LiveDisplays` and `SpaceKinds`, structs of fn pointers (`src/displays/platform/spaces.rs`) | `from_window_server()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, or a struct of its own |
 | the screens, for `ScreenCache` | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are |
 
@@ -258,7 +259,9 @@ An allow over a whole crate or file, `#![allow]`, is one of these, held by
 
 The quality roadmap the ids come from is a plan kept outside the repo, so the row of every id an
 allow cites is copied here. `every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing` holds the
-table to the ids the allows cite, both ways, so a row goes with the last allow that cites it:
+table to the ids the allows cite, both ways, so a row goes with the last allow that cites it. Nothing
+else in the repo cites an id; a comment or a doc names the work in words
+(`a_roadmap_id_is_cited_only_in_an_allow_s_reason_or_docs_testing`):
 
 | Id | Task | Done when |
 |---|---|---|
