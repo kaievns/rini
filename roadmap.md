@@ -34,6 +34,9 @@ requirement itself; this list only collects them.
   materials").
 - **Urgency that changes mid-flight turns at the lift.** A tile keeps the urgency its pass gave it
   (`specs/decorations.md`, "Urgent").
+- **A restart once restored a layout mirrored.** After a deploy restart on 2026-10-10 the columns
+  came back in reverse order, with one window stacked that had stood alone. Seen once, not
+  reproduced; the cause is not known.
 
 Not seen since 2026-08-15, when they were written, and in no spec, doc or test since. Each needs one
 check, then a spec or deletion:
