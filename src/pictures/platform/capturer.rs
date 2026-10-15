@@ -3,6 +3,8 @@
 //! it and records each one asked. The service is generic over it, so its rounds run in a test with
 //! no window server behind them.
 
+use std::sync::Arc;
+
 use objc2_core_foundation::{CFRetained, CGRect};
 use objc2_core_graphics::CGImage;
 use rini_core::ids::{WindowServerId, pid_t};
@@ -17,7 +19,7 @@ use crate::pictures::platform::desktop::{
 use crate::pictures::platform::picture::Picture;
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::{self, Batch, BatchCall, capture_list_via_skylight};
-use crate::windows::platform::window_server::{key_focus_pid, server_frame};
+use crate::windows::platform::window_server::{self, WindowServer};
 
 /// What the service's thread reads and captures. The ScreenCaptureKit calls complete on their own
 /// queues, through `done`.
@@ -59,16 +61,28 @@ pub trait Capturer {
     fn bar(&self, display: Display) -> (Option<Picture>, Option<ScreenRect>);
 }
 
-/// The calls themselves.
-pub struct MacCapturer;
+/// The calls themselves, the window server's through its port.
+pub struct MacCapturer {
+    window_server: Arc<dyn WindowServer>,
+}
+
+impl MacCapturer {
+    pub fn live() -> Self {
+        MacCapturer {
+            window_server: window_server::live(),
+        }
+    }
+}
 
 impl Capturer for MacCapturer {
-    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> { server_frame(id) }
+    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> {
+        self.window_server.server_frame(id)
+    }
 
-    fn key_focus_pid(&self) -> Option<pid_t> { key_focus_pid() }
+    fn key_focus_pid(&self) -> Option<pid_t> { self.window_server.key_focus_pid() }
 
     fn desktop_windows(&self, display: ScreenRect) -> DesktopBackdrop {
-        desktop_backdrop_windows(display)
+        desktop_backdrop_windows(&*self.window_server, display)
     }
 
     fn capture_on_screen(
@@ -110,11 +124,11 @@ impl Capturer for MacCapturer {
     }
 
     fn capture_screen(&self, display: ScreenRect) -> Option<CFRetained<CGImage>> {
-        skylight::capture_screen(display)
+        skylight::capture_screen(&*self.window_server, display)
     }
 
     fn bar(&self, display: Display) -> (Option<Picture>, Option<ScreenRect>) {
-        bar_of(&bar_strip(display.frame), display.scale)
+        bar_of(&bar_strip(&*self.window_server, display.frame), display.scale)
     }
 }
 

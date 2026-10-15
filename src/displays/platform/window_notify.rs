@@ -4,10 +4,9 @@
 //! handed to the application's [`OnServerRead`] callbacks, only while the application is
 //! [`Following`] them; window-server focus edges are coalesced and resolved into
 //! `WindowServerFocusChanged`.
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::CGRect;
 use rini_core::ids::{SpaceId, WindowServerId};
 use rini_skylight_sys::KnownCGSEvent;
 use rustc_hash::FxHashMap as HashMap;
@@ -19,7 +18,7 @@ use crate::displays::event::{
     ServerRead, StackLevel, ToRead,
 };
 use crate::displays::platform::{cgs_notify, spaces};
-use crate::windows::platform::window_server;
+use crate::windows::platform::window_server::{self, WindowServer};
 
 const FOCUS_WAKE_DEBOUNCE: Duration = Duration::from_millis(1);
 
@@ -48,9 +47,10 @@ impl WindowNotify {
         following: Following,
         reads: mpsc::Receiver<ToRead>,
     ) -> Self {
+        let window_server = window_server::live();
         let (focus_wake_tx, focus_wake_rx) = mpsc::sync_channel(1);
-        Self::spawn_focus_resolver(displays_tx, focus_wake_rx);
-        spawn_frame_reader(LIVE, on_read, reads);
+        Self::spawn_focus_resolver(window_server.clone(), displays_tx, focus_wake_rx);
+        spawn_frame_reader(window_server, on_read, reads);
         Self {
             spaces_tx,
             events: events.to_vec(),
@@ -157,6 +157,7 @@ impl WindowNotify {
     }
 
     fn spawn_focus_resolver(
+        window_server: Arc<dyn WindowServer>,
         displays_tx: impl EventSink + 'static,
         focus_wake_rx: mpsc::Receiver<()>,
     ) {
@@ -175,7 +176,7 @@ impl WindowNotify {
 
                         let query_started = Instant::now();
                         let space = crate::displays::platform::space_query::active_space();
-                        let window = window_server::key_focused_window(space);
+                        let window = window_server.key_focused_window(space);
                         let query_elapsed = query_started.elapsed();
 
                         // A wake queued during the SPI means this result may already
@@ -220,24 +221,8 @@ fn note(following: &Following, event: KnownCGSEvent, window: Option<u32>) {
     following.ask(read);
 }
 
-/// What the frames thread asks the window server, one call each.
-#[derive(Clone, Copy)]
-struct Reader {
-    frame: fn(WindowServerId) -> Option<CGRect>,
-    level: fn(WindowServerId) -> StackLevel,
-    ordered_in: fn(WindowServerId) -> Option<bool>,
-    radius: fn(WindowServerId) -> Option<f64>,
-}
-
-const LIVE: Reader = Reader {
-    frame: window_server::server_frame,
-    level: stack_level,
-    ordered_in: window_server::window_ordered_in,
-    radius: window_server::corner_radius,
-};
-
-fn stack_level(window: WindowServerId) -> StackLevel {
-    let (level, sub_level) = window_server::stack_level(window);
+fn stack_level(read: &dyn WindowServer, window: WindowServerId) -> StackLevel {
+    let (level, sub_level) = read.stack_level(window);
     StackLevel { level, sub_level }
 }
 
@@ -245,7 +230,7 @@ fn stack_level(window: WindowServerId) -> StackLevel {
 /// window read once after its last notification (`frames::latest`), then each order and each
 /// introduction as they came. A window's level is read once a burst, for its reorders and unhides
 /// and its introduction alike: every read in a burst comes after every notification in it.
-fn read_burst(read: &Reader, burst: &[ToRead]) -> Vec<ServerRead> {
+fn read_burst(read: &dyn WindowServer, burst: &[ToRead]) -> Vec<ServerRead> {
     let moved: Vec<u32> = burst
         .iter()
         .filter_map(|asked| match asked {
@@ -259,12 +244,12 @@ fn read_burst(read: &Reader, burst: &[ToRead]) -> Vec<ServerRead> {
         .filter_map(|window| {
             Some(ServerFrame {
                 window,
-                frame: (read.frame)(window)?,
+                frame: read.server_frame(window)?,
             })
         })
         .collect();
     let mut levels: HashMap<WindowServerId, StackLevel> = HashMap::default();
-    let mut level = |window| *levels.entry(window).or_insert_with(|| (read.level)(window));
+    let mut level = |window| *levels.entry(window).or_insert_with(|| stack_level(read, window));
     let mut out: Vec<ServerRead> = Vec::new();
     if !frames.is_empty() {
         out.push(ServerRead::Frames(frames));
@@ -282,9 +267,9 @@ fn read_burst(read: &Reader, burst: &[ToRead]) -> Vec<ServerRead> {
             }
             ToRead::Intro(window) => out.push(ServerRead::Intro(ServerIntro {
                 window,
-                frame: (read.frame)(window),
-                ordered_in: (read.ordered_in)(window),
-                radius: (read.radius)(window),
+                frame: read.server_frame(window),
+                ordered_in: read.window_ordered_in(window),
+                radius: read.corner_radius(window),
                 level: level(window),
             })),
         }
@@ -297,7 +282,7 @@ fn read_burst(read: &Reader, burst: &[ToRead]) -> Vec<ServerRead> {
 /// unordered against each other, and an introduction comes from the application's own thread. Each
 /// wake drains what has queued and reads it as one burst (`read_burst`).
 fn spawn_frame_reader(
-    read: Reader,
+    read: Arc<dyn WindowServer>,
     on_read: Vec<OnServerRead>,
     reads: mpsc::Receiver<ToRead>,
 ) -> std::thread::JoinHandle<()> {
@@ -306,7 +291,7 @@ fn spawn_frame_reader(
         .spawn(move || {
             while let Ok(first) = reads.recv() {
                 let burst: Vec<ToRead> = std::iter::once(first).chain(reads.try_iter()).collect();
-                for served in read_burst(&read, &burst) {
+                for served in read_burst(&*read, &burst) {
                     for on_read in &on_read {
                         on_read(served.clone());
                     }
@@ -318,18 +303,19 @@ fn spawn_frame_reader(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, mpsc};
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
     use rini_core::ids::WindowServerId;
     use rini_skylight_sys::KnownCGSEvent;
 
-    use super::{FocusWakeSender, Reader, note, read_burst, spawn_frame_reader};
+    use super::{FocusWakeSender, note, read_burst, spawn_frame_reader};
     use crate::displays::event::{
         Following, OnServerRead, OrderChange, ServerFrame, ServerIntro, ServerOrder, ServerRead,
         StackLevel, ToRead,
     };
+    use crate::windows::domain::info::WindowServerInfo;
+    use crate::windows::platform::window_server::FakeWindowServer;
 
     fn following() -> (Following, mpsc::Receiver<ToRead>) {
         let (following, reads) = Following::new();
@@ -345,21 +331,31 @@ mod tests {
         sub_level: Some(1),
     };
 
-    fn bounds(_: WindowServerId) -> Option<CGRect> { Some(AT) }
-    fn level(_: WindowServerId) -> StackLevel { LEVEL }
-    fn ordered_in(_: WindowServerId) -> Option<bool> { Some(false) }
-    fn radius(_: WindowServerId) -> Option<f64> { Some(16.0) }
-
-    const STUB: Reader = Reader {
-        frame: bounds,
-        level,
-        ordered_in,
-        radius,
-    };
+    /// A window server with each of `windows` at `AT`, ordered out, rounded at 16 and at `LEVEL`.
+    fn server(windows: &[u32]) -> Arc<FakeWindowServer> {
+        let server = Arc::new(FakeWindowServer::default());
+        for &id in windows {
+            let info = WindowServerInfo {
+                id: ws(id),
+                pid: 1,
+                layer: 3,
+                frame: AT,
+                min_frame: CGSize::ZERO,
+                max_frame: CGSize::ZERO,
+            };
+            server
+                .set_window(ws(id), Some(info))
+                .set_window_sub_level(ws(id), Some(1))
+                .set_server_frame(ws(id), Some(AT))
+                .set_window_ordered_in(ws(id), Some(false))
+                .set_corner_radii(ws(id), Some(vec![16.0; 4]));
+        }
+        server
+    }
 
     /// The reader on its own thread over `queued`, run to the queue's end, and everything it
     /// handed on.
-    fn run(read: Reader, queued: mpsc::Receiver<ToRead>) -> Vec<ServerRead> {
+    fn run(read: Arc<FakeWindowServer>, queued: mpsc::Receiver<ToRead>) -> Vec<ServerRead> {
         let published = Arc::new(Mutex::new(Vec::new()));
         let sink = published.clone();
         let on_read: Vec<OnServerRead> =
@@ -384,7 +380,7 @@ mod tests {
         drop(following);
         let window = ws(56);
         let order = |change, level| ServerRead::Order(ServerOrder { window, change, level });
-        assert_eq!(run(STUB, reads), vec![
+        assert_eq!(run(server(&[56]), reads), vec![
             order(OrderChange::Reordered, Some(LEVEL)),
             order(OrderChange::Hidden, None),
             order(OrderChange::Unhidden, Some(LEVEL)),
@@ -419,25 +415,19 @@ mod tests {
         );
     }
 
-    static FRAME_READS: AtomicUsize = AtomicUsize::new(0);
-
-    fn counted(window: WindowServerId) -> Option<CGRect> {
-        FRAME_READS.fetch_add(1, Ordering::SeqCst);
-        bounds(window)
-    }
-
     #[test]
     fn a_move_and_a_resize_of_one_window_publish_one_frame() {
         let (following, reads) = following();
         note(&following, KnownCGSEvent::WindowMoved, Some(7));
         note(&following, KnownCGSEvent::WindowResized, Some(7));
         drop(following);
-        let published = run(Reader { frame: counted, ..STUB }, reads);
+        let read = server(&[7]);
+        let published = run(read.clone(), reads);
         assert_eq!(published, vec![ServerRead::Frames(vec![ServerFrame {
             window: ws(7),
             frame: AT
         }])]);
-        assert_eq!(FRAME_READS.load(Ordering::SeqCst), 1, "one read for the two");
+        assert_eq!(read.reads(), 1, "one read for the two");
     }
 
     /// A window new to the rest windows is read on the frames thread, never on the main thread that
@@ -447,20 +437,13 @@ mod tests {
         let (following, reads) = following();
         following.ask(ToRead::Intro(ws(9)));
         drop(following);
-        assert_eq!(run(STUB, reads), vec![ServerRead::Intro(ServerIntro {
+        assert_eq!(run(server(&[9]), reads), vec![ServerRead::Intro(ServerIntro {
             window: ws(9),
             frame: Some(AT),
             ordered_in: Some(false),
             radius: Some(16.0),
             level: LEVEL,
         })]);
-    }
-
-    static LEVEL_READS: AtomicUsize = AtomicUsize::new(0);
-
-    fn counted_level(window: WindowServerId) -> StackLevel {
-        LEVEL_READS.fetch_add(1, Ordering::SeqCst);
-        level(window)
     }
 
     /// A raise is several 808s of one window: its level and sub-level are read once for them, and
@@ -475,7 +458,8 @@ mod tests {
             ToRead::Intro(ws(7)),
             order(8, OrderChange::Unhidden),
         ];
-        let read = read_burst(&Reader { level: counted_level, ..STUB }, &burst);
+        let server = server(&[7, 8]);
+        let read = read_burst(&*server, &burst);
         let levels: Vec<Option<StackLevel>> = read
             .iter()
             .map(|read| match read {
@@ -491,7 +475,12 @@ mod tests {
             Some(LEVEL),
             Some(LEVEL)
         ]);
-        assert_eq!(LEVEL_READS.load(Ordering::SeqCst), 2, "once a window a burst");
+        assert_eq!(
+            server.reads(),
+            3 + 2 * 2,
+            "the introduction's frame, order and corner, and each window's level and sub-level \
+             once a burst"
+        );
     }
 
     /// 816 and 815 arrive on a thread each; queued in the order they came, they are published in it,
@@ -503,7 +492,7 @@ mod tests {
         note(&following, KnownCGSEvent::WindowMoved, Some(5));
         note(&following, KnownCGSEvent::WindowUnhidden, Some(5));
         drop(following);
-        let changes: Vec<OrderChange> = run(STUB, reads)
+        let changes: Vec<OrderChange> = run(server(&[5]), reads)
             .into_iter()
             .filter_map(|read| match read {
                 ServerRead::Order(order) => Some(order.change),

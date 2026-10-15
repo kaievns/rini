@@ -9,6 +9,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Instant;
 
 use objc2_core_foundation::CGPoint;
@@ -30,7 +31,7 @@ use crate::input::platform::keyboard::key_code_from_event;
 use crate::input::platform::{cursor, tap};
 use crate::input::settings::InputSettings;
 use crate::windows::platform::mouse::{MouseState, is_rini_synthetic_event, set_mouse_state};
-use crate::windows::platform::window_server;
+use crate::windows::platform::window_server::{self, WindowServer};
 
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
 const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
@@ -64,6 +65,8 @@ pub struct InputTap {
     mouse_move_last_timestamp: Cell<Option<u64>>,
     mouse_move_min_interval_ns: Cell<u64>,
     mouse_window: Cell<pointer::PointerCache>,
+    /// Where a pointer's window is looked up when the event names none.
+    window_server: Arc<dyn WindowServer>,
     tap: RefCell<Option<tap::EventTap>>,
     tap_generation: Cell<u64>,
 }
@@ -245,6 +248,7 @@ impl InputTap {
             mouse_move_last_timestamp: Cell::new(None),
             mouse_move_min_interval_ns: Cell::new(mouse_move_min_interval_ns),
             mouse_window: Cell::new(pointer::PointerCache::default()),
+            window_server: window_server::live(),
             tap: RefCell::new(None),
             tap_generation: Cell::new(0),
         }
@@ -519,7 +523,7 @@ impl InputTap {
         if mouse.focus_follows_mouse_config_enabled && mouse.focus_follows_mouse_enabled {
             let hint = mouse_window_hint(event);
             let previous = self.mouse_window.get();
-            let window = Self::resolve_mouse_window(hint, loc, previous);
+            let window = self.resolve_mouse_window(hint, loc, previous);
             if previous.valid && previous.resolved == window {
                 // Keep the hint current even when WindowServer resolves both
                 // samples to the same window. This preserves the fast path
@@ -547,13 +551,14 @@ impl InputTap {
 
     #[inline]
     fn resolve_mouse_window(
+        &self,
         hint: Option<WindowServerId>,
         point: CGPoint,
         previous: pointer::PointerCache,
     ) -> Option<WindowServerId> {
         match pointer::pointer_window(previous, hint) {
             pointer::PointerWindow::Cached(resolved) => resolved,
-            pointer::PointerWindow::NeedsLookup => window_server::get_window_at_point(point),
+            pointer::PointerWindow::NeedsLookup => self.window_server.get_window_at_point(point),
         }
     }
 

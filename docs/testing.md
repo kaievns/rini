@@ -46,8 +46,8 @@ the frames a bar draw puts, and `BarPanel::draw` still decides the order it puts
 ## Which seam to use
 
 Reach for the seam where the read is made; a rule below it takes the answers as values and needs
-none. Each boundary has one seam but the window server, which has more: `WindowServer`; the frames
-thread's narrower `Reader`, until that thread moves onto the port; the spaces actor's `LiveDisplays`
+none. Each boundary has one seam but the window server, which has more: `WindowServer`; the spaces
+actor's `LiveDisplays`
 (the active space, the menu-bar display, each display's spaces and the quiet clock) and
 `SpaceKinds` (each space's kind), beside the port; the pictures thread's `Capturer`, which makes
 its captures as well as its reads; and the flight engine's `Capture`, the one capture it takes
@@ -58,32 +58,30 @@ itself, of a window that just opened, beside the `WindowServer` it reads.
 | the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings, a display's desktop windows; `make_key_window`, `take_stack_place`, and `focus_desktop` over them | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
 | what the reactor asks of the machine: the window server, the desktop focus included, the pointer, Low Power Mode, the displays' bounds, display churn, the space kinds, the running applications; and the two notes it hands back, the window-server activity clock and the windows it wants notifications for | `SystemReads`, one value of the `WindowServer` port and fn pointers (`src/app/system_reads.rs`). A reducer takes the answer it needs as a parameter. The five that judge manageability (`handle_window_created`, `handle_window_deminiaturized`, `sync_existing_window_state`, `process_window_list`, `update_window_states`) take the port instead: their facts are read lazily, each only while those in hand do not turn the window away (`turned_away_before_accessibility`), so no stickiness or level is read for a minimized window or one off layer 0 | `SystemReads::live()`, built in `Reactor::new` | `SystemReads::fake`, which `Reactor::new_for_test` builds over a `FakeWindowServer` of its own, stated through `reactor.window_server()`; a field swapped for a fn of the test's, `reactor.reads.low_power = \|\| true`; every read unknown, false or none until then (`a_test_reactor_reads_unknown_from_everything_it_was_not_told`) |
 | Accessibility, the window server, the pointer state and Command-W, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`), whose `server()` is the `WindowServer` port; the thread asks nothing past it and its tests take no path through `window_server` or `mouse`, `MouseState` re-exported from the world (`the_app_actor_reaches_the_platform_only_through_its_world`) | `MacAx`, its server `window_server::live()` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone; its server a `FakeWindowServer` (`made_key()` the windows made key), its pointer state `mouse`, its Command-W posts counted in `command_w_posts` |
-| the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
 | displays and spaces, from the spaces actor | `LiveDisplays` (`src/displays/platform/spaces.rs`) and `SpaceKinds` (`src/displays/domain/snapshot.rs`), structs of fn pointers, beside the `WindowServer` port for each space's windows and each window's home space | `from_window_server()`, and `window_server::live()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, which only a test build has, or a struct of its own; a `FakeWindowServer` (`hand_window_server`) |
 | when the spaces actor asks again: a refresh's retries, a churn's checks | `Schedule`, a trait object (`src/displays/platform/spaces/schedule.rs`) | `MainQueue`, the main dispatch queue | `Recorded`, which keeps every notification asked for and sends none, so a test feeds them back to run a retry to its cap (`a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh`) |
 | the framed capture of a window that just opened, from the flight engine | `Capture`, a boxed fn in `Parts` (`src/transitions/platform/engine.rs`) | `skylight::capture_via_framed` | a fn answering the picture the test gives for each window, recording each one asked |
 | the window server and ScreenCaptureKit, from the pictures thread | `Capturer`, a type parameter (`src/pictures/platform/capturer.rs`) | `MacCapturer` | `FakeCapturer`, answering from the frames a test gives it and recording every call |
 | the screens, for `ScreenCache`: the displays, their uuids and scales, the main and the built-in display, the menu bar and the Dock, the space each display shows | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are, whose menu bar is hidden, Dock not shown and spaces unknown until stated |
 
-A caller not yet handed a `WindowServer` calls the free functions of the same names in
-`window_server`, answered in a test build by a thread-local `FakeWindowServer` the `set_*_override`
-setters state answers into. That shim is temporary, and nothing new is written against it: the
-reactor reads through its `SystemReads`, the flight engine through its `Parts`
+Every caller of the window server holds the port, and `window_server` offers no free function of
+a read's or a command's name to call around it (`the_window_server_is_reached_only_through_its_port`).
+The reactor reads through its `SystemReads`, the flight engine through its `Parts`
 (`the_flight_engine_reads_the_window_server_only_through_its_port`), the app actor through its
-`AxWorld`'s `server()` (`the_app_actor_reaches_the_platform_only_through_its_world`) and the spaces
-actor through the port it is handed, so no test states an answer through the shim any more; once its
-last callers, the platform code of the frames, pictures, rest-border, bar and input threads, are
-handed a port, it goes.
+`AxWorld`'s `server()` (`the_app_actor_reaches_the_platform_only_through_its_world`), and the spaces
+actor, the frames thread and the focus resolver of `WindowNotify`, the rest borders, the input tap,
+the bar's extras and grounds and the pictures service's `MacCapturer` through the one their
+production constructor takes from `window_server::live()`. A read that runs on another's behalf
+takes the caller's port: `Pictures::dressing` and `skylight::capture_via_framed` read through the
+flight engine's.
 
 ## A unit test must not read the live window server
 
 A test asks the window server through `FakeWindowServer`, handed to the code under test as its
-`WindowServer` port, or, for code not yet on the port, through the shim's thread-local one. Every
-read of the fake answers "unknown" until the test states an answer
+`WindowServer` port. Every read of the fake answers "unknown" until the test states an answer
 (`every_read_answers_unknown_with_no_setup`), and a command is recorded, never carried out
 (`make_key_window_and_take_stack_place_only_record`), so no test reads the live window server or
-makes a real window key (`a_test_never_reads_or_drives_the_live_window_server`). The live port is
-out of a test's reach too: `window_server::live()` panics in a test build and nothing outside
+makes a real window key. The live port is out of a test's reach: `window_server::live()` panics in a test build and nothing outside
 `window_server` builds a `LiveWindowServer` (`a_test_build_never_takes_the_live_window_server`), so a
 test that builds a production reactor or actor through it fails rather than reading SkyLight. Before the port,
 `window_server.rs` answered from thread-local overrides under `cfg(test)`, and four of those fakes
@@ -129,14 +127,8 @@ ws.set_space_window_list(space.get(), Some(vec![wsid]))
 ```
 
 A reactor test states them on the reactor's own fake, `reactor.window_server()`, so what it states
-reaches no other reactor, and it never states one unknown again to tidy up after itself.
-
-The shim's `set_*_override` setters state the same answers into its thread-local fake, which
-lasts as long as the thread that set it, and libtest runs every test on a thread of its own,
-at one test thread as at many. A probe of two tests at `RUST_TEST_THREADS=1`: `a` ran on
-`ThreadId(2)` and set a thread-local to 7, `b` ran on `ThreadId(3)` and read 0. So no override
-reaches another test, and a `*_override(.., None)` call at the end of a test does nothing for
-isolation.
+reaches no other reactor, and it never states one unknown again to tidy up after itself. No test
+states an answer anywhere but on a fake it holds (`no_test_states_an_answer_through_an_override`).
 
 ### How this was found
 

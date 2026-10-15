@@ -4,9 +4,9 @@
 //! A trait object rather than a struct of fn pointers like `SpaceKinds`: the fake keeps answers a
 //! test states and the commands it is given, which a fn pointer cannot capture. Consumers hold an
 //! `Arc<dyn WindowServer>`, cloned to every thread that asks: production passes [`live`], a test a
-//! clone of an `Arc<FakeWindowServer>` it keeps to state answers and read commands. The methods
-//! are named as the free functions in `window_server` are, so a caller moves onto the port by
-//! swapping `window_server::` for its handle.
+//! clone of an `Arc<FakeWindowServer>` it keeps to state answers and read commands. No free
+//! function in `window_server` shares a method's name, so nothing reaches the window server around
+//! the port.
 
 use std::any::Any;
 use std::collections::HashMap;

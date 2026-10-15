@@ -15,6 +15,7 @@ use crate::bar::domain::palette::N1;
 use crate::bar::platform::menu_extras::capture;
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::desktop::desktop_backdrop_windows;
+use crate::windows::platform::window_server::WindowServer;
 
 /// One display's ground, `scale` pixels per point.
 pub struct Ground {
@@ -26,8 +27,11 @@ pub struct Ground {
 /// The ground for the display at `bounds`, with its scale and a hash of what was captured, so an
 /// unchanged wallpaper is not blurred and sent again. `None` when no wallpaper window is listed or
 /// the capture fails.
-pub fn picture_ground(bounds: CGRect) -> Option<(CFRetained<CGImage>, f64, u64)> {
-    let backdrop = desktop_backdrop_windows(ScreenRect::from_cg(bounds));
+pub fn picture_ground(
+    server: &dyn WindowServer,
+    bounds: CGRect,
+) -> Option<(CFRetained<CGImage>, f64, u64)> {
+    let backdrop = desktop_backdrop_windows(server, ScreenRect::from_cg(bounds));
     let wallpaper: Vec<u32> = backdrop.wallpaper.iter().map(|id| id.as_u32()).collect();
     if wallpaper.is_empty() {
         return None;

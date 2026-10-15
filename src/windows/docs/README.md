@@ -95,19 +95,16 @@ stated for, and only records a command (`every_read_answers_unknown_with_no_setu
 must never guess one. The rules over the answers take them as values (`domain/manageable.rs`,
 `domain/stack.rs`, `domain/home_space.rs`), so a rule's test needs no port at all.
 
-The reactor holds its port inside `app::system_reads::SystemReads`, with its other reads of the
-machine. Callers not yet handed a port call the free functions of the same names in `window_server`, which
-`platform/window_server/shim.rs` answers from `LiveWindowServer` in production and from a
-thread-local `FakeWindowServer` in a test build, stated through the old `set_*_override` setters.
-That shim is temporary: the flight engine
-(`the_flight_engine_reads_the_window_server_only_through_its_port`) and the spaces actor are handed a
-port, and the app actor is on it through its `AxWorld`'s `server()`, `live()` in `MacAx` and a
-`FakeWindowServer` in `FakeAx`, asking the pointer state and posting Command-W through the world too,
-so it makes no platform call past it and its tests take no path through `window_server` or `mouse`,
-`MouseState` coming from the world (`the_app_actor_reaches_the_platform_only_through_its_world`).
-Once its last callers, the platform code of the frames, pictures, rest-border, bar and input
-threads, are handed a port, it goes. Through the shim, a window no test stated is at the origin,
-800x600; on the port it is unknown.
+Every caller holds the port; `window_server` offers no free function of a read's or a command's
+name to call around it (`the_window_server_is_reached_only_through_its_port`). The reactor holds its
+port inside `app::system_reads::SystemReads`, with its other reads of the machine; the flight engine
+in its `Parts` (`the_flight_engine_reads_the_window_server_only_through_its_port`); the app actor
+behind its `AxWorld`'s `server()`, `live()` in `MacAx` and a `FakeWindowServer` in `FakeAx`, asking
+the pointer state and posting Command-W through the world too, so it makes no platform call past it
+and its tests take no path through `window_server` or `mouse`, `MouseState` coming from the world
+(`the_app_actor_reaches_the_platform_only_through_its_world`). The spaces actor, `WindowNotify`'s
+frames thread and focus resolver, the rest borders, the input tap, the bar's extras and grounds and
+the pictures service's `MacCapturer` take `live()` in their production constructors.
 
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
 stacking it produces. `domain/raise_order.rs` exists because that order kept being

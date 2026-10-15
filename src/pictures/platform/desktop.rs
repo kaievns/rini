@@ -8,7 +8,7 @@ use rini_geometry::CGRectExt;
 use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 
 use crate::pictures::domain::backdrop::{is_bar_layer, is_desktop_layer};
-use crate::windows::platform::window_server::{on_screen_windows, owner_name};
+use crate::windows::platform::window_server::{WindowServer, owner_name};
 
 /// The windows making up the desktop backdrop, which of them are the wallpaper, and the rect they
 /// cover together.
@@ -26,12 +26,12 @@ impl DesktopBackdrop {
 }
 /// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
 /// See "The wallpaper is not reliably a window" in `src/pictures/docs/capture-research.md`.
-pub fn desktop_backdrop_windows(display: ScreenRect) -> DesktopBackdrop {
+pub fn desktop_backdrop_windows(server: &dyn WindowServer, display: ScreenRect) -> DesktopBackdrop {
     let display = display.to_cg();
     let mut windows = Vec::new();
     let mut wallpaper = Vec::new();
     let mut union: Option<CGRect> = None;
-    for window in on_screen_windows(true) {
+    for window in server.on_screen_windows(true) {
         if !is_desktop_layer(window.level as i64) || !window.bounds.overlaps(&display) {
             continue;
         }
@@ -60,11 +60,11 @@ pub struct BarStrip {
     pub bounds: Option<ScreenRect>,
 }
 /// The bar sitting in the menu bar strip, with the rect it occupies.
-pub fn bar_strip(display: ScreenRect) -> BarStrip {
+pub fn bar_strip(server: &dyn WindowServer, display: ScreenRect) -> BarStrip {
     let display = display.to_cg();
     let mut windows: Vec<WindowServerId> = Vec::new();
     let mut bounds: Option<CGRect> = None;
-    for window in on_screen_windows(false) {
+    for window in server.on_screen_windows(false) {
         if !is_bar_layer(window.level as i64) || !window.bounds.overlaps(&display) {
             continue;
         }

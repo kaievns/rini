@@ -56,7 +56,8 @@ engine answers through what `src/main.rs` hands it in `Parts`: the frames to wri
 back to the reactor), whether a flight is up (`OnFlight`, to the bar), and each batch to draw
 (`Draw`, to the renderer, whose answer comes back as `Event::Rendered`); and it reads through
 `Parts` too, every frame, depth and corner radius from the `WindowServer` port, and the one capture
-of a window that just opened from `Capture`. The reactor never learns more of a flight than the
+of a window that just opened from `Capture`, which it hands the port, as it hands the port to the
+pictures service's `dressing`. The reactor never learns more of a flight than the
 frames.
 
 **The decisions are pure and the actor is not.** What `domain/` decides is tested over plain rects

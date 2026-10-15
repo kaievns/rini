@@ -368,8 +368,7 @@ fn the_tap_decides_a_key_event_only_through_the_key_router() {
 }
 
 /// The flight engine asks the window server only through the `WindowServer` its `Parts` hand it and
-/// captures only through `Parts::capture`, so its tests state every answer it reads and no shim
-/// override is left to state one with.
+/// captures only through `Parts::capture`, so its tests state every answer it reads.
 #[test]
 fn the_flight_engine_reads_the_window_server_only_through_its_port() {
     let mut broken = Vec::new();
@@ -383,15 +382,85 @@ fn the_flight_engine_reads_the_window_server_only_through_its_port() {
                 broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
             }
         }
-        for (line, code) in code_lines_in(&source) {
-            if code.contains("_override(") {
-                broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+    }
+    assert!(
+        broken.is_empty(),
+        "the flight engine reads through Parts::window_server and Parts::capture:\n{}",
+        broken.join("\n")
+    );
+}
+
+/// The reads and commands the `WindowServer` trait declares, by name.
+fn window_server_port_names() -> Vec<String> {
+    let source = fs::read_to_string("src/windows/platform/window_server/port.rs").expect("port.rs");
+    let body = source
+        .split_once("pub trait WindowServer")
+        .and_then(|(_, rest)| rest.split_once("\n}\n"))
+        .expect("the WindowServer trait")
+        .0;
+    code_lines_in(body)
+        .into_iter()
+        .filter_map(|(_, code)| {
+            let name = code.strip_prefix("fn ")?.split(['(', '<']).next()?;
+            Some(name.to_string())
+        })
+        .collect()
+}
+
+/// A free function named as one of the port's reads or commands is a way around the port: whatever
+/// calls it reaches the window server with no fake a test could hand it. The window server module
+/// offers none, so every caller holds an `Arc<dyn WindowServer>`.
+#[test]
+fn the_window_server_is_reached_only_through_its_port() {
+    let names = window_server_port_names();
+    assert!(names.iter().any(|name| name == "get_window"), "{names:?}");
+    let mut files = vec![PathBuf::from("src/windows/platform/window_server.rs")];
+    files.extend(rust_files(Path::new("src/windows/platform/window_server")));
+    let mut broken = Vec::new();
+    for path in &files {
+        let source = fs::read_to_string(path).expect("readable source");
+        for (n, line) in source.lines().enumerate() {
+            let free = ["pub fn ", "pub(crate) fn ", "pub(super) fn "]
+                .iter()
+                .find_map(|prefix| line.strip_prefix(prefix));
+            let Some(name) = free.and_then(|rest| rest.split(['(', '<']).next()) else {
+                continue;
+            };
+            if names.iter().any(|read| read == name) {
+                broken.push(format!("{}:{}: {}", slash(path), n + 1, line.trim()));
             }
         }
     }
     assert!(
         broken.is_empty(),
-        "the flight engine reads through Parts::window_server and Parts::capture:\n{}",
+        "call the port a caller is handed rather than a free function of the same name:\n{}",
+        broken.join("\n")
+    );
+}
+
+/// A test states the window server's answers on the `FakeWindowServer` it hands the code under test,
+/// never through a process- or thread-wide override (docs/testing.md, "A unit test must not read the
+/// live window server").
+#[test]
+fn no_test_states_an_answer_through_an_override() {
+    let mut files = rust_files(Path::new("src"));
+    files.extend(
+        rust_files(Path::new("tests"))
+            .into_iter()
+            .filter(|path| !path.ends_with("architecture.rs")),
+    );
+    let mut broken = Vec::new();
+    for path in &files {
+        let source = fs::read_to_string(path).expect("readable source");
+        for (line, code) in code_lines_in(&source) {
+            if code.contains("_override(") {
+                broken.push(format!("{}:{line}: {}", slash(path), code.trim()));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "state the answer on the fake:\n{}",
         broken.join("\n")
     );
 }
@@ -1114,7 +1183,7 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
 const LONG_FILES: [(&str, usize); 4] = [
     ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
-    ("src/transitions/platform/engine.rs", 2188),
+    ("src/transitions/platform/engine.rs", 2187),
     ("src/workspaces/engine.rs", 2544),
 ];
 

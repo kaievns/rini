@@ -189,9 +189,9 @@ pub type OnFlight = Box<dyn Fn(bool) + Send>;
 /// The instant now.
 pub type Clock = Box<dyn Fn() -> Instant + Send>;
 
-/// One framed capture of a window where it is, at a display's scale: what a window that just opened
-/// flies from (`skylight::capture_via_framed`).
-pub type Capture = Box<dyn Fn(WindowServerId, f64) -> Option<Picture> + Send>;
+/// One framed capture of a window where the window server has it, at a display's scale: what a
+/// window that just opened flies from (`skylight::capture_via_framed`).
+pub type Capture = Box<dyn Fn(&dyn WindowServer, WindowServerId, f64) -> Option<Picture> + Send>;
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
@@ -1832,7 +1832,7 @@ impl FlightEngine {
                         .filter(|f| f.size.width > 0.0 && f.size.height > 0.0 && budget_left)
                         .and_then(|_| {
                             sync_captures += 1;
-                            (self.capture)(request.server_id, scale)
+                            (self.capture)(ws, request.server_id, scale)
                         });
                     let usable = picture.filter(Picture::is_usable);
                     let entrance = entrance_plan(spawn, request.to, usable, budget_left);
@@ -1950,9 +1950,8 @@ impl FlightEngine {
             self.abandon();
             return;
         }
-        let dressing = self.picture_display().map(|display| self.pictures.dressing(display));
-        let display = self.display.map(|(frame, _)| frame);
-        if let (Some(dressing), Some(display)) = (dressing, display) {
+        if let (Some(at), Some((display, _))) = (self.picture_display(), self.display) {
+            let dressing = self.pictures.dressing(&*self.window_server, at);
             let strip = dressing.strip.map(|strip| to_overlay_space(strip, display));
             log_dressing(pass.label, &dressing, strip);
             self.render(Render::Dress {
@@ -4631,7 +4630,7 @@ mod tests {
                     window_server: ws.clone(),
                     capture: Box::new({
                         let captures = captures.clone();
-                        move |window, _| {
+                        move |_, window, _| {
                             let mut captures = captures.lock().unwrap();
                             captures.taken.push(window);
                             captures.of.get(&window).cloned()

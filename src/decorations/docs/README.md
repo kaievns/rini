@@ -290,7 +290,7 @@ the panel stayed below until it took that window's level and sub-level too (the 
 one place below before the copy, above after). So a rest window takes its window's level and
 sub-level, read on the frames thread when the window is introduced and after each reorder or unhide
 (`ServerIntro`, `ServerOrder.level`), through `SLSSetWindowLevel` and `SLSSetWindowSubLevel`, which
-act only on the caller's own windows (`window_server::take_stack_place`), and only when they differ
+act only on the caller's own windows (the port's `take_stack_place`), and only when they differ
 from the ones it took last (`rest::stack_change`), and then AppKit orders it above. A sub-level the
 window server gives no answer for is none, and the rest window keeps the sub-level it holds rather
 than take 0. The sub-level is read by the Mach port rini already reads other apps' windows with,

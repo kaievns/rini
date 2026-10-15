@@ -26,7 +26,7 @@ use crate::bar::platform::ground::{Ground, picture_ground};
 use crate::displays::screen::active_menu_bar_display_id;
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::skylight::capture_rect;
-use crate::windows::platform::window_server::{Listed, every_window, owner_name};
+use crate::windows::platform::window_server::{self, Listed, WindowServer, owner_name};
 
 /// What sketchybar passes. `1 << 11` would crop each picture to its opaque bounds and lose where the
 /// icon sits.
@@ -88,9 +88,10 @@ impl Watcher {
         let (commands, inbox) = mpsc::channel();
         let paused = Arc::new(AtomicBool::new(false));
         let read = Arc::clone(&paused);
+        let server = window_server::live();
         thread::Builder::new()
             .name("bar-extras".to_string())
-            .spawn(move || run(&inbox, &read, &sinks))
+            .spawn(move || run(&*server, &inbox, &read, &sinks))
             .expect("failed to spawn bar-extras thread");
         Watcher { commands, paused }
     }
@@ -116,7 +117,7 @@ struct Sent {
     items: Vec<Extra>,
 }
 
-fn run(inbox: &Receiver<Message>, paused: &AtomicBool, sinks: &Sinks) {
+fn run(server: &dyn WindowServer, inbox: &Receiver<Message>, paused: &AtomicBool, sinks: &Sinks) {
     let mut schedule = Schedule::new(Instant::now());
     let mut last: Option<Sent> = None;
     let mut owners = OwnerNames::default();
@@ -141,9 +142,9 @@ fn run(inbox: &Receiver<Message>, paused: &AtomicBool, sinks: &Sinks) {
         if !schedule.take(Instant::now(), idle()) {
             continue;
         }
-        grounds.picture(paused, &*sinks.ground);
+        grounds.picture(server, paused, &*sinks.ground);
         let may_capture = || schedule.may_capture(paused.load(Ordering::Relaxed), Instant::now());
-        let Some((mut extras, stamps)) = picture(&mut owners, may_capture) else {
+        let Some((mut extras, stamps)) = picture(server, &mut owners, may_capture) else {
             schedule.missed();
             continue;
         };
@@ -191,7 +192,7 @@ impl Grounds {
 
     /// Pictures every display's ground if one is due, and sends the ones that changed. A pause that
     /// lands meanwhile stops it, and the rest stay due.
-    fn picture(&mut self, paused: &AtomicBool, send: &dyn Fn(Ground)) {
+    fn picture(&mut self, server: &dyn WindowServer, paused: &AtomicBool, send: &dyn Fn(Ground)) {
         if !self.timer.take(Instant::now()) {
             return;
         }
@@ -200,7 +201,7 @@ impl Grounds {
                 self.timer.now(Instant::now());
                 return;
             }
-            let Some((picture, scale, hash)) = picture_ground(*bounds) else {
+            let Some((picture, scale, hash)) = picture_ground(server, *bounds) else {
                 continue;
             };
             if self.hashes.insert(display.clone(), hash) != Some(hash) {
@@ -224,10 +225,11 @@ struct Placed {
 /// Every extra drawn and what it is compared by. `None` when the capture failed, or `may_capture`
 /// called it off after the listing.
 fn picture(
+    server: &dyn WindowServer,
     owners: &mut OwnerNames,
     may_capture: impl FnOnce() -> bool,
 ) -> Option<(Extras, Vec<Stamp>)> {
-    let (windows, placed) = status_windows(owners);
+    let (windows, placed) = status_windows(server, owners);
     let chosen: Vec<(Placed, Kind)> = extras::select(&windows)
         .into_iter()
         .map(|(index, kind)| (placed[index], kind))
@@ -250,10 +252,14 @@ fn picture(
 
 /// The status-level windows on the active menu bar, and where each is. The main display's when which
 /// menu bar is active cannot be read.
-fn status_windows(owners: &mut OwnerNames) -> (Vec<StatusWindow>, Vec<Placed>) {
+fn status_windows(
+    server: &dyn WindowServer,
+    owners: &mut OwnerNames,
+) -> (Vec<StatusWindow>, Vec<Placed>) {
     let display =
         CGDisplayBounds(active_menu_bar_display_id().unwrap_or_else(|| CGMainDisplayID()));
-    let windows: Vec<Listed> = every_window()
+    let windows: Vec<Listed> = server
+        .every_window()
         .into_iter()
         .filter(|window| window.level as isize == NSStatusWindowLevel)
         .collect();

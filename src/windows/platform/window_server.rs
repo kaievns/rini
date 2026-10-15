@@ -18,12 +18,10 @@ use rini_skylight_sys::*;
 #[cfg(test)]
 mod fake;
 mod port;
-mod shim;
 
 #[cfg(test)]
 pub use fake::FakeWindowServer;
 pub use port::{Command, LiveWindowServer, WindowServer, live};
-pub use shim::*;
 
 use crate::windows::domain::info::{WindowServerInfo, reported_radius};
 use crate::windows::domain::stack::{StackWrite, WindowLevel, stack_place_writes};

@@ -11,6 +11,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
 use objc2::rc::Retained;
@@ -35,7 +36,7 @@ use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::event::{Following, ServerRead, StackLevel, ToRead};
 use crate::displays::screen::primary_display_height;
-use crate::windows::platform::window_server;
+use crate::windows::platform::window_server::{self, WindowServer};
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
@@ -174,10 +175,15 @@ impl Panel {
 
     /// Directly above `target`: at its `level` and sub-level, taken when it holds another, then
     /// ordered above it.
-    fn order_above(&mut self, target: WindowServerId, level: StackLevel) {
+    fn order_above(
+        &mut self,
+        server: &dyn WindowServer,
+        target: WindowServerId,
+        level: StackLevel,
+    ) {
         let Some(own) = self.own_id() else { return };
         if let Some(level) = stack_change(self.level, level) {
-            window_server::take_stack_place(own, level.level, level.sub_level);
+            server.take_stack_place(own, level.level, level.sub_level);
             self.level = Some(level);
         }
         self.window
@@ -253,6 +259,8 @@ pub struct RestBorders {
     rest: Rest,
     /// Where a window the model first names is asked of the window server.
     following: Following,
+    /// What a landed flight reads again and where a rest window takes its place in the stack.
+    window_server: Arc<dyn WindowServer>,
     panels: Vec<Panel>,
     /// Whether the one failure to make a panel has been logged.
     warned: bool,
@@ -264,6 +272,7 @@ impl RestBorders {
             mtm,
             rest: Rest::default(),
             following,
+            window_server: window_server::live(),
             panels: Vec::new(),
             warned: false,
         }
@@ -312,7 +321,7 @@ impl RestBorders {
         for window in reread {
             self.rest.reread(
                 window,
-                window_server::server_frame(window).map(ScreenRect::from_cg),
+                self.window_server.server_frame(window).map(ScreenRect::from_cg),
             );
         }
         self.draw(&draw);
@@ -351,7 +360,9 @@ impl RestBorders {
         for op in rest::plan_draw(&self.rest, &panels, draw) {
             match op {
                 PanelOp::Target { at, window } => self.panels[at].target = window,
-                PanelOp::Order { at, window, level } => self.panels[at].order_above(window, level),
+                PanelOp::Order { at, window, level } => {
+                    self.panels[at].order_above(&*self.window_server, window, level)
+                }
                 PanelOp::Hide { at } => self.panels[at].hide(),
                 PanelOp::Begin => {
                     CATransaction::begin();

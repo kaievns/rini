@@ -23,7 +23,7 @@ use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::desktop::DesktopBackdrop;
 use crate::pictures::platform::measure::{first_sight, shows_material};
 use crate::pictures::platform::picture::{LazyGround, Picture, Pixels, image_size};
-use crate::windows::platform::window_server::{READ_CONNECTION, on_screen_windows};
+use crate::windows::platform::window_server::{READ_CONNECTION, WindowServer};
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
 /// actually does" in `src/animation/docs/capture-overlay-research.md`.
@@ -76,8 +76,15 @@ pub fn capture_list_via_skylight(
 pub fn capture_alone(window: WindowServerId) -> Option<CFRetained<CGImage>> { composite(&[window]) }
 
 /// What `display` shows, every window on it, the overlay included while it is up.
-pub fn capture_screen(display: ScreenRect) -> Option<CFRetained<CGImage>> {
-    let ids: Vec<u32> = on_screen_windows(false).iter().map(|window| window.id.as_u32()).collect();
+pub fn capture_screen(
+    server: &dyn WindowServer,
+    display: ScreenRect,
+) -> Option<CFRetained<CGImage>> {
+    let ids: Vec<u32> = server
+        .on_screen_windows(false)
+        .iter()
+        .map(|window| window.id.as_u32())
+        .collect();
     capture_rect(&ids, display.to_cg(), ON_SCREEN_OPTIONS).ok().flatten()
 }
 
@@ -330,8 +337,12 @@ fn region(
 /// For a window wholly on a display, the picture also gets its blur back: a second capture of the
 /// window with everything below it, merged in by `translucency::merge`. About 14ms, measured, which is
 /// why it is never taken for every tile at the start of a flight.
-pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture> {
-    let frame = crate::windows::platform::window_server::get_window(window)?.frame;
+pub fn capture_via_framed(
+    server: &dyn WindowServer,
+    window: WindowServerId,
+    scale: f64,
+) -> Option<Picture> {
+    let frame = server.get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }
@@ -339,8 +350,10 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
     let on_a_display = fully_on_a_display(frame, &displays);
     let framed = capture_window_rect(window, frame, scale, on_a_display)?;
     let pixels = image_size(&framed);
-    let composite = on_a_display.then(|| capture_below_and_including(window, frame)).flatten();
-    let after = crate::windows::platform::window_server::get_window(window).map(|w| w.frame);
+    let composite = on_a_display
+        .then(|| capture_below_and_including(server, window, frame))
+        .flatten();
+    let after = server.get_window(window).map(|w| w.frame);
     let whole = stayed_wholly_on_a_display(frame, after, &displays);
     let composite = composite.filter(|_| whole);
     let (image, carries_blur) = match composite.and_then(|composite| with_blur(&framed, &composite))
@@ -365,11 +378,15 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
 /// The window and everything below it on screen, cropped to `rect`. Leaves out every window above it,
 /// so neither an overlapping window nor rini's own overlay can end up in the picture.
 fn capture_below_and_including(
+    server: &dyn WindowServer,
     window: WindowServerId,
     rect: CGRect,
 ) -> Option<CFRetained<CGImage>> {
-    let listed: Vec<u32> =
-        on_screen_windows(false).iter().map(|window| window.id.as_u32()).collect();
+    let listed: Vec<u32> = server
+        .on_screen_windows(false)
+        .iter()
+        .map(|window| window.id.as_u32())
+        .collect();
     let ids = from_window_back(&listed, window.as_u32())?;
     capture_rect(ids, rect, ON_SCREEN_OPTIONS).ok().flatten()
 }

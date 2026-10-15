@@ -44,6 +44,7 @@ use crate::pictures::platform::measure::{band_print, body_samples, picture_thumb
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_image, stand_in_picture};
 use crate::pictures::platform::screencapturekit::Prepared;
 use crate::pictures::platform::skylight::{self, BatchCall, capture_list_via_skylight};
+use crate::windows::platform::window_server::WindowServer;
 
 /// What a client asks of the service.
 #[derive(Debug)]
@@ -444,7 +445,7 @@ impl Pictures {
             watches: Arc::default(),
         };
         let service = Service {
-            capturer: MacCapturer,
+            capturer: MacCapturer::live(),
             requests,
             done,
             done_tx,
@@ -583,15 +584,15 @@ impl Pictures {
     /// without which it draws black. The bar is read for presence on every transition, so a bar that
     /// has gone is not drawn, and composited once per display.
     /// Whether there is a bar to picture is the service's, as the display it was last told says.
-    pub fn dressing(&self, display: Display) -> Dressing {
+    pub fn dressing(&self, server: &dyn WindowServer, display: Display) -> Dressing {
         let picture_bar = self.lock().schedule.picture_bar();
-        let strip = picture_bar.then(|| bar_strip(display.frame));
+        let strip = picture_bar.then(|| bar_strip(server, display.frame));
         let bar_on_screen = strip.as_ref().is_some_and(|strip| strip.bounds.is_some());
         let (desktop, bar) = {
             let shared = self.lock();
             shared.display.for_display(shared.schedule.display(), display, bar_on_screen)
         };
-        let desktop = desktop.or_else(|| composite_desktop(display));
+        let desktop = desktop.or_else(|| composite_desktop(server, display));
         let Some(strip) = strip else {
             return Dressing {
                 desktop,
@@ -633,9 +634,9 @@ fn held(cache: &PictureCache<Picture>, window: WindowId) -> Option<Held> {
 /// The desktop of `display` composited from its windows, for a transition before any render of it has
 /// landed, with or without its wallpaper: the overlay keeps no desktop between flights to prefer. See
 /// "Which route serves, and why the render wins" in `src/pictures/docs/capture-research.md`.
-fn composite_desktop(display: Display) -> Option<Picture> {
+fn composite_desktop(server: &dyn WindowServer, display: Display) -> Option<Picture> {
     let size = display.frame.size;
-    let desktop = desktop_backdrop_windows(display.frame);
+    let desktop = desktop_backdrop_windows(server, display.frame);
     let usable = capture_list_via_skylight(&desktop.windows, size, display.scale)
         .filter(|picture| spans_display(picture.coverage.covered, size));
     if usable.is_none() {
