@@ -877,9 +877,8 @@ impl LayoutEngine {
         space: SpaceId,
         pid: pid_t,
         tiled_by_workspace: &HashMap<crate::workspaces::VirtualWorkspaceId, Vec<WindowId>>,
-    ) -> Vec<(crate::workspaces::VirtualWorkspaceId, LayoutId)> {
+    ) {
         let total_tiled_count: usize = tiled_by_workspace.values().map(|v| v.len()).sum();
-        let mut changed_layouts = Vec::new();
 
         for (ws_id, layout) in self.workspace_layouts.active_layouts_for_space(space) {
             let mut desired = tiled_by_workspace.get(&ws_id).cloned().unwrap_or_default();
@@ -957,10 +956,7 @@ impl LayoutEngine {
             {
                 let _ = self.workspace_tree_mut(ws_id).select_window(layout, selected_window);
             }
-            changed_layouts.push((ws_id, layout));
         }
-
-        changed_layouts
     }
 
     pub fn update_space_display(
@@ -3073,14 +3069,6 @@ impl LayoutEngine {
         window: WindowId,
     ) -> Option<CGRect> {
         self.floating_positions.get(space, workspace, window)
-    }
-
-    pub fn workspace_floating_positions(
-        &self,
-        space: SpaceId,
-        workspace: VirtualWorkspaceId,
-    ) -> Vec<(WindowId, CGRect)> {
-        self.floating_positions.workspace_positions(space, workspace)
     }
 
     pub fn remove_floating_position(&mut self, window: WindowId) {

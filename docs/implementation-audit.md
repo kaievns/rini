@@ -193,8 +193,8 @@ INSIDE two production predicates, so the tests ran different code than ships —
 
 ### 3.1 `LayoutEngine` owns fourteen unrelated things
 
-**DONE — fourteen fields down to twelve. The IPC channel is an outbox the application drains
-(`a4ad095`); `display_affinity` and `launch_memory` are now one `DisplayMemory` owned by
+**DONE — fourteen fields down to twelve. The IPC channel became an outbox the application drained
+(`a4ad095`), since gone with the event subscriptions on 2026-10-15; `display_affinity` and `launch_memory` are now one `DisplayMemory` owned by
 `RiniState`, beside `WindowStore`, and passed in the same way.**
 
 `src/workspaces/engine.rs`, 2,876 code lines, 20 tests (144 lines per test). Its
