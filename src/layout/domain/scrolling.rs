@@ -2171,10 +2171,7 @@ mod tests {
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
 
-    use super::{
-        Column, Pin, Pinned, Place, Reveal, ScrollIntent, ScrollingLayoutSystem, View,
-        answers_slot, rebased_offset,
-    };
+    use super::{Column, Pin, Place, ScrollingLayoutSystem, View, answers_slot, rebased_offset};
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::Drag;
     use crate::layout::domain::tile;
@@ -2233,111 +2230,149 @@ mod tests {
     #[test]
     fn a_preview_gives_the_frames_of_the_next_pass_and_spends_nothing() {
         let (mut system, layout, _, _) = setup_two_windows(ScrollingLayoutSettings::default());
-        let (screen, gaps) = (screen(1000.0, 800.0), Gaps::default());
+        let (next_pass, untouched) = (system.clone_layout(layout), system.clone_layout(layout));
+        let gaps = Gaps::default();
         let borders = tile::Borders::default();
-        let preview = system.preview_layout(layout, screen, &constraints_none(), &borders, &gaps);
-        assert_eq!(system.scroll_offset(layout), 0.0, "the align still pending");
+        let preview = system.preview_layout(
+            layout,
+            screen(1000.0, 800.0),
+            &constraints_none(),
+            &borders,
+            &gaps,
+        );
         assert_eq!(system.strip_origin(layout), None, "nothing measured");
+        assert_eq!(
+            render(&mut system, next_pass, screen(1000.0, 800.0), &gaps),
+            preview
+        );
 
-        assert_eq!(render(&mut system, layout, screen, &gaps), preview);
-        assert!(system.scroll_offset(layout) > 0.0, "the pass spent the align");
-        assert!(system.strip_origin(layout).is_some());
+        let wider = screen(1400.0, 800.0);
+        assert_eq!(
+            render(&mut system, layout, wider, &gaps),
+            render(&mut system, untouched, wider, &gaps),
+            "the pending reveal still taken at the next pass's width"
+        );
     }
 
-    #[test]
-    fn a_pass_spends_the_intent() {
-        let (mut system, layout, _, w2) = setup_two_windows(ScrollingLayoutSettings::default());
-        let state = system.layout_state_mut(layout).expect("layout");
-        state.reveal_selected_without_direction();
-        state.pin(w2, Pin::RightEdge, 900.0);
+    /// Two columns 700 wide on a 1000 wide screen, the strip at its start and the second column,
+    /// 300 of it off the right edge, selected with the reveal the selection asks for pending.
+    fn second_column_off_the_right() -> (ScrollingLayoutSystem, LayoutId, WindowId) {
+        let (mut system, layout, w1, w2) = setup_two_windows(ScrollingLayoutSettings::default());
         render(&mut system, layout, screen(1000.0, 800.0), &Gaps::default());
-        let state = system.layout_state(layout).expect("layout");
-        assert_eq!(state.intent, ScrollIntent::Keep);
-        assert!(!state.holds_scroll_for(w2));
+        system.select_window(layout, w1);
+        let frames = render(&mut system, layout, screen(1000.0, 800.0), &Gaps::default());
+        assert_eq!(frame_for(&frames, w2).origin.x, 700.0);
+        system.select_window(layout, w2);
+        (system, layout, w2)
+    }
+
+    fn second_column_x(system: &mut ScrollingLayoutSystem, layout: LayoutId, w2: WindowId) -> f64 {
+        let frames = render(system, layout, screen(1000.0, 800.0), &Gaps::default());
+        frame_for(&frames, w2).origin.x
+    }
+
+    const REVEALED: f64 = 300.0;
+    const LEFT_AS_IT_WAS: f64 = 700.0;
+
+    #[test]
+    fn a_pass_spends_the_pin_and_the_reveal_under_it() {
+        let (mut system, layout, w2) = second_column_off_the_right();
+        system.layout_state_mut(layout).expect("layout").pin(w2, Pin::RightEdge, 900.0);
+        let frames = render(&mut system, layout, screen(1000.0, 800.0), &Gaps::default());
+        assert_eq!(right_edge(&frames, w2), 900.0);
+        let origin = system.strip_origin(layout);
+        assert!(!system.layout_state(layout).expect("layout").holds_scroll_for(w2));
+
+        let frames = render(&mut system, layout, screen(1400.0, 800.0), &Gaps::default());
+        assert_eq!(
+            system.strip_origin(layout),
+            origin,
+            "the strip left where the pin put it"
+        );
+        assert!(right_edge(&frames, w2) > 1400.0, "and no reveal taken");
     }
 
     #[test]
     fn a_pin_set_over_a_pending_reveal_leaves_the_reveal_pending_once_dropped() {
-        let (mut system, layout, _, w2) = setup_two_windows(ScrollingLayoutSettings::default());
+        let (mut system, layout, w2) = second_column_off_the_right();
         let state = system.layout_state_mut(layout).expect("layout");
-        state.reveal_selected_without_direction();
-        state.pin(w2, Pin::RightEdge, 900.0);
+        state.pin(w2, Pin::Start, 40.0);
         assert!(state.holds_scroll_for(w2));
+        let pinned = system.clone_layout(layout);
+        assert_eq!(second_column_x(&mut system, pinned, w2), 40.0);
+
+        let state = system.layout_state_mut(layout).expect("layout");
         state.unpin();
-        assert_eq!(state.intent, ScrollIntent::Reveal(Reveal::Either));
         assert!(!state.holds_scroll_for(w2));
+        assert_eq!(second_column_x(&mut system, layout, w2), REVEALED);
     }
 
     #[test]
     fn a_held_selection_s_pin_leaves_nothing_pending_once_dropped() {
-        let (mut system, layout, _, w2) = setup_two_windows(ScrollingLayoutSettings::default());
+        let (mut system, layout, w2) = second_column_off_the_right();
         let state = system.layout_state_mut(layout).expect("layout");
-        state.reveal_selected_without_direction();
         state.return_to_view(w2, View::StartingAt(40.0));
-        assert_eq!(
-            state.intent,
-            ScrollIntent::Pin(Pinned {
-                window: w2,
-                pin: Pin::Start,
-                value: 40.0,
-                reveal: None
-            })
-        );
-        state.unpin();
-        assert_eq!(state.intent, ScrollIntent::Keep);
+        let held = system.clone_layout(layout);
+        assert_eq!(second_column_x(&mut system, held, w2), 40.0);
+
+        system.layout_state_mut(layout).expect("layout").unpin();
+        assert_eq!(second_column_x(&mut system, layout, w2), LEFT_AS_IT_WAS);
     }
 
     #[test]
     fn a_renamed_window_keeps_its_pin() {
-        let (mut system, layout, _, w2) = setup_two_windows(ScrollingLayoutSettings::default());
+        let (mut system, layout, w2) = second_column_off_the_right();
         system.layout_state_mut(layout).expect("layout").pin(w2, Pin::Start, 40.0);
         let renamed = wid(1, 9);
         system.replace_window(w2, renamed);
         assert!(system.layout_state(layout).expect("layout").holds_scroll_for(renamed));
+        assert_eq!(second_column_x(&mut system, layout, renamed), 40.0);
     }
 
     #[test]
     fn a_clamp_drops_only_a_pending_align() {
-        let (mut system, layout, ..) = setup_two_windows(ScrollingLayoutSettings::default());
-        let state = system.layout_state_mut(layout).expect("layout");
-        state.align_scroll_to_selected();
-        state.clamp_scroll_offset();
-        assert_eq!(state.intent, ScrollIntent::Keep);
-        state.reveal_selected_in_direction(Direction::Left);
-        state.clamp_scroll_offset();
-        assert_eq!(state.intent, ScrollIntent::Reveal(Reveal::FromRight));
-        state.request_center_on_selected();
-        state.clamp_scroll_offset();
-        assert_eq!(state.intent, ScrollIntent::Center);
-    }
-
-    #[test]
-    fn a_reveal_names_the_side_it_comes_from_and_a_vertical_one_leaves_the_offset() {
-        let (mut system, layout, ..) = setup_two_windows(ScrollingLayoutSettings::default());
-        let state = system.layout_state_mut(layout).expect("layout");
-        for (direction, intent) in [
-            (Direction::Left, ScrollIntent::Reveal(Reveal::FromRight)),
-            (Direction::Right, ScrollIntent::Reveal(Reveal::FromLeft)),
-            (Direction::Up, ScrollIntent::Keep),
-            (Direction::Down, ScrollIntent::Keep),
-        ] {
-            state.reveal_selected_in_direction(direction);
-            assert_eq!(state.intent, intent, "{direction:?}");
+        type Request = fn(&mut super::LayoutState);
+        let cases: [(&str, Request, f64); 3] = [
+            ("align", |state| state.align_scroll_to_selected(), LEFT_AS_IT_WAS),
+            (
+                "reveal",
+                |state| state.reveal_selected_in_direction(Direction::Left),
+                REVEALED,
+            ),
+            ("centre", |state| state.request_center_on_selected(), 150.0),
+        ];
+        for (case, request, x) in cases {
+            let (mut system, layout, w2) = second_column_off_the_right();
+            let state = system.layout_state_mut(layout).expect("layout");
+            request(state);
+            state.clamp_scroll_offset();
+            assert_eq!(second_column_x(&mut system, layout, w2), x, "{case}");
         }
     }
 
     #[test]
-    fn an_align_with_no_selection_zeroes_the_offset_and_keeps_only_a_pending_align() {
-        let (mut system, layout, ..) = setup_two_windows(ScrollingLayoutSettings::default());
-        system.scroll_strip_to(layout, 300.0);
-        let state = system.layout_state_mut(layout).expect("layout");
-        state.align_scroll_to_selected();
-        state.selected = None;
-        state.align_scroll_to_selected();
-        assert_eq!((state.scroll_offset, state.intent), (0.0, ScrollIntent::Align));
-        state.reveal_selected_without_direction();
-        state.align_scroll_to_selected();
-        assert_eq!(state.intent, ScrollIntent::Keep);
+    fn a_sideways_reveal_brings_the_column_in_and_a_vertical_one_leaves_the_offset() {
+        for (direction, x) in [
+            (Direction::Left, REVEALED),
+            (Direction::Right, REVEALED),
+            (Direction::Up, LEFT_AS_IT_WAS),
+            (Direction::Down, LEFT_AS_IT_WAS),
+        ] {
+            let (mut system, layout, w2) = second_column_off_the_right();
+            let state = system.layout_state_mut(layout).expect("layout");
+            state.reveal_selected_in_direction(direction);
+            assert_eq!(second_column_x(&mut system, layout, w2), x, "{direction:?}");
+        }
+    }
+
+    #[test]
+    fn an_align_with_no_selection_puts_the_strip_at_its_start() {
+        let (mut system, layout, w2) = second_column_off_the_right();
+        assert_eq!(second_column_x(&mut system, layout, w2), REVEALED);
+        system.clear_selection_for_test(layout);
+        system.layout_state_mut(layout).expect("layout").align_scroll_to_selected();
+        render(&mut system, layout, screen(1000.0, 800.0), &Gaps::default());
+        assert_eq!(system.strip_origin(layout), Some(0.0));
     }
 
     #[test]
