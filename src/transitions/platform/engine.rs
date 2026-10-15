@@ -24,11 +24,11 @@ use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
-    FromCg, GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, PointSpace, Respace,
-    ScreenRect, ScreenSize, Size, SurfacePoint,
+    FromCg, OverlayPoint, OverlayRect, OverlayVector, Point, PointSpace, Respace, ScreenRect,
+    ScreenSize, Size, SurfacePoint,
 };
 use rini_geometry::stretch::grows;
-use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
+use rini_geometry::{from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
@@ -37,15 +37,13 @@ use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::score::{Edit, MediaClock, Node, Value};
-use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::domain::motion::tile;
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
 use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::handover::HandoverCheck;
 use crate::pictures::domain::route::Route;
-use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
-use crate::pictures::domain::stand_in::picture_or_stand_in;
+use crate::pictures::domain::schedule::{Ask, Display, Hold, Priority};
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
     CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag,
@@ -66,15 +64,15 @@ use crate::transitions::domain::lifecycle::{
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::timing::*;
-use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 use crate::transitions::platform::journal::Writer;
 use crate::transitions::platform::logged::Whole;
 use crate::transitions::settings::JournalSettings;
 use crate::windows::platform::window_server::WindowServer;
 
+mod compose;
 mod tiles;
 
-use tiles::{Stacking, entrance_tile};
+use tiles::entrance_tile;
 
 /// What the engine is told.
 #[derive(Debug)]
@@ -1583,25 +1581,29 @@ impl FlightEngine {
         self.render(Render::Stage { score, tiles });
     }
 
-    /// Opens a transition from what a request alone says, before anything is composed, so its
-    /// frame-zero pictures are asked for first. False when it could not run, and was abandoned.
+    /// Opens a transition, when none flies, from what a request alone says (`tiles`, read only
+    /// then), before anything is composed, so its frame-zero pictures are asked for first. False
+    /// when it could not run, and was abandoned.
     fn begin(
         &mut self,
-        tiles: Vec<TileSummary>,
-        final_frames: Vec<(WindowId, ScreenRect)>,
+        tiles: impl FnOnce() -> Vec<TileSummary>,
+        final_frames: &[(WindowId, ScreenRect)],
         (focus, focused_before): (Option<WindowId>, Option<WindowId>),
         key: Option<WindowId>,
-        shape: Shape,
+        shape: &Shape,
     ) -> bool {
+        if self.flights.coordinator().is_flying() {
+            return true;
+        }
         let Some((display, _)) = self.display else { return false };
         let stage = summary(
-            tiles,
-            final_frames,
+            tiles(),
+            final_frames.to_vec(),
             focus,
             losing_focus(focus, focused_before),
             None,
             key,
-            shape,
+            shape.clone(),
             (display, self.rests),
             &|window| self.pictures.knowledge(WindowServerId::from(window)).is_opaque(),
         );
@@ -1659,243 +1661,6 @@ impl FlightEngine {
         let focus = focus.or(self.running.as_ref().and_then(|running| running.focus));
         let shown = self.running.as_ref().map_or(focused_before, |running| running.shown_focus);
         (focus, losing_focus(focus, shown))
-    }
-
-    fn start(
-        &mut self,
-        windows: Vec<AnimationRequest>,
-        (focus, focused_before): (Option<WindowId>, Option<WindowId>),
-        key: Option<WindowId>,
-        duration: Duration,
-        look: Look,
-    ) {
-        if windows.is_empty() {
-            return;
-        }
-        let Some((display_frame, _)) = self.display else {
-            debug!("no display geometry yet; skipping animation");
-            return;
-        };
-
-        // Every moving window's destination, picture or not. A still window is not re-placed: the
-        // round trip invites another layout pass.
-        let final_frames: Vec<(WindowId, ScreenRect)> = windows
-            .iter()
-            .filter(|request| is_moving(request.from, request.to))
-            .map(|request| (request.window, request.to))
-            .collect();
-        let shape = Shape {
-            kind: Kind::LayoutPass,
-            start: Start::Coalesced,
-            duration,
-            waits: Waits::default(),
-        };
-        if !self.flights.coordinator().is_flying() {
-            let requested = windows
-                .iter()
-                .map(|request| TileSummary {
-                    window: request.window,
-                    start: request.from,
-                    end: request.to,
-                    floating: request.floating,
-                })
-                .collect();
-            if !self.begin(
-                requested,
-                final_frames.clone(),
-                (focus, focused_before),
-                key,
-                shape.clone(),
-            ) {
-                return;
-            }
-        }
-        let (drawing_focus, losing) = self.drawing_focus((focus, focused_before));
-
-        let ws = &*self.window_server;
-        let stacking = Stacking::read(ws, &windows.iter().map(|r| r.server_id).collect::<Vec<_>>());
-
-        let mut tiles = Vec::with_capacity(windows.len());
-        let mut skipped = 0usize;
-        let mut offscreen = 0usize;
-        let mut needs_capture: Vec<PictureTarget> = Vec::new();
-        let mut entrances: Vec<PendingEntrance> = Vec::new();
-        let mut waits = Waits::default();
-        // Newly opened windows travelling from their spawn frame.
-        let mut spawn_entrances: Vec<(WindowId, GroupRect, GroupRect)> = Vec::new();
-        let mut sync_captures = 0usize;
-        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-        let mut resolved: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = Vec::new();
-        for (index, request) in windows.iter().enumerate() {
-            let live = live_frame(ws, request.server_id);
-            let path = tile_path(live, &windows, index, display_frame);
-            let Some(TilePath { start, end }) = path else {
-                offscreen += 1;
-                debug!(
-                    wsid = request.server_id.as_u32(),
-                    from = %Whole(request.from),
-                    to = %Whole(request.to),
-                    "skipped as off screen"
-                );
-                continue;
-            };
-            // Any usable picture, whatever its shape; a wrong-shaped one is drawn cropped. See
-            // "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
-            let snapshot = self.pictures.usable(request.window);
-            if snapshot.is_none() {
-                // Asked for now so the next switch has pixels, even if this one does not.
-                needs_capture.push(PictureTarget {
-                    window: request.window,
-                    server_id: request.server_id,
-                    size: request.from.size,
-                });
-                debug!(
-                    pid = request.window.pid,
-                    idx = request.window.idx.get(),
-                    "animation wanted a snapshot for this window and had none"
-                );
-            }
-            // A known window off this display with no picture flies with a stand-in instead of
-            // leaving a hole; see `stands_in`. The flight holds for it, and its picture replaces the
-            // stand-in once it has repainted where it ends.
-            let snapshot = picture_or_stand_in(
-                snapshot,
-                || ws.get_window(request.server_id).map(|info| ScreenRect::from_cg(info.frame)),
-                display_frame,
-                || self.pictures.stand_in(request.to.size),
-            );
-            let flies = match snapshot {
-                Some(snapshot) => {
-                    let flies = FliesOn::Picture {
-                        source: snapshot.source,
-                        covered: snapshot.coverage.covered,
-                    };
-                    let clipped = snapshot.source.clips();
-                    let focused = drawn_focused(request.window, drawing_focus, losing);
-                    let tile = stacking.tile_of(
-                        request.window,
-                        request.server_id,
-                        request.floating,
-                        request.worn,
-                    );
-                    let path = (
-                        to_overlay_space(start, display_frame),
-                        to_overlay_space(end, display_frame),
-                    );
-                    tiles.push(tile.flying(path, snapshot, clipped, focused));
-                    resolved.push((request.window, start, end, request.floating));
-                    flies
-                }
-                // No picture: almost always a window that just opened. See "A window that opens"
-                // in `src/transitions/docs/coordination.md`.
-                None => {
-                    // Only a frame on this display counts as a spawn; capturing off screen is slow.
-                    let spawn = ws
-                        .get_window(request.server_id)
-                        .map(|info| ScreenRect::from_cg(info.frame))
-                        .filter(|f| !rini_geometry::is_off_screen(display_frame, *f));
-                    let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
-                    let captured_at = Instant::now();
-                    let picture = spawn
-                        .filter(|f| f.size.width > 0.0 && f.size.height > 0.0 && budget_left)
-                        .and_then(|_| {
-                            sync_captures += 1;
-                            (self.capture)(ws, request.server_id, scale)
-                        });
-                    let usable = picture.filter(Picture::is_usable);
-                    let entrance = entrance_plan(spawn, request.to, usable, budget_left);
-                    let decided = entrance.decided();
-                    match entrance {
-                        EntranceDecision::Travel { from, to, picture: snapshot } => {
-                            debug!(
-                                pid = request.window.pid,
-                                idx = request.window.idx.get(),
-                                spawn = %Whole(from),
-                                slot = %Whole(to),
-                                capture_ms = captured_at.elapsed().as_millis() as u64,
-                                "entrance from spawn"
-                            );
-                            self.pictures.insert(request.window, snapshot.clone());
-                            let clipped = snapshot.source.clips();
-                            let from_o = to_overlay_space(from, display_frame);
-                            let to_o = to_overlay_space(to, display_frame);
-                            // Already at its slot (a cold cache, not an open): a still tile.
-                            let standing = from.same_as(to);
-                            let focused =
-                                !standing || drawn_focused(request.window, drawing_focus, losing);
-                            let mut tile = stacking.tile_of(
-                                request.window,
-                                request.server_id,
-                                request.floating,
-                                request.worn,
-                            );
-                            if !standing {
-                                tile.server_order = Some(0);
-                            }
-                            tiles.push(tile.flying((from_o, to_o), snapshot, clipped, focused));
-                            if standing {
-                                resolved.push((request.window, from, to, request.floating));
-                            } else {
-                                let entrance = (plan::installed(from_o), plan::installed(to_o));
-                                spawn_entrances.push((request.window, entrance.0, entrance.1));
-                            }
-                        }
-                        EntranceDecision::Reserve(reason) => {
-                            skipped += 1;
-                            debug!(
-                                pid = request.window.pid,
-                                idx = request.window.idx.get(),
-                                reason,
-                                "entrance reserved"
-                            );
-                            entrances.push(PendingEntrance {
-                                window: request.window,
-                                to: to_overlay_space(request.to, display_frame),
-                                floating: request.floating,
-                                worn: request.worn,
-                            });
-                        }
-                    }
-                    FliesOn::Entrance(decided)
-                }
-            };
-            let landing = flies.ends_at(end.size).and_then(|to| self.landing(request.window, to));
-            waits.push_request(request, flies, landing, start, display_frame);
-        }
-        restack(&mut tiles, drawing_focus);
-        self.ask_missing(needs_capture);
-        debug!(
-            requested = windows.len(),
-            tiles = tiles.len(),
-            offscreen,
-            no_snapshot = skipped,
-            display = %Whole(display_frame),
-            "overlay animation composition"
-        );
-
-        let moving_drawable = tiles.iter().any(|tile| is_moving(tile.from, tile.to));
-        if !worth_flying(moving_drawable, self.running.is_some()) {
-            self.abandon();
-            return;
-        }
-
-        let mut plan = plan::reflow_plan(&resolved, display_frame);
-        plan.entrances.extend(spawn_entrances);
-
-        self.begin_group(Composed {
-            tiles,
-            final_frames,
-            label: "per-window",
-            shape: Shape { waits, ..shape },
-            entrances,
-            focus: (focus, focused_before),
-            key,
-            pan: None,
-            plan,
-            look,
-            cue: Cue::Plain,
-            accent: None,
-        });
     }
 
     /// Runs one composed pass: merged into the flight running, or posed as its frame zero.
@@ -2154,135 +1919,6 @@ impl FlightEngine {
         if let Some(extend) = extend {
             self.drive(lifecycle::Event::Extend(extend));
         }
-    }
-
-    /// Animates the whole strip surface as one rigid group, one container and one position
-    /// animation, with a container of its own for each column a move swapped that crosses it, and a
-    /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
-    /// travel. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
-    fn start_surface(
-        &mut self,
-        windows: Vec<SurfaceWindow>,
-        from_offset: SurfacePoint,
-        to_offset: SurfacePoint,
-        final_frames: Vec<(WindowId, ScreenRect)>,
-        focus: (Option<WindowId>, Option<WindowId>),
-        key: Option<WindowId>,
-        duration: Duration,
-        (look, cue, accent): (Look, Cue, Option<Accent>),
-        kind: Option<Kind>,
-    ) {
-        let Some((display, _)) = self.display else {
-            debug!("no display geometry yet; skipping animation");
-            return;
-        };
-        let shape = Shape {
-            kind: kind.unwrap_or_else(|| Kind::of_surface(&windows, from_offset, to_offset)),
-            start: Start::Immediate,
-            duration,
-            waits: Waits::default(),
-        };
-        if !self.flights.coordinator().is_flying() {
-            let requested = windows
-                .iter()
-                .map(|w| {
-                    let (from, to) = w.travel(from_offset, to_offset);
-                    TileSummary {
-                        window: w.window,
-                        start: from_overlay_space(from, display),
-                        end: from_overlay_space(to, display),
-                        floating: w.floating,
-                    }
-                })
-                .collect();
-            if !self.begin(requested, final_frames.clone(), focus, key, shape.clone()) {
-                return;
-            }
-        }
-        let (drawing_focus, losing) = self.drawing_focus(focus);
-
-        // One query for every window, not one each: a round trip per window stalled this thread
-        // for 100-200ms a press. See "Rapid presses" in `specs/focus.md`.
-        let ids: Vec<WindowServerId> = windows.iter().map(|w| w.server_id).collect();
-        let stacking = Stacking::read(&*self.window_server, &ids);
-        let real_frames = frames_of(&*self.window_server, &ids);
-        let mut tiles = Vec::with_capacity(windows.len());
-        let mut waits = Waits::default();
-        let mut missing = 0usize;
-        let mut misshapen = 0usize;
-        let mut stand_ins = 0usize;
-        for window in &windows {
-            let (from, to) = window.travel(from_offset, to_offset);
-            let cached = self.pictures.usable(window.window);
-            // A known window parked off this display with no picture flies as the stand-in, as on
-            // the per-window path; see `stands_in`.
-            let snapshot = picture_or_stand_in(
-                cached,
-                || real_frames.get(&window.server_id).copied(),
-                display,
-                || self.pictures.stand_in(window.frame.size.respace()),
-            );
-            match snapshot {
-                Some(snapshot) => {
-                    // A wrong-shaped picture is drawn rather than dropped, cropped with its window's
-                    // ground. See "A window that was resized keeps a usable picture" in
-                    // `src/pictures/docs/capture-research.md`.
-                    if snapshot.source == Route::StandIn {
-                        stand_ins += 1;
-                    } else if !snapshot.fits(window.frame.size) {
-                        misshapen += 1;
-                    }
-                    waits.push_strip(window.window, self.landing(window.window, to.size.respace()));
-                    let clipped = snapshot.source.clips();
-                    let focused = drawn_focused(window.window, drawing_focus, losing);
-                    let tile = stacking.tile_of(
-                        window.window,
-                        window.server_id,
-                        window.floating,
-                        window.worn,
-                    );
-                    tiles.push(tile.flying((from, to), snapshot, clipped, focused));
-                }
-                // Still placed by `final_frames`, and warmed once the movement settles.
-                None => missing += 1,
-            }
-        }
-        restack(&mut tiles, drawing_focus);
-        debug!(
-            requested = windows.len(),
-            tiles = tiles.len(),
-            missing,
-            misshapen,
-            stand_ins,
-            travel = format!("{} -> {}", Whole(from_offset), Whole(to_offset)),
-            "surface group animation"
-        );
-
-        // One rigid piece for the strip and one for each column a move swapped that crosses it.
-        let drawn: Vec<SurfaceWindow> = windows
-            .iter()
-            .filter(|w| tiles.iter().any(|t| t.window == w.window))
-            .cloned()
-            .collect();
-        let plan = plan::surface_plan(&drawn, from_offset, to_offset);
-
-        // A strip movement never resizes, never carries a brand-new window and never holds for
-        // itself: a stand-in whose window comes on screen is pictured once it lands there.
-        self.begin_group(Composed {
-            tiles,
-            final_frames,
-            label: "surface",
-            shape: Shape { waits, ..shape },
-            entrances: Vec::new(),
-            focus,
-            key,
-            pan: Some(pan_travel(from_offset, to_offset)),
-            plan,
-            look,
-            cue,
-            accent,
-        });
     }
 
     /// Pushes the strip surface out by `overshoot` and back, additively on a flight that moves, as
@@ -2581,12 +2217,14 @@ fn log_dressing(
 
 #[cfg(test)]
 mod tests {
+    use rini_geometry::SameAs;
     use rini_geometry::space::{Respace, ScreenSize, ScreenVector, SurfaceRect, ToCg};
 
     use super::*;
-    use crate::animation::domain::motion::surface::viewport;
+    use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel, viewport};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, VIEWPORT, rect};
     use crate::decorations::domain::style::Ring;
+    use crate::pictures::domain::schedule::MAX_SYNC_ENTRANCE_CAPTURES;
     use crate::pictures::platform::picture::test_picture;
 
     /// A frame on `DISPLAY`, which sits at the origin, on the overlay over it.
