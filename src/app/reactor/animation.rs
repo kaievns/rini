@@ -10,9 +10,13 @@ use tracing::{debug, trace};
 
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::{Present, instant_requests};
+use crate::pictures::domain::schedule::{Ask, Priority};
+use crate::pictures::domain::target::PictureTarget;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
+use crate::transitions::domain::request::AnimationRequest;
 use crate::transitions::domain::travel::changes_visibly;
-use crate::windows::domain::request::Request;
+use crate::windows::domain::request::{AppThreadHandle, Request};
+use crate::windows::domain::transaction::TransactionId;
 
 impl Reactor {
     /// One `PassWindow` per window the pass touches, read from the reactor's stores.
@@ -84,32 +88,7 @@ impl Reactor {
         let Some(active_ws) = self.layout_engine.active_workspace(space) else {
             return false;
         };
-        // A pass only asks for pictures of the windows it moves, and after a restart nothing moves:
-        // every window is where the saved layout left it. So each window is asked for once, the first
-        // time a pass lays it out, whichever workspace it is on. Per window rather than per space:
-        // at startup apps are found one by one, and the first pass knew one window of 21.
-        self.pictured_windows
-            .retain(|window| self.state.windows.window(*window).is_some());
-        let first_laid_out: Vec<crate::pictures::domain::target::PictureTarget> = layout
-            .iter()
-            .filter(|(window, _)| !self.pictured_windows.contains(window))
-            .filter_map(|&(window, frame)| {
-                Some(crate::pictures::domain::target::PictureTarget {
-                    window,
-                    server_id: self.state.windows.window(window)?.info.sys_id?,
-                    size: ScreenSize::from_cg(frame.size),
-                })
-            })
-            .collect();
-        if !first_laid_out.is_empty()
-            && let Some(pictures) = &self.communication_manager.pictures
-        {
-            self.pictured_windows.extend(first_laid_out.iter().map(|target| target.window));
-            pictures.ask(crate::pictures::domain::schedule::Ask {
-                priority: crate::pictures::domain::schedule::Priority::Warm,
-                targets: first_laid_out,
-            });
-        }
+        self.ask_pictures_of_first_laid_out(layout);
         let plan = pass::plan(self.pass_windows(space, layout, skip_wid, true));
         // A strip scroll moves every window by the SAME vector: a viewport pan over the one
         // workspace, the horizontal twin of the vertical workspace switch. The strip's own scroll
@@ -122,25 +101,7 @@ impl Reactor {
         let strip_before = strip_before.unwrap_or_default();
         let moved = self.take_move_in(layout);
 
-        // Visible moves wait for the flight decision; hidden ones go straight to the app.
-        let mut placements = Vec::new();
-        for m in &plan.moves {
-            let txid = self.commit_move(m);
-            let Some(handle) = self.apps.get(&m.window.pid).map(|a| a.handle.clone()) else {
-                continue;
-            };
-            if m.in_active_workspace {
-                trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Animating visible window");
-                placements.push((handle, m.window, m.to.to_cg(), txid));
-            } else {
-                trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Direct positioning hidden window");
-                let request = Request::SetWindowFrame(m.window, m.to.to_cg(), txid, true);
-                if let Err(e) = handle.send(request) {
-                    debug!(window = ?m.window, ?e, "Failed to send frame request for hidden window");
-                }
-            }
-        }
-
+        let placements = self.commit_pass_moves(&plan.moves);
         if placements.is_empty() {
             return plan.any_frame_changed;
         }
@@ -152,15 +113,11 @@ impl Reactor {
             any_frame_changed,
             ..
         } = plan;
-        let screen_space = |layout: &[(WindowId, CGRect)]| -> Vec<(WindowId, ScreenRect)> {
-            layout
-                .iter()
-                .map(|&(window, frame)| (window, ScreenRect::from_cg(frame)))
-                .collect()
-        };
-        let (was, is) = (screen_space(&strip_before), screen_space(&strip_now));
-        pass::place_on_strip(&mut overlay_requests, &was, &is);
-        pass::place_on_strip(&mut unmoved, &was, &is);
+        place_on_strip(
+            &mut [&mut overlay_requests, &mut unmoved],
+            &strip_before,
+            &strip_now,
+        );
         let low_power = (self.reads.low_power)();
         let layout_animate = self.config.settings.animate;
         // `is_resize` means a window REPORTED a size change, which happens both when the user is
@@ -196,17 +153,8 @@ impl Reactor {
             && !overlay_requests.is_empty()
             && self.communication_manager.transitions_tx.is_some();
 
-        // A pass that resizes a window is neither a pan nor a move: the strip surface draws final
-        // sizes, which would snap the resize. A move along the strip is a strip movement whether or
-        // not the strip scrolled, with the two columns that changed places crossing it.
         let moved = moved.filter(|_| !any_resize);
-        let pan_delta = if any_resize {
-            None
-        } else if moved.is_some() {
-            Some(strip_movement.unwrap_or(CGPoint::new(0.0, 0.0)))
-        } else {
-            strip_movement.filter(|movement| movement.x.abs() >= 1.0)
-        };
+        let pan_delta = pan_delta(any_resize, moved.is_some(), strip_movement);
         let moves: Vec<(WindowId, CGRect)> =
             placements.iter().map(|&(_, window, frame, _)| (window, frame)).collect();
         if use_overlay
@@ -223,33 +171,11 @@ impl Reactor {
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {
-            let duration = std::time::Duration::from_secs_f64(
-                self.config.settings.animation_duration.max(0.0),
-            );
-            let count = overlay_requests.len();
-            let flight = crate::transitions::platform::engine::Event::Animate {
-                windows: overlay_requests,
-                focus: self.layout_engine.focused_window(),
-                focused_before: self.focused_as_event_began,
-                key: self.main_window_tracker.key_window(),
-                duration,
-                look: crate::animation::domain::choreography::Look::default(),
-                cause: self.cause,
-            };
-            if self.send_flight(space, flight) {
-                trace!(count, "handed the layout to the overlay animation engine");
-            }
+            self.fly_on_overlay(space, overlay_requests);
         }
 
         // Warm whether or not this pass animated.
-        if !warm.is_empty()
-            && let Some(pictures) = &self.communication_manager.pictures
-        {
-            pictures.ask(crate::pictures::domain::schedule::Ask {
-                priority: crate::pictures::domain::schedule::Priority::Warm,
-                targets: warm,
-            });
-        }
+        self.ask_warm(warm);
 
         if !use_overlay {
             // Nothing flies: the windows go straight to their frames. When the overlay flies, the
@@ -261,6 +187,88 @@ impl Reactor {
         }
 
         any_frame_changed
+    }
+
+    /// Pictures asked for, once, of each window a pass lays out for the first time.
+    ///
+    /// A pass only asks for pictures of the windows it moves, and after a restart nothing moves:
+    /// every window is where the saved layout left it. So each window is asked for once, the first
+    /// time a pass lays it out, whichever workspace it is on. Per window rather than per space:
+    /// at startup apps are found one by one, and the first pass knew one window of 21.
+    fn ask_pictures_of_first_laid_out(&mut self, layout: &[(WindowId, CGRect)]) {
+        self.pictured_windows
+            .retain(|window| self.state.windows.window(*window).is_some());
+        let first_laid_out: Vec<PictureTarget> = layout
+            .iter()
+            .filter(|(window, _)| !self.pictured_windows.contains(window))
+            .filter_map(|&(window, frame)| {
+                Some(PictureTarget {
+                    window,
+                    server_id: self.state.windows.window(window)?.info.sys_id?,
+                    size: ScreenSize::from_cg(frame.size),
+                })
+            })
+            .collect();
+        if !first_laid_out.is_empty() && self.communication_manager.pictures.is_some() {
+            self.pictured_windows.extend(first_laid_out.iter().map(|target| target.window));
+            self.ask_warm(first_laid_out);
+        }
+    }
+
+    fn ask_warm(&self, targets: Vec<PictureTarget>) {
+        if !targets.is_empty()
+            && let Some(pictures) = &self.communication_manager.pictures
+        {
+            pictures.ask(Ask {
+                priority: Priority::Warm,
+                targets,
+            });
+        }
+    }
+
+    /// Each of a pass's moves committed; the visible ones returned to wait for the flight
+    /// decision, the hidden ones sent straight to their app.
+    fn commit_pass_moves(
+        &mut self,
+        moves: &[Move],
+    ) -> Vec<(AppThreadHandle, WindowId, CGRect, TransactionId)> {
+        let mut placements = Vec::new();
+        for m in moves {
+            let txid = self.commit_move(m);
+            let Some(handle) = self.apps.get(&m.window.pid).map(|a| a.handle.clone()) else {
+                continue;
+            };
+            if m.in_active_workspace {
+                trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Animating visible window");
+                placements.push((handle, m.window, m.to.to_cg(), txid));
+            } else {
+                trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Direct positioning hidden window");
+                let request = Request::SetWindowFrame(m.window, m.to.to_cg(), txid, true);
+                if let Err(e) = handle.send(request) {
+                    debug!(window = ?m.window, ?e, "Failed to send frame request for hidden window");
+                }
+            }
+        }
+        placements
+    }
+
+    /// The pass handed to the transitions engine as a flight over the overlay.
+    fn fly_on_overlay(&mut self, space: SpaceId, overlay_requests: Vec<AnimationRequest>) {
+        let duration =
+            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
+        let count = overlay_requests.len();
+        let flight = crate::transitions::platform::engine::Event::Animate {
+            windows: overlay_requests,
+            focus: self.layout_engine.focused_window(),
+            focused_before: self.focused_as_event_began,
+            key: self.main_window_tracker.key_window(),
+            duration,
+            look: crate::animation::domain::choreography::Look::default(),
+            cause: self.cause,
+        };
+        if self.send_flight(space, flight) {
+            trace!(count, "handed the layout to the overlay animation engine");
+        }
     }
 
     pub(super) fn instant_layout(
@@ -347,5 +355,65 @@ impl Reactor {
         }
 
         any_frame_changed
+    }
+}
+
+/// Each request placed on the strip as it was and as it is, by `pass::place_on_strip`.
+fn place_on_strip(
+    requests: &mut [&mut Vec<AnimationRequest>],
+    before: &[(WindowId, CGRect)],
+    now: &[(WindowId, CGRect)],
+) {
+    let screen_space = |layout: &[(WindowId, CGRect)]| -> Vec<(WindowId, ScreenRect)> {
+        layout
+            .iter()
+            .map(|&(window, frame)| (window, ScreenRect::from_cg(frame)))
+            .collect()
+    };
+    let (was, is) = (screen_space(before), screen_space(now));
+    for requests in requests {
+        pass::place_on_strip(requests, &was, &is);
+    }
+}
+
+/// How far a pass pans the strip surface, or `None` when it does not pan. A pass that resizes a
+/// window is neither a pan nor a move: the strip surface draws final sizes, which would snap the
+/// resize. A move along the strip is a strip movement whether or not the strip scrolled, with the
+/// two columns that changed places crossing it; a scroll under a point is no pan.
+fn pan_delta(any_resize: bool, moved: bool, strip_movement: Option<CGPoint>) -> Option<CGPoint> {
+    if any_resize {
+        None
+    } else if moved {
+        Some(strip_movement.unwrap_or(CGPoint::new(0.0, 0.0)))
+    } else {
+        strip_movement.filter(|movement| movement.x.abs() >= 1.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pass_pans_by_the_strip_movement_unless_it_resizes() {
+        let scroll = Some(CGPoint::new(-300.0, 0.0));
+        assert_eq!(pan_delta(false, false, scroll), scroll);
+        assert_eq!(pan_delta(true, false, scroll), None, "a resize is never a pan");
+        assert_eq!(pan_delta(true, true, scroll), None);
+        assert_eq!(
+            pan_delta(false, false, Some(CGPoint::new(0.5, 0.0))),
+            None,
+            "under a point of scroll is no pan"
+        );
+        assert_eq!(pan_delta(false, false, None), None);
+    }
+
+    #[test]
+    fn a_move_along_the_strip_pans_even_when_the_strip_did_not_scroll() {
+        assert_eq!(pan_delta(false, true, None), Some(CGPoint::new(0.0, 0.0)));
+        assert_eq!(
+            pan_delta(false, true, Some(CGPoint::new(0.5, 0.0))),
+            Some(CGPoint::new(0.5, 0.0))
+        );
     }
 }

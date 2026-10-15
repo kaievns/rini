@@ -1050,7 +1050,8 @@ measured yet.*
    was inline and untested; it has five tests now.
 
    What is left in `animate_layout` is the flight decision (skip reasons, pan
-   detection) and dispatch. It is a `&mut self` method on `Reactor`, and legitimately: it reads
+   detection, `pan_delta`) and dispatch (`commit_pass_moves`, `fly_on_overlay`). It is a
+   `&mut self` method on `Reactor`, and legitimately: it reads
    the config, the layout engine and the drag state, and sends to the flight engine.
    Those are the reactor's, not a narrower capability's.
 2. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,
