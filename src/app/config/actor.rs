@@ -53,11 +53,11 @@ impl ConfigActor {
         while let Some((_span, event)) = events.recv().await {
             match event {
                 Event::QueryConfig(resp) => {
-                    let _ = resp.send(self.config.clone());
+                    resp.send(self.config.clone());
                 }
                 Event::ApplyConfig { cmd, response } => {
                     let res = self.handle_config_command(cmd);
-                    let _ = response.send(res);
+                    response.send(res);
                 }
             }
         }

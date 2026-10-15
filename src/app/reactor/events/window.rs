@@ -93,14 +93,14 @@ pub fn handle_window_destroyed(
     }
     state.windows.remove_window(wid);
 
-    if let DragState::PendingSwap { session, target } = &drag.drag_state {
-        if session.window == wid || *target == wid {
-            trace!(
-                ?wid,
-                "Clearing pending drag swap because a participant window was destroyed"
-            );
-            drag.drag_state = DragState::Inactive;
-        }
+    if let DragState::PendingSwap { session, target } = &drag.drag_state
+        && (session.window == wid || *target == wid)
+    {
+        trace!(
+            ?wid,
+            "Clearing pending drag swap because a participant window was destroyed"
+        );
+        drag.drag_state = DragState::Inactive;
     }
 
     let dragged_window = drag.dragged();

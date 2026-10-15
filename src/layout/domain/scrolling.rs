@@ -685,10 +685,11 @@ impl LayoutState {
                     self.selected = Some(new_sel);
                 }
             }
-            if self.selected.is_none() && col_idx > 0 {
-                if let Some(new_sel) = self.columns[col_idx - 1].windows.last().copied() {
-                    self.selected = Some(new_sel);
-                }
+            if self.selected.is_none()
+                && col_idx > 0
+                && let Some(new_sel) = self.columns[col_idx - 1].windows.last().copied()
+            {
+                self.selected = Some(new_sel);
             }
             if self.selected.is_none() {
                 self.selected = self.first_window();
@@ -848,10 +849,10 @@ fn rebased_offset(
     previous_rel: f64,
     selected_start: f64,
 ) -> Option<f64> {
-    (gap != previous_gap && previous_rel.is_finite()).then(|| selected_start - previous_rel)
+    (gap != previous_gap && previous_rel.is_finite()).then_some(selected_start - previous_rel)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ScrollingLayoutSystem {
     layouts: slotmap::SlotMap<LayoutId, LayoutState>,
     #[serde(skip, default = "default_scrolling_settings")]
@@ -859,15 +860,6 @@ pub struct ScrollingLayoutSystem {
 }
 
 fn default_scrolling_settings() -> ScrollingLayoutSettings { ScrollingLayoutSettings::default() }
-
-impl Default for ScrollingLayoutSystem {
-    fn default() -> Self {
-        Self {
-            layouts: Default::default(),
-            settings: ScrollingLayoutSettings::default(),
-        }
-    }
-}
 
 impl ScrollingLayoutSystem {
     pub fn new(settings: &ScrollingLayoutSettings) -> Self {
@@ -1350,36 +1342,30 @@ impl ScrollingLayoutSystem {
             state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
         }
         let reveal_direction = state.pending_reveal_direction.swap(0, Ordering::Relaxed);
-        if reveal_direction != 0 {
-            if let Some((selected_col_idx, _)) = state.selected_location() {
-                let selected_width = column_widths
-                    .get(selected_col_idx)
-                    .copied()
-                    .unwrap_or((tiling.size.width * base_ratio).max(1.0));
-                let mut offset = f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed));
-                let selected_start = column_starts.get(selected_col_idx).copied().unwrap_or(0.0);
+        if reveal_direction != 0
+            && let Some((selected_col_idx, _)) = state.selected_location()
+        {
+            let selected_width = column_widths
+                .get(selected_col_idx)
+                .copied()
+                .unwrap_or((tiling.size.width * base_ratio).max(1.0));
+            let mut offset = f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed));
+            let selected_start = column_starts.get(selected_col_idx).copied().unwrap_or(0.0);
 
-                let reveal = match reveal_direction {
-                    _ if keeps_right_edge => Some(Reveal::KeepingRightEdge),
-                    -1 => Some(Reveal::FromRight),
-                    1 => Some(Reveal::FromLeft),
-                    2 => Some(Reveal::Either),
-                    _ => None,
-                };
-                if let Some(reveal) = reveal
-                    && let Some(corrected) = reveal_offset(
-                        reveal,
-                        tiling,
-                        anchor_x,
-                        selected_start,
-                        selected_width,
-                        offset,
-                    )
-                {
-                    offset = corrected;
-                }
-                state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
+            let reveal = match reveal_direction {
+                _ if keeps_right_edge => Some(Reveal::KeepingRightEdge),
+                -1 => Some(Reveal::FromRight),
+                1 => Some(Reveal::FromLeft),
+                2 => Some(Reveal::Either),
+                _ => None,
+            };
+            if let Some(reveal) = reveal
+                && let Some(corrected) =
+                    reveal_offset(reveal, tiling, anchor_x, selected_start, selected_width, offset)
+            {
+                offset = corrected;
             }
+            state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
         }
         let current = f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed));
         let base_max_offset = strip_max_offset;

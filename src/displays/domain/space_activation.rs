@@ -90,10 +90,9 @@ impl SpaceActivationPolicy {
             };
             if let Some(previous_display) =
                 self.last_known_display_by_screen.get(&screen.id).cloned()
+                && previous_display != new_display
             {
-                if previous_display != new_display {
-                    self.transfer_display_activation(cfg, &previous_display, new_display);
-                }
+                self.transfer_display_activation(cfg, &previous_display, new_display);
             }
             self.last_known_display_by_screen.insert(screen.id, new_display.to_string());
         }

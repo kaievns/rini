@@ -669,22 +669,21 @@ impl InputTap {
             }
         }
 
-        if event_type == CGEventType::KeyDown {
-            if let Some(key_code) = key_code_opt {
-                let hotkey = Hotkey::new(
-                    modifiers_from_flags_with_keys(state.current_flags, state.held.pressed()),
-                    key_code,
-                );
-                let is_repeat = CGEvent::integer_value_field(
-                    Some(event),
-                    CGEventField::KeyboardEventAutorepeat,
-                ) != 0;
-                if let Some(fired) = self.hotkeys.load().press(&hotkey, is_repeat) {
-                    if let Some(action) = fired {
-                        self.events.send(Event::Action(action));
-                    }
-                    return false;
+        if event_type == CGEventType::KeyDown
+            && let Some(key_code) = key_code_opt
+        {
+            let hotkey = Hotkey::new(
+                modifiers_from_flags_with_keys(state.current_flags, state.held.pressed()),
+                key_code,
+            );
+            let is_repeat =
+                CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat)
+                    != 0;
+            if let Some(fired) = self.hotkeys.load().press(&hotkey, is_repeat) {
+                if let Some(action) = fired {
+                    self.events.send(Event::Action(action));
                 }
+                return false;
             }
         }
 

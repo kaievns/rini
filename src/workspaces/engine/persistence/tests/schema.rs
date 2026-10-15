@@ -291,7 +291,7 @@ fn a_file_without_launch_memory_still_loads() {
     );
     let path =
         std::env::temp_dir().join(format!("rini-launch-memory-missing-{}.ron", std::process::id()));
-    engine.save(&mut memory, path.clone()).unwrap();
+    engine.save(&memory, path.clone()).unwrap();
 
     // Strip the record back out.
     let written = std::fs::read_to_string(&path).unwrap();

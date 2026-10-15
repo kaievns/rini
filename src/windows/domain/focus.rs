@@ -281,15 +281,16 @@ impl MainWindowTracker {
         if self.window_server_focus_authoritative {
             return None;
         }
-        if Some(event_pid) == self.global_frontmost && quiet_edge == Quiet::No {
-            if let Some(wid) = self.main_window() {
-                // The other focus edge. The window-server arm above returns early, so this is the only
-                // other point at which this type decides a window has the focus — an AX activation
-                // before the window server has spoken, which is the cold-start case. Touching only the
-                // window-server arm would leave the order empty until the first native focus report.
-                self.focus_order.touch(wid);
-                return Some(wid);
-            }
+        if Some(event_pid) == self.global_frontmost
+            && quiet_edge == Quiet::No
+            && let Some(wid) = self.main_window()
+        {
+            // The other focus edge. The window-server arm above returns early, so this is the only
+            // other point at which this type decides a window has the focus — an AX activation
+            // before the window server has spoken, which is the cold-start case. Touching only the
+            // window-server arm would leave the order empty until the first native focus report.
+            self.focus_order.touch(wid);
+            return Some(wid);
         }
         None
     }

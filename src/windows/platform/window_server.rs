@@ -171,7 +171,7 @@ impl WindowIterator {
     pub fn count(&self) -> i32 { unsafe { SLSWindowIteratorGetCount(self.iter) } }
 
     #[inline]
-    pub fn advance<'a>(&'a self) -> Option<&'a Self> {
+    pub fn advance(&self) -> Option<&Self> {
         if unsafe { SLSWindowIteratorAdvance(self.iter) } {
             return Some(self);
         }
@@ -420,7 +420,8 @@ pub fn window_spaces(id: WindowServerId) -> Vec<SpaceId> {
         .iter()
         .filter_map(|num| num.as_i64())
         .filter_map(|value| u64::try_from(value).ok())
-        .filter_map(|value| (value != 0).then(|| SpaceId::new(value)))
+        .filter(|&value| value != 0)
+        .map(SpaceId::new)
         .collect()
 }
 
@@ -756,7 +757,7 @@ fn window_info_from_query(query: &WindowIterator) -> Option<WindowServerInfo> {
     let (min_frame, max_frame) = query.constraints();
     Some(WindowServerInfo {
         id: WindowServerId::new(query.window_id()),
-        pid: query.pid() as i32,
+        pid: query.pid(),
         layer,
         frame: query.bounds(),
         min_frame,
@@ -1112,19 +1113,19 @@ pub fn compute_window_manageability(
     }
 
     if let Some(wsid) = window_server_id {
-        if let Some(info) = window_server_info(wsid) {
-            if info.layer != 0 {
-                return false;
-            }
+        if let Some(info) = window_server_info(wsid)
+            && info.layer != 0
+        {
+            return false;
         }
         if window_is_sticky(wsid) {
             return false;
         }
 
-        if let Some(level) = window_level(wsid.0) {
-            if level != NSNormalWindowLevel {
-                return false;
-            }
+        if let Some(level) = window_level(wsid.0)
+            && level != NSNormalWindowLevel
+        {
+            return false;
         }
     }
     is_ax_standard && is_ax_root

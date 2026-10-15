@@ -39,12 +39,11 @@ impl FromStr for KeyCode {
         let t = normalize_token(s);
 
         // function keys
-        if let Some(rest) = t.strip_prefix('f') {
-            if let Ok(n) = rest.parse::<u8>() {
-                if (1..=20).contains(&n) {
-                    return Ok(F_KEYS[(n - 1) as usize]);
-                }
-            }
+        if let Some(rest) = t.strip_prefix('f')
+            && let Ok(n) = rest.parse::<u8>()
+            && (1..=20).contains(&n)
+        {
+            return Ok(F_KEYS[(n - 1) as usize]);
         }
 
         let key = match t.as_str() {

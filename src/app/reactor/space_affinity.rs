@@ -144,7 +144,7 @@ impl SpaceAffinity<'_> {
     pub(crate) fn assigned_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
         self.engine
             .virtual_workspace_manager()
-            .workspace_info_for_window_any(&self.windows, wid)
+            .workspace_info_for_window_any(self.windows, wid)
             .map(|info| info.space)
     }
 
@@ -279,7 +279,7 @@ impl SpaceAffinity<'_> {
         };
         self.engine
             .virtual_workspace_manager()
-            .workspace_for_window(&self.windows, space, window_id)
+            .workspace_for_window(self.windows, space, window_id)
             .is_some_and(|window_workspace| window_workspace != active_workspace)
     }
 }

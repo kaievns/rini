@@ -387,8 +387,8 @@ impl WindowInfo {
             (None, None)
         };
 
-        let min_size = server_info.map(|info| info.min_frame).or_else(|| None);
-        let max_size = server_info.map(|info| info.max_frame).or_else(|| None);
+        let min_size = server_info.map(|info| info.min_frame).or(None);
+        let max_size = server_info.map(|info| info.max_frame).or(None);
         let info = WindowInfo {
             is_standard,
             is_root: true,

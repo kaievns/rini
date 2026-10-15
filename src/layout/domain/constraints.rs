@@ -205,10 +205,10 @@ pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
             if *v < mins[idx] {
                 *v = mins[idx];
             }
-            if let Some(max) = maxs[idx] {
-                if *v > max {
-                    *v = max;
-                }
+            if let Some(max) = maxs[idx]
+                && *v > max
+            {
+                *v = max;
             }
         }
     }
@@ -303,10 +303,10 @@ pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
     if remaining <= f64::EPSILON {
         let used: f64 = lengths.iter().sum();
         let drift = usable - used;
-        if drift.abs() > f64::EPSILON {
-            if let Some(idx) = (0..n).rfind(|&idx| lengths[idx] > 0.0) {
-                lengths[idx] = (lengths[idx] + drift).max(0.0);
-            }
+        if drift.abs() > f64::EPSILON
+            && let Some(idx) = (0..n).rfind(|&idx| lengths[idx] > 0.0)
+        {
+            lengths[idx] = (lengths[idx] + drift).max(0.0);
         }
     }
 

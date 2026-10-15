@@ -696,8 +696,8 @@ mod tests {
         mods.insert(Modifiers::CONTROL);
         let variants = mods.expand_to_specific();
         assert_eq!(variants.len(), 3);
-        assert!(variants.iter().any(|v| *v == Modifiers::CONTROL_LEFT));
-        assert!(variants.iter().any(|v| *v == Modifiers::CONTROL_RIGHT));
+        assert!(variants.contains(&Modifiers::CONTROL_LEFT));
+        assert!(variants.contains(&Modifiers::CONTROL_RIGHT));
         assert!(variants.iter().any(|v| v.contains(Modifiers::CONTROL)));
     }
 

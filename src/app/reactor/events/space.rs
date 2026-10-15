@@ -164,63 +164,63 @@ pub fn handle_window_server_appeared(
         is_parked_by_rini,
     } = observations;
     let mut outcome = EventOutcome::default();
-    if matches!(kind, SpaceEventKind::User) {
-        if let Some(resolved_space) = resolved_space {
-            // Never infer a display change for a window rini parked itself.
-            //
-            // Windows whose workspace is not the one their display is showing are moved
-            // off-screen, and macOS will not keep a window entirely outside every display —
-            // so those coordinates land inside the NEIGHBOURING display. WindowServer then
-            // reports the window as belonging to that display, rini believed it, and the
-            // window changed display. The next workspace switch parked it off the new
-            // display, and so on: a feedback loop that walked every window onto one display.
-            //
-            // Measured from the logs, the loop is exactly:
-            //   cmd=SwitchToWorkspace(1)
-            //   -> WindowServerAppeared(wsid, SpaceId(980), User)
-            //   -> reassigned to 980
-            //
-            // The old per-display workspace model contained this by accident: a window
-            // reassigned across displays landed in a DIFFERENT workspace object, which broke
-            // the cycle. Sharing workspaces between displays removed that accident, so the
-            // guard has to be explicit. This mirrors `keep_assigned_for_scrolling` on the
-            // WindowFrameChanged path, which exists for the same reason.
-            if is_parked_by_rini && Some(resolved_space) != assigned_space {
-                debug!(
-                    ?wsid,
-                    reported_space = ?sid,
-                    ?resolved_space,
-                    ?assigned_space,
-                    "Ignoring appearance for a window rini parked off-screen; its position is \
-                     not evidence of a display change"
-                );
-                return Ok(outcome);
-            }
-            if resolved_space != sid {
-                state.windows.set_window_server_space(wsid, Some(resolved_space));
-                if active_spaces.contains(&resolved_space) {
-                    state.windows.mark_window_visible(wsid);
-                } else {
-                    state.windows.mark_window_hidden(wsid);
-                }
-                if let Some(wid) = state.windows.tracked_window_id(wsid) {
-                    outcome = outcome
-                        .with_topology_reassignment(wid, resolved_space)
-                        .with_arrange_passes((!mission_control_active) as u8);
-                }
-                debug!(
-                    ?wsid,
-                    reported_space = ?sid,
-                    resolved_space = ?resolved_space,
-                    "Resolved user-space appearance to stronger native membership"
-                );
-                return Ok(outcome);
-            }
-
-            state.windows.set_window_server_space(wsid, Some(resolved_space));
-            state.windows.mark_window_visible(wsid);
-            outcome = outcome.with_confirmed_window_space(wsid, resolved_space);
+    if matches!(kind, SpaceEventKind::User)
+        && let Some(resolved_space) = resolved_space
+    {
+        // Never infer a display change for a window rini parked itself.
+        //
+        // Windows whose workspace is not the one their display is showing are moved
+        // off-screen, and macOS will not keep a window entirely outside every display —
+        // so those coordinates land inside the NEIGHBOURING display. WindowServer then
+        // reports the window as belonging to that display, rini believed it, and the
+        // window changed display. The next workspace switch parked it off the new
+        // display, and so on: a feedback loop that walked every window onto one display.
+        //
+        // Measured from the logs, the loop is exactly:
+        //   cmd=SwitchToWorkspace(1)
+        //   -> WindowServerAppeared(wsid, SpaceId(980), User)
+        //   -> reassigned to 980
+        //
+        // The old per-display workspace model contained this by accident: a window
+        // reassigned across displays landed in a DIFFERENT workspace object, which broke
+        // the cycle. Sharing workspaces between displays removed that accident, so the
+        // guard has to be explicit. This mirrors `keep_assigned_for_scrolling` on the
+        // WindowFrameChanged path, which exists for the same reason.
+        if is_parked_by_rini && Some(resolved_space) != assigned_space {
+            debug!(
+                ?wsid,
+                reported_space = ?sid,
+                ?resolved_space,
+                ?assigned_space,
+                "Ignoring appearance for a window rini parked off-screen; its position is \
+                 not evidence of a display change"
+            );
+            return Ok(outcome);
         }
+        if resolved_space != sid {
+            state.windows.set_window_server_space(wsid, Some(resolved_space));
+            if active_spaces.contains(&resolved_space) {
+                state.windows.mark_window_visible(wsid);
+            } else {
+                state.windows.mark_window_hidden(wsid);
+            }
+            if let Some(wid) = state.windows.tracked_window_id(wsid) {
+                outcome = outcome
+                    .with_topology_reassignment(wid, resolved_space)
+                    .with_arrange_passes((!mission_control_active) as u8);
+            }
+            debug!(
+                ?wsid,
+                reported_space = ?sid,
+                resolved_space = ?resolved_space,
+                "Resolved user-space appearance to stronger native membership"
+            );
+            return Ok(outcome);
+        }
+
+        state.windows.set_window_server_space(wsid, Some(resolved_space));
+        state.windows.mark_window_visible(wsid);
+        outcome = outcome.with_confirmed_window_space(wsid, resolved_space);
     }
 
     if state.windows.knows_window_server_id(wsid) || state.windows.is_window_server_observed(wsid) {

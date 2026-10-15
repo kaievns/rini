@@ -484,7 +484,7 @@ pub fn merge_plans(
     let floating_before = next.position(GroupKey::Floating);
     if incoming.floating_travel != OverlayVector::zero() {
         let p = floating_before + incoming.floating_travel;
-        next.floating_travel = next.floating_travel + incoming.floating_travel;
+        next.floating_travel += incoming.floating_travel;
         next.positions.insert(GroupKey::Floating, p);
         delta.retargeted_groups.push((GroupKey::Floating, p));
     }
@@ -1739,11 +1739,8 @@ mod tests {
                             let mut p = ReflowPlan::empty();
                             for w in &windows {
                                 let Some(from) = dest(&plan, *w) else { continue };
-                                match plan.member(*w) {
-                                    Some(Member::Rigid { .. }) => {
-                                        p.place(*w, installed(from), d);
-                                    }
-                                    _ => {}
+                                if let Some(Member::Rigid { .. }) = plan.member(*w) {
+                                    p.place(*w, installed(from), d);
                                 }
                             }
                             p

@@ -94,10 +94,10 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         }
     }
 
-    if let Some(gestures) = part.gestures {
-        if let Some(overlap) = gestures.drag_swap_overlap {
-            settings.window_snapping.drag_swap_fraction = overlap.get();
-        }
+    if let Some(gestures) = part.gestures
+        && let Some(overlap) = gestures.drag_swap_overlap
+    {
+        settings.window_snapping.drag_swap_fraction = overlap.get();
     }
 
     let mut switcher_binds = None;

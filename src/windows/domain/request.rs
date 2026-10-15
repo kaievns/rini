@@ -24,7 +24,10 @@ impl AppThreadHandle {
         AppThreadHandle { requests_tx }
     }
 
-    pub fn send(&self, req: Request) -> anyhow::Result<()> { Ok(self.requests_tx.send(req)) }
+    pub fn send(&self, req: Request) -> anyhow::Result<()> {
+        self.requests_tx.send(req);
+        Ok(())
+    }
 }
 
 impl Debug for AppThreadHandle {

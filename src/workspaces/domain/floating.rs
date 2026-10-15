@@ -66,12 +66,12 @@ impl FloatingManager {
     }
 
     pub fn remove_active(&mut self, space: SpaceId, pid: pid_t, wid: WindowId) {
-        if let Some(space_map) = self.active_floating_windows.get_mut(&space) {
-            if let Some(app_set) = space_map.get_mut(&pid) {
-                app_set.remove(&wid);
-                if app_set.is_empty() {
-                    space_map.remove(&pid);
-                }
+        if let Some(space_map) = self.active_floating_windows.get_mut(&space)
+            && let Some(app_set) = space_map.get_mut(&pid)
+        {
+            app_set.remove(&wid);
+            if app_set.is_empty() {
+                space_map.remove(&pid);
             }
         }
     }
@@ -149,10 +149,10 @@ impl FloatingManager {
             space_map.remove(&pid);
         }
 
-        if let Some(focus) = self.last_floating_focus {
-            if focus.pid == pid {
-                self.last_floating_focus = None;
-            }
+        if let Some(focus) = self.last_floating_focus
+            && focus.pid == pid
+        {
+            self.last_floating_focus = None;
         }
     }
 

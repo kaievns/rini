@@ -130,7 +130,7 @@ impl ForwardedSpaceState {
                 }
             };
 
-            let should_replace = best.as_ref().map_or(true, |(best_primary, best_orth, _)| {
+            let should_replace = best.as_ref().is_none_or(|(best_primary, best_orth, _)| {
                 primary_dist < *best_primary
                     || (primary_dist == *best_primary && orth_gap < *best_orth)
             });
@@ -625,10 +625,7 @@ mod tests {
     fn a_display_reported_twice_is_one_display() {
         let delta = display_set_delta(&uuids(&["A", "A"]), &uuids(&["A"]), false);
         assert!(delta.departed.is_empty());
-        assert_eq!(
-            delta.unchanged, true,
-            "one distinct display before, one screen now"
-        );
+        assert!(delta.unchanged, "one distinct display before, one screen now");
     }
 
     #[test]

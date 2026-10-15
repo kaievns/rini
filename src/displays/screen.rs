@@ -425,11 +425,11 @@ impl System for Actual {
         }
 
         for screen in screens {
-            if let Ok(screen_id) = screen.get_number() {
-                if screen_id.as_u32() == did {
-                    let insets = screen.safeAreaInsets();
-                    return insets.top;
-                }
+            if let Ok(screen_id) = screen.get_number()
+                && screen_id.as_u32() == did
+            {
+                let insets = screen.safeAreaInsets();
+                return insets.top;
             }
         }
         0.0
@@ -539,22 +539,22 @@ pub fn managed_display_space_ids() -> HashMap<String, Vec<SpaceId>> {
             }
 
             let mut space_ids = Vec::new();
-            if let Some(spaces_value) = display_entry.get(&spaces_key) {
-                if let Ok(spaces) = spaces_value.downcast::<CFArray>() {
-                    let spaces = CFRetained::cast_unchecked::<CFArray<CFType>>(spaces);
-                    for space_entry in spaces.iter() {
-                        if let Ok(space_dict) = space_entry.downcast::<CFDictionary>() {
-                            let space_dict = CFRetained::cast_unchecked::<
-                                CFDictionary<CFString, CFType>,
-                            >(space_dict);
-                            let space_id = space_dict
-                                .get(&managed_space_id_key)
-                                .and_then(|v| v.downcast::<CFNumber>().ok())
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0);
-                            if space_id != 0 {
-                                space_ids.push(SpaceId::new(space_id as u64));
-                            }
+            if let Some(spaces_value) = display_entry.get(&spaces_key)
+                && let Ok(spaces) = spaces_value.downcast::<CFArray>()
+            {
+                let spaces = CFRetained::cast_unchecked::<CFArray<CFType>>(spaces);
+                for space_entry in spaces.iter() {
+                    if let Ok(space_dict) = space_entry.downcast::<CFDictionary>() {
+                        let space_dict = CFRetained::cast_unchecked::<CFDictionary<CFString, CFType>>(
+                            space_dict,
+                        );
+                        let space_id = space_dict
+                            .get(&managed_space_id_key)
+                            .and_then(|v| v.downcast::<CFNumber>().ok())
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        if space_id != 0 {
+                            space_ids.push(SpaceId::new(space_id as u64));
                         }
                     }
                 }
@@ -566,6 +566,44 @@ pub fn managed_display_space_ids() -> HashMap<String, Vec<SpaceId>> {
 
     out
 }
+
+/// Make a display's desktop window key, so the display holds focus with no app window on it.
+#[cfg(not(test))]
+pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
+    use std::ptr::NonNull;
+
+    use objc2_core_foundation::{CFArray, CFRetained};
+    use rini_core::ids::WindowServerId;
+    use rini_geometry::CGRectExt;
+    use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
+
+    use crate::windows::platform::window_server::{get_window, make_key_window};
+    let Some(display_uuid) = screen.display_uuid_opt() else {
+        return false;
+    };
+    let uuid = objc2_core_foundation::CFString::from_str(display_uuid);
+    let displays = CFArray::from_objects(&[&*uuid]);
+    let Some(windows) = NonNull::new(unsafe {
+        SLSManagedDisplaysCopyRoleWindows(*G_CONNECTION, CFRetained::as_ptr(&displays).as_ptr(), 1)
+    }) else {
+        return false;
+    };
+    let windows = unsafe { CFRetained::from_raw(windows) };
+    windows.iter().any(|number| {
+        let Some(id) = number.as_i64().and_then(|id| u32::try_from(id).ok()) else {
+            return false;
+        };
+        let wsid = WindowServerId::new(id);
+        let Some(info) = get_window(wsid) else {
+            return false;
+        };
+        info.layer < 0
+            && screen.frame.contains(info.frame.mid())
+            && make_key_window(info.pid, wsid).is_ok()
+    })
+}
+#[cfg(test)]
+pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool { false }
 
 #[cfg(test)]
 mod test {
@@ -785,41 +823,3 @@ mod test {
         assert_eq!(screens.len(), 1, "the same band again rebuilt nothing");
     }
 }
-
-/// Make a display's desktop window key, so the display holds focus with no app window on it.
-#[cfg(not(test))]
-pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
-    use std::ptr::NonNull;
-
-    use objc2_core_foundation::{CFArray, CFRetained};
-    use rini_core::ids::WindowServerId;
-    use rini_geometry::CGRectExt;
-    use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
-
-    use crate::windows::platform::window_server::{get_window, make_key_window};
-    let Some(display_uuid) = screen.display_uuid_opt() else {
-        return false;
-    };
-    let uuid = objc2_core_foundation::CFString::from_str(display_uuid);
-    let displays = CFArray::from_objects(&[&*uuid]);
-    let Some(windows) = NonNull::new(unsafe {
-        SLSManagedDisplaysCopyRoleWindows(*G_CONNECTION, CFRetained::as_ptr(&displays).as_ptr(), 1)
-    }) else {
-        return false;
-    };
-    let windows = unsafe { CFRetained::from_raw(windows) };
-    windows.iter().any(|number| {
-        let Some(id) = number.as_i64().and_then(|id| u32::try_from(id).ok()) else {
-            return false;
-        };
-        let wsid = WindowServerId::new(id);
-        let Some(info) = get_window(wsid) else {
-            return false;
-        };
-        info.layer < 0
-            && screen.frame.contains(info.frame.mid())
-            && make_key_window(info.pid, wsid).is_ok()
-    })
-}
-#[cfg(test)]
-pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool { false }

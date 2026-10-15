@@ -32,10 +32,7 @@ impl TryFrom<u8> for MouseState {
 }
 pub fn set_mouse_state(state: MouseState) { MOUSE_STATE.store(state.into(), Ordering::Relaxed); }
 pub fn get_mouse_state() -> Option<MouseState> {
-    match MouseState::try_from(MOUSE_STATE.load(Ordering::Relaxed)) {
-        Ok(s) => Some(s),
-        Err(_) => None,
-    }
+    MouseState::try_from(MOUSE_STATE.load(Ordering::Relaxed)).ok()
 }
 /// Ask an application to handle its standard Command-W action.
 ///

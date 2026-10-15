@@ -58,7 +58,7 @@ pub fn handle_service_command(cmd: &ServiceCommands) -> Result<&'static str, Str
 fn plist_path() -> io::Result<PathBuf> {
     let home = env::var_os("HOME")
         .map(PathBuf::from)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "HOME not set"))?;
+        .ok_or_else(|| io::Error::other("HOME not set"))?;
     Ok(home.join("Library").join("LaunchAgents").join(format!("{RINI_PLIST}.plist")))
 }
 
@@ -75,12 +75,8 @@ fn agent_executable(invoked: &Path) -> PathBuf {
 }
 
 fn find_rini_executable() -> io::Result<PathBuf> {
-    let invoked = env::current_exe().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            "unable to retrieve path of current executable",
-        )
-    })?;
+    let invoked = env::current_exe()
+        .map_err(|_| io::Error::other("unable to retrieve path of current executable"))?;
     Ok(agent_executable(&invoked))
 }
 
@@ -136,10 +132,9 @@ fn launch(plan: Launch, plist_path: &Path) -> io::Result<()> {
     if code == 0 {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("{plan:?}: kickstart failed (exit {code})"),
-        ))
+        Err(io::Error::other(format!(
+            "{plan:?}: kickstart failed (exit {code})"
+        )))
     }
 }
 
@@ -188,15 +183,11 @@ fn service_is_loaded() -> bool {
 }
 
 fn plist_contents() -> io::Result<String> {
-    let user =
-        env::var("USER").map_err(|_| io::Error::new(io::ErrorKind::Other, "env USER not set"))?;
-    let path_env =
-        env::var("PATH").map_err(|_| io::Error::new(io::ErrorKind::Other, "env PATH not set"))?;
+    let user = env::var("USER").map_err(|_| io::Error::other("env USER not set"))?;
+    let path_env = env::var("PATH").map_err(|_| io::Error::other("env PATH not set"))?;
 
     let agent_exe = find_rini_executable()?;
-    let exe_str = agent_exe
-        .to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "non-UTF8 executable path"))?;
+    let exe_str = agent_exe.to_str().ok_or_else(|| io::Error::other("non-UTF8 executable path"))?;
 
     Ok(plist_xml(exe_str, &path_env, &user))
 }
@@ -285,10 +276,10 @@ fn run_launchctl(args: &[&str], suppress_output: bool) -> io::Result<i32> {
         Ok(code)
     } else {
         let sig = status.signal().unwrap_or_default();
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("launchctl terminated by signal {}", sig),
-        ))
+        Err(io::Error::other(format!(
+            "launchctl terminated by signal {}",
+            sig
+        )))
     }
 }
 
@@ -354,8 +345,7 @@ pub fn service_uninstall() -> io::Result<()> {
         ));
     }
     if service_is_running()? {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "service is still running; stop it first with `rini service stop` before uninstalling",
         ));
     }
@@ -421,10 +411,7 @@ pub fn service_stop() -> io::Result<()> {
         if code == 0 {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("kill SIGTERM failed (exit {})", code),
-            ))
+            Err(io::Error::other(format!("kill SIGTERM failed (exit {})", code)))
         }
     } else {
         let code1 =
@@ -434,10 +421,10 @@ pub fn service_stop() -> io::Result<()> {
         if code1 == 0 && code2 == 0 {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("bootout exit {}, disable exit {}", code1, code2),
-            ))
+            Err(io::Error::other(format!(
+                "bootout exit {}, disable exit {}",
+                code1, code2
+            )))
         }
     }
 }

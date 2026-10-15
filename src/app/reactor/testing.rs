@@ -393,7 +393,7 @@ pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) 
     assert_eq!(frames.len(), spaces.len());
     frames
         .into_iter()
-        .zip(spaces.into_iter())
+        .zip(spaces)
         .enumerate()
         .map(|(idx, (frame, space))| ScreenInfo {
             is_builtin: false,
@@ -492,7 +492,7 @@ pub fn fullscreen_startup_space_state(
 }
 
 pub fn make_window(idx: usize) -> WindowInfo {
-    let window = make_window_info(
+    make_window_info(
         CGRect::new(
             CGPoint::new(100.0 * f64::from(idx as u32), 100.0),
             CGSize::new(50.0, 50.0),
@@ -500,8 +500,7 @@ pub fn make_window(idx: usize) -> WindowInfo {
         Some(WindowServerId::new(idx as u32)),
         &format!("Window{idx}"),
         None,
-    );
-    window
+    )
 }
 
 pub fn make_window_info(

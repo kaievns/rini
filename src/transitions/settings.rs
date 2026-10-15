@@ -4,21 +4,12 @@
 use serde::Serialize;
 
 /// The journal of every transition (`src/transitions/docs/journal.md`). Its ring is kept either way.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Default)]
 pub struct JournalSettings {
     /// Each burst written once it settles.
     pub write: bool,
     /// Each lift held for the overlay's own picture and measured against the screen after it.
     pub measure_handover: bool,
-}
-
-impl Default for JournalSettings {
-    fn default() -> Self {
-        JournalSettings {
-            write: false,
-            measure_handover: false,
-        }
-    }
 }
 
 #[cfg(test)]

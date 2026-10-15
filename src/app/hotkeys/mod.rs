@@ -130,7 +130,7 @@ impl WmController {
                 self.events_tx.send(Event::MouseMoved(window))
             }
             AppEventsRegistered => {
-                _ = self.event_tap_tx.send(event_tap::Request::SetEventProcessing(false));
+                self.event_tap_tx.send(event_tap::Request::SetEventProcessing(false));
 
                 if !self.hotkeys_installed {
                     self.register_hotkeys();
@@ -181,7 +181,7 @@ impl WmController {
                 self.config = new_cfg;
 
                 let input_settings = crate::input::settings::InputSettings::from(&self.config);
-                _ = self.event_tap_tx.send(event_tap::Request::SettingsUpdated(input_settings));
+                self.event_tap_tx.send(event_tap::Request::SettingsUpdated(input_settings));
 
                 if !self.hotkeys_installed {
                     debug!(
@@ -199,10 +199,10 @@ impl WmController {
             }
             PowerStateChanged(is_low_power_mode) => {
                 info!("Power state changed: low power mode = {}", is_low_power_mode);
-                _ = self.event_tap_tx.send(event_tap::Request::SetLowPowerMode(is_low_power_mode));
+                self.event_tap_tx.send(event_tap::Request::SetLowPowerMode(is_low_power_mode));
             }
             KeyboardLayoutChanged => {
-                _ = self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
+                self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
             }
             ClockChanged => self.events_tx.send(Event::ClockChanged),
         }
@@ -295,8 +295,8 @@ impl WmController {
                         .ok()?;
                 Some((hotkey.modifiers, hotkey.key_code))
             });
-        _ = self.event_tap_tx.send(event_tap::Request::SetSwitchKeys(switch_keys));
-        _ = self.event_tap_tx.send(event_tap::Request::SetHotkeys(
+        self.event_tap_tx.send(event_tap::Request::SetSwitchKeys(switch_keys));
+        self.event_tap_tx.send(event_tap::Request::SetHotkeys(
             binds.into_iter().chain(switcher_binds).collect(),
         ));
     }

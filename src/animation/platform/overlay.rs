@@ -327,7 +327,7 @@ impl Playing {
     /// left of it. None when it begins after `at` already, or has ended.
     fn again_at(self, at: f64) -> Option<Playing> {
         let ends = self.begin + self.active;
-        (self.begin <= at && at < ends).then(|| Playing {
+        (self.begin <= at && at < ends).then_some(Playing {
             begin: at,
             offset: self.offset + (at - self.begin),
             active: ends - at,

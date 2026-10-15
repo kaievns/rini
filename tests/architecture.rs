@@ -958,7 +958,7 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
     ("src/displays/screen.rs", "refresh_snapshot", 130),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
     ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
-    ("src/layout/domain/scrolling.rs", "calculate_layout", 249),
+    ("src/layout/domain/scrolling.rs", "calculate_layout", 243),
     ("src/layout/domain/scrolling.rs", "on_window_resized", 105),
     ("src/main.rs", "main", 292),
     ("src/pictures/domain/watch.rs", "seen", 151),
@@ -976,21 +976,21 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
     (
         "src/workspaces/engine.rs",
         "calculate_layout_with_virtual_workspaces",
-        177,
+        176,
     ),
     ("src/workspaces/engine.rs", "handle_event_inner", 123),
     ("src/workspaces/engine.rs", "move_focus_internal", 106),
-    ("src/workspaces/engine.rs", "move_window_to_space", 119),
+    ("src/workspaces/engine.rs", "move_window_to_space", 118),
     ("src/workspaces/engine.rs", "move_window_to_workspace", 156),
     ("src/workspaces/engine.rs", "on_windows_on_screen_updated", 151),
 ];
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
 const LONG_FILES: [(&str, usize); 4] = [
-    ("src/app/reactor/mod.rs", 4545),
-    ("src/layout/domain/scrolling.rs", 1828),
+    ("src/app/reactor/mod.rs", 4544),
+    ("src/layout/domain/scrolling.rs", 1815),
     ("src/transitions/platform/engine.rs", 2210),
-    ("src/workspaces/engine.rs", 2547),
+    ("src/workspaces/engine.rs", 2540),
 ];
 
 /// `source` with every comment blanked, so a `//` inside a string is not a comment, and with

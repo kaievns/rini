@@ -70,10 +70,10 @@ impl ConfigWatcher {
         if let Some(p) = self.file.parent() {
             parents.insert(p.to_path_buf());
         }
-        if let Some(real) = &self.real_file {
-            if let Some(p) = real.parent() {
-                parents.insert(p.to_path_buf());
-            }
+        if let Some(real) = &self.real_file
+            && let Some(p) = real.parent()
+        {
+            parents.insert(p.to_path_buf());
         }
 
         for dir in parents.iter() {
@@ -107,18 +107,18 @@ impl ConfigWatcher {
                 return true;
             }
 
-            if let Ok(ev_real) = fs::canonicalize(&event.path) {
-                if ev_real == *real {
-                    return true;
-                }
+            if let Ok(ev_real) = fs::canonicalize(&event.path)
+                && ev_real == *real
+            {
+                return true;
             }
 
-            if let Ok(meta) = fs::metadata(&event.path) {
-                if let Some((dev, ino)) = self.real_file_id {
-                    if meta.dev() == dev && meta.ino() == ino {
-                        return true;
-                    }
-                }
+            if let Ok(meta) = fs::metadata(&event.path)
+                && let Some((dev, ino)) = self.real_file_id
+                && meta.dev() == dev
+                && meta.ino() == ino
+            {
+                return true;
             }
         }
 

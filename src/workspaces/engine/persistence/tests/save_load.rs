@@ -39,7 +39,7 @@ fn save_and_load_arms_fingerprint_reconciliation() {
         window.idx.get()
     ));
 
-    engine.save(&mut memory, path.clone()).unwrap();
+    engine.save(&memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -108,7 +108,7 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
     ));
 
     engine
-        .save_current_layout(path.clone(), &window_store, &mut memory, Some(space))
+        .save_current_layout(path.clone(), &window_store, &memory, Some(space))
         .unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
@@ -179,7 +179,7 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
     ));
 
     engine
-        .save_current_layout(path.clone(), &window_store, &mut memory, Some(space))
+        .save_current_layout(path.clone(), &window_store, &memory, Some(space))
         .unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);

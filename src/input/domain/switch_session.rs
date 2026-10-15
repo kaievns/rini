@@ -172,14 +172,14 @@ impl SwitchSession {
 
         // The deadline first, so an event arriving after one is the thing that closes the session
         // rather than being swallowed by it.
-        if let Some(live) = self.live {
-            if event.at.saturating_duration_since(live.opened) >= MAX_SESSION {
-                self.live = None;
-                // Pass the event through: it is not part of the switch any more, and if it happens to
-                // be the trigger the next branch would have opened a fresh session on a key the user
-                // is still holding from the last one.
-                return Verdict::pass_with(Signal::Commit);
-            }
+        if let Some(live) = self.live
+            && event.at.saturating_duration_since(live.opened) >= MAX_SESSION
+        {
+            self.live = None;
+            // Pass the event through: it is not part of the switch any more, and if it happens to
+            // be the trigger the next branch would have opened a fresh session on a key the user
+            // is still holding from the last one.
+            return Verdict::pass_with(Signal::Commit);
         }
 
         let Some(live) = self.live else {

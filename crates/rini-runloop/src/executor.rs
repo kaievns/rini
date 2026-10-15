@@ -143,6 +143,46 @@ impl Wake for WakerImpl {
     fn wake(self: Arc<Self>) { self.0.wake(); }
 }
 
+/// Waits for `duration` on the current run loop. `tokio::time::sleep` panics under this executor;
+/// see `docs/run-loop-executor.md`.
+pub fn sleep(duration: Duration) -> Sleep {
+    Sleep {
+        deadline: Instant::now() + duration,
+        timer: None,
+    }
+}
+
+pub struct Sleep {
+    deadline: Instant,
+    /// Created on first poll, so the timer is tied to the run loop that actually polls this future
+    /// rather than whichever thread constructed it. Dropped on completion, which invalidates it.
+    timer: Option<RepeatingTimer>,
+}
+
+impl Future for Sleep {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let now = Instant::now();
+        if now >= self.deadline {
+            // Drop the timer so a completed sleep stops costing run loop wakeups.
+            self.timer = None;
+            return Poll::Ready(());
+        }
+        if self.timer.is_none() {
+            let waker = cx.waker().clone();
+            let remaining = self.deadline - now;
+            self.timer = RepeatingTimer::every(remaining, move || waker.wake_by_ref());
+            if self.timer.is_none() {
+                // No run loop to schedule on. Waking immediately busy-polls rather than hanging
+                // forever, which is the lesser failure: the caller still makes progress.
+                cx.waker().wake_by_ref();
+            }
+        }
+        Poll::Pending
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -202,7 +242,7 @@ mod tests {
         });
 
         assert!(result.is_err());
-        assert_eq!(true, dropped.take());
+        assert!(dropped.take());
     }
 
     #[test]
@@ -241,45 +281,5 @@ mod tests {
         });
 
         assert_eq!(2, msgs.get());
-    }
-}
-
-/// Waits for `duration` on the current run loop. `tokio::time::sleep` panics under this executor;
-/// see `docs/run-loop-executor.md`.
-pub fn sleep(duration: Duration) -> Sleep {
-    Sleep {
-        deadline: Instant::now() + duration,
-        timer: None,
-    }
-}
-
-pub struct Sleep {
-    deadline: Instant,
-    /// Created on first poll, so the timer is tied to the run loop that actually polls this future
-    /// rather than whichever thread constructed it. Dropped on completion, which invalidates it.
-    timer: Option<RepeatingTimer>,
-}
-
-impl Future for Sleep {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let now = Instant::now();
-        if now >= self.deadline {
-            // Drop the timer so a completed sleep stops costing run loop wakeups.
-            self.timer = None;
-            return Poll::Ready(());
-        }
-        if self.timer.is_none() {
-            let waker = cx.waker().clone();
-            let remaining = self.deadline - now;
-            self.timer = RepeatingTimer::every(remaining, move || waker.wake_by_ref());
-            if self.timer.is_none() {
-                // No run loop to schedule on. Waking immediately busy-polls rather than hanging
-                // forever, which is the lesser failure: the caller still makes progress.
-                cx.waker().wake_by_ref();
-            }
-        }
-        Poll::Pending
     }
 }

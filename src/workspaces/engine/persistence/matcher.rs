@@ -36,7 +36,7 @@ pub(super) fn choose_match(
             && candidate.fingerprint.direct_identity_compatible_with(fingerprint)
     });
     let server_id_match =
-        direct.is_none().then(|| fingerprint.window_server_id).flatten().and_then(
+        direct.is_none().then_some(fingerprint.window_server_id).flatten().and_then(
             |window_server_id| {
                 candidates
                     .iter()
@@ -91,10 +91,8 @@ pub(super) fn choose_match(
     // both available window-specific signals, otherwise identical default sizes or common titles
     // let one window from an application consume another window's saved slot. This deliberately
     // prefers leaving a saved slot empty over manufacturing a convincing ghost match.
-    if !exact_identity {
-        if !known_app_match || !title_matches || !size_matches {
-            return None;
-        }
+    if !exact_identity && (!known_app_match || !title_matches || !size_matches) {
+        return None;
     }
 
     let mut duplicate_identities = if direct.is_none() && server_id_match.is_some() {

@@ -250,7 +250,7 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
         std::process::id(),
         saved_space.get(),
     ));
-    snapshot.save(&mut memory, path.clone()).unwrap();
+    snapshot.save(&memory, path.clone()).unwrap();
 
     let (mut restored, _restored_memory) =
         LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
@@ -323,7 +323,7 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
         "rini-startup-space-swap-test-{}.ron",
         std::process::id(),
     ));
-    snapshot.save(&mut memory, path.clone()).unwrap();
+    snapshot.save(&memory, path.clone()).unwrap();
 
     let (mut restored, _restored_memory) =
         LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
@@ -401,7 +401,7 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
         "rini-absent-display-release-test-{}.ron",
         std::process::id(),
     ));
-    snapshot.save(&mut memory, path.clone()).unwrap();
+    snapshot.save(&memory, path.clone()).unwrap();
 
     let mut restored = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);

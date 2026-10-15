@@ -356,7 +356,8 @@ impl WorkspaceStore {
 
             // No "does this workspace belong to this display" check any more: every
             // workspace exists on every display.
-            let result = if self.workspaces.contains_key(workspace_id) {
+
+            if self.workspaces.contains_key(workspace_id) {
                 self.active_workspace_per_space.insert(space, (active, workspace_id));
                 true
             } else {
@@ -365,9 +366,7 @@ impl WorkspaceStore {
                     workspace_id, space
                 );
                 false
-            };
-
-            result
+            }
         })
     }
 
@@ -549,10 +548,10 @@ impl WorkspaceStore {
         space: SpaceId,
         window_id: WindowId,
     ) -> bool {
-        if let Some(active_workspace_id) = self.active_workspace(space) {
-            if let Some(window_workspace_id) = window_store.workspace_for_window(space, window_id) {
-                return window_workspace_id == active_workspace_id;
-            }
+        if let Some(active_workspace_id) = self.active_workspace(space)
+            && let Some(window_workspace_id) = window_store.workspace_for_window(space, window_id)
+        {
+            return window_workspace_id == active_workspace_id;
         }
         true
     }
@@ -1800,7 +1799,7 @@ mod tests {
             None,
         )
         .workspace_id;
-        let expected_pref = manager.list_workspaces(space1).get(0).unwrap().0;
+        let expected_pref = manager.list_workspaces(space1).first().unwrap().0;
         let expected_dialog = manager.list_workspaces(space1).get(2).unwrap().0;
         assert_eq!(ws_pref, expected_pref);
         assert_eq!(ws_dialog, expected_dialog);

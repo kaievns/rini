@@ -264,7 +264,7 @@ impl StateView<'_> {
     fn handle_workspace_query(&self, space_id_param: Option<SpaceId>) -> Vec<RuntimeWorkspaceData> {
         let mut workspaces = Vec::new();
 
-        let space_id = space_id_param.or_else(|| self.default_space);
+        let space_id = space_id_param.or(self.default_space);
         let workspace_list: Vec<(crate::workspaces::VirtualWorkspaceId, String)> =
             if space_id.is_some() {
                 self.engine.virtual_workspace_manager().existing_workspaces()
@@ -282,7 +282,7 @@ impl StateView<'_> {
             let workspace_windows_ids: Vec<rini_core::ids::WindowId> = if let Some(space) = space_id
             {
                 self.engine.virtual_workspace_manager().workspace_windows(
-                    &self.windows,
+                    self.windows,
                     space,
                     *workspace_id,
                 )
@@ -304,7 +304,7 @@ impl StateView<'_> {
                         let display_uuid = screen.display_uuid_opt();
                         let gaps = self.settings.layout.gaps.effective_for_display(display_uuid);
                         self.engine.calculate_layout_for_workspace(
-                            &self.windows,
+                            self.windows,
                             space,
                             *workspace_id,
                             screen.frame,
@@ -326,10 +326,8 @@ impl StateView<'_> {
             let mut windows: Vec<RuntimeWindowData> = Vec::new();
             for wid in workspace_windows_ids.into_iter() {
                 if let Some(mut wd) = self.create_window_data(wid) {
-                    if !is_active {
-                        if let Some(pred) = predicted_map.get(&wid).copied() {
-                            wd.info.frame = pred;
-                        }
+                    if !is_active && let Some(pred) = predicted_map.get(&wid).copied() {
+                        wd.info.frame = pred;
                     }
                     windows.push(wd);
                 }
@@ -404,7 +402,7 @@ impl StateView<'_> {
             let ordered = engine.ordered_windows_in_active_workspace(space);
             let owned: Vec<WindowId> = engine
                 .virtual_workspace_manager()
-                .windows_in_active_workspace(&self.windows, space);
+                .windows_in_active_workspace(self.windows, space);
 
             // Column geometry is read off the applied frames rather than the layout
             // system's internals: it is what the user is actually looking at, and it makes
@@ -502,7 +500,7 @@ impl StateView<'_> {
         let orphaned_workspaces = self
             .engine
             .virtual_workspace_manager()
-            .workspaces_with_windows_outside(&self.windows, &live_spaces);
+            .workspaces_with_windows_outside(self.windows, &live_spaces);
 
         let stale_homes =
             diagnostics::stale_display_homes(&self.memory.affinity.homed_windows(), |window| {
@@ -538,7 +536,7 @@ impl StateView<'_> {
             let mut assigned = 0;
             for (workspace_id, name) in workspaces {
                 let windows = self.engine.virtual_workspace_manager().workspace_windows(
-                    &self.windows,
+                    self.windows,
                     space,
                     workspace_id,
                 );
@@ -586,10 +584,10 @@ impl StateView<'_> {
     }
 
     fn handle_windows_query(&self, space_id: Option<SpaceId>) -> Vec<RuntimeWindowData> {
-        let target_space = space_id.or_else(|| self.default_space);
+        let target_space = space_id.or(self.default_space);
 
         if let Some(space) = target_space {
-            let active_windows = self.engine.windows_in_active_workspace(&self.windows, space);
+            let active_windows = self.engine.windows_in_active_workspace(self.windows, space);
 
             active_windows
                 .into_iter()
@@ -642,7 +640,7 @@ impl StateView<'_> {
 
         let snapshot = self.engine.query_workspace_layout(space_id, workspace_id)?;
         let workspace_windows = self.engine.virtual_workspace_manager().workspace_windows(
-            &self.windows,
+            self.windows,
             space_id,
             snapshot.workspace_id,
         );
@@ -673,7 +671,7 @@ impl StateView<'_> {
     }
 
     fn handle_metrics_query(&self) -> serde_json::Value {
-        let stats = self.engine.virtual_workspace_manager().get_stats(&self.windows);
+        let stats = self.engine.virtual_workspace_manager().get_stats(self.windows);
 
         let workspace_stats: rustc_hash::FxHashMap<String, usize> = stats
             .workspace_window_counts

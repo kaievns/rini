@@ -296,7 +296,7 @@ pub(crate) fn process_window_list(
     let any_recent = observed.iter().any(|window| {
         let info = &window.info;
         info.sys_id
-            .map_or(false, |wsid| state.windows.is_wsid_recent(wsid, APP_RULE_TTL_MS))
+            .is_some_and(|wsid| state.windows.is_wsid_recent(wsid, APP_RULE_TTL_MS))
     });
 
     if any_recent && app_info.is_none() && !observed.is_empty() {
@@ -530,7 +530,7 @@ pub(crate) fn emit_layout_events(
         }
     }
 
-    let discovered_spaces = active_spaces.iter().copied().collect::<Vec<_>>();
+    let discovered_spaces = active_spaces.to_vec();
     for space in active_spaces {
         let windows_for_space = app_windows.remove(&space).unwrap_or_default();
 

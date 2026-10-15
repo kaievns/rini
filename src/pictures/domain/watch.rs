@@ -2041,7 +2041,7 @@ mod tests {
             at += LANDING_POLL;
         }
         let mut tries = 0;
-        while let Some(_) = round(&mut watches, at, |_| Some(LEFT), |_| Some(1)) {
+        while round(&mut watches, at, |_| Some(LEFT), |_| Some(1)).is_some() {
             tries += 1;
             at += CHANGE_EVERY;
         }

@@ -60,7 +60,7 @@ impl LayoutEngine {
                         moved: None,
                     };
                     self.apply_focus_response(space, workspace_id, layout, &response);
-                    return response;
+                    response
                 } else {
                     let focus_window = self
                         .workspace_tree(workspace_id)
@@ -76,7 +76,7 @@ impl LayoutEngine {
                         moved: None,
                     };
                     self.apply_focus_response(space, workspace_id, layout, &response);
-                    return response;
+                    response
                 }
             }
             LayoutCommand::MoveFocus(direction) => {
@@ -84,14 +84,14 @@ impl LayoutEngine {
                     "MoveFocus command received, direction: {:?}, is_floating: {}",
                     direction, is_floating
                 );
-                return self.move_focus_internal(
+                self.move_focus_internal(
                     window_store,
                     space,
                     visible_spaces,
                     visible_space_centers,
                     direction,
                     is_floating,
-                );
+                )
             }
             other => {
                 debug_assert!(false, "{other:?} is not a focus command");

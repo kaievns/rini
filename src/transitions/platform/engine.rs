@@ -1621,7 +1621,7 @@ impl FlightEngine {
         self.quiet = None;
         let tx = self.tx.clone();
         self.frame_clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
-            _ = tx.send(Event::Tick);
+            tx.send(Event::Tick);
         });
         self.drive(lifecycle::Event::Begin(stage));
         if self.frame_clock.is_none() {
@@ -2483,7 +2483,7 @@ impl FlightEngine {
     fn quiet_after(&mut self, generation: Generation) {
         let tx = self.tx.clone();
         match RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
-            _ = tx.send(Event::Quiet(generation));
+            tx.send(Event::Quiet(generation));
         }) {
             Some(timer) => self.quiet = Some((generation, timer)),
             None => self.tx.send(Event::Quiet(generation)),
@@ -2522,7 +2522,7 @@ impl FlightEngine {
         let quiet = Owed::Quiet(generation);
         let tx = self.tx.clone();
         let Some(patience) =
-            RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || _ = tx.send(Event::LiftPatience))
+            RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || tx.send(Event::LiftPatience))
         else {
             self.hide(vec![quiet]);
             return;

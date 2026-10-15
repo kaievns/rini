@@ -618,7 +618,8 @@ impl Reactor {
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
         let (raise_manager_tx, _rx) = channels::channel();
-        let reactor = Reactor {
+
+        Reactor {
             live_switch: None,
             switcher_tx: None,
             bar: bar::BarFeed::default(),
@@ -702,8 +703,7 @@ impl Reactor {
             autosave_path: Some(rini_core::paths::restore_file()),
             space_kinds: SpaceKinds::from_window_server(),
             display_churn: crate::displays::platform::display_churn::is_active,
-        };
-        reactor
+        }
     }
 
     fn set_active_spaces(&mut self, spaces: &[Option<SpaceId>]) {
@@ -1073,7 +1073,7 @@ impl Reactor {
         let event_tap_tx = reactor.communication_manager.event_tap_tx.clone();
         let warp = move |point| {
             if let Some(event_tap_tx) = &event_tap_tx {
-                _ = event_tap_tx.send(crate::input::platform::input_tap::Request::Warp(point));
+                event_tap_tx.send(crate::input::platform::input_tap::Request::Warp(point));
             }
         };
         let reactor_task = Self::run_reactor_loop(reactor, events);
@@ -1258,7 +1258,7 @@ impl Reactor {
             .collect();
         if let (false, Some(tx)) = (windows.is_empty(), &self.communication_manager.transitions_tx)
         {
-            _ = tx.send(crate::transitions::platform::engine::Event::LooksTurned(windows));
+            tx.send(crate::transitions::platform::engine::Event::LooksTurned(windows));
         }
     }
 
@@ -1763,10 +1763,10 @@ impl Reactor {
         }
 
         // Execute deferred mouse warp after workspace switch completes
-        if let Some(wid) = self.workspace_switch_manager.pending_workspace_mouse_warp.take() {
-            if let Some(window_center) = self.affinity().window_center_on_known_screen(wid) {
-                self.warp_mouse(window_center);
-            }
+        if let Some(wid) = self.workspace_switch_manager.pending_workspace_mouse_warp.take()
+            && let Some(window_center) = self.affinity().window_center_on_known_screen(wid)
+        {
+            self.warp_mouse(window_center);
         }
 
         if outcome.refresh_window_notifications {
@@ -1897,13 +1897,13 @@ impl Reactor {
                     .windows
                     .restore_window_from_native_fullscreen(record.current_window_id);
 
-                if let Some(app) = self.app_manager.apps.get(&record.current_window_id.pid) {
-                    if let Err(e) = app.handle.send(Request::GetVisibleWindows) {
-                        warn!(
-                            "Failed to send GetVisibleWindows to app {}: {}",
-                            record.current_window_id.pid, e
-                        );
-                    }
+                if let Some(app) = self.app_manager.apps.get(&record.current_window_id.pid)
+                    && let Err(e) = app.handle.send(Request::GetVisibleWindows)
+                {
+                    warn!(
+                        "Failed to send GetVisibleWindows to app {}: {}",
+                        record.current_window_id.pid, e
+                    );
                 }
 
                 let live_window_id = record
@@ -1963,10 +1963,10 @@ impl Reactor {
             StaleCleanupState::Enabled
         };
         self.expose_all_spaces();
-        if let Some(main_window) = self.main_window() {
-            if let Some(space) = self.main_window_space() {
-                self.send_layout_event(LayoutEvent::WindowFocused(space, main_window));
-            }
+        if let Some(main_window) = self.main_window()
+            && let Some(space) = self.main_window_space()
+        {
+            self.send_layout_event(LayoutEvent::WindowFocused(space, main_window));
         }
         self.reconcile_authoritative_active_window_snapshot(
             active_windows,
@@ -2848,7 +2848,7 @@ impl Reactor {
         };
         switch.cursor.select(index);
         if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
-            _ = event_tap_tx.send(crate::input::platform::input_tap::Request::EndSwitchSession);
+            event_tap_tx.send(crate::input::platform::input_tap::Request::EndSwitchSession);
         }
         self.handle_switch_signal(SwitchSignal::Commit)
     }
@@ -3366,16 +3366,16 @@ impl Reactor {
         let Some(tx) = &self.communication_manager.cursor_warp_tx else {
             return;
         };
-        _ = tx.send(crate::displays::platform::cursor_warp::Request::SetEnabled(
+        tx.send(crate::displays::platform::cursor_warp::Request::SetEnabled(
             self.config.settings.warp_cursor_between_stacked_displays,
         ));
-        _ = tx.send(crate::displays::platform::cursor_warp::Request::SetUpperSide(
+        tx.send(crate::displays::platform::cursor_warp::Request::SetUpperSide(
             self.config.settings.stacked_display_upper_is,
         ));
-        _ = tx.send(crate::displays::platform::cursor_warp::Request::SetLowerTopAt(
+        tx.send(crate::displays::platform::cursor_warp::Request::SetLowerTopAt(
             self.config.settings.stacked_display_lower_top_at,
         ));
-        _ = tx.send(crate::displays::platform::cursor_warp::Request::ScreensChanged(
+        tx.send(crate::displays::platform::cursor_warp::Request::ScreensChanged(
             crate::displays::platform::cursor_warp::screens_of(&self.space_state.screens),
         ));
     }
@@ -4022,7 +4022,7 @@ impl Reactor {
             return false;
         };
         let pressed = event.pressed();
-        _ = tx.send(event);
+        tx.send(event);
         self.rest.flight = display.zip(pressed).or(self.rest.flight);
         true
     }
@@ -4040,7 +4040,7 @@ impl Reactor {
     /// Tells the transitions engine whether to write its journal and measure each lift's handover.
     fn publish_journal(&self) {
         if let Some(tx) = &self.communication_manager.transitions_tx {
-            _ = tx.send(crate::transitions::platform::engine::Event::Journal(
+            tx.send(crate::transitions::platform::engine::Event::Journal(
                 self.config.settings.journal,
             ));
         }
@@ -4066,7 +4066,7 @@ impl Reactor {
             .or_else(|| self.space_state.screens.first())?;
         let frame = ScreenRect::from_cg(objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
         if let Some(tx) = &self.communication_manager.transitions_tx {
-            _ = tx.send(crate::transitions::platform::engine::Event::SetDisplay {
+            tx.send(crate::transitions::platform::engine::Event::SetDisplay {
                 id: screen.id.as_u32(),
                 frame,
                 scale: screen.scale,
@@ -4091,7 +4091,7 @@ impl Reactor {
         let Some(event_tap_tx) = self.communication_manager.event_tap_tx.clone() else {
             return;
         };
-        _ = event_tap_tx.send(crate::input::platform::input_tap::Request::Warp(point));
+        event_tap_tx.send(crate::input::platform::input_tap::Request::Warp(point));
     }
 
     fn warp_mouse_to_space_center(&mut self, space: SpaceId) -> bool {
@@ -5378,15 +5378,15 @@ impl Reactor {
     }
 
     fn request_close_window(&mut self, pid: pid_t, window_server_id: Option<WindowServerId>) {
-        if let Some(app) = self.app_manager.apps.get(&pid) {
-            if let Err(err) = app.handle.send(Request::CloseWindow(window_server_id)) {
-                warn!(
-                    pid,
-                    ?window_server_id,
-                    "Failed to send close window request: {}",
-                    err
-                );
-            }
+        if let Some(app) = self.app_manager.apps.get(&pid)
+            && let Err(err) = app.handle.send(Request::CloseWindow(window_server_id))
+        {
+            warn!(
+                pid,
+                ?window_server_id,
+                "Failed to send close window request: {}",
+                err
+            );
         }
     }
 
@@ -5448,10 +5448,10 @@ impl Reactor {
     }
 
     fn current_screen_center(&self) -> Option<CGPoint> {
-        if let Some(space) = self.raw_command_space() {
-            if let Some(screen) = self.space_state.screen_by_space(space) {
-                return Some(screen.frame.mid());
-            }
+        if let Some(space) = self.raw_command_space()
+            && let Some(screen) = self.space_state.screen_by_space(space)
+        {
+            return Some(screen.frame.mid());
         }
 
         self.space_state.screens.first().map(|screen| screen.frame.mid())
@@ -5519,11 +5519,11 @@ impl Reactor {
         const AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
         let now = std::time::Instant::now();
-        if let Some(last) = self.last_autosave {
-            if now.duration_since(last) < AUTOSAVE_INTERVAL {
-                self.autosave_pending = true;
-                return;
-            }
+        if let Some(last) = self.last_autosave
+            && now.duration_since(last) < AUTOSAVE_INTERVAL
+        {
+            self.autosave_pending = true;
+            return;
         }
         self.save_layout_now();
     }

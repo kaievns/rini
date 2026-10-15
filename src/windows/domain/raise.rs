@@ -132,14 +132,13 @@ impl RaiseManager {
                 // Handle timeout - send timeout event to reactor
                 _ = timeout_timer.next() => {
                     // Send timeout event for the active sequence
-                    if let Some(sequence) = &mut raise_manager.active_sequence {
-                        if sequence_timeout(sequence) <= Duration::ZERO {
+                    if let Some(sequence) = &mut raise_manager.active_sequence
+                        && sequence_timeout(sequence) <= Duration::ZERO {
                             // Send timeout event to reactor; this will get
                             // relayed back to us.
                             sequence.timed_out = true;
                             events.send(WindowsEvent::RaiseTimeout { sequence_id: sequence.sequence_id });
                         }
-                    }
                 }
             }
         }
@@ -189,36 +188,36 @@ impl RaiseManager {
                 trace!("Raise completed for {:?} in sequence {}", window_id, sequence_id);
 
                 // Remove this window from the active sequence's pending raises
-                if let Some(sequence) = &mut self.active_sequence {
-                    if sequence.sequence_id == sequence_id {
-                        sequence.pending_raises.remove(&window_id);
-                    }
+                if let Some(sequence) = &mut self.active_sequence
+                    && sequence.sequence_id == sequence_id
+                {
+                    sequence.pending_raises.remove(&window_id);
                 }
             }
             Event::RaiseTimeout { sequence_id } => {
                 trace!("Raise sequence {} timed out", sequence_id);
 
                 // Clear pending raises for the active sequence if it matches
-                if let Some(sequence) = &mut self.active_sequence {
-                    if sequence.sequence_id == sequence_id {
-                        warn!(
-                            "Sequence {} timed out, clearing pending raises: {:?}",
-                            sequence_id, sequence.pending_raises
-                        );
-                        sequence.pending_raises.clear();
-                        // Cancel the raises that hung, then install a fresh
-                        // token. The focus raise is sent next (in
-                        // process_active_sequence) and must use a live token, or
-                        // the app rejects it as cancelled and never reports
-                        // completion, blocking the manager permanently.
-                        sequence.raise_token.cancel();
-                        sequence.raise_token = CancellationToken::new();
-                        // Restart the timeout window so the focus phase gets its
-                        // own timeout. Otherwise a hung focus raise could never
-                        // time out again and would block all future raises.
-                        sequence.started_at = Instant::now();
-                        sequence.timed_out = false;
-                    }
+                if let Some(sequence) = &mut self.active_sequence
+                    && sequence.sequence_id == sequence_id
+                {
+                    warn!(
+                        "Sequence {} timed out, clearing pending raises: {:?}",
+                        sequence_id, sequence.pending_raises
+                    );
+                    sequence.pending_raises.clear();
+                    // Cancel the raises that hung, then install a fresh
+                    // token. The focus raise is sent next (in
+                    // process_active_sequence) and must use a live token, or
+                    // the app rejects it as cancelled and never reports
+                    // completion, blocking the manager permanently.
+                    sequence.raise_token.cancel();
+                    sequence.raise_token = CancellationToken::new();
+                    // Restart the timeout window so the focus phase gets its
+                    // own timeout. Otherwise a hung focus raise could never
+                    // time out again and would block all future raises.
+                    sequence.started_at = Instant::now();
+                    sequence.timed_out = false;
                 }
             }
         }
@@ -235,11 +234,11 @@ impl RaiseManager {
     }
 
     fn process_queued_responses(&mut self) -> bool {
-        if self.active_sequence.is_none() {
-            if let Some(queued) = self.queued_sequences.pop_front() {
-                self.start_new_sequence(queued);
-                return true;
-            }
+        if self.active_sequence.is_none()
+            && let Some(queued) = self.queued_sequences.pop_front()
+        {
+            self.start_new_sequence(queued);
+            return true;
         }
         false
     }

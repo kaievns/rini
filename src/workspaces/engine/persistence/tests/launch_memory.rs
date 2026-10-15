@@ -43,7 +43,7 @@ fn launch_memory_survives_a_save_and_load() {
 
     let path =
         std::env::temp_dir().join(format!("rini-launch-memory-test-{}.ron", std::process::id()));
-    engine.save(&mut memory, path.clone()).unwrap();
+    engine.save(&memory, path.clone()).unwrap();
     let _loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -566,7 +566,7 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
 
     let path =
         std::env::temp_dir().join(format!("rini-dragged-slot-test-{}.ron", std::process::id()));
-    engine.save(&mut memory, path.clone()).unwrap();
+    engine.save(&memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load_file(&path).unwrap().memory;
     let _ = std::fs::remove_file(path);
     assert_eq!(
@@ -650,7 +650,7 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
         "rini-full-viewport-slot-test-{}.ron",
         std::process::id()
     ));
-    engine.save(&mut memory, path.clone()).unwrap();
+    engine.save(&memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load_file(&path).unwrap().memory;
     let _ = std::fs::remove_file(path);
     let reloaded = loaded.launch.slots(APP, &topology)[0].width;
@@ -762,7 +762,7 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
 
     // rini restarts, and the window is discovered before the topology is known.
     let path = std::env::temp_dir().join(format!("full_width_{}.ron", std::process::id()));
-    engine.save(&mut memory, path.clone()).unwrap();
+    engine.save(&memory, path.clone()).unwrap();
     let mut reloaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(&path);
 

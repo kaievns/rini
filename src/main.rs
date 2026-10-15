@@ -271,7 +271,7 @@ fn main() {
         Some(window_tx_store.clone()),
     );
 
-    let _ = events_tx.send(reactor::Event::RegisterWmSender(wm_controller_sender.clone()));
+    events_tx.send(reactor::Event::RegisterWmSender(wm_controller_sender.clone()));
 
     let spaces_actor = SpacesActor::new(
         spaces_rx,

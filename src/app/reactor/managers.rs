@@ -277,7 +277,7 @@ impl LayoutManager {
                 reactor.layout_manager.layout_engine.calculate_layout_with_virtual_workspaces(
                     &reactor.state.windows,
                     space,
-                    screen.frame.clone(),
+                    screen.frame,
                     &gaps,
                     |wid| reactor.state.windows.window(wid).map(|w| w.frame_monotonic),
                     &all_screen_frames,

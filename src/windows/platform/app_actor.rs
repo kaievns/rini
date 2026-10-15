@@ -874,11 +874,11 @@ impl<W: AxWorld> State<W> {
             if wids.len() == 1 {
                 // `quiet` only applies if the first window is also the last.
                 let quiet_window_change = (quiet == Quiet::Yes).then_some(first);
-                Self::wait_for_activation(this_ref, this, quiet, quiet_window_change, &token)
+                Self::wait_for_activation(this_ref, this, quiet, quiet_window_change, token)
                     .await?;
             } else {
                 // Windows before the last are always quiet.
-                Self::wait_for_activation(this_ref, this, Quiet::Yes, Some(first), &token).await?;
+                Self::wait_for_activation(this_ref, this, Quiet::Yes, Some(first), token).await?;
             }
             this = this_ref.borrow_mut();
         } else {
@@ -1390,12 +1390,12 @@ impl<W: AxWorld> State<W> {
     }
 
     fn id(&self, elem: &W::Element) -> Result<WindowId, AxError> {
-        if let Some(id) = self.ax.window_server_id(elem) {
-            if let Some(idx) = id.as_nonzero() {
-                let wid = WindowId { pid: self.pid, idx };
-                if self.windows.contains_key(&wid) {
-                    return Ok(wid);
-                }
+        if let Some(id) = self.ax.window_server_id(elem)
+            && let Some(idx) = id.as_nonzero()
+        {
+            let wid = WindowId { pid: self.pid, idx };
+            if self.windows.contains_key(&wid) {
+                return Ok(wid);
             }
         }
         if let Some(&wid) = self.elem_to_wid.get(elem) {
@@ -1469,7 +1469,7 @@ fn app_thread_main(
     let (notifications_tx, notifications_rx) = channels::channel();
     let observer = observer.install(move |elem, data| {
         if let Some((notif, wid)) = decode_notification_data(pid, data) {
-            _ = notifications_tx.send((elem, notif, wid));
+            notifications_tx.send((elem, notif, wid));
         }
     });
 

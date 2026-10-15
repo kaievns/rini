@@ -252,7 +252,7 @@ impl NotificationCenterInner {
         )
     }
 
-    fn send_event(&self, event: WmEvent) { _ = self.ivars().events_tx.send(event); }
+    fn send_event(&self, event: WmEvent) { self.ivars().events_tx.send(event); }
 
     fn send_space_event(&self, event: spaces::Notification) { self.ivars().spaces_tx.send(event); }
 

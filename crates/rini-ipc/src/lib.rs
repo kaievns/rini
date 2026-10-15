@@ -96,7 +96,7 @@ impl<B: Backend> MachHandler<B> {
                 Err(e) => {
                     error!("{}", e);
                     RiniResponse::Error {
-                        error: serde_json::json!({ "message": "Failed to get config response", "details": format!("{}", e) }),
+                        error: serde_json::json!({ "message": "Failed to get config response", "details": e.to_string() }),
                     }
                 }
             },
@@ -246,7 +246,7 @@ mod tests {
 
         fn window(&self, window: WindowId) -> Option<crate::protocol::WindowData> {
             (window.pid == 1).then(|| crate::protocol::WindowData {
-                id: window.into(),
+                id: window,
                 title: "t".into(),
                 frame: crate::protocol::Rect {
                     origin: crate::protocol::Point { x: 0.0, y: 0.0 },

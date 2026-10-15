@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn more_applications_than_fit_scroll_rather_than_drop() {
         let m = metrics();
-        let stacks: Vec<Tile> = std::iter::repeat(stack(wide(), 2)).take(9).collect();
+        let stacks: Vec<Tile> = std::iter::repeat_n(stack(wide(), 2), 9).collect();
         let strip = lay_out(&stacks, 8, screen(), m).expect("strip");
         let inner_right = strip.panel.size.width - m.padding;
         let showing = strip
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn the_panel_is_sized_to_its_content() {
         let three = lay_out(&[third(), third(), third()], 0, screen(), metrics()).expect("strip");
-        let many: Vec<Tile> = std::iter::repeat(wide()).take(10).collect();
+        let many: Vec<Tile> = std::iter::repeat_n(wide(), 10).collect();
         let ten = lay_out(&many, 0, screen(), metrics()).expect("strip");
 
         assert!(three.panel.size.width < ten.panel.size.width);
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn the_panel_never_exceeds_its_share_of_the_screen() {
         let m = metrics();
-        let many: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
+        let many: Vec<Tile> = std::iter::repeat_n(wide(), 60).collect();
         let strip = lay_out(&many, 0, screen(), m).expect("strip");
 
         assert!(
@@ -528,7 +528,7 @@ mod tests {
     /// The ask was every window, so a list too long to fit scrolls rather than being cut short.
     #[test]
     fn a_list_too_long_to_fit_keeps_every_row() {
-        let many: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
+        let many: Vec<Tile> = std::iter::repeat_n(wide(), 60).collect();
         let strip = lay_out(&many, 0, screen(), metrics()).expect("strip");
         assert_eq!(strip.rows.len(), 60, "no row is dropped");
     }
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn the_ends_of_the_list_are_flush() {
         let m = metrics();
-        let windows: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
+        let windows: Vec<Tile> = std::iter::repeat_n(wide(), 60).collect();
 
         let first = lay_out(&windows, 0, screen(), m).expect("strip");
         assert_eq!(first.scroll, 0.0);
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn a_row_scrolled_out_of_view_is_not_hit_by_a_click_inside_the_panel() {
         let m = metrics();
-        let windows: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
+        let windows: Vec<Tile> = std::iter::repeat_n(wide(), 60).collect();
         let strip = lay_out(&windows, 40, screen(), m).expect("strip");
 
         let offscreen: Vec<usize> = strip
