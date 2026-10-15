@@ -6,7 +6,7 @@
 //! re-exported here so a feature does not reach into `rini-skylight-sys` for a number.
 
 use std::borrow::Borrow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
 pub use libc::pid_t;
@@ -181,14 +181,6 @@ impl BTreeExt for BTreeSet<WindowId> {
     }
 }
 
-impl<V> BTreeExt for BTreeMap<WindowId, V> {
-    fn remove_all_for_pid(&mut self, pid: pid_t) -> Self {
-        let mut split = self.split_off(&PidRange(pid));
-        self.extend(split.split_off(&PidRange(pid + 1)));
-        split
-    }
-}
-
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
 #[repr(transparent)]
 struct PidRange(pid_t);
@@ -284,15 +276,5 @@ mod tests {
         assert!(removed.iter().all(|w| w.pid == 2));
         assert_eq!(set.len(), 2);
         assert!(set.iter().all(|w| w.pid != 2));
-    }
-
-    #[test]
-    fn remove_all_for_pid_takes_exactly_that_pid_from_a_map() {
-        let mut map: BTreeMap<WindowId, u8> = ids().into_iter().map(|w| (w, 0)).collect();
-        let removed = map.remove_all_for_pid(2);
-        assert_eq!(removed.len(), 3);
-        assert_eq!(map.len(), 2);
-        assert!(map.remove_all_for_pid(9).is_empty());
-        assert_eq!(map.len(), 2);
     }
 }
