@@ -28,7 +28,7 @@ feature") records why, and `tests/architecture.rs` holds each one's `domain/` fr
 
 ```
              reactor ──Request──▶ transitions coordinator ──Write / Raise──▶ reactor
-   app actors ──Placed──▶            │  ▲                 ──Stage / Play / Swap / Lift──▶ animation renderer (main thread)
+                                    │  ▲                 ──Stage / Play / Swap / Lift──▶ animation renderer (main thread)
    window server ──Focused──▶        │  │ pictures(tag)
                               ask /  ▼  │
                               watch  pictures service (own thread: one SkyLight call at a time)
@@ -53,7 +53,7 @@ score evaluates to exactly what the render server draws, so the coordinator reta
 - `watch` windows: until each lands where it ends or is lost (`Landing`, its deadline the watch's
   `until`), until a window's look changes from a print (`Change`), or kept fresh at a rate (`Live`);
   `retarget` or `stop` a watch;
-- `hint` that a window was placed or focused; `hold` off-screen capture while a transition runs;
+- `hint` that a window was focused; `hold` off-screen capture while a transition runs;
 - `check_handover` a lift: the overlay alone, then the screen 45ms later, compared over every window
   ending wholly on screen;
 - read the cache: `usable`, `focused`, `knowledge` (translucency, material), and `dressing`

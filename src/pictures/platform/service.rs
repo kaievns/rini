@@ -218,9 +218,9 @@ fn land_desktop<P, O, C>(
 /// Puts a capture in the cache; true when its pixels are now the ones held, and then every sink hears
 /// `Taken`.
 fn put(cache: &mut PictureCache<Picture>, window: WindowId, picture: Picture, events: &mut Vec<Event>) -> bool {
-    let took = cache.insert(window, picture.clone());
+    let took = cache.insert(window, picture);
     if took {
-        events.push(Event::Taken { window, picture });
+        events.push(Event::Taken { window });
     }
     took
 }
@@ -709,9 +709,8 @@ impl Service {
             Command::Retarget(id, watch) => shared.schedule.retarget(id, watch, now),
             Command::Stop(id) => shared.schedule.stop(id),
             Command::Hint(hint) => {
-                if let Hint::Focused(window) = hint {
-                    shared.learned.focused(window, now);
-                }
+                let Hint::Focused(window) = hint;
+                shared.learned.focused(window, now);
                 shared.schedule.hint(hint, now)
             }
             Command::KeepFocused(tag, window) => {
@@ -1159,7 +1158,7 @@ mod tests {
     #[test]
     fn a_capture_the_cache_took_is_taken_and_one_it_refused_is_no_news() {
         let now = Instant::now();
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         let mut schedule = Schedule::<(), (), ()>::default();
         let kept = || owed_as_focus(Vec::new());
@@ -1203,7 +1202,7 @@ mod tests {
     #[test]
     fn a_capture_owed_as_a_focus_change_is_delivered_when_the_cache_takes_it() {
         let now = Instant::now();
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         let mut schedule = Schedule::<(), (), ()>::default();
         let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), owed_as_focus(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
@@ -1251,7 +1250,7 @@ mod tests {
                 other => panic!("a capture: {other:?}"),
             }
         };
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         let mut schedule = watched(&mut cache);
         let first = came_back(&mut schedule);
@@ -1265,7 +1264,7 @@ mod tests {
         ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == cut), "{events:?}");
         assert!(delivered.under(tag(3), wid(1)).is_some());
 
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut blurred = sized(1148.0, 1081.0);
         blurred.carries_blur = true;
         cache.insert(wid(1), blurred);
@@ -1352,7 +1351,7 @@ mod tests {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         cache.insert(wid(2), blurred(0.5, now));
         let events = asked(
@@ -1384,7 +1383,7 @@ mod tests {
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.hold(Hold::Transition, now);
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         cache.insert(wid(1), blurred(0.5, now));
         cache.insert(wid(2), blurred(0.5, now));
@@ -1408,7 +1407,7 @@ mod tests {
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.hold(Hold::Transition, now);
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         let events = asked(
             &mut schedule,
@@ -1439,7 +1438,7 @@ mod tests {
         let sent = taken + Duration::from_millis(31);
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, taken);
-        let mut cache = PictureCache::new();
+        let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         schedule.ask_on_screen(on_screen(1, Moment::FrameZero, &[1]));
         let looks = sky(schedule.next(taken, |_| None));
@@ -1857,8 +1856,8 @@ mod tests {
         let told = Arc::new(Mutex::new(Vec::new()));
         let heard = told.clone();
         service.sinks = vec![Box::new(move |event| {
-            if let Event::Taken { window, picture } = event {
-                heard.lock().unwrap().push((window, picture.taken));
+            if let Event::Taken { window } = event {
+                heard.lock().unwrap().push(window);
             }
         })];
         {
@@ -1884,7 +1883,7 @@ mod tests {
         refreshed(&mut service, flat(0.1, settled));
         assert!(owed().is_empty(), "settled");
         assert_eq!(held(), Some(settled));
-        assert_eq!(*told.lock().unwrap(), vec![(wid(1), settled)], "told once");
+        assert_eq!(*told.lock().unwrap(), vec![wid(1)], "told once");
     }
 
     /// A refresh's capture the cache would refuse, one without the blur of the blurred picture held at
@@ -1958,7 +1957,7 @@ mod tests {
         pictures.ask_on_screen(on_screen(1, Moment::Final, &[1]));
         pictures.retarget(WatchId(3), change_watch(1));
         pictures.stop(WatchId(3));
-        pictures.hint(Hint::Placed(wid(1)));
+        pictures.hint(Hint::Focused(wid(1)));
         pictures.keep_focused(tag(2), wid(1));
         pictures.check_handover(check());
         pictures.refresh(vec![target(2)]);
@@ -1968,11 +1967,11 @@ mod tests {
             Command::AskOnScreen(ask),
             Command::Retarget(WatchId(3), Watch::Change { .. }),
             Command::Stop(WatchId(3)),
-            Command::Hint(Hint::Placed(placed)),
+            Command::Hint(Hint::Focused(focused_hint)),
             Command::KeepFocused(kept, focused),
             Command::CheckHandover(checked),
             Command::Refresh(refreshed),
-        ] if ask.moment == Moment::Final && *placed == wid(1) && *kept == tag(2) && *focused == wid(1)
+        ] if ask.moment == Moment::Final && *focused_hint == wid(1) && *kept == tag(2) && *focused == wid(1)
             && *checked == check() && *refreshed == vec![target(2)]));
 
         let now = Instant::now();

@@ -3177,7 +3177,7 @@ mod tests {
             for _ in 0..RUNS {
                 let slot: SurfaceRect = rng.on_screen();
                 let mut cache: crate::pictures::domain::cache::PictureCache<Picture> =
-                    crate::pictures::domain::cache::PictureCache::new();
+                    crate::pictures::domain::cache::PictureCache::default();
                 cache.insert(wid(2), clipped(slot.size.respace()));
                 assert!(cache.usable(wid(1)).is_none(), "seed 95: never captured");
                 assert!(cache.usable(wid(2)).is_none(), "seed 95: a sliver");

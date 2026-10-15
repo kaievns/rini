@@ -274,7 +274,7 @@ mod tests {
     /// A stand-in never enters the cache, where the switcher would read it as a picture.
     #[test]
     fn a_stand_in_is_never_cached() {
-        let mut cache: PictureCache<Picture> = PictureCache::new();
+        let mut cache: PictureCache<Picture> = PictureCache::default();
         let window = WindowId::new(1, 1);
         assert!(!cache.insert(
             window,
@@ -368,7 +368,7 @@ mod tests {
     /// replaced by a later capture of the window on its own, which is flat grey where the blur is.
     #[test]
     fn a_picture_with_its_blur_is_kept_over_a_grey_one_of_the_same_size() {
-        let mut cache: PictureCache<Picture> = PictureCache::new();
+        let mut cache: PictureCache<Picture> = PictureCache::default();
         let window = WindowId::new(1, 1);
         let mut blurred = test_picture(ScreenSize::new(859.0, 1081.0));
         blurred.carries_blur = true;
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn forgetting_a_window_empties_the_cache_even_while_a_clone_is_held() {
         let window = WindowId::new(1, 1);
-        let mut cache: PictureCache<Picture> = PictureCache::new();
+        let mut cache: PictureCache<Picture> = PictureCache::default();
         let size = ScreenSize::new(859.0, 1081.0);
         cache.insert(window, test_picture(size));
         let held = cache.usable(window).cloned().expect("inserted");
