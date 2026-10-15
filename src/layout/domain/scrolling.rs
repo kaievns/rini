@@ -3596,6 +3596,27 @@ mod tests {
         }
     }
 
+    /// Between neighbours the column comes apart where it stood: the rows take its place in their
+    /// order, the neighbours keep their places in the strip and their widths, and the selected
+    /// window keeps the column's width.
+    #[test]
+    fn exploding_a_column_between_neighbours_leaves_them_as_they_were() {
+        let (mut system, layout) = a_strip(&[&[1], &[2, 3, 4], &[5]]);
+        for wide in [1, 5, 3] {
+            assert!(system.select_window(layout, wid(1, wide)));
+            system.cycle_preset_column_width(layout);
+        }
+        let width = |system: &ScrollingLayoutSystem, idx| laid_out_xw(system, layout, wid(1, idx)).1;
+        let before = [1, 3, 5].map(|idx| width(&system, idx));
+
+        system.explode_column_of_selection(layout);
+
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[2], &[3], &[4], &[5]]));
+        assert_eq!([1, 3, 5].map(|idx| width(&system, idx)), before);
+        assert_ne!(width(&system, 2), before[0], "fixture: the neighbours are not at the default");
+        assert_eq!(system.selected_window(layout), Some(wid(1, 3)));
+    }
+
     /// A window alone in its column has nothing to explode: the strip and its frames stay as they
     /// were.
     #[test]
