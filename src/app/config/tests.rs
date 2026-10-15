@@ -1039,6 +1039,14 @@ fn a_niri_action_rini_lacks_is_told_why() {
     assert!(report.contains("cross to the next display"), "{report}");
 }
 
+#[test]
+fn a_niri_debug_section_points_at_nothing_rini_refuses() {
+    let report = refused("debug {\n}\n");
+    let (_, help) = report.split_once("help:").expect("a help line");
+    assert!(help.contains("rini has no debug options or actions"), "{report}");
+    assert!(!help.contains("`debug`"), "{report}");
+}
+
 /// Kai deleted the debug actions on 2026-10-15 ("The pictures held" in `specs/animation.md`), so a
 /// bind naming one is an unknown action.
 #[test]
