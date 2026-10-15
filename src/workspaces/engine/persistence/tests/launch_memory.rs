@@ -41,11 +41,9 @@ fn launch_memory_survives_a_save_and_load() {
         .into(),
     ]);
 
-    let path =
-        std::env::temp_dir().join(format!("rini-launch-memory-test-{}.ron", std::process::id()));
+    let (_dir, path) = layout_file();
     engine.save(&memory, path.clone()).unwrap();
     let _loaded = LayoutEngine::load(path.clone()).unwrap();
-    let _ = std::fs::remove_file(path);
 
     let docked_slots = memory.launch.slots("com.mitchellh.ghostty", &docked);
     assert_eq!(docked_slots.len(), 1);
@@ -564,11 +562,9 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
         dragged
     );
 
-    let path =
-        std::env::temp_dir().join(format!("rini-dragged-slot-test-{}.ron", std::process::id()));
+    let (_dir, path) = layout_file();
     engine.save(&memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load_file(&path).unwrap().memory;
-    let _ = std::fs::remove_file(path);
     assert_eq!(
         loaded.launch.slots("com.mitchellh.ghostty", &topology)[0].width,
         dragged
@@ -646,13 +642,9 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
     let remembered = memory.launch.slots(APP, &topology)[0].width;
     assert!(unbounded(remembered), "{remembered:?}");
 
-    let path = std::env::temp_dir().join(format!(
-        "rini-full-viewport-slot-test-{}.ron",
-        std::process::id()
-    ));
+    let (_dir, path) = layout_file();
     engine.save(&memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load_file(&path).unwrap().memory;
-    let _ = std::fs::remove_file(path);
     let reloaded = loaded.launch.slots(APP, &topology)[0].width;
     assert!(unbounded(reloaded), "{reloaded:?}");
 
@@ -768,10 +760,9 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
     );
 
     // rini restarts, and the window is discovered before the topology is known.
-    let path = std::env::temp_dir().join(format!("full_width_{}.ron", std::process::id()));
+    let (_dir, path) = layout_file();
     engine.save(&memory, path.clone()).unwrap();
     let mut reloaded = LayoutEngine::load(path.clone()).unwrap();
-    let _ = std::fs::remove_file(&path);
 
     let mut store = WindowStore::default();
     let after_relaunch = WindowId::new(900, 7);

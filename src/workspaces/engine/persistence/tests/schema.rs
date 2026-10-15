@@ -289,8 +289,7 @@ fn a_file_without_launch_memory_still_loads() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let path =
-        std::env::temp_dir().join(format!("rini-launch-memory-missing-{}.ron", std::process::id()));
+    let (_dir, path) = layout_file();
     engine.save(&memory, path.clone()).unwrap();
 
     // Strip the record back out.
@@ -303,7 +302,6 @@ fn a_file_without_launch_memory_still_loads() {
     std::fs::write(&path, stripped).unwrap();
 
     let loaded = LayoutEngine::load_file(&path).unwrap();
-    let _ = std::fs::remove_file(path);
     assert!(
         loaded.layout.is_ok(),
         "a missing record is a default, not a refusal"
