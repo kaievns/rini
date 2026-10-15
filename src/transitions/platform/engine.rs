@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
-    FromCg, OverlayPoint, OverlayRect, OverlayVector, Point, PointSpace, Respace, ScreenRect,
-    ScreenSize, Size, SurfacePoint,
+    FromCg, OverlayRect, OverlayVector, Point, PointSpace, Respace, ScreenRect, ScreenSize, Size,
+    SurfacePoint,
 };
 use rini_geometry::stretch::grows;
 use rini_geometry::{from_overlay_space, to_overlay_space};
@@ -36,7 +36,7 @@ use tracing::{debug, warn};
 use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::plan::{self, entrance_from};
-use crate::animation::domain::motion::score::{Edit, MediaClock, Node, Value};
+use crate::animation::domain::motion::score::{Edit, MediaClock};
 use crate::animation::domain::motion::tile;
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
@@ -65,7 +65,7 @@ use crate::transitions::domain::lifecycle::{
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::timing::*;
 use crate::transitions::platform::journal::Writer;
-use crate::transitions::platform::logged::Whole;
+use crate::transitions::platform::logged::{self, Whole};
 use crate::transitions::settings::JournalSettings;
 use crate::windows::platform::window_server::WindowServer;
 
@@ -699,6 +699,26 @@ impl RunningAnimation {
             return None;
         }
         Some(self.score.push(cue, wall, seconds, at))
+    }
+
+    /// A later pass's reserved entrances, but for a window already waiting to enter, and every
+    /// entrance then pointed at where `final_frames` ends it on `display`, with those frames the
+    /// flight's latest for their windows.
+    fn take_ends(
+        &mut self,
+        entrances: Vec<PendingEntrance>,
+        final_frames: Vec<(WindowId, ScreenRect)>,
+        display: Option<ScreenRect>,
+    ) {
+        for entrance in entrances {
+            if !self.entrances.iter().any(|e| e.window == entrance.window) {
+                self.entrances.push(entrance);
+            }
+        }
+        if let Some(display) = display {
+            retarget_entrances(&mut self.entrances, &final_frames, display);
+        }
+        extend_latest(&mut self.final_frames, final_frames.into_iter());
     }
 
     /// The windows the flight draws a tile of.
@@ -1815,15 +1835,7 @@ impl FlightEngine {
         let viewport = self.viewport();
         let display = self.display.map(|(frame, _)| frame);
         let Some(running) = self.running.as_mut() else { return };
-        for entrance in pass.entrances {
-            if !running.entrances.iter().any(|e| e.window == entrance.window) {
-                running.entrances.push(entrance);
-            }
-        }
-        if let Some(display) = display {
-            retarget_entrances(&mut running.entrances, &pass.final_frames, display);
-        }
-        extend_latest(&mut running.final_frames, pass.final_frames.into_iter());
+        running.take_ends(pass.entrances, pass.final_frames, display);
         let focus_before = running.focus;
         let drawn_focused_before: Vec<(WindowId, (bool, Worn))> =
             running.tiles.iter().map(|t| (t.window, (t.focused, t.worn))).collect();
@@ -1854,40 +1866,7 @@ impl FlightEngine {
         if let Some((mut delta, mut edits)) = running.take_pass(&folded, at) {
             delta.focus_changed = pass_focus.is_some() && pass_focus != focus_before;
             if !delta.is_empty() {
-                debug!(
-                    groups = running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
-                    changing = running.plan.changing.len(),
-                    entrances = running.plan.entrances.len(),
-                    reparented = delta.reparented.len(),
-                    retargeted_groups = delta.retargeted_groups.len(),
-                    joined = delta.joined_tiles.len(),
-                    "flight merged"
-                );
-                for (key, to) in &delta.retargeted_groups {
-                    let drawn = match running.score.score().sample(Node::Container(*key), at) {
-                        Some(Value::Point(drawn)) => drawn,
-                        _ => OverlayPoint::origin(),
-                    };
-                    debug!(
-                        key = format!("{key:?}"),
-                        presented = %Whole(drawn),
-                        to = %Whole(*to),
-                        "group retargeted"
-                    );
-                }
-                for (window, from_key, to_key) in &delta.reparented {
-                    let dest = running.plan.destination(*window).map(Whole);
-                    let from_to = running.plan.position_of(*from_key);
-                    debug!(
-                        pid = window.pid,
-                        idx = window.idx.get(),
-                        from = format!("{from_key:?}"),
-                        to = format!("{to_key:?}"),
-                        group_destination = %Whole(from_to),
-                        member_destination = dest.map(|dest| dest.to_string()).unwrap_or_default(),
-                        "member reparented"
-                    );
-                }
+                logged::merged(&running.plan, running.score.score(), &delta, at);
             }
             moved = delta.moves_anything();
             let banding = band_plan(&running.plan, &running.tiles, running.focus);
@@ -2218,9 +2197,12 @@ fn log_dressing(
 #[cfg(test)]
 mod tests {
     use rini_geometry::SameAs;
-    use rini_geometry::space::{Respace, ScreenSize, ScreenVector, SurfaceRect, ToCg};
+    use rini_geometry::space::{
+        OverlayPoint, Respace, ScreenSize, ScreenVector, SurfaceRect, ToCg,
+    };
 
     use super::*;
+    use crate::animation::domain::motion::score::Node;
     use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel, viewport};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, VIEWPORT, rect};
     use crate::decorations::domain::style::Ring;
@@ -2559,6 +2541,44 @@ mod tests {
             assert_eq!(running.tiles[0].snapshot.coverage, fresh.coverage);
             assert!(running.tiles[0].clipped, "as it was handed");
             assert_eq!(running.tiles.len(), 1);
+        }
+
+        #[test]
+        fn a_later_passs_entrances_join_but_for_one_waiting_and_each_takes_the_latest_end() {
+            let entrance = |window, to| PendingEntrance {
+                window,
+                to,
+                floating: false,
+                worn: Default::default(),
+            };
+            let (first, moved) = (rect(4.0, 32.0, 859.0, 1081.0), rect(867.0, 32.0, 859.0, 1081.0));
+            let (joining, still) =
+                (rect(1730.0, 32.0, 859.0, 1081.0), rect(0.0, 0.0, 400.0, 300.0));
+            let mut running = flight();
+            running.entrances.push(entrance(wid(1), on(first)));
+            running.final_frames = vec![(wid(1), first), (wid(3), still)];
+
+            running.take_ends(
+                vec![entrance(wid(1), on(still)), entrance(wid(2), on(still))],
+                vec![(wid(1), moved), (wid(2), joining)],
+                Some(DISPLAY),
+            );
+
+            let entrances: Vec<_> = running.entrances.iter().map(|e| (e.window, e.to)).collect();
+            assert_eq!(entrances, vec![(wid(1), on(moved)), (wid(2), on(joining))]);
+            assert_eq!(running.final_frames, vec![
+                (wid(1), moved),
+                (wid(3), still),
+                (wid(2), joining)
+            ]);
+
+            running.take_ends(vec![entrance(wid(4), on(still))], vec![(wid(4), first)], None);
+            assert_eq!(
+                running.entrances[2].to,
+                on(still),
+                "with no display, nothing is retargeted"
+            );
+            assert_eq!(running.final_frames[3], (wid(4), first));
         }
 
         #[test]

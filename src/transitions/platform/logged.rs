@@ -1,8 +1,12 @@
-//! How the flight engine logs geometry.
+//! What the flight engine logs: geometry to the point, and what a merge changed.
 
 use std::fmt;
 
-use rini_geometry::space::{Point, Rect, Size, Vector};
+use rini_geometry::space::{OverlayPoint, Point, Rect, Size, Vector};
+use tracing::debug;
+
+use crate::animation::domain::motion::plan::{FlightPlan, PlanDelta};
+use crate::animation::domain::motion::score::{Node, Score, Value};
 
 /// A frame, point, vector or size as the log gives it, to the point: a frame as its origin, then
 /// its size.
@@ -27,6 +31,45 @@ impl<U> fmt::Display for Whole<Vector<U>> {
 impl<U> fmt::Display for Whole<Size<U>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:.0}x{:.0}", self.0.width, self.0.height)
+    }
+}
+
+/// What a merge at `at` on the media clock changed of the flight, now `plan` and playing `score`:
+/// the containers it retargeted, from where each is drawn, and the members it moved between them.
+pub(super) fn merged(plan: &FlightPlan, score: &Score, delta: &PlanDelta, at: f64) {
+    debug!(
+        groups = plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
+        changing = plan.changing.len(),
+        entrances = plan.entrances.len(),
+        reparented = delta.reparented.len(),
+        retargeted_groups = delta.retargeted_groups.len(),
+        joined = delta.joined_tiles.len(),
+        "flight merged"
+    );
+    for (key, to) in &delta.retargeted_groups {
+        let drawn = match score.sample(Node::Container(*key), at) {
+            Some(Value::Point(drawn)) => drawn,
+            _ => OverlayPoint::origin(),
+        };
+        debug!(
+            key = format!("{key:?}"),
+            presented = %Whole(drawn),
+            to = %Whole(*to),
+            "group retargeted"
+        );
+    }
+    for (window, from_key, to_key) in &delta.reparented {
+        let dest = plan.destination(*window).map(Whole);
+        let from_to = plan.position_of(*from_key);
+        debug!(
+            pid = window.pid,
+            idx = window.idx.get(),
+            from = format!("{from_key:?}"),
+            to = format!("{to_key:?}"),
+            group_destination = %Whole(from_to),
+            member_destination = dest.map(|dest| dest.to_string()).unwrap_or_default(),
+            "member reparented"
+        );
     }
 }
 
