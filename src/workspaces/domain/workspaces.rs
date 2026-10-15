@@ -242,6 +242,21 @@ impl WorkspaceLayouts {
         layouts
     }
 
+    #[cfg(test)]
+    pub fn insert_layout_configuration_for_test(
+        &mut self,
+        space: SpaceId,
+        workspace: crate::workspaces::VirtualWorkspaceId,
+        size: CGSize,
+        layout: LayoutId,
+    ) {
+        self.map
+            .get_mut(&(space, workspace))
+            .expect("test workspace must be initialized")
+            .configurations
+            .insert(Size::from(size), layout);
+    }
+
     pub fn ensure_active_for_workspace(
         &mut self,
         space: SpaceId,

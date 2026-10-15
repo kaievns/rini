@@ -56,6 +56,75 @@ fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
     assert!(engine.persistence.pending_windows.contains(&restarted_app));
 }
 
+/// A ghost saved in the layout of a display size not showing goes from every layout when its app's
+/// discovery completes, not only from the one on screen.
+#[test]
+fn completed_app_discovery_discards_a_ghost_from_a_dormant_display_size() {
+    let space = SpaceId::new(504);
+    let small = CGSize::new(1200.0, 800.0);
+    let large = CGSize::new(1600.0, 1000.0);
+    let ghost = WindowId::new(33419, 82684);
+    let mut snapshot = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut snapshot_store = WindowStore::default();
+    let _ = snapshot.handle_event(
+        &mut snapshot_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, large),
+    );
+    let workspace = snapshot.active_workspace(space).unwrap();
+    let large_layout = snapshot.workspace_layouts.active(space, workspace).unwrap();
+    let small_layout = snapshot.virtual_workspace_manager.workspaces[workspace]
+        .layout_system
+        .create_layout();
+    snapshot.workspace_layouts.insert_layout_configuration_for_test(
+        space,
+        workspace,
+        small,
+        small_layout,
+    );
+    assert_ne!(small_layout, large_layout);
+    snapshot.workspace_tree_mut(workspace).add_window_after_selection(small_layout, ghost);
+    snapshot.persistence.windows.insert(
+        ghost,
+        WindowFingerprint {
+            window_server_id: Some(82684),
+            title: Some("Music".into()),
+            width: 1512.0,
+            height: 944.0,
+            app_id: Some("com.apple.Music".into()),
+        },
+    );
+    let path = std::env::temp_dir().join(format!(
+        "rini-dormant-size-ghost-test-{}-{}.ron",
+        std::process::id(),
+        space.get(),
+    ));
+    snapshot.save(&memory, path.clone()).unwrap();
+
+    let mut engine = LayoutEngine::load(path.clone()).unwrap();
+    let _ = std::fs::remove_file(path);
+    let mut window_store = WindowStore::default();
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, large),
+    );
+    assert!(engine.persistence.pending_windows.contains(&ghost), "fixture: a candidate");
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowDiscoveryCompleted(ghost.pid, None, vec![space]),
+    );
+
+    for (_, workspace, layout) in engine.workspace_layouts.all_layouts() {
+        assert!(!engine.workspace_tree(workspace).contains_window(layout, ghost));
+    }
+    assert!(!engine.persistence.windows.contains_key(&ghost));
+    assert!(!engine.persistence.pending_windows.contains(&ghost));
+}
+
 #[test]
 fn completed_app_discovery_discards_unmatched_startup_ghosts() {
     let mut engine = test_engine();
