@@ -423,7 +423,7 @@ fn animated_layout_handles_windows_without_server_ids() {
     assert!(
         requests.iter().any(|request| matches!(
             request,
-            Request::SetWindowFrame(..) | Request::SetBatchWindowFrame(..)
+            Request::SetWindowFrame { .. } | Request::SetBatchWindowFrame(..)
         )),
         "expected layout to still request a frame update without a server id: {requests:?}"
     );
@@ -1471,7 +1471,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     assert!(
         apps.requests().iter().any(|request| matches!(
             request,
-            Request::SetWindowFrame(..) | Request::SetBatchWindowFrame(..)
+            Request::SetWindowFrame { .. } | Request::SetBatchWindowFrame(..)
         )),
         "the window still has to be placed"
     );
@@ -1553,7 +1553,7 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
     assert!(
         apps.requests().iter().any(|request| matches!(
             request,
-            Request::SetWindowFrame(..) | Request::SetBatchWindowFrame(..)
+            Request::SetWindowFrame { .. } | Request::SetBatchWindowFrame(..)
         )),
         "the windows are still placed"
     );
@@ -1563,7 +1563,7 @@ fn frames_written(requests: &[Request], wid: WindowId) -> Vec<CGRect> {
     let mut out = Vec::new();
     for request in requests {
         match request {
-            Request::SetWindowFrame(w, frame, _, _) if *w == wid => out.push(*frame),
+            Request::SetWindowFrame { window: w, frame, .. } if *w == wid => out.push(*frame),
             Request::SetBatchWindowFrame(frames, _, _) => {
                 out.extend(frames.iter().filter(|(w, _)| *w == wid).map(|(_, f)| *f))
             }

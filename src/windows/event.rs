@@ -7,7 +7,7 @@ use rini_core::ids::{WindowId, pid_t};
 
 use crate::windows::domain::attention::Attention;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
-use crate::windows::domain::request::{AppThreadHandle, Quiet};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, RaiseSequence};
 use crate::windows::domain::transaction::{Requested, TransactionId};
 use crate::windows::platform::mouse::MouseState;
 
@@ -56,11 +56,11 @@ pub enum Event {
     /// `src/windows/docs/admission-and-raise-findings.md` for why it is not retried.
     RaiseCompleted {
         window_id: WindowId,
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
     /// A raise sequence ran past the raise manager's deadline; its pending raises are dropped.
     RaiseTimeout {
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
     /// The raise manager has nothing running or waiting, having received `requests_seen` raise
     /// requests in all.

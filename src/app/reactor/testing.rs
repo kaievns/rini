@@ -1024,7 +1024,7 @@ impl Apps {
                 Request::ApplicationGloballyActivated(pid) => {
                     events.push(Event::ApplicationActivated(pid, Quiet::No));
                 }
-                Request::SetWindowFrame(wid, frame, txid, _) => {
+                Request::SetWindowFrame { window: wid, frame, txid, .. } => {
                     let window = self.windows.entry(wid).or_default();
                     window.last_seen_txid = txid;
                     let old_frame = window.frame;
@@ -1073,7 +1073,7 @@ impl Apps {
                         }
                     }
                 }
-                Request::Raise(..) => todo!(),
+                Request::Raise { .. } => todo!(),
                 Request::CloseWindow(..) => todo!(),
             }
         }

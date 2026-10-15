@@ -6,6 +6,7 @@ use crate::app::reactor::MenuState;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::CommunicationManager;
 use crate::windows::domain::raise as raise_manager;
+use crate::windows::domain::request::RaiseSequence;
 
 pub fn handle_menu_opened(menu_state: &mut MenuState, pid: i32) -> EventOutcome {
     *menu_state = match *menu_state {
@@ -64,7 +65,7 @@ pub fn handle_system_woke() -> EventOutcome { EventOutcome::window_notification_
 #[derive(Debug, Clone, Copy)]
 pub struct RaiseCompletedPayload {
     pub window: WindowId,
-    pub sequence: u64,
+    pub sequence: RaiseSequence,
 }
 
 pub fn handle_raise_completed(payload: RaiseCompletedPayload) -> EventOutcome {
@@ -76,7 +77,7 @@ pub fn handle_raise_completed(payload: RaiseCompletedPayload) -> EventOutcome {
         .with_raise_request(raise_manager::Event::RaiseCompleted { window_id, sequence_id })
 }
 
-pub fn handle_raise_timeout(sequence_id: u64) -> EventOutcome {
+pub fn handle_raise_timeout(sequence_id: RaiseSequence) -> EventOutcome {
     EventOutcome::no_change().with_raise_request(raise_manager::Event::RaiseTimeout { sequence_id })
 }
 

@@ -583,7 +583,7 @@ fn a_space_change_held_through_mission_control_is_laid_out_before_the_exit_refre
         .requests()
         .into_iter()
         .filter_map(|request| match request {
-            Request::SetWindowFrame(window, frame, ..) => Some((window, frame)),
+            Request::SetWindowFrame { window, frame, .. } => Some((window, frame)),
             _ => None,
         })
         .collect();
@@ -849,7 +849,7 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
         .requests()
         .into_iter()
         .flat_map(|request| match request {
-            Request::SetWindowFrame(wid, frame, _, _) if wid == moved => vec![frame],
+            Request::SetWindowFrame { window: wid, frame, .. } if wid == moved => vec![frame],
             Request::SetBatchWindowFrame(frames, _, _) => frames
                 .into_iter()
                 .filter_map(|(wid, frame)| (wid == moved).then_some(frame))
@@ -1183,7 +1183,7 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
     assert_eq!(reactor.focus_tracker().key_window(), Some(focused));
     assert_eq!(test_layout(&mut reactor, space, screen), layout);
     assert!(
-        !apps.requests().iter().any(|request| matches!(request, Request::Raise(..))),
+        !apps.requests().iter().any(|request| matches!(request, Request::Raise { .. })),
         "a quarantine event is not a focus edge, so nothing is raised"
     );
 }

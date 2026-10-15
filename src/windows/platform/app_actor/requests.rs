@@ -31,7 +31,9 @@ impl<W: AxWorld> State<W> {
                     self.on_global_activation()?;
                 }
             }
-            Request::SetWindowFrame(wid, desired, txid, _) => self.set_frame(wid, desired, txid)?,
+            Request::SetWindowFrame { window, frame, txid, .. } => {
+                self.set_frame(window, frame, txid)?
+            }
             Request::SetBatchWindowFrame(frames, txid, _) => {
                 for (wid, desired) in frames {
                     self.set_frame(wid, desired, txid)?;
@@ -42,8 +44,18 @@ impl<W: AxWorld> State<W> {
                     self.set_switch_position(wid, position, txid)?;
                 }
             }
-            Request::Raise(wids, token, sequence_id, quiet) => {
-                self.raises_tx.send(RaiseRequest(wids, token, sequence_id, quiet));
+            Request::Raise {
+                windows,
+                token,
+                sequence_id,
+                quiet,
+            } => {
+                self.raises_tx.send(RaiseRequest {
+                    windows,
+                    token,
+                    sequence_id,
+                    quiet,
+                });
             }
         }
         Ok(false)
@@ -164,6 +176,7 @@ mod tests {
     use super::super::fixtures::{PID, announced, app_with, peer, raisable, rect, state_with};
     use super::*;
     use crate::windows::domain::ax_events::AxNotificationKind;
+    use crate::windows::domain::request::SuppressEnhancedUi;
     use crate::windows::platform::ax::world::FakeAx;
 
     /// A frame write that changes the size is size, then position, then size AGAIN.
@@ -193,12 +206,12 @@ mod tests {
 
         let desired = rect(500., 300., 800., 600.);
         state
-            .handle_request(Request::SetWindowFrame(
-                wid,
-                desired,
-                TransactionId::default(),
-                false,
-            ))
+            .handle_request(Request::SetWindowFrame {
+                window: wid,
+                frame: desired,
+                txid: TransactionId::default(),
+                enhanced_ui: SuppressEnhancedUi::No,
+            })
             .expect("the write succeeds");
 
         assert_eq!(
@@ -233,12 +246,12 @@ mod tests {
 
         let desired = rect(500., 300., 800., 600.);
         state
-            .handle_request(Request::SetWindowFrame(
-                wid,
-                desired,
-                TransactionId::default(),
-                false,
-            ))
+            .handle_request(Request::SetWindowFrame {
+                window: wid,
+                frame: desired,
+                txid: TransactionId::default(),
+                enhanced_ui: SuppressEnhancedUi::No,
+            })
             .expect("the write succeeds");
 
         assert!(state.ax.sizes.borrow().is_empty(), "never sized");
@@ -272,12 +285,12 @@ mod tests {
         let clamped = rect(2000., 0., 640., 600.);
         state.ax.frame_reads.borrow_mut().insert(window, [clamped, desired].into());
         state
-            .handle_request(Request::SetWindowFrame(
-                wid,
-                desired,
-                TransactionId::default(),
-                false,
-            ))
+            .handle_request(Request::SetWindowFrame {
+                window: wid,
+                frame: desired,
+                txid: TransactionId::default(),
+                enhanced_ui: SuppressEnhancedUi::No,
+            })
             .expect("the write succeeds");
 
         assert_eq!(
@@ -327,7 +340,7 @@ mod tests {
             .handle_request(Request::SetBatchWindowFrame(
                 vec![(kept_wid, to_kept), (unread_wid, to_unread)],
                 TransactionId::default(),
-                false,
+                SuppressEnhancedUi::No,
             ))
             .expect("the writes succeed");
 
@@ -355,7 +368,7 @@ mod tests {
         let done = state.handle_request(Request::SetBatchWindowFrame(
             frames,
             TransactionId::default(),
-            false,
+            SuppressEnhancedUi::No,
         ));
 
         assert!(matches!(done, Ok(false)));
@@ -380,7 +393,7 @@ mod tests {
             .handle_request(Request::SetWorkspaceSwitchPositions(
                 vec![(wids[0], CGPoint::new(600., 0.))],
                 txid,
-                false,
+                SuppressEnhancedUi::No,
             ))
             .expect("handled");
         state.handle_notification(7, AxNotificationKind::WindowMoved, Some(wids[0]));

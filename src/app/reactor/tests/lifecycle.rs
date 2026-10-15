@@ -634,7 +634,7 @@ fn a_discovery_lays_its_window_out_where_it_hands_it_back() {
         .requests()
         .into_iter()
         .map(|request| match request {
-            Request::SetWindowFrame(window, frame, ..) => (Some(window), Some(frame == placed)),
+            Request::SetWindowFrame { window, frame, .. } => (Some(window), Some(frame == placed)),
             Request::GetVisibleWindows => (None, None),
             other => panic!("unexpected {other:?}"),
         })

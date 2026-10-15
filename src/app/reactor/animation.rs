@@ -15,7 +15,7 @@ use crate::pictures::domain::target::PictureTarget;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::transitions::domain::request::AnimationRequest;
 use crate::transitions::domain::travel::changes_visibly;
-use crate::windows::domain::request::{AppThreadHandle, Request};
+use crate::windows::domain::request::{AppThreadHandle, Request, SuppressEnhancedUi};
 use crate::windows::domain::transaction::TransactionId;
 
 impl Reactor {
@@ -182,7 +182,12 @@ impl Reactor {
             // real windows are placed by Event::ApplyOverlayFrames once it covers them; placing them
             // now let them visibly jump into position before the overlay appeared.
             for (handle, wid, frame, txid) in placements {
-                _ = handle.send(Request::SetWindowFrame(wid, frame, txid, true));
+                _ = handle.send(Request::SetWindowFrame {
+                    window: wid,
+                    frame,
+                    txid,
+                    enhanced_ui: SuppressEnhancedUi::Yes,
+                });
             }
         }
 
@@ -243,7 +248,12 @@ impl Reactor {
                 placements.push((handle, m.window, m.to.to_cg(), txid));
             } else {
                 trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Direct positioning hidden window");
-                let request = Request::SetWindowFrame(m.window, m.to.to_cg(), txid, true);
+                let request = Request::SetWindowFrame {
+                    window: m.window,
+                    frame: m.to.to_cg(),
+                    txid,
+                    enhanced_ui: SuppressEnhancedUi::Yes,
+                };
                 if let Err(e) = handle.send(request) {
                     debug!(window = ?m.window, ?e, "Failed to send frame request for hidden window");
                 }

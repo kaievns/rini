@@ -65,7 +65,9 @@ use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise::RaiseManager;
-use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::request::{
+    AppThreadHandle, Quiet, RaiseSequence, Request, SuppressEnhancedUi,
+};
 use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -234,13 +236,13 @@ pub enum Event {
     /// all raise requests in a sequence have finished.
     RaiseCompleted {
         window_id: WindowId,
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
 
     /// A raise sequence timed out. Used by the raise manager to clean up
     /// pending raises that took too long.
     RaiseTimeout {
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
 
     /// The raise manager has nothing running or waiting. See `RaiseEcho::idle`.
@@ -1041,12 +1043,12 @@ impl Reactor {
             TransactionId::default()
         };
         if let Some(app) = self.apps.get(&write.window.pid)
-            && let Err(error) = app.handle.send(Request::SetWindowFrame(
-                write.window,
-                write.frame,
-                transaction,
-                true,
-            ))
+            && let Err(error) = app.handle.send(Request::SetWindowFrame {
+                window: write.window,
+                frame: write.frame,
+                txid: transaction,
+                enhanced_ui: SuppressEnhancedUi::Yes,
+            })
         {
             warn!(window = ?write.window, %error, "failed to write requested window frame");
         }

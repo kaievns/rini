@@ -151,7 +151,7 @@ mod tests {
     use super::super::fixtures::{PID, app_with, main_window_changes, poll_once};
     use super::*;
     use crate::windows::domain::ax_events::AxNotificationKind;
-    use crate::windows::domain::request::Request;
+    use crate::windows::domain::request::{RaiseSequence, Request};
 
     /// The windows a batch raises before its last are always quiet, so the activation its first
     /// window waits for is quiet whatever the batch asked.
@@ -165,7 +165,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
         assert!(poll_once(raise.as_mut()).is_pending());
@@ -209,7 +209,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::Yes
         ));
         assert!(poll_once(raise.as_mut()).is_pending());
