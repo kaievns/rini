@@ -8,6 +8,17 @@ use rustc_hash::FxHashMap as HashMap;
 use crate::input::domain::binding::{Action, Bind};
 use crate::input::domain::key::{Hotkey, Modifiers};
 
+/// What a key-down does to the table.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Press {
+    /// Nothing is bound to the chord: the key goes on to the application.
+    Unbound,
+    /// A held key's repeat of a bind that does not ask for repeats: deleted, firing nothing.
+    Swallowed,
+    /// The bind's action, the key deleted.
+    Fired(Action),
+}
+
 /// Every bound key, by each exact chord it answers to.
 #[derive(Debug, Default)]
 pub struct HotkeyTable {
@@ -41,12 +52,15 @@ impl HotkeyTable {
 
     pub fn len(&self) -> usize { self.binds.len() }
 
-    /// What a key-down of `hotkey` fires: `None` when nothing is bound to it, so the key goes on to
-    /// the application. A held key's repeats fire only a bind written `repeat=true`; otherwise they
-    /// are swallowed, because a repeat re-fires commands such as workspace back-and-forth.
-    pub fn press(&self, hotkey: &Hotkey, is_repeat: bool) -> Option<Option<Action>> {
-        let (action, repeat) = self.binds.get(hotkey)?;
-        Some((!is_repeat || *repeat).then(|| action.clone()))
+    /// What a key-down of `hotkey` does. A held key's repeats fire only a bind written
+    /// `repeat=true`; otherwise they are swallowed, because a repeat re-fires commands such as
+    /// workspace back-and-forth.
+    pub fn press(&self, hotkey: &Hotkey, is_repeat: bool) -> Press {
+        match self.binds.get(hotkey) {
+            None => Press::Unbound,
+            Some((_, false)) if is_repeat => Press::Swallowed,
+            Some((action, _)) => Press::Fired(action.clone()),
+        }
     }
 }
 
@@ -109,26 +123,27 @@ mod tests {
         ]);
         assert_eq!(
             table.press(&left_alt(KeyCode::KeyJ), false),
-            Some(Some(Action::FocusColumnLeft))
+            Press::Fired(Action::FocusColumnLeft)
         );
+        assert_eq!(table.press(&left_alt(KeyCode::KeyJ), true), Press::Swallowed);
         assert_eq!(
-            table.press(&left_alt(KeyCode::KeyJ), true),
-            Some(None),
-            "swallowed, not fired"
+            table.press(&left_alt(KeyCode::KeyK), false),
+            Press::Fired(Action::FocusColumnRight)
         );
         assert_eq!(
             table.press(&left_alt(KeyCode::KeyK), true),
-            Some(Some(Action::FocusColumnRight))
+            Press::Fired(Action::FocusColumnRight)
         );
     }
 
     #[test]
     fn an_unbound_key_goes_on_to_the_application() {
         let table = table(&[("Alt+J", Action::FocusColumnLeft, false)]);
-        assert_eq!(table.press(&left_alt(KeyCode::KeyL), false), None);
+        assert_eq!(table.press(&left_alt(KeyCode::KeyL), false), Press::Unbound);
+        assert_eq!(table.press(&left_alt(KeyCode::KeyL), true), Press::Unbound);
         assert_eq!(
             table.press(&Hotkey::new(Modifiers::empty(), KeyCode::KeyJ), false),
-            None
+            Press::Unbound
         );
     }
 
@@ -137,8 +152,12 @@ mod tests {
     fn a_generic_modifier_answers_to_either_side() {
         let table = table(&[("Alt+J", Action::FocusColumnLeft, false)]);
         assert_eq!(table.len(), 3);
-        assert!(table.press(&Hotkey::new(Modifiers::ALT_RIGHT, KeyCode::KeyJ), false).is_some());
-        assert!(table.press(&Hotkey::new(Modifiers::ALT, KeyCode::KeyJ), false).is_some());
+        for modifiers in [Modifiers::ALT_LEFT, Modifiers::ALT_RIGHT, Modifiers::ALT] {
+            assert_eq!(
+                table.press(&Hotkey::new(modifiers, KeyCode::KeyJ), false),
+                Press::Fired(Action::FocusColumnLeft)
+            );
+        }
     }
 
     #[test]

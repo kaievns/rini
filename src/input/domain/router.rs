@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use crate::input::domain::binding::{Action, Bind};
 use crate::input::domain::held_keys::HeldKeys;
-use crate::input::domain::hotkey::HotkeyTable;
+use crate::input::domain::hotkey::{HotkeyTable, Press};
 use crate::input::domain::key::{Hotkey, KeyCode};
 use crate::input::domain::switch_session::{
     KeyEvent, KeyEventKind, Signal, SwitchKeys, SwitchSession,
@@ -93,9 +93,13 @@ impl KeyRouter {
         if switched.swallow || stroke.kind != KeyEventKind::Down {
             return verdict;
         }
-        if let Some(fired) = self.hotkeys.press(&Hotkey::new(modifiers, key), stroke.repeat) {
-            verdict.swallow = true;
-            verdict.action = fired;
+        match self.hotkeys.press(&Hotkey::new(modifiers, key), stroke.repeat) {
+            Press::Unbound => {}
+            Press::Swallowed => verdict.swallow = true,
+            Press::Fired(action) => {
+                verdict.swallow = true;
+                verdict.action = Some(action);
+            }
         }
         verdict
     }
