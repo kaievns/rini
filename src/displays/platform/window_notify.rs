@@ -161,7 +161,6 @@ impl WindowNotify {
                     | CGSEventType::Known(KnownCGSEvent::WindowResized) => {
                         note(&following, event, evt.window_id)
                     }
-                    _ => {}
                 }
             }
         });

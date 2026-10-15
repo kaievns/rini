@@ -214,14 +214,6 @@ impl WindowCatalogue {
             .filter_map(|(&wsid, record)| record.visible.then_some(wsid))
     }
 
-    pub fn window_server_info_count(&self) -> usize {
-        self.window_servers.values().filter(|record| record.info.is_some()).count()
-    }
-
-    pub fn visible_window_server_count(&self) -> usize {
-        self.window_servers.values().filter(|record| record.visible).count()
-    }
-
     fn server_record_mut(&mut self, wsid: WindowServerId) -> &mut WindowServerRecord {
         self.window_servers.entry(wsid).or_default()
     }
@@ -1147,6 +1139,6 @@ mod tests {
         catalogue.clear_visible_windows();
 
         assert!(!catalogue.is_window_visible(wsid));
-        assert_eq!(catalogue.visible_window_server_count(), 0);
+        assert_eq!(catalogue.iter_visible_window_server_ids().next(), None);
     }
 }

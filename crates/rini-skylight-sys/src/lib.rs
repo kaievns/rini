@@ -177,23 +177,16 @@ pub enum KnownCGSEvent {
     WindowMoved = 806,
     WindowResized = 807,
     WindowReordered = 808,
-    WindowLevelChanged = 811,
     WindowUnhidden = 815,
     WindowHidden = 816,
     SpaceWindowCreated = 1325,
     SpaceWindowDestroyed = 1326,
     SpaceCreated = 1327,
     SpaceDestroyed = 1328,
-    SpaceCurrentChanged = 1329,
-    WindowManagerActivatingClickOrdering = 1333,
     WindowManagerSpaceFrontConnectionChanged = 1334,
     WindowManagerGlobalFrontConnectionChanged = 1335,
-    WindowOrderingGroupChanged = 1336,
-    SpaceWindowBatchReassociated = 1339,
     SpaceWindowManagementCapabilitiesChanged = 1340,
-    WindowParentChanged = 1341,
     ManagedSpaceMembershipUpdated = 1342,
-    WorkspaceDidChange = 1401,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

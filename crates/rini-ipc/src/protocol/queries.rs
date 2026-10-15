@@ -34,10 +34,6 @@ impl WindowId {
             Some(Self { pid, idx })
         }
     }
-
-    pub fn to_debug_string(self) -> String {
-        format!("WindowId {{ pid: {}, idx: {} }}", self.pid, self.idx)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

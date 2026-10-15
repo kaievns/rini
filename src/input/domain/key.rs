@@ -488,51 +488,6 @@ impl fmt::Display for Hotkey {
     }
 }
 
-#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum HotkeySpec {
-    Hotkey(Hotkey),
-    ModifiersOnly { modifiers: Modifiers },
-}
-
-pub(in crate::input) fn default_key_for_modifiers(mods: Modifiers) -> Option<KeyCode> {
-    for m in MOD_FAMILIES {
-        if !mods.intersects(m.generic) {
-            continue;
-        }
-        if mods.contains(m.right) && !mods.contains(m.left) {
-            return Some(m.right_key);
-        }
-        return Some(m.left_key);
-    }
-    None
-}
-
-impl HotkeySpec {
-    pub fn to_hotkey(&self) -> Option<Hotkey> {
-        match self {
-            HotkeySpec::Hotkey(h) => Some(h.clone()),
-            HotkeySpec::ModifiersOnly { modifiers } => {
-                default_key_for_modifiers(*modifiers).map(|k| Hotkey::new(*modifiers, k))
-            }
-        }
-    }
-}
-
-impl From<HotkeySpec> for Hotkey {
-    fn from(spec: HotkeySpec) -> Hotkey {
-        match spec {
-            HotkeySpec::Hotkey(h) => h,
-            HotkeySpec::ModifiersOnly { modifiers } => {
-                if let Some(k) = default_key_for_modifiers(modifiers) {
-                    Hotkey::new(modifiers, k)
-                } else {
-                    Hotkey::new(modifiers, KeyCode::ShiftLeft)
-                }
-            }
-        }
-    }
-}
-
 /// The flag bits a key contributes when held, or `None` if it is not a modifier.
 ///
 /// The three lock keys are here because macOS reports them as modifier FLAGS rather than as key
@@ -883,31 +838,6 @@ mod tests {
     #[test]
     fn no_modifiers_prints_as_nothing() {
         assert_eq!(Modifiers::empty().to_string(), "");
-    }
-
-    // --- a modifiers-only binding needs a key -------------------------------------------------
-
-    /// A binding with no key registers against one anyway: macOS has no "modifier alone" hotkey, so
-    /// rini picks the modifier's own key code.
-    #[test]
-    fn a_modifiers_only_spec_becomes_a_hotkey_on_the_modifiers_own_key() {
-        let mut mods = Modifiers::empty();
-        mods.insert(Modifiers::CONTROL);
-        let hotkey = HotkeySpec::ModifiersOnly { modifiers: mods }.to_hotkey().expect("a hotkey");
-        assert_eq!(hotkey.key_code, KeyCode::ControlLeft);
-    }
-
-    /// Naming only the right side picks the right key, not the left one.
-    #[test]
-    fn a_right_side_only_spec_picks_the_right_key() {
-        let mut mods = Modifiers::empty();
-        mods.insert(Modifiers::CONTROL_RIGHT);
-        assert_eq!(default_key_for_modifiers(mods), Some(KeyCode::ControlRight));
-    }
-
-    #[test]
-    fn a_spec_with_no_modifiers_at_all_has_no_default_key() {
-        assert_eq!(default_key_for_modifiers(Modifiers::empty()), None);
     }
 
     // --- is_modifier_key ----------------------------------------------------------------------

@@ -14,11 +14,9 @@ continue = { workspace = true }
 dispatchr = { workspace = true }
 futures-task = { workspace = true }
 libc = { workspace = true }
-nix = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }
 objc2-core-foundation = { workspace = true }
-once_cell = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-stream = { workspace = true }

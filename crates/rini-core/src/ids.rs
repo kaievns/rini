@@ -137,10 +137,6 @@ impl WindowId {
             idx: std::num::NonZeroU32::new(idx)?,
         })
     }
-
-    pub fn to_debug_string(&self) -> String {
-        format!("{:?}", self)
-    }
 }
 
 impl From<WindowId> for WindowServerId {
@@ -219,7 +215,7 @@ mod tests {
             wid()
         );
         assert_eq!(
-            WindowId::from_debug_string(&wid().to_debug_string()),
+            WindowId::from_debug_string(&format!("{:?}", wid())),
             Some(wid())
         );
         assert_eq!(WindowId::from_debug_string("Window { pid: 1, idx: 2 }"), None);

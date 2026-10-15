@@ -16,7 +16,7 @@ use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags};
 use parking_lot::Mutex;
 
 use crate::input::domain::key::{
-    F_KEYS, Hotkey, HotkeySpec, KeyCode, MOD_FAMILIES, Modifiers, normalize_token,
+    F_KEYS, Hotkey, KeyCode, MOD_FAMILIES, Modifiers, normalize_token,
 };
 
 impl FromStr for KeyCode {
@@ -462,20 +462,6 @@ fn fallback_keycode_from_char(ch: &str) -> Option<KeyCode> {
     Some(code)
 }
 
-/// A full hotkey, modifiers alone (`"Alt"`), or a lone key (`"Fn"`).
-impl FromStr for HotkeySpec {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (mods, key_opt) = parse_mods_and_optional_key(s)?;
-        match key_opt {
-            Some(key) => Ok(HotkeySpec::Hotkey(Hotkey::new(mods, key))),
-            None if mods != Modifiers::empty() => Ok(HotkeySpec::ModifiersOnly { modifiers: mods }),
-            None => Err(anyhow!("No key specified in hotkey: {s}")),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,20 +566,6 @@ mod tests {
         alt_shift.insert(Modifiers::SHIFT);
         assert_eq!(alt_shift.expand_to_specific().len(), 9);
         assert_eq!(Modifiers::empty().expand_to_specific(), vec![Modifiers::empty()]);
-    }
-
-    #[test]
-    fn a_modifiers_only_spec_gets_the_matching_modifier_key() {
-        let spec: HotkeySpec = "Alt".parse().unwrap();
-        assert_eq!(spec, HotkeySpec::ModifiersOnly { modifiers: Modifiers::ALT });
-        assert_eq!(spec.to_hotkey().unwrap().key_code, KeyCode::AltLeft);
-        let right: HotkeySpec = "RAlt".parse().unwrap();
-        assert_eq!(right.to_hotkey().unwrap().key_code, KeyCode::AltRight);
-        let full: HotkeySpec = "Alt + H".parse().unwrap();
-        assert!(matches!(full, HotkeySpec::Hotkey(_)));
-        let fn_key: HotkeySpec = "Fn".parse().unwrap();
-        assert_eq!(fn_key, HotkeySpec::Hotkey(Hotkey::new(Modifiers::empty(), KeyCode::Fn)));
-        assert!("".parse::<HotkeySpec>().is_err());
     }
 
     #[test]
