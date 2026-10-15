@@ -40,7 +40,16 @@ pub fn begins_display_churn(flags: DisplayReconfigFlags) -> bool {
     )
 }
 
-type Fingerprint = Vec<(DisplayUuid, u64, u64, u64, u64, Option<u64>)>;
+/// One screen as a topology sample compares it: its display, its frame's bits and its space.
+#[derive(Debug, PartialEq)]
+struct ScreenSample {
+    display_uuid: DisplayUuid,
+    origin: (u64, u64),
+    size: (u64, u64),
+    space: Option<u64>,
+}
+
+type Fingerprint = Vec<ScreenSample>;
 
 /// The topology samples a churn has taken: the last one, and how many times in a row it was taken.
 #[derive(Debug, Default)]
@@ -55,16 +64,12 @@ impl Stability {
             .iter()
             .map(|d| {
                 let (origin, size) = (d.frame.origin, d.frame.size);
-                let space = d.space.map(|space| space.get());
-                let bits = (origin.x.to_bits(), origin.y.to_bits());
-                (
-                    d.display_uuid.clone(),
-                    bits.0,
-                    bits.1,
-                    size.width.to_bits(),
-                    size.height.to_bits(),
-                    space,
-                )
+                ScreenSample {
+                    display_uuid: d.display_uuid.clone(),
+                    origin: (origin.x.to_bits(), origin.y.to_bits()),
+                    size: (size.width.to_bits(), size.height.to_bits()),
+                    space: d.space.map(|space| space.get()),
+                }
             })
             .collect();
         match &mut self.0 {
