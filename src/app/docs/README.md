@@ -157,7 +157,8 @@ concern files beside it, and `main.rs` for how it is all assembled.
 
 ## Known debt
 
-The reactor's functions past the size limit, `dispatch_workflow` in `reactor/mod.rs` and
-one or two in several of the concern files, are held at their sizes in `LONG_FNS` in
-`tests/architecture.rs`; what each of them is, is in
-[`docs/implementation-audit.md`](../../../docs/implementation-audit.md).
+The reactor still holds every feature's store, and each concern's methods borrow all of it
+rather than the stores they write: 3.2 and 3.3 of
+[`docs/implementation-audit.md`](../../../docs/implementation-audit.md), which also says what
+its largest functions were split into. No function in `src/app` is past the size limit, and
+`no_function_or_file_grows_past_its_limit` in `tests/architecture.rs` holds each to it.
