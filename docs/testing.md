@@ -195,9 +195,20 @@ while posting the resize keys, and `sheet.sh` cuts each press into a contact she
 (`tools/focuslab/README.md`, "Watching a resize"). It is a screen test with the battery's guard, run
 only while Kai is away. The recordings so far are listed there too.
 
-## Clippy runs to the end, and its warnings are not a check
+## Clippy is a check, at zero warnings
 
-`cargo clippy --all-targets --workspace` completes with no errors, so its lints reach every crate.
-Its warnings, mostly style lints such as a collapsible `if`, are not held at zero. The checks a
-change passes are `bin/check.sh`: the nightly format check, a build of every target with warnings
-as errors, and the suite, `tests/architecture.rs` with it.
+The checks a change passes are `bin/check.sh`: the nightly format check, a build of every target
+with warnings as errors, `cargo clippy --workspace --all-targets -- -D warnings`, and the suite,
+`tests/architecture.rs` with it. A clippy warning fails the check as a compiler warning does.
+
+Every crate takes its lints from `[workspace.lints]` in `Cargo.toml` (`[lints] workspace = true`,
+held by `every_crate_inherits_the_workspace_lints`): clippy's defaults, plus `redundant_lifetimes`,
+`unused_macro_rules` and `allow_attributes_without_reason`. The last means every `#[allow]` says
+why. A lint allowed because a roadmap task will fix it names the quality roadmap's task id
+(`reason = "P3.9"`) and sits on the one item it covers; one allowed for good names what makes it
+right, such as a C name. The crate-wide allows are in the two `-sys` crates: their C names, and
+`rini-mach-sys`'s unsafe operations.
+
+`unsafe_op_in_unsafe_fn` is not in the table. Edition 2024 warns on it already, and
+`rini-mach-sys` and `rini-ipc`'s `mach.rs` allow it with 47 unsafe operations outside an `unsafe`
+block, so P5.1 denies it once they are wrapped, with `undocumented_unsafe_blocks` beside it.

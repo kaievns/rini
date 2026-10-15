@@ -25,6 +25,8 @@ jobs:
         with:
           components: rustfmt
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target-dev"

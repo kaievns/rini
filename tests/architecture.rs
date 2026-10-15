@@ -1458,8 +1458,9 @@ fn a_path_is_named_only_whole() {
 }
 
 /// Names the docs quote that rini does not define: the window server's and SkyLight's internals as
-/// disassembled, and yabai's and niri's functions as read from their source.
-const OTHERS_NAMES: [&str; 13] = [
+/// disassembled, yabai's and niri's functions as read from their source, and rustc's and clippy's
+/// lints.
+const OTHERS_NAMES: [&str; 15] = [
     "managed_display_set_current_space",
     "post_space_lifecycle_notification",
     "managed_space_update_membership",
@@ -1473,6 +1474,8 @@ const OTHERS_NAMES: [&str; 13] = [
     "sls_window_disable_shadow",
     "is_centering_focused_column",
     "compute_new_view_offset",
+    "allow_attributes_without_reason",
+    "unsafe_op_in_unsafe_fn",
 ];
 
 /// Names the docs record as deleted: the audits' findings as they were found, and rift's options

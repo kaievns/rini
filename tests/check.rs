@@ -55,7 +55,7 @@ fn check(stubs: &Path, env: &[(&str, &str)]) -> (Output, Vec<String>) {
 }
 
 #[test]
-fn the_check_formats_builds_and_tests_into_target_dev_with_warnings_as_errors() {
+fn the_check_formats_builds_lints_and_tests_into_target_dev_with_warnings_as_errors() {
     let (output, calls) = check(&stubs("pass"), &[]);
     assert!(
         output.status.success(),
@@ -69,6 +69,9 @@ fn the_check_formats_builds_and_tests_into_target_dev_with_warnings_as_errors() 
             "{target}|-D warnings|{NIGHTLY_RUSTFMT}|rustup run nightly cargo fmt --all --check"
         ),
         format!("{target}|-D warnings||cargo build --locked --workspace --all-targets"),
+        format!(
+            "{target}|-D warnings||cargo clippy --locked --workspace --all-targets -- -D warnings"
+        ),
         format!("{target}|-D warnings||cargo test --locked --workspace"),
     ]);
 }
@@ -82,7 +85,7 @@ fn a_failing_step_fails_the_check_and_every_other_step_still_runs() {
     ]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("failed: fmt"));
-    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert_eq!(calls.len(), 5, "{calls:?}");
     assert!(
         calls
             .iter()
@@ -97,7 +100,7 @@ fn without_a_nightly_rustfmt_the_format_step_fails_and_runs_no_cargo_fmt() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("failed: fmt"));
     assert!(!calls.iter().any(|call| call.contains("cargo fmt")), "{calls:?}");
-    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert_eq!(calls.len(), 4, "{calls:?}");
 }
 
 /// CI runs the same command as local, and no runner of its own beside it.
@@ -111,6 +114,18 @@ fn ci_runs_the_check_and_no_cargo_command_of_its_own() {
         .collect();
     assert_eq!(runs, ["bin/check.sh"]);
     assert!(!workflow.contains("nextest"));
+}
+
+/// The stable toolchain CI installs carries clippy, which its minimal profile leaves out.
+#[test]
+fn ci_installs_clippy_with_the_stable_toolchain() {
+    let workflow = fs::read_to_string(Path::new(ROOT).join(".github/workflows/rust.yml")).unwrap();
+    assert!(
+        workflow.contains(
+            "uses: dtolnay/rust-toolchain@stable\n        with:\n          components: clippy\n"
+        ),
+        "{workflow}"
+    );
 }
 
 /// Every crate in the workspace takes its lints from `[workspace.lints]`, so a lint set there

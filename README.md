@@ -202,8 +202,8 @@ logs to `/tmp/rini_<user>.out.log` and `/tmp/rini_<user>.err.log`.
 
 **`bin/check.sh` is what a change passes,** locally and in CI, which runs nothing else
 (`.github/workflows/rust.yml`): the nightly format check, a build of every target with warnings as
-errors, and `cargo test --workspace`. Every step runs even when one fails. It builds into
-`target-dev` unless `CARGO_TARGET_DIR` names another directory.
+errors, clippy with warnings as errors, and `cargo test --workspace`. Every step runs even when one
+fails. It builds into `target-dev` unless `CARGO_TARGET_DIR` names another directory.
 
 `cargo test` runs in parallel; a test that reads an animation back off a layer holds Core
 Animation's lock while it does (`docs/testing.md`). Formatting needs nightly, because
