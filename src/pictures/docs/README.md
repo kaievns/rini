@@ -25,7 +25,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be |
 | **Identity** | `domain/identity.rs` — the id a window is pictured under, its own or a synthetic one, which windows rini does not manage a warm pictures, and which of their pictures go |
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, refreshes, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
-| **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus and placement hints, and the band prints each client was last delivered, which decide what is news; a window those watches wait for that ends cut by the display's edge, a focus target or a repainting `Landing` window, handed to ScreenCaptureKit (`Outcome::clipped`, `Outcome::elsewhere`) |
+| **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus hint, and the band prints each client was last delivered, which decide what is news; a window those watches wait for that ends cut by the display's edge, a focus target or a repainting `Landing` window, handed to ScreenCaptureKit (`Outcome::clipped`, `Outcome::elsewhere`) |
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
@@ -58,7 +58,7 @@ engine, the reactor and the switcher each hold a `Pictures` handle.
 | A client | Through the handle |
 |---|---|
 | asks | `ask` windows anywhere at a priority, `ask_on_screen` windows on screen under a tag, `refresh` windows whose look has just turned, wherever they are, `forget` a window that is gone, `set_display` for the display the overlay flies on, `warm_visible` every window on it rini does not manage, for the debug slide |
-| watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
+| watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
 | measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared on a thread of the check's own |
 | holds | `hold` at a transition's begin, before anything is composed, `Settling` at its lift, `Released` at its quiet |

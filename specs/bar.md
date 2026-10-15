@@ -129,5 +129,9 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 `src/bar/`: `domain/model.rs` decides what each bar shows, `domain/layout.rs` where each piece goes,
 `domain/extras.rs` which menu extras are drawn, `domain/style.rs` how each piece is set.
 `platform/actor.rs` owns the bars on the main thread and `platform/menu_extras.rs` pictures the
-extras. The reactor's side is `src/app/reactor/bar.rs`. Findings are in `src/bar/docs/`. Whether a flight
-pictures another application's bar is `picture_bar` in `src/pictures/domain/schedule.rs`.
+extras. The reactor's side is `src/app/reactor/bar.rs`. Findings are in `src/bar/docs/`. Whether a
+flight pictures another application's bar is decided in `publish_animation_display_for`
+(`src/app/reactor/mod.rs`), which passes `!bar.enabled` to the pictures service, and
+`Schedule::set_display` and `arm_bar` (`src/pictures/domain/schedule.rs`) act on it.
+`the_overlay_pictures_a_bar_only_when_rini_draws_none` (`src/app/reactor/tests/displays.rs`) and
+`no_bar_is_pictured_while_rini_draws_its_own` (`schedule.rs`) hold it.
