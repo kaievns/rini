@@ -24,8 +24,6 @@ requirement itself; this list only collects them.
 - **The session tap still makes synchronous SkyLight calls.** The hit tests in its callback are what
   stalled when a Screen Recording grant was revoked and froze all input. The re-arm fix removed the
   amplifier, not the trigger (`docs/permissions-and-the-launch-agent.md`).
-- **With rini's bar off, a flight still pictures another app's bar.** That path exists for
-  sketchybar and breaks the batteries-included rule (`specs/README.md`).
 - **A window that opens or resizes mid-step stops the step.** When a window moves along the strip,
   the whole strip steps aside; a window opening or resizing then leaves the step where it is drawn,
   unfinished (`specs/animation.md`, "Moving a window along the strip").
@@ -109,7 +107,8 @@ The things most likely to look like obvious next steps. The values behind some o
 - **More layout modes.** There is one, deliberately.
 - **Relying on another app's tooling.** No border tool, no status bar, no companion code for one.
   `rini-cli` and `subscribe` are rini's interface for others to call, not a dependency
-  (`specs/README.md`).
+  (`specs/README.md`). The one exception keeps another app's bar visible through a flight with
+  rini's bar off (`specs/bar.md`).
 - **Settings beyond niri's.** Where rini and niri share a concept, rini takes niri's settings and
   names. Where they differ, rini decides. No configuration GUI.
 - **Config stability.** Keys change when a better design needs them. The layout file promises only

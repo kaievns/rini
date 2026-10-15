@@ -424,8 +424,8 @@ destination for a window already moving.
   by one at startup, and the first pass on the display knew one window of 21.
 - A picture read off the screen after a lift, such as the bar's, MUST NOT show the overlay: the bar's
   is drawn over every flight after it, so one taken with the overlay up draws the overlay where the
-  bar should be. The bar this pictures is one another application draws, which "What rini is" in
-  `specs/README.md` holds as not yet met.
+  bar should be. The bar this pictures is one another application draws, with rini's bar off
+  (`bar.md`, "Showing it").
 - A change of display MUST NOT drop the window pictures being captured. Only the desktop render belongs
   to a display; with a second display attached, every flight on the other one threw the window captures
   in flight away.
@@ -804,8 +804,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   where the window wears one at rest (`decorations.md`), so a lift can be read against the handover
   measured on 2026-10-02. Measuring MAY hold each lift's hide up to 60ms for the overlay's own picture; the bar's
   picture and the quiet after the lift MUST then count from the hide, so the bar is never pictured
-  with the overlay over it. That bar is one another application draws ("What rini is" in
-  `specs/README.md`, not yet met). It MUST NOT start a capture once a press has asked for a
+  with the overlay over it. That bar is one another application draws, with rini's bar off
+  (`bar.md`, "Showing it"). It MUST NOT start a capture once a press has asked for a
   transition, so that press waits at most for the one capture of the overlay or the screen under way
   as it lands, and it MUST be off unless asked for.
 - Each step MUST carry its time on the outside probe's clock (mach absolute time), so a probe's trial

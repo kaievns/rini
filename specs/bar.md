@@ -17,6 +17,15 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 
 - There MUST be one bar per display, 32pt tall, across the top. `bar { off; }` in the config turns
   every bar off.
+- With every bar off, a flight MUST keep visible the bar another application draws under the
+  overlay, such as sketchybar's: it pictures that bar and draws the picture over itself. With rini's
+  bar on it MUST NOT picture one: rini's bar sits above the overlay, and nothing is under it.
+
+> **Asked 2026-10-15.** Kai, on whether the path that pictures another application's bar goes: "i
+> want to have an option to disable the rini's menubar for those who want to run the native one or
+> sketchybar". `bar { off; }` is that option, and a flight that hid the other bar would leave it
+> half usable. This is the one exception to the batteries-included rule ("What rini is" in
+> `specs/README.md`).
 - The bar's ground MUST be the desktop behind it, blurred, under the ground's colour. It MUST be a
   still picture, taken again when the display or the wallpaper changes and never while a flight
   runs, so nothing is blurred again as windows move. Windows passing under the bar are not seen
@@ -120,4 +129,5 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 `src/bar/`: `domain/model.rs` decides what each bar shows, `domain/layout.rs` where each piece goes,
 `domain/extras.rs` which menu extras are drawn, `domain/style.rs` how each piece is set.
 `platform/actor.rs` owns the bars on the main thread and `platform/menu_extras.rs` pictures the
-extras. The reactor's side is `src/app/reactor/bar.rs`. Findings are in `src/bar/docs/`.
+extras. The reactor's side is `src/app/reactor/bar.rs`. Findings are in `src/bar/docs/`. Whether a flight
+pictures another application's bar is `picture_bar` in `src/pictures/domain/schedule.rs`.
