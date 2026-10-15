@@ -482,17 +482,11 @@ impl LayoutState {
         }
     }
 
-    /// Give `wid`'s column an explicit ratio, its offset given as `given` says, leaving full width
-    /// if it was maximised.
-    fn set_column_ratio(
-        &mut self,
-        wid: WindowId,
-        col_idx: usize,
-        ratio: f64,
-        given: fn(f64) -> GivenWidth,
-    ) {
+    /// Give `wid`'s column an explicit ratio, held as a column of `kind` is, leaving full width if
+    /// it was maximised.
+    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, kind: ColumnKind, ratio: f64) {
         self.leave_full_width_in_place(wid);
-        self.columns[col_idx].width = Some(given(ratio - self.column_width_ratio));
+        self.columns[col_idx].width = Some(GivenWidth::new(kind, ratio - self.column_width_ratio));
     }
 
     fn locate(&self, wid: WindowId) -> Option<(usize, usize)> {
@@ -1505,12 +1499,11 @@ impl ScrollingLayoutSystem {
             let centred = centres(col_idx, state.columns.len(), center, has_override);
             dragged_width(start.size.width, new_frame.size.width, centred)
         });
-        let (kind, given): (_, fn(f64) -> GivenWidth) =
-            if side_drag.is_some() || state.columns[col_idx].is_unbounded() {
-                (ColumnKind::Unbounded, GivenWidth::Unbounded)
-            } else {
-                (ColumnKind::Bounded, GivenWidth::Bounded)
-            };
+        let kind = if side_drag.is_some() || state.columns[col_idx].is_unbounded() {
+            ColumnKind::Unbounded
+        } else {
+            ColumnKind::Bounded
+        };
         let read_back = ratio_of_column_width(kind, width, tiling.size.width, gaps.inner);
         let ratio = column_ratio(kind, read_back, 0.0, min_ratio, max_ratio);
         if let Some((start, _)) = side_drag
@@ -1524,7 +1517,7 @@ impl ScrollingLayoutSystem {
                 state.enter_full_width(wid);
             }
         } else if !kept.width {
-            state.set_column_ratio(wid, col_idx, ratio, given);
+            state.set_column_ratio(wid, col_idx, kind, ratio);
         }
 
         if !kept.height {

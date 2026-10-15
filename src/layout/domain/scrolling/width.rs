@@ -133,14 +133,13 @@ impl ScrollingLayoutSystem {
             return Vec::new();
         };
 
-        let (ratio, given): (f64, fn(f64) -> GivenWidth) =
-            match next_preset(state.ratio_of(selected, col_idx), &presets) {
-                Some(PresetWidth::Full) => (1.0, GivenWidth::Unbounded),
-                Some(PresetWidth::Ratio(ratio)) => (ratio, GivenWidth::Bounded),
-                None => return Vec::new(),
-            };
+        let (kind, ratio) = match next_preset(state.ratio_of(selected, col_idx), &presets) {
+            Some(PresetWidth::Full) => (ColumnKind::Unbounded, 1.0),
+            Some(PresetWidth::Ratio(ratio)) => (ColumnKind::Bounded, ratio),
+            None => return Vec::new(),
+        };
         let place = reveals_only.then(|| state.place_of(selected)).flatten();
-        state.set_column_ratio(selected, col_idx, ratio, given);
+        state.set_column_ratio(selected, col_idx, kind, ratio);
         state.selected = Some(selected);
         state.rescroll_after_width(selected, place, reveals_only);
 
@@ -212,7 +211,7 @@ impl ScrollingLayoutSystem {
         }
         let clamped = column_ratio(ColumnKind::Bounded, current, amount, min_ratio, max_ratio);
         let place = reveals_only.then(|| state.place_of(selected)).flatten();
-        state.set_column_ratio(selected, col_idx, clamped, GivenWidth::Bounded);
+        state.set_column_ratio(selected, col_idx, ColumnKind::Bounded, clamped);
         state.rescroll_after_width(selected, place, reveals_only);
     }
 }

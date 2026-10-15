@@ -1,6 +1,8 @@
 //! The width a column was given, as the layout means it rather than in points: what a column holds
 //! (`GivenWidth`), and what a window carries to another layout or display (`ColumnWidth`).
 
+use crate::layout::domain::constraints::ColumnKind;
+
 /// The width a window occupied, as the layout means it rather than in points.
 ///
 /// Points would not survive a resolution change or a move between displays of different widths,
@@ -29,6 +31,15 @@ pub enum GivenWidth {
 }
 
 impl GivenWidth {
+    /// `offset` held as a column of `kind` is. Full width is a mode a window enters, not bounds a
+    /// width has, so a width given under it is held as a key's is.
+    pub fn new(kind: ColumnKind, offset: f64) -> Self {
+        match kind {
+            ColumnKind::Unbounded => Self::Unbounded(offset),
+            ColumnKind::Bounded | ColumnKind::FullWidth => Self::Bounded(offset),
+        }
+    }
+
     pub fn offset(self) -> f64 {
         match self {
             Self::Bounded(offset) | Self::Unbounded(offset) => offset,
@@ -77,6 +88,18 @@ mod tests {
             assert_eq!(GivenWidth::from_carried(carried), Some(given));
         }
         assert_eq!(GivenWidth::from_carried(ColumnWidth::FullWidth), None);
+    }
+
+    #[test]
+    fn a_given_width_is_held_as_its_kind_of_column_is() {
+        let cases = [
+            (ColumnKind::Bounded, GivenWidth::Bounded(0.2)),
+            (ColumnKind::Unbounded, GivenWidth::Unbounded(0.2)),
+            (ColumnKind::FullWidth, GivenWidth::Bounded(0.2)),
+        ];
+        for (kind, given) in cases {
+            assert_eq!(GivenWidth::new(kind, 0.2), given, "{kind:?}");
+        }
     }
 
     #[test]
