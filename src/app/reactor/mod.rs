@@ -44,6 +44,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use events::{EventOutcome, WindowFrameWriteRequest, focus as focus_service};
+use layout_pass::Pass;
 use objc2_core_foundation::CGRect;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::space::{FromCg, ScreenRect};
@@ -768,7 +769,7 @@ impl Reactor {
             self.handle_loop_event(event);
         }
         if self.refresh_borders() {
-            self.update_layout(false, false, None);
+            self.update_layout(Pass::Plain, None);
         }
         self.publish_bar();
         self.publish_rest();
@@ -1091,14 +1092,11 @@ impl Reactor {
         let mut layout_changed = false;
         if let Some(passes) = outcome.arrange.passes_to_run(self.is_in_drag()) {
             for _ in 0..passes {
-                layout_changed |= self.update_layout(
-                    outcome.arrange.is_resize,
-                    matches!(
-                        self.workspace_switch_manager.workspace_switch_state,
-                        WorkspaceSwitchState::Active
-                    ),
-                    outcome.arrange.space_scope,
+                let pass = Pass::of(
+                    &outcome.arrange,
+                    &self.workspace_switch_manager.workspace_switch_state,
                 );
+                layout_changed |= self.update_layout(pass, outcome.arrange.space_scope);
             }
         }
         // A move is only a move for the passes its command asked for.

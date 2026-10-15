@@ -6,6 +6,7 @@ use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::{debug, trace};
 
+use super::events::ArrangeRequest;
 use super::{Reactor, RefocusState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::displays::domain::screen::order_visible_spaces_by_position;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
@@ -50,11 +51,12 @@ impl Reactor {
         self.prepare_refocus_after_layout_event(&event_clone);
         self.handle_layout_response(response, workspace_switch_space);
         if geometry_changed {
-            let layout_changed = self.update_layout(
-                false,
-                workspace_switch_space.is_some(),
-                workspace_switch_space.or(event_space),
-            );
+            let pass = if workspace_switch_space.is_some() {
+                Pass::WorkspaceSwitch
+            } else {
+                Pass::Plain
+            };
+            let layout_changed = self.update_layout(pass, workspace_switch_space.or(event_space));
             // A focus report onto a parked window (cmd-tab) scrolls it in here; if it was behind a
             // floating window it has to be lifted now that it is on screen.
             if layout_changed {
@@ -384,15 +386,10 @@ impl Reactor {
         }
     }
 
-    pub(crate) fn update_layout(
-        &mut self,
-        is_resize: bool,
-        is_workspace_switch: bool,
-        space_scope: Option<SpaceId>,
-    ) -> bool {
+    pub(crate) fn update_layout(&mut self, pass: Pass, space_scope: Option<SpaceId>) -> bool {
         self.refresh_borders();
         let layout_result = self.calculate_layout(space_scope);
-        let changed = self.apply_layout(layout_result, is_resize, is_workspace_switch);
+        let changed = self.apply_layout(layout_result, pass);
         if changed {
             // Re-observe affinity before saving, so the file records the arrangement that
             // was just applied. This is the path that catches a window dragged between
@@ -475,12 +472,7 @@ impl Reactor {
         layout_result
     }
 
-    fn apply_layout(
-        &mut self,
-        layout_result: LayoutResult,
-        is_resize: bool,
-        is_workspace_switch: bool,
-    ) -> bool {
+    fn apply_layout(&mut self, layout_result: LayoutResult, pass: Pass) -> bool {
         let main_window = self.main_window();
         trace!(?main_window);
         // Skipped for the whole drag, not one pass: a drag produces many passes, each of which would
@@ -495,14 +487,15 @@ impl Reactor {
 
         for (space, layout) in layout_result {
             let movement = self.take_workspace_movement(space);
-            if is_workspace_switch {
-                any_frame_changed |=
-                    self.workspace_switch_layout(space, movement, &layout, skip_wid);
-            } else if self.workspace_switch_manager.active_workspace_switch.is_some() {
-                any_frame_changed |= self.instant_layout(space, &layout, skip_wid);
-            } else {
-                any_frame_changed |= self.animate_layout(space, &layout, is_resize, skip_wid);
-            }
+            any_frame_changed |= match pass {
+                Pass::WorkspaceSwitch => {
+                    self.workspace_switch_layout(space, movement, &layout, skip_wid)
+                }
+                _ if self.workspace_switch_manager.active_workspace_switch.is_some() => {
+                    self.instant_layout(space, &layout, skip_wid)
+                }
+                _ => self.animate_layout(space, &layout, pass == Pass::Resize, skip_wid),
+            };
         }
 
         any_frame_changed
@@ -510,6 +503,29 @@ impl Reactor {
 }
 
 type LayoutResult = Vec<(SpaceId, Vec<(WindowId, CGRect)>)>;
+
+/// What a layout pass is for, which decides how its frames reach the windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pass {
+    /// Frames animate, or land at once while a workspace switch is still in flight.
+    Plain,
+    /// After a window reported a size change: as `Plain`, except that frames land at once while
+    /// the user drags an edge.
+    Resize,
+    /// The workspace switch's own layout, a reported size change or not.
+    WorkspaceSwitch,
+}
+
+impl Pass {
+    /// The pass `arrange` runs while the workspace switch is in `switch`.
+    pub(crate) fn of(arrange: &ArrangeRequest, switch: &WorkspaceSwitchState) -> Self {
+        match (switch, arrange.is_resize) {
+            (WorkspaceSwitchState::Active, _) => Self::WorkspaceSwitch,
+            (WorkspaceSwitchState::Inactive, true) => Self::Resize,
+            (WorkspaceSwitchState::Inactive, false) => Self::Plain,
+        }
+    }
+}
 
 /// How much of a fully-scrolled-away window stays on screen, in points.
 ///
@@ -568,10 +584,29 @@ fn bound_scrolling_tiled_frames_to_screen(
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::{WINDOW_HIDDEN_THRESHOLD, bound_frame_to_screen};
+    use super::{
+        ArrangeRequest, Pass, WINDOW_HIDDEN_THRESHOLD, WorkspaceSwitchState, bound_frame_to_screen,
+    };
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    #[test]
+    fn a_switch_outranks_a_resize_and_a_resize_outranks_a_plain_pass() {
+        use WorkspaceSwitchState::{Active, Inactive};
+        for (is_resize, switch, pass) in [
+            (false, Inactive, Pass::Plain),
+            (true, Inactive, Pass::Resize),
+            (false, Active, Pass::WorkspaceSwitch),
+            (true, Active, Pass::WorkspaceSwitch),
+        ] {
+            let arrange = ArrangeRequest {
+                is_resize,
+                ..ArrangeRequest::default()
+            };
+            assert_eq!(Pass::of(&arrange, &switch), pass, "{is_resize}, {switch:?}");
+        }
     }
 
     #[test]

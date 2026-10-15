@@ -8,6 +8,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::{info, warn};
 
 use super::events::EventOutcome;
+use super::layout_pass::Pass;
 use super::{Reactor, RefocusState, StaleCleanupState};
 use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::{
@@ -481,7 +482,7 @@ impl Reactor {
             }
 
             self.refocus_manager.refocus_state = RefocusState::Pending(space);
-            self.update_layout(false, false, None);
+            self.update_layout(Pass::Plain, None);
             self.update_focus_follows_mouse_state();
         }
     }

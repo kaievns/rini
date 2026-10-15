@@ -1002,12 +1002,12 @@ fn the_first_pass_to_lay_a_window_out_pictures_it() {
         reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
     }
     // Settled, as a restart finds it: every window already where the saved layout puts it.
-    reactor.update_layout(false, false, None);
-    reactor.update_layout(false, false, None);
+    reactor.update_layout(Pass::Plain, None);
+    reactor.update_layout(Pass::Plain, None);
     reactor.forget_pictured_windows();
     let mut pictures = reactor.connect_test_pictures();
     let mut warmed_by_pass = || {
-        reactor.update_layout(false, false, None);
+        reactor.update_layout(Pass::Plain, None);
         asked_at(
             &pictures_asked(&mut pictures),
             crate::pictures::domain::schedule::Priority::Warm,
@@ -1040,17 +1040,17 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
     };
     let mut asked = reactor.connect_test_pictures();
     add(&mut reactor, early, 901, workspaces[0]);
-    reactor.update_layout(false, false, None);
+    reactor.update_layout(Pass::Plain, None);
 
     // The late window arrives and is settled into place with no pictures service listening.
     let pictures = reactor.take_test_pictures();
     add(&mut reactor, late, 902, workspaces[1]);
-    reactor.update_layout(false, false, None);
-    reactor.update_layout(false, false, None);
+    reactor.update_layout(Pass::Plain, None);
+    reactor.update_layout(Pass::Plain, None);
     pictures_asked(&mut asked);
     reactor.restore_test_pictures(pictures);
 
-    reactor.update_layout(false, false, None);
+    reactor.update_layout(Pass::Plain, None);
     let warmed = asked_at(
         &pictures_asked(&mut asked),
         crate::pictures::domain::schedule::Priority::Warm,

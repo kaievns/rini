@@ -403,7 +403,7 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
 
     reactor.pend_test_frame(wsid, hidden_target);
 
-    assert!(!reactor.update_layout(false, true, None));
+    assert!(!reactor.update_layout(Pass::WorkspaceSwitch, None));
     assert!(
         apps.requests().is_empty(),
         "a stale pending target suppresses the hide write before topology invalidation"
