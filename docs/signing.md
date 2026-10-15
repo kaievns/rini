@@ -47,9 +47,29 @@ tried:
 - **A build.rs cannot do it at all**: it runs before the binary exists.
 
 The wrapper signs only the `rini` bin artifact and skips silently when the certificate is absent
-(CI, another machine), so it never breaks a build. `bin/build.sh` remains the deploy entry: it
-still verifies the designated requirement came out with a certificate in it and fails loudly if
-not.
+(CI, another machine), so a missing certificate never fails a build. `bin/build.sh` remains the
+deploy entry: it still verifies the designated requirement came out with a certificate in it and
+fails loudly if not.
+
+## A release build into the checkout's `target/release` is refused
+
+launchd runs `target/release/rini` with KeepAlive and relaunches it after any crash, so whatever a
+build leaves there runs next: a compile check in the main checkout is a deploy nobody ran. The
+wrapper reads rustc's `--out-dir` and, before rustc runs, refuses any compile that lands inside the
+checkout's `target/release`, symlinks resolved, unless `RINI_DEPLOY=1` is set. The refusal names
+`CARGO_TARGET_DIR=target-dev` and `RINI_DEPLOY=1`.
+
+- `bin/build.sh` sets `RINI_DEPLOY=1`; it is the one build that deploys.
+- Every other release build, `cargo test --release` and `cargo bench` included, goes to
+  `CARGO_TARGET_DIR=target-dev`. A `--target <triple>` build lands in `target/<triple>/release` and
+  is not refused, which is what CI's release workflow does.
+- A deploy of another revision builds in its own target dir and moves the binary in, so it needs no
+  `RINI_DEPLOY`.
+- The wrapper wraps workspace members only, so a refused build has already compiled third-party
+  crates into `target/release/deps`. None of them is the rini binary, and the binary keeps its
+  mtime.
+
+`tests/deploy_path.rs` runs the wrapper with a fake rustc and holds each case.
 
 ## Recreating the certificate
 

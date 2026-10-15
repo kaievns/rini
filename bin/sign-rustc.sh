@@ -14,9 +14,10 @@
 #
 # Signs only the `rini` bin. A missing certificate (CI, another machine) skips signing rather than
 # failing the build.
+#
+# Refuses, before rustc runs, any compile into this checkout's `target/release` unless RINI_DEPLOY=1:
+# launchd runs `target/release/rini` with KeepAlive, so a build there is a deploy.
 set -euo pipefail
-
-"$@"
 
 crate_name=""
 out_dir=""
@@ -30,6 +31,32 @@ for arg in "$@"; do
     esac
     prev="$arg"
 done
+
+physical() {
+    if [[ -d "$1" ]]; then
+        (cd "$1" && pwd -P)
+    else
+        local parent
+        parent="$(physical "$(dirname "$1")")"
+        printf '%s/%s\n' "${parent%/}" "$(basename "$1")"
+    fi
+}
+
+if [[ -n "$out_dir" && "${RINI_DEPLOY:-}" != 1 ]]; then
+    deploy_dir="$(physical "$(dirname "${BASH_SOURCE[0]}")/../target/release")"
+    resolved="$(physical "$out_dir")"
+    if [[ "$resolved" == "$deploy_dir" || "$resolved" == "$deploy_dir"/* ]]; then
+        cat >&2 <<EOF
+sign-rustc.sh: refusing to compile into $deploy_dir.
+launchd runs $deploy_dir/rini with KeepAlive, so a build there is a deploy.
+Build anywhere else with CARGO_TARGET_DIR=target-dev (cargo test --release and cargo bench too);
+deploy with bin/build.sh, which sets RINI_DEPLOY=1. See docs/signing.md.
+EOF
+        exit 1
+    fi
+fi
+
+"$@"
 
 [[ "$crate_name" == "rini" && -n "$out_dir" ]] || exit 0
 binary="$out_dir/rini$extra"

@@ -22,6 +22,10 @@ rini runs as a per-user launchd agent. This is what starting and restarting it m
   path as well as the signature, so a build at a new path is a client it never granted, even signed
   with the same certificate and identifier. A service with no installed binary has no path to
   protect.
+- A release build in the checkout MUST NOT replace the binary the service runs unless the build
+  says it is a deploy, and MUST stop before it compiles anything of rini's, naming where other
+  builds go and how to deploy. launchd relaunches the service's binary after any crash, so a compile
+  check that lands there is a deploy nobody ran.
 
 > **Reported 2026-09-29.** "you switched from a dev build to another thing that requires permission
 > regrants. this happened like 10 times already". The latest was a rollback that pointed the service
@@ -41,4 +45,6 @@ rini runs as a per-user launchd agent. This is what starting and restarting it m
 ## Where it lives
 
 `src/app/launch_agent.rs` builds the definition and drives launchd, and `install_panic_hook` in
-`src/main.rs` aborts on a panic. The measurements behind these rules are in `docs/permissions-and-the-launch-agent.md`.
+`src/main.rs` aborts on a panic. The rustc wrapper `bin/sign-rustc.sh` refuses a release build into
+`target/release` without `RINI_DEPLOY=1`, held by `tests/deploy_path.rs`. The measurements behind
+these rules are in `docs/permissions-and-the-launch-agent.md`.
