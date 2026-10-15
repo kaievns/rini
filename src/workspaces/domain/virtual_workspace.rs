@@ -1060,6 +1060,25 @@ mod tests {
     }
 
     #[test]
+    fn a_reload_that_declares_one_more_workspace_adds_it_and_nothing_else() {
+        let settings = |names: &[&str]| VirtualWorkspaceSettings {
+            workspace_names: names.iter().map(|name| name.to_string()).collect(),
+            ..Default::default()
+        };
+        let mut manager =
+            WorkspaceStore::new_with_config(&settings(&["a", "b"]), &LayoutSettings::default());
+        let space = SpaceId::new(1);
+        let names = |manager: &mut WorkspaceStore| -> Vec<String> {
+            manager.list_workspaces(space).into_iter().map(|(_, name)| name).collect()
+        };
+        assert_eq!(names(&mut manager), ["a", "b"]);
+
+        manager.update_settings(&settings(&["a", "b", "c"]), &LayoutSettings::default());
+
+        assert_eq!(names(&mut manager), ["a", "b", "c"]);
+    }
+
+    #[test]
     fn test_virtual_workspace_creation() {
         let mut manager = WorkspaceStore::new();
 
