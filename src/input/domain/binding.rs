@@ -112,18 +112,6 @@ pub enum Action {
         source: Option<RestoreSource>,
     },
     RedistributeWindows,
-    Serialize,
-    Debug,
-    DebugWarmSnapshots,
-    DebugOverlaySlide {
-        #[knus(property)]
-        dx: i32,
-        #[knus(property)]
-        dy: i32,
-        #[knus(property)]
-        duration_ms: u64,
-    },
-    ShowTiming,
     /// The switcher, only in `recent-windows › binds`.
     NextWindow {
         #[knus(property, str)]
@@ -336,7 +324,7 @@ mod tests {
 
     #[test]
     fn every_action_name_is_kebab_case_and_counted() {
-        assert_eq!(Action::VARIANTS.len(), 65);
+        assert_eq!(Action::VARIANTS.len(), 60);
         for name in Action::VARIANTS {
             assert!(
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),

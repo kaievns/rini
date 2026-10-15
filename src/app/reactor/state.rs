@@ -13,10 +13,8 @@ use rini_core::ids::{WindowId, pid_t};
 
 /// All mutable domain state is owned by the reactor thread.
 ///
-/// Workspace topology is still carried by the layout coordinator during this
-/// migration, but window identity, native-space observations, and workspace
-/// assignments have one explicit owner here. Cross-store operations receive
-/// this store by reference instead of retaining an alias to it.
+/// Window identity, native-space observations, and workspace assignments have one explicit owner
+/// here. Cross-store operations receive this store by reference instead of retaining an alias to it.
 #[derive(Debug, Default)]
 pub struct RiniState {
     pub windows: WindowStore,
@@ -25,8 +23,6 @@ pub struct RiniState {
     /// because it outlives one: a layout can be discarded without forgetting the hardware.
     pub display_memory: DisplayMemory,
 }
-
-pub use rini_ipc::protocol::Command;
 
 #[derive(Debug, Clone)]
 pub struct DragSession {
@@ -64,7 +60,6 @@ pub enum DragState {
 pub enum MissionControlState {
     Inactive,
     Active,
-    Transitioning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,25 +94,8 @@ pub enum RefocusState {
 
 #[derive(Debug)]
 pub(crate) struct AppState {
-    #[allow(unused)]
     pub(crate) info: AppInfo,
     pub(crate) handle: AppThreadHandle,
-}
-
-pub use crate::windows::domain::state::{WindowFilter, WindowState};
-
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum ReactorError {
-    #[error("App communication failed: {0}")]
-    AppCommunicationFailed(
-        #[from] tokio::sync::mpsc::error::SendError<crate::windows::domain::request::Request>,
-    ),
-    #[error("Raise manager communication failed: {0}")]
-    RaiseManagerCommunicationFailed(
-        #[from] tokio::sync::mpsc::error::SendError<crate::windows::domain::raise::Event>,
-    ),
 }
 
 #[cfg(test)]

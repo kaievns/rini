@@ -197,7 +197,7 @@ target/release/rini service restart
 from the start.
 
 Other flags: `--one` (this Space only), `--no-restore` (start from a clean layout), `--config PATH`,
-`--default-disable`, `--record PATH`. The agent logs to `/tmp/rini_<user>.out.log` and
+`--default-disable`. The agent logs to `/tmp/rini_<user>.out.log` and
 `/tmp/rini_<user>.err.log`.
 
 `cargo test` runs on one thread on purpose: concurrent framework start-up aborts the process
@@ -241,7 +241,6 @@ The default binds, with `Mod` as Alt (`input › mod-key`):
 | `Mod+Shift+Equal` / `Mod+Shift+Minus` | width 5% up or down |
 | `Mod+Z` | manage this Space, or stop |
 | `Mod+Return` | open Terminal |
-| `Mod+Shift+D` / `Mod+Ctrl+S` | print the layout tree / the state as JSON |
 | `Mod+Ctrl+Q` | save the layout and quit |
 
 Not bound by default: `switch-preset-column-width` (the `Mod+R` the specs name),
@@ -275,13 +274,10 @@ Mach-port IPC, as in rift, under `git.kaievns.rini`. `rini-cli` prints compact J
 rini-cli query diagnostics             # every display, workspace, column and parked window
 rini-cli query displays
 rini-cli execute workspace switch 1    # counts from 0: the second workspace
-rini-cli subscribe cli --event workspace_changed --command sh --args -c --args 'echo "$RINI_WORKSPACE_NAME"'
 ```
 
-The CLI counts workspaces from 0, the config from 1. `subscribe` delivers four events:
-`workspace_changed`, `windows_changed`, `window_title_changed` and `focused_window_changed`, or `*`
-for all. A subscribed command gets the event in its environment; `rini.default.kdl` lists the
-variables.
+The CLI counts workspaces from 0, the config from 1. rini pushes no events: a tool that follows
+rini polls a query.
 
 ## Credits
 

@@ -8,7 +8,7 @@ use rini_geometry::SameAs;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::config::Edges;
+use crate::layout::settings::Edges;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::info::AppInfo;

@@ -64,9 +64,7 @@ impl SwitchKeys {
 }
 
 /// What the tap should tell the reactor.
-///
-/// Serialisable because the reactor's event enum is, for the record/replay harness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
     /// Begin a switch over `scope`. The reactor builds the list and selects the second entry, so an
     /// Open followed straight by a Commit is the quick tap.

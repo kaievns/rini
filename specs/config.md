@@ -35,7 +35,7 @@
 
 - A name rini does not know MUST be refused, naming the line. When a known name is near, the report
   MUST say which; when the name is niri's and rini does not have it, the report MUST say why rather
-  than offer a lookalike.
+  than offer a lookalike, and MUST NOT send the reader to a name rini refuses.
 - Every problem in a file MUST be reported in one report, each with its line and column: what does
   not decode and what the checks across nodes find (a key bound twice, a workspace that is not
   declared, widths that do not nest) alike. Two kinds MAY show only once another problem is fixed.

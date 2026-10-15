@@ -23,7 +23,6 @@ the one that turned out to be a live bug.
 | LOW | `spaces.rs:498` `collect_state` | an inline fake screen cache | **done** — the fallback is now always compiled and defensible on its own |
 | LOW | `window_server.rs:488,742` | thread-local overrides | **kept** — fakes at the FFI boundary, which is the right pattern; `get_window` moved to item-level `#[cfg]` to match its neighbours |
 | LOW | `mod.rs:605` `autosave_path` | `None`, so the suite cannot overwrite `~/.rini/layout.ron` | **done** — set by `new_for_test` instead |
-| LOW | `replay.rs:53` `file()` | a temp file | **kept** — `Record::temp` is a `#[cfg(test)]` field, so there is no field to read in production |
 
 ### The five in `spaces.rs`
 

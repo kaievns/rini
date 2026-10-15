@@ -5,7 +5,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::SameAs;
 use tracing::debug;
 
-use super::{Event, EventOutcome, Reactor, Record, ScreenInfo, TransactionId};
+use super::{Event, EventOutcome, Reactor, ScreenInfo, TransactionId};
 use crate::app::channels;
 use crate::app::config::Config;
 use crate::displays::domain::topology::ForwardedSpaceState;
@@ -21,14 +21,10 @@ impl Reactor {
         let mut config = Config::default();
         config.settings.default_disable = false;
         config.settings.animate = false;
-        let record = Record::new_for_test(tempfile::NamedTempFile::new().unwrap());
-        let (broadcast_tx, _) = channels::channel();
         let mut reactor = Reactor::new(
             config,
             layout,
             DisplayMemory::default(),
-            record,
-            broadcast_tx,
             WindowTxStore::new(),
             false,
         );
@@ -64,10 +60,6 @@ impl Reactor {
         index: usize,
     ) -> crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId {
         self.test_workspace_ids(space)[index]
-    }
-
-    pub fn test_window_is_standard(&self, wid: WindowId) -> bool {
-        self.window_is_standard_for_test(wid)
     }
 
     /// Make `window` the focused window, as WindowServer focus would.
@@ -222,13 +214,13 @@ impl Reactor {
     }
 
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
-        self.handle_event(Event::Command(crate::app::reactor::state::Command::Layout(
+        self.handle_event(Event::Command(crate::app::reactor::Command::Layout(
             command,
         )));
     }
 
     pub(crate) fn dispatch_test_layout_command(&mut self, command: LayoutCommand) -> EventOutcome {
-        self.dispatch_workflow(Event::Command(crate::app::reactor::state::Command::Layout(
+        self.dispatch_workflow(Event::Command(crate::app::reactor::Command::Layout(
             command,
         )))
         .expect("test layout command should dispatch")
@@ -508,28 +500,6 @@ pub fn fullscreen_startup_space_state(
         .insert(state.screens[0].display_uuid.clone(), user_space);
     Event::SpaceStateChanged(state)
 }
-
-/*impl Drop for Reactor {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            return;
-        }
-
-        if let Some(temp) = self.record.temp() {
-            temp.as_file().flush().unwrap();
-            // Attempt to run the replay tool if available; ignore if it's not present
-            let replay_attempt = std::panic::catch_unwind(|| {
-                let mut cmd = test_bin::get_test_bin("examples/devtool");
-                cmd.arg("replay").arg(temp.path());
-                println!("Replaying recorded data:\n{cmd:?}");
-                cmd.spawn().unwrap().wait().unwrap().success()
-            });
-            if let Ok(false) = replay_attempt {
-                // Tool executed but returned error; still ignore in tests
-            }
-        }
-    }
-}*/
 
 pub fn make_window(idx: usize) -> WindowInfo {
     let window = make_window_info(

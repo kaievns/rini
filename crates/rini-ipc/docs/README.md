@@ -8,13 +8,11 @@ link the daemon, so anything it needs has to be in the protocol.
 
 | | |
 |---|---|
-| `protocol/commands.rs` | `LayoutCommand`, `Command`: every action rini can be asked to take, and `ConfigCommand`: get the running config, reload it, or apply a KDL fragment over it |
+| `protocol/commands.rs` | `LayoutCommand`, `Command`: every action rini can be asked to take, and `ConfigCommand`: reload the running config, or apply a KDL fragment over it |
 | `protocol/queries.rs` | The shapes a query answers in: `ContainerTreeNode`, the diagnostics census, window and workspace views |
 | `protocol/layout.rs` | `Direction`, `ResizeOrientation`, `LayoutKind` |
 | `mach.rs` | The Mach service: registering `git.kaievns.rini` and carrying a request/response pair |
 | `client.rs` | The client half, used by `rini-cli` and anything else that asks |
-| `subscriptions.rs` | Event subscription, so a status bar can subscribe rather than poll |
-| `cli_exec.rs` | Running a subscriber's command with the event in its environment |
 
 ## The shape that matters
 
@@ -32,5 +30,5 @@ names a press by. `strum_names_are_the_wire_names` holds every variant's to what
 the port would need `bootstrap_check_in` instead of `bootstrap_register`, and nothing
 needs it. See [`docs/permissions-and-the-launch-agent.md`](../../../docs/permissions-and-the-launch-agent.md).
 
-**Signals fire on startup, workspace switches and workspace window changes**, so a
-status bar subscribes instead of polling.
+**Nothing is pushed.** A request is answered on the reply port it came with, and rini sends
+nothing unasked: a client that follows rini polls a query.

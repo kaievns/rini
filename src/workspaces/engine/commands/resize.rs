@@ -21,36 +21,6 @@ impl LayoutEngine {
             layout,
         } = target;
         match command {
-            LayoutCommand::ResizeWindowGrow(orientation) => {
-                if is_floating {
-                    return EventResponse::default();
-                }
-
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                let resize_amount = 0.05;
-                self.workspace_tree_mut(workspace_id).resize_selection_by(
-                    layout,
-                    resize_amount,
-                    orientation,
-                );
-                self.remember_selected_column_width(memory, space, workspace_id, layout);
-                EventResponse::default()
-            }
-            LayoutCommand::ResizeWindowShrink(orientation) => {
-                if is_floating {
-                    return EventResponse::default();
-                }
-
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                let resize_amount = -0.05;
-                self.workspace_tree_mut(workspace_id).resize_selection_by(
-                    layout,
-                    resize_amount,
-                    orientation,
-                );
-                self.remember_selected_column_width(memory, space, workspace_id, layout);
-                EventResponse::default()
-            }
             LayoutCommand::ResizeWindowBy { amount, orientation } => {
                 if is_floating {
                     return EventResponse::default();

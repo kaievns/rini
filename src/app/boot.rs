@@ -1,22 +1,12 @@
 //! What the flags and the config file say, decided before anything is built.
 //!
 //! `main` is one long function by nature — it assembles eleven actors and hands them to each other —
-//! but the two DECISIONS in it are not, and both have a recorded history behind them. They were
-//! reachable only by running the binary, so neither was tested.
+//! but the DECISIONS in it are not, so they live here, where a test reaches them without running
+//! the binary.
 
 use std::path::{Path, PathBuf};
 
 use crate::app::config::{Config, Settings};
-
-/// Whether to restore the saved layout.
-///
-/// On by default, so a restart or a redeploy keeps window sizes, workspaces and strip positions.
-/// `--restore` is accepted for compatibility and as an explicit override, so giving BOTH flags
-/// restores: the positive one wins. Reading that off `!no_restore || restore` is not obvious, which
-/// is the reason it is a named function with a test.
-pub fn wants_restore(restore: bool, no_restore: bool) -> bool {
-    !no_restore || restore
-}
 
 /// The config, or the built-in defaults and the reason the file could not be used.
 ///
@@ -98,23 +88,6 @@ pub fn apply_flag_overrides(settings: &mut Settings, no_animate: bool, default_d
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn restore_is_on_by_default() {
-        assert!(wants_restore(false, false));
-    }
-
-    #[test]
-    fn no_restore_turns_it_off() {
-        assert!(!wants_restore(false, true));
-    }
-
-    /// Both flags together restore. `--restore` exists as an explicit override, so the positive one
-    /// wins; the alternative is that a script passing both silently starts from a clean layout.
-    #[test]
-    fn restore_wins_when_both_flags_are_given() {
-        assert!(wants_restore(true, true));
-    }
 
     fn temp_config(name: &str, text: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();

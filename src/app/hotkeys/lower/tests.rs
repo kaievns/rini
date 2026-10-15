@@ -1,6 +1,4 @@
-use rini_ipc::protocol::{
-    MetricsCommand, RestoreScope, RestoreSource, SwitchScope, WorkspaceSelector,
-};
+use rini_ipc::protocol::{RestoreScope, RestoreSource, SwitchScope, WorkspaceSelector};
 use strum::VariantNames;
 
 use super::*;
@@ -201,25 +199,6 @@ fn table() -> Vec<(Action, Lowered)> {
             }),
         ),
         (Action::RedistributeWindows, reactor(R::RedistributeWindows)),
-        (Action::Serialize, reactor(R::Serialize)),
-        (Action::Debug, reactor(R::Debug)),
-        (Action::DebugWarmSnapshots, reactor(R::DebugWarmSnapshots)),
-        (
-            Action::DebugOverlaySlide {
-                dx: -400,
-                dy: 0,
-                duration_ms: 250,
-            },
-            reactor(R::DebugOverlaySlide {
-                dx: -400,
-                dy: 0,
-                duration_ms: 250,
-            }),
-        ),
-        (
-            Action::ShowTiming,
-            Lowered::Command(Command::Metrics(MetricsCommand::ShowTiming)),
-        ),
         (
             Action::NextWindow { scope: None, filter: None },
             switch(false, SwitchScope::Everything),
@@ -318,9 +297,9 @@ fn an_index_is_not_checked_against_the_configured_names() {
     );
 }
 
-/// `set-column-width "+5%"` is what `resize_window_grow` was: the same step, the same orientation.
+/// `set-column-width "+5%"` and `"-5%"` step the column's width by 5% of the tiling area.
 #[test]
-fn a_five_percent_step_is_the_old_grow_and_shrink() {
+fn a_five_percent_step_resizes_the_width_by_five_percent() {
     assert_eq!(
         lower(Action::SetColumnWidth("+5%".parse().unwrap()), &names()),
         layout(LayoutCommand::ResizeWindowBy {

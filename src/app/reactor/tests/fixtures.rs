@@ -181,9 +181,9 @@ pub fn fullscreen_startup_fixture(
         ..crate::app::config::VirtualWorkspaceSettings::default()
     };
     if with_app_rule {
-        workspace_cfg.app_rules = vec![crate::app::config::WindowRule {
+        workspace_cfg.app_rules = vec![crate::windows::domain::rules::WindowRule {
             open_on_workspace: Some("2".into()),
-            ..crate::app::config::WindowRule::when(crate::app::config::RuleMatch::app("com.testapp1"))
+            ..crate::windows::domain::rules::WindowRule::when(crate::windows::domain::rules::RuleMatch::app("com.testapp1"))
         }];
     }
 

@@ -1,23 +1,6 @@
-//! Which of the window server's windows a listing of what is on a display names.
+//! Whether a window's rect and a display's share an area.
 
 use objc2_core_foundation::CGRect;
-use rini_core::ids::pid_t;
-
-/// Below this in either axis a window is too small to be worth drawing.
-const MIN_SIDE: f64 = 100.0;
-
-/// Whether a window of `layer`, owned by `owner`, at `bounds`, is listed as on `display`: a layer-0
-/// window of another process, 100pt or more each way, overlapping it. Other layers hold the bar, the
-/// Dock and notifications; rini's own windows (`own`) are the decorations it draws, never pictured. A
-/// window parked at the corner is listed: it keeps its full size, and the sliver it shows is on
-/// screen.
-pub fn listed(layer: Option<i64>, owner: Option<pid_t>, own: pid_t, bounds: CGRect, display: CGRect) -> bool {
-    layer == Some(0)
-        && owner != Some(own)
-        && bounds.size.width >= MIN_SIDE
-        && bounds.size.height >= MIN_SIDE
-        && overlaps(bounds, display)
-}
 
 /// Whether two rects share an area, edges that merely touch excluded.
 pub fn overlaps(a: CGRect, b: CGRect) -> bool {
@@ -35,18 +18,6 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-    }
-
-    #[test]
-    fn rinis_own_windows_are_never_listed() {
-        let display = rect(0.0, 32.0, 1728.0, 1085.0);
-        let window = rect(865.0, 32.0, 859.0, 1081.0);
-        assert!(listed(Some(0), Some(500), 42, window, display));
-        assert!(!listed(Some(0), Some(42), 42, window, display), "a rest window rini draws");
-        assert!(listed(Some(0), None, 42, window, display), "an owner unreported is another's");
-        assert!(!listed(Some(18), Some(500), 42, window, display), "off layer 0");
-        assert!(!listed(Some(0), Some(500), 42, rect(865.0, 32.0, 99.0, 1081.0), display), "too narrow");
-        assert!(!listed(Some(0), Some(500), 42, rect(1728.0, 32.0, 859.0, 1081.0), display), "the next display's");
     }
 
     #[test]

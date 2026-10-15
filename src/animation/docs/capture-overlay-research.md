@@ -825,8 +825,7 @@ windows snapped to their new frames with no animation at all.
 
 Both canvas builders already resolve the screen from the space they are animating,
 so they now publish THAT display. `publish_animation_display()` without a space
-survives for the debug commands and a config reload, which have no display in
-mind.
+survives for a config reload, which has no display in mind.
 
 The other half of the same bug: moving the overlay to another display invalidates
 every picture it holds. A display change cleared only the bar, and one frame later

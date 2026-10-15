@@ -66,14 +66,12 @@ tokio = { workspace = true, features = ["sync"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tracing-timing = { workspace = true }
 tracing-tree = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
 tempfile = { workspace = true }
 test-log = { version = "0.2.16", default-features = false }
-test_bin = "0.5.0"
 tokio = { workspace = true, features = ["sync", "macros"] }
 
 [workspace]
@@ -198,7 +196,6 @@ tokio = { version = "1.35.1", features = ["libc", "macros"] }
 tokio-stream = "0.1.16"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["std", "tracing", "env-filter"], default-features = false }
-tracing-timing = "0.7.0"
 tracing-tree = { version = "0.4.0", features = ["time"], default-features = false }
 futures-task = { version = "0.3.31", features = ["alloc"], default-features = false }
 rustc-hash = "2.1.1"

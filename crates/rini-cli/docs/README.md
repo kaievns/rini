@@ -6,14 +6,14 @@ point: anything the CLI can do is in the wire protocol.
 
 ## What it owns
 
-Argument parsing (clap), the mapping from subcommands to `LayoutCommand`, the three
+Argument parsing (clap), the mapping from subcommands to the wire's `RiniRequest`, the three
 parsers (`parse_direction`, `parse_window_server_id`, `parse_window_id`), and the
 output formatting for queries.
 
 ## The shape that matters
 
-**A mis-mapping is silent.** Thirty-three near-identical match arms turn subcommands
-into wire commands, and nothing at runtime notices if two of them produce the same one.
+**A mis-mapping is silent.** Near-identical match arms turn subcommands into wire
+commands, and nothing at runtime notices if two of them produce the same one.
 The tests are therefore mostly about collisions rather than values: no two window
 subcommands may map to the same wire command, the two fold directions must differ, and
 so must the three resize orientations.
@@ -24,7 +24,7 @@ diagnostics output, so it is what a user has to hand.
 
 **Workspace numbers count from 0.** `workspace switch` and `workspace move-window` pass the
 index to the wire as given, while the config counts from 1, so `workspace switch 0` is the
-config's `focus-workspace 1`.
+config's `focus-workspace 1`. Every help that takes a workspace number says it counts from 0.
 
 ## Usage
 

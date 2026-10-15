@@ -467,14 +467,11 @@ pub fn handle_window_title_changed(
 ) -> anyhow::Result<crate::app::reactor::events::EventOutcome> {
     let WindowTitleChangedPayload { window: wid, title: new_title } = payload;
     if let Some(window) = state.windows.window_mut(wid) {
-        let previous_title = window.info.title.clone();
-        if previous_title == new_title {
+        if window.info.title == new_title {
             return Ok(crate::app::reactor::events::EventOutcome::no_change());
         }
-        window.info.title = new_title.clone();
-        return Ok(crate::app::reactor::events::EventOutcome::no_change()
-            .with_app_rule_reapply(wid)
-            .with_window_title_broadcast(wid, previous_title, new_title));
+        window.info.title = new_title;
+        return Ok(crate::app::reactor::events::EventOutcome::no_change().with_app_rule_reapply(wid));
     }
     Ok(crate::app::reactor::events::EventOutcome::no_change())
 }

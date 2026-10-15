@@ -13,7 +13,6 @@ use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext, RuleState};
 use crate::windows::domain::state::WindowState;
-use crate::workspaces::broadcast::{BroadcastEvent, protocol_workspace_id};
 use crate::workspaces::domain::app_rules::{
     AfterRules, AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus, BeforeRules,
 };
@@ -33,11 +32,6 @@ mod persistence;
 use persistence::PersistenceState;
 pub use persistence::{RestoreReport, RestoreRequest, RestoreScope, RestoreSource, RestoreWarning};
 pub use rini_ipc::protocol::LayoutCommand;
-
-#[derive(Debug, Default)]
-struct WindowRemovalImpact {
-    active_space: Option<SpaceId>,
-}
 
 /// One window as `WindowsOnScreenUpdated` describes it: id, title, AX role, AX subrole,
 /// is_modal, is_resizable, size, min size, max size.
@@ -137,13 +131,6 @@ pub struct LayoutEngine {
     borders: Borders,
     virtual_workspace_manager: WorkspaceStore,
     layout_settings: LayoutSettings,
-    /// Events the engine wants announced, for the application to send.
-    ///
-    /// An outbox rather than the IPC channel itself: `docs/architecture.md` puts broadcasting in
-    /// `app/api/`, and a layout engine holding a wire sender is what made "what did that command
-    /// announce" unanswerable without standing up a channel. `RefCell` because several of the
-    /// places that announce only hold `&self`.
-    outbox: std::cell::RefCell<Vec<BroadcastEvent>>,
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
     connected_displays: Vec<String>,
@@ -384,8 +371,6 @@ impl LayoutEngine {
     ) -> EventResponse {
         self.virtual_workspace_manager.set_active_workspace(space, workspace_id);
         self.update_active_floating_windows(window_store, space);
-        self.broadcast_workspace_changed(space);
-        self.broadcast_windows_changed(window_store, space);
 
         EventResponse {
             changed: true,
@@ -697,7 +682,7 @@ impl LayoutEngine {
         wid: WindowId,
         preserve_floating: bool,
     ) {
-        let removal = self.remove_window_layout_membership(window_store, wid);
+        self.remove_window_layout_membership(window_store, wid);
 
         if preserve_floating {
             self.floating.remove_active_for_window(wid);
@@ -715,18 +700,13 @@ impl LayoutEngine {
             self.focused_window = None;
         }
         self.window_layout_constraints.remove(&wid);
-
-        if let Some(space) = removal.active_space {
-            self.broadcast_windows_changed(window_store, space);
-        }
     }
 
     fn remove_window_layout_membership(
         &mut self,
         window_store: &WindowStore,
         wid: WindowId,
-    ) -> WindowRemovalImpact {
-        let active_space = self.space_with_window(wid);
+    ) {
         let tiled_workspaces =
             self.virtual_workspace_manager.workspaces_for_window(window_store, wid);
 
@@ -734,7 +714,7 @@ impl LayoutEngine {
             for ws_id in &tiled_workspaces {
                 self.workspace_tree_mut(*ws_id).remove_window(wid);
             }
-            return WindowRemovalImpact { active_space };
+            return;
         }
 
         // The store may already have dropped the record (for example after
@@ -744,7 +724,6 @@ impl LayoutEngine {
         for ws_id in ws_ids {
             self.workspace_tree_mut(ws_id).remove_window(wid);
         }
-        WindowRemovalImpact { active_space }
     }
 
     fn add_window_to_layout(
@@ -864,19 +843,6 @@ impl LayoutEngine {
         None
     }
 
-    fn active_workspace_id_and_name(
-        &self,
-        space_id: SpaceId,
-    ) -> Option<(crate::workspaces::VirtualWorkspaceId, String)> {
-        let workspace_id = self.virtual_workspace_manager.active_workspace(space_id)?;
-        let workspace_name = self
-            .virtual_workspace_manager
-            .workspace_info(workspace_id)
-            .map(|ws| ws.name.clone())
-            .unwrap_or_else(|| format!("Workspace {:?}", workspace_id));
-        Some((workspace_id, workspace_name))
-    }
-
     fn window_no_longer_assigned_to_space(
         &self,
         window_store: &WindowStore,
@@ -895,9 +861,8 @@ impl LayoutEngine {
         space: SpaceId,
         pid: pid_t,
         tiled_by_workspace: &HashMap<crate::workspaces::VirtualWorkspaceId, Vec<WindowId>>,
-    ) -> Vec<(crate::workspaces::VirtualWorkspaceId, LayoutId)> {
+    ) {
         let total_tiled_count: usize = tiled_by_workspace.values().map(|v| v.len()).sum();
-        let mut changed_layouts = Vec::new();
 
         for (ws_id, layout) in self.workspace_layouts.active_layouts_for_space(space) {
             let mut desired = tiled_by_workspace.get(&ws_id).cloned().unwrap_or_default();
@@ -975,10 +940,7 @@ impl LayoutEngine {
             {
                 let _ = self.workspace_tree_mut(ws_id).select_window(layout, selected_window);
             }
-            changed_layouts.push((ws_id, layout));
         }
-
-        changed_layouts
     }
 
     pub fn update_space_display(
@@ -1468,7 +1430,6 @@ impl LayoutEngine {
             borders: Borders::default(),
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
-            outbox: Default::default(),
             connected_displays: Vec::new(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
@@ -1539,23 +1500,13 @@ impl LayoutEngine {
     }
 
     pub fn debug_tree(&self, space: SpaceId) {
-        self.debug_tree_desc(space, "", false);
+        self.debug_tree_desc(space, "");
     }
 
-    pub fn debug_tree_desc(&self, space: SpaceId, desc: &'static str, print: bool) {
+    pub fn debug_tree_desc(&self, space: SpaceId, desc: &'static str) {
         if let Some(workspace_id) = self.virtual_workspace_manager.active_workspace(space) {
             if let Some(layout) = self.workspace_layouts.active(space, workspace_id) {
-                if print {
-                    println!(
-                        "Tree {desc}\n{}",
-                        self.workspace_tree(workspace_id).draw_tree(layout).trim()
-                    );
-                } else {
-                    debug!(
-                        "Tree {desc}\n{}",
-                        self.workspace_tree(workspace_id).draw_tree(layout).trim()
-                    );
-                }
+                debug!("Tree {desc}\n{}", self.workspace_tree(workspace_id).draw_tree(layout).trim());
             } else {
                 debug!("No layout for workspace {workspace_id:?} on space {space:?}");
             }
@@ -1709,11 +1660,7 @@ impl LayoutEngine {
 
         // `windows_by_workspace` already excludes floating windows.
         let tiled_by_workspace = windows_by_workspace;
-        let changed_layouts =
-            self.sync_tiled_windows_for_app(window_store, memory, space, pid, &tiled_by_workspace);
-        if !changed_layouts.is_empty() {
-            self.broadcast_windows_changed(window_store, space);
-        }
+        self.sync_tiled_windows_for_app(window_store, memory, space, pid, &tiled_by_workspace);
 
         if let Some((window, workspace)) = focus_request {
             let workspace_index = self
@@ -1810,9 +1757,7 @@ impl LayoutEngine {
             }
             LayoutEvent::WindowAdded(space, wid) => {
                 self.debug_tree(space);
-                if self.add_window_to_layout(window_store, memory, space, wid) {
-                    self.broadcast_windows_changed(window_store, space);
-                }
+                self.add_window_to_layout(window_store, memory, space, wid);
             }
             LayoutEvent::WindowRemoved(wid) => {
                 self.remove_window_internal(window_store, memory, wid, false);
@@ -2110,9 +2055,7 @@ impl LayoutEngine {
                 target,
                 command,
             ),
-            LayoutCommand::ResizeWindowGrow(_)
-            | LayoutCommand::ResizeWindowShrink(_)
-            | LayoutCommand::ResizeWindowBy { .. }
+            LayoutCommand::ResizeWindowBy { .. }
             | LayoutCommand::CyclePresetColumnWidth => {
                 self.handle_resize_command(memory, target, is_floating, command)
             }
@@ -2539,7 +2482,6 @@ impl LayoutEngine {
             if is_floating {
                 self.floating.add_active(op_space, focused_window.pid, focused_window);
             }
-            self.broadcast_windows_changed(window_store, op_space);
             return EventResponse {
                 changed: true,
                 focus_window: Some(focused_window),
@@ -2559,7 +2501,6 @@ impl LayoutEngine {
                 .virtual_workspace_manager
                 .windows_in_active_workspace(window_store, op_space);
             if let Some(&new_focus) = remaining_windows.first() {
-                self.broadcast_windows_changed(window_store, op_space);
                 return EventResponse {
                     changed: true,
                     focus_window: Some(new_focus),
@@ -2576,7 +2517,6 @@ impl LayoutEngine {
             Some(focused_window),
         );
 
-        self.broadcast_windows_changed(window_store, op_space);
         EventResponse {
             changed: true,
             ..EventResponse::default()
@@ -2999,11 +2939,6 @@ impl LayoutEngine {
         );
         self.focused_window = Some(window_id);
 
-        if source_space != target_space {
-            self.broadcast_windows_changed(window_store, source_space);
-        }
-        self.broadcast_windows_changed(window_store, target_space);
-
         EventResponse {
             changed: true,
             raise_windows: vec![window_id],
@@ -3061,14 +2996,6 @@ impl LayoutEngine {
         window: WindowId,
     ) -> Option<CGRect> {
         self.floating_positions.get(space, workspace, window)
-    }
-
-    pub fn workspace_floating_positions(
-        &self,
-        space: SpaceId,
-        workspace: VirtualWorkspaceId,
-    ) -> Vec<(WindowId, CGRect)> {
-        self.floating_positions.workspace_positions(space, workspace)
     }
 
     pub fn remove_floating_position(&mut self, window: WindowId) {
@@ -3130,46 +3057,6 @@ impl LayoutEngine {
             for &(window, frame) in floating_positions {
                 self.floating_positions.store(space, workspace, window, frame);
             }
-        }
-    }
-
-    fn broadcast_workspace_changed(&self, space_id: SpaceId) {
-        if let Some((active_workspace_id, active_workspace_name)) =
-            self.active_workspace_id_and_name(space_id)
-        {
-            self.announce(BroadcastEvent::WorkspaceChanged {
-                workspace_id: protocol_workspace_id(active_workspace_id),
-                workspace_name: active_workspace_name.clone(),
-                space_id: space_id.get(),
-                display_uuid: None,
-            });
-        }
-    }
-
-    fn announce(&self, event: BroadcastEvent) {
-        self.outbox.borrow_mut().push(event);
-    }
-
-    /// Take what the engine wants announced. The application owns the channel and sends these.
-    pub fn drain_broadcasts(&self) -> Vec<BroadcastEvent> {
-        std::mem::take(&mut *self.outbox.borrow_mut())
-    }
-
-    fn broadcast_windows_changed(&self, window_store: &WindowStore, space_id: SpaceId) {
-        if let Some((workspace_id, workspace_name)) = self.active_workspace_id_and_name(space_id) {
-            let windows = self
-                .virtual_workspace_manager
-                .windows_in_active_workspace(window_store, space_id)
-                .iter()
-                .map(|window_id| window_id.to_debug_string())
-                .collect();
-            self.announce(BroadcastEvent::WindowsChanged {
-                workspace_id: protocol_workspace_id(workspace_id),
-                workspace_name,
-                windows,
-                space_id: space_id.get(),
-                display_uuid: None,
-            });
         }
     }
 

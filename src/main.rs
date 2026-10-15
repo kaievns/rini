@@ -7,7 +7,7 @@ use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
 use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
-use rini::app::hotkeys::{self as wm_controller, WmController};
+use rini::app::hotkeys::WmController;
 use rini::app::launch_agent::{ServiceCommands, handle_service_command};
 use rini::app::logging as log;
 use rini::app::notifications::NotificationCenter;
@@ -56,21 +56,9 @@ struct Cli {
     #[arg(long)]
     validate: bool,
 
-    /// Restore the saved layout on startup: window sizes, workspaces and strip
-    /// positions from the last session. On by default.
-    ///
-    /// Accepted for compatibility and as an explicit override of --no-restore.
-    #[arg(long)]
-    restore: bool,
-
     /// Start from a clean layout, ignoring the saved one.
     #[arg(long)]
     no_restore: bool,
-
-    /// Record reactor events to the specified file path. Overwrites the file if
-    /// exists.
-    #[arg(long)]
-    record: Option<PathBuf>,
 
     /// Path to the config file (KDL) to use instead of ~/.config/rini/config.kdl.
     #[arg(long, value_name = "PATH")]
@@ -207,7 +195,6 @@ fn main() {
 
     execute_startup_commands(&config.settings.run_on_start);
 
-    let (broadcast_tx, broadcast_rx) = rini::app::channels::channel();
 
     // Restore is ON by default, so a restart or redeploy keeps window sizes, workspaces
     // and strip positions.
@@ -224,9 +211,8 @@ fn main() {
     // that is not attached while keeping each window's display affinity, so those
     // windows lay out fresh on a live display and return to their own display when it
     // is plugged back in.
-    let want_restore = rini::app::boot::wants_restore(opt.restore, opt.no_restore);
     let fresh = || LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout);
-    let (mut layout, display_memory) = if want_restore {
+    let (mut layout, display_memory) = if !opt.no_restore {
         let path = restore_file();
         match LayoutEngine::load_for_startup_restore(path.clone()) {
             Ok(loaded) => loaded,
@@ -279,9 +265,7 @@ fn main() {
         config.clone(),
         layout,
         display_memory,
-        reactor::Record::new(opt.record.as_deref()),
         event_tap_tx.clone(),
-        broadcast_tx.clone(),
         Some(cursor_warp_tx.clone()),
         Some(transitions_tx.clone()),
         Some(pictures.clone()),
@@ -318,42 +302,16 @@ fn main() {
 
     ConfigWatcher::spawn(config_tx.clone(), config_path.clone());
 
-    let server_state = match ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
+    if let Err(err) = ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
         reactor.clone(),
         config_tx.clone(),
     )) {
-        Ok(state) => state,
-        Err(err) => {
-            eprintln!("{}", err);
-            process::exit(1);
-        }
-    };
+        eprintln!("{}", err);
+        process::exit(1);
+    }
 
-    let mach_bridge_rx = broadcast_rx;
-
-    let server_state_for_bridge = server_state.clone();
-    std::thread::spawn(move || {
-        let mut rx = mach_bridge_rx;
-        let server_state = server_state_for_bridge;
-        loop {
-            match rx.blocking_recv() {
-                Some((_span, event)) => {
-                    let state = server_state.read();
-                    state.publish(event);
-                }
-                None => {
-                    break;
-                }
-            }
-        }
-    });
-
-    let wm_config = wm_controller::Config {
-        restore_file: restore_file(),
-        config: config.clone(),
-    };
     let (wm_controller, wm_controller_sender) = WmController::new(
-        wm_config,
+        config.clone(),
         config_tx.clone(),
         events_tx.clone(),
         event_tap_tx.clone(),

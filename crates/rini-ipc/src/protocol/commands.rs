@@ -26,8 +26,6 @@ pub enum LayoutCommand {
     ToggleWindowFloating,
     /// niri's `maximize-column`: the column fills the tiling area and stays in the strip.
     ToggleFullscreenWithinGaps,
-    ResizeWindowGrow(ResizeOrientation),
-    ResizeWindowShrink(ResizeOrientation),
     /// Change the selection's size by `amount` of the tiling area: its column's width, its height
     /// in a stacked column, or whichever of the two `Smart` picks.
     ResizeWindowBy {
@@ -38,9 +36,8 @@ pub enum LayoutCommand {
     SnapStrip,
     /// Cycle the selected column through the configured preset widths.
     ///
-    /// niri's `switch-preset-column-width`. The existing ResizeWindowGrow /
-    /// ResizeWindowShrink commands step by a fixed ~5%, which leaves columns at
-    /// arbitrary in-between widths; this snaps to a known set instead.
+    /// niri's `switch-preset-column-width`. `ResizeWindowBy` leaves a column at whatever width
+    /// it reaches; this snaps to a known set instead.
     ///
     /// The whole viewport is one of those widths, a width rather than full-width mode:
     /// the cycle reaches it with the column's stack kept, and a step off a full-width
@@ -64,21 +61,6 @@ pub enum LayoutCommand {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ReactorCommand {
-    Debug,
-    /// Slide every visible window in from an offset using the capture-based overlay.
-    ///
-    /// A debugging aid for judging animation quality by eye. It draws pictures of the windows and
-    /// never moves a real one, so it is safe to run at any time and leaves no state behind.
-    DebugOverlaySlide {
-        dx: i32,
-        dy: i32,
-        duration_ms: u64,
-    },
-    /// Picture every window on screen that rini does not manage.
-    ///
-    /// Background work only. Nothing is drawn and no window is touched.
-    DebugWarmSnapshots,
-    Serialize,
     SaveLayout {
         path: PathBuf,
     },
@@ -139,12 +121,6 @@ pub enum SwitchScope {
     App,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricsCommand {
-    ShowTiming,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigCommand {
@@ -152,7 +128,6 @@ pub enum ConfigCommand {
     /// it writes replaces what is running, setting by setting, `workspace` and `window-rule` lists
     /// whole, and binds key by key (`specs/config.md`, "Changing the running config").
     Set(String),
-    GetConfig,
     ReloadConfig,
 }
 
@@ -160,7 +135,6 @@ pub enum ConfigCommand {
 #[serde(rename_all = "snake_case")]
 pub enum RiniCommand {
     Layout(LayoutCommand),
-    Metrics(MetricsCommand),
     Reactor(ReactorCommand),
     Config(ConfigCommand),
 }
@@ -171,7 +145,6 @@ pub enum RiniCommand {
 #[serde(untagged)]
 pub enum Command {
     Layout(LayoutCommand),
-    Metrics(MetricsCommand),
     Reactor(ReactorCommand),
 }
 

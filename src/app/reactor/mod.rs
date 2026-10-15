@@ -14,7 +14,6 @@ mod managers;
 mod observations;
 mod present;
 mod query;
-mod replay;
 mod space_affinity;
 mod space_resolution;
 pub mod state;
@@ -79,10 +78,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_geometry::space::{
     FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, SurfaceRect, ToCg,
 };
-pub use replay::{Record, replay};
 use rini_ipc::protocol::SwitchScope;
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 use space_affinity::SpaceAffinity;
 use tracing::{debug, info, instrument, trace, warn};
 
@@ -103,16 +99,12 @@ use crate::windows::domain::transaction::WindowTxStore;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
 use crate::windows::platform::window_server::{StackPlace, covered_by_peer_above};
-use crate::workspaces::broadcast::{
-    BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id,
-};
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 use crate::workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
 use rini_core::ids::{WindowId, pid_t};
-use rini_geometry::CGRectDef;
 use rini_runloop::executor::Executor;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
@@ -131,15 +123,6 @@ pub(crate) use crate::windows::domain::state::WindowFilter;
 pub use crate::windows::domain::transaction::Requested;
 pub use rini_ipc::protocol::Command;
 
-/// The five answers every broadcast event needs about where a window is.
-struct BroadcastContext {
-    space: SpaceId,
-    workspace_id: crate::workspaces::VirtualWorkspaceId,
-    workspace_index: Option<u64>,
-    workspace_name: String,
-    display_uuid: Option<String>,
-}
-
 #[derive(Clone)]
 pub struct ReactorHandle {
     sender: Sender,
@@ -153,10 +136,6 @@ impl ReactorHandle {
 
     pub fn sender(&self) -> Sender {
         self.sender.clone()
-    }
-
-    pub fn send(&self, event: Event) {
-        self.sender.send(event)
     }
 
     pub fn try_send(
@@ -175,8 +154,7 @@ impl std::ops::Deref for ReactorHandle {
     }
 }
 
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum Event {
     /// Place these windows at these frames now, with no animation.
@@ -184,11 +162,8 @@ pub enum Event {
     /// Sent by the flight engine once its flight is far enough along that the real
     /// windows are safely hidden behind it. Applying them any earlier let the windows visibly jump
     /// into place BEFORE the overlay appeared, so a switch read as a flicker followed by a slide.
-    #[serde(skip)]
     ApplyOverlayFrames(Vec<(WindowId, CGRect)>),
-    #[serde(skip)]
     SpaceStateChanged(ForwardedSpaceState),
-    #[serde(skip)]
     ActiveDisplayChanged {
         menu_bar_space: Option<SpaceId>,
         command_space: Option<SpaceId>,
@@ -209,7 +184,6 @@ pub enum Event {
     ApplicationLaunched {
         pid: pid_t,
         info: AppInfo,
-        #[serde(skip, default = "replay::deserialize_app_thread_handle")]
         handle: AppThreadHandle,
         is_frontmost: bool,
         main_window: Option<WindowId>,
@@ -225,7 +199,6 @@ pub enum Event {
     ApplicationMainWindowChanged(pid_t, Option<WindowId>, Quiet),
     /// Authoritative focus resolved from WindowServer's key-focus process and
     /// the z-ordered windows on the active native space.
-    #[serde(skip)]
     WindowServerFocusChanged(WindowId, SpaceId),
 
     WindowsDiscovered {
@@ -240,19 +213,15 @@ pub enum Event {
         Option<MouseState>,
     ),
     WindowDestroyed(WindowId),
-    #[serde(skip)]
     WindowServerDestroyed(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
-    #[serde(skip)]
     WindowServerAppeared(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
-    #[serde(skip)]
     SpaceCreated(SpaceId),
-    #[serde(skip)]
     SpaceDestroyed(SpaceId),
     WindowMinimized(WindowId),
     WindowDeminiaturized(WindowId),
     WindowFrameChanged(
         WindowId,
-        #[serde(with = "CGRectDef")] CGRect,
+        CGRect,
         Option<TransactionId>,
         Requested,
         Option<MouseState>,
@@ -276,14 +245,12 @@ pub enum Event {
     /// The left button went down. Straight from the input thread, so it is handled before any frame
     /// report the app sends in answer; see [`Event::left_press_sink`]. A double-click on a column's
     /// title bar is the evidence that the resize after it is the app zooming the window.
-    #[serde(skip)]
     LeftMouseDown(crate::input::event::LeftPress),
     /// A switcher session opened, moved, committed or was cancelled.
     Switch(crate::input::domain::switch_session::Signal),
     /// A row of the switcher popup was clicked: select that window and commit.
     SwitchPicked(WindowId),
     /// Something on a bar was clicked.
-    #[serde(skip)]
     BarAction(crate::bar::domain::model::Action),
     /// Sent by the event tap only when the cursor enters a different window.
     /// Window resolution and transition deduplication stay on the input
@@ -298,21 +265,13 @@ pub enum Event {
     SystemWoke,
     /// The system clock was set, or the time zone changed.
     ClockChanged,
-    #[serde(skip)]
     SystemWillSleep,
-    #[serde(skip)]
     SessionDidResignActive,
-    #[serde(skip)]
     SessionDidBecomeActive,
 
-    #[serde(skip)]
     DisplayChurnBegin,
-    #[serde(skip)]
-    DisplayChurnEnd,
 
-    #[serde(skip)]
     MissionControlNativeEntered,
-    #[serde(skip)]
     MissionControlNativeExited,
 
     /// A raise request completed. Used by the raise manager to track when
@@ -336,19 +295,15 @@ pub enum Event {
     /// The applications asking for attention changed.
     AttentionChanged(crate::windows::domain::attention::Attention),
 
-    #[serde(skip)]
     Query(query::QueryRequest),
 
     Command(Command),
 
-    #[serde(skip)]
     RegisterWmSender(crate::app::hotkeys::Sender),
 
-    #[serde(skip)]
     ConfigUpdated(Config),
 
     /// The config file was read, and whether it could be used. While it cannot, every bar is marked.
-    #[serde(skip)]
     ConfigFileRead { usable: bool },
 }
 
@@ -550,7 +505,6 @@ pub struct Reactor {
     regroup_raised: Vec<WindowId>,
     drag_manager: managers::DragManager,
     workspace_switch_manager: managers::WorkspaceSwitchManager,
-    recording_manager: managers::RecordingManager,
     communication_manager: managers::CommunicationManager,
     /// The workspace each space's last layout pass drew, where its next switch slides from.
     drawn_workspace: HashMap<SpaceId, crate::workspaces::VirtualWorkspaceId>,
@@ -570,7 +524,7 @@ pub struct Reactor {
     /// Where autosave writes. `None` disables it.
     ///
     /// A field rather than a call to `config::restore_file()` at the write site because
-    /// autosave fires from `update_layout_or_warn_with`, which almost every test drives.
+    /// autosave fires from `update_layout`, which almost every test drives.
     /// Resolving the real path there meant the suite overwrote the user's own
     /// ~/.rini/layout.ron with test fixtures. `Reactor::new_for_test` sets it to `None`.
     autosave_path: Option<PathBuf>,
@@ -584,9 +538,7 @@ impl Reactor {
         config: Config,
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
-        record: Record,
         event_tap_tx: event_tap::Sender,
-        broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
         transitions_tx: Option<crate::transitions::platform::engine::Sender>,
         pictures: Option<crate::pictures::platform::service::Pictures>,
@@ -602,8 +554,6 @@ impl Reactor {
             config,
             layout_engine,
             display_memory,
-            record,
-            broadcast_tx,
             window_tx_store,
             one_space,
         );
@@ -632,15 +582,12 @@ impl Reactor {
         config: Config,
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
-        mut record: Record,
-        broadcast_tx: BroadcastSender,
         window_tx_store: WindowTxStore,
         one_space: bool,
     ) -> Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
-        record.start(&layout_engine, &display_memory);
         let (raise_manager_tx, _rx) = channels::channel();
         let reactor = Reactor {
             live_switch: None,
@@ -683,7 +630,6 @@ impl Reactor {
                 pending_workspace_switch_origin: None,
                 pending_workspace_mouse_warp: None,
             },
-            recording_manager: managers::RecordingManager { record },
             drawn_workspace: HashMap::default(),
             communication_manager: managers::CommunicationManager {
                 event_tap_tx: None,
@@ -691,7 +637,6 @@ impl Reactor {
                 transitions_tx: None,
                 pictures: None,
                 raise_manager_tx,
-                event_broadcaster: broadcast_tx,
                 wm_sender: None,
                 events_tx: None,
             },
@@ -785,12 +730,6 @@ impl Reactor {
     #[cfg(test)]
     fn raw_spaces_for_current_screens(&self) -> Vec<Option<SpaceId>> {
         self.space_state.screens.iter().map(|s| s.space).collect()
-    }
-
-    fn display_uuid_for_space(&self, space: SpaceId) -> Option<String> {
-        self.space_state
-            .screen_by_space(space)
-            .and_then(|screen| screen.display_uuid_owned())
     }
 
     fn expose_space_if_known(&mut self, space: SpaceId) {
@@ -1041,21 +980,6 @@ impl Reactor {
             == Some("com.apple.loginwindow")
     }
 
-    // fn store_txid(&self, wsid: Option<WindowServerId>, txid: TransactionId, target: CGRect) {
-    //     self.transaction_manager.store_txid(wsid, txid, target);
-    // }
-    //
-    // fn update_txid_entries<I>(&self, entries: I)
-    // where
-    //     I: IntoIterator<Item = (WindowServerId, TransactionId, CGRect)>,
-    // {
-    //     self.transaction_manager.update_entries(entries);
-    // }
-    //
-    // fn remove_txid_for_window(&self, wsid: Option<WindowServerId>) {
-    //     self.transaction_manager.remove_for_window(wsid);
-    // }
-
     fn clear_pending_hidden_window_targets(&self) {
         for (wid, window) in self.state.windows.iter_windows() {
             if self.affinity().hidden_assigned_space_for_window_id(wid).is_none() {
@@ -1148,7 +1072,7 @@ impl Reactor {
             self.handle_loop_event(event);
         }
         if self.refresh_borders() {
-            self.update_layout_or_warn(false, false, None);
+            self.update_layout(false, false, None);
         }
         self.publish_bar();
         self.publish_rest();
@@ -1300,19 +1224,10 @@ impl Reactor {
     fn handle_event(&mut self, event: Event) {
         let cause = Cause { at: std::time::Instant::now(), what: event.what() };
         let outer_cause = std::mem::replace(&mut self.cause, cause);
-        let previously_focused_window = self.main_window();
         let began = self.layout_manager.layout_engine.focused_window();
         let outer = std::mem::replace(&mut self.focused_as_event_began, began);
         match self.dispatch_workflow(event) {
-            Ok(mut outcome) => {
-                let focused_window = self.main_window();
-                if focused_window != previously_focused_window
-                    && let Some(focused_window) = focused_window
-                {
-                    outcome = outcome.with_focused_window_broadcast(focused_window);
-                }
-                self.apply_event_outcome(outcome);
-            }
+            Ok(outcome) => self.apply_event_outcome(outcome),
             Err(error) => warn!(%error, "reactor workflow failed"),
         }
         self.focused_as_event_began = outer;
@@ -1361,7 +1276,6 @@ impl Reactor {
     fn dispatch_workflow(&mut self, event: Event) -> anyhow::Result<EventOutcome> {
         self.live_spaces.clear();
         self.log_event(&event);
-        self.recording_manager.record.on_event(&event);
 
         if let Some(outcome) = self.on_quarantine_event(&event) {
             return outcome;
@@ -1441,7 +1355,7 @@ impl Reactor {
                 return Ok(system_workflow::handle_register_wm_sender(
                     &mut self.communication_manager,
                     sender,
-                )?);
+                ));
             }
             Event::WindowsDiscovered { pid, new, known_visible } => {
                 return self.on_windows_discovered(
@@ -1524,10 +1438,10 @@ impl Reactor {
                 return Ok(EventOutcome::no_change());
             }
             Event::MenuOpened(pid) => {
-                return Ok(system_workflow::handle_menu_opened(&mut self.menu_manager, pid)?);
+                return Ok(system_workflow::handle_menu_opened(&mut self.menu_manager, pid));
             }
             Event::MenuClosed(pid) => {
-                return Ok(system_workflow::handle_menu_closed(&mut self.menu_manager, pid)?);
+                return Ok(system_workflow::handle_menu_closed(&mut self.menu_manager, pid));
             }
             Event::MouseMoved(wsid) => {
                 return self.on_mouse_moved(wsid);
@@ -1549,10 +1463,10 @@ impl Reactor {
                         window: window_id,
                         sequence: sequence_id,
                     },
-                )?);
+                ));
             }
             Event::RaiseTimeout { sequence_id } => {
-                return Ok(system_workflow::handle_raise_timeout(sequence_id)?);
+                return Ok(system_workflow::handle_raise_timeout(sequence_id));
             }
             Event::RaisesIdle { requests_seen } => {
                 self.raise_echo.idle(requests_seen, std::time::Instant::now());
@@ -1568,25 +1482,6 @@ impl Reactor {
                     &mut self.layout_manager,
                     &mut self.drag_manager,
                     new_cfg,
-                );
-            }
-            Event::Command(Command::Metrics(cmd)) => {
-                return command_workflow::handle_command_metrics(cmd);
-            }
-            Event::Command(Command::Reactor(ReactorCommand::DebugOverlaySlide {
-                dx,
-                dy,
-                duration_ms,
-            })) => {
-                return self.on_debug_overlay_slide(dx, dy, duration_ms);
-            }
-            Event::Command(Command::Reactor(ReactorCommand::DebugWarmSnapshots)) => {
-                return self.on_debug_warm_snapshots();
-            }
-            Event::Command(Command::Reactor(ReactorCommand::Debug)) => {
-                return command_workflow::handle_command_reactor_debug(
-                    &self.layout_manager,
-                    &self.space_state,
                 );
             }
             Event::Command(Command::Reactor(ReactorCommand::SaveAndExit)) => {
@@ -1608,10 +1503,6 @@ impl Reactor {
                 source,
             })) => {
                 return self.on_restore_layout(path, scope, source);
-            }
-            Event::Command(Command::Reactor(ReactorCommand::Serialize)) => {
-                let serialized = self.serialize_state();
-                return command_workflow::handle_command_reactor_serialize(serialized);
             }
             Event::Command(Command::Reactor(ReactorCommand::SwitchSpace(direction))) => {
                 return command_workflow::handle_switch_native_space(direction);
@@ -1681,9 +1572,9 @@ impl Reactor {
     ///
     /// Explicit transition frames are written before layout calculation so the
     /// resulting layout remains authoritative. Focus selection follows layout
-    /// writes, then UI/platform presentation state is refreshed. Broadcast and
-    /// discovery requests made directly by a workflow are consequently observed
-    /// only after its model mutation is complete.
+    /// writes, then UI/platform presentation state is refreshed. Discovery
+    /// requests made directly by a workflow are consequently observed only after
+    /// its model mutation is complete.
     fn apply_event_outcome(&mut self, outcome: EventOutcome) {
         // Per event: what this event's regroup raises is only known to this event.
         self.regroup_raised.clear();
@@ -1832,7 +1723,7 @@ impl Reactor {
         let mut layout_changed = false;
         if let Some(passes) = outcome.arrange.passes_to_run(self.is_in_drag()) {
             for _ in 0..passes {
-                layout_changed |= self.update_layout_or_warn(
+                layout_changed |= self.update_layout(
                     outcome.arrange.is_resize,
                     matches!(
                         self.workspace_switch_manager.workspace_switch_state,
@@ -1929,18 +1820,8 @@ impl Reactor {
         if outcome.refresh_focus_follows_mouse {
             self.update_focus_follows_mouse_state();
         }
-        for broadcast in outcome.window_title_broadcasts {
-            self.broadcast_window_title_changed(
-                broadcast.window,
-                broadcast.previous_title,
-                broadcast.new_title,
-            );
-        }
-        if let Some(window) = outcome.focused_window_broadcast {
-            self.broadcast_focused_window_changed(window);
-        }
         // Requests which schedule fresh discovery are last so observers see
-        // the fully reconciled model, layout, UI, and broadcasts.
+        // the fully reconciled model, layout and UI.
         for (pid, request) in outcome.app_requests {
             if let Some(app) = self.app_manager.apps.get(&pid)
                 && let Err(error) = app.handle.send(request)
@@ -2101,7 +1982,7 @@ impl Reactor {
             }
 
             self.refocus_manager.refocus_state = RefocusState::Pending(space);
-            self.update_layout_or_warn(false, false, None);
+            self.update_layout(false, false, None);
             self.update_focus_follows_mouse_state();
         }
     }
@@ -2141,85 +2022,8 @@ impl Reactor {
             .workspace_command_space()
             .or_else(|| spaces.iter().copied().flatten().find(|space| self.is_space_active(*space)))
         {
-            if let Some((workspace_id, workspace_name)) =
-                self.layout_manager.layout_engine.ensure_active_workspace_info(space)
-            {
-                let display_uuid = self.display_uuid_for_space(space);
-                let broadcast_event = BroadcastEvent::WorkspaceChanged {
-                    workspace_id: protocol_workspace_id(workspace_id),
-                    workspace_name,
-                    space_id: space.get(),
-                    display_uuid,
-                };
-                _ = self.communication_manager.event_broadcaster.send(broadcast_event);
-            }
+            self.layout_manager.layout_engine.ensure_active_workspace_info(space);
         }
-    }
-
-    /// Where a window is, as a broadcast event has to describe it.
-    ///
-    /// `None` when the window has no active space, no active workspace, or is on a space that is
-    /// not showing — in which case no broadcast goes out at all. Every event below needs the same
-    /// five answers and used to resolve them itself.
-    fn broadcast_context(&self, window_id: WindowId) -> Option<BroadcastContext> {
-        let space = self.affinity().best_space_for_window_id(window_id)?;
-        if !self.is_space_active(space) {
-            return None;
-        }
-        let engine = &self.layout_manager.layout_engine;
-        let workspace_id = engine.active_workspace(space)?;
-        Some(BroadcastContext {
-            space,
-            workspace_id,
-            workspace_index: engine.active_workspace_idx(space),
-            workspace_name: engine
-                .workspace_name(workspace_id)
-                .unwrap_or_else(|| format!("Workspace {workspace_id:?}")),
-            display_uuid: self.display_uuid_for_space(space),
-        })
-    }
-
-    fn broadcast_window_title_changed(
-        &mut self,
-        window_id: WindowId,
-        previous_title: String,
-        new_title: String,
-    ) {
-        if previous_title == new_title {
-            return;
-        }
-        let Some(at) = self.broadcast_context(window_id) else {
-            return;
-        };
-        let _ =
-            self.communication_manager
-                .event_broadcaster
-                .send(BroadcastEvent::WindowTitleChanged {
-                    window_id: protocol_window_id(window_id),
-                    workspace_id: protocol_workspace_id(at.workspace_id),
-                    workspace_index: at.workspace_index,
-                    workspace_name: at.workspace_name,
-                    previous_title,
-                    new_title,
-                    space_id: at.space.get(),
-                    display_uuid: at.display_uuid,
-                });
-    }
-
-    fn broadcast_focused_window_changed(&self, window_id: WindowId) {
-        let Some(at) = self.broadcast_context(window_id) else {
-            return;
-        };
-        let _ = self.communication_manager.event_broadcaster.send(
-            BroadcastEvent::FocusedWindowChanged {
-                window_id: protocol_window_id(window_id),
-                workspace_id: protocol_workspace_id(at.workspace_id),
-                workspace_index: at.workspace_index,
-                workspace_name: at.workspace_name,
-                space_id: at.space.get(),
-                display_uuid: at.display_uuid,
-            },
-        );
     }
 
     fn maybe_reapply_app_rules_for_window(&mut self, window_id: WindowId) {
@@ -4376,11 +4180,6 @@ impl Reactor {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn window_is_standard_for_test(&self, id: WindowId) -> bool {
-        self.window_is_standard(id)
-    }
-
     fn window_is_standard(&self, id: WindowId) -> bool {
         self.state
             .windows
@@ -4451,7 +4250,7 @@ impl Reactor {
         self.prepare_refocus_after_layout_event(&event_clone);
         self.handle_layout_response(response, workspace_switch_space);
         if geometry_changed {
-            let layout_changed = self.update_layout_or_warn(
+            let layout_changed = self.update_layout(
                 false,
                 workspace_switch_space.is_some(),
                 workspace_switch_space.or(event_space),
@@ -4466,7 +4265,7 @@ impl Reactor {
             self.focus_desktop_if_active_workspace_empty(space);
         }
         for space in self.space_state.iter_known_spaces() {
-            self.layout_manager.layout_engine.debug_tree_desc(space, "after event", false);
+            self.layout_manager.layout_engine.debug_tree_desc(space, "after event");
         }
     }
 
@@ -4867,25 +4666,11 @@ impl Reactor {
         EventOutcome::no_change()
     }
 
-    fn flush_engine_broadcasts(&mut self) {
-        for mut event in self.layout_manager.layout_engine.drain_broadcasts() {
-            // The engine does not know which display owns a space; the record is here.
-            let space = SpaceId::new(event.space_id());
-            let memory = &self.state.display_memory;
-            event.name_display(|| memory.affinity.display_for_space(space).map(str::to_owned));
-            let _ = self.communication_manager.event_broadcaster.send(event);
-        }
-    }
-
     fn handle_layout_response(
         &mut self,
         response: layout::EventResponse,
         workspace_switch_space: Option<SpaceId>,
     ) {
-        // Whatever the engine wanted announced, sent from here: the engine fills an outbox and the
-        // application owns the wire. Draining at the top means every path that reaches a layout
-        // response flushes, which is every path that can change what a subscriber sees.
-        self.flush_engine_broadcasts();
         if self.is_in_drag() {
             self.workspace_switch_manager.mark_workspace_switch_inactive();
             return;
@@ -5619,7 +5404,7 @@ impl Reactor {
         self.mission_control_manager.pending_mission_control_refresh.clear();
         self.force_refresh_all_windows();
         self.check_for_new_windows();
-        self.update_layout_or_warn(false, false, None);
+        self.update_layout(false, false, None);
     }
 
     // Uses the same "pending refresh" path as Mission Control recovery so a bulk
@@ -5749,33 +5534,14 @@ impl Reactor {
         }
     }
 
-    pub(crate) fn update_layout_or_warn(
+    pub(crate) fn update_layout(
         &mut self,
         is_resize: bool,
         is_workspace_switch: bool,
         space_scope: Option<SpaceId>,
-    ) -> bool {
-        self.update_layout_or_warn_with(
-            is_resize,
-            is_workspace_switch,
-            space_scope,
-            "Layout update failed",
-        )
-    }
-
-    pub(crate) fn update_layout_or_warn_with(
-        &mut self,
-        is_resize: bool,
-        is_workspace_switch: bool,
-        space_scope: Option<SpaceId>,
-        context: &'static str,
     ) -> bool {
         let changed =
-            LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope)
-                .unwrap_or_else(|e| {
-                    warn!(error = ?e, "{}", context);
-                    false
-                });
+            LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope);
         if changed {
             // Re-observe affinity before saving, so the file records the arrangement that
             // was just applied. This is the path that catches a window dragged between
@@ -5787,12 +5553,8 @@ impl Reactor {
         changed
     }
 
-    /// Persist the layout after a change, at most once every AUTOSAVE_INTERVAL.
-    ///
-    /// Saving used to be entirely manual — the menu bar item and `rini-cli save-layout`
-    /// were the only writers — so a restart or redeploy lost every window's
-    /// workspace, size and strip position, and windows fell back to the default
-    /// column width. `--restore` existed but had nothing to read.
+    /// Persist the layout after a change, at most once every AUTOSAVE_INTERVAL, so a restart or
+    /// redeploy keeps every window's workspace, size and strip position.
     ///
     /// Debounced because update_layout runs on every focus change, resize and
     /// workspace switch, and serialising the whole engine plus an fsync on each one

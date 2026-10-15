@@ -65,7 +65,7 @@ to the read connection changes nothing.
 
 | call | the wait | rini's reads through it |
 |---|---|---|
-| `SLSWindowQueryWindows`, `SLSWindowQueryRun` | `run_query`: `CGSConnectionByID(cid)`, then the sync | `WindowIterator`: `get_windows`, `get_window`, `existing_windows`, `window_parent`, `window_level` (so `stack_level` and `StackPlace::of`), `corner_radii` (so `corner_radius`), `app_window_suitability`, `window_ordered_in`, `key_focused_window`, `space_window_list_for_connection`, and the listings' details |
+| `SLSWindowQueryWindows`, `SLSWindowQueryRun` | `run_query`: `CGSConnectionByID(cid)`, then the sync | `WindowIterator`: `get_windows`, `get_window`, `window_parent`, `window_level` (so `stack_level` and `StackPlace::of`), `corner_radii` (so `corner_radius`), `app_window_suitability`, `window_ordered_in`, `key_focused_window`, `space_window_list_for_connection`, and the listings' details |
 | `SLSHWCaptureWindowList` | `hw_capture_window_list_common`: the main connection only for a cid of 0 | every SkyLight composite in `src/pictures/platform/skylight.rs` |
 | `SLSCaptureWindowsContentsToRectWithOptions` | the main connection only for a cid of 0 | `capture_rect`: the bar's menu-extras capture and its ground, the framed spawn capture and its composite with what is below, a handover check's picture of the screen |
 
@@ -116,7 +116,6 @@ them stall 500ms the same way. Each read rini made through them is now made on t
 | read | where it ran | was | is |
 |---|---|---|---|
 | `front_to_back_depths` | `transitions`, at every flight's start; the reactor's strip regroup | on screen, desktop elements excluded | `on_screen_windows` without a window at `kCGDesktopIconWindowLevel` or below (`depths`) |
-| `visible_windows_on_display` | the pictures warm, the debug slide | the same | `on_screen_windows`; only layer-0 windows are listed |
 | `desktop_backdrop_windows`, `bar_strip` | pictures, at a flight's desktop and bar | on screen, owner names and titles | `on_screen_windows` with titles, the owner's name for a desktop window |
 | the menu extras' listing | `bar-extras` | every window, owner names and titles | `every_window` with titles and owner names |
 | the framed spawn capture | `transitions` | `CGWindowListCreateImage`, the window alone in its frame | `capture_rect` of the window: bits 11 and 8 wholly on a display, none otherwise |

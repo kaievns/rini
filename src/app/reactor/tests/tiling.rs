@@ -11,7 +11,7 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::animation::domain::motion::surface::SurfaceGeometry;
-use crate::app::config::Edges;
+use crate::layout::settings::Edges;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::input::event::LeftPress;
@@ -2568,7 +2568,6 @@ fn causes(
             Engine::Animate { cause, .. } => ("pass", cause),
             Engine::AnimateSurface { cause, .. } => ("movement", cause),
             Engine::Bounce { cause, .. } => ("bounce", cause),
-            Engine::DebugSlide { cause, .. } => ("slide", cause),
             _ => continue,
         });
     }
@@ -2576,7 +2575,7 @@ fn causes(
 }
 
 /// A flight's journal starts at the press: each request names the command it answers, stamped when
-/// the reactor took it, whichever of the five ways it goes to the flight engine. `None` is a press
+/// the reactor took it, whichever way it goes to the flight engine. `None` is a press
 /// that may send nothing: the second column is in view.
 #[test]
 fn a_commands_flight_carries_its_cause() {
@@ -2590,16 +2589,11 @@ fn a_commands_flight_carries_its_cause() {
         sends(LayoutCommand::ToggleFullscreenWithinGaps, "pass"),
         sends(LayoutCommand::NextWorkspace(None), "movement"),
         sends(LayoutCommand::PrevWorkspace(None), "movement"),
-        (
-            Command::Reactor(ReactorCommand::DebugOverlaySlide { dx: 0, dy: 40, duration_ms: 350 }),
-            Some("slide"),
-        ),
     ];
     for (command, request) in cases {
         let what: &'static str = match &command {
             Command::Layout(command) => command.into(),
             Command::Reactor(command) => command.into(),
-            Command::Metrics(_) => unreachable!(),
         };
         let before = Instant::now();
         reactor.handle_event(Event::Command(command));

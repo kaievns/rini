@@ -1,7 +1,7 @@
 //! Raising windows in order. A raise walks every window of a workspace and ends on the one to
 //! focus; the manager serialises those sequences, waits for each app's completion report, and
-//! times out the ones that hang. Timeouts go out as `Event::RaiseTimeout` so the application
-//! can record and replay them; the cursor warp that follows a focus raise is the caller's.
+//! times out the ones that hang. Timeouts go out as `Event::RaiseTimeout` and come back through
+//! the reactor; the cursor warp that follows a focus raise is the caller's.
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -137,8 +137,7 @@ impl RaiseManager {
                     if let Some(sequence) = &mut raise_manager.active_sequence {
                         if sequence_timeout(sequence) <= Duration::ZERO {
                             // Send timeout event to reactor; this will get
-                            // relayed back to us. We send these events through
-                            // the reactor so that we can record/replay them.
+                            // relayed back to us.
                             sequence.timed_out = true;
                             events.send(WindowsEvent::RaiseTimeout { sequence_id: sequence.sequence_id });
                         }

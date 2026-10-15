@@ -8,7 +8,7 @@ use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
 use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue, Paint};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
-use crate::layout::settings::{CenterFocusedColumn, Gaps};
+use crate::layout::settings::{CenterFocusedColumn, Edges, Gaps};
 use crate::windows::domain::rules::{
     AppRuleDecision, AppRuleEngine, FloatingPosition, RelativeTo, WindowRuleContext,
 };
@@ -890,7 +890,7 @@ fn a_key_bound_twice_is_an_error_with_both_places() {
 #[test]
 fn a_key_is_bound_once_across_both_bind_blocks() {
     let report = refused(concat!(
-        "binds {\n    Super+F19 { debug; }\n}\n",
+        "binds {\n    Super+F19 { close-window; }\n}\n",
         "recent-windows {\n    binds {\n        Super+F19 { next-window; }\n    }\n}\n",
     ));
     assert!(report.contains("bound twice"), "{report}");
@@ -899,10 +899,10 @@ fn a_key_is_bound_once_across_both_bind_blocks() {
 #[test]
 fn a_spelling_of_one_side_overlaps_the_generic_modifier() {
     assert!(
-        refused("binds {\n    Alt+H { debug; }\n    LAlt+H { serialize; }\n}\n")
+        refused("binds {\n    Alt+H { close-window; }\n    LAlt+H { quit; }\n}\n")
             .contains("bound twice")
     );
-    parse("binds {\n    LAlt+H { debug; }\n    RAlt+H { serialize; }\n}\n");
+    parse("binds {\n    LAlt+H { close-window; }\n    RAlt+H { quit; }\n}\n");
 }
 
 #[test]
@@ -935,13 +935,13 @@ fn niri_page_keys_bind() {
 
 #[test]
 fn a_key_with_two_keys_in_it_is_refused() {
-    assert!(refused("binds {\n    Ctrl+J+K { debug; }\n}\n").contains("names two keys"));
+    assert!(refused("binds {\n    Ctrl+J+K { close-window; }\n}\n").contains("names two keys"));
 }
 
 #[test]
 fn a_quoted_key_with_spaces_is_the_same_key() {
     assert!(
-        refused("binds {\n    \"Alt + H\" { debug; }\n    Alt+H { serialize; }\n}\n")
+        refused("binds {\n    \"Alt + H\" { close-window; }\n    Alt+H { quit; }\n}\n")
             .contains("bound twice")
     );
 }
@@ -949,13 +949,13 @@ fn a_quoted_key_with_spaces_is_the_same_key() {
 #[test]
 fn a_bind_takes_exactly_one_action_and_no_arguments() {
     assert!(refused("binds {\n    Alt+H\n}\n").contains("expected an action"));
-    assert!(refused("binds {\n    Alt+H { debug; serialize; }\n}\n").contains("one action"));
-    assert!(refused("binds {\n    Alt+H \"x\" { debug; }\n}\n").contains("takes no arguments"));
+    assert!(refused("binds {\n    Alt+H { close-window; quit; }\n}\n").contains("one action"));
+    assert!(refused("binds {\n    Alt+H \"x\" { close-window; }\n}\n").contains("takes no arguments"));
     assert!(
-        refused("binds {\n    Alt+H cooldown-ms=150 { debug; }\n}\n").contains("not supported yet")
+        refused("binds {\n    Alt+H cooldown-ms=150 { close-window; }\n}\n").contains("not supported yet")
     );
     assert!(
-        refused("binds {\n    Alt+H allow-when-locked=true { debug; }\n}\n")
+        refused("binds {\n    Alt+H allow-when-locked=true { close-window; }\n}\n")
             .contains("lock screen")
     );
 }
@@ -967,7 +967,7 @@ fn the_switcher_actions_belong_in_recent_windows() {
             .contains("`recent-windows › binds`")
     );
     assert!(
-        refused("recent-windows {\n    binds {\n        Super+F19 { debug; }\n    }\n}\n")
+        refused("recent-windows {\n    binds {\n        Super+F19 { close-window; }\n    }\n}\n")
             .contains("takes `next-window` and `previous-window`")
     );
     assert!(refused("recent-windows {\n    binds {\n        Super+F19 { next-window scope=\"workspace\" filter=\"app-id\"; }\n    }\n}\n")
@@ -1080,6 +1080,24 @@ fn a_niri_action_rini_lacks_is_told_why() {
     assert!(report.contains("cross to the next display"), "{report}");
 }
 
+#[test]
+fn a_niri_debug_section_points_at_nothing_rini_refuses() {
+    let report = refused("debug {\n}\n");
+    let (_, help) = report.split_once("help:").expect("a help line");
+    assert!(help.contains("rini has no debug options or actions"), "{report}");
+    assert!(!help.contains("`debug`"), "{report}");
+}
+
+/// Kai deleted the debug actions on 2026-10-15 ("The pictures held" in `specs/animation.md`), so a
+/// bind naming one is an unknown action.
+#[test]
+fn the_debug_actions_are_gone() {
+    for name in ["debug", "serialize", "show-timing", "debug-warm-snapshots", "debug-overlay-slide"] {
+        let report = refused(&format!("binds {{\n    Mod+J {{ {name}; }}\n}}\n"));
+        assert!(report.contains(&format!("unknown action `{name}`")), "{name}: {report}");
+    }
+}
+
 /// Every action decodes from its name, with the arguments it needs.
 #[test]
 fn every_action_name_decodes() {
@@ -1095,7 +1113,6 @@ fn every_action_name_decodes() {
         "spawn" | "spawn-sh" => " \"true\"",
         "save-layout" => " \"/tmp/layout.ron\"",
         "restore-layout" => " \"/tmp/layout.ron\" scope=\"workspace\"",
-        "debug-overlay-slide" => " dx=1 dy=2 duration-ms=3",
         _ => "",
     };
     for (index, name) in Action::VARIANTS.iter().enumerate() {
@@ -1173,7 +1190,7 @@ fn what_does_not_decode_and_the_checks_across_nodes_are_one_report() {
         "binds {\n",
         "    Mod+J { focus-column-left; }\n",
         "    Mod+J { focus-column-right; }\n",
-        "    Ctrl+J+K { debug; }\n",
+        "    Ctrl+J+K { close-window; }\n",
         "    Mod+Q { focus-colum-left; }\n",
         "}\n",
     ));
@@ -1218,9 +1235,9 @@ fn a_check_that_needs_a_node_that_did_not_decode_is_not_run() {
         "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"a\"\n}\n",
         "binds {\n",
         "    Mod+J { focus-workspace \"a\"; }\n",
-        "    Alt+J { debug; }\n",
-        "    Mod+K { debug; }\n",
-        "    Mod+K { serialize; }\n",
+        "    Alt+J { close-window; }\n",
+        "    Mod+K { close-window; }\n",
+        "    Mod+K { quit; }\n",
         "}\n",
     ));
     assert!(!report.contains("`Alt+J` is bound twice"), "{report}");
@@ -1356,11 +1373,11 @@ fn a_fragment_changes_what_it_names_and_keeps_the_rest() {
 fn a_fragments_binds_replace_the_binds_for_their_keys() {
     let running = Config::default();
     let changed = running
-        .with("config set", "binds {\n    Mod+H { debug; }\n}\n")
+        .with("config set", "binds {\n    Mod+H { close-window; }\n}\n")
         .expect("applies");
     assert_eq!(changed.binds.len(), running.binds.len());
     let h = changed.binds.iter().find(|bind| bind.key == "Mod+H").unwrap();
-    assert_eq!(h.action, Action::Debug);
+    assert_eq!(h.action, Action::CloseWindow);
 }
 
 fn refused_fragment(running: &Config, fragment: &str) -> String {
@@ -1372,7 +1389,7 @@ fn refused_fragment(running: &Config, fragment: &str) -> String {
 
 #[test]
 fn a_fragment_that_makes_two_running_binds_one_key_is_refused() {
-    let running = parse("binds {\n    Mod+J { focus-column-left; }\n    Ctrl+J { debug; }\n}\n");
+    let running = parse("binds {\n    Mod+J { focus-column-left; }\n    Ctrl+J { close-window; }\n}\n");
     let report = refused_fragment(&running, "input {\n    mod-key \"Ctrl\"\n}\n");
     assert!(
         report.contains("the running binds `Mod+J` and `Ctrl+J` are the same key"),
@@ -1381,7 +1398,7 @@ fn a_fragment_that_makes_two_running_binds_one_key_is_refused() {
     let rebound = running
         .with(
             "config set",
-            "input {\n    mod-key \"Ctrl\"\n}\nbinds {\n    Ctrl+J { debug; }\n}\n",
+            "input {\n    mod-key \"Ctrl\"\n}\nbinds {\n    Ctrl+J { close-window; }\n}\n",
         )
         .expect("rebinding the key in the same fragment settles it");
     assert_eq!(bind_keys(&rebound), ["Ctrl+J"]);
@@ -1420,7 +1437,7 @@ fn a_fragment_whose_rules_or_binds_did_not_decode_does_not_check_the_running_one
     let running = parse(concat!(
         "workspace \"a\"\nworkspace \"b\"\n",
         "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"b\"\n}\n",
-        "binds {\n    Mod+B { focus-workspace \"b\"; }\n    Ctrl+J { debug; }\n}\n",
+        "binds {\n    Mod+B { focus-workspace \"b\"; }\n    Ctrl+J { close-window; }\n}\n",
         "recent-windows {\n    binds {\n        Mod+J { next-window; }\n    }\n}\n",
     ));
 

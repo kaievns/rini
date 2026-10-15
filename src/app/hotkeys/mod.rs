@@ -1,10 +1,7 @@
-//! The WM Controller handles major events like enabling and disabling the
-//! window manager on certain spaces and launching app threads. It also
-//! controls hotkey registration.
+//! The WM Controller launches app threads, registers the hotkeys and lowers what they fire, and
+//! re-registers them when the config is reloaded.
 
 mod lower;
-
-use std::path::PathBuf;
 
 use dispatchr::queue;
 use dispatchr::time::Time;
@@ -73,13 +70,8 @@ impl From<crate::windows::platform::lifecycle::AppLifecycle> for WmEvent {
     }
 }
 
-pub struct Config {
-    pub restore_file: PathBuf,
-    pub config: crate::app::config::Config,
-}
-
 pub struct WmController {
-    config: Config,
+    config: crate::app::config::Config,
     config_tx: config::Sender,
     events_tx: reactor::Sender,
     event_tap_tx: event_tap::Sender,
@@ -92,7 +84,7 @@ pub struct WmController {
 
 impl WmController {
     pub fn new(
-        config: Config,
+        config: crate::app::config::Config,
         config_tx: config::Sender,
         events_tx: reactor::Sender,
         event_tap_tx: event_tap::Sender,
@@ -189,12 +181,12 @@ impl WmController {
             AppThreadGaveUp(pid) => self.app_threads.ended(pid),
             ConfigUpdated(new_cfg) => {
                 let binds_changed =
-                    Registration::of(&self.config.config) != Registration::of(&new_cfg);
+                    Registration::of(&self.config) != Registration::of(&new_cfg);
 
-                self.config.config = new_cfg;
+                self.config = new_cfg;
 
                 let input_settings =
-                    crate::input::settings::InputSettings::from(&self.config.config);
+                    crate::input::settings::InputSettings::from(&self.config);
                 _ = self
                     .event_tap_tx
                     .send(event_tap::Request::SettingsUpdated(input_settings));
@@ -227,7 +219,7 @@ impl WmController {
     /// Every bound action is a translation; `lower` is that translation and is tested on its own.
     /// What is left here is the two things only the controller can carry out.
     fn carry_out(&self, action: Action) {
-        match lower::lower(action, &self.config.config.virtual_workspaces.workspace_names) {
+        match lower::lower(action, &self.config.virtual_workspaces.workspace_names) {
             lower::Lowered::Command(cmd) => self.events_tx.send(reactor::Event::Command(cmd)),
             lower::Lowered::Spawn(argv) => crate::app::startup::spawn(argv),
             lower::Lowered::ReloadConfig => self.reload_config(),
@@ -301,7 +293,7 @@ impl WmController {
 
     fn register_hotkeys(&mut self) {
         debug!("register_hotkeys");
-        let Registration { binds, switcher_binds } = Registration::of(&self.config.config);
+        let Registration { binds, switcher_binds } = Registration::of(&self.config);
         // Derived from the same bindings rather than configured separately, so the chord that opens a
         // switch and the modifier that holds it open cannot disagree.
         let switch_keys =
@@ -377,7 +369,7 @@ mod tests {
     }
 
     const BINDS: &str = concat!(
-        "binds {\n    Mod+J { focus-column-left; }\n    Alt+K { debug; }\n}\n",
+        "binds {\n    Mod+J { focus-column-left; }\n    Alt+K { close-window; }\n}\n",
         "recent-windows {\n    binds {\n        Mod+Tab { next-window; }\n    }\n}\n",
     );
 
@@ -420,12 +412,13 @@ mod tests {
         let (config_tx, _config_rx) = channels::channel();
         let (events_tx, mut events_rx) = channels::channel();
         let (event_tap_tx, _event_tap_rx) = channels::channel();
-        let config = Config {
-            restore_file: PathBuf::new(),
-            config: crate::app::config::Config::default(),
-        };
-        let (mut controller, _sender) =
-            WmController::new(config, config_tx, events_tx, event_tap_tx, None);
+        let (mut controller, _sender) = WmController::new(
+            crate::app::config::Config::default(),
+            config_tx,
+            events_tx,
+            event_tap_tx,
+            None,
+        );
         controller.handle_event(WmEvent::ClockChanged);
         assert!(matches!(
             events_rx.try_recv(),

@@ -66,7 +66,7 @@ impl Reactor {
                 let outcome = system_workflow::handle_system_woke();
                 self.defer_visible_refresh(true);
                 self.bar_clock_changed();
-                Some(outcome.map_err(Into::into))
+                Some(Ok(outcome))
             }
             Event::SessionDidResignActive => {
                 quarantine.session_inactive = true;
@@ -81,11 +81,6 @@ impl Reactor {
             }
             Event::DisplayChurnBegin => {
                 quarantine.display_churn_active = true;
-                Some(Ok(EventOutcome::default()))
-            }
-            Event::DisplayChurnEnd => {
-                quarantine.display_churn_active = false;
-                self.request_refresh_when_spaces_actor_stabilizes();
                 Some(Ok(EventOutcome::default()))
             }
             _ => None,

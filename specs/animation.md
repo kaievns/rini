@@ -468,15 +468,11 @@ destination for a window already moving.
 
 ## The pictures held
 
-- A window rini manages MUST be pictured under its own identity, and every flight, the debug slide
-  included, and the switcher MUST draw it by that identity. A picture of it taken as a window rini
-  does not manage, before rini held or asked for one under its own, MUST go at the next release: once
-  its own is held, the second is memory nothing reads.
+- A window rini manages MUST be pictured under its own identity, and every flight and the switcher
+  MUST draw it by that identity.
 - A window parked off the display MUST NOT be pictured through the sliver it shows at the corner. It
   keeps its full size there, so the picture costs as much as one of a window on screen, and it is
   pictured by its own identity like every managed window.
-- A picture of a window rini does not manage MAY be kept while the window lives, and MUST go once
-  the window server no longer has the window.
 - A picture delivered to a flight MUST be held for it only while one of its tiles can still take it.
   One a tile turned down or one delivered to a flight before MUST NOT be held, nor any once the
   overlay has lifted. The pictures kept for the next flight are the cache's.
@@ -498,6 +494,10 @@ destination for a window already moving.
 > Read from the code, each can pin a display-sized capture. Read from the code and measured with
 > vmmap, 2026-10-06: the overlay kept the last flight's desktop after the lift, 29.5MB at 3456x2234,
 > beside the newer one rendered at the release after it.
+
+> **Reported 2026-10-15.** Kai's decision on the debug actions: "delete". The debug slide and the
+> warm were the only paths that pictured a window rini does not manage, so the requirements on those
+> pictures went with them.
 
 ## Windows with blurred materials
 
@@ -887,8 +887,7 @@ Every read of windows that waits on Core Animation is made on the read connectio
 `src/windows/docs/window-server-reads.md`.
 The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
 stand-in, the blur, and the schedule that holds background capture off while a flight runs in
-`src/pictures/domain/`, which id a window is pictured under, which windows rini does not manage are
-pictured and when those pictures go in `src/pictures/domain/identity.rs`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
+`src/pictures/domain/`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
 for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
 captures and those of a window cut by the display's edge, a focus target's or a grow's repaint), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
 Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),

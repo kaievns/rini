@@ -115,7 +115,7 @@ fixed.
 
 ### 1.6 Two broadcast builders
 
-**DONE — both use `broadcast_context` (`45adc4b`).**
+**GONE — both went with the event subscriptions, deleted on Kai's decision of 2026-10-15.**
 
 `src/app/reactor/mod.rs:1923` `broadcast_window_title_changed` (34 lines) and
 `:1958` `broadcast_focused_window_changed` (24 lines), 0.91 similar. Same
@@ -183,7 +183,7 @@ checked individually; they describe current behaviour and its history, not dead
 branches.
 
 Test scaffolding sits behind `#[cfg(test)]` in every case found
-(`reactor/testing.rs`, `replay.rs:41`, `spaces.rs:173`, `workspaces.rs:279`,
+(`reactor/testing.rs`, `spaces.rs:173`, `workspaces.rs:279`,
 `focus.rs:113`, `mod.rs:3673`). Nothing ships in the release binary.
 
 **Corrected.** Two of those were not scaffolding. `spaces.rs` had `#[cfg(test)]`
@@ -193,8 +193,8 @@ INSIDE two production predicates, so the tests ran different code than ships —
 
 ### 3.1 `LayoutEngine` owns fourteen unrelated things
 
-**DONE — fourteen fields down to twelve. The IPC channel is an outbox the application drains
-(`a4ad095`); `display_affinity` and `launch_memory` are now one `DisplayMemory` owned by
+**DONE — fourteen fields down to twelve. The IPC channel became an outbox the application drained
+(`a4ad095`), since gone with the event subscriptions on 2026-10-15; `display_affinity` and `launch_memory` are now one `DisplayMemory` owned by
 `RiniState`, beside `WindowStore`, and passed in the same way.**
 
 `src/workspaces/engine.rs`, 2,876 code lines, 20 tests (144 lines per test). Its
@@ -309,9 +309,9 @@ this out and names the fix: a `present(motion)` boundary.
 because it is the only remaining rule-2 violation and the reason the ratchet has
 an exception list at all.
 
-### 3.5 `src/workspaces/broadcast.rs` sends IPC from the layout engine
+### 3.5 The workspaces feature's `broadcast.rs` sends IPC from the layout engine
 
-Named in `docs/architecture.md` as belonging to `app/api/`. Unchanged.
+**GONE — the file and the engine's outbox went with the event subscriptions on 2026-10-15.**
 
 ## 4. Testability
 

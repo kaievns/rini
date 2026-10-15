@@ -23,13 +23,6 @@ pub(crate) struct WindowFrameWriteRequest {
     pub(crate) requested: bool,
 }
 
-#[derive(Debug)]
-pub(crate) struct WindowTitleBroadcast {
-    pub(crate) window: WindowId,
-    pub(crate) previous_title: String,
-    pub(crate) new_title: String,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TopologyReassignment {
     pub(crate) window: WindowId,
@@ -70,8 +63,6 @@ pub(crate) struct EventOutcome {
     pub(crate) stdout_lines: Vec<String>,
     pub(crate) reapply_app_rules: Vec<WindowId>,
     pub(crate) finalize_created_windows: Vec<WindowId>,
-    pub(crate) window_title_broadcasts: Vec<WindowTitleBroadcast>,
-    pub(crate) focused_window_broadcast: Option<WindowId>,
     pub(crate) layout_events: Vec<LayoutEvent>,
     pub(crate) layout_responses: Vec<(EventResponse, Option<SpaceId>)>,
     pub(crate) arrange: ArrangeRequest,
@@ -158,8 +149,6 @@ impl EventOutcome {
             mut stdout_lines,
             mut reapply_app_rules,
             mut finalize_created_windows,
-            mut window_title_broadcasts,
-            focused_window_broadcast,
             mut layout_events,
             mut layout_responses,
             arrange,
@@ -192,8 +181,6 @@ impl EventOutcome {
         self.stdout_lines.append(&mut stdout_lines);
         self.reapply_app_rules.append(&mut reapply_app_rules);
         self.finalize_created_windows.append(&mut finalize_created_windows);
-        self.window_title_broadcasts.append(&mut window_title_broadcasts);
-        self.focused_window_broadcast = focused_window_broadcast.or(self.focused_window_broadcast);
         self.layout_events.append(&mut layout_events);
         self.layout_responses.append(&mut layout_responses);
         if arrange.requested {
@@ -242,8 +229,6 @@ impl EventOutcome {
             stdout_lines: Vec::new(),
             reapply_app_rules: Vec::new(),
             finalize_created_windows: Vec::new(),
-            window_title_broadcasts: Vec::new(),
-            focused_window_broadcast: None,
             layout_events: Vec::new(),
             layout_responses: Vec::new(),
             arrange: ArrangeRequest {
@@ -461,25 +446,6 @@ impl EventOutcome {
         self.finalize_created_windows.push(window);
         self
     }
-
-    pub(crate) fn with_window_title_broadcast(
-        mut self,
-        window: WindowId,
-        previous_title: String,
-        new_title: String,
-    ) -> Self {
-        self.window_title_broadcasts.push(WindowTitleBroadcast {
-            window,
-            previous_title,
-            new_title,
-        });
-        self
-    }
-
-    pub(crate) fn with_focused_window_broadcast(mut self, window: WindowId) -> Self {
-        self.focused_window_broadcast = Some(window);
-        self
-    }
 }
 
 #[cfg(test)]
@@ -514,9 +480,6 @@ mod tests {
         let outcome = EventOutcome::focus_changed(Some(focused), false);
         assert!(!outcome.arrange.requested);
         assert_eq!(outcome.focused_window, Some(focused));
-
-        let outcome = EventOutcome::no_change().with_focused_window_broadcast(focused);
-        assert_eq!(outcome.focused_window_broadcast, Some(focused));
     }
 
     #[test]

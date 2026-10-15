@@ -5,7 +5,6 @@ use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 use objc2_core_foundation::CGRect;
 use rini_ipc::protocol::{
     ApplicationData, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, LayoutStateData,
-    WorkspaceLayoutData,
 };
 
 use crate::app::api::dto::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
@@ -16,7 +15,6 @@ use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::state::WindowFilter;
-use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::{LayoutEngine, WindowStore};
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowId;
@@ -55,23 +53,8 @@ impl ReactorQueryHandle {
             .unwrap_or_default()
     }
 
-    pub fn query_active_workspace(&self, space_id: Option<SpaceId>) -> Option<VirtualWorkspaceId> {
-        self.send_query(|resp| QueryRequest::ActiveWorkspace { space_id, resp })
-            .ok()
-            .flatten()
-    }
-
     pub fn query_displays(&self) -> Vec<RuntimeDisplayData> {
         self.send_query(QueryRequest::Displays).unwrap_or_default()
-    }
-
-    pub fn query_workspace_layouts(
-        &self,
-        space_id: Option<SpaceId>,
-        workspace_id: Option<usize>,
-    ) -> Vec<WorkspaceLayoutData> {
-        self.send_query(|resp| QueryRequest::WorkspaceLayouts { space_id, workspace_id, resp })
-            .unwrap_or_default()
     }
 
     pub fn query_window_info(&self, window_id: WindowId) -> Option<RuntimeWindowData> {
@@ -119,16 +102,7 @@ pub enum QueryRequest {
         space_id: Option<SpaceId>,
         resp: SyncSender<Vec<RuntimeWindowData>>,
     },
-    ActiveWorkspace {
-        space_id: Option<SpaceId>,
-        resp: SyncSender<Option<VirtualWorkspaceId>>,
-    },
     Displays(SyncSender<Vec<RuntimeDisplayData>>),
-    WorkspaceLayouts {
-        space_id: Option<SpaceId>,
-        workspace_id: Option<usize>,
-        resp: SyncSender<Vec<WorkspaceLayoutData>>,
-    },
     WindowInfo {
         window_id: WindowId,
         resp: SyncSender<Option<RuntimeWindowData>>,
@@ -152,14 +126,8 @@ impl Reactor {
             QueryRequest::Windows { space_id, resp } => {
                 let _ = resp.send(self.query_windows(space_id));
             }
-            QueryRequest::ActiveWorkspace { space_id, resp } => {
-                let _ = resp.send(self.query_active_workspace(space_id));
-            }
             QueryRequest::Displays(resp) => {
                 let _ = resp.send(self.query_displays());
-            }
-            QueryRequest::WorkspaceLayouts { space_id, workspace_id, resp } => {
-                let _ = resp.send(self.query_workspace_layouts(space_id, workspace_id));
             }
             QueryRequest::WindowInfo { window_id, resp } => {
                 let _ = resp.send(self.query_window_info(window_id));
@@ -194,10 +162,6 @@ impl Reactor {
         }
     }
 
-    pub(crate) fn serialize_state(&self) -> Result<String, serde_json::Error> {
-        self.view().serialize_state()
-    }
-
     fn default_query_space(&self) -> Option<SpaceId> {
         diagnostics::default_query_space(
             self.workspace_command_space(),
@@ -214,20 +178,8 @@ impl Reactor {
         self.view().handle_windows_query(space_id)
     }
 
-    pub fn query_active_workspace(&self, space_id: Option<SpaceId>) -> Option<VirtualWorkspaceId> {
-        self.view().handle_active_workspace_query(space_id)
-    }
-
     pub fn query_displays(&self) -> Vec<RuntimeDisplayData> {
         self.view().handle_displays_query()
-    }
-
-    pub fn query_workspace_layouts(
-        &self,
-        space_id: Option<SpaceId>,
-        workspace_id: Option<usize>,
-    ) -> Vec<WorkspaceLayoutData> {
-        self.view().handle_workspace_layouts_query(space_id, workspace_id)
     }
 
     pub fn query_window_info(&self, window_id: WindowId) -> Option<RuntimeWindowData> {
@@ -405,39 +357,6 @@ impl StateView<'_> {
         }
 
         workspaces
-    }
-
-    fn handle_workspace_layouts_query(
-        &self,
-        space_id_param: Option<SpaceId>,
-        workspace_id: Option<usize>,
-    ) -> Vec<WorkspaceLayoutData> {
-        let Some(space) = space_id_param.or_else(|| self.default_space) else {
-            return Vec::new();
-        };
-
-        let workspace_list = self.engine.virtual_workspace_manager().existing_workspaces();
-        let active_workspace = self.engine.active_workspace(space);
-
-        workspace_list
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| workspace_id.map(|target| target == *index).unwrap_or(true))
-            .map(|(index, (id, name))| WorkspaceLayoutData {
-                id: format!("{:?}", id),
-                index,
-                name: name.clone(),
-                is_active: active_workspace == Some(*id),
-            })
-            .collect()
-    }
-
-    fn handle_active_workspace_query(
-        &self,
-        space_id_param: Option<SpaceId>,
-    ) -> Option<VirtualWorkspaceId> {
-        let space_id = space_id_param.or_else(|| self.default_space)?;
-        self.engine.active_workspace(space_id)
     }
 
     fn handle_displays_query(&self) -> Vec<RuntimeDisplayData> {
@@ -781,190 +700,6 @@ impl StateView<'_> {
             "workspace_stats": workspace_stats,
         })
     }
-
-    pub(crate) fn serialize_state(&self) -> Result<String, serde_json::Error> {
-        let layout_engine_ron = self.engine.serialize_to_string(self.memory);
-        let stats = self.engine.virtual_workspace_manager().get_stats(&self.windows);
-        let mut workspace_window_counts = serde_json::Map::new();
-        for (ws_id, count) in &stats.workspace_window_counts {
-            workspace_window_counts.insert(format!("{:?}", ws_id), serde_json::json!(*count));
-        }
-
-        let mut spaces_intermediate: Vec<(
-            u64,
-            Vec<(
-                crate::workspaces::VirtualWorkspaceId,
-                String,
-                bool,
-                Vec<rini_core::ids::WindowId>,
-                Option<rini_core::ids::WindowId>,
-                Vec<(rini_core::ids::WindowId, objc2_core_foundation::CGRect)>,
-            )>,
-        )> = Vec::new();
-
-        for screen in &self.spaces.screens {
-            if let Some(space) = screen.space {
-                let workspaces = self.engine.virtual_workspace_manager().existing_workspaces();
-                let active_ws = self.engine.active_workspace(space);
-
-                let mut ws_entries = Vec::new();
-                for (workspace_id, workspace_name) in workspaces {
-                    let window_ids: Vec<rini_core::ids::WindowId> =
-                        self.windows.workspace_windows(space, workspace_id);
-
-                    let last_focused = self
-                        .engine
-                        .virtual_workspace_manager()
-                        .last_focused_window(space, workspace_id);
-
-                    let floating_positions =
-                        self.engine.workspace_floating_positions(space, workspace_id);
-
-                    ws_entries.push((
-                        workspace_id,
-                        workspace_name,
-                        active_ws == Some(workspace_id),
-                        window_ids,
-                        last_focused,
-                        floating_positions,
-                    ));
-                }
-
-                spaces_intermediate.push((space.get(), ws_entries));
-            }
-        }
-
-        let mut mapping_intermediate: Vec<(
-            u64,
-            rini_core::ids::WindowId,
-            crate::workspaces::VirtualWorkspaceId,
-        )> = Vec::new();
-        for (window_id, assignment) in self.windows.iter_workspace_assignments() {
-            mapping_intermediate.push((assignment.space.get(), window_id, assignment.workspace_id));
-        }
-
-        let mut included_windows: HashSet<rini_core::ids::WindowId> = HashSet::default();
-
-        let mut spaces_json = Vec::new();
-        for (space_num, ws_entries) in spaces_intermediate {
-            let mut ws_json = Vec::new();
-            for (
-                workspace_id,
-                workspace_name,
-                is_active,
-                window_ids,
-                last_focused,
-                floating_positions,
-            ) in ws_entries
-            {
-                let mut windows_json = Vec::new();
-                for wid in window_ids {
-                    if let Some(window_data) = self.create_window_data(wid) {
-                        let v = serde_json::to_value(&window_data)
-                            .unwrap_or_else(|_| serde_json::json!({ "id": wid.to_debug_string() }));
-                        windows_json.push(v);
-                    } else {
-                        windows_json.push(serde_json::json!({ "id": wid.to_debug_string() }));
-                    }
-
-                    let _ = included_windows.insert(wid);
-                }
-
-                let last_focused_json = last_focused.map(|w| w.to_debug_string());
-
-                let floating_json: Vec<serde_json::Value> = floating_positions
-                    .into_iter()
-                    .map(|(wid, rect)| {
-                        serde_json::json!({
-                            "window": wid.to_debug_string(),
-                            "rect": {
-                                "x": rect.origin.x,
-                                "y": rect.origin.y,
-                                "w": rect.size.width,
-                                "h": rect.size.height
-                            }
-                        })
-                    })
-                    .collect();
-
-                let id_str = workspace_id.to_string();
-                let digits: String = id_str.chars().filter(|c| c.is_ascii_digit()).collect();
-                let id_num = digits.parse::<u64>().unwrap_or(0);
-
-                ws_json.push(serde_json::json!({
-                    "id": id_str,
-                    "id_num": id_num,
-                    "name": workspace_name,
-                    "is_active": is_active,
-                    "windows": windows_json,
-                    "last_focused": last_focused_json,
-                    "floating_positions": floating_json,
-                }));
-            }
-
-            spaces_json.push(serde_json::json!({
-                "space": space_num,
-                "workspaces": ws_json,
-            }));
-        }
-
-        let mut mapping = Vec::new();
-        for (space_num, window_id, workspace_id) in mapping_intermediate {
-            let window_json = if let Some(window_data) = self.create_window_data(window_id) {
-                serde_json::to_value(&window_data)
-                    .unwrap_or_else(|_| serde_json::json!({ "id": window_id.to_debug_string() }))
-            } else {
-                serde_json::json!({ "id": window_id.to_debug_string() })
-            };
-
-            let _ = included_windows.insert(window_id);
-
-            mapping.push(serde_json::json!({
-                "space": space_num,
-                "window": window_json,
-                "workspace": workspace_id.to_string()
-            }));
-        }
-
-        let known_managed_windows: Vec<serde_json::Value> = self
-            .windows
-            .iter_windows()
-            .map(|(wid, _)| wid)
-            .filter(|w| !included_windows.contains(w))
-            .map(|w| {
-                if let Some(window_data) = self.create_window_data(w) {
-                    serde_json::to_value(&window_data)
-                        .unwrap_or_else(|_| serde_json::json!({ "id": w.to_debug_string() }))
-                } else {
-                    serde_json::json!({ "id": w.to_debug_string() })
-                }
-            })
-            .collect();
-
-        let reactor_summary = serde_json::json!({
-            "apps": self.apps.len(),
-            "managed_windows": self.windows.tracked_window_count(),
-            "window_server_info": self.windows.window_server_info_count(),
-            "visible_window_server_ids": self.windows.visible_window_server_count(),
-            "screens": self.spaces.screens.len(),
-            "known_managed_windows": known_managed_windows,
-        });
-
-        let out = serde_json::json!({
-            "layout_engine_ron": layout_engine_ron,
-            "virtual_workspace_manager": {
-                "total_workspaces": stats.total_workspaces,
-                "total_windows": stats.total_windows,
-                "active_spaces": stats.active_spaces,
-                "workspace_window_counts": workspace_window_counts,
-            },
-            "spaces": spaces_json,
-            "window_to_workspace": mapping,
-            "reactor": reactor_summary,
-        });
-
-        serde_json::to_string_pretty(&out)
-    }
 }
 
 #[cfg(test)]
@@ -1214,7 +949,8 @@ mod tests {
     #[test]
     fn the_active_workspace_of_a_space_rini_has_seen_is_reported() {
         let f = Fixture::new(&[10], &[1]);
-        assert!(f.view().handle_active_workspace_query(Some(SpaceId::new(10))).is_some());
+        let listed = f.view().handle_workspace_query(Some(SpaceId::new(10)));
+        assert_eq!(listed.iter().filter(|workspace| workspace.is_active).count(), 1);
     }
 
     /// The workspace ORDER is global and the ACTIVE workspace is per space, which is why a space rini
@@ -1228,11 +964,10 @@ mod tests {
         let f = Fixture::new(&[10], &[1]);
         let unknown = SpaceId::new(4242);
 
-        let known = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None);
-        let listed = f.view().handle_workspace_layouts_query(Some(unknown), None);
+        let known = f.view().handle_workspace_query(Some(SpaceId::new(10)));
+        let listed = f.view().handle_workspace_query(Some(unknown));
         assert_eq!(listed.len(), known.len(), "the workspace order is global");
 
-        assert_eq!(f.view().handle_active_workspace_query(Some(unknown)), None);
         assert!(
             listed.iter().all(|workspace| !workspace.is_active),
             "none of them is active on a space rini has never seen"
@@ -1251,41 +986,25 @@ mod tests {
     }
 
     #[test]
-    fn workspace_layouts_are_reported_for_a_space_rini_has_seen() {
-        let f = Fixture::new(&[10], &[1]);
-        assert!(!f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None).is_empty());
-    }
-
-    /// Naming a workspace narrows the answer to that one rather than returning all of them.
-    #[test]
-    fn naming_a_workspace_narrows_the_layout_answer_to_it() {
-        let f = Fixture::new(&[10], &[1]);
-        let all = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None);
-        let one = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), Some(0));
-        assert!(
-            all.len() > one.len() || all.len() == 1,
-            "all={} one={}",
-            all.len(),
-            one.len()
-        );
-        assert_eq!(one.len(), 1);
-    }
-
-    /// A workspace index the space does not have answers nothing rather than the nearest one.
-    #[test]
-    fn a_workspace_index_that_does_not_exist_answers_nothing() {
-        let f = Fixture::new(&[10], &[1]);
-        assert!(
-            f.view()
-                .handle_workspace_layouts_query(Some(SpaceId::new(10)), Some(99))
-                .is_empty()
-        );
-    }
-
-    #[test]
     fn layout_state_is_reported_for_a_space_rini_has_seen() {
         let f = Fixture::new(&[10], &[1]);
         assert!(f.view().handle_layout_state_query(Some(10), None).is_some());
+    }
+
+    /// A workspace index counts from 0, as `rini-cli query layout --workspace-id` says, and one the
+    /// space does not have answers nothing rather than the nearest.
+    #[test]
+    fn layout_state_reads_a_workspace_index_from_0() {
+        let f = Fixture::new(&[10], &[1]);
+        let view = f.view();
+        let active = view.handle_layout_state_query(Some(10), None).expect("the active workspace");
+        let first = view.handle_layout_state_query(Some(10), Some(0)).expect("the first workspace");
+        assert_eq!(first.workspace_id, 0);
+        assert_eq!(first.is_active_workspace, active.workspace_id == 0);
+        let second = view.handle_layout_state_query(Some(10), Some(1)).expect("the second workspace");
+        assert_eq!(second.workspace_id, 1);
+        assert_ne!(first.is_active_workspace, second.is_active_workspace);
+        assert!(view.handle_layout_state_query(Some(10), Some(99)).is_none());
     }
 
     /// Metrics answer with an object even when nothing has happened, so a caller can always read the
@@ -1294,18 +1013,6 @@ mod tests {
     fn metrics_answer_with_an_object_on_a_fresh_reactor() {
         let f = Fixture::new(&[10], &[1]);
         assert!(f.view().handle_metrics_query().is_object());
-    }
-
-    /// The whole-state dump serializes on a fresh reactor. It is what `rini debug` prints and what a
-    /// bug report carries, so it failing is the one case where nobody can tell you what went wrong.
-    #[test]
-    fn the_state_dump_serializes_on_a_fresh_reactor() {
-        let f = Fixture::new(&[10, 20], &[1]);
-        let dumped = f.view().serialize_state().expect("state serializes");
-        assert!(
-            dumped.contains("\"layout_engine\"") || dumped.contains("layout"),
-            "{dumped:.200}"
-        );
     }
 
     /// A window owned by a space but absent from its layout tree is reported as orphaned rather than

@@ -8,7 +8,6 @@ use std::fmt::Debug;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_runloop::channel as channels;
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use rini_core::ids::{WindowId, WindowServerId, pid_t};
@@ -21,7 +20,7 @@ pub struct AppThreadHandle {
 }
 
 impl AppThreadHandle {
-    /// A handle over any request channel: what tests and event replay stand in for a live app thread.
+    /// A handle over any request channel: what tests stand in for a live app thread.
     pub fn from_sender(requests_tx: channels::Sender<Request>) -> Self {
         AppThreadHandle { requests_tx }
     }
@@ -74,7 +73,7 @@ impl Request {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub enum Quiet {
     Yes,
     #[default]

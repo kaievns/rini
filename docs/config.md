@@ -110,8 +110,8 @@ rini-only actions keep rini's own words: `move-window-left` and `-right` (a lone
 columns, a stacked one leaves as a new column, which niri's `move-column-left` never does),
 `toggle-fold-left` and `-right` (niri's `consume-or-expel-window-left` never round-tripped:
 `src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `snap-strip`,
-`move-mouse-to-monitor-…`, `switch-space-left` and `-right`,
-`toggle-space-activated`, the layout save and restore, and the debug actions. Every action and the
+`move-mouse-to-monitor-…`, `switch-space-left` and `-right`, `toggle-space-activated`, and the
+layout save and restore. Every action and the
 wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 
 ## What went with the TOML
@@ -133,6 +133,3 @@ wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 | `config save` | it rewrote the file without its comments. The file is the config |
 | the typed `config set-…` setters and the JSON-path `config set` | `config set '<KDL>'` applies a fragment through the same code as the file |
 | the legacy bare `resize_window_grow` migration | it existed for TOML, and made every parse error lose its span |
-
-A recording (`rini --record`) no longer carries the config, since a config has no written form but
-its file; `replay` takes one.

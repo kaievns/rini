@@ -136,7 +136,7 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     (
         "",
         "debug",
-        "niri's debug options are its renderer's; rini's are actions such as `debug`",
+        "niri's debug options are its renderer's; rini has no debug options or actions",
     ),
     (
         "",

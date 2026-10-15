@@ -1,7 +1,6 @@
 //! A small, synchronous Rust client for Rini's Mach IPC API.
 //!
-//! The client talks to the same bootstrap service as `rini-cli` and includes
-//! the public request and response wire types.
+//! `rini-cli` is the one client: it sends a request and blocks for the response.
 
 use std::ffi::{CStr, CString, c_int, c_void};
 use std::mem::{size_of, zeroed};
@@ -9,19 +8,19 @@ use std::ptr::copy_nonoverlapping;
 use std::thread;
 use std::time::Duration;
 
-pub use crate::protocol::*;
 use rini_mach_sys::{
     KERN_SUCCESS, MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND, MACH_MSGH_BITS,
-    MACH_PORT_LIMITS_INFO, MACH_PORT_LIMITS_INFO_COUNT, MACH_PORT_QLIMIT_LARGE,
-    MACH_PORT_RIGHT_RECEIVE, MACH_RCV_MSG, MACH_SEND_MSG, MAX_MESSAGE_SIZE_USIZE,
-    TASK_BOOTSTRAP_PORT, bootstrap_look_up, kern_return_t, mach_buffer_t, mach_message_t,
-    mach_msg, mach_msg_destroy, mach_msg_header_t, mach_port_allocate, mach_port_deallocate,
-    mach_port_insert_right, mach_port_limits, mach_port_mod_refs, mach_port_set_attributes,
-    mach_port_t, mach_task_self, task_get_special_port,
+    MACH_PORT_LIMITS_INFO, MACH_PORT_LIMITS_INFO_COUNT, MACH_PORT_RIGHT_RECEIVE, MACH_RCV_MSG,
+    MACH_SEND_MSG, MAX_MESSAGE_SIZE_USIZE, TASK_BOOTSTRAP_PORT, bootstrap_look_up, kern_return_t,
+    mach_buffer_t, mach_message_t, mach_msg, mach_msg_destroy, mach_msg_header_t,
+    mach_port_allocate, mach_port_deallocate, mach_port_insert_right, mach_port_limits,
+    mach_port_mod_refs, mach_port_set_attributes, mach_port_t, mach_task_self,
+    task_get_special_port,
 };
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 use thiserror::Error;
+
+use crate::protocol::{RiniRequest, RiniResponse};
 
 const MAX_MESSAGE_SIZE: usize = MAX_MESSAGE_SIZE_USIZE;
 const DEFAULT_SERVICE_NAME: &str = "git.kaievns.rini";
@@ -51,10 +50,6 @@ pub enum ClientError {
         #[source]
         source: serde_json::Error,
     },
-    #[error("Rini rejected the subscription: {0}")]
-    SubscriptionRejected(Value),
-    #[error("Rini returned an error: {0}")]
-    Server(Value),
 }
 
 /// A handle for issuing synchronous requests to the running Rini process.
@@ -70,146 +65,11 @@ impl RiniMachClient {
         Ok(Self)
     }
 
-    /// Returns whether Rini's bootstrap service is currently registered.
-    pub fn is_available(&self) -> bool {
-        let service_port = service_name()
-            .ok()
-            .and_then(|name| unsafe { lookup_service(&name).ok() })
-            .map(ServicePort::new);
-        service_port.is_some()
-    }
-
     /// Sends one request and blocks until Rini responds.
-    pub fn send_request(&self, request: &RiniRequest) -> Result<JsonRiniResponse, ClientError> {
-        self.send_typed_request(request)
-    }
-
-    /// Sends one request and decodes its response payload into caller-provided
-    /// types.
-    pub fn send_typed_request<T: DeserializeOwned>(
-        &self,
-        request: &RiniRequest,
-    ) -> Result<RiniResponse<T>, ClientError> {
+    pub fn send_request(&self, request: &RiniRequest) -> Result<RiniResponse, ClientError> {
         let request_json = serde_json::to_vec(request).map_err(ClientError::Encode)?;
-        let response = unsafe { send_request(&request_json, None)? };
+        let response = unsafe { send_request(&request_json)? };
         parse_json_payload(&response, "response")
-    }
-
-    /// Lists virtual workspaces, optionally for a specific macOS space.
-    pub fn get_workspaces(&self, space_id: Option<u64>) -> Result<Vec<WorkspaceData>, ClientError> {
-        self.request(RiniRequest::GetWorkspaces { space_id })
-    }
-
-    /// Lists managed windows, optionally filtered by a macOS space.
-    pub fn get_windows(&self, space_id: Option<u64>) -> Result<Vec<WindowData>, ClientError> {
-        self.request(RiniRequest::GetWindows { space_id })
-    }
-
-    /// Lists connected displays.
-    pub fn get_displays(&self) -> Result<Vec<DisplayData>, ClientError> {
-        self.request(RiniRequest::GetDisplays)
-    }
-
-    /// Returns information about a managed window.
-    pub fn get_window_info(&self, window_id: WindowId) -> Result<WindowData, ClientError> {
-        self.request(RiniRequest::GetWindowInfo { window_id })
-    }
-
-    /// Returns the layout state for a macOS space.
-    pub fn get_layout_state(&self, space_id: Option<u64>) -> Result<LayoutStateData, ClientError> {
-        self.get_workspace_layout_state(space_id, None)
-    }
-
-    /// Returns layout state for an optional macOS space and workspace index.
-    /// Omitted selectors independently default to the active space/workspace.
-    pub fn get_workspace_layout_state(
-        &self,
-        space_id: Option<u64>,
-        workspace_id: Option<usize>,
-    ) -> Result<LayoutStateData, ClientError> {
-        self.request(RiniRequest::GetLayoutState { space_id, workspace_id })
-    }
-
-    /// Returns layout modes for workspaces in a macOS space.
-    pub fn get_workspace_layouts(
-        &self,
-        space_id: Option<u64>,
-        workspace_id: Option<usize>,
-    ) -> Result<Vec<WorkspaceLayoutData>, ClientError> {
-        self.request(RiniRequest::GetWorkspaceLayouts { space_id, workspace_id })
-    }
-
-    /// Lists running applications known to Rini.
-    pub fn get_applications(&self) -> Result<Vec<ApplicationData>, ClientError> {
-        self.request(RiniRequest::GetApplications)
-    }
-
-    /// Returns the current metrics payload.
-    pub fn get_metrics(&self) -> Result<Value, ClientError> {
-        self.request(RiniRequest::GetMetrics)
-    }
-
-    /// The live configuration as JSON.
-    pub fn get_config(&self) -> Result<Value, ClientError> {
-        self.request(RiniRequest::GetConfig)
-    }
-
-    /// Executes a typed Rini command.
-    pub fn execute(&self, command: RiniCommand) -> Result<Value, ClientError> {
-        self.request(RiniRequest::ExecuteCommand { command })
-    }
-
-    /// Executes a typed Rini command.
-    pub fn execute_command(&self, command: RiniCommand) -> Result<Value, ClientError> {
-        self.execute(command)
-    }
-
-    /// Subscribes to an event and returns a handle that blocks for future events.
-    pub fn subscribe(&self, event: EventKind) -> Result<RiniMachSubscription, ClientError> {
-        let reply_port = ReplyPort::allocate(MACH_PORT_QLIMIT_LARGE)?;
-        let request = RiniRequest::Subscribe { event };
-        let request_json = serde_json::to_vec(&request).map_err(ClientError::Encode)?;
-        let response = unsafe { send_request(&request_json, Some(reply_port.name))? };
-
-        match parse_json_payload::<RiniResponse>(&response, "response")? {
-            RiniResponse::Success { .. } => Ok(RiniMachSubscription { reply_port }),
-            RiniResponse::Error { error } => Err(ClientError::SubscriptionRejected(error)),
-        }
-    }
-
-    fn request<T: DeserializeOwned>(&self, request: RiniRequest) -> Result<T, ClientError> {
-        match self.send_typed_request(&request)? {
-            RiniResponse::Success { data } => Ok(data),
-            RiniResponse::Error { error } => Err(ClientError::Server(error)),
-        }
-    }
-}
-
-/// A live event subscription. Dropping it releases its Mach receive right.
-#[derive(Debug)]
-pub struct RiniMachSubscription {
-    reply_port: ReplyPort,
-}
-
-impl RiniMachSubscription {
-    /// Blocks until the next event arrives on this subscription.
-    pub fn recv_event(&self) -> Result<RiniEvent, ClientError> {
-        self.recv_event_as()
-    }
-
-    /// Blocks until the next event arrives and returns its raw JSON payload.
-    ///
-    /// This is useful for compatibility with clients that intentionally handle
-    /// newer event variants without upgrading their protocol types.
-    pub fn recv_event_value(&self) -> Result<Value, ClientError> {
-        self.recv_event_as()
-    }
-
-    /// Blocks until the next event arrives and decodes it into the requested
-    /// type.
-    pub fn recv_event_as<T: DeserializeOwned>(&self) -> Result<T, ClientError> {
-        let payload = unsafe { receive_message(self.reply_port.name)? };
-        parse_json_payload(&payload, "event")
     }
 }
 
@@ -331,37 +191,21 @@ unsafe fn find_service_with_retry() -> Result<ServicePort, ClientError> {
     Err(ClientError::ServiceUnavailable)
 }
 
-unsafe fn send_request(
-    payload: &[u8],
-    subscription_port: Option<mach_port_t>,
-) -> Result<Vec<u8>, ClientError> {
+unsafe fn send_request(payload: &[u8]) -> Result<Vec<u8>, ClientError> {
     if payload.len() > MAX_MESSAGE_SIZE {
         return Err(ClientError::MessageTooLarge);
     }
 
     let service_port = unsafe { find_service_with_retry()? };
-    let owned_reply_port;
-    let reply_port = match subscription_port {
-        Some(port) => port,
-        None => {
-            owned_reply_port = ReplyPort::allocate(1)?;
-            owned_reply_port.name
-        }
-    };
+    let owned_reply_port = ReplyPort::allocate(1)?;
+    let reply_port = owned_reply_port.name;
 
     let aligned_len = (payload.len() + 3) & !3;
     let mut message: mach_message_t = unsafe { zeroed() };
     message.header.msgh_remote_port = service_port.name;
     message.header.msgh_local_port = reply_port;
     message.header.msgh_id = reply_port as i32;
-    message.header.msgh_bits = MACH_MSGH_BITS(
-        MACH_MSG_TYPE_COPY_SEND,
-        if subscription_port.is_some() {
-            MACH_MSG_TYPE_COPY_SEND
-        } else {
-            MACH_MSG_TYPE_MAKE_SEND
-        },
-    );
+    message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND);
     message.header.msgh_size = (size_of::<mach_msg_header_t>() + aligned_len) as u32;
     unsafe {
         copy_nonoverlapping(payload.as_ptr(), message.data.as_mut_ptr(), payload.len());
@@ -427,7 +271,7 @@ mod tests {
     fn parses_nul_terminated_response_with_alignment_padding() {
         let response: RiniResponse =
             parse_json_payload(b"{\"data\":true}\0\0\0", "response").unwrap();
-        assert_eq!(response.into_result(), Ok(Value::Bool(true)));
+        assert_eq!(response, RiniResponse::Success { data: serde_json::Value::Bool(true) });
     }
 
     #[test]

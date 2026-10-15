@@ -2,7 +2,6 @@ use tracing::{error, info, warn};
 
 use super::super::ScreenInfo;
 use crate::app::config::Config;
-use crate::app::logging::{MetricsCommand, handle_command as handle_metrics_command};
 use crate::app::reactor::WorkspaceSwitchOrigin;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::{
@@ -12,7 +11,6 @@ use crate::app::reactor::state::RiniState;
 use crate::displays::domain::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
-use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::windows::domain::raise as raise_manager;
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use crate::workspaces::{EventResponse, LayoutCommand, LayoutEvent};
@@ -166,11 +164,6 @@ fn store_current_floating_positions(state: &RiniState, layout: &mut LayoutManage
     }
 }
 
-pub fn handle_command_metrics(cmd: MetricsCommand) -> anyhow::Result<EventOutcome> {
-    handle_metrics_command(cmd);
-    Ok(EventOutcome::no_change())
-}
-
 pub fn handle_switch_native_space(
     direction: crate::workspaces::Direction,
 ) -> anyhow::Result<EventOutcome> {
@@ -199,24 +192,6 @@ pub fn handle_config_updated(
     drag.update_config(config.settings.window_snapping);
 
     Ok(EventOutcome::layout_changed(false).with_service_config_update(config.clone()))
-}
-
-pub fn handle_command_reactor_debug(
-    layout: &LayoutManager,
-    topology: &ForwardedSpaceState,
-) -> anyhow::Result<EventOutcome> {
-    for screen in &topology.screens {
-        if let Some(space) = screen.space {
-            layout.layout_engine.debug_tree_desc(space, "", true);
-        }
-    }
-    Ok(EventOutcome::no_change())
-}
-
-pub fn handle_command_reactor_serialize(
-    serialized: Result<String, serde_json::Error>,
-) -> anyhow::Result<EventOutcome> {
-    Ok(EventOutcome::no_change().with_stdout_line(serialized?))
 }
 
 pub fn save_layout_before_exit(

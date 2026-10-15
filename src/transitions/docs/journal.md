@@ -151,8 +151,8 @@ generation is a number; a `why` is `frame_zero`, `landed`, `focus_changed`, `bac
 
 ## The press
 
-Every request the reactor sends the engine (a layout pass, a strip movement, a bounce, the debug
-slide) carries its `Cause`: when the reactor took the event it answers and what that event was.
+Every request the reactor sends the engine (a layout pass, a strip movement, a bounce) carries its
+`Cause`: when the reactor took the event it answers and what that event was.
 `Reactor::handle_event` stamps it as it takes each event, before anything else, and puts the outer
 one back as it returns: a frame report that releases a drag handles the mouse up inside it, and the
 report's passes after it are the report's again. `what` is the event's variant, `window_frame_changed`
@@ -244,7 +244,7 @@ It is off unless asked for, and `journal false` turns it off with the writing.
   `Journalled::heard` says so: on the service's word for that lift's picture (`OverlayTaken`), on any
   request, since a press never waits for the overlay's picture, on the overlay about to move to
   another display or be laid out for another band or scale (a `SetDisplay`: ahead of a request onto
-  another display, at a config reload and at the debug warm), so it never moves with the finished
+  another display and at a config reload), so it never moves with the finished
   flight's tiles on it, or on `OVERLAY_TAKE_PATIENCE`. That
   is 60ms, past a cold SkyLight call: p50 43.3ms at an 800ms gap, 39-47ms cold ("A SkyLight capture
   costs what the time since the previous one says" in `src/pictures/docs/capture-research.md`). Its

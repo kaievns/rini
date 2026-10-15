@@ -1,26 +1,20 @@
-//! The Mach IPC server: decodes `RiniRequest`s, answers them through a [`Backend`] the window
-//! manager implements, and fans `RiniEvent`s out to subscribed clients and CLI hooks.
+//! The Mach IPC server: decodes `RiniRequest`s and answers them through a [`Backend`] the window
+//! manager implements.
 
-pub mod cli_exec;
 pub mod client;
 pub mod mach;
 pub mod protocol;
-pub mod subscriptions;
 
 pub use protocol::*;
 
 use std::ffi::c_char;
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tracing::{error, info, trace};
 
-use crate::subscriptions::SharedServerState;
-pub use client::{ClientError as RiniMachClientError, RiniMachClient, RiniMachSubscription};
+pub use client::RiniMachClient;
 use mach::{is_mach_server_registered, mach_server_run, send_mach_reply};
 use rini_mach_sys::mach_msg_header_t;
-
-type ClientPort = u32;
 
 /// What the window manager answers over IPC. The daemon implements it in `src/app/api/backend.rs`;
 /// every method blocks the Mach server thread until the reactor replies.
@@ -34,11 +28,6 @@ pub trait Backend: Send + 'static {
         space: Option<u64>,
         workspace: Option<usize>,
     ) -> Option<crate::protocol::LayoutStateData>;
-    fn workspace_layouts(
-        &self,
-        space: Option<u64>,
-        workspace: Option<usize>,
-    ) -> Vec<crate::protocol::WorkspaceLayoutData>;
     fn applications(&self) -> Vec<crate::protocol::ApplicationData>;
     fn metrics(&self) -> serde_json::Value;
     fn diagnostics(&self) -> crate::protocol::DiagnosticsData;
@@ -51,20 +40,16 @@ pub trait Backend: Send + 'static {
     fn apply_config(&self, command: ConfigCommand) -> Result<Result<(), String>, String>;
 }
 
-pub fn run_mach_server<B: Backend>(reactor: B) -> Result<SharedServerState, String> {
+pub fn run_mach_server<B: Backend>(reactor: B) -> Result<(), String> {
     if is_mach_server_registered() {
         return Err(
             "Another Rini instance is already running; quit it before starting another.".into(),
         );
     }
-    info!("Spawning background Mach server thread and returning SharedServerState");
+    info!("Spawning background Mach server thread");
 
-    let shared_state: SharedServerState =
-        std::sync::Arc::new(parking_lot::RwLock::new(crate::subscriptions::ServerState::new()));
-
-    let thread_state = shared_state.clone();
     std::thread::spawn(move || {
-        let handler = MachHandler::new(reactor, thread_state.clone());
+        let handler = MachHandler { reactor };
         unsafe {
             mach_server_run(
                 Box::into_raw(Box::new(handler)) as *mut _,
@@ -73,61 +58,18 @@ pub fn run_mach_server<B: Backend>(reactor: B) -> Result<SharedServerState, Stri
         }
     });
 
-    Ok(shared_state)
+    Ok(())
 }
 
 struct MachHandler<B: Backend> {
     reactor: B,
-    server_state: SharedServerState,
 }
 
 impl<B: Backend> MachHandler<B> {
-    fn new(reactor: B, server_state: SharedServerState) -> Self {
-        Self { reactor, server_state }
-    }
-
-    fn handle_request(&self, request: RiniRequest, client_port: ClientPort) -> RiniResponse {
-        trace!("Handling request: {:?} from client {}", request, client_port);
+    fn handle_request(&self, request: RiniRequest) -> RiniResponse {
+        trace!("Handling request: {:?}", request);
 
         match request {
-            RiniRequest::Subscribe { event } => {
-                let state = self.server_state.read();
-                state.subscribe_client(client_port, event.to_string());
-                RiniResponse::Success {
-                    data: serde_json::json!({ "subscribed": event.to_string() }),
-                }
-            }
-            RiniRequest::Unsubscribe { event } => {
-                let state = self.server_state.read();
-                state.unsubscribe_client(client_port, event.to_string());
-                RiniResponse::Success {
-                    data: serde_json::json!({ "unsubscribed": event.to_string() }),
-                }
-            }
-            RiniRequest::SubscribeCli { event, command, args } => {
-                let state = self.server_state.read();
-                state.subscribe_cli(event.to_string(), command.clone(), args.clone());
-                RiniResponse::Success {
-                    data: serde_json::json!({
-                        "cli_subscribed": event.to_string(),
-                        "command": command,
-                        "args": args
-                    }),
-                }
-            }
-            RiniRequest::UnsubscribeCli { event } => {
-                let state = self.server_state.read();
-                state.unsubscribe_cli(event.to_string());
-                RiniResponse::Success {
-                    data: serde_json::json!({ "cli_unsubscribed": event.to_string() }),
-                }
-            }
-            RiniRequest::ListCliSubscriptions => {
-                let state = self.server_state.read();
-                let data = state.list_cli_subscriptions();
-                RiniResponse::Success { data }
-            }
-
             RiniRequest::GetWorkspaces { space_id } => success(self.reactor.workspaces(space_id)),
             RiniRequest::GetDisplays => success(self.reactor.displays()),
             RiniRequest::GetWindows { space_id } => success(self.reactor.windows(space_id)),
@@ -147,9 +89,6 @@ impl<B: Backend> MachHandler<B> {
                     },
                 }
             }
-            RiniRequest::GetWorkspaceLayouts { space_id, workspace_id } => {
-                success(self.reactor.workspace_layouts(space_id, workspace_id))
-            }
             RiniRequest::GetApplications => success(self.reactor.applications()),
             RiniRequest::GetMetrics => RiniResponse::Success { data: self.reactor.metrics() },
             RiniRequest::GetDiagnostics => success(self.reactor.diagnostics()),
@@ -165,47 +104,24 @@ impl<B: Backend> MachHandler<B> {
             },
 
             RiniRequest::ExecuteCommand { command } => match command {
-                crate::protocol::RiniCommand::Config(command) => match decode_protocol(command) {
-                    Ok(command) => match self.reactor.apply_config(command) {
-                        Ok(Ok(())) => RiniResponse::Success {
-                            data: serde_json::json!("Config applied successfully"),
-                        },
-                        Ok(Err(msg)) => RiniResponse::Error {
-                            error: serde_json::json!({ "message": msg }),
-                        },
-                        Err(e) => RiniResponse::Error {
-                            error: serde_json::json!({ "message": format!("Failed to apply config: {}", e) }),
-                        },
+                RiniCommand::Config(command) => match self.reactor.apply_config(command) {
+                    Ok(Ok(())) => RiniResponse::Success {
+                        data: serde_json::json!("Config applied successfully"),
+                    },
+                    Ok(Err(msg)) => RiniResponse::Error {
+                        error: serde_json::json!({ "message": msg }),
                     },
                     Err(e) => RiniResponse::Error {
-                        error: serde_json::json!({ "message": format!("Invalid config command: {}", e) }),
+                        error: serde_json::json!({ "message": format!("Failed to apply config: {}", e) }),
                     },
                 },
-                crate::protocol::RiniCommand::Layout(command) => {
-                    self.send_typed_reactor_command(command)
-                }
-                crate::protocol::RiniCommand::Metrics(command) => {
-                    self.send_typed_reactor_command(command)
-                }
-                crate::protocol::RiniCommand::Reactor(command) => {
-                    self.send_typed_reactor_command(command)
-                }
+                RiniCommand::Layout(command) => self.execute(Command::Layout(command)),
+                RiniCommand::Reactor(command) => self.execute(Command::Reactor(command)),
             },
         }
     }
 
-    fn send_typed_reactor_command<T>(&self, command: T) -> RiniResponse
-    where
-        T: Serialize,
-    {
-        let command = match decode_protocol(command) {
-            Ok(command) => command,
-            Err(e) => {
-                return RiniResponse::Error {
-                    error: serde_json::json!({ "message": format!("Invalid command format: {}", e) }),
-                };
-            }
-        };
+    fn execute(&self, command: Command) -> RiniResponse {
         if let Err(e) = self.reactor.execute(command) {
             error!("Failed to send command to reactor: {}", e);
             return RiniResponse::Error {
@@ -226,14 +142,6 @@ fn success<T: Serialize>(data: T) -> RiniResponse {
             error: serde_json::json!({ "message": "Failed to serialize response", "details": e.to_string() }),
         },
     }
-}
-
-fn decode_protocol<T, U>(value: T) -> Result<U, serde_json::Error>
-where
-    T: Serialize,
-    U: DeserializeOwned,
-{
-    serde_json::from_value(serde_json::to_value(value)?)
 }
 
 unsafe extern "C" fn handle_mach_request_c<B: Backend>(
@@ -271,8 +179,6 @@ unsafe extern "C" fn handle_mach_request_c<B: Backend>(
         }
     };
 
-    let client_port = unsafe { (*original_msg).msgh_remote_port };
-
     let request: RiniRequest = match serde_json::from_str(message_str) {
         Ok(req) => req,
         Err(e) => {
@@ -285,7 +191,7 @@ unsafe extern "C" fn handle_mach_request_c<B: Backend>(
         }
     };
 
-    let response = handler.handle_request(request, client_port);
+    let response = handler.handle_request(request);
     send_response(original_msg, &response);
 }
 
@@ -366,13 +272,6 @@ mod tests {
         ) -> Option<crate::protocol::LayoutStateData> {
             None
         }
-        fn workspace_layouts(
-            &self,
-            _: Option<u64>,
-            _: Option<usize>,
-        ) -> Vec<crate::protocol::WorkspaceLayoutData> {
-            vec![]
-        }
         fn applications(&self) -> Vec<crate::protocol::ApplicationData> {
             vec![]
         }
@@ -402,21 +301,19 @@ mod tests {
 
     fn handler() -> (MachHandler<std::sync::Arc<Fake>>, std::sync::Arc<Fake>) {
         let fake = std::sync::Arc::new(Fake::default());
-        let state: SharedServerState =
-            std::sync::Arc::new(parking_lot::RwLock::new(subscriptions::ServerState::new()));
-        (MachHandler::new(fake.clone(), state), fake)
+        (MachHandler { reactor: fake.clone() }, fake)
     }
 
     #[test]
     fn queries_are_answered_from_the_backend() {
         let (handler, _) = handler();
         let RiniResponse::Success { data } =
-            handler.handle_request(RiniRequest::GetWorkspaces { space_id: Some(4) }, 1)
+            handler.handle_request(RiniRequest::GetWorkspaces { space_id: Some(4) })
         else {
             panic!("expected success")
         };
         assert_eq!(data[0]["name"], "space Some(4)");
-        let RiniResponse::Success { data } = handler.handle_request(RiniRequest::GetMetrics, 1)
+        let RiniResponse::Success { data } = handler.handle_request(RiniRequest::GetMetrics)
         else {
             panic!("expected success")
         };
@@ -428,7 +325,7 @@ mod tests {
         let (handler, _) = handler();
         let unknown = crate::protocol::WindowId::new(2, 5).unwrap();
         assert!(matches!(
-            handler.handle_request(RiniRequest::GetWindowInfo { window_id: unknown }, 1),
+            handler.handle_request(RiniRequest::GetWindowInfo { window_id: unknown }),
             RiniResponse::Error { .. }
         ));
         assert!(serde_json::from_str::<crate::protocol::WindowId>(r#"{"pid":1,"idx":0}"#).is_err());
@@ -436,8 +333,7 @@ mod tests {
             handler.handle_request(
                 RiniRequest::GetWindowInfo {
                     window_id: crate::protocol::WindowId::new(1, 5).unwrap()
-                },
-                1
+                }
             ),
             RiniResponse::Success { .. }
         ));
@@ -450,7 +346,6 @@ mod tests {
             RiniRequest::ExecuteCommand {
                 command: RiniCommand::Layout(LayoutCommand::SwitchToWorkspace(2)),
             },
-            1,
         );
         assert!(matches!(response, RiniResponse::Success { .. }));
         assert_eq!(

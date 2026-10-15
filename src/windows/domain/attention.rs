@@ -5,10 +5,9 @@
 use std::collections::BTreeSet;
 
 use rini_core::ids::pid_t;
-use serde::{Deserialize, Serialize};
 
 /// The applications asking for attention now.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Attention {
     asking: BTreeSet<pid_t>,
 }

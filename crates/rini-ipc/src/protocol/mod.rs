@@ -5,23 +5,21 @@
 //! implementation detail of the transport crates.
 
 mod commands;
-mod events;
 mod layout;
 mod queries;
 mod selectors;
 mod transport;
 
 pub use commands::{
-    Command, ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand, SwitchScope,
+    Command, ConfigCommand, LayoutCommand, ReactorCommand, RiniCommand, SwitchScope,
 };
-pub use events::{EventKind, RiniEvent, WorkspaceId};
 pub use layout::{Direction, LayoutKind, ResizeOrientation};
 pub use queries::{
     ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticCensusWindow,
     DiagnosticDisplayCensus, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, DisplayData,
-    LayoutStateData, Point, Rect, Size, WindowData, WindowId, WorkspaceData, WorkspaceLayoutData,
+    LayoutStateData, Point, Rect, Size, WindowData, WindowId, WorkspaceData,
 };
 pub use selectors::{
     DisplaySelector, RelativeDisplay, RestoreScope, RestoreSource, WorkspaceSelector,
 };
-pub use transport::{JsonRiniResponse, RiniRequest, RiniResponse};
+pub use transport::{RiniRequest, RiniResponse};

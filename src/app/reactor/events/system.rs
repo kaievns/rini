@@ -10,7 +10,7 @@ use rini_core::ids::WindowId;
 pub fn handle_menu_opened(
     menu: &mut MenuManager,
     pid: i32,
-) -> Result<EventOutcome, crate::app::reactor::state::ReactorError> {
+) -> EventOutcome {
     menu.menu_state = match menu.menu_state {
         MenuState::Closed => {
             debug!(pid, "menu opened");
@@ -32,13 +32,13 @@ pub fn handle_menu_opened(
             MenuState::Open(pid)
         }
     };
-    Ok(EventOutcome::focus_changed(None, false).with_focus_follows_mouse_refresh())
+    EventOutcome::focus_changed(None, false).with_focus_follows_mouse_refresh()
 }
 
 pub fn handle_menu_closed(
     menu: &mut MenuManager,
     pid: i32,
-) -> Result<EventOutcome, crate::app::reactor::state::ReactorError> {
+) -> EventOutcome {
     let refresh = match menu.menu_state {
         MenuState::Closed => {
             debug!(pid, "menu closed while no menu was marked open");
@@ -58,15 +58,11 @@ pub fn handle_menu_closed(
         }
     };
     let outcome = EventOutcome::focus_changed(None, false);
-    if refresh {
-        Ok(outcome.with_focus_follows_mouse_refresh())
-    } else {
-        Ok(outcome)
-    }
+    if refresh { outcome.with_focus_follows_mouse_refresh() } else { outcome }
 }
 
-pub fn handle_system_woke() -> Result<EventOutcome, crate::app::reactor::state::ReactorError> {
-    Ok(EventOutcome::window_notification_refresh())
+pub fn handle_system_woke() -> EventOutcome {
+    EventOutcome::window_notification_refresh()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -77,26 +73,25 @@ pub struct RaiseCompletedPayload {
 
 pub fn handle_raise_completed(
     payload: RaiseCompletedPayload,
-) -> Result<EventOutcome, crate::app::reactor::state::ReactorError> {
+) -> EventOutcome {
     let RaiseCompletedPayload {
         window: window_id,
         sequence: sequence_id,
     } = payload;
-    Ok(EventOutcome::no_change()
-        .with_raise_request(raise_manager::Event::RaiseCompleted { window_id, sequence_id }))
+    EventOutcome::no_change()
+        .with_raise_request(raise_manager::Event::RaiseCompleted { window_id, sequence_id })
 }
 
 pub fn handle_raise_timeout(
     sequence_id: u64,
-) -> Result<EventOutcome, crate::app::reactor::state::ReactorError> {
-    Ok(EventOutcome::no_change()
-        .with_raise_request(raise_manager::Event::RaiseTimeout { sequence_id }))
+) -> EventOutcome {
+    EventOutcome::no_change().with_raise_request(raise_manager::Event::RaiseTimeout { sequence_id })
 }
 
 pub fn handle_register_wm_sender(
     communication: &mut CommunicationManager,
     sender: WmSender,
-) -> Result<EventOutcome, crate::app::reactor::state::ReactorError> {
+) -> EventOutcome {
     communication.wm_sender = Some(sender);
-    Ok(EventOutcome::no_change())
+    EventOutcome::no_change()
 }

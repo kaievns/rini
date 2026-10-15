@@ -531,6 +531,7 @@ impl<P, O, C> Schedule<P, O, C> {
     pub fn held(&self) -> bool { self.hold != Hold::Released }
 
     /// Every window owed a capture or with one out, but for those forgotten.
+    #[cfg(test)]
     pub fn owed(&self) -> impl Iterator<Item = WindowId> + '_ {
         self.jobs.iter().filter(|job| !job.forgotten).map(|job| job.target.window).chain(self.refreshes.owed())
     }
