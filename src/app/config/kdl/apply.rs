@@ -15,10 +15,14 @@ use rustc_hash::FxHashSet as HashSet;
 use super::ConfigPart;
 use super::binds::{BindPart, BindsPart};
 use super::error::Problem;
-use super::layout::{BandPart, GradientPart, GradientRelativeTo, LayoutPart, ProportionPart};
+use super::gestures::AnimationsPart;
+use super::input::InputPart;
+use super::layout::{
+    BandPart, GradientPart, GradientRelativeTo, LayoutPart, OutputPart, ProportionPart,
+};
 use super::value::{ColourSpaceValue, ColourValue, Flag, Number};
-use super::window_rule::{FixedPart, MatchPart, RadiusPart, WindowRulePart};
-use crate::app::config::{BASE_ANIMATION_SECONDS, Config, MAX_WORKSPACES};
+use super::window_rule::{BoolPart, FixedPart, MatchPart, RadiusPart, WindowRulePart};
+use crate::app::config::{BASE_ANIMATION_SECONDS, Config, MAX_WORKSPACES, Settings};
 use crate::decorations::domain::paint::{ColourSpace, Gradient, Paint};
 use crate::decorations::domain::rules::{BandRule, DecorationRule};
 use crate::decorations::settings::BandSetting;
@@ -34,27 +38,7 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     let workspaces = &mut config.virtual_workspaces;
 
     if let Some(input) = part.input {
-        if let Some(mod_key) = input.mod_key {
-            settings.mod_key = mod_key;
-        }
-        if let Some(Flag(on)) = input.focus_follows_mouse {
-            settings.focus_follows_mouse = on;
-        }
-        if let Some(Flag(on)) = input.warp_mouse_to_focus {
-            settings.mouse_follows_focus = on;
-        }
-        if let Some(warp) = input.warp_mouse_across_stacked_outputs {
-            settings.warp_cursor_between_stacked_displays = warp.on;
-            if let Some(side) = warp.upper_side {
-                settings.stacked_display_upper_is = side;
-            }
-            if let Some(top) = warp.lower_top_at {
-                settings.stacked_display_lower_top_at = top.get();
-            }
-        }
-        if !input.ignore_app_activation.is_empty() {
-            settings.auto_focus_denylist = input.ignore_app_activation;
-        }
+        apply_input(input, settings);
     }
 
     if let Some(mut layout) = part.layout {
@@ -67,31 +51,10 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         apply_layout(layout, &mut settings.layout, &mut problems);
     }
 
-    for output in part.outputs {
-        let Some(layout) = output.layout else { continue };
-        let entry = settings.layout.gaps.per_display.entry(output.uuid).or_default();
-        if let Some(gaps) = layout.gaps {
-            entry.gaps = Some(gaps.get());
-        }
-        if let Some(struts) = layout.struts {
-            entry.struts = Some(struts.edges());
-        }
-    }
+    apply_outputs(part.outputs, settings);
 
     if let Some(animations) = part.animations {
-        if let Some(Flag(off)) = animations.off {
-            settings.animate = !off;
-        }
-        if let Some(slowdown) = animations.slowdown {
-            settings.animation_duration = BASE_ANIMATION_SECONDS * slowdown.get();
-        }
-        if let Some(journal) = animations.journal {
-            settings.journal.write = journal.on;
-            if let Some(Flag(on)) = journal.measure_handover {
-                settings.journal.measure_handover = on;
-            }
-            settings.journal.measure_handover &= settings.journal.write;
-        }
+        apply_animations(animations, settings);
     }
 
     if let Some(gestures) = part.gestures
@@ -133,36 +96,13 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     }
 
     let names = (!part.undecoded.workspace_names).then(|| workspaces.workspace_names.clone());
-    if !part.window_rules.is_empty() {
-        let rules: Vec<(WindowRule, DecorationRule)> = part
-            .window_rules
-            .into_iter()
-            .map(|rule| window_rule(rule, names.as_deref(), &mut problems))
-            .collect();
-        workspaces.app_rules = rules
-            .iter()
-            .filter(|(opening, decorating)| opening.sets_anything() || !decorating.decorates())
-            .map(|(opening, _)| opening.clone())
-            .collect();
-        settings.decorations.rules = rules
-            .into_iter()
-            .map(|(_, decorating)| decorating)
-            .filter(DecorationRule::decorates)
-            .collect();
-    } else if !part.undecoded.window_rules
-        && let Some(names) = &names
-    {
-        for name in workspaces.app_rules.iter().filter_map(|rule| rule.open_on_workspace.as_ref()) {
-            if !names.contains(name) {
-                problems.push(
-                    Problem::new(format!(
-                        "a running window rule opens on workspace `{name}`, which is not declared"
-                    ))
-                    .help(declared(names)),
-                );
-            }
-        }
-    }
+    apply_window_rules(
+        part.window_rules,
+        part.undecoded.window_rules,
+        names.as_deref(),
+        config,
+        &mut problems,
+    );
 
     let checks = BindChecks {
         mod_keys: if part.undecoded.mod_key {
@@ -175,6 +115,106 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     };
     apply_binds(part.binds, switcher_binds, &checks, config, &mut problems);
     problems
+}
+
+/// The `input` section laid over the settings, field by field.
+fn apply_input(input: InputPart, settings: &mut Settings) {
+    if let Some(mod_key) = input.mod_key {
+        settings.mod_key = mod_key;
+    }
+    if let Some(Flag(on)) = input.focus_follows_mouse {
+        settings.focus_follows_mouse = on;
+    }
+    if let Some(Flag(on)) = input.warp_mouse_to_focus {
+        settings.mouse_follows_focus = on;
+    }
+    if let Some(warp) = input.warp_mouse_across_stacked_outputs {
+        settings.warp_cursor_between_stacked_displays = warp.on;
+        if let Some(side) = warp.upper_side {
+            settings.stacked_display_upper_is = side;
+        }
+        if let Some(top) = warp.lower_top_at {
+            settings.stacked_display_lower_top_at = top.get();
+        }
+    }
+    if !input.ignore_app_activation.is_empty() {
+        settings.auto_focus_denylist = input.ignore_app_activation;
+    }
+}
+
+/// Each `output`'s layout laid over its display's gaps and struts.
+fn apply_outputs(outputs: Vec<OutputPart>, settings: &mut Settings) {
+    for output in outputs {
+        let Some(layout) = output.layout else { continue };
+        let entry = settings.layout.gaps.per_display.entry(output.uuid).or_default();
+        if let Some(gaps) = layout.gaps {
+            entry.gaps = Some(gaps.get());
+        }
+        if let Some(struts) = layout.struts {
+            entry.struts = Some(struts.edges());
+        }
+    }
+}
+
+/// The `animations` section laid over the settings, field by field.
+fn apply_animations(animations: AnimationsPart, settings: &mut Settings) {
+    if let Some(Flag(off)) = animations.off {
+        settings.animate = !off;
+    }
+    if let Some(slowdown) = animations.slowdown {
+        settings.animation_duration = BASE_ANIMATION_SECONDS * slowdown.get();
+    }
+    if let Some(journal) = animations.journal {
+        settings.journal.write = journal.on;
+        if let Some(Flag(on)) = journal.measure_handover {
+            settings.journal.measure_handover = on;
+        }
+        settings.journal.measure_handover &= settings.journal.write;
+    }
+}
+
+/// The `window-rule` nodes, when there are any, replacing the running rules: the ones that open a
+/// window as app rules, the ones that dress it as decoration rules. With none, the running rules'
+/// workspaces checked against the declared names, unless a rule failed to decode.
+fn apply_window_rules(
+    window_rules: Vec<WindowRulePart>,
+    undecoded: bool,
+    names: Option<&[String]>,
+    config: &mut Config,
+    problems: &mut Vec<Problem>,
+) {
+    if !window_rules.is_empty() {
+        let rules: Vec<(WindowRule, DecorationRule)> = window_rules
+            .into_iter()
+            .map(|rule| window_rule(rule, names, problems))
+            .collect();
+        config.virtual_workspaces.app_rules = rules
+            .iter()
+            .filter(|(opening, decorating)| opening.sets_anything() || !decorating.decorates())
+            .map(|(opening, _)| opening.clone())
+            .collect();
+        config.settings.decorations.rules = rules
+            .into_iter()
+            .map(|(_, decorating)| decorating)
+            .filter(DecorationRule::decorates)
+            .collect();
+    } else if !undecoded && let Some(names) = names {
+        for name in config
+            .virtual_workspaces
+            .app_rules
+            .iter()
+            .filter_map(|rule| rule.open_on_workspace.as_ref())
+        {
+            if !names.contains(name) {
+                problems.push(
+                    Problem::new(format!(
+                        "a running window rule opens on workspace `{name}`, which is not declared"
+                    ))
+                    .help(declared(names)),
+                );
+            }
+        }
+    }
 }
 
 /// A block's `on` and `off`: which one was written, and both is an error.
@@ -384,57 +424,10 @@ fn window_rule(
     names: Option<&[String]>,
     problems: &mut Vec<Problem>,
 ) -> (WindowRule, DecorationRule) {
-    let line = |part: MatchPart, problems: &mut Vec<Problem>| {
-        let patterns = [&part.app_id, &part.title, &part.app_name];
-        if patterns
-            .iter()
-            .any(|pattern| pattern.as_ref().is_some_and(|p| p.as_str().is_empty()))
-        {
-            problems.push(
-                Problem::at(&part.span, "an empty pattern matches every window", "here")
-                    .help("leave the matcher out instead"),
-            );
-        }
-        let names_nothing = patterns.iter().all(|pattern| pattern.is_none())
-            && part.ax_role.is_none()
-            && part.ax_subrole.is_none()
-            && [
-                part.is_modal,
-                part.is_active,
-                part.is_focused,
-                part.is_floating,
-                part.is_active_in_column,
-                part.is_urgent,
-            ]
-            .iter()
-            .all(Option::is_none);
-        if names_nothing {
-            problems.push(
-                Problem::at(&part.span, "this line names no matcher", "matches every window")
-                    .help("a rule with no `match` line already applies to every window"),
-            );
-        }
-        if part.is_active_in_column.is_some() {
-            problems.push(
-                Problem::at(&part.span, "`is-active-in-column` is not supported yet", "here")
-                    .help("a column keeps no window of its own to focus: focus lands on the row it comes from"),
-            );
-        }
-        RuleMatch {
-            app_id: part.app_id,
-            title: part.title,
-            app_name: part.app_name,
-            ax_role: part.ax_role,
-            ax_subrole: part.ax_subrole,
-            is_modal: part.is_modal,
-            is_active: part.is_active,
-            is_focused: part.is_focused,
-            is_floating: part.is_floating,
-            is_urgent: part.is_urgent,
-        }
-    };
-    let matches: Vec<RuleMatch> = part.matches.into_iter().map(|m| line(m, problems)).collect();
-    let excludes: Vec<RuleMatch> = part.excludes.into_iter().map(|m| line(m, problems)).collect();
+    let matches: Vec<RuleMatch> =
+        part.matches.into_iter().map(|m| match_line(m, problems)).collect();
+    let excludes: Vec<RuleMatch> =
+        part.excludes.into_iter().map(|m| match_line(m, problems)).collect();
 
     let open_on_workspace = part.open_on_workspace.map(|workspace| {
         if let Some(names) = names {
@@ -442,38 +435,13 @@ fn window_rule(
         }
         workspace.name
     });
-    let fixed = |part: Option<FixedPart>, problems: &mut Vec<Problem>| {
-        let part = part?;
-        if part.fixed.is_none() {
-            problems.push(
-                Problem::at(&part.span, "expected a size, `{ fixed 640; }`", "no size here")
-                    .help("a window deciding its own size is what leaving this out means"),
-            );
-        }
-        part.fixed.map(Number::get)
-    };
-    let default_column_width = fixed(part.default_column_width, problems);
-    let default_window_height = fixed(part.default_window_height, problems);
-    if let Some(focused) = &part.open_focused
-        && !focused.value
-    {
-        problems.push(
-            Problem::at(
-                &focused.span,
-                "`open-focused false` is not supported yet",
-                "here",
-            )
-            .help("rini cannot stop a new window taking focus yet; leave it out"),
-        );
-    }
-    if let Some(background) = &part.draw_border_with_background
-        && background.value
-    {
-        problems.push(
-            Problem::at(&background.span, "`draw-border-with-background true` is not supported yet", "here")
-                .help("rini draws the border and the ring hollow; a fill would go under another application's window"),
-        );
-    }
+    let default_column_width = fixed_size(part.default_column_width, problems);
+    let default_window_height = fixed_size(part.default_window_height, problems);
+    refuse_unsupported(
+        part.open_focused.as_ref(),
+        part.draw_border_with_background.as_ref(),
+        problems,
+    );
     let decorating = DecorationRule {
         matches: matches.clone(),
         excludes: excludes.clone(),
@@ -503,6 +471,98 @@ fn window_rule(
         open_on_output: part.open_on_output,
     };
     (opening, decorating)
+}
+
+/// One `match` or `exclude` line of a window rule, with an empty pattern, a line naming no
+/// matcher and an unsupported matcher reported.
+fn match_line(part: MatchPart, problems: &mut Vec<Problem>) -> RuleMatch {
+    let patterns = [&part.app_id, &part.title, &part.app_name];
+    if patterns
+        .iter()
+        .any(|pattern| pattern.as_ref().is_some_and(|p| p.as_str().is_empty()))
+    {
+        problems.push(
+            Problem::at(&part.span, "an empty pattern matches every window", "here")
+                .help("leave the matcher out instead"),
+        );
+    }
+    let names_nothing = patterns.iter().all(|pattern| pattern.is_none())
+        && part.ax_role.is_none()
+        && part.ax_subrole.is_none()
+        && [
+            part.is_modal,
+            part.is_active,
+            part.is_focused,
+            part.is_floating,
+            part.is_active_in_column,
+            part.is_urgent,
+        ]
+        .iter()
+        .all(Option::is_none);
+    if names_nothing {
+        problems.push(
+            Problem::at(&part.span, "this line names no matcher", "matches every window")
+                .help("a rule with no `match` line already applies to every window"),
+        );
+    }
+    if part.is_active_in_column.is_some() {
+        problems.push(
+            Problem::at(&part.span, "`is-active-in-column` is not supported yet", "here")
+                .help("a column keeps no window of its own to focus: focus lands on the row it comes from"),
+        );
+    }
+    RuleMatch {
+        app_id: part.app_id,
+        title: part.title,
+        app_name: part.app_name,
+        ax_role: part.ax_role,
+        ax_subrole: part.ax_subrole,
+        is_modal: part.is_modal,
+        is_active: part.is_active,
+        is_focused: part.is_focused,
+        is_floating: part.is_floating,
+        is_urgent: part.is_urgent,
+    }
+}
+
+/// A rule's `{ fixed N; }` size, reported when the block names none.
+fn fixed_size(part: Option<FixedPart>, problems: &mut Vec<Problem>) -> Option<f64> {
+    let part = part?;
+    if part.fixed.is_none() {
+        problems.push(
+            Problem::at(&part.span, "expected a size, `{ fixed 640; }`", "no size here")
+                .help("a window deciding its own size is what leaving this out means"),
+        );
+    }
+    part.fixed.map(Number::get)
+}
+
+/// The window-rule settings rini reads and cannot carry out yet, reported.
+fn refuse_unsupported(
+    open_focused: Option<&BoolPart>,
+    draw_border_with_background: Option<&BoolPart>,
+    problems: &mut Vec<Problem>,
+) {
+    if let Some(focused) = open_focused
+        && !focused.value
+    {
+        problems.push(
+            Problem::at(
+                &focused.span,
+                "`open-focused false` is not supported yet",
+                "here",
+            )
+            .help("rini cannot stop a new window taking focus yet; leave it out"),
+        );
+    }
+    if let Some(background) = draw_border_with_background
+        && background.value
+    {
+        problems.push(
+            Problem::at(&background.span, "`draw-border-with-background true` is not supported yet", "here")
+                .help("rini draws the border and the ring hollow; a fill would go under another application's window"),
+        );
+    }
 }
 
 /// A rule's `focus-ring` or `border`: what it writes, `on` and `off` refused together as in `layout`,
@@ -652,8 +712,34 @@ fn apply_binds(
     config: &mut Config,
     problems: &mut Vec<Problem>,
 ) {
+    let written = written_binds(&binds, &switcher, checks, problems);
+    let kept = kept_running_binds(&written, checks, config, problems);
+
+    let (mut binds, mut switcher_binds) = (Vec::new(), Vec::new());
+    let kept = kept.into_iter().map(|(in_switcher, bind, _)| (in_switcher, bind));
+    let written = written.into_iter().filter_map(|w| Some((w.in_switcher, w.bind?)));
+    for (in_switcher, bind) in kept.chain(written) {
+        if in_switcher {
+            switcher_binds.push(bind);
+        } else {
+            binds.push(bind);
+        }
+    }
+    config.binds = binds;
+    config.switcher_binds = switcher_binds;
+}
+
+/// The binds this text writes, in order, each with its chords: a key rini cannot bind or one
+/// bound twice reported and left out, an action refused kept with no bind so its key still
+/// replaces the running one.
+fn written_binds<'a>(
+    binds: &'a Option<BindsPart>,
+    switcher: &'a Option<BindsPart>,
+    checks: &BindChecks,
+    problems: &mut Vec<Problem>,
+) -> Vec<Written<'a>> {
     let mut written: Vec<Written> = Vec::new();
-    for (in_switcher, block) in [(false, &binds), (true, &switcher)] {
+    for (in_switcher, block) in [(false, binds), (true, switcher)] {
         for part in block.iter().flat_map(|block| &block.binds) {
             let key = normalize_spec(part.key.trim());
             let chords = match checks.chords(&key) {
@@ -699,7 +785,17 @@ fn apply_binds(
             });
         }
     }
+    written
+}
 
+/// The running binds on keys the text does not write, with their chords. When the running binds
+/// are known, two on one key and a workspace that is not declared are reported.
+fn kept_running_binds(
+    written: &[Written<'_>],
+    checks: &BindChecks,
+    config: &Config,
+    problems: &mut Vec<Problem>,
+) -> Vec<(bool, Bind, Vec<Chords>)> {
     let running = config.binds.iter().map(|bind| (false, bind));
     let running = running.chain(config.switcher_binds.iter().map(|bind| (true, bind)));
     let mut kept: Vec<(bool, Bind, Vec<Chords>)> = Vec::new();
@@ -738,19 +834,7 @@ fn apply_binds(
         }
         kept.push((in_switcher, bind.clone(), chords));
     }
-
-    let (mut binds, mut switcher_binds) = (Vec::new(), Vec::new());
-    let kept = kept.into_iter().map(|(in_switcher, bind, _)| (in_switcher, bind));
-    let written = written.into_iter().filter_map(|w| Some((w.in_switcher, w.bind?)));
-    for (in_switcher, bind) in kept.chain(written) {
-        if in_switcher {
-            switcher_binds.push(bind);
-        } else {
-            binds.push(bind);
-        }
-    }
-    config.binds = binds;
-    config.switcher_binds = switcher_binds;
+    kept
 }
 
 /// Whether `action` may be bound where it is written; says why not when it may not. A workspace
