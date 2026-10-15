@@ -263,6 +263,30 @@ impl Reactor {
             outcome.focused_window = raised_window;
             return Ok(outcome);
         }
+        let payload = self.frame_change_payload(window, new_frame, mouse_state, zoom);
+        let mut outcome = window_workflow::handle_window_frame_changed(
+            &mut self.state,
+            &mut self.layout_engine,
+            &mut self.drag_manager,
+            payload,
+        )?;
+        if ends_a_drag {
+            outcome.dispatch_mouse_up = true;
+        }
+        outcome.focused_window = raised_window;
+        Ok(outcome)
+    }
+
+    /// What the frame-change reducer is handed about a report it has to analyse: the spaces the
+    /// window was and is on by geometry, whether they are active, the space it is being moved to
+    /// or is assigned, and whether the strip holds it on its old space while it scrolls.
+    fn frame_change_payload(
+        &self,
+        window: WindowId,
+        new_frame: CGRect,
+        mouse_state: Option<MouseState>,
+        zoom: Option<(SpaceId, Zoom)>,
+    ) -> window_workflow::WindowFrameChangedPayload {
         let (server_id, old_frame) = self
             .state
             .windows
@@ -271,7 +295,7 @@ impl Reactor {
             .unwrap_or((None, new_frame));
         let old_space = self.affinity().geometry_space_for_window(&old_frame, server_id);
         let new_space = self.affinity().geometry_space_for_window(&new_frame, server_id);
-        let payload = window_workflow::WindowFrameChangedPayload {
+        window_workflow::WindowFrameChangedPayload {
             window,
             new_frame,
             mouse_state,
@@ -301,18 +325,7 @@ impl Reactor {
                 })
                 .collect(),
             zoom,
-        };
-        let mut outcome = window_workflow::handle_window_frame_changed(
-            &mut self.state,
-            &mut self.layout_engine,
-            &mut self.drag_manager,
-            payload,
-        )?;
-        if ends_a_drag {
-            outcome.dispatch_mouse_up = true;
         }
-        outcome.focused_window = raised_window;
-        Ok(outcome)
     }
 
     /// Whether this resize is `window`'s app zooming it from the title bar, and which strip it is a
