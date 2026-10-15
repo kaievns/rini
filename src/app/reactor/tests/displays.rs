@@ -6,6 +6,7 @@ use rini_geometry::CGRectExt;
 use test_log::test;
 
 use super::fixtures::*;
+use crate::app::reactor::managers::RefreshQuarantineState;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::raise_order::AppBatch;

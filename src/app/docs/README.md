@@ -23,6 +23,7 @@ knows the features and converts what they emit.
 | `reactor/observations.rs` | The other half of the inbox: what the system reported, gathered and handed over settled |
 | `reactor/space_affinity.rs` | Which space a window is on — the gathering |
 | `reactor/space_resolution.rs` | Which space a window is on — the rules, pure |
+| `reactor/quarantine.rs` | What is held back while displays or the session are unstable: events dropped during display churn and while refreshes are blocked, and the one visible-window refresh owed until every quarantine lifts |
 | `reactor/query.rs` | Answers from a borrowed `StateView` |
 | `reactor/present.rs` | The frame-writing capability: record a destination, number the write; and `instant_requests`, what a pass that does not fly sends one application |
 | `reactor/bar.rs` | The bar's half here: its model built from the stores after every batch and sent only when it changed, and what a click on it asks for |
