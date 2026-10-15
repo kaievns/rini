@@ -13,6 +13,14 @@ pub use domain::scrolling::ScrollingLayoutSystem;
 
 slotmap::new_key_type! { pub struct LayoutId; }
 
+/// Which of a window's dimensions a limit is read along: its width, across the strip, or its height,
+/// down a column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    Horizontal,
+    Vertical,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WindowLayoutConstraints {
     pub is_resizable: bool,
@@ -64,30 +72,27 @@ impl WindowLayoutConstraints {
             || c.locked_height > 0.0
     }
 
-    pub fn min_for_axis(self, horizontal: bool) -> f64 {
-        if horizontal {
-            self.min_width
-        } else {
-            self.min_height
+    pub fn min_for_axis(self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.min_width,
+            Axis::Vertical => self.min_height,
         }
     }
 
-    pub fn max_for_axis(self, horizontal: bool) -> f64 {
-        if horizontal {
-            self.max_width
-        } else {
-            self.max_height
+    pub fn max_for_axis(self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.max_width,
+            Axis::Vertical => self.max_height,
         }
     }
 
-    pub fn fixed_for_axis(self, horizontal: bool) -> Option<f64> {
-        let locked = if horizontal {
-            self.locked_width
-        } else {
-            self.locked_height
+    pub fn fixed_for_axis(self, axis: Axis) -> Option<f64> {
+        let locked = match axis {
+            Axis::Horizontal => self.locked_width,
+            Axis::Vertical => self.locked_height,
         };
-        let min = self.min_for_axis(horizontal);
-        let max = self.max_for_axis(horizontal);
+        let min = self.min_for_axis(axis);
+        let max = self.max_for_axis(axis);
         // Axis-specific lock: when min/max collapse to the same positive value,
         // treat that axis as fixed even if the window is generally resizable.
         if min > 0.0 && max > 0.0 && (min - max).abs() <= f64::EPSILON {
@@ -99,16 +104,14 @@ impl WindowLayoutConstraints {
         None
     }
 
-    pub fn resizable_for_axis(self, horizontal: bool) -> bool {
-        self.fixed_for_axis(horizontal).is_none()
-    }
+    pub fn resizable_for_axis(self, axis: Axis) -> bool { self.fixed_for_axis(axis).is_none() }
 }
 
 #[cfg(test)]
 mod tests {
     use rini_core::ids::WindowId;
 
-    use super::{ScrollingLayoutSystem, WindowLayoutConstraints};
+    use super::{Axis, ScrollingLayoutSystem, WindowLayoutConstraints};
 
     fn w(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
@@ -125,10 +128,10 @@ mod tests {
         }
         .normalized();
 
-        assert_eq!(c.fixed_for_axis(true), Some(723.0));
-        assert_eq!(c.fixed_for_axis(false), None);
-        assert!(!c.resizable_for_axis(true));
-        assert!(c.resizable_for_axis(false));
+        assert_eq!(c.fixed_for_axis(Axis::Horizontal), Some(723.0));
+        assert_eq!(c.fixed_for_axis(Axis::Vertical), None);
+        assert!(!c.resizable_for_axis(Axis::Horizontal));
+        assert!(c.resizable_for_axis(Axis::Vertical));
     }
 
     #[test]
@@ -144,10 +147,10 @@ mod tests {
         }
         .normalized();
 
-        assert_eq!(c.fixed_for_axis(true), None);
-        assert_eq!(c.fixed_for_axis(false), None);
-        assert!(c.resizable_for_axis(true));
-        assert!(c.resizable_for_axis(false));
+        assert_eq!(c.fixed_for_axis(Axis::Horizontal), None);
+        assert_eq!(c.fixed_for_axis(Axis::Vertical), None);
+        assert!(c.resizable_for_axis(Axis::Horizontal));
+        assert!(c.resizable_for_axis(Axis::Vertical));
     }
 
     #[test]
@@ -163,10 +166,10 @@ mod tests {
         }
         .normalized();
 
-        assert_eq!(c.fixed_for_axis(true), Some(640.0));
-        assert_eq!(c.fixed_for_axis(false), Some(360.0));
-        assert!(!c.resizable_for_axis(true));
-        assert!(!c.resizable_for_axis(false));
+        assert_eq!(c.fixed_for_axis(Axis::Horizontal), Some(640.0));
+        assert_eq!(c.fixed_for_axis(Axis::Vertical), Some(360.0));
+        assert!(!c.resizable_for_axis(Axis::Horizontal));
+        assert!(!c.resizable_for_axis(Axis::Vertical));
     }
 
     #[test]
@@ -182,12 +185,12 @@ mod tests {
         }
         .normalized();
 
-        assert_eq!(c.fixed_for_axis(true), None);
-        assert_eq!(c.fixed_for_axis(false), None);
-        assert_eq!(c.max_for_axis(true), 600.0);
-        assert_eq!(c.max_for_axis(false), 480.0);
-        assert!(c.resizable_for_axis(true));
-        assert!(c.resizable_for_axis(false));
+        assert_eq!(c.fixed_for_axis(Axis::Horizontal), None);
+        assert_eq!(c.fixed_for_axis(Axis::Vertical), None);
+        assert_eq!(c.max_for_axis(Axis::Horizontal), 600.0);
+        assert_eq!(c.max_for_axis(Axis::Vertical), 480.0);
+        assert!(c.resizable_for_axis(Axis::Horizontal));
+        assert!(c.resizable_for_axis(Axis::Vertical));
     }
 
     fn window_nodes(
