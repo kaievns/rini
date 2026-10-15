@@ -869,6 +869,35 @@ pub struct Apps {
     pub windows: BTreeMap<WindowId, TestWindowState>,
 }
 
+/// How a test app launches: its main window, whether it is frontmost, and whether the launch
+/// reports its windows' window-server info.
+#[derive(Debug, Clone, Copy)]
+pub struct AppLaunch {
+    pub main_window: Option<WindowId>,
+    pub is_frontmost: bool,
+    pub with_ws_info: bool,
+}
+
+impl AppLaunch {
+    pub fn frontmost(main_window: Option<WindowId>) -> Self {
+        Self {
+            main_window,
+            is_frontmost: true,
+            with_ws_info: true,
+        }
+    }
+
+    pub fn background(main_window: Option<WindowId>) -> Self {
+        Self {
+            main_window,
+            is_frontmost: false,
+            with_ws_info: true,
+        }
+    }
+
+    pub fn without_ws_info(self) -> Self { Self { with_ws_info: false, ..self } }
+}
+
 #[derive(Default, PartialEq, Debug, Clone)]
 pub struct TestWindowState {
     pub last_seen_txid: TransactionId,
@@ -887,18 +916,21 @@ impl Apps {
     }
 
     pub fn make_app(&mut self, pid: pid_t, windows: Vec<WindowInfo>) -> Vec<Event> {
-        let frontmost = windows.first().map(|_| WindowId::new(pid, 1));
-        self.make_app_with_opts(pid, windows, frontmost, false, true)
+        let main_window = windows.first().map(|_| WindowId::new(pid, 1));
+        self.make_app_with_opts(pid, windows, AppLaunch::background(main_window))
     }
 
     pub fn make_app_with_opts(
         &mut self,
         pid: pid_t,
         windows: Vec<WindowInfo>,
-        main_window: Option<WindowId>,
-        is_frontmost: bool,
-        with_ws_info: bool,
+        launch: AppLaunch,
     ) -> Vec<Event> {
+        let AppLaunch {
+            main_window,
+            is_frontmost,
+            with_ws_info,
+        } = launch;
         let windows: Vec<WindowInfo> = windows
             .into_iter()
             .enumerate()

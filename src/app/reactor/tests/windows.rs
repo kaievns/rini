@@ -82,7 +82,11 @@ fn it_ignores_windows_on_nonzero_layers() {
     let full_screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     reactor.handle_event(space_state_event(vec![full_screen], vec![Some(SpaceId::new(1))]));
 
-    reactor.handle_events(apps.make_app_with_opts(1, make_windows(1), None, true, false));
+    reactor.handle_events(apps.make_app_with_opts(
+        1,
+        make_windows(1),
+        AppLaunch::frontmost(None).without_ws_info(),
+    ));
 
     let state_before = apps.windows.clone();
     let _events = apps.simulate_events();

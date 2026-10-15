@@ -59,9 +59,7 @@ fn passive_command_space_change_does_not_override_clicked_window_focus() {
     reactor.handle_events(apps.make_app_with_opts(
         1,
         windows,
-        Some(WindowId::new(1, 1)),
-        true,
-        true,
+        AppLaunch::frontmost(Some(WindowId::new(1, 1))),
     ));
     apps.simulate_until_quiet(&mut reactor);
 
@@ -114,11 +112,9 @@ fn discovery_does_not_replay_another_apps_global_main_window() {
     reactor.handle_events(apps.make_app_with_opts(
         1,
         make_windows(1),
-        Some(WindowId::new(1, 1)),
-        true,
-        true,
+        AppLaunch::frontmost(Some(WindowId::new(1, 1))),
     ));
-    reactor.handle_events(apps.make_app_with_opts(2, make_windows(1), None, false, true));
+    reactor.handle_events(apps.make_app_with_opts(2, make_windows(1), AppLaunch::background(None)));
     apps.simulate_until_quiet(&mut reactor);
 
     let app_two_window = WindowId::new(2, 1);
@@ -181,9 +177,7 @@ fn carbon_activation_is_replayed_when_it_arrives_before_app_registration() {
     reactor.handle_events(apps.make_app_with_opts(
         pid,
         make_windows(1),
-        Some(WindowId::new(pid, 1)),
-        true,
-        true,
+        AppLaunch::frontmost(Some(WindowId::new(pid, 1))),
     ));
 
     let requests = apps.requests();
@@ -652,7 +646,7 @@ mod main_window_tracking {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
     use test_log::test;
 
-    use crate::app::reactor::testing::{Apps, make_windows, space_state_event};
+    use crate::app::reactor::testing::{AppLaunch, Apps, make_windows, space_state_event};
     use crate::app::reactor::tests::fixtures::selected_window;
     use crate::app::reactor::{Event, Quiet, Reactor, SpaceId, WindowId};
     use crate::workspaces::LayoutEngine;
@@ -674,11 +668,13 @@ mod main_window_tracking {
         reactor.handle_events(apps.make_app_with_opts(
             1,
             make_windows(2),
-            Some(WindowId::new(1, 1)),
-            true,
-            true,
+            AppLaunch::frontmost(Some(WindowId::new(1, 1))),
         ));
-        reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
+        reactor.handle_events(apps.make_app_with_opts(
+            2,
+            make_windows(2),
+            AppLaunch::background(None),
+        ));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
         assert_eq!(selected_window(&reactor, space), Some(WindowId::new(1, 1)));
 
@@ -711,9 +707,7 @@ mod main_window_tracking {
         reactor.handle_events(apps.make_app_with_opts(
             3,
             make_windows(2),
-            Some(WindowId::new(3, 1)),
-            true,
-            true,
+            AppLaunch::frontmost(Some(WindowId::new(3, 1))),
         ));
         assert_eq!(Some(WindowId::new(3, 1)), reactor.main_window());
         assert_eq!(selected_window(&reactor, space), Some(WindowId::new(3, 1)));
@@ -735,11 +729,13 @@ mod main_window_tracking {
         reactor.handle_events(apps.make_app_with_opts(
             1,
             make_windows(2),
-            Some(WindowId::new(1, 1)),
-            true,
-            true,
+            AppLaunch::frontmost(Some(WindowId::new(1, 1))),
         ));
-        reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
+        reactor.handle_events(apps.make_app_with_opts(
+            2,
+            make_windows(2),
+            AppLaunch::background(None),
+        ));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
         assert_eq!(selected_window(&reactor, space), Some(WindowId::new(1, 1)));
 
@@ -798,9 +794,7 @@ mod main_window_tracking {
         reactor.handle_events(apps.make_app_with_opts(
             pid,
             windows,
-            Some(WindowId::new(3, 1)),
-            false,
-            true,
+            AppLaunch::background(Some(WindowId::new(3, 1))),
         ));
 
         reactor.handle_event(space_state_event(vec![screen_frame], vec![None]));

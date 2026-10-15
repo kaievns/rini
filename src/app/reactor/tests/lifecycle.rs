@@ -134,9 +134,7 @@ fn it_retains_windows_without_server_ids_after_login_visibility_failure() {
     reactor.handle_events(apps.make_app_with_opts(
         1,
         vec![window],
-        Some(WindowId::new(1, 1)),
-        true,
-        false,
+        AppLaunch::frontmost(Some(WindowId::new(1, 1))).without_ws_info(),
     ));
     apps.simulate_until_quiet(&mut reactor);
 

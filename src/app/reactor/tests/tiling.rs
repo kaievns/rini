@@ -410,9 +410,7 @@ fn animated_layout_handles_windows_without_server_ids() {
     reactor.handle_events(apps.make_app_with_opts(
         1,
         vec![window],
-        Some(WindowId::new(1, 1)),
-        true,
-        false,
+        AppLaunch::frontmost(Some(WindowId::new(1, 1))).without_ws_info(),
     ));
     apps.requests();
 

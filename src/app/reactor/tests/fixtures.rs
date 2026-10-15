@@ -197,15 +197,21 @@ pub fn reactor_with_floating_window() -> Floating {
     }
 }
 
-pub fn fullscreen_startup_fixture(
-    with_app_rule: bool,
-    preserve_workspace: bool,
-) -> FullscreenStartup {
+/// How a fullscreen startup's hidden window comes to be on the second workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecondWorkspaceBy {
+    /// An app rule opens it there.
+    AppRule,
+    /// It was assigned there before the window was discovered.
+    EarlierAssignment,
+}
+
+pub fn fullscreen_startup_fixture(by: SecondWorkspaceBy) -> FullscreenStartup {
     let mut workspace_cfg = crate::app::config::VirtualWorkspaceSettings {
         workspace_names: crate::workspaces::settings::numbered_names(2),
         ..crate::app::config::VirtualWorkspaceSettings::default()
     };
-    if with_app_rule {
+    if by == SecondWorkspaceBy::AppRule {
         workspace_cfg.app_rules = vec![crate::windows::domain::rules::WindowRule {
             open_on_workspace: Some("2".into()),
             ..crate::windows::domain::rules::WindowRule::when(
@@ -233,7 +239,7 @@ pub fn fullscreen_startup_fixture(
     let workspaces = reactor.test_workspace_ids(user_space);
     let default_workspace = workspaces[0];
     let secondary_workspace = workspaces[1];
-    if preserve_workspace {
+    if by == SecondWorkspaceBy::EarlierAssignment {
         assert!(reactor.assign_test_window_to_workspace(user_space, wid, secondary_workspace));
     }
 
@@ -308,7 +314,7 @@ pub fn make_active_app(
     windows: Vec<WindowInfo>,
     main_window: Option<WindowId>,
 ) {
-    reactor.handle_events(apps.make_app_with_opts(pid, windows, main_window, true, true));
+    reactor.handle_events(apps.make_app_with_opts(pid, windows, AppLaunch::frontmost(main_window)));
     reactor.handle_event(Event::ApplicationGloballyActivated(pid));
     apps.simulate_until_quiet(reactor);
 }
