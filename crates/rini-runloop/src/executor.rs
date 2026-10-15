@@ -21,16 +21,6 @@ thread_local! {
 
 pub struct Executor;
 
-pub struct Session;
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        HANDLE.with(|handle| {
-            handle.0.borrow_mut().main_task.take();
-        });
-    }
-}
-
 impl Executor {
     pub fn run(task: impl Future<Output = ()> + 'static) {
         Self::run_with_loop_fn(task, CFRunLoop::run);
