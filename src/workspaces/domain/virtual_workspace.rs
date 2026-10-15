@@ -649,8 +649,8 @@ impl WorkspaceStore {
         self.existing_workspaces()
     }
 
-    /// Read workspace topology without creating missing state. Validation and restore planning
-    /// must use this accessor so a failed transaction cannot initialize part of the live engine.
+    /// Read workspace topology without creating missing state, so a read such as validation cannot
+    /// initialize part of the live engine.
     pub fn existing_workspaces(&self) -> Vec<(VirtualWorkspaceId, String)> {
         self.ordered_workspace_ids()
             .into_iter()

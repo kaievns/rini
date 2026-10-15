@@ -150,9 +150,9 @@ impl LayoutEngine {
         // state would create a ghost that no later discovery-completion cleanup could identify.
         engine.discard_candidates(unmatchable.into_iter().collect());
         // Only fingerprints backed by saved layout state are restoration candidates. A
-        // locationless fingerprint can remain briefly after scope replacement or lifecycle
-        // churn; arming it would let it steal an unrelated future window despite having nowhere
-        // meaningful to restore that window to.
+        // locationless fingerprint can remain briefly after lifecycle churn; arming it would let
+        // it steal an unrelated future window despite having nowhere meaningful to restore that
+        // window to.
         let pending = engine
             .persistence
             .windows
