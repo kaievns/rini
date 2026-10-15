@@ -450,7 +450,6 @@ struct LiveSwitch {
 
 pub struct Reactor {
     pub config: Config,
-    pub one_space: bool,
     /// The switcher session, while one is open.
     live_switch: Option<LiveSwitch>,
     /// Where the popup is drawn. `None` until the main thread registers itself, and absent entirely in
@@ -546,17 +545,10 @@ impl Reactor {
         bar_tx: Option<crate::bar::platform::actor::Sender>,
         rest: Option<(crate::decorations::platform::rest::Sender, crate::displays::event::Following)>,
         window_tx_store: WindowTxStore,
-        one_space: bool,
     ) -> ReactorHandle {
         let (events_tx, events) = channels::channel();
         let events_tx_clone = events_tx.clone();
-        let mut reactor = Reactor::new(
-            config,
-            layout_engine,
-            display_memory,
-            window_tx_store,
-            one_space,
-        );
+        let mut reactor = Reactor::new(config, layout_engine, display_memory, window_tx_store);
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.connect_transitions(transitions_tx);
@@ -583,7 +575,6 @@ impl Reactor {
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
         window_tx_store: WindowTxStore,
-        one_space: bool,
     ) -> Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
@@ -596,7 +587,6 @@ impl Reactor {
             attention: Default::default(),
             rest: decorations::RestFeed::default(),
             config: config.clone(),
-            one_space,
             app_manager: managers::AppManager::new(),
             layout_manager: managers::LayoutManager { layout_engine },
             state: RiniState {
@@ -711,7 +701,6 @@ impl Reactor {
     fn activation_cfg(&self) -> SpaceActivationConfig {
         SpaceActivationConfig {
             default_disable: self.config.settings.default_disable,
-            one_space: self.one_space,
         }
     }
 

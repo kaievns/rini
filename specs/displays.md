@@ -135,6 +135,10 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - rini MUST offer no action, wire command or CLI subcommand that switches the native macOS Space;
   macOS's own keys do that, and rini follows the Space shown. Kai, deleting `switch-space-left` and
   `-right` on 2026-10-15: "generally happy to delete", then "delete".
+- Which native Spaces rini manages MUST be decided by `activate-spaces-by-default` and
+  `toggle-space-activated` alone, with no command-line flag that limits rini to the Space it started
+  on or starts every Space inactive. Kai, deleting `--one` and `--default-disable` on 2026-10-15:
+  "delete".
 
 ## Where it lives
 

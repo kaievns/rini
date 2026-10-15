@@ -21,13 +21,8 @@ impl Reactor {
         let mut config = Config::default();
         config.settings.default_disable = false;
         config.settings.animate = false;
-        let mut reactor = Reactor::new(
-            config,
-            layout,
-            DisplayMemory::default(),
-            WindowTxStore::new(),
-            false,
-        );
+        let mut reactor =
+            Reactor::new(config, layout, DisplayMemory::default(), WindowTxStore::new());
         // Never let the suite write to the real layout file. Almost every test drives
         // `update_layout`, which autosaves; a test that wants to exercise autosave sets a temp path.
         reactor.autosave_path = None;

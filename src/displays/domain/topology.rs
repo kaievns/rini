@@ -513,10 +513,7 @@ mod tests {
             &current,
             &active,
             &SpaceActivationPolicy::new(),
-            SpaceActivationConfig {
-                default_disable: false,
-                one_space: false,
-            },
+            SpaceActivationConfig { default_disable: false },
             &incoming,
         );
         assert!(a.command_space_only_update);
@@ -535,10 +532,7 @@ mod tests {
             &current,
             &active,
             &SpaceActivationPolicy::new(),
-            SpaceActivationConfig {
-                default_disable: false,
-                one_space: false,
-            },
+            SpaceActivationConfig { default_disable: false },
             &incoming,
         );
         assert!(!a.command_space_only_update);
@@ -555,10 +549,7 @@ mod tests {
             &current,
             &active,
             &SpaceActivationPolicy::new(),
-            SpaceActivationConfig {
-                default_disable: false,
-                one_space: false,
-            },
+            SpaceActivationConfig { default_disable: false },
             &incoming,
         );
         assert_eq!(a.authoritative_spaces, vec![Some(SpaceId::new(1)), None]);

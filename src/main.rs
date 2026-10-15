@@ -1,14 +1,14 @@
 use std::future::Future;
-use std::path::PathBuf;
 use std::process;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
+use rini::app::boot::{Cli, Commands};
 use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
 use rini::app::hotkeys::WmController;
-use rini::app::launch_agent::{ServiceCommands, handle_service_command};
+use rini::app::launch_agent::handle_service_command;
 use rini::app::logging as log;
 use rini::app::notifications::NotificationCenter;
 use rini::app::reactor::{self, Reactor};
@@ -35,47 +35,6 @@ use rini_skylight_sys::{
 use tokio::join;
 
 embed_plist::embed_info_plist!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Info.plist"));
-
-#[derive(Parser)]
-struct Cli {
-    /// Only run the window manager on the current space.
-    #[arg(long)]
-    one: bool,
-
-    /// Start with every Space inactive, whatever activate-spaces-by-default says.
-    ///
-    /// Ignored if --one is used.
-    #[arg(long)]
-    default_disable: bool,
-
-    /// Disable animations.
-    #[arg(long)]
-    no_animate: bool,
-
-    /// Check the config file and the saved layout snapshot, then exit.
-    #[arg(long)]
-    validate: bool,
-
-    /// Start from a clean layout, ignoring the saved one.
-    #[arg(long)]
-    no_restore: bool,
-
-    /// Path to the config file (KDL) to use instead of ~/.config/rini/config.kdl.
-    #[arg(long, value_name = "PATH")]
-    config: Option<PathBuf>,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Manage the launchd service for rini
-    Service {
-        #[command(subcommand)]
-        service: ServiceCommands,
-    },
-}
 
 /// this is okay because there is no recovery mechanism for actors
 /// so we want to immediately exit (and most likely restart since
@@ -187,11 +146,7 @@ fn main() {
     if let Some(complaint) = complaint {
         eprintln!("{complaint}");
     }
-    rini::app::boot::apply_flag_overrides(
-        &mut config.settings,
-        opt.no_animate,
-        opt.default_disable,
-    );
+    rini::app::boot::apply_no_animate(&mut config.settings, opt.no_animate);
 
     execute_startup_commands(&config.settings.run_on_start);
 
@@ -273,7 +228,6 @@ fn main() {
         Some(bar_tx.clone()),
         Some((rest_tx.clone(), following.clone())),
         window_tx_store.clone(),
-        opt.one,
     );
     let events_tx = reactor.sender();
     if !config_usable {

@@ -315,7 +315,7 @@ window-rule {
 
 // rini starts with every macOS Space inactive: it manages no windows there until the Space is
 // turned on with toggle-space-activated (Mod+Z below). Uncomment to manage every Space from the
-// start instead. `rini --default-disable` forces the inactive start for one run.
+// start instead.
 // activate-spaces-by-default
 
 // Commands run once when rini starts. spawn-at-startup runs a program with its arguments, one

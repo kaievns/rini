@@ -6,7 +6,41 @@
 
 use std::path::{Path, PathBuf};
 
+use clap::{Parser, Subcommand};
+
 use crate::app::config::{Config, Settings};
+use crate::app::launch_agent::ServiceCommands;
+
+#[derive(Parser)]
+pub struct Cli {
+    /// Disable animations.
+    #[arg(long)]
+    pub no_animate: bool,
+
+    /// Check the config file and the saved layout snapshot, then exit.
+    #[arg(long)]
+    pub validate: bool,
+
+    /// Start from a clean layout, ignoring the saved one.
+    #[arg(long)]
+    pub no_restore: bool,
+
+    /// Path to the config file (KDL) to use instead of ~/.config/rini/config.kdl.
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Manage the launchd service for rini
+    Service {
+        #[command(subcommand)]
+        service: ServiceCommands,
+    },
+}
 
 /// The config, or the built-in defaults and the reason the file could not be used.
 ///
@@ -72,17 +106,14 @@ pub fn config_path(explicit: Option<PathBuf>) -> PathBuf {
     explicit.unwrap_or_else(rini_core::paths::config_file)
 }
 
-/// Apply the two command-line flags that override the config.
+/// Apply `--no-animate`, the one command-line flag that overrides the config.
 ///
-/// Both are one-directional, and deliberately so. `--no-animate` can only turn animation OFF and
-/// `--default-disable` can only turn the disabled start ON; neither can undo what the config says in
-/// the other direction, because there is no `--animate` or `--no-default-disable` to do that with.
-///
-/// So the flags are for a one-off run that differs from the config — starting without animation to
-/// see whether animation is what is wrong — rather than a second place to configure rini.
-pub fn apply_flag_overrides(settings: &mut Settings, no_animate: bool, default_disable: bool) {
+/// It can only turn animation OFF, and deliberately so: there is no `--animate` to undo what the
+/// config says in the other direction. So the flag is for a one-off run that differs from the config,
+/// starting without animation to see whether animation is what is wrong, rather than a second place
+/// to configure rini.
+pub fn apply_no_animate(settings: &mut Settings, no_animate: bool) {
     settings.animate &= !no_animate;
-    settings.default_disable |= default_disable;
 }
 
 #[cfg(test)]
@@ -204,53 +235,66 @@ mod tests {
         assert_ne!(config_path(Some(absent)), rini_core::paths::config_file());
     }
 
-    fn settings(animate: bool, default_disable: bool) -> Settings {
+    fn settings(animate: bool) -> Settings {
         let mut settings = Config::default().settings;
         settings.animate = animate;
-        settings.default_disable = default_disable;
         settings
     }
 
     #[test]
     fn no_flags_leave_the_config_alone() {
-        let mut on = settings(true, false);
-        apply_flag_overrides(&mut on, false, false);
+        let mut on = settings(true);
+        apply_no_animate(&mut on, false);
         assert!(on.animate);
-        assert!(!on.default_disable);
     }
 
     #[test]
-    fn the_flags_override_the_config_in_their_own_direction() {
-        let mut settings = settings(true, false);
-        apply_flag_overrides(&mut settings, true, true);
-        assert!(!settings.animate, "--no-animate turns animation off");
-        assert!(settings.default_disable, "--default-disable starts disabled");
+    fn no_animate_turns_animation_off() {
+        let mut settings = settings(true);
+        apply_no_animate(&mut settings, true);
+        assert!(!settings.animate);
     }
 
-    /// The asymmetry, stated. Each flag pushes one way only, because there is no `--animate` or
-    /// `--no-default-disable` to push back with, so the flags are for a one-off run that differs from
-    /// the config rather than a second place to configure rini.
     #[test]
-    fn neither_flag_can_undo_the_config_in_the_other_direction() {
-        let mut animation_off_in_config = settings(false, true);
-        apply_flag_overrides(&mut animation_off_in_config, false, false);
-        assert!(
-            !animation_off_in_config.animate,
-            "no flag turns animation back on"
-        );
-        assert!(
-            animation_off_in_config.default_disable,
-            "no flag undoes a disabled start"
-        );
+    fn no_flag_turns_animation_back_on() {
+        let mut animation_off_in_config = settings(false);
+        apply_no_animate(&mut animation_off_in_config, false);
+        assert!(!animation_off_in_config.animate);
     }
 
     #[test]
     fn a_flag_applied_twice_says_the_same_thing() {
-        let mut once = settings(true, false);
-        apply_flag_overrides(&mut once, true, true);
+        let mut once = settings(true);
+        apply_no_animate(&mut once, true);
         let mut twice = once.clone();
-        apply_flag_overrides(&mut twice, true, true);
+        apply_no_animate(&mut twice, true);
         assert_eq!(twice.animate, once.animate);
-        assert_eq!(twice.default_disable, once.default_disable);
+    }
+
+    #[test]
+    fn no_flag_limits_rini_to_one_space_or_starts_every_space_inactive() {
+        for flag in ["--one", "--default-disable"] {
+            let refused = Cli::try_parse_from(["rini", flag]).err();
+            assert_eq!(
+                refused.map(|error| error.kind()),
+                Some(clap::error::ErrorKind::UnknownArgument),
+                "{flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_flags_rini_keeps_parse() {
+        let cli = Cli::try_parse_from([
+            "rini",
+            "--no-animate",
+            "--validate",
+            "--no-restore",
+            "--config",
+            "/tmp/rini.kdl",
+        ])
+        .unwrap();
+        assert!(cli.no_animate && cli.validate && cli.no_restore);
+        assert_eq!(cli.config, Some(PathBuf::from("/tmp/rini.kdl")));
     }
 }
