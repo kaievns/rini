@@ -21,6 +21,7 @@ use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
+use crate::windows::platform::window_server::WindowServer;
 
 const NS_KEY_VALUE_OBSERVING_OPTION_NEW: usize = 1 << 0;
 const NS_KEY_VALUE_OBSERVING_OPTION_INITIAL: usize = 1 << 2;
@@ -355,9 +356,12 @@ impl From<&NSRunningApplication> for AppInfo {
 }
 
 impl WindowInfo {
+    /// What `element` is, with the window server's record of it: `server_info_hint`, or else, for
+    /// a standard window, the record `server` has for its id.
     pub fn from_ax_element(
         element: &AXUIElement,
         server_info_hint: Option<WindowServerInfo>,
+        server: &dyn WindowServer,
     ) -> Result<(Self, Option<WindowServerInfo>), AxError> {
         let frame = element.frame()?;
         let role = element.role()?;
@@ -381,7 +385,7 @@ impl WindowInfo {
         } else if let Some(info) = server_info {
             bundle_info_for_pid(info.pid)
         } else if let Some(window_id) = id {
-            server_info = crate::windows::platform::window_server::get_window(window_id);
+            server_info = server.get_window(window_id);
             server_info.map(|info| bundle_info_for_pid(info.pid)).unwrap_or((None, None))
         } else {
             (None, None)
@@ -407,14 +411,6 @@ impl WindowInfo {
         };
 
         Ok((info, server_info))
-    }
-}
-
-impl TryFrom<&AXUIElement> for WindowInfo {
-    type Error = AxError;
-
-    fn try_from(element: &AXUIElement) -> Result<Self, AxError> {
-        WindowInfo::from_ax_element(element, None).map(|(info, _)| info)
     }
 }
 

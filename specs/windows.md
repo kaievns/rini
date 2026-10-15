@@ -65,6 +65,12 @@ A window Accessibility reports is turned away before anything else knows it exis
 Accessibility reports a window BEFORE the window server has it, so "no server id yet" MUST be treated
 as visible rather than absent. The reverse — an id the server does not report — means not on screen.
 
+What admission decides about a window MUST hold at every refresh of the application's windows, not
+only when the window is first seen: a window the title-element rule makes non-standard stays
+non-standard, and one the window server gives a parent stays off the root. A refresh reports each
+window once (`a_refresh_reports_a_known_window_as_registration_decided`,
+`a_refresh_reports_a_window_it_takes_on_once`).
+
 ## Identity
 
 - A window has two identities: rini's own, which dies with the process, and the window server's, which

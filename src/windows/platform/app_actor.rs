@@ -40,7 +40,6 @@ use crate::windows::platform::ax::element::{
 use crate::windows::platform::ax::observer::Observer;
 use crate::windows::platform::ax::world::{AxWorld, MacAx};
 use crate::windows::platform::process::ProcessInfo;
-use crate::windows::platform::{mouse, window_server};
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";
 const kAXApplicationDeactivatedNotification: &str = "AXApplicationDeactivated";
@@ -135,7 +134,8 @@ enum Outcome {
 struct State<W: AxWorld> {
     pid: pid_t,
     bundle_id: Option<String>,
-    /// Everything this thread asks of Accessibility. Production installs `MacAx`; a test installs a
+    /// Everything this thread asks of the platform: Accessibility, the window server through
+    /// `server()`, the pointer state and Command-W. Production installs `MacAx`; a test installs a
     /// fake whose elements are plain numbers. See `platform/ax/world.rs`.
     ax: W,
     events_tx: Box<dyn EventSink>,
@@ -179,7 +179,7 @@ impl<W: AxWorld> State<W> {
         for elem in window_elems {
             let wsid = self.ax.window_server_id(&elem);
             let hint = wsid.and_then(|id| server_info_by_id.get(&id).copied());
-            let info = match self.ax.window_info(&elem, hint) {
+            let mut info = match self.ax.window_info(&elem, hint) {
                 Ok((info, _)) => info,
                 Err(err) => {
                     let id = self.id(&elem).ok();
@@ -192,24 +192,22 @@ impl<W: AxWorld> State<W> {
                 continue;
             }
 
-            let Some(wid) = self.id(&elem).ok().or_else(|| {
-                self.register_window(elem.clone(), hint).map(|(info, wid, _)| {
-                    if !info.is_minimized {
-                        known_visible.push(wid);
-                    }
-                    new.push((wid, info));
-                    wid
-                })
-            }) else {
-                continue;
+            let wid = if let Ok(wid) = self.id(&elem) {
+                self.complete_info(&elem, &mut info);
+                // The WindowServer id is stable across sleep/display transitions, but
+                // the corresponding AXUIElement is not. `id` intentionally resolves the
+                // fresh element to the existing wid by that stable id; refresh the actor's
+                // handle as well or subsequent frame writes keep targeting the pre-wake
+                // element and can never recover.
+                self.rebind_window_element(wid, elem, &info);
+                wid
+            } else {
+                let Some((registered, wid, _)) = self.register_window(elem, hint) else {
+                    continue;
+                };
+                info = registered;
+                wid
             };
-
-            // The WindowServer id is stable across sleep/display transitions, but
-            // the corresponding AXUIElement is not. `id` intentionally resolves the
-            // fresh element to the existing wid by that stable id; refresh the actor's
-            // handle as well or subsequent frame writes keep targeting the pre-wake
-            // element and can never recover.
-            self.rebind_window_element(wid, elem, &info);
 
             if !info.is_minimized {
                 known_visible.push(wid);
@@ -447,12 +445,12 @@ impl<W: AxWorld> State<W> {
             }
             Request::CloseWindow(window_server_id) => {
                 if let Some(wsid) = window_server_id
-                    && let Err(err) = window_server::make_key_window(self.pid, wsid)
+                    && let Err(err) = self.ax.server().make_key_window(self.pid, wsid)
                 {
                     warn!(pid = self.pid, ?wsid, ?err, "Failed to focus close target");
                     return Ok(false);
                 }
-                if !mouse::post_command_w(self.pid) {
+                if !self.ax.post_command_w() {
                     warn!(pid = self.pid, ?window_server_id, "Failed to post Command-W");
                 }
             }
@@ -580,7 +578,9 @@ impl<W: AxWorld> State<W> {
         server_id: Option<WindowServerId>,
         desired: CGRect,
     ) -> Result<Option<CGRect>, AxError> {
-        let current = server_id.and_then(|id| self.ax.server_frame(id)).map(|frame| frame.size);
+        let current = server_id
+            .and_then(|id| self.ax.server().server_frame(id))
+            .map(|frame| frame.size);
         if frame_write(current, desired.size) == FrameWrite::PositionOnly {
             let _ = self.ax.set_position(elem, desired.origin);
             let Some(landed) =
@@ -628,12 +628,12 @@ impl<W: AxWorld> State<W> {
                     return;
                 };
                 let window_server_info = window_server_info
-                    .or_else(|| window.sys_id.and_then(window_server::get_window));
+                    .or_else(|| window.sys_id.and_then(|id| self.ax.server().get_window(id)));
                 self.send_event(Event::WindowCreated(
                     wid,
                     window,
                     window_server_info,
-                    mouse::get_mouse_state(),
+                    self.ax.mouse_state(),
                 ));
             }
             AxNotificationKind::MenuOpened => self.send_event(Event::MenuOpened(self.pid)),
@@ -666,7 +666,7 @@ impl<W: AxWorld> State<W> {
                     return;
                 }
 
-                let mouse_state = mouse::get_mouse_state();
+                let mouse_state = self.ax.mouse_state();
                 let txid = match self.window(wid) {
                     Ok(window) => self.txid_for_window_state(window),
                     Err(err) => {
@@ -853,7 +853,7 @@ impl<W: AxWorld> State<W> {
             );
         }
         let make_key_result =
-            window_server_id.map(|wsid| window_server::make_key_window(this.pid, wsid));
+            window_server_id.map(|wsid| this.ax.server().make_key_window(this.pid, wsid));
         if let Some(Err(err)) = &make_key_result {
             warn!(?this.pid, ?err, "Failed to activate app");
         }
@@ -960,13 +960,13 @@ impl<W: AxWorld> State<W> {
                     debug!(?self.pid, "Got MainWindowChanged on unknown window");
                     return None;
                 };
-                let window_server_info =
-                    window_server_info.or_else(|| info.sys_id.and_then(window_server::get_window));
+                let window_server_info = window_server_info
+                    .or_else(|| info.sys_id.and_then(|id| self.ax.server().get_window(id)));
                 self.send_event(Event::WindowCreated(
                     wid,
                     info,
                     window_server_info,
-                    mouse::get_mouse_state(),
+                    self.ax.mouse_state(),
                 ));
                 wid
             }
@@ -1171,17 +1171,7 @@ impl<W: AxWorld> State<W> {
             return None;
         }
 
-        if admissible::needs_title_element_to_be_standard(self.bundle_id.as_deref())
-            && self.ax.read_attribute(&elem, "AXTitleUIElement").is_err()
-        {
-            info.is_standard = false;
-        }
-
-        if let Some(wsid) = info.sys_id {
-            info.is_root = window_server::window_parent(wsid).is_none();
-        } else {
-            info.is_root = true;
-        }
+        self.complete_info(&elem, &mut info);
 
         let window_server_id = info.sys_id.filter(|sid| sid.as_nonzero().is_some()).or_else(|| {
             let id = self.ax.window_server_id(&elem);
@@ -1220,6 +1210,19 @@ impl<W: AxWorld> State<W> {
             self.send_event(Event::WindowMinimized(wid));
         }
         Some((info, wid, server_info))
+    }
+
+    /// What Accessibility's own read leaves out of `info`: whether a window of an application
+    /// `admissible::needs_title_element_to_be_standard` names is standard, and whether the window
+    /// server gives it a parent.
+    fn complete_info(&self, elem: &W::Element, info: &mut WindowInfo) {
+        if admissible::needs_title_element_to_be_standard(self.bundle_id.as_deref())
+            && self.ax.read_attribute(elem, "AXTitleUIElement").is_err()
+        {
+            info.is_standard = false;
+        }
+        info.is_root =
+            info.sys_id.is_none_or(|wsid| self.ax.server().window_parent(wsid).is_none());
     }
 
     fn register_window_notifications(&self, elem: &W::Element, wid: WindowId) -> bool {
@@ -1289,7 +1292,7 @@ impl<W: AxWorld> State<W> {
             .filter_map(|elem| self.ax.window_server_id(elem))
             .collect();
         let mut info_by_id = HashMap::with_capacity_and_hasher(wsids.len(), Default::default());
-        for info in window_server::get_windows(&wsids) {
+        for info in self.ax.server().get_windows(&wsids) {
             info_by_id.insert(info.id, info);
         }
         info_by_id
@@ -1493,7 +1496,7 @@ fn app_thread_main(
     let mut state = State {
         pid,
         bundle_id: info.bundle_id.clone(),
-        ax: MacAx::new(app.clone(), running_app.clone(), observer),
+        ax: MacAx::new(pid, app.clone(), running_app.clone(), observer),
         events_tx,
         windows: HashMap::default(),
         elem_to_wid: HashMap::default(),
@@ -1564,9 +1567,10 @@ mod tests {
     use std::rc::Rc;
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use objc2_core_graphics::CGError;
 
     use super::*;
-    use crate::windows::platform::ax::world::FakeAx;
+    use crate::windows::platform::ax::world::{FakeAx, MouseState};
 
     /// Collects what the actor told the reactor.
     #[derive(Clone, Default)]
@@ -1637,8 +1641,8 @@ mod tests {
             state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
         state
             .ax
-            .server_frames
-            .insert(WindowServerId::new(window), rect(0., 0., 100., 100.));
+            .server
+            .set_server_frame(WindowServerId::new(window), Some(rect(0., 0., 100., 100.)));
         let wid = state
             .register_window(window, peer(window, rect(0., 0., 100., 100.)))
             .expect("the window registers")
@@ -1677,8 +1681,8 @@ mod tests {
             state_with(FakeAx::with_one_window(window, rect(0., 0., 800., 600.)));
         state
             .ax
-            .server_frames
-            .insert(WindowServerId::new(window), rect(0., 0., 800., 600.));
+            .server
+            .set_server_frame(WindowServerId::new(window), Some(rect(0., 0., 800., 600.)));
         let wid = state
             .register_window(window, peer(window, rect(0., 0., 800., 600.)))
             .expect("the window registers")
@@ -1713,8 +1717,8 @@ mod tests {
             state_with(FakeAx::with_one_window(window, rect(0., 0., 800., 600.)));
         state
             .ax
-            .server_frames
-            .insert(WindowServerId::new(window), rect(0., 0., 800., 600.));
+            .server
+            .set_server_frame(WindowServerId::new(window), Some(rect(0., 0., 800., 600.)));
         let wid = state
             .register_window(window, peer(window, rect(0., 0., 800., 600.)))
             .expect("the window registers")
@@ -1763,7 +1767,8 @@ mod tests {
         let mut ax = FakeAx::with_one_window(kept, rect(0., 0., 800., 600.));
         ax.windows.push(unread);
         ax.describe_standard_window(unread, rect(800., 0., 400., 600.));
-        ax.server_frames.insert(WindowServerId::new(kept), rect(0., 0., 800., 600.));
+        ax.server
+            .set_server_frame(WindowServerId::new(kept), Some(rect(0., 0., 800., 600.)));
         let (mut state, _sink) = state_with(ax);
         let kept_wid = state
             .register_window(kept, peer(kept, rect(0., 0., 800., 600.)))
@@ -1874,6 +1879,195 @@ mod tests {
         assert!(!info.is_standard, "no readable title element means not standard");
     }
 
+    /// A close makes the window key through the window server, then posts Command-W, so the
+    /// application closes that window its own way.
+    #[test]
+    fn a_close_makes_the_window_key_then_posts_command_w() {
+        let (mut state, _sink, _) = raisable(7);
+
+        state
+            .handle_request(Request::CloseWindow(Some(WindowServerId::new(7))))
+            .expect("handled");
+
+        assert_eq!(state.ax.made_key(), [(PID, WindowServerId::new(7))]);
+        assert_eq!(state.ax.command_w_posts.get(), 1, "Command-W posted once");
+    }
+
+    /// Command-W closes whichever window is key, so a close whose window could not be made key
+    /// posts none.
+    #[test]
+    fn a_close_whose_window_cannot_be_made_key_posts_no_command_w() {
+        let (mut state, _sink, _) = raisable(7);
+        state.ax.server.fail_make_key_window(Some(CGError::Failure));
+
+        state
+            .handle_request(Request::CloseWindow(Some(WindowServerId::new(7))))
+            .expect("handled");
+
+        assert_eq!(state.ax.made_key(), [(PID, WindowServerId::new(7))], "asked");
+        assert_eq!(state.ax.command_w_posts.get(), 0, "and nothing posted");
+    }
+
+    #[test]
+    fn a_close_of_a_window_with_no_server_id_posts_command_w_alone() {
+        let (mut state, _sink, _) = raisable(7);
+
+        state.handle_request(Request::CloseWindow(None)).expect("handled");
+
+        assert!(state.ax.made_key().is_empty(), "nothing to make key");
+        assert_eq!(state.ax.command_w_posts.get(), 1);
+    }
+
+    /// A created window is announced with the window server's record of it and the pointer state,
+    /// so a window that opens mid-drag is not taken for a layout echo.
+    #[test]
+    fn a_created_window_is_announced_with_its_server_record_and_the_pointer_state() {
+        let window = 7;
+        let frame = rect(0., 0., 100., 100.);
+        let mut ax = FakeAx::with_one_window(window, frame);
+        ax.server.set_window(WindowServerId::new(window), peer(window, frame));
+        ax.mouse = Some(MouseState::Down);
+        let (mut state, sink) = state_with(ax);
+
+        state.handle_notification(window, AxNotificationKind::WindowCreated, None);
+
+        let announced = sink.0.borrow();
+        assert!(
+            matches!(
+                announced.as_slice(),
+                [Event::WindowCreated(_, _, Some(info), Some(MouseState::Down))]
+                    if info.id == WindowServerId::new(window)
+            ),
+            "{announced:?}"
+        );
+    }
+
+    /// A window with a server id the window server does not report is not on screen, and is not
+    /// taken on when the application says it was created.
+    #[test]
+    fn a_created_window_the_window_server_does_not_report_is_not_taken_on() {
+        let window = 7;
+        let (mut state, sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
+
+        state.handle_notification(window, AxNotificationKind::WindowCreated, None);
+
+        assert!(state.windows.is_empty());
+        assert!(sink.0.borrow().is_empty(), "{:?}", sink.0.borrow());
+    }
+
+    /// A window the window server gives a parent is a child window, not a root one.
+    #[test]
+    fn a_window_the_window_server_gives_a_parent_is_not_a_root_window() {
+        let window = 7;
+        let frame = rect(0., 0., 100., 100.);
+        let ax = FakeAx::with_one_window(window, frame);
+        ax.server
+            .set_window_parent(WindowServerId::new(window), Some(WindowServerId::new(3)));
+        let (mut state, _sink) = state_with(ax);
+
+        let (info, _, _) = state.register_window(window, peer(window, frame)).expect("registers");
+
+        assert!(!info.is_root);
+    }
+
+    /// A refresh takes on the windows the window server reports, and leaves out one it does not,
+    /// which is not on screen.
+    #[test]
+    fn a_refresh_takes_on_only_the_windows_the_window_server_reports() {
+        let (reported, unreported) = (7, 8);
+        let frame = rect(0., 0., 100., 100.);
+        let mut ax = FakeAx::with_one_window(reported, frame);
+        ax.windows.push(unreported);
+        ax.describe_standard_window(unreported, frame);
+        ax.server.set_window(WindowServerId::new(reported), peer(reported, frame));
+        let (mut state, sink) = state_with(ax);
+
+        state.handle_request(Request::GetVisibleWindows).expect("refreshed");
+
+        let reported_wid = state.id(&reported).expect("taken on");
+        assert!(state.id(&unreported).is_err(), "left out");
+        assert!(
+            sink.0.borrow().iter().any(|event| matches!(
+                event,
+                Event::WindowsDiscovered { new, .. }
+                    if new.iter().map(|(w, _)| *w).eq([reported_wid])
+            )),
+            "{:?}",
+            sink.0.borrow()
+        );
+    }
+
+    /// What the refresh `GetVisibleWindows` asks for reports: each window it found, with its info,
+    /// and the ones of those not minimized.
+    fn refreshed(
+        state: &mut State<FakeAx>,
+        sink: &Sink,
+    ) -> (Vec<(WindowId, WindowInfo)>, Vec<WindowId>) {
+        sink.0.borrow_mut().clear();
+        state.handle_request(Request::GetVisibleWindows).expect("refreshed");
+        sink.0
+            .borrow()
+            .iter()
+            .find_map(|event| match event {
+                Event::WindowsDiscovered { new, known_visible, .. } => {
+                    Some((new.clone(), known_visible.clone()))
+                }
+                _ => None,
+            })
+            .expect("a refresh reports what it found")
+    }
+
+    /// A window a refresh takes on is reported once, not once as registered and again as found.
+    #[test]
+    fn a_refresh_reports_a_window_it_takes_on_once() {
+        let window = 7;
+        let frame = rect(0., 0., 100., 100.);
+        let ax = FakeAx::with_one_window(window, frame);
+        ax.server.set_window(WindowServerId::new(window), peer(window, frame));
+        let (mut state, sink) = state_with(ax);
+
+        let (new, known_visible) = refreshed(&mut state, &sink);
+
+        let wid = state.id(&window).expect("taken on");
+        assert_eq!(new.iter().map(|(w, _)| *w).collect::<Vec<_>>(), [wid]);
+        assert_eq!(known_visible, [wid]);
+    }
+
+    /// What registration decides about a window holds at every refresh after: a window of an
+    /// application that needs a title element and has none stays non-standard, and one the window
+    /// server gives a parent stays off the root.
+    #[test]
+    fn a_refresh_reports_a_known_window_as_registration_decided() {
+        let (untitled, child) = (7, 8);
+        let frame = rect(0., 0., 100., 100.);
+        let mut ax = FakeAx::with_one_window(untitled, frame);
+        ax.windows.push(child);
+        ax.describe_standard_window(child, frame);
+        ax.without_title_element.push(untitled);
+        for window in [untitled, child] {
+            ax.server.set_window(WindowServerId::new(window), peer(window, frame));
+        }
+        ax.server
+            .set_window_parent(WindowServerId::new(child), Some(WindowServerId::new(3)));
+        let (mut state, sink) = state_with(ax);
+        state.bundle_id = Some("com.googlecode.iterm2".to_owned());
+        refreshed(&mut state, &sink);
+
+        let (new, _) = refreshed(&mut state, &sink);
+
+        let info = |window| {
+            let wid = state.id(&window).expect("known");
+            new.iter()
+                .find(|(w, _)| *w == wid)
+                .map(|(_, info)| info.clone())
+                .expect("reported")
+        };
+        assert!(!info(untitled).is_standard, "no title element, not standard");
+        assert!(!info(child).is_root, "a parent, not a root window");
+        assert_eq!(new.len(), 2, "each reported once: {new:?}");
+    }
+
     /// Runs the actor over `requests` with a raise of `raised` queued ahead of them, and answers
     /// whether its task finished. Every sender stays open, so only a request can end it, and one poll
     /// is all it takes when everything it needs is already queued: a task still pending after that is
@@ -1905,8 +2099,7 @@ mod tests {
         finished
     }
 
-    /// A window the fake can raise without the window server: with no server id, a raise asks
-    /// nothing of SkyLight and goes straight to Accessibility.
+    /// A registered window of a frontmost application, with nothing announced yet.
     fn raisable(window: u32) -> (State<FakeAx>, Sink, WindowId) {
         let (mut state, sink) =
             state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
@@ -1914,7 +2107,6 @@ mod tests {
             .register_window(window, peer(window, rect(0., 0., 100., 100.)))
             .expect("registers")
             .1;
-        state.ax.server_ids.remove(&window);
         sink.0.borrow_mut().clear();
         (state, sink, wid)
     }
@@ -2118,5 +2310,745 @@ mod tests {
             )),
             "and the reactor hears of it"
         );
+    }
+
+    /// An application with `windows` registered, each stated on the window server, frontmost, with
+    /// nothing announced yet.
+    fn app_with(windows: &[u32]) -> (State<FakeAx>, Sink, Vec<WindowId>) {
+        let frame = rect(0., 0., 100., 100.);
+        let mut ax = FakeAx::with_one_window(windows[0], frame);
+        for &window in &windows[1..] {
+            ax.windows.push(window);
+            ax.describe_standard_window(window, frame);
+        }
+        for &window in windows {
+            ax.server.set_window(WindowServerId::new(window), peer(window, frame));
+        }
+        let (mut state, sink) = state_with(ax);
+        let wids = windows
+            .iter()
+            .map(|&window| state.register_window(window, peer(window, frame)).expect("registers").1)
+            .collect();
+        sink.0.borrow_mut().clear();
+        (state, sink, wids)
+    }
+
+    /// `window` registered, then found at a refresh as a new element, `replacement`, of the same
+    /// window-server window, as after a wake: the element the window had is superseded.
+    fn replaced(window: u32, replacement: u32) -> (State<FakeAx>, Sink, WindowId) {
+        let (mut state, sink, wids) = app_with(&[window]);
+        state.ax.describe_standard_window(replacement, rect(0., 0., 100., 100.));
+        state.ax.server_ids.insert(replacement, WindowServerId::new(window));
+        state.ax.windows = vec![replacement];
+        state.handle_request(Request::GetVisibleWindows).expect("refreshed");
+        assert!(
+            state.is_current_window_element(wids[0], &replacement),
+            "rebound to the replacement"
+        );
+        sink.0.borrow_mut().clear();
+        (state, sink, wids[0])
+    }
+
+    fn announced(sink: &Sink) -> Vec<Event> { sink.0.borrow_mut().drain(..).collect() }
+
+    /// A late notification for the element a window had before it was replaced says nothing about
+    /// the window: the element now bound to it does.
+    #[test]
+    fn a_move_or_resize_for_a_replaced_element_is_ignored() {
+        let (mut state, sink, wid) = replaced(7, 70);
+        state.ax.frames.insert(7, rect(300., 0., 100., 100.));
+
+        for kind in [
+            AxNotificationKind::WindowMoved,
+            AxNotificationKind::WindowResized,
+        ] {
+            state.handle_notification(7, kind, Some(wid));
+        }
+
+        assert!(announced(&sink).is_empty());
+    }
+
+    #[test]
+    fn a_destroy_for_a_replaced_element_leaves_the_window() {
+        let (mut state, sink, wid) = replaced(7, 70);
+
+        state.handle_notification(7, AxNotificationKind::WindowDestroyed, Some(wid));
+
+        assert!(state.windows.contains_key(&wid), "the window stays");
+        assert!(announced(&sink).is_empty());
+    }
+
+    #[test]
+    fn a_title_change_for_a_replaced_element_is_ignored() {
+        let (mut state, sink, wid) = replaced(7, 70);
+        state.ax.titles.insert(7, "stale".to_owned());
+
+        state.handle_notification(7, AxNotificationKind::TitleChanged, Some(wid));
+
+        assert!(announced(&sink).is_empty());
+    }
+
+    #[test]
+    fn a_miniaturize_or_deminiaturize_for_a_replaced_element_is_ignored() {
+        let (mut state, sink, wid) = replaced(7, 70);
+
+        for kind in [
+            AxNotificationKind::WindowMiniaturized,
+            AxNotificationKind::WindowDeminiaturized,
+        ] {
+            state.handle_notification(7, kind, Some(wid));
+        }
+
+        assert!(announced(&sink).is_empty());
+    }
+
+    /// A move the application reports is announced as not asked for by rini, with the frame read
+    /// back and the pointer state.
+    #[test]
+    fn a_move_is_announced_unrequested_with_the_pointer_state() {
+        let (mut state, sink, wid) = replaced(7, 70);
+        let moved = rect(300., 0., 100., 100.);
+        state.ax.frames.insert(70, moved);
+        state.ax.mouse = Some(MouseState::Down);
+
+        state.handle_notification(70, AxNotificationKind::WindowMoved, Some(wid));
+
+        let events = announced(&sink);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Event::WindowFrameChanged(w, frame, None, Requested(false), Some(MouseState::Down))]
+                    if *w == wid && *frame == moved
+            ),
+            "{events:?}"
+        );
+    }
+
+    /// A move whose frame cannot be read, as during a display teardown, is not a destroy.
+    #[test]
+    fn a_move_whose_element_cannot_be_read_is_not_taken_for_a_destroy() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frames.remove(&7);
+
+        state.handle_notification(7, AxNotificationKind::WindowMoved, Some(wids[0]));
+
+        assert!(state.windows.contains_key(&wids[0]), "the window stays");
+        assert!(announced(&sink).is_empty());
+    }
+
+    #[test]
+    fn a_destroy_retires_the_window_once() {
+        let (mut state, sink, wids) = app_with(&[7]);
+
+        for _ in 0..2 {
+            state.handle_notification(7, AxNotificationKind::WindowDestroyed, Some(wids[0]));
+        }
+
+        assert!(state.windows.is_empty());
+        let events = announced(&sink);
+        assert!(
+            matches!(events.as_slice(), [Event::WindowDestroyed(w)] if *w == wids[0]),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn a_title_change_is_announced_once_per_title() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.titles.insert(7, "renamed".to_owned());
+
+        for _ in 0..2 {
+            state.handle_notification(7, AxNotificationKind::TitleChanged, Some(wids[0]));
+        }
+
+        let events = announced(&sink);
+        assert!(
+            matches!(events.as_slice(), [Event::WindowTitleChanged(w, title)]
+                if *w == wids[0] && title == "renamed"),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn a_miniaturized_window_is_announced_minimized_and_a_deminiaturized_one_restored() {
+        let (mut state, sink, wids) = app_with(&[7]);
+
+        state.handle_notification(7, AxNotificationKind::WindowMiniaturized, Some(wids[0]));
+        state.handle_notification(7, AxNotificationKind::WindowDeminiaturized, Some(wids[0]));
+
+        let events = announced(&sink);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Event::WindowMinimized(a), Event::WindowDeminiaturized(b)]
+                    if *a == wids[0] && *b == wids[0]
+            ),
+            "{events:?}"
+        );
+    }
+
+    fn minimized_and_restored(events: &[Event]) -> (Vec<WindowId>, Vec<WindowId>) {
+        let mut minimized: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::WindowMinimized(wid) => Some(*wid),
+                _ => None,
+            })
+            .collect();
+        let mut restored: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::WindowDeminiaturized(wid) => Some(*wid),
+                _ => None,
+            })
+            .collect();
+        minimized.sort_by_key(|wid| wid.idx);
+        restored.sort_by_key(|wid| wid.idx);
+        (minimized, restored)
+    }
+
+    #[test]
+    fn hiding_the_application_minimizes_each_window_once() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+
+        for _ in 0..2 {
+            state.handle_notification(1, AxNotificationKind::ApplicationHidden, None);
+        }
+
+        assert_eq!(minimized_and_restored(&announced(&sink)), (wids, vec![]));
+    }
+
+    /// The show restores what the hide minimized, but not a window the user minimized meanwhile.
+    #[test]
+    fn showing_the_application_restores_what_hiding_minimized_and_nothing_else() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+        state.handle_notification(1, AxNotificationKind::ApplicationHidden, None);
+        state.ax.minimized.insert(8, true);
+        announced(&sink);
+
+        for _ in 0..2 {
+            state.handle_notification(1, AxNotificationKind::ApplicationShown, None);
+        }
+
+        assert_eq!(
+            minimized_and_restored(&announced(&sink)),
+            (vec![], vec![wids[0]])
+        );
+    }
+
+    /// A window miniaturized while its application is hidden was minimized by the user, not by the
+    /// hide, so the show leaves it minimized.
+    #[test]
+    fn a_window_miniaturized_while_the_application_is_hidden_stays_minimized_at_the_show() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+        state.handle_notification(1, AxNotificationKind::ApplicationHidden, None);
+        state.handle_notification(8, AxNotificationKind::WindowMiniaturized, Some(wids[1]));
+        announced(&sink);
+
+        state.handle_notification(1, AxNotificationKind::ApplicationShown, None);
+
+        assert_eq!(
+            minimized_and_restored(&announced(&sink)),
+            (vec![], vec![wids[0]])
+        );
+    }
+
+    #[test]
+    fn a_window_taken_on_while_the_application_is_hidden_is_announced_minimized() {
+        let (mut state, sink, _) = app_with(&[7]);
+        state.handle_notification(1, AxNotificationKind::ApplicationHidden, None);
+        state.ax.describe_standard_window(8, rect(0., 0., 100., 100.));
+        announced(&sink);
+
+        let (_, wid, _) =
+            state.register_window(8, peer(8, rect(0., 0., 100., 100.))).expect("registers");
+
+        assert_eq!(minimized_and_restored(&announced(&sink)), (vec![wid], vec![]));
+    }
+
+    /// AXWindows is filtered to the current space, so a change of main window retires only a window
+    /// whose element has died, and names the new main window.
+    #[test]
+    fn a_main_window_change_retires_only_a_dead_element_and_names_the_main_window() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+        state.ax.windows = vec![7];
+        state.ax.frames.remove(&8);
+        state.ax.roles.remove(&8);
+        state.ax.main_window = Some(7);
+
+        state.handle_notification(1, AxNotificationKind::MainWindowChanged, None);
+
+        let events = announced(&sink);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [
+                    Event::WindowDestroyed(gone),
+                    Event::ApplicationMainWindowChanged(PID, Some(main), Quiet::No),
+                ] if *gone == wids[1] && *main == wids[0]
+            ),
+            "{events:?}"
+        );
+    }
+
+    fn poll_once<T>(future: std::pin::Pin<&mut impl Future<Output = T>>) -> std::task::Poll<T> {
+        future.poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    }
+
+    fn main_window_changes(sink: &Sink) -> Vec<(Option<WindowId>, Quiet)> {
+        sink.0
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                Event::ApplicationMainWindowChanged(PID, wid, quiet) => Some((*wid, *quiet)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Raising the window that already has focus would pulse focus and can pull it back from
+    /// transient system UI, so a raise of it alone is reported done and nothing is asked.
+    #[test]
+    fn a_raise_of_the_window_already_focused_is_skipped() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.main_window = Some(wids[0]);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert!(state.borrow().ax.raised.borrow().is_empty(), "nothing raised");
+        assert!(state.borrow().ax.made_key().is_empty(), "nothing made key");
+        assert_eq!(completed(&sink), wids);
+    }
+
+    /// A batch needs every raise for the stacking it asks, the focused window's included.
+    #[test]
+    fn a_batch_holding_the_focused_window_is_still_raised() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+        state.main_window = Some(wids[0]);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7, 8]);
+        assert_eq!(completed(&sink), wids);
+    }
+
+    /// Raising is last-wins, so a batch's order is the stacking it makes: each window is raised and
+    /// reported in the order asked, and only the first is made key.
+    #[test]
+    fn a_batch_is_raised_and_reported_in_its_order() {
+        let (state, sink, wids) = app_with(&[7, 8, 9]);
+        let order = vec![wids[2], wids[0], wids[1]];
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            order.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(*state.borrow().ax.raised.borrow(), [9, 7, 8]);
+        assert_eq!(completed(&sink), order);
+        assert_eq!(state.borrow().ax.made_key(), [(PID, WindowServerId::new(9))]);
+    }
+
+    /// A quiet raise makes the main-window change it causes quiet only for the last window.
+    #[test]
+    fn a_quiet_raise_is_quiet_when_its_last_window_becomes_main() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+        state.ax.main_window = Some(8);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::Yes
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(main_window_changes(&sink), [(Some(wids[1]), Quiet::Yes)]);
+    }
+
+    #[test]
+    fn a_quiet_raise_that_leaves_another_window_main_announces_it_unquietly() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+        state.ax.main_window = Some(7);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::Yes
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(main_window_changes(&sink), [(Some(wids[0]), Quiet::No)]);
+    }
+
+    /// An application in the background is made key and its window raised at once, before the raise
+    /// waits for the application to come to the front: waiting first lets macOS make its previous key
+    /// window authoritative.
+    #[test]
+    fn a_raise_in_a_background_application_raises_then_waits_for_activation() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(poll_once(raise.as_mut()).is_pending(), "waiting for activation");
+        assert_eq!(state.borrow().ax.made_key(), [(PID, WindowServerId::new(7))]);
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7]);
+        assert!(completed(&sink).is_empty(), "not reported done while waiting");
+    }
+
+    /// A background application keeps its main window, so being main is not being focused: a raise
+    /// of a background application's main window is made key and raised like any other.
+    #[test]
+    fn a_raise_of_a_background_application_s_main_window_is_not_skipped() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        state.main_window = Some(wids[0]);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(poll_once(raise.as_mut()).is_pending(), "waiting for activation");
+        assert_eq!(state.borrow().ax.made_key(), [(PID, WindowServerId::new(7))]);
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7]);
+        assert!(completed(&sink).is_empty(), "not reported done while waiting");
+    }
+
+    /// The application's activation ends the wait, and the window already raised is not raised again.
+    #[test]
+    fn a_raise_waiting_for_activation_finishes_when_the_application_activates() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+        assert!(poll_once(raise.as_mut()).is_pending());
+
+        state.borrow_mut().ax.frontmost = true;
+        state
+            .borrow_mut()
+            .handle_notification(1, AxNotificationKind::ApplicationActivated, None);
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7], "raised once");
+        assert_eq!(completed(&sink), wids);
+    }
+
+    /// A raise cancelled while it waits ends unreported. The make-key and raise it already made stay
+    /// made: the activation they started must not lose its window.
+    #[test]
+    fn cancelling_a_raise_waiting_for_activation_ends_it_unreported() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+        assert!(poll_once(raise.as_mut()).is_pending());
+
+        token.cancel();
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Err(RaiseError::RaiseCancelled))
+        ));
+        assert!(completed(&sink).is_empty(), "never reported done");
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7]);
+    }
+
+    #[test]
+    fn a_raise_cancelled_before_it_starts_asks_nothing() {
+        let (state, sink, wids) = app_with(&[7]);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Err(RaiseError::RaiseCancelled))
+        ));
+        assert!(state.borrow().ax.raised.borrow().is_empty());
+        assert!(state.borrow().ax.made_key().is_empty());
+        assert!(completed(&sink).is_empty());
+    }
+
+    /// An activation the application gives no notification of is seen by asking it, every 10ms,
+    /// whether it is frontmost.
+    #[test]
+    fn activation_is_seen_through_frontmost_polling() {
+        let (state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost_reads.borrow_mut().push_back(false);
+        let state = Rc::new(RefCell::new(state));
+        let outcome = Rc::new(RefCell::new(None));
+
+        let (raising, finished, raised) = (state.clone(), outcome.clone(), wids.clone());
+        Executor::run(async move {
+            let token = CancellationToken::new();
+            select! {
+                result = State::handle_raise_request(&raising, raised, &token, 1, Quiet::No) => {
+                    *finished.borrow_mut() = Some(result.is_ok());
+                }
+                () = Timer::sleep(Duration::from_secs(5)) => {}
+            }
+        });
+
+        assert_eq!(*outcome.borrow(), Some(true), "the raise finished");
+        assert_eq!(
+            *state.borrow().ax.raised.borrow(),
+            [7],
+            "raised once, before the wait"
+        );
+        assert!(
+            state.borrow().last_activated.is_some(),
+            "no notification ended it"
+        );
+        assert_eq!(completed(&sink), wids);
+    }
+
+    /// The windows a batch raises before its last are always quiet, so the activation its first
+    /// window waits for is quiet whatever the batch asked.
+    #[test]
+    fn a_batch_waits_for_activation_quietly_for_its_first_window() {
+        let (mut state, sink, wids) = app_with(&[7, 8]);
+        state.ax.frontmost = false;
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+        assert!(poll_once(raise.as_mut()).is_pending());
+
+        {
+            let mut app = state.borrow_mut();
+            app.ax.frontmost = true;
+            app.ax.main_window = Some(7);
+            app.handle_notification(1, AxNotificationKind::ApplicationActivated, None);
+        }
+
+        assert_eq!(main_window_changes(&sink), [(Some(wids[0]), Quiet::Yes)]);
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7, 8]);
+        state
+            .borrow_mut()
+            .handle_request(Request::ApplicationGloballyActivated(PID))
+            .expect("handled");
+        assert!(
+            sink.0
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, Event::ApplicationActivated(PID, Quiet::Yes))),
+            "the activation is quiet: {:?}",
+            sink.0.borrow()
+        );
+    }
+
+    /// A raise of one window activates its application with the quiet it was asked, which the
+    /// application's activation, when the reactor hears of it, carries.
+    #[test]
+    fn a_single_window_raise_activates_with_the_quiet_it_was_asked() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::Yes
+        ));
+        assert!(poll_once(raise.as_mut()).is_pending());
+        {
+            let mut app = state.borrow_mut();
+            app.ax.frontmost = true;
+            app.ax.main_window = Some(7);
+            app.handle_notification(1, AxNotificationKind::ApplicationActivated, None);
+        }
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+
+        state
+            .borrow_mut()
+            .handle_request(Request::ApplicationGloballyActivated(PID))
+            .expect("handled");
+
+        assert_eq!(main_window_changes(&sink), [(Some(wids[0]), Quiet::Yes)]);
+        assert!(
+            sink.0
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, Event::ApplicationActivated(PID, Quiet::Yes))),
+            "{:?}",
+            sink.0.borrow()
+        );
+    }
+
+    /// A raise waits for activation only after a make-key that worked, so one whose window could not
+    /// be made key is raised at once.
+    #[test]
+    fn a_raise_whose_window_cannot_be_made_key_does_not_wait() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        state.ax.server.fail_make_key_window(Some(CGError::Failure));
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7]);
+        assert_eq!(completed(&sink), wids);
+    }
+
+    #[test]
+    fn a_raise_of_a_window_with_no_server_id_is_not_made_key_and_does_not_wait() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        state.ax.server_ids.remove(&7);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert!(state.borrow().ax.made_key().is_empty());
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7]);
+        assert_eq!(completed(&sink), wids);
+    }
+
+    /// Only a standard window's raise waits for activation, so a dialog's is made key and raised at
+    /// once.
+    #[test]
+    fn a_raise_of_a_window_that_is_not_standard_does_not_wait() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        state.ax.subroles.insert(7, "AXDialog".to_owned());
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(matches!(
+            poll_once(raise.as_mut()),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(state.borrow().ax.made_key(), [(PID, WindowServerId::new(7))]);
+        assert_eq!(completed(&sink), wids);
     }
 }

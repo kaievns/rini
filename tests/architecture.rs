@@ -396,6 +396,55 @@ fn the_flight_engine_reads_the_window_server_only_through_its_port() {
     );
 }
 
+/// What the per-app thread would reach the platform through past its `AxWorld`. The world is what a
+/// test fakes, so a call past it reads the live window server or posts a real key event
+/// (src/windows/platform/ax/world.rs). A test may set `FakeAx`'s fields of these names, but takes
+/// no path through either module: the types it needs come from the world too.
+const PAST_THE_WORLD: [&str; 2] = ["window_server", "mouse"];
+
+/// Whether `code` names a path through `module`, as `module::` with no identifier running into it.
+fn names_path_through(code: &str, module: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    code.match_indices(&format!("{module}::"))
+        .any(|(at, _)| !code[..at].ends_with(word))
+}
+
+#[test]
+fn a_path_through_a_module_is_named_only_whole() {
+    assert!(names_path_through(
+        "use crate::windows::platform::mouse::MouseState;",
+        "mouse"
+    ));
+    assert!(!names_path_through("let m = ax.mouse;", "mouse"));
+    assert!(!names_path_through("fake_window_server::new()", "window_server"));
+}
+
+#[test]
+fn the_app_actor_reaches_the_platform_only_through_its_world() {
+    let path = Path::new("src/windows/platform/app_actor.rs");
+    let source = fs::read_to_string(path).expect("readable source");
+    let mut broken = Vec::new();
+    for (line, code) in production_lines_in(&source) {
+        for name in PAST_THE_WORLD {
+            if names_identifier(&code, name) {
+                broken.push(format!("{}:{line}: {name} in {}", slash(path), code.trim()));
+            }
+        }
+    }
+    for (line, code) in code_lines_in(&source) {
+        for name in PAST_THE_WORLD {
+            if names_path_through(&code, name) {
+                broken.push(format!("{}:{line}: {name}:: in {}", slash(path), code.trim()));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "the app actor asks the window server, the pointer state and Command-W of its AxWorld:\n{}",
+        broken.join("\n")
+    );
+}
+
 /// A module only a test builds: the 1-based lines of one written inline, or the name of one in a
 /// file of its own.
 #[derive(Debug, PartialEq)]
