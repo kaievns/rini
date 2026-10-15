@@ -2784,10 +2784,10 @@ fn a_commands_flight_carries_its_cause() {
     }
 }
 
-/// An app's frame report that releases a drag handles the mouse up inside it: the mouse up's flight
-/// is its own, and the report's passes after it are the report's again.
+/// An app's frame report that releases a drag handles the mouse up inside it, as part of the
+/// report: the strip laid out again for the release is the report's press.
 #[test]
-fn a_nested_event_leaves_the_outer_cause() {
+fn a_drag_released_inside_a_frame_report_is_the_reports_press() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
@@ -2821,14 +2821,8 @@ fn a_nested_event_leaves_the_outer_cause() {
 
     let sent = causes(&mut rx);
     assert!(!sent.is_empty(), "the mouse up lays the strip out again");
-    assert!(
-        sent.iter().all(|(_, cause)| cause.what == "mouse_up" && cause.at >= report.at),
-        "{sent:?}"
-    );
-    assert_eq!(
-        reactor.cause, report,
-        "what the report does after it carries the report"
-    );
+    assert!(sent.iter().all(|(_, cause)| *cause == report), "{sent:?}");
+    assert_eq!(reactor.cause, report);
 }
 
 /// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else

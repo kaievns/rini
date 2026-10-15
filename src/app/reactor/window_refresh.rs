@@ -5,7 +5,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rustc_hash::FxHashSet as HashSet;
 use tracing::{debug, warn};
 
-use super::events::window_discovery;
+use super::events::{EventOutcome, window_discovery};
 use super::{Reactor, StaleCleanupState, WindowFilter};
 use crate::app::system_reads::server_facts;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
@@ -136,7 +136,7 @@ impl Reactor {
         new: Vec<(WindowId, WindowInfo)>,
         known_visible: Vec<WindowId>,
         app_info: Option<AppInfo>,
-    ) {
+    ) -> EventOutcome {
         let app_info = app_info.or_else(|| self.apps.get(&pid).map(|app| app.info.clone()));
         let ws = self.reads.window_server.clone();
         let inactive_windows = self
@@ -194,7 +194,7 @@ impl Reactor {
             Ok(outcome) => outcome,
             Err(error) => {
                 warn!(%error, pid, "window discovery cleanup failed");
-                return;
+                return EventOutcome::default();
             }
         };
         let observed_windows = new
@@ -270,6 +270,6 @@ impl Reactor {
                 focused_window,
             },
         ));
-        self.apply_event_outcome(outcome);
+        outcome
     }
 }

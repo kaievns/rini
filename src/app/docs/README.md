@@ -29,7 +29,7 @@ knows the features and converts what they emit.
 | `reactor/events/command.rs` | The commands: layout commands, closing a window, a config update, saving before exit, and focusing or moving the mouse to a display |
 | `reactor/events/drag.rs` | A mouse-up ending a drag: the swap it deferred carried out, and a window dragged onto another display's space moved to that display's strip in its own workspace |
 | `reactor/events/focus.rs` | `resolve`: the space and window a workflow's focus request lands on |
-| `reactor/events/outcome.rs` | `EventOutcome`: what a reducer leaves for after its mutation, in order (window-server updates, discoveries, app requests, raises and refreshes), and `absorb`, which merges two |
+| `reactor/events/outcome.rs` | `EventOutcome`: what a reducer leaves for after its mutation, in order (window-server updates, discoveries, app requests, raises and refreshes), `absorb`, which merges two, `absorb_ahead`, which takes in work handed back mid-drain, and `take_work_before_arrange`, one round of what goes before the arrange |
 | `reactor/events/space.rs` | The window server's windows appearing and going, native Mission Control entered and left, and space lifecycle, with the fullscreen departure and last-known user space rules |
 | `reactor/events/system.rs` | Menus opening and closing, waking from sleep, a raise completing or timing out, and the WM controller's sender registering |
 | `reactor/events/window.rs` | One window's events: created, destroyed, minimized and back, its frame changing (`classify_window_frame_change`), its title, and the mouse moving over it |
@@ -83,6 +83,34 @@ refusal. It was ninety match arms inside `handle_event`, each ending in a `send`
 nothing could check that two actions did not lower to the same command; now a table test
 names every action's target.
 
+## Carrying out an outcome
+
+`apply_event_outcome` carries out what a reducer left in two parts. First the steps before
+the arrange: pictures forgotten, window-server info, the active spaces, the Mission Control
+repair and refresh, discoveries, app rules, created windows, confirmed spaces, fullscreen
+restorations, topology moves, the frames written ahead of the layout, layout events and
+responses, the drag swap, and a drag's release. Then the arrange, once, and what follows
+it: raises, focus, the regroup, key windows, mouse warps, the controller's events, a close,
+a config, notifications, and the deferred application requests last.
+
+Four steps hand work back: a discovery (`on_windows_discovered_with_app_info`), a
+fullscreen restoration, the space change held while Mission Control was open
+(`repair_spaces_after_mission_control`), and a drag's release (`on_mouse_up`). Each
+outcome they return is absorbed with `absorb_ahead`, ahead of what is left of the event's,
+and `take_work_before_arrange` hands it to another round of the steps before the arrange.
+A snapshot that applies the held space change absorbs its outcome the same way. Nothing
+re-enters `apply_event_outcome` or `handle_event`, so an event has one arrange, one
+regroup and one press in the transitions journal: a drag released inside a frame report is
+that report's press (`a_drag_released_inside_a_frame_report_is_the_reports_press`), and
+the window a discovery adds is arranged after the frames written ahead of the layout
+(`work_a_discovery_hands_back_is_arranged_after_the_frames_written_ahead_of_layout`).
+
+Rejected: each of those steps carrying out its own outcome on the spot. That ran a whole
+drain inside the event's, so the nested arrange went before the frames written ahead of
+the layout, cleared the command's strip move and the workspace switch before the event's
+own arrange, forgot what the event's focus raise had lifted so its regroup could lift the
+strip again, and journalled a drag's release as a press of its own.
+
 ## Where the reactor's tests are
 
 `reactor/tests/` is one module per subject. A failing test names the subject, and the
@@ -117,7 +145,7 @@ and `main.rs` for how it is all assembled.
 
 ## Known debt
 
-The reactor's functions past the size limit, `dispatch_workflow` and `apply_event_outcome`
-in `reactor/mod.rs` and one or two in several of the concern files, are held at their sizes
-in `LONG_FNS` in `tests/architecture.rs`; what each of them is, is in
+The reactor's functions past the size limit, `dispatch_workflow` in `reactor/mod.rs` and
+one or two in several of the concern files, are held at their sizes in `LONG_FNS` in
+`tests/architecture.rs`; what each of them is, is in
 [`docs/implementation-audit.md`](../../../docs/implementation-audit.md).

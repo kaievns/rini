@@ -97,7 +97,7 @@ impl Reactor {
             }
             self.recompute_and_set_active_spaces(&[]);
             self.update_complete_window_server_info(Vec::new());
-            self.try_apply_pending_space_change();
+            outcome.absorb_ahead(self.try_apply_pending_space_change());
             return Ok(outcome);
         }
 
@@ -240,7 +240,7 @@ impl Reactor {
         }
         let active_windows = self.authoritative_active_space_windows();
         self.finalize_space_change(&spaces, active_windows, releases_lifecycle_refresh_quarantine);
-        self.try_apply_pending_space_change();
+        outcome.absorb_ahead(self.try_apply_pending_space_change());
         // Repatriate LAST, after finalize_space_change.
         //
         // Everything above this line derives window ownership from where macOS currently
@@ -272,24 +272,25 @@ impl Reactor {
         Ok(outcome)
     }
 
-    fn try_apply_pending_space_change(&mut self) {
-        if let Some(pending) = self.pending_space_change.take() {
-            if pending.screens.len() == self.space_state.screens.len() {
-                // During native Mission Control we must preserve the full forwarded snapshot,
-                // not just the raw spaces vector, otherwise command-space and per-display space
-                // metadata can remain stale after exit.
-                if let Ok(outcome) = self.handle_authoritative_space_snapshot(pending) {
-                    self.apply_event_outcome(outcome);
-                }
-            } else {
-                self.pending_space_change = Some(pending);
-            }
+    /// What applying the space change held back during Mission Control asks for, once the screens
+    /// it was taken on are back.
+    fn try_apply_pending_space_change(&mut self) -> EventOutcome {
+        let Some(pending) = self.pending_space_change.take() else {
+            return EventOutcome::default();
+        };
+        if pending.screens.len() != self.space_state.screens.len() {
+            self.pending_space_change = Some(pending);
+            return EventOutcome::default();
         }
+        // During native Mission Control we must preserve the full forwarded snapshot,
+        // not just the raw spaces vector, otherwise command-space and per-display space
+        // metadata can remain stale after exit.
+        self.handle_authoritative_space_snapshot(pending).unwrap_or_default()
     }
 
-    pub(super) fn repair_spaces_after_mission_control(&mut self) {
+    pub(super) fn repair_spaces_after_mission_control(&mut self) -> EventOutcome {
         // First, apply any SpaceChanged that arrived while MC was active.
-        self.try_apply_pending_space_change();
+        self.try_apply_pending_space_change()
     }
 
     fn finalize_space_change(

@@ -248,7 +248,7 @@ Largest methods, and what each one turned out to be:
 |---|---|---|
 | `handle_layout_response` | 303 → 248 | four rules extracted, one of them a bug fix |
 | `dispatch_workflow` | 288 | a dispatch table; length is not the defect |
-| `apply_event_outcome` | 271 → 261 | three rules extracted; the rest is an ordered drain |
+| `apply_event_outcome` | 271 → 9 | three rules extracted; the drain split at the arrange, with no re-entry |
 | `handle_authoritative_space_snapshot` | 251 → 228 | the display-set comparison extracted |
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
@@ -266,11 +266,14 @@ arguments.
 
 `apply_event_outcome` gave up three rules: `ArrangeRequest::passes_to_run`,
 `EventOutcome::focus_landed` and `notification_ids_to_publish` (`src/app/reactor/managers.rs`),
-with 14 tests. What is left is a drain of 35 outcome fields in one deliberate order, and
-it stays one function on purpose: it takes `outcome` BY VALUE, so partial moves make the
-compiler prove every field is consumed exactly once. Splitting it into phase methods
-means passing `&mut EventOutcome` and `mem::take`-ing fields, which trades a
-compiler-checked invariant for four shorter functions.
+with 14 tests. It no longer re-enters itself: what a discovery, a fullscreen restoration,
+the held space change and a drag's release hand back is absorbed into the event's outcome
+(`absorb_ahead`), and it is 9 lines over two halves. `settle_before_arrange` is one round
+of the steps before the arrange, repeated while `take_work_before_arrange` finds work, and
+`arrange_and_follow_up` the rest. Each takes its outcome by value, and
+`settle_before_arrange` destructures its round exhaustively, so a field taken before the
+arrange and left unused there fails the `-D warnings` build. See "Carrying out an outcome"
+in `src/app/docs/README.md`.
 
 `dispatch_workflow` is long because it is a dispatch table — one arm per event variant,
 every arm delegating. Length is not the defect there and splitting it by event family

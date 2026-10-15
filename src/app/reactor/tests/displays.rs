@@ -453,7 +453,9 @@ fn discovery_preserves_hidden_windows_on_their_original_same_display_space() {
     reactor.state.windows.mark_window_visible(WindowServerId::new(103));
     reactor.mission_control_manager.pending_mission_control_refresh.insert(pid);
 
-    reactor.on_windows_discovered_with_app_info(pid, vec![], vec![WindowId::new(pid, 3)], None);
+    let outcome =
+        reactor.on_windows_discovered_with_app_info(pid, vec![], vec![WindowId::new(pid, 3)], None);
+    reactor.apply_event_outcome(outcome);
 
     let space1_workspaces = reactor.query_workspaces(Some(space1));
     let space2_workspaces = reactor.query_workspaces(Some(space2));

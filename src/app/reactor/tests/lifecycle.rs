@@ -590,3 +590,49 @@ fn the_quit_save_forgets_a_space_the_display_moved_off_and_left_empty() {
         vec![new]
     );
 }
+
+/// A discovery hands work back mid-drain, a window to add and an arrange. That work is carried out
+/// in this outcome's own steps: its window is arranged in the one arrange, after this outcome's
+/// frame write ahead of the layout, and the deferred request still goes last.
+#[test]
+fn work_a_discovery_hands_back_is_arranged_after_the_frames_written_ahead_of_layout() {
+    let (mut apps, mut reactor) = test_context();
+    let space = SpaceId::new(1);
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+
+    let (first, added) = (WindowId::new(1, 1), WindowId::new(1, 3));
+    let mut info = make_window(3);
+    let wsid = WindowServerId::new(10_003);
+    info.sys_id = Some(wsid);
+    reactor.track_test_window_server_info(wsid, 1, info.frame);
+    reactor.state.windows.set_window_server_space(wsid, Some(space));
+    let placed = CGRect::new(CGPoint::new(5., 5.), CGSize::new(300., 200.));
+    let outcome = EventOutcome::layout_changed(false)
+        .with_discovery(crate::app::reactor::events::WindowDiscoveryRequest {
+            pid: 1,
+            new: vec![(added, info)],
+            known_visible: vec![first, WindowId::new(1, 2), added],
+            app_info: None,
+        })
+        .with_pre_layout_window_frame_write(first, placed)
+        .with_app_request(1, Request::GetVisibleWindows);
+    reactor.apply_event_outcome(outcome);
+
+    let sent: Vec<_> = apps
+        .requests()
+        .into_iter()
+        .map(|request| match request {
+            Request::SetWindowFrame(window, frame, ..) => (Some(window), Some(frame == placed)),
+            Request::GetVisibleWindows => (None, None),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(sent, [
+        (Some(first), Some(true)),
+        (Some(added), Some(false)),
+        (None, None)
+    ]);
+}
