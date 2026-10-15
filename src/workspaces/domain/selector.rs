@@ -100,6 +100,22 @@ mod tests {
         }
     }
 
+    /// Only the lowercase wire strings are steps, so any other spelling reaches a workspace that
+    /// carries a step's name.
+    #[test]
+    fn a_workspace_called_next_is_reached_by_another_spelling_of_its_name() {
+        let workspaces = stack(["main", "next", "prev"]);
+        let [_, next, prev] = [0, 1, 2].map(|i| workspaces[i].0);
+        for (name, expected) in [("Next", next), ("NEXT", next), ("Prev", prev)] {
+            let selector = WorkspaceSelector::Name(name.to_owned());
+            assert_eq!(
+                resolve_workspace(&selector, None, &workspaces),
+                Some(expected),
+                "{name}"
+            );
+        }
+    }
+
     /// Workspaces stack downward, so `Next` is an edge at the BOTTOM and `Prev` one at the top.
     #[test]
     fn a_step_names_the_edge_it_can_run_into() {

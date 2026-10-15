@@ -77,7 +77,7 @@ mod tests {
     }
 
     /// The wire shape is the one a plain string had, so a client sending `"next"` reaches the step
-    /// and any other string still reaches a name.
+    /// and any other string, "Next" included, still reaches a name.
     #[test]
     fn a_workspace_step_is_a_keyword_and_anything_else_is_a_name() {
         let parse = |json: &str| serde_json::from_str::<WorkspaceSelector>(json).expect("parses");

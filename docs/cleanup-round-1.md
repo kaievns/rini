@@ -75,11 +75,12 @@ it is shared by every arm.
 Named by the RULE rather than by line count this time. Four are out since: the park corner is
 `strip_frame` and the floating rescue `usable_floating_frame`, falling back to `centred_on`, each
 tested in `workspaces/engine/frames.rs`, and `op_space` collapsed to
-`space_with_window(window).unwrap_or(space)` in `workspaces/engine/moves.rs`. One is still open:
+`space_with_window(window).unwrap_or(space)` in `workspaces/engine/moves.rs`. The last one open
+is out too:
 
 | rule | where | why it is worth naming |
 |---|---|---|
-| `"next"` / `"prev"` | `move_window_to_workspace` | matched as magic NAMES before the name lookup, so a workspace a user actually names "next" cannot be selected by name. Undocumented trap |
+| `"next"` / `"prev"` | `resolve_workspace` in `src/workspaces/domain/selector.rs` | a step is `WorkspaceSelector::Relative(RelativeWorkspace::Next/Prev)`, not a magic name, so `move_window_to_workspace` and an app rule resolve it the same way. On the wire only the exact lowercase strings are steps; specs/workspaces.md states the rule |
 
 `on_windows_on_screen_updated` sequences store mutations on `was_floating` branches, which is
 orchestration; its one rule, whether a window's new constraints change a layout, is

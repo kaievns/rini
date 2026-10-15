@@ -48,9 +48,10 @@ moves along the strip within one workspace.
 - The CLI MUST NOT follow unless asked, with `--follow`.
 - A move acts on the space the window is actually on, not the space the command named.
 - A move's `next` and `prev` are steps through the stack, not names. Neither wraps, and a step past
-  the end bounces. On the wire they are the strings `"next"` and `"prev"`, read as steps before any
-  name, so an IPC client cannot name a workspace called "next". Binds name a workspace by its place
-  in the config and window rules by its name, so a workspace called "next" is reachable from both.
+  the end bounces. On the wire only the exact lowercase strings `"next"` and `"prev"` are steps,
+  read before any name. Any other spelling is a name, compared ignoring case, so an IPC client
+  reaches a workspace called "next" as `"Next"`. Binds name a workspace by its place in the config
+  and window rules by its name, so a workspace called "next" is reachable from both.
 
 ## Relaunching an application
 
