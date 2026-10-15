@@ -1,8 +1,9 @@
 //! The tree's rules, checked against the tree.
 //!
-//! A ratchet: the files that already break the macOS rule are named in `MIXED`, and nothing else may
-//! join them. The rules in prose, why they are these rules, and why a test rather than the compiler
-//! holds them: `docs/architecture.md`.
+//! Ratchets: what already breaks a rule is named, and nothing else may join it. The files that break
+//! the macOS rule are `MIXED`, the functions and files past the size limits `LONG_FNS` and
+//! `LONG_FILES`. The rules in prose, why they are these rules, and why a test rather than the
+//! compiler holds them: `docs/architecture.md`.
 
 use std::fs;
 use std::ops::RangeInclusive;
@@ -100,31 +101,25 @@ fn code_lines(path: &Path) -> Vec<(usize, String)> {
 }
 
 fn code_lines_in(source: &str) -> Vec<(usize, String)> {
-    let mut in_block = false;
-    let mut out = Vec::new();
-    for (n, raw) in source.lines().enumerate() {
-        let mut line = raw.trim().to_string();
-        if in_block {
-            match line.find("*/") {
-                Some(end) => {
-                    line = line[end + 2..].to_string();
-                    in_block = false;
-                }
-                None => continue,
-            }
-        }
-        if let Some(start) = line.find("/*") {
-            in_block = !line[start..].contains("*/");
-            line.truncate(start);
-        }
-        if let Some(start) = line.find("//") {
-            line.truncate(start);
-        }
-        if !line.trim().is_empty() {
-            out.push((n + 1, line));
-        }
-    }
-    out
+    blank_comments(source, false)
+        .lines()
+        .enumerate()
+        .map(|(n, line)| (n + 1, line.trim().to_string()))
+        .filter(|(_, line)| !line.is_empty())
+        .collect()
+}
+
+#[test]
+fn a_comment_is_stripped_and_a_comment_marker_in_a_string_is_not() {
+    let source =
+        "let url = \"http://x\"; // note\n/* a\n /* nested */ still */ let b = '/';\n// only\n";
+    assert_eq!(
+        code_lines_in(source),
+        vec![
+            (1, "let url = \"http://x\";".to_string()),
+            (3, "let b = '/';".to_string())
+        ]
+    );
 }
 
 fn feature_files() -> Vec<PathBuf> {
@@ -409,16 +404,21 @@ fn test_files(files: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The code of `source` that builds outside a test, comments stripped: all of it but its inline
-/// `#[cfg(test)]` modules.
-fn production_lines_in(source: &str) -> Vec<(usize, String)> {
-    let inline: Vec<RangeInclusive<usize>> = test_modules(source)
+/// The 1-based lines of each inline `#[cfg(test)]` module of `source`.
+fn inline_test_ranges(source: &str) -> Vec<RangeInclusive<usize>> {
+    test_modules(source)
         .into_iter()
         .filter_map(|module| match module {
             TestModule::Inline(lines) => Some(lines),
             TestModule::File(_) => None,
         })
-        .collect();
+        .collect()
+}
+
+/// The code of `source` that builds outside a test, comments stripped: all of it but its inline
+/// `#[cfg(test)]` modules.
+fn production_lines_in(source: &str) -> Vec<(usize, String)> {
+    let inline = inline_test_ranges(source);
     code_lines_in(source)
         .into_iter()
         .filter(|(line, _)| !inline.iter().any(|lines| lines.contains(line)))
@@ -557,6 +557,19 @@ fn every_feature_and_its_layers_are_declared() {
             }
         }
     }
+}
+
+/// The map at the top of `src/lib.rs` names every feature.
+#[test]
+fn the_crate_map_names_every_feature() {
+    let map = fs::read_to_string("src/lib.rs").expect("readable src/lib.rs");
+    let unnamed: Vec<&str> = FEATURES
+        .iter()
+        .chain(["app"].iter())
+        .copied()
+        .filter(|feature| !map.contains(&format!("//! src/{feature}/ ")))
+        .collect();
+    assert!(unnamed.is_empty(), "src/lib.rs's map of the tree leaves out: {unnamed:?}");
 }
 
 /// Every feature and every crate carries its own `docs/README.md`.
@@ -896,4 +909,679 @@ fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
+}
+
+/// The longest a function may be, in code lines: comments, blank lines and test code not counted.
+const FN_LIMIT: usize = 100;
+/// The longest a file may be, counted the same way.
+const FILE_LIMIT: usize = 1500;
+
+/// The functions over `FN_LIMIT`, each at its size now as its ceiling: file, name, ceiling.
+const LONG_FNS: [(&str, &str, usize); 41] = [
+    ("crates/rini-ipc/src/mach.rs", "mach_server_begin", 101),
+    ("src/animation/domain/choreography/slide.rs", "retarget", 156),
+    ("src/animation/domain/motion/plan.rs", "merge_plans", 202),
+    ("src/app/config/kdl/apply.rs", "apply", 134),
+    ("src/app/config/kdl/apply.rs", "apply_binds", 105),
+    ("src/app/config/kdl/apply.rs", "window_rule", 115),
+    ("src/app/notifications.rs", "new", 130),
+    ("src/app/reactor/animation.rs", "animate_layout", 147),
+    ("src/app/reactor/events/command.rs", "handle_command_layout", 105),
+    ("src/app/reactor/events/space.rs", "handle_window_server_appeared", 162),
+    ("src/app/reactor/events/window.rs", "handle_window_frame_changed", 148),
+    ("src/app/reactor/events/window_discovery.rs", "emit_layout_events", 147),
+    ("src/app/reactor/mod.rs", "apply_event_outcome", 212),
+    ("src/app/reactor/mod.rs", "dispatch_workflow", 274),
+    ("src/app/reactor/mod.rs", "handle_authoritative_space_snapshot", 190),
+    ("src/app/reactor/mod.rs", "handle_layout_response", 190),
+    ("src/app/reactor/mod.rs", "maybe_swap_on_drag", 111),
+    ("src/app/reactor/mod.rs", "on_windows_discovered_with_app_info", 147),
+    ("src/app/reactor/mod.rs", "start_strip_switch", 131),
+    ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
+    ("src/displays/platform/spaces.rs", "build_forwarded_state", 118),
+    ("src/displays/platform/spaces.rs", "handle_event", 118),
+    ("src/displays/screen.rs", "refresh_snapshot", 130),
+    ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
+    ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
+    ("src/layout/domain/scrolling.rs", "calculate_layout", 247),
+    ("src/main.rs", "main", 292),
+    ("src/pictures/domain/watch.rs", "seen", 146),
+    ("src/transitions/platform/engine.rs", "merge_now", 124),
+    ("src/transitions/platform/engine.rs", "start", 247),
+    ("src/transitions/platform/engine.rs", "start_surface", 124),
+    ("src/windows/platform/app_actor.rs", "handle_notification", 148),
+    ("src/windows/platform/app_actor.rs", "handle_raise_request", 101),
+    ("src/windows/platform/app_actor.rs", "handle_request", 132),
+    ("src/workspaces/domain/virtual_workspace.rs", "apply_app_rule_decision", 133),
+    ("src/workspaces/engine.rs", "calculate_layout_with_virtual_workspaces", 177),
+    ("src/workspaces/engine.rs", "handle_event_inner", 128),
+    ("src/workspaces/engine.rs", "move_focus_internal", 106),
+    ("src/workspaces/engine.rs", "move_window_to_space", 119),
+    ("src/workspaces/engine.rs", "move_window_to_workspace", 156),
+    ("src/workspaces/engine.rs", "on_windows_on_screen_updated", 151),
+];
+
+/// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
+const LONG_FILES: [(&str, usize); 4] = [
+    ("src/app/reactor/mod.rs", 4638),
+    ("src/layout/domain/scrolling.rs", 1825),
+    ("src/transitions/platform/engine.rs", 2021),
+    ("src/workspaces/engine.rs", 2553),
+];
+
+/// `source` with every comment blanked, so a `//` inside a string is not a comment, and with
+/// `literals` every string and character literal's contents replaced by `x` too, so a brace or a
+/// `fn` inside one is not code. Lines stay where they were.
+fn blank_comments(source: &str, literals: bool) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(source.len());
+    let keep_line = |c: char, fill: char| if c == '\n' { '\n' } else { fill };
+    let literal = |c: char| if literals { keep_line(c, 'x') } else { c };
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        let before = i.checked_sub(1).map(|p| chars[p]);
+        if c == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            let mut depth = 0;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(keep_line(chars[i], ' '));
+                    i += 1;
+                }
+            }
+        } else if c == 'r'
+            && matches!(next, Some('"' | '#'))
+            && before.is_none_or(|b| !ident(b) || b == 'b')
+        {
+            let hashes = chars[i + 1..].iter().take_while(|&&h| h == '#').count();
+            if chars.get(i + 1 + hashes) != Some(&'"') {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            let close: String = std::iter::once('"').chain(std::iter::repeat_n('#', hashes)).collect();
+            let open = 2 + hashes;
+            out.extend(&chars[i..i + open]);
+            i += open;
+            while i < chars.len() && !chars[i..].starts_with(&close.chars().collect::<Vec<_>>()) {
+                out.push(literal(chars[i]));
+                i += 1;
+            }
+            out.push_str(&close);
+            i += close.len();
+        } else if c == '"' {
+            out.push('"');
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' {
+                    out.push(literal('\\'));
+                    i += 1;
+                }
+                if let Some(&escaped) = chars.get(i) {
+                    out.push(literal(escaped));
+                }
+                i += 1;
+            }
+            out.push('"');
+            i += 1;
+        } else if c == '\'' && next == Some('\\') {
+            out.push('\'');
+            i += 1;
+            while i < chars.len() && chars[i] != '\'' {
+                if chars[i] == '\\' {
+                    out.push(literal('\\'));
+                    i += 1;
+                }
+                if let Some(&escaped) = chars.get(i) {
+                    out.push(literal(escaped));
+                }
+                i += 1;
+            }
+            out.push('\'');
+            i += 1;
+        } else if c == '\'' && chars.get(i + 2) == Some(&'\'') {
+            out.extend(['\'', literal(chars[i + 1]), '\'']);
+            i += 3;
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// A function in a source file: its name, the 1-based line of its `fn`, and its code lines from
+/// that line to its closing brace.
+#[derive(Debug, PartialEq)]
+struct FnSpan {
+    name: String,
+    line: usize,
+    code_lines: usize,
+}
+
+/// What of `source` builds outside a test: its code-line count and every function with a body,
+/// neither counting an inline `#[cfg(test)]` module or an item `#[cfg(test)]` or `#[test]` marks.
+fn production_size(source: &str) -> (usize, Vec<FnSpan>) {
+    let blanked = blank_comments(source, true);
+    let lines: Vec<&str> = blanked.lines().collect();
+    let mut excluded = inline_test_ranges(source);
+    let is_code = |n: usize| !lines[n - 1].trim().is_empty();
+    let mut fns = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let number = index + 1;
+        let Some((name, column)) = fns_declared(line).next() else {
+            continue;
+        };
+        if excluded.iter().any(|lines| lines.contains(&number)) {
+            continue;
+        }
+        let Some(end) = body_end(&lines, index, column) else {
+            continue;
+        };
+        if let Some(first) = test_attribute(&lines, index) {
+            excluded.push(first + 1..=end + 1);
+            continue;
+        }
+        let code_lines = (number..=end + 1).filter(|&n| is_code(n)).count();
+        fns.push(FnSpan { name, line: number, code_lines });
+    }
+    let total = (1..=lines.len())
+        .filter(|&n| is_code(n) && !excluded.iter().any(|lines| lines.contains(&n)))
+        .count();
+    (total, fns)
+}
+
+/// The names the `fn`s on `line` declare, each with the column after it.
+fn fns_declared(line: &str) -> impl Iterator<Item = (String, usize)> + '_ {
+    let bytes = line.as_bytes();
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    line.match_indices("fn ").filter_map(move |(start, _)| {
+        if start > 0 && ident(bytes[start - 1]) {
+            return None;
+        }
+        let rest = line[start + 3..].trim_start();
+        let name: String = rest.bytes().take_while(|&b| ident(b)).map(char::from).collect();
+        (!name.is_empty() && !name.as_bytes()[0].is_ascii_digit())
+            .then(|| (name, line.len() - rest.len()))
+    })
+}
+
+/// The 0-based line of the brace closing the body of the `fn` that starts at `lines[index]`, or
+/// `None` for a declaration with no body.
+fn body_end(lines: &[&str], index: usize, column: usize) -> Option<usize> {
+    let mut nesting = 0i32;
+    let mut depth = 0i32;
+    let mut opened = false;
+    for (n, line) in lines.iter().enumerate().skip(index) {
+        let text = if n == index { &line[column..] } else { line };
+        for b in text.bytes() {
+            match b {
+                b'(' | b'[' => nesting += 1,
+                b')' | b']' => nesting -= 1,
+                b';' if !opened && nesting == 0 => return None,
+                b'{' if opened || nesting == 0 => {
+                    opened = true;
+                    depth += 1;
+                }
+                b'}' if opened => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(n);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// The 0-based line of the first attribute above `lines[index]`, when one of them marks its item
+/// as built only for a test.
+fn test_attribute(lines: &[&str], index: usize) -> Option<usize> {
+    let mut first = index;
+    let mut marked = false;
+    for n in (0..index).rev() {
+        let line = lines[n].trim();
+        if line.is_empty() {
+            continue;
+        }
+        if !line.starts_with("#[") {
+            break;
+        }
+        first = n;
+        marked |= line == "#[cfg(test)]" || line == "#[test]";
+    }
+    marked.then_some(first)
+}
+
+/// Every non-test file of `src/` and `crates/`, with its production size.
+fn production_sizes() -> Vec<(String, usize, Vec<FnSpan>)> {
+    let files: Vec<PathBuf> = rust_files(Path::new("src"))
+        .into_iter()
+        .chain(rust_files(Path::new("crates")))
+        .collect();
+    let tests = test_files(&files);
+    files
+        .iter()
+        .filter(|path| !tests.contains(path))
+        .map(|path| {
+            let (total, fns) = production_size(&fs::read_to_string(path).expect("readable source"));
+            (slash(path), total, fns)
+        })
+        .collect()
+}
+
+/// What breaks the size limits in `sizes`, given the functions and files named with a ceiling: an
+/// offender not named, a named one past its ceiling or under it, and a named one back under the
+/// limit or gone. A ceiling names the longest function of its name in its file; any other of that
+/// name is held to `FN_LIMIT`.
+fn size_breaches(
+    sizes: &[(String, usize, Vec<FnSpan>)],
+    long_fns: &[(&str, &str, usize)],
+    long_files: &[(&str, usize)],
+) -> Vec<String> {
+    let mut broken = Vec::new();
+    for (file, total, fns) in sizes {
+        match long_files.iter().find(|(name, _)| name == file) {
+            Some(_) if *total <= FILE_LIMIT => broken.push(format!(
+                "{file}: {total} code lines, under {FILE_LIMIT}: remove it from LONG_FILES"
+            )),
+            Some(&(_, ceiling)) if *total > ceiling => {
+                broken.push(format!("{file}: {total} code lines, past its ceiling of {ceiling}"));
+            }
+            Some(&(_, ceiling)) if *total < ceiling => broken.push(format!(
+                "{file}: {total} code lines, under its ceiling of {ceiling}: lower it in \
+                 LONG_FILES to {total}"
+            )),
+            None if *total > FILE_LIMIT => {
+                broken.push(format!("{file}: {total} code lines, past {FILE_LIMIT}"));
+            }
+            _ => {}
+        }
+        for (index, span) in fns.iter().enumerate() {
+            let longest = fns
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| other.name == span.name)
+                .max_by_key(|&(at, other)| (other.code_lines, std::cmp::Reverse(at)))
+                .map(|(at, _)| at);
+            let entry = long_fns.iter().find(|(f, name, _)| f == file && *name == span.name);
+            match entry.filter(|_| longest == Some(index)) {
+                Some(_) if span.code_lines <= FN_LIMIT => broken.push(format!(
+                    "{file}: `{}` {} code lines, under {FN_LIMIT}: remove it from LONG_FNS",
+                    span.name, span.code_lines
+                )),
+                Some(&(_, _, ceiling)) if span.code_lines > ceiling => broken.push(format!(
+                    "{file}:{}: `{}` {} code lines, past its ceiling of {ceiling}",
+                    span.line, span.name, span.code_lines
+                )),
+                Some(&(_, _, ceiling)) if span.code_lines < ceiling => broken.push(format!(
+                    "{file}:{}: `{}` {} code lines, under its ceiling of {ceiling}: lower it in \
+                     LONG_FNS to {}",
+                    span.line, span.name, span.code_lines, span.code_lines
+                )),
+                None if span.code_lines > FN_LIMIT => broken.push(format!(
+                    "{file}:{}: `{}` {} code lines, past {FN_LIMIT}",
+                    span.line, span.name, span.code_lines
+                )),
+                _ => {}
+            }
+        }
+    }
+    for &(file, name, _) in long_fns {
+        let present = sizes
+            .iter()
+            .any(|(f, _, fns)| f == file && fns.iter().any(|span| span.name == name));
+        if !present {
+            broken.push(format!("{file}: `{name}` is gone: remove it from LONG_FNS"));
+        }
+    }
+    for &(file, _) in long_files {
+        if !sizes.iter().any(|(f, _, _)| f == file) {
+            broken.push(format!("{file} is gone: remove it from LONG_FILES"));
+        }
+    }
+    broken.sort();
+    broken
+}
+
+/// No function grows past `FN_LIMIT` code lines and no file past `FILE_LIMIT`. The ones already
+/// past are named in `LONG_FNS` and `LONG_FILES` with a ceiling at their size now: one that shrinks
+/// lowers its ceiling in the same change, and leaves the list once it is back under.
+#[test]
+fn no_function_or_file_grows_past_its_limit() {
+    let broken = size_breaches(&production_sizes(), &LONG_FNS, &LONG_FILES);
+    assert!(
+        broken.is_empty(),
+        "split the function or the file rather than raising a ceiling or adding an entry, and lower \
+         a ceiling the change shrank under:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_size_breach_is_a_new_offender_a_grown_exception_or_a_stale_one() {
+    let span = |name: &str, line, code_lines| FnSpan { name: name.to_string(), line, code_lines };
+    let sizes = vec![
+        (
+            "a.rs".to_string(),
+            1501,
+            vec![
+                span("new", 1, 101),
+                span("grown", 2, 121),
+                span("kept", 3, 115),
+                span("lowered", 4, 110),
+                span("shrunk", 5, 100),
+                span("twin", 6, 125),
+                span("twin", 7, 105),
+            ],
+        ),
+        ("b.rs".to_string(), 1600, vec![span("small", 1, 100)]),
+        ("c.rs".to_string(), 1500, vec![]),
+        ("e.rs".to_string(), 1650, vec![]),
+    ];
+    let long_fns = [
+        ("a.rs", "grown", 120),
+        ("a.rs", "kept", 115),
+        ("a.rs", "lowered", 115),
+        ("a.rs", "shrunk", 130),
+        ("a.rs", "twin", 125),
+        ("a.rs", "deleted", 140),
+    ];
+    let long_files = [("b.rs", 1700), ("c.rs", 1600), ("d.rs", 1600), ("e.rs", 1650)];
+    assert_eq!(
+        size_breaches(&sizes, &long_fns, &long_files),
+        vec![
+            "a.rs: 1501 code lines, past 1500",
+            "a.rs: `deleted` is gone: remove it from LONG_FNS",
+            "a.rs: `shrunk` 100 code lines, under 100: remove it from LONG_FNS",
+            "a.rs:1: `new` 101 code lines, past 100",
+            "a.rs:2: `grown` 121 code lines, past its ceiling of 120",
+            "a.rs:4: `lowered` 110 code lines, under its ceiling of 115: lower it in LONG_FNS to 110",
+            "a.rs:7: `twin` 105 code lines, past 100",
+            "b.rs: 1600 code lines, under its ceiling of 1700: lower it in LONG_FILES to 1600",
+            "c.rs: 1500 code lines, under 1500: remove it from LONG_FILES",
+            "d.rs is gone: remove it from LONG_FILES",
+        ]
+    );
+}
+
+#[test]
+fn a_function_is_measured_in_code_lines_from_its_fn_to_its_closing_brace() {
+    let source = r##"fn short() {
+    let s = "{ not a brace";
+    let c = '{';
+    let r = r#"fn fake() {"#;
+}
+
+pub(crate) fn longer<'a>(a: [u8; 2], b: &'a str) -> u8 {
+    // a comment line
+    let x = 1; /* { */
+
+    x + a[0]
+}
+
+trait T {
+    fn declared(&self);
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+fn helper() {
+    let x = 1;
+}
+
+#[cfg(test)]
+mod tests {
+    fn inside() {}
+}
+"##;
+    let (total, fns) = production_size(source);
+    assert_eq!(
+        fns,
+        vec![
+            FnSpan { name: "short".to_string(), line: 1, code_lines: 5 },
+            FnSpan { name: "longer".to_string(), line: 7, code_lines: 4 },
+        ]
+    );
+    assert_eq!(total, 12);
+}
+
+/// Whether `text` names `path` whole, not as the tail of a longer path or name.
+fn names_path(text: &str, path: &str) -> bool {
+    let part = |c: char| c.is_alphanumeric() || c == '_' || c == '/';
+    text.match_indices(path).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(part)
+            && !text[at + path.len()..].chars().next().is_some_and(part)
+    })
+}
+
+/// Every module of a feature's `domain/`, and of the reactor and its `events/`, has a line in the
+/// README beside it, named by its path from the feature's root.
+#[test]
+fn every_domain_and_reactor_module_is_named_in_its_readme() {
+    let mut layers: Vec<(PathBuf, PathBuf)> = FEATURES
+        .iter()
+        .map(|feature| (Path::new("src").join(feature), PathBuf::from("domain")))
+        .collect();
+    layers.push((PathBuf::from("src/app"), PathBuf::from("reactor")));
+    layers.push((PathBuf::from("src/app"), PathBuf::from("reactor/events")));
+    let mut missing = Vec::new();
+    for (root, layer) in layers {
+        let Ok(entries) = fs::read_dir(root.join(&layer)) else { continue };
+        let readme_path = root.join("docs/README.md");
+        let readme = fs::read_to_string(&readme_path).expect("every feature has a README");
+        let mut files: Vec<PathBuf> = entries
+            .map(|entry| entry.expect("readable entry").path())
+            .filter(|path| path.extension().is_some_and(|e| e == "rs"))
+            .filter(|path| path.file_name().is_some_and(|name| name != "mod.rs"))
+            .collect();
+        files.sort();
+        for path in files {
+            let relative = slash(path.strip_prefix(&root).expect("under its root"));
+            if !names_path(&readme, &relative) {
+                missing.push(format!("{}: `{relative}`", slash(&readme_path)));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "each of these modules wants a row in its README's \"What it owns\", by its path from the \
+         feature's root:\n{}",
+        missing.join("\n")
+    );
+}
+
+#[test]
+fn a_path_is_named_only_whole() {
+    let readme = "| `domain/app_rules.rs` | rules |\nsee src/x/domain/zoom.rs and domain/raise.rs.";
+    assert!(names_path(readme, "domain/app_rules.rs"));
+    assert!(names_path(readme, "domain/raise.rs"));
+    assert!(!names_path(readme, "domain/rules.rs"));
+    assert!(!names_path(readme, "domain/zoom.rs"));
+    assert!(!names_path(readme, "domain/raise_order.rs"));
+}
+
+/// Names the docs quote that rini does not define: the window server's and SkyLight's internals as
+/// disassembled, and yabai's and niri's functions as read from their source.
+const OTHERS_NAMES: [&str; 13] = [
+    "managed_display_set_current_space",
+    "post_space_lifecycle_notification",
+    "managed_space_update_membership",
+    "sls_transaction_commit_ca",
+    "hw_capture_window_list_common",
+    "window_list_create_image_from_array_internal",
+    "window_manager_animate_window_list_async",
+    "scripting_addition_swap_window_proxy_in",
+    "scripting_addition_swap_window_proxy_out",
+    "window_manager_set_window_frame",
+    "sls_window_disable_shadow",
+    "is_centering_focused_column",
+    "compute_new_view_offset",
+];
+
+/// Names the docs record as deleted: the audits' findings as they were found, and rift's options
+/// a spec says are gone.
+const GONE_NAMES: [&str; 13] = [
+    "focus_stays_on_this_display",
+    "current_reported_space_for_window_id",
+    "capture_composite_via_skylight",
+    "broadcast_window_title_changed",
+    "broadcast_focused_window_changed",
+    "last_space_for_display_uuid",
+    "space_for_display_uuid",
+    "workspace_step_at_boundary",
+    "should_buffer_topology_updates",
+    "should_quarantine_window_space_event",
+    "consume_or_expel_window",
+    "focus_follows_mouse_disable_hotkey",
+    "mouse_hides_on_focus",
+];
+
+/// The snake_case name of four words or more an inline code span `span` holds, path and call
+/// parentheses aside: `a_b_c_d`, `module::a_b_c_d`, `a_b_c_d()`.
+fn long_snake_name(span: &str) -> Option<&str> {
+    let path = span.strip_suffix("()").unwrap_or(span);
+    let (prefix, name) = path.rsplit_once("::").unwrap_or(("", path));
+    let identifier = |part: &str| {
+        part.starts_with(|c: char| c.is_alphabetic() || c == '_')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+    let words: Vec<&str> = name.split('_').collect();
+    let snake = words.len() >= 4
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && words.iter().all(|word| {
+            !word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        });
+    (snake && (prefix.is_empty() || prefix.split("::").all(identifier))).then_some(name)
+}
+
+/// The inline code spans of `text` outside its fenced blocks, each with its 1-based line.
+fn code_spans(text: &str) -> Vec<(usize, &str)> {
+    let mut fenced = false;
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        out.extend(line.split('`').skip(1).step_by(2).map(|span| (n + 1, span)));
+    }
+    out
+}
+
+/// The names `source` declares as a function or a field.
+fn declared_names(source: &str) -> Vec<String> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    for (_, code) in code_lines_in(source) {
+        out.extend(fns_declared(&code).map(|(name, _)| name));
+        let field = code.trim_start();
+        let field = field.strip_prefix("pub").map_or(field, |rest| {
+            let rest = rest.strip_prefix('(').and_then(|r| r.split_once(')')).map_or(rest, |(_, r)| r);
+            rest.trim_start()
+        });
+        if let Some((name, _)) = field.split_once(':')
+            && !name.is_empty()
+            && name.chars().all(ident)
+            && !field[name.len()..].starts_with("::")
+        {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// The markdown the identifier check reads: the root README, `docs/`, `specs/`, and every feature's
+/// and crate's own `docs/`.
+fn documentation() -> Vec<PathBuf> {
+    let mut files = vec![PathBuf::from("README.md")];
+    for dir in ["docs", "specs"] {
+        collect_markdown(Path::new(dir), &mut files);
+    }
+    let mut inside = Vec::new();
+    for dir in ["src", "crates"] {
+        collect_markdown(Path::new(dir), &mut inside);
+    }
+    files.extend(inside.into_iter().filter(|path| slash(path).contains("/docs/")));
+    files.sort();
+    files
+}
+
+/// Every function a doc names by a snake_case name of four words or more, the tests included, is
+/// still a function or a field in `src/`, `crates/` or `tests/`, so renaming a test a doc cites fails
+/// here. The names rini quotes from other code are `OTHERS_NAMES`, and the ones a doc records as
+/// deleted are `GONE_NAMES`.
+#[test]
+fn every_long_name_a_doc_cites_is_still_defined() {
+    let mut defined = std::collections::HashSet::new();
+    for path in ["src", "crates", "tests"].iter().flat_map(|dir| rust_files(Path::new(dir))) {
+        defined.extend(declared_names(&fs::read_to_string(&path).expect("readable source")));
+    }
+    let mut broken = Vec::new();
+    let mut cited = std::collections::HashSet::new();
+    for path in documentation() {
+        let text = fs::read_to_string(&path).expect("readable doc");
+        for (line, span) in code_spans(&text) {
+            let Some(name) = long_snake_name(span) else { continue };
+            cited.insert(name.to_string());
+            let listed = OTHERS_NAMES.contains(&name) || GONE_NAMES.contains(&name);
+            if !defined.contains(name) && !listed {
+                broken.push(format!("{}:{line}: `{name}`", slash(&path)));
+            }
+        }
+    }
+    for name in OTHERS_NAMES.iter().chain(GONE_NAMES.iter()) {
+        if defined.contains(*name) {
+            broken.push(format!("`{name}` is defined in rini: remove it from its list"));
+        } else if !cited.contains(*name) {
+            broken.push(format!("`{name}` is cited by no doc: remove it from its list"));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "these name a function or a field rini no longer has. Name the one that holds it now, or \
+         record it as gone:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_long_snake_name_is_read_whole_from_its_span() {
+    assert_eq!(long_snake_name("every_spec_is_listed"), Some("every_spec_is_listed"));
+    assert_eq!(long_snake_name("reactor::query::a_b_c_d()"), Some("a_b_c_d"));
+    assert_eq!(long_snake_name("three_word_name"), None);
+    assert_eq!(long_snake_name("WAITS_ON_THE_MAIN"), None);
+    assert_eq!(long_snake_name("src/a_b_c_d.rs"), None);
+    assert_eq!(long_snake_name("a_b_c_d(x)"), None);
+    assert_eq!(long_snake_name("a__b_c_d"), None);
+    let doc = "`one_two_three_four` and `x`\n```\n`five_six_seven_eight`\n```\nlast `y`";
+    assert_eq!(code_spans(doc), vec![(1, "one_two_three_four"), (1, "x"), (5, "y")]);
+    let source = "pub(crate) fn a_b_c_d() {}\nstruct S {\n    pub e_f_g_h: u8,\n    i_j_k_l: u8,\n}\n// fn m_n_o_p\nuse a::b;\nfn q_r_s_t(f: fn(u8)) {} fn u_v_w_x() {}";
+    assert_eq!(
+        declared_names(source),
+        vec!["a_b_c_d", "e_f_g_h", "i_j_k_l", "q_r_s_t", "u_v_w_x"]
+    );
 }

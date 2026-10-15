@@ -11,6 +11,7 @@
 //! src/layout/       the scrolling strip
 //! src/workspaces/   virtual workspaces and their persistence
 //! src/input/        keys, bindings, drags
+//! src/decorations/  what a window wears: its ring and its border
 //! src/pictures/     pictures of windows, the desktop and the bar
 //! src/animation/    how things move on screen
 //! src/transitions/  when things happen in a transition
@@ -19,7 +20,7 @@
 //! ```
 //!
 //! The rules this layout is held to, and what enforces each, are in
-//! `docs/architecture.md`. `tests/architecture.rs` checks the two the tree can be
+//! `docs/architecture.md`. `tests/architecture.rs` checks the ones the tree can be
 //! read for.
 
 pub mod animation;

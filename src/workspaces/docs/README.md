@@ -14,11 +14,16 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `domain/assignment.rs` | `WorkspaceAssignments`: window → workspace and workspace → windows, one index kept both ways so they cannot disagree |
 | `domain/display_affinity.rs` | What belongs to a display and survives a replug: home, column width, strip order. Keyed by display UUID |
 | `domain/workspace_focus.rs` | Who takes focus when a workspace becomes active, and where a cycle step lands |
+| `domain/app_rules.rs` | What a window's app rule does to workspace policy as one `AppRuleEffects` (its workspace, floating, position, size, focus), and what the layout does once a window's rules are re-evaluated (`BeforeRules` -> `AfterRules`) |
+| `domain/display_pin.rs` | `DisplayRole`: an app pinned to a display by its role, such as the built-in screen, resolved against whatever is attached (`display_for_role`), a default an explicit move beats |
+| `domain/display_setup.rs` | `Setup` per `SetupId`, the set of attached display UUIDs: each window's display, the strip order per display and the width per window and display, never shared between arrangements |
+| `domain/window_store.rs` | `WindowStore`: the window catalogue with each window's workspace assignment, the operations that touch both kept here so the two cannot disagree |
 | `domain/launch_memory.rs` | Where an application's windows belong, under a key that outlives the process |
-| `domain/floating.rs`, `floating_position_store.rs` | Which windows float and where they sit |
+| `domain/floating.rs`, `domain/floating_position_store.rs` | Which windows float and where they sit |
 | `domain/hidden_window_placement.rs` | Where off-workspace windows park |
 | `domain/workspaces.rs` | `WorkspaceLayouts`: a layout per workspace per display SIZE |
 | `engine/persistence/` | `layout.ron`: save, load, restore, and matching a saved window to a live one |
+| `settings.rs` | `VirtualWorkspaceSettings`: which workspaces there are, which one shows at launch, and the window rules that route windows into them |
 
 ## The shape that matters
 

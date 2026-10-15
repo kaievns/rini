@@ -27,7 +27,8 @@ feature") records why, and `tests/architecture.rs` holds each one's `domain/` fr
 ## Who talks to whom
 
 ```
-             reactor ──Request──▶ transitions coordinator ──Write / Raise──▶ reactor
+             reactor ──Request──▶ transitions coordinator ──Write──▶ reactor
+                                    │  ▲                 ──ReportUp / ReportSettled──▶ bar (stops picturing the menu extras in flight)
                                     │  ▲                 ──Stage / Play / Swap / Lift──▶ animation renderer (main thread)
    window server ──Focused──▶        │  │ pictures(tag)
                               ask /  ▼  │
@@ -92,15 +93,19 @@ matching on either, and the look says which windows cross, which are held and wh
 movement. An `Accent` adds an additive track (the bounce re-kicks from where it is drawn). The
 renderer plays a score's edits, the snap of a tile onto its window's frame among them, swaps
 pictures, cuts holes over windows that end on screen, draws each tile's decorations, and lifts. A new
-look, such as the zoom-out spike, is another `Look`, its choreography and its staging, in `animation`
-and the reactor's choice of it; capture, swaps and handover never see what a score contains.
+look that moves tiles through points and rects is another `Look`, its choreography and its staging, in
+`animation`, and the reactor's choice of it; capture, swaps and handover never see what a score
+contains. A zoom is more than a look: a score's `Value` is a `Point` or a `Rect`
+(`src/animation/domain/motion/score.rs`), so nothing in a score can say scale, and a zoom also needs a
+scale track in the score and the overlay installing its key.
 
 ## `transitions`
 
-A `Transition` is one kind of change: the strip panning or a move along it, a layout pass (resizes,
-swaps, a window opening), a workspace switch, the edge bounce. Each says what it stages, which
-pictures frame zero needs, when real frames are written, what the lift must match, and how it absorbs
-a press arriving in flight.
+A transition is one `Kind` of change (`domain::lifecycle`): the strip panning (`Pan`) or a move along
+it (`Move`), a workspace switch (`Switch`), a layout pass (`LayoutPass`: resizes, swaps, a window
+opening), the edge bounce (`Bounce`). The lifecycle is the same for every kind; a kind decides only
+whether the real windows are written to new frames (`writes`) and whether the end state is watched
+and recaptured as it lands (`watches_end`).
 
 The coordinator is one lifecycle for every kind, as a pure state machine (`on(event, now) -> commands`):
 

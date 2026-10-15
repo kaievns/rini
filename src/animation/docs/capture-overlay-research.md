@@ -3,7 +3,7 @@
 How rini draws a transition: one opaque window of its own above every managed window, holding a
 picture of each window that moves, while the real windows are placed once underneath. Why it is
 built that way, what it does and does not do, and what was measured about the handover. The early
-spikes ran on 2026-08-16 in `/tmp/sls-spike` against a 1728x1117 built-in display at 2x; later
+spikes, not kept, ran on 2026-08-16 against a 1728x1117 built-in display at 2x; later
 sections date their own. What the captures it draws cost and return, the spikes' list included
 ("Reproducing"), is `src/pictures/docs/capture-research.md`.
 

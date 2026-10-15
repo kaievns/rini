@@ -324,7 +324,7 @@ the surprise this replaced.
 explode and full width. Unfolding,
 expelling, unstacking and unjoining were four copies of the same removal, each
 with its own idea of where the new column goes and whether the height weight
-travelled with it — 164 lines that are now 35 plus its callers. The column left
+travelled with it — 164 lines that are now `split_out` and its callers. The column left
 behind re-equalises there, in one place, rather than in each caller that
 remembered to.
 

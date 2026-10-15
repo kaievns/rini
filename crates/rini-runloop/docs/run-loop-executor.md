@@ -26,7 +26,8 @@ because it is runtime-free; nothing else of tokio is.
 ## `tokio::time` panics here
 
 `tokio::time::sleep` needs a tokio reactor for its timer and panics with
-"there is no reactor running" when polled under this executor. That panic took
+"there is no reactor running" when polled under this executor. It compiles because tokio-stream's
+default `time` feature turns tokio's on (`cargo tree -e features -i tokio`). That panic took
 the whole window manager down twice: once from the animation frame clock, and
 once from the cursor warp poll, which only reached its sleep branch after a
 second display appeared and so hid for weeks. `executor::sleep` and
