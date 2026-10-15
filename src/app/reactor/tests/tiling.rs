@@ -498,9 +498,8 @@ fn repeated_ordered_out_ax_replacement_does_not_accumulate_layout_ghosts() {
     assert_eq!(test_layout(&mut reactor, space, screen).len(), 3);
 
     for _ in 0..2 {
-        crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+        reactor.window_server().set_window_ordered_in(wsid, Some(false));
         reactor.handle_event(Event::WindowDestroyed(middle));
-        crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
 
         assert!(reactor.state.windows.record(middle).is_none());
         assert_eq!(
@@ -617,7 +616,7 @@ fn dragging_a_floating_window_keeps_the_layout_skip_for_the_whole_gesture() {
     let tiled = WindowId::new(1, 2);
     let start = CGRect::new(CGPoint::new(100., 100.), CGSize::new(200., 200.));
 
-    set_space_membership(&[(space, &[1, 2])]);
+    set_space_membership(&reactor, &[(space, &[1, 2])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     reactor.add_test_window(tiled, WindowServerId::new(2), Some(space), screen);
@@ -663,7 +662,7 @@ fn diagnostics_report_windows_missing_from_the_layout_tree() {
     let space = SpaceId::new(1);
     let orphan = WindowId::new(1, 1);
 
-    set_space_membership(&[(space, &[901])]);
+    set_space_membership(&reactor, &[(space, &[901])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let workspace = reactor.test_workspace(space, 0);
@@ -696,7 +695,7 @@ fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
     let second = WindowId::new(1, 2);
     let floater = WindowId::new(1, 3);
 
-    set_space_membership(&[(space, &[901, 902, 903])]);
+    set_space_membership(&reactor, &[(space, &[901, 902, 903])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let workspace = reactor.test_workspace(space, 0);
@@ -763,7 +762,7 @@ mod strip_regroup {
         let (raise_tx, mut raise_rx) = channels::channel();
         reactor.communication_manager.raise_manager_tx = raise_tx;
         let space = SpaceId::new(1);
-        set_space_membership(&[(space, &[901, 902, 903, 904])]);
+        set_space_membership(&reactor, &[(space, &[901, 902, 903, 904])]);
         reactor.handle_event(space_state_event(vec![SCREEN], vec![Some(space)]));
         let mut apps = pids.to_vec();
         apps.sort_unstable();
@@ -877,9 +876,7 @@ mod strip_regroup {
     fn a_focus_response_onto_the_strip_raises_the_on_screen_strip_over_the_floating_window() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
         // Front to back: right column, Settings, left column, parked column.
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            902, 904, 901, 903,
-        ]));
+        reactor.state_front_to_back(&[902, 904, 901, 903]);
 
         reactor.handle_layout_response(
             layout::EventResponse {
@@ -891,7 +888,6 @@ mod strip_regroup {
             },
             None,
         );
-        crate::windows::platform::window_server::set_front_to_back_override(None);
 
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
@@ -908,9 +904,7 @@ mod strip_regroup {
     fn a_regroup_across_applications_raises_their_batches_back_to_front() {
         for (left, right) in [(2, 3), (3, 2)] {
             let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich_of([left, right, 1, 1]);
-            crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-                902, 904, 901, 903,
-            ]));
+            reactor.state_front_to_back(&[902, 904, 901, 903]);
 
             reactor.handle_layout_response(
                 layout::EventResponse {
@@ -922,7 +916,6 @@ mod strip_regroup {
                 },
                 None,
             );
-            crate::windows::platform::window_server::set_front_to_back_override(None);
 
             let request = raise_request(&mut raise_rx).expect("a raise request");
             assert_eq!(
@@ -943,12 +936,9 @@ mod strip_regroup {
             let (mut reactor, mut raise_rx, space) = reactor_with_sandwich_of([left, right, 1, 1]);
             reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 4)));
             while raise_rx.try_recv().is_ok() {}
-            crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-                901, 904, 902, 903,
-            ]));
+            reactor.state_front_to_back(&[901, 904, 902, 903]);
 
             reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(left, 1), space));
-            crate::windows::platform::window_server::set_front_to_back_override(None);
 
             let request = raise_request(&mut raise_rx).expect("a raise request");
             assert_eq!(
@@ -975,15 +965,12 @@ mod strip_regroup {
     fn a_newly_opened_floating_window_is_left_in_front_of_the_strip() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
         // Front to back: the new Settings window, then the strip.
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            904, 902, 901, 903,
-        ]));
+        reactor.state_front_to_back(&[904, 902, 901, 903]);
 
         // The layout still believes a strip window has focus: rini has not yet been told the new
         // window took it, which is the race the old rule turned into a visible bug.
         reactor.send_layout_event(LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1)));
         reactor.regroup_after_layout();
-        crate::windows::platform::window_server::set_front_to_back_override(None);
 
         assert!(
             raise_request(&mut raise_rx).is_none(),
@@ -996,13 +983,10 @@ mod strip_regroup {
     fn a_floating_window_between_two_columns_still_lifts_the_strip() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
         // Front to back: right column, Settings, left column, parked column.
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            902, 904, 901, 903,
-        ]));
+        reactor.state_front_to_back(&[902, 904, 901, 903]);
 
         reactor.send_layout_event(LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1)));
         reactor.regroup_after_layout();
-        crate::windows::platform::window_server::set_front_to_back_override(None);
 
         let request = raise_request(&mut raise_rx).expect("the sandwich is still put right");
         assert!(
@@ -1019,9 +1003,7 @@ mod strip_regroup {
     #[test]
     fn a_focus_response_onto_the_floating_window_lifts_nothing_extra() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            902, 904, 901, 903,
-        ]));
+        reactor.state_front_to_back(&[902, 904, 901, 903]);
         reactor.handle_layout_response(
             layout::EventResponse {
                 changed: true,
@@ -1032,7 +1014,6 @@ mod strip_regroup {
             },
             None,
         );
-        crate::windows::platform::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(request.raise_windows, vec![AppBatch::of(&[WindowId::new(1, 4)])]);
     }
@@ -1041,9 +1022,7 @@ mod strip_regroup {
     #[test]
     fn a_grouped_order_is_left_alone_by_the_focus_response() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            902, 901, 903, 904,
-        ]));
+        reactor.state_front_to_back(&[902, 901, 903, 904]);
         reactor.handle_layout_response(
             layout::EventResponse {
                 changed: true,
@@ -1054,7 +1033,6 @@ mod strip_regroup {
             },
             None,
         );
-        crate::windows::platform::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(request.raise_windows, vec![AppBatch::of(&[WindowId::new(1, 1)])]);
     }
@@ -1067,12 +1045,9 @@ mod strip_regroup {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
         while raise_rx.try_recv().is_ok() {}
         // Left column in front, Settings, then the right column and the parked one.
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            901, 904, 902, 903,
-        ]));
+        reactor.state_front_to_back(&[901, 904, 902, 903]);
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
-        crate::windows::platform::window_server::set_front_to_back_override(None);
 
         assert_eq!(
             reactor.layout_manager.layout_engine.focused_window(),
@@ -1112,12 +1087,9 @@ mod strip_regroup {
         assert!(reactor.affinity().is_window_parked_offscreen(WindowId::new(1, 3)));
         while raise_rx.try_recv().is_ok() {}
         // The visible pair is grouped in front of Settings; the parked column is behind it.
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            902, 901, 904, 903,
-        ]));
+        reactor.state_front_to_back(&[902, 901, 904, 903]);
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
-        crate::windows::platform::window_server::set_front_to_back_override(None);
 
         assert_eq!(
             reactor.layout_manager.layout_engine.focused_window(),
@@ -1159,12 +1131,9 @@ mod strip_regroup {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 4)));
         while raise_rx.try_recv().is_ok() {}
         // macOS raised the clicked left column over Settings; the right column stayed behind.
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            901, 904, 902, 903,
-        ]));
+        reactor.state_front_to_back(&[901, 904, 902, 903]);
 
         reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(1, 1), space));
-        crate::windows::platform::window_server::set_front_to_back_override(None);
 
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(request.raise_windows, vec![AppBatch::of(&[
@@ -1200,12 +1169,9 @@ mod strip_regroup {
         reactor.handle_event(Event::ApplicationGloballyActivated(zoom));
         while raise_rx.try_recv().is_ok() {}
         // Zoom in front, then Settings (floating) over the strip: a sandwich if the strip were focused.
-        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
-            905, 904, 901, 902, 903,
-        ]));
+        reactor.state_front_to_back(&[905, 904, 901, 902, 903]);
 
         reactor.handle_event(Event::WindowServerFocusChanged(toolbar, space));
-        crate::windows::platform::window_server::set_front_to_back_override(None);
 
         assert_eq!(
             reactor.main_window(),
@@ -1634,7 +1600,7 @@ impl Strip {
             .set_layout_settings(&reactor.config.settings.layout);
         let space = SpaceId::new(1);
         let members: Vec<u32> = (1..=count as u32).collect();
-        set_space_membership(&[(space, members.as_slice())]);
+        set_space_membership(&reactor, &[(space, members.as_slice())]);
         reactor.handle_event(space_state_event_from_screens(vec![ScreenInfo {
             id: rini_core::ids::ScreenId::new(0),
             frame: VISIBLE,
@@ -1913,28 +1879,10 @@ fn every_report_of_a_drag_measures_from_where_the_drag_started() {
     );
 }
 
-/// The window the window server finds under the cursor, for as long as the guard lives.
-struct CursorOver;
-
-impl CursorOver {
-    fn window(reactor: &Reactor, window: WindowId) -> Self {
-        let id = reactor
-            .state
-            .windows
-            .window(window)
-            .and_then(|w| w.info.sys_id)
-            .expect("sys id");
-        crate::windows::platform::window_server::set_window_under_cursor_override(Some(
-            id.as_u32(),
-        ));
-        CursorOver
-    }
-}
-
-impl Drop for CursorOver {
-    fn drop(&mut self) {
-        crate::windows::platform::window_server::set_window_under_cursor_override(None);
-    }
+/// The window the window server finds under the cursor; `None` finds none.
+fn cursor_over(reactor: &Reactor, window: Option<WindowId>) {
+    let id = window.map(|window| reactor.test_window_server_id(window));
+    reactor.window_server().set_window_at_point(id);
 }
 
 /// `other`, column 1, dragged left by its left edge over 3 reports and let go with `under_cursor`
@@ -1970,9 +1918,9 @@ fn left_edge_drag_released_over(under_cursor: Option<fn(&Strip) -> WindowId>) ->
             MouseState::Down,
         );
     }
-    let cursor = under_cursor.map(|window| CursorOver::window(&strip.reactor, window(&strip)));
+    cursor_over(&strip.reactor, under_cursor.map(|window| window(&strip)));
     strip.reactor.handle_event(Event::MouseUp);
-    drop(cursor);
+    cursor_over(&strip.reactor, None);
     strip.settle(strip.other);
 
     let end = strip.on_screen(strip.other);

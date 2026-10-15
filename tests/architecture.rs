@@ -998,13 +998,13 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
     (
         "src/app/reactor/mod.rs",
         "on_windows_discovered_with_app_info",
-        144,
+        142,
     ),
     ("src/app/reactor/mod.rs", "start_strip_switch", 132),
     ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
     ("src/displays/platform/spaces.rs", "build_forwarded_state", 118),
     ("src/displays/platform/spaces.rs", "handle_event", 118),
-    ("src/displays/screen.rs", "refresh_snapshot", 130),
+    ("src/displays/screen.rs", "refresh_snapshot", 106),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
     ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
     ("src/layout/domain/scrolling.rs", "calculate_layout", 243),
@@ -1036,7 +1036,7 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
 const LONG_FILES: [(&str, usize); 4] = [
-    ("src/app/reactor/mod.rs", 4544),
+    ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
     ("src/transitions/platform/engine.rs", 2212),
     ("src/workspaces/engine.rs", 2544),

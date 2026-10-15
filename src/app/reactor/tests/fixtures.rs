@@ -332,12 +332,9 @@ pub fn laid_out_frame(
 /// does. Without this the reactor sees an empty active-space query, concludes every
 /// window has vanished, and drops its workspace assignment — which makes any
 /// display-change test measure that instead of what it meant to.
-pub fn set_space_membership(entries: &[(SpaceId, &[u32])]) {
+pub fn set_space_membership(reactor: &Reactor, entries: &[(SpaceId, &[u32])]) {
     for (space, wsids) in entries {
-        crate::windows::platform::window_server::set_space_window_list_for_space_override(
-            space.get(),
-            Some(wsids.to_vec()),
-        );
+        reactor.window_server().set_space_window_list(space.get(), Some(wsids.to_vec()));
     }
 }
 

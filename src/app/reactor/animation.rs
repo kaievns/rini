@@ -5,7 +5,6 @@ use rini_geometry::stretch::is_a_resize;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, trace};
 
-use crate::app::power;
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::{Present, instant_requests};
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
@@ -174,7 +173,7 @@ impl AnimationManager {
         let (was, is) = (screen_space(&strip_before), screen_space(&strip_now));
         pass::place_on_strip(&mut overlay_requests, &was, &is);
         pass::place_on_strip(&mut unmoved, &was, &is);
-        let low_power = power::is_low_power_mode_enabled();
+        let low_power = (reactor.reads.low_power)();
         let layout_animate = reactor.config.settings.animate;
         // `is_resize` means a window REPORTED a size change, which happens both when the user is
         // dragging an edge and when rini resized it for a command. Only a real interactive drag
@@ -300,7 +299,7 @@ impl AnimationManager {
         layout: &[(WindowId, CGRect)],
         skip_wid: Option<WindowId>,
     ) -> bool {
-        let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
+        let animate = reactor.config.settings.animate && !(reactor.reads.low_power)();
         if animate
             && let Some((from_index, to_index)) = movement
             && reactor.start_strip_switch(space, from_index, to_index, layout, skip_wid)

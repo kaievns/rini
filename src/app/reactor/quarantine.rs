@@ -6,7 +6,7 @@ use super::{Event, Reactor};
 
 impl Reactor {
     pub(super) fn should_quarantine_during_display_churn(&self, event: &Event) -> bool {
-        if !(self.display_churn)() {
+        if !(self.reads.display_churn)() {
             return false;
         }
 

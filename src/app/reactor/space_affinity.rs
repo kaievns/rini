@@ -11,7 +11,7 @@ use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::displays::platform::spaces::SpaceKinds;
 use crate::windows::domain::state::WindowState;
 use crate::windows::domain::transaction::TransactionManager;
-use crate::windows::platform::window_server;
+use crate::windows::platform::window_server::WindowServer;
 use crate::workspaces::{LayoutEngine, WindowStore};
 
 /// The window server's answer for which space each window is on, read once per reactor event.
@@ -50,6 +50,7 @@ pub(crate) struct SpaceAffinity<'a> {
     pub(crate) active_spaces: &'a HashSet<SpaceId>,
     pub(crate) space_kinds: SpaceKinds,
     pub(crate) live_spaces: &'a LiveSpaces,
+    pub(crate) window_server: &'a dyn WindowServer,
 }
 
 impl SpaceAffinity<'_> {
@@ -179,7 +180,7 @@ impl SpaceAffinity<'_> {
         observation: Option<SpaceId>,
     ) -> Option<SpaceId> {
         let pending = self.pending_target_space_for_window_server_id(wsid);
-        let live = self.live_spaces.get(wsid, window_server::window_space);
+        let live = self.live_spaces.get(wsid, |id| self.window_server.window_space(id));
         let prior = self.windows.window_server_space(wsid);
 
         let resolved = match (observation, pending) {
@@ -326,6 +327,7 @@ mod tests {
         let transactions = TransactionManager::new(WindowTxStore::new());
         let active_spaces: HashSet<SpaceId> = spaces.iter_known_spaces().collect();
         let live_spaces = LiveSpaces::default();
+        let window_server = crate::windows::platform::window_server::FakeWindowServer::default();
         f(SpaceAffinity {
             windows: &windows,
             spaces,
@@ -334,6 +336,7 @@ mod tests {
             active_spaces: &active_spaces,
             space_kinds: SpaceKinds::for_tests(),
             live_spaces: &live_spaces,
+            window_server: &window_server,
         })
     }
 

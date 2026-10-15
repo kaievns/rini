@@ -1,4 +1,6 @@
+use std::any::Any;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
@@ -8,11 +10,12 @@ use tracing::debug;
 use super::{Event, EventOutcome, Reactor, ScreenInfo, TransactionId};
 use crate::app::channels;
 use crate::app::config::Config;
+use crate::app::system_reads::SystemReads;
 use crate::displays::domain::topology::ForwardedSpaceState;
-use crate::displays::platform::spaces::SpaceKinds;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use crate::windows::domain::transaction::{Requested, WindowTxStore};
+use crate::windows::platform::window_server::{FakeWindowServer, Listed};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{LayoutCommand, LayoutEngine};
 
@@ -21,14 +24,39 @@ impl Reactor {
         let mut config = Config::default();
         config.settings.default_disable = false;
         config.settings.animate = false;
-        let mut reactor =
-            Reactor::new(config, layout, DisplayMemory::default(), WindowTxStore::new());
+        let reads = SystemReads::fake(Arc::new(FakeWindowServer::default()));
+        let mut reactor = Reactor::with_reads(
+            config,
+            layout,
+            DisplayMemory::default(),
+            WindowTxStore::new(),
+            reads,
+        );
         // Never let the suite write to the real layout file. Almost every test drives
         // `update_layout`, which autosaves; a test that wants to exercise autosave sets a temp path.
         reactor.autosave_path = None;
-        reactor.space_kinds = SpaceKinds::for_tests();
-        reactor.display_churn = || false;
         reactor
+    }
+
+    /// The on-screen order, frontmost first, each window at the normal level.
+    pub fn state_front_to_back(&self, order: &[u32]) {
+        let listed = order
+            .iter()
+            .map(|&id| Listed {
+                id: WindowServerId::new(id),
+                level: 0,
+                pid: 1234,
+                bounds: CGRect::default(),
+                title: None,
+            })
+            .collect();
+        self.window_server().set_on_screen_windows(listed);
+    }
+
+    /// The window server a test reactor reads, for the test to state its answers on.
+    pub fn window_server(&self) -> &FakeWindowServer {
+        let port: &dyn Any = &*self.reads.window_server;
+        port.downcast_ref().expect("a test reactor reads a FakeWindowServer")
     }
 
     pub fn handle_events(&mut self, events: Vec<Event>) {

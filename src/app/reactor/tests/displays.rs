@@ -11,6 +11,7 @@ use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
+use crate::windows::platform::window_server::FakeWindowServer;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -389,12 +390,8 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
         Some(space1)
     );
 
-    crate::windows::platform::window_server::set_window_spaces_override(
-        wsid,
-        Some(vec![space2.get()]),
-    );
+    reactor.window_server().set_window_spaces(wsid, vec![space2]);
     window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
-    crate::windows::platform::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
     assert_eq!(
@@ -853,14 +850,10 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
 
     reactor.mark_test_window_visible_in_space(moved_wsid, active_space);
     reactor.mark_test_window_visible_in_space(retained_wsid, active_space);
-    crate::windows::platform::window_server::set_window_spaces_override(
-        moved_wsid,
-        Some(vec![inactive_space.get()]),
-    );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        active_space.get(),
-        Some(vec![retained_wsid.as_u32()]),
-    );
+    reactor.window_server().set_window_spaces(moved_wsid, vec![inactive_space]);
+    reactor
+        .window_server()
+        .set_space_window_list(active_space.get(), Some(vec![retained_wsid.as_u32()]));
 
     reactor.handle_event(space_state_event_with(
         vec![frame],
@@ -876,12 +869,6 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
                 });
         },
     ));
-
-    crate::windows::platform::window_server::set_window_spaces_override(moved_wsid, None);
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        active_space.get(),
-        None,
-    );
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(moved),
@@ -902,18 +889,11 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
         reactor_with_window_on_space1_two_displays();
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
 
-    crate::windows::platform::window_server::set_window_spaces_override(
-        wsid,
-        Some(vec![space2.get()]),
-    );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space1.get(),
-        Some(vec![]),
-    );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space2.get(),
-        Some(vec![wsid.as_u32()]),
-    );
+    reactor.window_server().set_window_spaces(wsid, vec![space2]);
+    reactor.window_server().set_space_window_list(space1.get(), Some(vec![]));
+    reactor
+        .window_server()
+        .set_space_window_list(space2.get(), Some(vec![wsid.as_u32()]));
 
     reactor.handle_event(space_state_event_with(
         vec![screen1, screen2],
@@ -930,16 +910,6 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
         },
     ));
 
-    crate::windows::platform::window_server::set_window_spaces_override(wsid, None);
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space1.get(),
-        None,
-    );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space2.get(),
-        None,
-    );
-
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2),
@@ -951,7 +921,7 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
 #[test]
 fn display_churn_quarantines_window_frame_and_membership_events() {
     let mut reactor = test_reactor();
-    reactor.display_churn = || true;
+    reactor.reads.display_churn = || true;
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
 
@@ -1010,10 +980,12 @@ fn a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag() {
     assert!(!reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
 }
 
-/// The reactor production builds reads the process-wide churn flag.
+/// The reads production builds take the process-wide churn flag; a test build gives them a fake
+/// window server, as it can give no other.
 #[test]
 fn a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set() {
-    let reactor = Reactor::new(
+    let reads = SystemReads::live_with(std::sync::Arc::new(FakeWindowServer::default()));
+    let reactor = Reactor::with_reads(
         crate::app::config::Config::default(),
         LayoutEngine::new(
             &crate::app::config::VirtualWorkspaceSettings::default(),
@@ -1021,6 +993,7 @@ fn a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set(
         ),
         DisplayMemory::default(),
         WindowTxStore::new(),
+        reads,
     );
     let _held = crate::displays::platform::display_churn::hold_for_test();
     crate::displays::platform::display_churn::begin();
@@ -1171,9 +1144,8 @@ fn ax_destruction_removes_window_on_known_inactive_space_outside_churn() {
     reactor.state.windows.mark_window_hidden(wsid);
     assert!(reactor.affinity().is_window_on_known_inactive_space(wid));
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert_eq!(reactor.test_workspace_for_window(inactive_space, wid), None);
@@ -1192,9 +1164,8 @@ fn ax_destruction_removes_already_minimized_window_outside_churn() {
     reactor.handle_event(Event::WindowMinimized(wid));
     assert!(reactor.state.windows.window(wid).unwrap().info.is_minimized);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
@@ -1212,9 +1183,8 @@ fn ax_destruction_removes_ordered_in_window_outside_churn() {
     assert!(!reactor.refreshes_blocked());
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(true));
+    reactor.window_server().set_window_ordered_in(wsid, Some(true));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
@@ -1444,7 +1414,10 @@ fn replug_returns_the_windows_that_were_on_that_display() {
     let terminal_a = WindowId::new(1, 1);
     let terminal_b = WindowId::new(1, 2);
     let slack = WindowId::new(1, 3);
-    set_space_membership(&[(builtin_space, &[903]), (external_space, &[901, 902])]);
+    set_space_membership(&reactor, &[
+        (builtin_space, &[903]),
+        (external_space, &[901, 902]),
+    ]);
 
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
@@ -1479,7 +1452,10 @@ fn replug_returns_the_windows_that_were_on_that_display() {
     assert!(reactor.assign_test_window_to_workspace(builtin_space, slack, builtin_workspace));
 
     // Unplug. macOS evacuates the external's windows onto the built-in.
-    set_space_membership(&[(builtin_space, &[901, 902, 903]), (external_space, &[])]);
+    set_space_membership(&reactor, &[
+        (builtin_space, &[901, 902, 903]),
+        (external_space, &[]),
+    ]);
     reactor.handle_event(space_state_event_with(
         vec![builtin],
         vec![Some(builtin_space)],
@@ -1487,7 +1463,10 @@ fn replug_returns_the_windows_that_were_on_that_display() {
     ));
 
     // Replug under a new space id. macOS still reports all three on the built-in.
-    set_space_membership(&[(builtin_space, &[901, 902, 903]), (replugged_space, &[])]);
+    set_space_membership(&reactor, &[
+        (builtin_space, &[901, 902, 903]),
+        (replugged_space, &[]),
+    ]);
     reactor.handle_event(space_state_event_with(
         vec![builtin, external],
         vec![Some(builtin_space), Some(replugged_space)],
@@ -1547,7 +1526,7 @@ fn arranging_one_setup_does_not_disturb_another() {
     let studio = |space| screen("studio", 1, external_frame, space);
     let docked = |b, e| vec![builtin(b), studio(e)];
 
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901])]);
     reactor.handle_event(space_state_event_from_screens(docked(
         builtin_space,
         external_space,
@@ -1572,7 +1551,7 @@ fn arranging_one_setup_does_not_disturb_another() {
     );
 
     // Undock, and DELIBERATELY put the terminal on the laptop: an intent, which is recorded.
-    set_space_membership(&[(builtin_space, &[901]), (external_space, &[])]);
+    set_space_membership(&reactor, &[(builtin_space, &[901]), (external_space, &[])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![builtin(builtin_space)],
         |state| state.display_set_changed = true,
@@ -1586,7 +1565,7 @@ fn arranging_one_setup_does_not_disturb_another() {
     );
 
     // Redock. The docked arrangement never heard about that move.
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901])]);
     reactor.handle_event(space_state_event_from_screens_with(
         docked(builtin_space, external_space),
         |state| state.display_set_changed = true,
@@ -1647,7 +1626,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
 
     // Slack sitting on the EXTERNAL, which is where observation would home it. Only the pin can
     // give the right answer here, which is what makes this test about the pin.
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901])]);
     reactor.handle_event(space_state_event_from_screens(vec![
         builtin(builtin_space),
         studio(external_space),
@@ -1674,7 +1653,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
 
     // Lid shut: only the external is attached, so the pinned role is filled by nothing and the pin
     // goes quiet rather than holding the window off a screen that is not there.
-    set_space_membership(&[(external_space, &[901])]);
+    set_space_membership(&reactor, &[(external_space, &[901])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![studio(external_space)],
         |state| state.display_set_changed = true,
@@ -1720,7 +1699,7 @@ fn a_display_never_seen_before_takes_no_windows() {
     // Docked at the desk: two windows living on the studio display.
     let a = WindowId::new(1, 1);
     let b = WindowId::new(1, 2);
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[901, 902])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901, 902])]);
     reactor.handle_event(space_state_event_from_screens(vec![
         builtin(builtin_space),
         studio(external_space),
@@ -1744,7 +1723,7 @@ fn a_display_never_seen_before_takes_no_windows() {
     );
 
     // Undock, and let the laptop-only arrangement settle.
-    set_space_membership(&[(builtin_space, &[901, 902]), (external_space, &[])]);
+    set_space_membership(&reactor, &[(builtin_space, &[901, 902]), (external_space, &[])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![builtin(builtin_space)],
         |state| state.display_set_changed = true,
@@ -1752,7 +1731,7 @@ fn a_display_never_seen_before_takes_no_windows() {
     reactor.handle_event(space_state_event_from_screens(vec![builtin(builtin_space)]));
 
     // A projector in a meeting room: a display this machine has never held a window on.
-    set_space_membership(&[(builtin_space, &[901, 902]), (projector_space, &[])]);
+    set_space_membership(&reactor, &[(builtin_space, &[901, 902]), (projector_space, &[])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![builtin(builtin_space), projector(projector_space)],
         |state| state.display_set_changed = true,
@@ -1794,7 +1773,10 @@ fn replug_leaves_the_other_display_group_order_untouched() {
 
     let strip: Vec<WindowId> = (1..=3).map(|idx| WindowId::new(1, idx)).collect();
     let resident = WindowId::new(1, 9);
-    set_space_membership(&[(builtin_space, &[801, 802, 803]), (external_space, &[909])]);
+    set_space_membership(&reactor, &[
+        (builtin_space, &[801, 802, 803]),
+        (external_space, &[909]),
+    ]);
 
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
@@ -1825,7 +1807,7 @@ fn replug_leaves_the_other_display_group_order_untouched() {
         "test setup must establish a known strip order"
     );
 
-    set_space_membership(&[
+    set_space_membership(&reactor, &[
         (builtin_space, &[801, 802, 803, 909]),
         (external_space, &[]),
     ]);
@@ -1834,7 +1816,7 @@ fn replug_leaves_the_other_display_group_order_untouched() {
         vec![Some(builtin_space)],
         |state| state.display_set_changed = true,
     ));
-    set_space_membership(&[
+    set_space_membership(&reactor, &[
         (builtin_space, &[801, 802, 803, 909]),
         (replugged_space, &[]),
     ]);
@@ -1866,7 +1848,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     let external_space = SpaceId::new(479);
     let exile = WindowId::new(1, 1);
 
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901])]);
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
         Some(external_space),
@@ -1886,7 +1868,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     );
 
     // Unplug, then let the built-in-only topology settle repeatedly, as it does in practice.
-    set_space_membership(&[(builtin_space, &[901]), (external_space, &[])]);
+    set_space_membership(&reactor, &[(builtin_space, &[901]), (external_space, &[])]);
     reactor.handle_event(space_state_event_with(
         vec![builtin],
         vec![Some(builtin_space)],
@@ -1902,7 +1884,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     );
 
     // Replug. The docked arrangement never stopped saying the external, so the window goes back.
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901])]);
     reactor.handle_event(space_state_event_with(
         vec![builtin, external],
         vec![Some(builtin_space), Some(external_space)],
@@ -1947,7 +1929,7 @@ fn replug_rebuilds_strip_adjacency() {
         (editor, 902),
     ];
 
-    set_space_membership(&[
+    set_space_membership(&reactor, &[
         (builtin_space, &[]),
         (external_space, &[901, 902, 908, 909]),
     ]);
@@ -1988,7 +1970,7 @@ fn replug_rebuilds_strip_adjacency() {
         "test setup must establish a known strip order on the external"
     );
 
-    set_space_membership(&[
+    set_space_membership(&reactor, &[
         (builtin_space, &[901, 902, 908, 909]),
         (external_space, &[]),
     ]);
@@ -1997,7 +1979,7 @@ fn replug_rebuilds_strip_adjacency() {
         vec![Some(builtin_space)],
         |state| state.display_set_changed = true,
     ));
-    set_space_membership(&[
+    set_space_membership(&reactor, &[
         (builtin_space, &[901, 902, 908, 909]),
         (replugged_space, &[]),
     ]);
@@ -2037,7 +2019,7 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     let doomed = WindowId::new(1, 1);
     let survivor = WindowId::new(1, 2);
 
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[901, 902])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901, 902])]);
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
         Some(external_space),
@@ -2069,7 +2051,7 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     reactor.state.windows.remove_window(doomed);
 
     // Any settled topology is enough to notice.
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[902])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[902])]);
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
         Some(external_space),
@@ -2112,7 +2094,7 @@ fn diagnostics_report_every_display_not_just_the_default_space() {
     let on_builtin = WindowId::new(1, 1);
     let on_external = WindowId::new(1, 2);
 
-    set_space_membership(&[(builtin_space, &[901]), (external_space, &[902])]);
+    set_space_membership(&reactor, &[(builtin_space, &[901]), (external_space, &[902])]);
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
         Some(external_space),
@@ -2181,7 +2163,7 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     let parked = WindowId::new(1, 1);
     let wsid = WindowServerId::new(901);
 
-    set_space_membership(&[(builtin_space, &[901]), (external_space, &[])]);
+    set_space_membership(&reactor, &[(builtin_space, &[901]), (external_space, &[])]);
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
         Some(external_space),
@@ -2198,12 +2180,8 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     // WindowServer announces it on the external, as it does for a parked window whose frame
     // overlaps that display. Its space MEMBERSHIP still says built-in, which is what
     // distinguishes this from a real move.
-    crate::windows::platform::window_server::set_window_spaces_override(
-        wsid,
-        Some(vec![builtin_space.get()]),
-    );
+    reactor.window_server().set_window_spaces(wsid, vec![builtin_space]);
     window_server_appeared(&mut reactor, wsid, external_space, SpaceEventKind::User);
-    crate::windows::platform::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(parked),
@@ -2236,7 +2214,7 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     let displaced = WindowId::new(1, 1);
     let settled = WindowId::new(1, 2);
 
-    set_space_membership(&[(builtin_space, &[901, 902]), (external_space, &[])]);
+    set_space_membership(&reactor, &[(builtin_space, &[901, 902]), (external_space, &[])]);
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
         Some(external_space),

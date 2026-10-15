@@ -61,4 +61,5 @@ hardest file in the tree and worth reading last.
 `screen.rs` sits at the feature root rather than in `domain/` or `platform/`, because
 it mixes a pure cache with the reads that fill it. It is the sole named exception in
 [`tests/architecture.rs`](../../../tests/architecture.rs) and the reason that list
-exists; the port it is generic over does not yet cover the space lookup.
+exists. Every read the cache makes goes through the `System` port it is generic over; it still
+holds each display's uuid as a `CFRetained<CFString>`, and the free reads beside it have no port.

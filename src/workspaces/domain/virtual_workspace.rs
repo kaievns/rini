@@ -122,9 +122,6 @@ pub struct WorkspaceStore {
     workspace_order: Vec<VirtualWorkspaceId>,
     pub active_workspace_per_space:
         HashMap<SpaceId, (Option<VirtualWorkspaceId>, VirtualWorkspaceId)>,
-    #[cfg(test)]
-    #[serde(skip)]
-    test_app_rules: crate::windows::domain::rules::AppRuleEngine,
     #[serde(skip)]
     max_workspaces: usize,
     #[serde(skip)]
@@ -154,8 +151,6 @@ impl WorkspaceStore {
             workspaces: SlotMap::default(),
             workspace_order: Vec::new(),
             active_workspace_per_space: HashMap::default(),
-            #[cfg(test)]
-            test_app_rules: crate::windows::domain::rules::AppRuleEngine::new(&config.app_rules),
             max_workspaces: MAX_WORKSPACES,
             default_workspace_names: config.workspace_names.clone(),
             default_workspace,
@@ -875,32 +870,6 @@ impl WorkspaceStore {
         }
     }
 
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments, reason = "P3.8")]
-    fn assign_window_with_app_info(
-        &mut self,
-        window_store: &mut WindowStore,
-        window_id: WindowId,
-        space: SpaceId,
-        app_bundle_id: Option<&str>,
-        app_name: Option<&str>,
-        window_title: Option<&str>,
-        ax_role: Option<&str>,
-        ax_subrole: Option<&str>,
-    ) -> Result<AppRuleResult, WorkspaceError> {
-        let decision =
-            self.test_app_rules.evaluate(crate::windows::domain::rules::WindowRuleContext {
-                app_bundle_id,
-                app_name,
-                window_title,
-                ax_role,
-                ax_subrole,
-                is_modal: false,
-                state: crate::windows::domain::rules::RuleState::default(),
-            });
-        self.apply_app_rule_decision(window_store, window_id, space, decision)
-    }
-
     fn get_default_workspace(
         &mut self,
         space: SpaceId,
@@ -1015,6 +984,7 @@ mod tests {
     use rini_core::ids::{SpaceId, WindowId};
 
     use super::*;
+    use crate::windows::domain::rules::{AppRuleEngine, RuleState, WindowRuleContext};
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {
         match result {
@@ -1022,13 +992,41 @@ mod tests {
             Ok(AppRuleResult::Unmanaged) => {
                 panic!("App rule unexpectedly marked window as unmanaged")
             }
-            Err(e) => panic!("assign_window_with_app_info failed: {:?}", e),
+            Err(e) => panic!("the rule's decision failed to apply: {:?}", e),
         }
+    }
+
+    /// `rules`' decision for a window, applied as production applies the one the layout engine
+    /// makes.
+    #[allow(clippy::too_many_arguments, reason = "P3.8")]
+    fn decide(
+        manager: &mut WorkspaceStore,
+        rules: &AppRuleEngine,
+        window_store: &mut WindowStore,
+        window_id: WindowId,
+        space: SpaceId,
+        app_bundle_id: Option<&str>,
+        app_name: Option<&str>,
+        window_title: Option<&str>,
+        ax_role: Option<&str>,
+        ax_subrole: Option<&str>,
+    ) -> Result<AppRuleResult, WorkspaceError> {
+        let decision = rules.evaluate(WindowRuleContext {
+            app_bundle_id,
+            app_name,
+            window_title,
+            ax_role,
+            ax_subrole,
+            is_modal: false,
+            state: RuleState::default(),
+        });
+        manager.apply_app_rule_decision(window_store, window_id, space, decision)
     }
 
     #[allow(clippy::too_many_arguments, reason = "P3.8")]
     fn assign(
         manager: &mut WorkspaceStore,
+        rules: &AppRuleEngine,
         window_store: &mut WindowStore,
         window_id: WindowId,
         space: SpaceId,
@@ -1038,7 +1036,9 @@ mod tests {
         ax_role: Option<&str>,
         ax_subrole: Option<&str>,
     ) -> AppRuleEffects {
-        expect_managed(manager.assign_window_with_app_info(
+        expect_managed(decide(
+            manager,
+            rules,
             window_store,
             window_id,
             space,
@@ -1217,6 +1217,7 @@ mod tests {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.workspace_names = crate::workspaces::settings::numbered_names(3);
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let rules = AppRuleEngine::new(&settings.app_rules);
         let old_space = SpaceId::new(1);
         let new_space = SpaceId::new(2);
         let window = WindowId::new(12, 1);
@@ -1235,6 +1236,7 @@ mod tests {
 
         let assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             window,
             new_space,
@@ -1263,6 +1265,7 @@ mod tests {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.workspace_names = crate::workspaces::settings::numbered_names(4);
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let rules = AppRuleEngine::new(&settings.app_rules);
         let builtin = SpaceId::new(1);
         let external = SpaceId::new(479);
 
@@ -1275,6 +1278,7 @@ mod tests {
         let on_external = WindowId::new(1, 2);
         let builtin_assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             on_builtin,
             builtin,
@@ -1286,6 +1290,7 @@ mod tests {
         );
         let external_assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             on_external,
             external,
@@ -1323,6 +1328,7 @@ mod tests {
             ..VirtualWorkspaceSettings::default()
         };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let rules = AppRuleEngine::new(&settings.app_rules);
         let builtin = SpaceId::new(1);
         let external = SpaceId::new(479);
 
@@ -1338,6 +1344,7 @@ mod tests {
         ] {
             let assignment = assign(
                 &mut manager,
+                &rules,
                 &mut window_store,
                 window,
                 space,
@@ -1368,6 +1375,7 @@ mod tests {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.workspace_names = crate::workspaces::settings::numbered_names(3);
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let rules = AppRuleEngine::new(&settings.app_rules);
         let old_space = SpaceId::new(1);
         let new_space = SpaceId::new(2);
         let moved_window = WindowId::new(13, 1);
@@ -1396,6 +1404,7 @@ mod tests {
 
         let assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             moved_window,
             new_space,
@@ -1480,6 +1489,7 @@ mod tests {
             ..WindowRule::when(RuleMatch::app("com.example.unmanaged"))
         }];
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let rules = AppRuleEngine::new(&settings.app_rules);
         let old_space = SpaceId::new(1);
         let new_space = SpaceId::new(2);
         let window = WindowId::new(15, 1);
@@ -1496,7 +1506,9 @@ mod tests {
             old_assignment.workspace_id
         ));
 
-        let result = manager.assign_window_with_app_info(
+        let result = decide(
+            &mut manager,
+            &rules,
             &mut window_store,
             window,
             new_space,
@@ -1733,11 +1745,13 @@ mod tests {
         ];
 
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let rules = AppRuleEngine::new(&settings.app_rules);
 
         // 1. Floating persistence via app_id
         let w_float = WindowId::new(10, 1);
         let assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_float,
             space1,
@@ -1754,6 +1768,7 @@ mod tests {
         // After removal, reassign should still float.
         let assignment_again = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_float,
             space1,
@@ -1769,6 +1784,7 @@ mod tests {
         let w_name = WindowId::new(20, 2);
         let ws_name = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_name,
             space1,
@@ -1788,6 +1804,7 @@ mod tests {
         let w_dialog = WindowId::new(30, 4);
         let ws_pref = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_pref,
             space1,
@@ -1800,6 +1817,7 @@ mod tests {
         .workspace_id;
         let ws_dialog = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_dialog,
             space1,
@@ -1819,6 +1837,7 @@ mod tests {
         let w_ax = WindowId::new(40, 5);
         let ax_assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_ax,
             space1,
@@ -1834,6 +1853,7 @@ mod tests {
         let w_named = WindowId::new(50, 6);
         let ws_named = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_named,
             space1,
@@ -1852,6 +1872,7 @@ mod tests {
         let w_tie = WindowId::new(60, 7);
         let ws_tie = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_tie,
             space1,
@@ -1869,6 +1890,7 @@ mod tests {
         let w_bw = WindowId::new(70, 8);
         let bw_initial_assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_bw,
             space1,
@@ -1881,6 +1903,7 @@ mod tests {
         assert!(!bw_initial_assignment.floating);
         let bw_updated_assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_bw,
             space1,
@@ -1900,6 +1923,7 @@ mod tests {
         let w_bw2 = WindowId::new(80, 9);
         let bw2_initial_assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_bw2,
             space2,
@@ -1912,6 +1936,7 @@ mod tests {
         assert!(!bw2_initial_assignment.floating);
         let bw2_updated_assignment = assign(
             &mut manager,
+            &rules,
             &mut window_store,
             w_bw2,
             space2,

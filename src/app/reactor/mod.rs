@@ -76,13 +76,13 @@ use crate::app::channels;
 use crate::app::config::Config;
 use crate::app::reactor::events::window_discovery;
 use crate::app::reactor::state::RiniState;
+use crate::app::system_reads::{SystemReads, server_facts};
 pub use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::screen::order_visible_spaces_by_position;
 use crate::displays::domain::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::displays::domain::topology::{
     ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta, display_set_delta,
 };
-use crate::displays::platform::spaces::SpaceKinds;
 use crate::input::domain::switch_session::Signal as SwitchSignal;
 use crate::input::platform::input_tap as event_tap;
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
@@ -99,7 +99,6 @@ use crate::windows::domain::rules::AppRuleDecision;
 use crate::windows::domain::stack::covered_by_peer_above;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
-use crate::windows::platform::window_server;
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::domain::display_affinity::SetupChange;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -559,13 +558,7 @@ pub struct Reactor {
     /// Resolving the real path there meant the suite overwrote the user's own
     /// ~/.rini/layout.ron with test fixtures. `Reactor::new_for_test` sets it to `None`.
     autosave_path: Option<PathBuf>,
-    /// How a space id is classified. Injected rather than called, so a test can say what a
-    /// non-user space is; see `displays::platform::spaces::SpaceKinds`.
-    space_kinds: SpaceKinds,
-    /// Whether the spaces actor is mid display reconfiguration. Injected rather than called: the
-    /// flag behind the production reader is process-wide, so a test that read it would be
-    /// quarantined by whichever spaces test runs beside it.
-    display_churn: fn() -> bool,
+    reads: SystemReads,
 }
 
 impl Reactor {
@@ -615,6 +608,22 @@ impl Reactor {
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
         window_tx_store: WindowTxStore,
+    ) -> Reactor {
+        Self::with_reads(
+            config,
+            layout_engine,
+            display_memory,
+            window_tx_store,
+            SystemReads::live(),
+        )
+    }
+
+    fn with_reads(
+        config: Config,
+        layout_engine: LayoutEngine,
+        display_memory: DisplayMemory,
+        window_tx_store: WindowTxStore,
+        reads: SystemReads,
     ) -> Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
@@ -703,8 +712,7 @@ impl Reactor {
             last_autosave: None,
             autosave_pending: false,
             autosave_path: Some(rini_core::paths::restore_file()),
-            space_kinds: SpaceKinds::from_window_server(),
-            display_churn: crate::displays::platform::display_churn::is_active,
+            reads,
         }
     }
 
@@ -723,7 +731,8 @@ impl Reactor {
             engine: &self.layout_manager.layout_engine,
             transactions: &self.transaction_manager,
             active_spaces: &self.active_spaces,
-            space_kinds: self.space_kinds,
+            space_kinds: self.reads.space_kinds,
+            window_server: &*self.reads.window_server,
             live_spaces: &self.live_spaces,
         }
     }
@@ -863,7 +872,10 @@ impl Reactor {
     fn authoritative_active_space_windows(&self) -> Vec<(WindowServerId, Option<SpaceId>)> {
         let mut queried = HashMap::default();
         for space in self.iter_active_spaces() {
-            for wsid in window_server::space_window_list_for_connection(&[space.get()])
+            for wsid in self
+                .reads
+                .window_server
+                .space_window_list_for_connection(&[space.get()])
                 .into_iter()
                 .map(WindowServerId::new)
             {
@@ -1120,66 +1132,10 @@ impl Reactor {
             trace!(?event, "quarantined during display churn");
             return;
         }
-        Self::note_windowserver_activity(&event);
+        self.note_windowserver_activity(&event);
         self.handle_event(event);
         #[cfg(any(test, debug_assertions))]
         self.state.windows.debug_assert_invariants();
-    }
-
-    fn note_windowserver_activity(event: &Event) {
-        let wsid = match event {
-            Event::WindowFrameChanged(wid, ..) => Some(wid.idx.get()),
-            Event::WindowCreated(wid, ..) => Some(wid.idx.get()),
-            Event::WindowDestroyed(wid) => Some(wid.idx.get()),
-            Event::WindowMinimized(wid) => Some(wid.idx.get()),
-            Event::WindowDeminiaturized(wid) => Some(wid.idx.get()),
-            Event::MouseMoved(_) => None,
-            Event::WindowServerDestroyed(wsid, ..) => Some(wsid.as_u32()),
-            Event::WindowServerAppeared(wsid, ..) => Some(wsid.as_u32()),
-            Event::ApplyOverlayFrames(_)
-            | Event::SpaceStateChanged(_)
-            | Event::ActiveDisplayChanged { .. }
-            | Event::ApplicationLaunched { .. }
-            | Event::ApplicationTerminated(_)
-            | Event::ApplicationThreadTerminated(_)
-            | Event::ApplicationActivated(..)
-            | Event::ApplicationDeactivated(_)
-            | Event::ApplicationGloballyActivated(_)
-            | Event::ApplicationGloballyDeactivated(_)
-            | Event::ApplicationMainWindowChanged(..)
-            | Event::WindowServerFocusChanged(..)
-            | Event::WindowsDiscovered { .. }
-            | Event::SpaceCreated(_)
-            | Event::SpaceDestroyed(_)
-            | Event::WindowTitleChanged(..)
-            | Event::MenuOpened(_)
-            | Event::MenuClosed(_)
-            | Event::MouseUp
-            | Event::LeftMouseDown(_)
-            | Event::Switch(_)
-            | Event::SwitchPicked(_)
-            | Event::BarAction(_)
-            | Event::SystemWoke
-            | Event::ClockChanged
-            | Event::SystemWillSleep
-            | Event::SessionDidResignActive
-            | Event::SessionDidBecomeActive
-            | Event::DisplayChurnBegin
-            | Event::MissionControlNativeEntered
-            | Event::MissionControlNativeExited
-            | Event::RaiseCompleted { .. }
-            | Event::RaiseTimeout { .. }
-            | Event::RaisesIdle { .. }
-            | Event::AttentionChanged(_)
-            | Event::Query(_)
-            | Event::Command(_)
-            | Event::RegisterWmSender(_)
-            | Event::ConfigUpdated(_)
-            | Event::ConfigFileRead { .. } => None,
-        };
-        if let Some(wsid) = wsid {
-            window_server::note_windowserver_activity(wsid);
-        }
     }
 
     fn log_event(&self, event: &Event) {
@@ -1719,7 +1675,7 @@ impl Reactor {
         }
 
         for (pid, window) in outcome.make_key_windows {
-            if let Err(error) = window_server::make_key_window(pid, window) {
+            if let Err(error) = self.reads.window_server.make_key_window(pid, window) {
                 warn!(?error, "failed to make key window");
             }
         }
@@ -1775,7 +1731,7 @@ impl Reactor {
             let tracked =
                 self.state.windows.iter_tracked_window_server_ids().map(|wsid| wsid.as_u32());
             if let Some(ids) = self.notification_manager.notification_ids_to_publish(tracked) {
-                crate::displays::platform::cgs_notify::update_window_notifications(&ids);
+                (self.reads.watch_windows)(&ids);
                 self.notification_manager.last_sls_notification_ids = ids;
             }
         }
@@ -1821,10 +1777,10 @@ impl Reactor {
                     } else {
                         continue;
                     };
-                let manageable =
-                    manageable(window_server::with_server_facts(ax, server_id, |wsid| {
-                        self.state.windows.get_window_server_info(wsid)
-                    }));
+                let ws = &*self.reads.window_server;
+                let manageable = manageable(server_facts(ws, ax, server_id, |wsid| {
+                    self.state.windows.get_window_server_info(wsid)
+                }));
                 if let Some(window) = self.state.windows.window_mut(wid) {
                     window.is_manageable = manageable;
                 }
@@ -2306,6 +2262,7 @@ impl Reactor {
     ) {
         let app_info =
             app_info.or_else(|| self.app_manager.apps.get(&pid).map(|app| app.info.clone()));
+        let ws = self.reads.window_server.clone();
         let inactive_windows = self
             .state
             .windows
@@ -2321,15 +2278,11 @@ impl Reactor {
             .iter_windows()
             .filter_map(|(wid, window)| (wid.pid == pid).then_some(window.info.sys_id).flatten())
             .map(|wsid| {
-                let info = self
-                    .state
-                    .windows
-                    .get_window_server_info(wsid)
-                    .or_else(|| window_server::get_window(wsid));
+                let known = self.state.windows.get_window_server_info(wsid);
                 (wsid, window_discovery::StaleWindowObservation {
-                    info,
-                    suitable: window_server::app_window_suitability(wsid),
-                    ordered_in: window_server::window_ordered_in(wsid),
+                    info: known.or_else(|| ws.get_window(wsid)),
+                    suitable: ws.app_window_suitability(wsid),
+                    ordered_in: ws.window_ordered_in(wsid),
                 })
             })
             .collect();
@@ -2390,13 +2343,14 @@ impl Reactor {
             .collect();
         let (new_windows, process_outcome) = window_discovery::process_window_list(
             &mut self.state,
+            &*ws,
             &mut self.layout_manager,
             &mut self.main_window_tracker,
             observed_windows,
             &app_info,
         );
         outcome.absorb(process_outcome);
-        window_discovery::update_window_states(&mut self.state, new_windows);
+        window_discovery::update_window_states(&mut self.state, &*ws, new_windows);
 
         let candidate_windows: HashSet<WindowId> = self
             .state
@@ -2650,7 +2604,7 @@ impl Reactor {
     }
 
     fn sync_display_affinity_from_live_layout(&mut self) {
-        if (self.display_churn)() {
+        if (self.reads.display_churn)() {
             return;
         }
         // Closed windows keep their affinity otherwise, because the display-change path
@@ -3398,7 +3352,8 @@ impl Reactor {
             .iter()
             .filter_map(|(wid, _)| self.state.windows.window(*wid)?.info.sys_id)
             .collect();
-        let real: HashMap<WindowServerId, ScreenRect> = window_server::get_windows(&server_ids)
+        let real: HashMap<WindowServerId, ScreenRect> = (self.reads.window_server)
+            .get_windows(&server_ids)
             .into_iter()
             .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
@@ -3566,7 +3521,7 @@ impl Reactor {
         );
 
         // Full-display coordinates, matching the overlay's own space.
-        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let display_bounds = (self.reads.display_bounds)(screen.id);
         // A floating window is not in the strip. Panning it with the strip dragged it sideways
         // and snapped it back at the handover.
         let mut windows = self.strip_windows_at(&full, display_bounds, true);
@@ -3692,7 +3647,7 @@ impl Reactor {
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. See "Edge bounce" in `src/transitions/docs/coordination.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
-        if !self.config.settings.animate || crate::app::power::is_low_power_mode_enabled() {
+        if !self.config.settings.animate || (self.reads.low_power)() {
             return;
         }
         if self.communication_manager.transitions_tx.is_none() {
@@ -3724,7 +3679,7 @@ impl Reactor {
             screen.frame,
             &gaps,
         );
-        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let display_bounds = (self.reads.display_bounds)(screen.id);
         let vertical = matches!(direction, Direction::Up | Direction::Down);
         // A strip bounce leaves floating windows where they are, as a pan does; a stack bounce
         // carries them, as a switch does.
@@ -3797,7 +3752,7 @@ impl Reactor {
         //
         // The surface is still expressed in full-display coordinates (the overlay's own), so a
         // window keeps its position below the bar within its row; only the row-to-row step shrinks.
-        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let display_bounds = (self.reads.display_bounds)(screen.id);
         let row_pitch = screen.frame.size.height;
         let height = row_pitch;
 
@@ -4062,7 +4017,7 @@ impl Reactor {
             .iter()
             .find(|screen| screen.space == wanted)
             .or_else(|| self.space_state.screens.first())?;
-        let frame = ScreenRect::from_cg(objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
+        let frame = ScreenRect::from_cg((self.reads.display_bounds)(screen.id));
         if let Some(tx) = &self.communication_manager.transitions_tx {
             tx.send(crate::transitions::platform::engine::Event::SetDisplay {
                 id: screen.id.as_u32(),
@@ -4340,7 +4295,8 @@ impl Reactor {
         };
 
         // The stack from the top down to the candidate; only floating windows rini tracks count.
-        let order = window_server::space_window_list_for_connection(&[space.get()]);
+        let ws = &*self.reads.window_server;
+        let order = ws.space_window_list_for_connection(&[space.get()]);
         let candidate_u32 = candidate_wsid.as_u32();
         let above = order.into_iter().take_while(|&id| id != candidate_u32).filter_map(|id| {
             let wsid = WindowServerId::new(id);
@@ -4349,12 +4305,9 @@ impl Reactor {
                 return None;
             }
             let frame = self.state.windows.window(wid)?.frame_monotonic;
-            Some(window_server::stack_place(wsid, frame))
+            Some(ws.stack_place(wsid, frame))
         });
-        !covered_by_peer_above(
-            window_server::stack_place(candidate_wsid, candidate_frame),
-            above,
-        )
+        !covered_by_peer_above(ws.stack_place(candidate_wsid, candidate_frame), above)
     }
 
     fn process_windows_for_app_rules(
@@ -4863,7 +4816,7 @@ impl Reactor {
     /// column's place cannot be seen; it is judged again by `regroup_after_layout` once a layout pass
     /// brings it on screen, since nothing else raises a column that scrolls back into view.
     fn strip_group_to_lift(&mut self, space: SpaceId, focused: WindowId) -> Vec<WindowId> {
-        let depths = crate::windows::platform::window_server::front_to_back_depths();
+        let depths = self.reads.window_server.front_to_back_depths();
         let mut order: Vec<StackedWindow> = self
             .layout_manager
             .layout_engine
@@ -5156,7 +5109,7 @@ impl Reactor {
     }
 
     fn window_server_id_under_cursor(&self) -> Option<WindowServerId> {
-        window_server::window_under_cursor()
+        self.reads.window_server.window_under_cursor()
     }
 
     fn tracked_window_under_cursor(&self) -> Option<(WindowServerId, WindowId)> {
@@ -5184,10 +5137,10 @@ impl Reactor {
             .state
             .windows
             .get_window_server_info(wsid)
-            .or_else(|| window_server::get_window(wsid));
+            .or_else(|| self.reads.window_server.get_window(wsid));
 
         let Some(info) = window_info else { return false };
-        window_server::make_key_window(info.pid, wsid).is_ok()
+        self.reads.window_server.make_key_window(info.pid, wsid).is_ok()
     }
 
     fn focus_desktop_if_active_workspace_empty(&mut self, space: SpaceId) -> bool {
@@ -5203,7 +5156,7 @@ impl Reactor {
         let Some(screen) = self.space_state.screen_by_space(space) else {
             return false;
         };
-        if !crate::displays::screen::focus_desktop_window(screen) {
+        if !self.reads.window_server.focus_desktop(&screen.display_uuid, screen.frame) {
             return false;
         }
 

@@ -275,9 +275,8 @@ fn current_ax_destruction_after_quarantine_release_removes_window() {
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
     let wsid = reactor.test_window_server_id(wid);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
@@ -334,13 +333,9 @@ fn genuine_close_during_sleep_recovery_does_not_leave_layout_ghost() {
         .active_window_spaces
         .insert(WindowServerId::new(survivor.idx.get()), space);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(
-        closed_wsid,
-        Some(false),
-    );
+    reactor.window_server().set_window_ordered_in(closed_wsid, Some(false));
     reactor.handle_event(Event::SpaceStateChanged(recovered));
     reactor.discover_test_windows(1, vec![], vec![survivor]);
-    crate::windows::platform::window_server::set_window_ordered_in_override(closed_wsid, None);
 
     assert!(reactor.state.windows.record(closed).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, closed));
@@ -377,13 +372,9 @@ fn last_window_close_during_sleep_recovery_does_not_leave_layout_ghost() {
         forwarded_space_state(make_screen_snapshots(vec![screen], vec![Some(space)]));
     recovered.releases_lifecycle_refresh_quarantine = true;
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(
-        closed_wsid,
-        Some(false),
-    );
+    reactor.window_server().set_window_ordered_in(closed_wsid, Some(false));
     reactor.handle_event(Event::SpaceStateChanged(recovered));
     reactor.discover_test_windows(1, vec![], vec![]);
-    crate::windows::platform::window_server::set_window_ordered_in_override(closed_wsid, None);
 
     assert!(reactor.state.windows.record(closed).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, closed));
@@ -402,11 +393,8 @@ fn empty_active_space_membership_during_wake_race_does_not_blank_known_active_wi
 
     reactor.mark_test_window_visible_in_space(wsid, space);
 
-    crate::windows::platform::window_server::set_space_window_list_for_connection_override(Some(
-        vec![],
-    ));
+    reactor.window_server().set_any_space_window_list(Some(vec![]));
     reactor.refresh_window_server_snapshot_for_active_spaces();
-    crate::windows::platform::window_server::set_space_window_list_for_connection_override(None);
 
     assert!(
         reactor.state.windows.is_window_visible(wsid),

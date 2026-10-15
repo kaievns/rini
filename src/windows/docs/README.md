@@ -95,11 +95,12 @@ stated for, and only records a command (`every_read_answers_unknown_with_no_setu
 must never guess one. The rules over the answers take them as values (`domain/manageable.rs`,
 `domain/stack.rs`, `domain/home_space.rs`), so a rule's test needs no port at all.
 
-Callers not yet handed a port call the free functions of the same names in `window_server`, which
+The reactor holds its port inside `app::system_reads::SystemReads`, with its other reads of the
+machine. Callers not yet handed a port call the free functions of the same names in `window_server`, which
 `platform/window_server/shim.rs` answers from `LiveWindowServer` in production and from a
 thread-local `FakeWindowServer` in a test build, stated through the old `set_*_override` setters.
-That shim is temporary: once the reactor, the flight engine, the app actor and the spaces actor are
-handed a port, it goes. Through the shim, a window no test stated
+That shim is temporary: once the flight engine, the app actor and the spaces actor are handed a
+port, it goes. Through the shim, a window no test stated
 is at the origin, 800x600, which the tests written against it expect; on the port it is unknown.
 
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the

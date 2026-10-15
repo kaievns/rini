@@ -38,6 +38,7 @@ knows the features and converts what they emit.
 | `hotkeys/` | The controller: app launches and which apps get a thread (the rule is `windows::domain::app_threads`), hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a bound `Action` to a `reactor::Command`, which is where the tests are |
 | `notifications.rs` | The NSWorkspace demultiplexer |
 | `power.rs` | Low Power Mode, read at start and kept current from its notification: the input tap and the reactor's flight decision read it |
+| `system_reads.rs` | `SystemReads`, everything the reactor asks of the machine as one value: the window-server port, through which it makes a display's desktop key, the pointer, Low Power Mode, the displays' bounds, display churn, the space kinds, the running applications, and the activity clock and window notifications it hands back. `Reactor::new` builds the live one; a test reactor's knows nothing until the test states it on `reactor.window_server()` or swaps a field |
 | `boot.rs` | What the flags and the config file say before anything is built: the command line, `--no-animate` over the config, and the config-or-defaults fallback |
 | `launch_agent.rs`, `startup.rs`, `logging.rs`, `channels.rs` | The service plist, configured startup commands, tracing, and the span-carrying channel every actor is wired with |
 
@@ -82,6 +83,7 @@ file you open to change one is the size of that subject rather than of the react
 | `lifecycle.rs` | windows and apps appearing, disappearing, dying, and surviving a restart |
 | `windows.rs` | which windows rini takes on and which it refuses |
 | `bar.rs` | what each display's bar is sent after a batch, and what a click on it does |
+| `reads.rs` | what the reactor asks of the machine: only its `SystemReads`, every read unknown in a test until stated |
 | `decorations.rs` | what the rest windows are sent after a batch: each window's ring and border, whether it holds focus or asks for attention, and the rules that dress it |
 | `fixtures.rs` | the reactors, apps and windows the cases are built on |
 

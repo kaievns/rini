@@ -875,7 +875,7 @@ fn displays_share_workspaces_but_switch_between_them_independently() {
     let builtin_space = SpaceId::new(1);
     let external_space = SpaceId::new(479);
 
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[])]);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[])]);
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
         Some(external_space),
@@ -920,7 +920,7 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
     let new_space = SpaceId::new(552);
     let window = WindowId::new(1, 1);
 
-    set_space_membership(&[(old_space, &[901])]);
+    set_space_membership(&reactor, &[(old_space, &[901])]);
     reactor.handle_event(space_state_event(vec![builtin], vec![Some(old_space)]));
     reactor.add_test_app(1);
     let workspace = reactor.test_workspace(old_space, 2);
@@ -978,7 +978,7 @@ fn switch_desk(windows: &[(WindowId, usize)], focus: &[WindowId]) -> (Reactor, S
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
     let space = SpaceId::new(1);
     let wsids: Vec<u32> = (0..windows.len() as u32).map(|at| 901 + at).collect();
-    set_space_membership(&[(space, &wsids)]);
+    set_space_membership(&reactor, &[(space, &wsids)]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     let mut pids: Vec<rini_core::ids::pid_t> =
         windows.iter().map(|(window, _)| window.pid).collect();
@@ -1332,7 +1332,7 @@ fn a_workspace_switch_offers_that_workspace_on_every_display() {
     let there = WindowId::new(2, 1);
     let other_workspace = WindowId::new(1, 2);
 
-    set_space_membership(&[(left_space, &[901, 903]), (right_space, &[902])]);
+    set_space_membership(&reactor, &[(left_space, &[901, 903]), (right_space, &[902])]);
     reactor.handle_event(space_state_event(vec![left, right], vec![
         Some(left_space),
         Some(right_space),
@@ -1381,7 +1381,10 @@ fn a_workspace_switch_is_a_hard_filter_whatever_the_other_display_shows() {
     let slack = WindowId::new(3, 1); // ws1, external, showing
     let terminal = WindowId::new(4, 1); // ws2, external, parked
 
-    set_space_membership(&[(laptop_space, &[901, 902]), (external_space, &[903, 904])]);
+    set_space_membership(&reactor, &[
+        (laptop_space, &[901, 902]),
+        (external_space, &[903, 904]),
+    ]);
     reactor.handle_event(space_state_event(vec![laptop, external], vec![
         Some(laptop_space),
         Some(external_space),
@@ -1442,7 +1445,7 @@ fn an_app_switch_stays_inside_the_focused_application() {
     let controls = WindowId::new(1, 2);
     let slack = WindowId::new(2, 1);
 
-    set_space_membership(&[(space, &[901, 902, 903])]);
+    set_space_membership(&reactor, &[(space, &[901, 902, 903])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     reactor.add_test_app(2);
@@ -1488,7 +1491,7 @@ fn an_app_switch_with_nothing_focused_offers_nothing() {
     let mut reactor = test_reactor();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
     let space = SpaceId::new(1);
-    set_space_membership(&[(space, &[901])]);
+    set_space_membership(&reactor, &[(space, &[901])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let window = WindowId::new(1, 1);
@@ -1693,7 +1696,7 @@ fn moving_a_window_between_workspaces_keeps_its_column_width() {
     let sized = WindowId::new(1, 1);
     let neighbour = WindowId::new(1, 2);
 
-    set_space_membership(&[(space, &[901, 902])]);
+    set_space_membership(&reactor, &[(space, &[901, 902])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let workspaces = reactor.test_workspace_ids(space);
@@ -1758,7 +1761,7 @@ fn a_full_width_window_stays_full_width_across_workspaces() {
     let sized = WindowId::new(1, 1);
     let neighbour = WindowId::new(1, 2);
 
-    set_space_membership(&[(space, &[901, 902])]);
+    set_space_membership(&reactor, &[(space, &[901, 902])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let workspaces = reactor.test_workspace_ids(space);
@@ -1875,7 +1878,8 @@ fn restored_showing(showing: usize) -> Reactor {
         std::process::id()
     ));
     saved.save(&memory, path.clone()).unwrap();
-    let (mut restored, _) = LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
+    let (mut restored, _) =
+        LayoutEngine::load_for_startup_restore(path.clone(), |_, _| false, |_| false).unwrap();
     let _ = std::fs::remove_file(path);
     restored.finish_loading(&settings, &layout);
     Reactor::new_for_test(restored)
@@ -1914,6 +1918,25 @@ fn the_first_switch_after_start_slides() {
     assert!(
         !writes_a_frame(&requests),
         "the slide places the windows, not the switch: {requests:?}"
+    );
+}
+
+/// A switch reads Low Power Mode from the reactor's reads, so in it the switch cuts rather than
+/// slides.
+#[test]
+fn in_low_power_mode_a_workspace_switch_does_not_slide() {
+    let (_apps, mut reactor, mut rx) = started(test_reactor_with_workspace_count(4));
+
+    reactor.reads.low_power = || true;
+    reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
+    assert!(strip_movements(&mut rx).is_empty(), "no slide in Low Power Mode");
+
+    reactor.reads.low_power = || false;
+    reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
+    assert_eq!(
+        strip_movements(&mut rx).len(),
+        1,
+        "the switch back slides out of it"
     );
 }
 

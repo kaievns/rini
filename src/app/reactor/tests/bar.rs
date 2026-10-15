@@ -8,7 +8,6 @@ use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::bar::domain::model::{Action, BarModel, FocusLabel, Row};
 use crate::bar::platform::actor::{Event as BarEvent, Receiver};
-use crate::windows::platform::window_server::set_space_window_list_for_space_override;
 use crate::workspaces::LayoutCommand;
 
 const LEFT: &str = "test-display-0";
@@ -25,14 +24,6 @@ struct Desk {
     bar: Receiver,
     left: SpaceId,
     right: SpaceId,
-}
-
-impl Drop for Desk {
-    fn drop(&mut self) {
-        for space in [self.left, self.right] {
-            set_space_window_list_for_space_override(space.get(), None);
-        }
-    }
 }
 
 fn left_ghostty() -> WindowId { WindowId::new(GHOSTTY, 1) }
@@ -53,7 +44,7 @@ fn desk() -> Desk {
     let left = SpaceId::new(1);
     let right = SpaceId::new(2);
     let (left_frame, right_frame) = (left_frame(), right_frame());
-    set_space_membership(&[(left, &[901, 902]), (right, &[903, 904])]);
+    set_space_membership(&reactor, &[(left, &[901, 902]), (right, &[903, 904])]);
     reactor.handle_test_batch(vec![space_state_event(vec![left_frame, right_frame], vec![
         Some(left),
         Some(right),

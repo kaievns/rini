@@ -52,17 +52,19 @@ thread's narrower `Reader`, until that thread moves onto the port; and the pictu
 
 | what the code asks | seam | production | a test passes |
 |---|---|---|---|
-| the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings; `make_key_window`, `take_stack_place` | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
+| the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings, a display's desktop windows; `make_key_window`, `take_stack_place`, and `focus_desktop` over them | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
+| what the reactor asks of the machine: the window server, the desktop focus included, the pointer, Low Power Mode, the displays' bounds, display churn, the space kinds, the running applications; and the two notes it hands back, the window-server activity clock and the windows it wants notifications for | `SystemReads`, one value of the `WindowServer` port and fn pointers (`src/app/system_reads.rs`). A reducer takes the answer it needs as a parameter. The five that judge manageability (`handle_window_created`, `handle_window_deminiaturized`, `sync_existing_window_state`, `process_window_list`, `update_window_states`) take the port instead: their facts are read lazily, each only while those in hand do not turn the window away (`turned_away_before_accessibility`), so no stickiness or level is read for a minimized window or one off layer 0 | `SystemReads::live()`, built in `Reactor::new` | `SystemReads::fake`, which `Reactor::new_for_test` builds over a `FakeWindowServer` of its own, stated through `reactor.window_server()`; a field swapped for a fn of the test's, `reactor.reads.low_power = \|\| true`; every read unknown, false or none until then (`a_test_reactor_reads_unknown_from_everything_it_was_not_told`) |
 | Accessibility, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`) | `MacAx` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone |
 | the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
 | displays and spaces, from the spaces actor | `LiveDisplays` and `SpaceKinds`, structs of fn pointers (`src/displays/platform/spaces.rs`) | `from_window_server()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, or a struct of its own |
 | the window server and ScreenCaptureKit, from the pictures thread | `Capturer`, a type parameter (`src/pictures/platform/capturer.rs`) | `MacCapturer` | `FakeCapturer`, answering from the frames a test gives it and recording every call |
-| the screens, for `ScreenCache` | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are |
+| the screens, for `ScreenCache`: the displays, their uuids and scales, the main and the built-in display, the menu bar and the Dock, the space each display shows | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are, whose menu bar is hidden, Dock not shown and spaces unknown until stated |
 
 A caller not yet handed a `WindowServer` calls the free functions of the same names in
 `window_server`, answered in a test build by a thread-local `FakeWindowServer` the `set_*_override`
 setters state answers into. That shim is temporary, and nothing new is written against it: the
-reactor, the flight engine, the app actor and the spaces actor move onto a port and it goes.
+reactor reads through its `SystemReads`, and once the flight engine, the app actor and the spaces
+actor move onto a port it goes.
 
 ## A unit test must not read the live window server
 
@@ -117,13 +119,15 @@ ws.set_space_window_list(space.get(), Some(vec![wsid]))
     .set_window_spaces(WindowServerId::new(wsid), vec![space]);
 ```
 
+A reactor test states them on the reactor's own fake, `reactor.window_server()`, so what it states
+reaches no other reactor, and it never states one unknown again to tidy up after itself.
+
 The shim's `set_*_override` setters state the same answers into its thread-local fake, which
 lasts as long as the thread that set it, and libtest runs every test on a thread of its own,
 at one test thread as at many. A probe of two tests at `RUST_TEST_THREADS=1`: `a` ran on
 `ThreadId(2)` and set a thread-local to 7, `b` ran on `ThreadId(3)` and read 0. So no override
-reaches another test, and the `*_override(.., None)` calls at the end of tests do nothing for
-isolation. They are left in place: a reset part-way through a test does change what its next
-step reads, and telling those apart from the trailing ones is site by site.
+reaches another test, and a `*_override(.., None)` call at the end of a test does nothing for
+isolation.
 
 ### How this was found
 
@@ -150,9 +154,9 @@ ways:
 
 | static | tests that write it | tests that read it | held by |
 |---|---|---|---|
-| `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | `a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set`, under `hold_for_test`; every other reactor reads its own `display_churn` field, false under test | `hold_for_test` around every writer and that reader |
-| `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | every reactor test that handles a window event | `the_production_reader_reports_a_window_server_that_just_moved_as_busy`, which only asks whether it is busy right after setting it; the spaces actor reads `LiveDisplays::window_server_quiet` | injection; the one reader holds because every writer moves the clock later |
-| `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the reactor and the app actor read the initial value | nothing yet; a test that writes one injects it first |
+| `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | `a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set`, under `hold_for_test`; every other reactor reads its `SystemReads::display_churn`, false under test | `hold_for_test` around every writer and that reader |
+| `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | two spaces actor tests, through `note_windowserver_activity`; no reactor test, whose reads note on a clock of their own (`a_window_event_is_noted_on_the_reads_activity_clock`) | `the_production_reader_reports_a_window_server_that_just_moved_as_busy`, which only asks whether it is busy right after setting it; the spaces actor reads `LiveDisplays::window_server_quiet` | injection; the one reader holds because every writer moves the clock later |
+| `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the app actor and the input tap's start read the initial value; the reactor reads them through `SystemReads`, which a test reactor answers not in Low Power Mode and the pointer unknown | nothing yet; a test that writes one injects it first |
 | `SAVE_TEMP_COUNTER` (`src/workspaces/engine/persistence/mod.rs`) | persistence tests | none read its value; it only makes temp names unique | nothing needed |
 
 The tests that hold this: `a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag` and
@@ -195,8 +199,8 @@ that reads back without the hold fails on its first run, not on an unlucky one. 
 `a_commit_on_another_thread_drops_a_test_layers_animation_once_the_hold_is_let_go` holds the
 behaviour it rests on.
 
-The suite used to run on one thread for another reason, an abort while macOS frameworks start up
-lazily on two threads at once:
+The suite used to run on one thread for another reason, an abort while SkyLight starts up lazily
+on two threads at once:
 
 ```
 objc[75992]: Cannot form weak reference to instance of class
@@ -204,10 +208,15 @@ SLSWindowManagementFallbackBridge. It is possible that this object was
 over-released, or is in the process of deallocation.
 ```
 
-On 2026-10-10 it took a few percent of 40 parallel runs. It took none of the 47 parallel runs
-on 2026-10-15, with nothing changed that it was traced to; if it comes back the message names it.
-The tests that build capture fixtures still avoid `IOSurface` for that reason, and use a CPU
-bitmap instead.
+Its crash report puts every thread in `SLSWMBridgeDelegate`, which SkyLight sets up on the first
+window-management call, `SLSCopyBestManagedDisplayForRect` here: four `ScreenCache` tests made
+that call at once, through the Dock read `refresh` made itself. A test that reads the machine is
+the cause, so the cure is the seam: `ScreenCache` now asks its `System` for the menu bar, the Dock
+and each display's space, and its tests read no SkyLight. On 2026-10-16 the lib tests aborted in 4
+of 10 runs before that and in 0 of 20 after, and `bin/check.sh` in 0 of 20 consecutive runs
+after. If it comes back, the crash report in `~/Library/Logs/DiagnosticReports` names the tests
+whose threads are in SkyLight. The tests that build capture fixtures avoid `IOSurface` for the
+same reason, and use a CPU bitmap instead.
 
 ## What a flight costs is measured on the screen, by the timing battery
 
@@ -281,7 +290,7 @@ else in the repo cites an id; a comment or a doc names the work in words
 
 | Id | Task | Done when |
 |---|---|---|
-| P3.8 | `EngineFixture` over the production layout fn; delete the `cfg(test)` `calculate_layout` and the test-only `create_workspace`/`test_app_rules` | engine test average under 30 lines; `virtual_workspace.rs` has one `cfg(test)` |
+| P3.8 | `EngineFixture` over the production layout fn; delete the `cfg(test)` `calculate_layout` and the test-only `create_workspace` | engine test average under 30 lines; `virtual_workspace.rs` has one `cfg(test)` |
 | P4.1 | Named structs for positional tuples: the `OnScreenEntry` 9-tuple, `Request::SetWindowFrame(.., bool)`, `Event::WindowFrameChanged`, `ReactorParts` for an 11-parameter `spawn` | no tuple over 3 in an enum variant or pub fn type at these sites |
 | P4.8 | Small enums: `Pass` for `update_layout(bool, bool, ..)`, `Press`, `Axis`, the repaint subsets in `StageSummary`/`Flight` | no fn with 2+ bool parameters (`clippy::fn_params_excessive_bools` denied) |
 | P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`; replace `static mut SERVER` in `rini-ipc` | clippy clean with both denied; 0 `static mut` in the repo |
