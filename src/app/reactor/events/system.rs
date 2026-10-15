@@ -4,11 +4,11 @@ use tracing::debug;
 use crate::app::hotkeys::Sender as WmSender;
 use crate::app::reactor::MenuState;
 use crate::app::reactor::events::EventOutcome;
-use crate::app::reactor::managers::{CommunicationManager, MenuManager};
+use crate::app::reactor::managers::CommunicationManager;
 use crate::windows::domain::raise as raise_manager;
 
-pub fn handle_menu_opened(menu: &mut MenuManager, pid: i32) -> EventOutcome {
-    menu.menu_state = match menu.menu_state {
+pub fn handle_menu_opened(menu_state: &mut MenuState, pid: i32) -> EventOutcome {
+    *menu_state = match *menu_state {
         MenuState::Closed => {
             debug!(pid, "menu opened");
             MenuState::Open(pid)
@@ -32,15 +32,15 @@ pub fn handle_menu_opened(menu: &mut MenuManager, pid: i32) -> EventOutcome {
     EventOutcome::focus_changed(None, false).with_focus_follows_mouse_refresh()
 }
 
-pub fn handle_menu_closed(menu: &mut MenuManager, pid: i32) -> EventOutcome {
-    let refresh = match menu.menu_state {
+pub fn handle_menu_closed(menu_state: &mut MenuState, pid: i32) -> EventOutcome {
+    let refresh = match *menu_state {
         MenuState::Closed => {
             debug!(pid, "menu closed while no menu was marked open");
             true
         }
         MenuState::Open(owner) if owner == pid => {
             debug!(pid, "menu closed; clearing menu-open state");
-            menu.menu_state = MenuState::Closed;
+            *menu_state = MenuState::Closed;
             true
         }
         MenuState::Open(owner) => {

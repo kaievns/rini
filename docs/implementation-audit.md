@@ -231,45 +231,61 @@ No method of `LayoutEngine` is past the function limit; `tests/architecture.rs` 
 
 **OPEN — deliberately. See 3.3.**
 
-`src/app/reactor/mod.rs`, 4,201 code lines, no in-file tests. Direct field
-reaches: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
-`communication_manager` 17, `refresh_quarantine_manager` 14,
-`transaction_manager` 11, `pending_space_change_manager` 3. Eight "manager"
-structs plus `RiniState`.
+`src/app/reactor/` splits `Reactor` by concern: `mod.rs` holds the struct, its `Event`, the
+loop and `apply_event_outcome`, `dispatch.rs` holds `dispatch_workflow`, and each other file
+beside it is one concern's `impl Reactor` (`src/app/docs/README.md`, "What it owns"). No in-file
+tests. Direct field reaches, as counted when this was found: `state` 112, the layout engine 61,
+`space_state` 43, `drag_manager` 18, `communication_manager` 17, `refresh_quarantine_manager` 14,
+`transactions` 11. The one-field wrappers are gone: the layout engine, the applications, the menu
+state, the notification ids, the pending space change and the transaction store (`WindowTxStore`)
+are plain `Reactor` fields.
+Six multi-field managers remain in `reactor/managers.rs`, plus `RiniState`.
 
 Largest methods, and what each one turned out to be:
 
 | method | lines | verdict |
 |---|---|---|
-| `handle_layout_response` | 303 → 248 | four rules extracted, one of them a bug fix |
-| `dispatch_workflow` | 288 | a dispatch table; length is not the defect |
-| `apply_event_outcome` | 271 → 261 | three rules extracted; the rest is an ordered drain |
-| `handle_authoritative_space_snapshot` | 251 → 228 | the display-set comparison extracted |
+| `handle_layout_response` | 303 → 75 | four rules extracted, one of them a bug fix; the phases split off |
+| `dispatch_workflow` | 288 → 57 | a dispatch table, split by event family |
+| `apply_event_outcome` | 271 → 9 | three rules extracted; the drain split at the arrange, with no re-entry |
+| `handle_authoritative_space_snapshot` | 251 → 76 | the display-set comparison extracted; the settling split off |
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
 `layout::domain::boundary` (`workspace_step_at_boundary`, deleted with the trackpad swipes), with
 15 tests between them.
-One of those extractions was a bug fix: see 3.2.1.
+One of those extractions was a bug fix: see 3.2.1. Its phases are methods of their own:
+`bounce_at_edge`, `switch_target`, `focus_without_raise`, `drop_focus_out_of_sight`,
+`raise_list` and `warp_for_focus`.
 
 `handle_authoritative_space_snapshot` gave up its display-set comparison to
 `displays::domain::topology::display_set_delta` with 9 tests. That one was a
 correctness hazard rather than a length one: the previous display set was captured
 inline, one line before the field holding it was overwritten, and a comment was all
 that kept the two statements in that order. The function now takes both lists as
-arguments.
+arguments. The handler takes the screens in and holds the snapshot while Mission Control is
+open; `settle_snapshot` carries out the rest, from the space remaps to the windows moved back
+to a display that arrived, over a `SnapshotSettlement` of what the snapshot left for it.
 
 `apply_event_outcome` gave up three rules: `ArrangeRequest::passes_to_run`,
-`EventOutcome::focus_landed` and `NotificationManager::notification_ids_to_publish`,
-with 14 tests. What is left is a drain of 35 outcome fields in one deliberate order, and
-it stays one function on purpose: it takes `outcome` BY VALUE, so partial moves make the
-compiler prove every field is consumed exactly once. Splitting it into phase methods
-means passing `&mut EventOutcome` and `mem::take`-ing fields, which trades a
-compiler-checked invariant for four shorter functions.
+`EventOutcome::focus_landed` and `notification_ids_to_publish` (`src/app/reactor/managers.rs`),
+with 14 tests. It no longer re-enters itself, and it is one call for each of its two halves.
+`settle_ahead_of_arrange` carries out the steps before the arrange, split off by
+`take_work_before_arrange`, through `settle_before_arrange`, which settles what a
+discovery, a fullscreen restoration, the held space change and a drag's release hand back
+the same way, where it is handed back, and returns what is left of them for
+`absorb_ahead`. `arrange_and_follow_up` is the rest. Each takes its outcome by value, and
+`settle_before_arrange` destructures its work exhaustively, so a field taken before the
+arrange and left unused there fails the `-D warnings` build. See "Carrying out an outcome"
+in `src/app/docs/README.md`.
 
-`dispatch_workflow` is long because it is a dispatch table — one arm per event variant,
-every arm delegating. Length is not the defect there and splitting it by event family
-would add a "not handled" return for nothing.
+`dispatch_workflow` (`src/app/reactor/dispatch.rs`) is a dispatch table: one arm per event
+variant, every arm delegating. It names every variant once, so the match stays exhaustive, and
+hands each to its family's dispatcher. A variant with nothing of its own to carry out, such as
+`ApplicationMainWindowChanged`, has an arm that leaves the focus report's raise. A family's
+catch-all fails a debug assertion, so any test that sends a variant to a family with no arm for
+it fails rather than leaving only the raise, held by
+`a_variant_routed_to_the_wrong_family_fails_the_suite`.
 
 #### 3.2.1 The raise list's order was thrown away by its own batching
 
@@ -299,10 +315,11 @@ DONE — the variant is deleted, and `WindowPlacement` with it, since nothing re
 for a window that goes fullscreen before rini has one, which the rekey path needs. A test caught
 that immediately.
 
-`src/app/reactor/animation.rs` and `managers.rs` take `reactor: &mut Reactor`
-rather than `&mut self` on a narrower borrow — 9 signatures. `animate_layout`'s own
-doc (`src/transitions/docs/coordination.md`, "Structural findings") already calls
-this out and names the fix: a `present(motion)` boundary.
+The layout pass (`src/app/reactor/layout_pass.rs`) and its animation (`animation.rs`) are
+`impl Reactor` methods on `&mut self`: no function outside `impl Reactor` takes the reactor, but
+each still borrows all of it rather than the stores it writes. `animate_layout`'s own doc
+(`src/transitions/docs/coordination.md`, "Structural findings") names the fix: a
+`present(motion)` boundary.
 
 ### 3.4 `src/displays/screen.rs` straddles domain and platform
 
@@ -354,8 +371,8 @@ The recent batches moved the opposite way deliberately — pure decisions to
 | `src/windows/platform/app_actor.rs` | — | the AX driver, its size held to the file limit by `tests/architecture.rs`. DONE: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`), and the fake `AXUIElement` seam it needed (`FakeAx`, `9ea1079`) carries the actor's own tests, `handle_notification` and `handle_raise_request` among them, beside each job's code in `src/windows/platform/app_actor/` |
 | `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
 | `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
-| `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
-| `src/main.rs` | 430 | one 317-line `main`; composition root |
+| `src/app/reactor/observations.rs` | 572 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
+| `src/main.rs` | 525 | the composition root: `main` builds the actors in order, each built by a function of its own, and joins them |
 | `src/app/hotkeys/mod.rs` | 404 | DONE: the alias lowering is `hotkeys/lower.rs` with 7 tests |
 
 ### 4.3 Worst code-to-test ratios among tested files
@@ -429,10 +446,12 @@ the assignment. The guard was then provably redundant and is deleted.
 
 ### 4.5 The 317-line `main`
 
-`src/main.rs:100`. Flags, AX permission, the "separate Spaces" check, config read
-with fallback, layout restore, actor construction, joining. The config-fallback
-branch (lines 148-168) is a behaviour with a recorded history and no test; it is
-reachable only by running the binary.
+**DONE — `main` is 94 code lines.** The flags, the AX permission and the "separate Spaces" check
+are `start`, the config read with its fallback `read_config`, the layout restore
+`restored_layout`, and each actor is built by a function of its own, in the order `main` built
+them. The main thread's actors are joined by `run_main_thread`, as the seven that draw nothing
+(`QuietActors`) and the four that draw (`DrawingActors`). The config fallback is
+`app::boot::config_or_default`, with its tests.
 
 ## Not findings, checked and dismissed
 

@@ -23,18 +23,18 @@ thread_local! {
 fn a_test_reactor_reads_unknown_from_everything_it_was_not_told() {
     let reactor = test_reactor();
     let (window, space) = (WindowServerId::new(10001), SpaceId::new(1));
-    let port = &*reactor.reads.window_server;
+    let port = &*reactor.reads().window_server;
     assert_eq!(port.get_window(window).map(|info| info.id), None);
     assert_eq!(port.window_ordered_in(window), None);
     assert!(port.space_window_list_for_connection(&[space.get()]).is_empty());
     assert!(port.front_to_back_depths().is_empty());
     assert_eq!(reactor.window_id_under_cursor(), None);
-    assert_eq!((reactor.reads.mouse)(), None);
-    assert!((reactor.reads.running_app)(4242).is_none());
-    assert!(!(reactor.reads.low_power)());
-    assert!(!(reactor.reads.display_churn)());
+    assert_eq!((reactor.reads().mouse)(), None);
+    assert!((reactor.reads().running_app)(4242).is_none());
+    assert!(!(reactor.reads().low_power)());
+    assert!(!(reactor.reads().display_churn)());
     assert_eq!(
-        (reactor.reads.display_bounds)(rini_core::ids::ScreenId::new(1)),
+        (reactor.reads().display_bounds)(rini_core::ids::ScreenId::new(1)),
         CGRect::ZERO
     );
     assert!(!port.focus_desktop("test-display-0", CGRect::new(CGPoint::ZERO, CGSize::new(1., 1.))));
@@ -47,23 +47,22 @@ fn in_low_power_mode_pushing_past_an_end_does_not_bounce() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 2)));
     apps.requests();
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let bounced = |rx: &mut channels::Receiver<Anim>| {
         std::iter::from_fn(|| rx.try_recv().ok())
             .any(|(_, event)| matches!(event, Anim::Bounce { .. }))
     };
 
-    reactor.reads.low_power = || true;
+    reactor.reads_mut().low_power = || true;
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     assert!(!bounced(&mut animation_rx));
 
-    reactor.reads.low_power = || false;
+    reactor.reads_mut().low_power = || false;
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     assert!(bounced(&mut animation_rx), "the same push bounces out of it");
 }
@@ -73,8 +72,7 @@ fn in_low_power_mode_pushing_past_an_end_does_not_bounce() {
 #[test]
 fn a_window_of_an_app_with_no_thread_reads_its_launch_from_the_running_apps() {
     let mut reactor = test_reactor();
-    let (wm_tx, mut wm_rx) = channels::channel();
-    reactor.communication_manager.wm_sender = Some(wm_tx);
+    let mut wm_rx = reactor.connect_test_hotkeys();
     let space = SpaceId::new(1);
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
@@ -90,7 +88,7 @@ fn a_window_of_an_app_with_no_thread_reads_its_launch_from_the_running_apps() {
             max_frame: CGSize::ZERO,
         }),
     );
-    reactor.reads.running_app = |pid| {
+    reactor.reads_mut().running_app = |pid| {
         (pid == 77).then(|| AppInfo {
             bundle_id: Some("com.example.late".into()),
             localized_name: Some("Late".into()),
@@ -112,7 +110,7 @@ fn a_window_of_an_app_with_no_thread_reads_its_launch_from_the_running_apps() {
 #[test]
 fn a_window_event_is_noted_on_the_reads_activity_clock() {
     let mut reactor = test_reactor();
-    reactor.reads.note_activity = |id| NOTED.with(|noted| noted.borrow_mut().push(id));
+    reactor.reads_mut().note_activity = |id| NOTED.with(|noted| noted.borrow_mut().push(id));
     reactor.handle_test_batch(vec![Event::WindowDestroyed(WindowId::new(5, 31))]);
     assert_eq!(NOTED.with(|noted| noted.borrow().clone()), [31]);
 }
@@ -121,7 +119,7 @@ fn a_window_event_is_noted_on_the_reads_activity_clock() {
 #[test]
 fn the_tracked_windows_are_handed_to_the_reads_to_watch() {
     let (mut apps, mut reactor) = test_context();
-    reactor.reads.watch_windows =
+    reactor.reads_mut().watch_windows =
         |ids| WATCHED.with(|watched| watched.borrow_mut().push(ids.to_vec()));
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
@@ -159,7 +157,7 @@ fn closing_the_last_window_of_the_workspace_makes_the_display_s_desktop_key() {
         );
 
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, wid));
-    assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(wid));
+    assert_eq!(reactor.layout().focused_window(), Some(wid));
     let wsid = reactor.test_window_server_id(wid);
     reactor.window_server().set_window_ordered_in(wsid, Some(true));
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -186,9 +184,8 @@ fn the_animation_overlay_spans_the_display_bounds_its_reads_give() {
         ],
         vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
     ));
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
-    reactor.reads.display_bounds = |screen| {
+    let mut animation_rx = reactor.connect_test_transitions();
+    reactor.reads_mut().display_bounds = |screen| {
         if screen.as_u32() == 1 {
             CGRect::new(CGPoint::new(1728., 0.), CGSize::new(1920., 1080.))
         } else {
@@ -220,17 +217,16 @@ fn in_low_power_mode_a_layout_pass_flies_no_window() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     apps.requests();
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let layout = |reactor: &Reactor, by: f64| -> Vec<(WindowId, CGRect)> {
         [(1, by), (2, -by)]
             .map(|(idx, dx)| {
                 let wid = WindowId::new(1, idx);
-                let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+                let frame = reactor.test_frame(wid);
                 (
                     wid,
                     CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y), frame.size),
@@ -243,14 +239,14 @@ fn in_low_power_mode_a_layout_pass_flies_no_window() {
             .any(|(_, event)| matches!(event, Anim::Animate { .. }))
     };
 
-    reactor.reads.low_power = || true;
+    reactor.reads_mut().low_power = || true;
     let moved = layout(&reactor, 120.);
-    animation::AnimationManager::animate_layout(&mut reactor, space, &moved, false, None);
+    reactor.animate_layout(space, &moved, false, None);
     assert!(!flew(&mut animation_rx));
 
-    reactor.reads.low_power = || false;
+    reactor.reads_mut().low_power = || false;
     let moved = layout(&reactor, 120.);
-    animation::AnimationManager::animate_layout(&mut reactor, space, &moved, false, None);
+    reactor.animate_layout(space, &moved, false, None);
     assert!(flew(&mut animation_rx), "the same pass flies out of it");
 }
 
@@ -266,8 +262,7 @@ fn a_frame_report_with_no_mouse_state_reads_the_pointer_from_the_reads() {
     let wsid = reactor.test_window_server_id(wid);
     let report = |reactor: &mut Reactor| {
         let target = CGRect::new(CGPoint::new(200., 200.), CGSize::new(600., 400.));
-        let txid = reactor.transaction_manager.generate_next_txid(wsid);
-        reactor.transaction_manager.store_txid(wsid, txid, target);
+        let txid = reactor.pend_test_frame(wsid, target);
         let elsewhere = CGRect::new(CGPoint::new(260., 230.), CGSize::new(600., 400.));
         reactor.handle_event(Event::WindowFrameChanged(
             wid,
@@ -276,14 +271,14 @@ fn a_frame_report_with_no_mouse_state_reads_the_pointer_from_the_reads() {
             Requested(false),
             None,
         ));
-        reactor.transaction_manager.get_target_frame(wsid)
+        reactor.transactions().target(&wsid)
     };
 
     assert!(
         report(&mut reactor).is_some(),
         "the pointer unknown, rini's write still stands"
     );
-    reactor.reads.mouse = || Some(MouseState::Down);
+    reactor.reads_mut().mouse = || Some(MouseState::Down);
     assert_eq!(
         report(&mut reactor),
         None,

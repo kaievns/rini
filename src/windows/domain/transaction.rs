@@ -89,6 +89,9 @@ impl WindowTxStore {
     pub fn last_txid(&self, id: &WindowServerId) -> TransactionId {
         self.get(id).map(|record| record.txid).unwrap_or_default()
     }
+
+    /// The frame the last write is still waiting to see reported, if any.
+    pub fn target(&self, id: &WindowServerId) -> Option<CGRect> { self.get(id)?.target }
 }
 
 #[cfg(test)]
@@ -127,6 +130,21 @@ mod tests {
     }
 
     #[test]
+    fn target_is_the_pending_frame_until_cleared() {
+        let store = WindowTxStore::new();
+        let wsid = WindowServerId::new(4);
+        assert_eq!(store.target(&wsid), None);
+
+        let txid = store.next_txid(wsid);
+        let target = CGRect::new(CGPoint::new(1.0, 1.0), CGSize::new(2.0, 2.0));
+        store.insert(wsid, txid, target);
+        assert_eq!(store.target(&wsid), Some(target));
+
+        store.clear_target(&wsid);
+        assert_eq!(store.target(&wsid), None);
+    }
+
+    #[test]
     fn set_last_txid_clears_any_stale_target() {
         let store = WindowTxStore::new();
         let wsid = WindowServerId::new(3);
@@ -140,55 +158,5 @@ mod tests {
         let record = store.get(&wsid).expect("tx record should exist");
         assert_eq!(record.txid, txid_2);
         assert_eq!(record.target, None);
-    }
-}
-
-/// A per-window counter that tracks the last time the reactor sent a request to
-/// change the window frame.
-#[derive(Debug)]
-pub struct TransactionManager {
-    pub store: WindowTxStore,
-}
-
-impl TransactionManager {
-    pub fn new(store: WindowTxStore) -> Self { Self { store } }
-
-    /// Stores a transaction ID for a window with its target frame.
-    pub fn store_txid(&self, wsid: WindowServerId, txid: TransactionId, target: CGRect) {
-        self.store.insert(wsid, txid, target);
-    }
-
-    /// Updates multiple transaction ID entries.
-    pub fn update_txid_entries<I>(&self, entries: I)
-    where I: IntoIterator<Item = (WindowServerId, TransactionId, CGRect)> {
-        for (wsid, txid, target) in entries {
-            self.store.insert(wsid, txid, target);
-        }
-    }
-
-    /// Removes the transaction ID entry for a window.
-    pub fn remove_for_window(&self, wsid: WindowServerId) { self.store.remove(&wsid); }
-
-    /// Clears the pending target for a window while preserving its last txid.
-    pub fn clear_target_for_window(&self, wsid: WindowServerId) { self.store.clear_target(&wsid); }
-
-    /// Generates the next transaction ID for a window.
-    pub fn generate_next_txid(&self, wsid: WindowServerId) -> TransactionId {
-        self.store.next_txid(wsid)
-    }
-
-    /// Sets the last sent transaction ID for a window.
-    pub fn set_last_sent_txid(&self, wsid: WindowServerId, txid: TransactionId) {
-        self.store.set_last_txid(wsid, txid);
-    }
-
-    /// Gets the last sent transaction ID for a window.
-    pub fn get_last_sent_txid(&self, wsid: WindowServerId) -> TransactionId {
-        self.store.last_txid(&wsid)
-    }
-
-    /// Gets the target frame for a window's transaction, if it exists.
-    pub fn get_target_frame(&self, wsid: WindowServerId) -> Option<CGRect> {
-        self.store.get(&wsid)?.target
     }
 }

@@ -1,21 +1,19 @@
-use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{error, info, warn};
 
 use super::super::ScreenInfo;
 use crate::app::config::Config;
-use crate::app::reactor::WorkspaceSwitchOrigin;
 use crate::app::reactor::events::EventOutcome;
-use crate::app::reactor::managers::{
-    AppManager, DragManager, LayoutManager, WorkspaceSwitchManager,
-};
+use crate::app::reactor::managers::{DragManager, WorkspaceSwitchManager};
 use crate::app::reactor::state::RiniState;
+use crate::app::reactor::{AppState, WorkspaceSwitchOrigin};
 use crate::displays::domain::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
 use crate::windows::domain::raise as raise_manager;
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
-use crate::workspaces::{EventResponse, LayoutCommand, LayoutEvent};
+use crate::workspaces::{EventResponse, LayoutCommand, LayoutEngine, LayoutEvent};
 
 #[derive(Debug, Clone)]
 pub struct LayoutCommandPayload {
@@ -27,7 +25,7 @@ pub struct LayoutCommandPayload {
 
 pub fn handle_command_layout(
     state: &mut RiniState,
-    layout: &mut LayoutManager,
+    layout: &mut LayoutEngine,
     workspace_switch: &mut WorkspaceSwitchManager,
     payload: LayoutCommandPayload,
 ) -> anyhow::Result<EventOutcome> {
@@ -38,31 +36,9 @@ pub fn handle_command_layout(
         visible_space_centers,
     } = payload;
     info!(?cmd);
-    let is_workspace_switch = matches!(
-        cmd,
-        LayoutCommand::NextWorkspace(_)
-            | LayoutCommand::PrevWorkspace(_)
-            | LayoutCommand::SwitchToWorkspace(_)
-            | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
-            | LayoutCommand::SwitchToLastWorkspace
-    );
-    let requires_workspace_space = matches!(
-        cmd,
-        LayoutCommand::NextWorkspace(_)
-            | LayoutCommand::PrevWorkspace(_)
-            | LayoutCommand::SwitchToWorkspace(_)
-            | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
-            | LayoutCommand::SwitchToLastWorkspace
-    );
-    let is_virtual_workspace_command = matches!(
-        cmd,
-        LayoutCommand::NextWorkspace(_)
-            | LayoutCommand::PrevWorkspace(_)
-            | LayoutCommand::SwitchToWorkspace(_)
-            | LayoutCommand::MoveWindowToWorkspace { .. }
-            | LayoutCommand::SwitchToLastWorkspace
-    );
-    let workspace_space = if requires_workspace_space {
+    let is_workspace_switch = is_workspace_switch(&cmd);
+    let is_virtual_workspace_command = is_virtual_workspace_command(&cmd);
+    let workspace_space = if is_workspace_switch {
         if let Some(space) = command_space {
             store_current_floating_positions(state, layout, space);
         }
@@ -77,39 +53,21 @@ pub fn handle_command_layout(
     }
 
     let response = match &cmd {
-        LayoutCommand::NextWorkspace(_)
-        | LayoutCommand::PrevWorkspace(_)
-        | LayoutCommand::SwitchToWorkspace(_)
-        | LayoutCommand::SwitchToLastWorkspace => {
-            if let Some(space) = workspace_space {
-                layout.layout_engine.handle_virtual_workspace_command(
-                    &mut state.windows,
-                    &mut state.display_memory,
-                    space,
-                    &cmd,
-                )
-            } else {
-                EventResponse::default()
-            }
-        }
-        LayoutCommand::MoveWindowToWorkspace { .. } => {
-            if let Some(space) = command_space {
-                layout.layout_engine.handle_virtual_workspace_command(
-                    &mut state.windows,
-                    &mut state.display_memory,
-                    space,
-                    &cmd,
-                )
-            } else {
-                EventResponse::default()
-            }
-        }
+        cmd if is_virtual_workspace_command => match command_space {
+            Some(space) => layout.handle_virtual_workspace_command(
+                &mut state.windows,
+                &mut state.display_memory,
+                space,
+                cmd,
+            ),
+            None => EventResponse::default(),
+        },
         _ => {
             if visible_spaces.is_empty() {
                 warn!("Layout command ignored: no active spaces");
                 return Ok(EventOutcome::no_change());
             }
-            layout.layout_engine.handle_command(
+            layout.handle_command(
                 &mut state.windows,
                 &mut state.display_memory,
                 command_space,
@@ -136,29 +94,54 @@ pub fn handle_command_layout(
         .with_arrange_space_scope(arrange_space_scope))
 }
 
+/// A command that switches the workspace shown: it starts a workspace switch and acts on the
+/// command space.
+fn is_workspace_switch(cmd: &LayoutCommand) -> bool {
+    matches!(
+        cmd,
+        LayoutCommand::NextWorkspace(_)
+            | LayoutCommand::PrevWorkspace(_)
+            | LayoutCommand::SwitchToWorkspace(_)
+            | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
+            | LayoutCommand::SwitchToLastWorkspace
+    )
+}
+
+/// A command the virtual workspaces carry out rather than the layout: the switches, and moving a
+/// window to a workspace whether or not focus follows it.
+fn is_virtual_workspace_command(cmd: &LayoutCommand) -> bool {
+    matches!(
+        cmd,
+        LayoutCommand::NextWorkspace(_)
+            | LayoutCommand::PrevWorkspace(_)
+            | LayoutCommand::SwitchToWorkspace(_)
+            | LayoutCommand::MoveWindowToWorkspace { .. }
+            | LayoutCommand::SwitchToLastWorkspace
+    )
+}
+
 fn current_floating_positions(
     state: &RiniState,
-    layout: &LayoutManager,
+    layout: &LayoutEngine,
     space: SpaceId,
 ) -> Vec<(SpaceId, WindowId, objc2_core_foundation::CGRect)> {
     layout
-        .layout_engine
         .windows_in_active_workspace(&state.windows, space)
         .into_iter()
-        .filter(|window| layout.layout_engine.is_window_floating(*window))
+        .filter(|window| layout.is_window_floating(*window))
         .filter_map(|window| {
             state.windows.window(window).map(|state| (space, window, state.frame_monotonic))
         })
         .collect()
 }
 
-fn store_current_floating_positions(state: &RiniState, layout: &mut LayoutManager, space: SpaceId) {
+fn store_current_floating_positions(state: &RiniState, layout: &mut LayoutEngine, space: SpaceId) {
     let positions = current_floating_positions(state, layout, space)
         .into_iter()
         .map(|(_, window, frame)| (window, frame))
         .collect::<Vec<_>>();
     if !positions.is_empty() {
-        layout.layout_engine.store_floating_window_positions(space, &positions);
+        layout.store_floating_window_positions(space, &positions);
     }
 }
 
@@ -170,16 +153,14 @@ pub fn handle_close_window(
 
 pub fn handle_config_updated(
     config: &mut Config,
-    layout: &mut LayoutManager,
+    layout: &mut LayoutEngine,
     drag: &mut DragManager,
     new_config: Config,
 ) -> anyhow::Result<EventOutcome> {
     *config = new_config;
-    layout.layout_engine.set_layout_settings(&config.settings.layout);
+    layout.set_layout_settings(&config.settings.layout);
 
-    layout
-        .layout_engine
-        .update_virtual_workspace_settings(&config.virtual_workspaces);
+    layout.update_virtual_workspace_settings(&config.virtual_workspaces);
 
     drag.update_config(config.settings.window_snapping);
 
@@ -188,15 +169,13 @@ pub fn handle_config_updated(
 
 pub fn save_layout_before_exit(
     state: &RiniState,
-    layout: &mut LayoutManager,
+    layout: &mut LayoutEngine,
     path: std::path::PathBuf,
     active_space: Option<SpaceId>,
     listed: Option<&[SpaceId]>,
 ) -> std::io::Result<()> {
     if let Some(listed) = listed {
-        layout
-            .layout_engine
-            .forget_vacant_spaces(&state.windows, &state.display_memory, listed);
+        layout.forget_vacant_spaces(&state.windows, &state.display_memory, listed);
     }
     save_layout(state, layout, path, active_space)
 }
@@ -218,16 +197,11 @@ pub fn handle_command_reactor_save_and_exit(
 
 fn save_layout(
     state: &RiniState,
-    layout: &mut LayoutManager,
+    layout: &mut LayoutEngine,
     path: std::path::PathBuf,
     active_space: Option<SpaceId>,
 ) -> std::io::Result<()> {
-    layout.layout_engine.save_current_layout(
-        path,
-        &state.windows,
-        &state.display_memory,
-        active_space,
-    )
+    layout.save_current_layout(path, &state.windows, &state.display_memory, active_space)
 }
 
 #[derive(Debug, Clone)]
@@ -298,7 +272,7 @@ pub fn handle_focus_display(payload: DisplayFocusPayload) -> anyhow::Result<Even
 
 pub fn handle_command_reactor_focus_window(
     state: &RiniState,
-    apps: &AppManager,
+    apps: &HashMap<pid_t, AppState>,
     payload: FocusWindowPayload,
 ) -> anyhow::Result<EventOutcome> {
     let FocusWindowPayload {
@@ -320,7 +294,7 @@ pub fn handle_command_reactor_focus_window(
         outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, window_id));
 
         let mut app_handles: HashMap<i32, AppThreadHandle> = HashMap::default();
-        if let Some(app) = apps.apps.get(&window_id.pid) {
+        if let Some(app) = apps.get(&window_id.pid) {
             app_handles.insert(window_id.pid, app.handle.clone());
         }
         let request = raise_manager::Event::RaiseRequest(raise_manager::RaiseRequest {
@@ -348,7 +322,7 @@ pub struct MoveWindowToDisplayPayload {
 
 pub fn handle_command_reactor_move_window_to_display(
     state: &mut RiniState,
-    layout: &mut LayoutManager,
+    layout: &mut LayoutEngine,
     payload: MoveWindowToDisplayPayload,
 ) -> anyhow::Result<EventOutcome> {
     if let Some(window) = state.windows.window_mut(payload.window) {
@@ -358,7 +332,7 @@ pub fn handle_command_reactor_move_window_to_display(
         return Ok(EventOutcome::no_change());
     }
 
-    let response = layout.layout_engine.move_window_to_space(
+    let response = layout.move_window_to_space(
         &mut state.windows,
         &mut state.display_memory,
         payload.source_space,
@@ -369,11 +343,7 @@ pub fn handle_command_reactor_move_window_to_display(
 
     // The user asked for this display, so it becomes the window's home. A later unplug
     // will evacuate the window elsewhere, and this is the record that brings it back.
-    layout.layout_engine.set_window_display_home(
-        &mut state.display_memory,
-        payload.window,
-        payload.target_space,
-    );
+    layout.set_window_display_home(&mut state.display_memory, payload.window, payload.target_space);
 
     if state
         .windows
@@ -398,12 +368,37 @@ mod tests {
     use rini_core::ids::ScreenId;
 
     use super::*;
-    use crate::app::reactor::managers::AppManager;
     use crate::app::reactor::state::RiniState;
     use crate::app::reactor::testing::make_window_info;
     use crate::windows::domain::state::WindowState;
 
     fn wid() -> WindowId { WindowId::new(1, 1) }
+
+    /// Every workspace switch is a virtual-workspace command; moving a window without following
+    /// it is one too, and switches nothing; a layout command is neither.
+    #[test]
+    fn a_switch_is_a_workspace_command_and_a_move_switches_only_when_focus_follows() {
+        use rini_ipc::protocol::WorkspaceSelector;
+        let moved = |follow| LayoutCommand::MoveWindowToWorkspace {
+            workspace: WorkspaceSelector::Index(1),
+            follow,
+            window_id: None,
+        };
+        for switch in [
+            LayoutCommand::NextWorkspace(None),
+            LayoutCommand::PrevWorkspace(None),
+            LayoutCommand::SwitchToWorkspace(2),
+            LayoutCommand::SwitchToLastWorkspace,
+            moved(true),
+        ] {
+            assert!(is_workspace_switch(&switch), "{switch:?}");
+            assert!(is_virtual_workspace_command(&switch), "{switch:?}");
+        }
+        assert!(!is_workspace_switch(&moved(false)));
+        assert!(is_virtual_workspace_command(&moved(false)));
+        assert!(!is_workspace_switch(&LayoutCommand::NextWindow));
+        assert!(!is_virtual_workspace_command(&LayoutCommand::NextWindow));
+    }
 
     fn screen(space: Option<SpaceId>) -> ScreenInfo {
         ScreenInfo {
@@ -505,7 +500,7 @@ mod tests {
     fn focusing_a_tracked_window_on_an_active_space_raises_it() {
         let outcome = handle_command_reactor_focus_window(
             &state_with_window(),
-            &AppManager::new(),
+            &HashMap::default(),
             FocusWindowPayload {
                 window_id: wid(),
                 window_server_id: None,
@@ -523,7 +518,7 @@ mod tests {
         for (space, active) in [(None, true), (Some(SpaceId::new(2)), false)] {
             let outcome = handle_command_reactor_focus_window(
                 &state_with_window(),
-                &AppManager::new(),
+                &HashMap::default(),
                 FocusWindowPayload {
                     window_id: wid(),
                     window_server_id: None,
@@ -543,7 +538,7 @@ mod tests {
     fn an_untracked_window_is_made_key_through_the_window_server() {
         let outcome = handle_command_reactor_focus_window(
             &RiniState::default(),
-            &AppManager::new(),
+            &HashMap::default(),
             FocusWindowPayload {
                 window_id: wid(),
                 window_server_id: Some(WindowServerId::new(7)),
@@ -560,7 +555,7 @@ mod tests {
     fn an_untracked_window_with_no_server_id_cannot_be_focused_at_all() {
         let outcome = handle_command_reactor_focus_window(
             &RiniState::default(),
-            &AppManager::new(),
+            &HashMap::default(),
             FocusWindowPayload {
                 window_id: wid(),
                 window_server_id: None,

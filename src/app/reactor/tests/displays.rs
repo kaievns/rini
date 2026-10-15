@@ -9,9 +9,11 @@ use super::fixtures::*;
 use crate::app::reactor::managers::RefreshQuarantineState;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
 use crate::windows::platform::window_server::FakeWindowServer;
+use crate::workspaces as layout;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -20,20 +22,20 @@ fn it_clears_screen_state_when_no_displays_are_reported() {
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
-    assert_eq!(1, reactor.space_state.screens.len());
+    assert_eq!(1, reactor.space_state().screens.len());
 
     reactor.handle_event(space_state_event(vec![], vec![]));
-    assert!(reactor.space_state.screens.is_empty());
+    assert!(reactor.space_state().screens.is_empty());
     assert_eq!(reactor.raw_command_space(), None);
-    assert_eq!(reactor.space_state.menu_bar_space, None);
-    assert!(reactor.space_state.display_space_ids.is_empty());
+    assert_eq!(reactor.space_state().menu_bar_space, None);
+    assert!(reactor.space_state().display_space_ids.is_empty());
 
     reactor.handle_event(space_state_event(vec![], vec![]));
-    assert!(reactor.space_state.screens.is_empty());
+    assert!(reactor.space_state().screens.is_empty());
     assert_eq!(reactor.raw_command_space(), None);
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
-    assert_eq!(1, reactor.space_state.screens.len());
+    assert_eq!(1, reactor.space_state().screens.len());
 }
 
 #[test]
@@ -80,15 +82,12 @@ fn layout_commands_follow_active_display_space_across_active_displays() {
 
     assert_eq!(reactor.workspace_command_space(), Some(left_space));
     assert_eq!(reactor.command_context_space(), Some(left_space));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(target_a)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(target_a));
 
     reactor.handle_test_layout_command(LayoutCommand::NextWindow);
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout().focused_window(),
         Some(source),
         "non-workspace layout commands should follow the active display space"
     );
@@ -115,7 +114,7 @@ fn active_display_update_only_changes_command_context() {
     });
 
     assert_eq!(reactor.workspace_command_space(), Some(right_space));
-    assert_eq!(reactor.space_state.menu_bar_space, Some(right_space));
+    assert_eq!(reactor.space_state().menu_bar_space, Some(right_space));
     assert!(
         apps.requests().is_empty(),
         "active-display updates must not trigger window discovery"
@@ -131,8 +130,14 @@ fn active_display_update_only_changes_command_context() {
 /// `keep_assigned_for_scrolling` prevents that for every tiled window.
 #[test]
 fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_display() {
-    let (mut reactor, wid, _wsid, space1, _space2, frame, screen2) =
-        reactor_with_window_on_space1_two_displays();
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        space1,
+        frame,
+        screen2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
     let moved = CGRect::new(
         CGPoint::new(screen2.origin.x + 100.0, frame.origin.y),
         frame.size,
@@ -204,35 +209,31 @@ fn an_unmanageable_window_is_not_tiled_when_its_frame_comes_back_on_screen() {
 
 #[test]
 fn cross_display_drag_clears_source_floating_position() {
-    let (mut reactor, wid, _wsid, space1, space2, initial_frame, screen2) =
-        reactor_with_window_on_space1_two_displays();
-    let source_workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(space1)
-        .expect("source workspace");
-    let target_workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(space2)
-        .expect("target workspace");
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        space1,
+        space2,
+        frame: initial_frame,
+        screen2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
+    let source_workspace = reactor.layout().active_workspace(space1).expect("source workspace");
+    let target_workspace = reactor.layout().active_workspace(space2).expect("target workspace");
 
     reactor.send_layout_event(LayoutEvent::WindowAdded(space1, wid));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space1, wid));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(wid));
-    reactor.layout_manager.layout_engine.store_floating_position(
-        space1,
-        source_workspace,
-        wid,
-        initial_frame,
-    );
+    assert!(reactor.layout().is_window_floating(wid));
+    reactor
+        .layout_mut()
+        .store_floating_position(space1, source_workspace, wid, initial_frame);
 
     let moved_frame = CGRect::new(
         CGPoint::new(screen2.origin.x + 120.0, initial_frame.origin.y),
         initial_frame.size,
     );
-    reactor.drag_manager.drag_state = DragState::Active {
+    reactor.drag_mut().drag_state = DragState::Active {
         session: DragSession {
             window: wid,
             start_frame: initial_frame,
@@ -245,55 +246,52 @@ fn cross_display_drag_clears_source_floating_position() {
     };
 
     let (visible_spaces, visible_space_centers) = reactor.visible_spaces_for_layout(true);
-    let outcome = crate::app::reactor::events::drag::handle_mouse_up(
-        &mut reactor.state,
-        &mut reactor.layout_manager,
-        &mut reactor.drag_manager,
-        crate::app::reactor::events::drag::MouseUpPayload {
+    let outcome = reactor
+        .reduce_test_mouse_up(crate::app::reactor::events::drag::MouseUpPayload {
             pending_swap: None,
             swap_space: Some(space2),
             final_space: Some(space2),
             visible_spaces,
             visible_space_centers,
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     assert!(outcome.arrange.requested);
-    assert!(matches!(reactor.drag_manager.drag_state, DragState::Inactive));
+    assert!(matches!(reactor.drag().drag_state, DragState::Inactive));
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
     );
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .get_floating_position(space1, source_workspace, wid),
+        reactor.layout().get_floating_position(space1, source_workspace, wid),
         None,
         "cross-display drags must clear the source workspace's floating position"
     );
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .get_floating_position(space2, target_workspace, wid),
+        reactor.layout().get_floating_position(space2, target_workspace, wid),
         Some(moved_frame)
     );
 }
 
 #[test]
 fn stale_user_space_disappearance_does_not_restore_old_display_assignment() {
-    let (mut reactor, wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
 
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
     );
-    assert!(reactor.state.windows.is_window_visible(wsid));
+    assert!(reactor.windows().is_window_visible(wsid));
 
     let _ = reactor.reconcile_windows_with_authoritative_spaces();
 
@@ -306,11 +304,18 @@ fn stale_user_space_disappearance_does_not_restore_old_display_assignment() {
 
 #[test]
 fn stale_user_space_appearance_does_not_restore_old_display_assignment() {
-    let (mut reactor, wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
 
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
@@ -327,11 +332,18 @@ fn stale_user_space_appearance_does_not_restore_old_display_assignment() {
 
 #[test]
 fn multi_active_visible_window_appearance_keeps_display_assignment_and_visibility() {
-    let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
 
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
@@ -340,21 +352,28 @@ fn multi_active_visible_window_appearance_keeps_display_assignment_and_visibilit
         reactor.affinity().authoritative_space_for_window_id(wid),
         Some(space2)
     );
-    assert!(reactor.state.windows.is_window_visible(wsid));
+    assert!(reactor.windows().is_window_visible(wsid));
 }
 
 #[test]
 fn multi_active_visible_window_disappearance_does_not_reassign_between_display_spaces() {
-    let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
 
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
     );
-    assert!(reactor.state.windows.is_window_visible(wsid));
+    assert!(reactor.windows().is_window_visible(wsid));
 }
 
 #[test]
@@ -393,7 +412,7 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
     reactor.window_server().set_window_spaces(wsid, vec![space2]);
     window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
 
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
@@ -406,7 +425,13 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
 
 #[test]
 fn recent_cross_display_move_ignores_conflicting_geometry_space_change() {
-    let (mut reactor, wid, wsid, _space1, space2, _) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
     let conflicting_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(800., 600.));
 
     reactor.handle_event(Event::WindowFrameChanged(
@@ -421,7 +446,7 @@ fn recent_cross_display_move_ignores_conflicting_geometry_space_change() {
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
     );
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
 }
 
 #[test]
@@ -465,11 +490,13 @@ fn discovery_preserves_hidden_windows_on_their_original_same_display_space() {
     ));
 
     reactor.handle_event(space_state_event(vec![frame], vec![Some(space2)]));
-    reactor.state.windows.clear_visible_windows();
-    reactor.state.windows.mark_window_visible(WindowServerId::new(103));
-    reactor.mission_control_manager.pending_mission_control_refresh.insert(pid);
+    reactor.windows_mut().clear_visible_windows();
+    reactor.windows_mut().mark_window_visible(WindowServerId::new(103));
+    reactor.defer_test_refresh_past_mission_control(pid);
 
-    reactor.on_windows_discovered_with_app_info(pid, vec![], vec![WindowId::new(pid, 3)], None);
+    let outcome =
+        reactor.on_windows_discovered_with_app_info(pid, vec![], vec![WindowId::new(pid, 3)], None);
+    reactor.apply_event_outcome(outcome);
 
     let space1_workspaces = reactor.query_workspaces(Some(space1));
     let space2_workspaces = reactor.query_workspaces(Some(space2));
@@ -502,18 +529,73 @@ fn forwarded_space_state_is_queued_during_mission_control_and_applied_on_exit() 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(new_space)]));
 
     assert_eq!(
-        reactor
-            .pending_space_change_manager
-            .pending_space_change
-            .as_ref()
-            .map(|pending| pending.screens.iter().map(|screen| screen.space).collect::<Vec<_>>()),
+        reactor.pending_space_change().map(|pending| pending
+            .screens
+            .iter()
+            .map(|screen| screen.space)
+            .collect::<Vec<_>>()),
         Some(vec![Some(new_space)])
     );
 
     reactor.handle_event(Event::MissionControlNativeExited);
 
     assert_eq!(reactor.workspace_command_space(), Some(new_space));
-    assert!(reactor.pending_space_change_manager.pending_space_change.is_none());
+    assert!(reactor.pending_space_change().is_none());
+}
+
+/// The exit's refresh pass lays out what the space change held through Mission Control did: the
+/// window it took off the space is gone before that pass, so the pass writes the frame the window
+/// left behind, before the event's own arrange.
+#[test]
+fn a_space_change_held_through_mission_control_is_laid_out_before_the_exit_refresh_pass() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(2));
+    let (kept, gone) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    let (kept_wsid, gone_wsid) = (WindowServerId::new(10_001), WindowServerId::new(10_002));
+    reactor.handle_event(Event::MissionControlNativeEntered);
+    reactor
+        .window_server()
+        .set_space_window_list(space.get(), Some(vec![kept_wsid.as_u32()]));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(space)],
+        |state| {
+            state.topology_window_delta =
+                Some(crate::displays::domain::topology::TopologyWindowDelta {
+                    disappeared: vec![(gone_wsid, space)],
+                    ..Default::default()
+                });
+        },
+    ));
+    assert!(reactor.pending_space_change().is_some());
+    apps.requests();
+
+    let exit = reactor.dispatch_workflow(Event::MissionControlNativeExited).unwrap();
+    let rest = reactor.settle_ahead_of_arrange(exit);
+
+    assert!(
+        rest.arrange.requested,
+        "the event's own arrange is still to come"
+    );
+    let written: Vec<_> = apps
+        .requests()
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::SetWindowFrame(window, frame, ..) => Some((window, frame)),
+            _ => None,
+        })
+        .collect();
+    let kept_frame = written.iter().find(|(window, _)| *window == kept).map(|(_, frame)| *frame);
+    assert!(written.iter().all(|(window, _)| *window != gone), "{written:?}");
+    reactor.apply_event_outcome(rest);
+    assert!(!has_window_in_layout(&mut reactor, space, screen, gone));
+    assert_eq!(
+        kept_frame,
+        reactor.windows().window(kept).map(|window| window.frame_monotonic),
+        "the refresh pass wrote the kept window's frame without the window the held change took off"
+    );
 }
 
 #[test]
@@ -528,7 +610,7 @@ fn mission_control_exit_does_not_restore_cached_space_without_authoritative_snap
     reactor.handle_event(Event::MissionControlNativeExited);
 
     assert_eq!(reactor.workspace_command_space(), None);
-    assert_eq!(reactor.space_state.screens[0].space, None);
+    assert_eq!(reactor.space_state().screens[0].space, None);
 }
 
 #[test]
@@ -605,15 +687,12 @@ fn mission_control_enter_clears_active_drag_state() {
     reactor.insert_test_window_state(wid, frame, Some(WindowServerId::new(1)), true);
     reactor.ensure_active_drag(wid, &frame);
 
-    assert!(matches!(
-        reactor.drag_manager.drag_state,
-        DragState::Active { .. }
-    ));
+    assert!(matches!(reactor.drag().drag_state, DragState::Active { .. }));
 
     reactor.handle_event(Event::MissionControlNativeEntered);
 
-    assert!(matches!(reactor.drag_manager.drag_state, DragState::Inactive));
-    assert!(reactor.drag_manager.skip_layout_for_window.is_none());
+    assert!(matches!(reactor.drag().drag_state, DragState::Inactive));
+    assert!(reactor.drag().skip_layout_for_window.is_none());
 }
 
 #[test]
@@ -653,8 +732,7 @@ fn it_keeps_discovered_windows_on_their_initial_screen() {
 #[test]
 fn handle_layout_response_groups_windows_by_app_and_screen() {
     let (mut apps, mut reactor) = test_context();
-    let (raise_manager_tx, mut raise_manager_rx) = channels::channel();
-    reactor.communication_manager.raise_manager_tx = raise_manager_tx;
+    let mut raise_manager_rx = reactor.connect_test_raises();
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let screen2 = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
     reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
@@ -802,19 +880,25 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
 
 #[test]
 fn authoritative_active_window_snapshot_reassigns_window_across_active_displays() {
-    let (mut reactor, wid, wsid, space1, space2, _initial_frame, _screen2) =
-        reactor_with_window_on_space1_two_displays();
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space1)
     );
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space1));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space1));
 
     reactor.reconcile_authoritative_active_window_snapshot(vec![(wsid, Some(space2))], false);
 
     assert_eq!(
-        reactor.state.windows.window_server_space(wsid),
+        reactor.windows().window_server_space(wsid),
         Some(space2),
         "authoritative active-space membership should update the tracked native space"
     );
@@ -885,8 +969,15 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
 
 #[test]
 fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
-    let (mut reactor, wid, wsid, space1, space2, _initial_frame, screen2) =
-        reactor_with_window_on_space1_two_displays();
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        screen2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
 
     reactor.window_server().set_window_spaces(wsid, vec![space2]);
@@ -915,13 +1006,13 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
         Some(space2),
         "topology delta should still be processed even when the forwarded screens snapshot is unchanged"
     );
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
+    assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
 }
 
 #[test]
 fn display_churn_quarantines_window_frame_and_membership_events() {
     let mut reactor = test_reactor();
-    reactor.reads.display_churn = || true;
+    reactor.reads_mut().display_churn = || true;
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
 
@@ -1056,40 +1147,40 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
     apps.requests();
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    assert!(reactor.refresh_quarantine_manager.display_churn_active);
+    assert!(reactor.quarantine().display_churn_active);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::DisplayChurn
     );
 
     reactor.handle_event(Event::SessionDidResignActive);
-    assert!(reactor.refresh_quarantine_manager.session_inactive);
-    assert!(!reactor.refresh_quarantine_manager.awaiting_post_session_snapshot);
+    assert!(reactor.quarantine().session_inactive);
+    assert!(!reactor.quarantine().awaiting_post_session_snapshot);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::SessionInactive
     );
 
     reactor.handle_event(Event::SystemWillSleep);
-    assert!(reactor.refresh_quarantine_manager.sleeping);
-    assert!(!reactor.refresh_quarantine_manager.awaiting_post_wake_snapshot);
+    assert!(reactor.quarantine().sleeping);
+    assert!(!reactor.quarantine().awaiting_post_wake_snapshot);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::Sleeping
     );
 
     reactor.handle_event(Event::SystemWoke);
-    assert!(reactor.refresh_quarantine_manager.sleeping);
-    assert!(reactor.refresh_quarantine_manager.awaiting_post_wake_snapshot);
-    assert!(reactor.refresh_quarantine_manager.pending_visible_refresh);
+    assert!(reactor.quarantine().sleeping);
+    assert!(reactor.quarantine().awaiting_post_wake_snapshot);
+    assert!(reactor.quarantine().pending_visible_refresh);
 
-    reactor.refresh_quarantine_manager.pending_visible_refresh = false;
+    reactor.quarantine_mut().pending_visible_refresh = false;
     reactor.handle_event(Event::SessionDidBecomeActive);
-    assert!(reactor.refresh_quarantine_manager.session_inactive);
-    assert!(reactor.refresh_quarantine_manager.awaiting_post_session_snapshot);
-    assert!(reactor.refresh_quarantine_manager.pending_visible_refresh);
+    assert!(reactor.quarantine().session_inactive);
+    assert!(reactor.quarantine().awaiting_post_session_snapshot);
+    assert!(reactor.quarantine().pending_visible_refresh);
 
-    assert_eq!(reactor.main_window_tracker.key_window(), Some(focused));
+    assert_eq!(reactor.focus_tracker().key_window(), Some(focused));
     assert_eq!(test_layout(&mut reactor, space, screen), layout);
     assert!(
         !apps.requests().iter().any(|request| matches!(request, Request::Raise(..))),
@@ -1124,18 +1215,24 @@ fn display_churn_end_refresh_is_idempotent_without_topology_change() {
 
 #[test]
 fn ax_destruction_removes_window_on_known_inactive_space_outside_churn() {
-    let (mut reactor, wid, wsid, active_space, inactive_space, _frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1: active_space,
+        space2: inactive_space,
+        ..
+    } = reactor_with_window_on_space1();
     let inactive_workspace = reactor.test_workspace(inactive_space, 0);
     assert!(reactor.assign_test_window_to_workspace(inactive_space, wid, inactive_workspace));
-    reactor.state.windows.set_window_server_space(wsid, Some(inactive_space));
-    reactor.state.windows.mark_window_hidden(wsid);
+    reactor.windows_mut().set_window_server_space(wsid, Some(inactive_space));
+    reactor.windows_mut().mark_window_hidden(wsid);
     assert!(reactor.affinity().is_window_on_known_inactive_space(wid));
 
     reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    assert!(reactor.state.windows.record(wid).is_none());
+    assert!(reactor.windows().record(wid).is_none());
     assert_eq!(reactor.test_workspace_for_window(inactive_space, wid), None);
     assert_eq!(reactor.test_workspace_for_window(active_space, wid), None);
 }
@@ -1150,12 +1247,12 @@ fn ax_destruction_removes_already_minimized_window_outside_churn() {
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
     let wsid = reactor.test_window_server_id(wid);
     reactor.handle_event(Event::WindowMinimized(wid));
-    assert!(reactor.state.windows.window(wid).unwrap().info.is_minimized);
+    assert!(reactor.windows().window(wid).unwrap().info.is_minimized);
 
     reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    assert!(reactor.state.windows.record(wid).is_none());
+    assert!(reactor.windows().record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
 }
 
@@ -1174,7 +1271,7 @@ fn ax_destruction_removes_ordered_in_window_outside_churn() {
     reactor.window_server().set_window_ordered_in(wsid, Some(true));
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    assert!(reactor.state.windows.record(wid).is_none());
+    assert!(reactor.windows().record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
     assert!(
         apps.requests()
@@ -1340,7 +1437,7 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The engine must know which display owns that space.
     assert_eq!(
-        reactor.state.display_memory.affinity.space_for_display("test-display-1"),
+        reactor.display_affinity().space_for_display("test-display-1"),
         Some(external_space),
         "the external display's space must be recorded before unplugging"
     );
@@ -1354,7 +1451,7 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The mapping must SURVIVE the unplug — this is what prune_display_state destroyed.
     assert_eq!(
-        reactor.state.display_memory.affinity.space_for_display("test-display-1"),
+        reactor.display_affinity().space_for_display("test-display-1"),
         Some(external_space),
         "unplugging must not forget which space belonged to the display"
     );
@@ -1368,11 +1465,11 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The mapping is overwritten by update_space_display regardless, so asserting on
     // it proves nothing. What matters is whether the WINDOW came back with the display.
-    let landed = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .workspace_for_window(&reactor.state.windows, replugged_space, wid);
+    let landed = reactor.layout().virtual_workspace_manager().workspace_for_window(
+        reactor.windows(),
+        replugged_space,
+        wid,
+    );
     assert!(
         landed.is_some(),
         "the window arranged on the external display must be reachable under its new \
@@ -1462,8 +1559,7 @@ fn replug_returns_the_windows_that_were_on_that_display() {
 
     let space_of = |reactor: &Reactor, window: WindowId| {
         reactor
-            .state
-            .windows
+            .windows()
             .workspace_info_for_window(window)
             .map(|assignment| assignment.space)
     };
@@ -1532,10 +1628,7 @@ fn arranging_one_setup_does_not_disturb_another() {
         builtin_space,
         external_space,
     )));
-    assert_eq!(
-        reactor.state.display_memory.affinity.window_home(terminal),
-        Some("studio")
-    );
+    assert_eq!(reactor.display_affinity().window_home(terminal), Some("studio"));
 
     // Undock, and DELIBERATELY put the terminal on the laptop: an intent, which is recorded.
     set_space_membership(&reactor, &[(builtin_space, &[901]), (external_space, &[])]);
@@ -1544,9 +1637,9 @@ fn arranging_one_setup_does_not_disturb_another() {
         |state| state.display_set_changed = true,
     ));
     reactor.handle_event(space_state_event_from_screens(vec![builtin(builtin_space)]));
-    reactor.state.display_memory.affinity.set_window_home(terminal, "builtin");
+    reactor.display_affinity_mut().set_window_home(terminal, "builtin");
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(terminal),
+        reactor.display_affinity().window_home(terminal),
         Some("builtin"),
         "the laptop arrangement now says the laptop"
     );
@@ -1558,14 +1651,13 @@ fn arranging_one_setup_does_not_disturb_another() {
         |state| state.display_set_changed = true,
     ));
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(terminal),
+        reactor.display_affinity().window_home(terminal),
         Some("studio"),
         "the desk arrangement kept its own answer"
     );
     assert_eq!(
         reactor
-            .state
-            .windows
+            .windows()
             .workspace_info_for_window(terminal)
             .map(|assignment| assignment.space),
         Some(external_space),
@@ -1583,7 +1675,7 @@ fn arranging_one_setup_does_not_disturb_another() {
 #[test]
 fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
     let mut reactor = test_reactor();
-    reactor.config.settings.layout.gaps = Default::default();
+    reactor.settings_mut().layout.gaps = Default::default();
     reactor.set_test_app_rules(vec![crate::windows::domain::rules::WindowRule {
         open_on_output: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
         ..crate::windows::domain::rules::WindowRule::when(
@@ -1633,7 +1725,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
         studio(external_space),
     ]));
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(slack),
+        reactor.display_affinity().window_home(slack),
         Some("builtin"),
         "the pin decides, not where macOS happens to have put the window"
     );
@@ -1647,7 +1739,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
     ));
     reactor.handle_event(space_state_event_from_screens(vec![studio(external_space)]));
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(slack),
+        reactor.display_affinity().window_home(slack),
         Some("studio"),
         "with no internal display the pin is inert and the window lives where it can"
     );
@@ -1704,7 +1796,7 @@ fn a_display_never_seen_before_takes_no_windows() {
         studio(external_space),
     ]));
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(a),
+        reactor.display_affinity().window_home(a),
         Some("studio"),
         "the docked arrangement records the studio display"
     );
@@ -1730,8 +1822,7 @@ fn a_display_never_seen_before_takes_no_windows() {
 
     let space_of = |reactor: &Reactor, window: WindowId| {
         reactor
-            .state
-            .windows
+            .windows()
             .workspace_info_for_window(window)
             .map(|assignment| assignment.space)
     };
@@ -1850,7 +1941,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
         Some(external_space),
     ]));
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(exile),
+        reactor.display_affinity().window_home(exile),
         Some("test-display-1")
     );
 
@@ -1865,7 +1956,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     reactor.handle_event(space_state_event(vec![builtin], vec![Some(builtin_space)]));
 
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(exile),
+        reactor.display_affinity().window_home(exile),
         Some("test-display-0"),
         "on the built-in alone the window IS on the built-in, and that arrangement says so"
     );
@@ -1883,7 +1974,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     ]));
 
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(exile),
+        reactor.display_affinity().window_home(exile),
         Some("test-display-1"),
         "the docked arrangement kept its own record, so the replug has something to bring the \
          window back with"
@@ -1947,10 +2038,7 @@ fn replug_rebuilds_strip_adjacency() {
         Some(builtin_space),
         Some(external_space),
     ]));
-    let strip_before = reactor
-        .layout_manager
-        .layout_engine
-        .ordered_windows_in_active_workspace(external_space);
+    let strip_before = reactor.layout().ordered_windows_in_active_workspace(external_space);
     assert_eq!(
         strip_before,
         vec![chrome, terminal_a, terminal_b, editor],
@@ -1976,10 +2064,7 @@ fn replug_rebuilds_strip_adjacency() {
         |state| state.display_set_changed = true,
     ));
 
-    let strip_after = reactor
-        .layout_manager
-        .layout_engine
-        .ordered_windows_in_active_workspace(replugged_space);
+    let strip_after = reactor.layout().ordered_windows_in_active_workspace(replugged_space);
     assert_eq!(
         strip_after, strip_before,
         "the strip must come back in the order it was left, keeping adjacent windows adjacent"
@@ -2027,7 +2112,7 @@ fn closed_windows_do_not_keep_their_display_affinity() {
         Some(external_space),
     ]));
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(doomed),
+        reactor.display_affinity().window_home(doomed),
         Some("test-display-1"),
         "test setup must home both windows to the external"
     );
@@ -2035,7 +2120,7 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     // The window is closed. This is the removal flavour the display-change path uses, and
     // the one that used to leave affinity behind.
     reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(doomed));
-    reactor.state.windows.remove_window(doomed);
+    reactor.windows_mut().remove_window(doomed);
 
     // Any settled topology is enough to notice.
     set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[902])]);
@@ -2045,22 +2130,17 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     ]));
 
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(doomed),
+        reactor.display_affinity().window_home(doomed),
         None,
         "a closed window must not keep a home; stale entries make a replug look like it \
          has windows to bring back when it does not"
     );
     assert!(
-        !reactor
-            .state
-            .display_memory
-            .affinity
-            .windows_homed_to("test-display-1")
-            .contains(&doomed),
+        !reactor.display_affinity().windows_homed_to("test-display-1").contains(&doomed),
         "and it must be gone from the display's affinity list"
     );
     assert_eq!(
-        reactor.state.display_memory.affinity.window_home(survivor),
+        reactor.display_affinity().window_home(survivor),
         Some("test-display-1"),
         "the window that is still open keeps its home"
     );
@@ -2127,6 +2207,43 @@ fn diagnostics_report_every_display_not_just_the_default_space() {
     );
 }
 
+/// The census counts each display's windows across every workspace, the hidden ones with the
+/// visible, so a workspace switch does not read as windows vanishing.
+#[test]
+fn the_diagnostics_census_counts_every_workspace_on_each_display() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    set_space_membership(&reactor, &[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    for (index, wsid) in [(0, 901u32), (1, 902)] {
+        let window = WindowId::new(1, wsid - 900);
+        let workspace = reactor.test_workspace(space, index);
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+    }
+
+    let diagnostics = reactor.query_diagnostics();
+
+    let [census] = &diagnostics.census[..] else {
+        panic!("one display, one census: {:?}", diagnostics.census);
+    };
+    assert_eq!(census.display_uuid, "test-display-0");
+    assert_eq!(census.assigned, 2);
+    assert_eq!(census.windows.len(), 2);
+    let visible: Vec<bool> = census.windows.iter().map(|window| window.visible).collect();
+    assert_eq!(
+        visible,
+        [true, false],
+        "the second window is on a workspace not shown"
+    );
+    assert_eq!(
+        census.by_workspace.iter().map(|(_, count)| count).sum::<usize>(),
+        2
+    );
+}
+
 /// A window rini parked off-screen must not be treated as having changed display.
 ///
 /// Windows belonging to a workspace their display is not showing are moved off-screen, and
@@ -2177,8 +2294,7 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     );
     assert_eq!(
         reactor
-            .state
-            .windows
+            .windows()
             .workspace_info_for_window(parked)
             .map(|assignment| assignment.workspace_id),
         Some(workspaces[1]),
@@ -2213,29 +2329,20 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     reactor.add_test_window(displaced, WindowServerId::new(901), Some(builtin_space), builtin);
     assert!(reactor.assign_test_window_to_workspace(builtin_space, displaced, workspaces[2]));
     reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, displaced));
-    reactor.layout_manager.layout_engine.set_window_display_home(
-        &mut reactor.state.display_memory,
-        displaced,
-        external_space,
-    );
+    reactor.set_test_window_display_home(displaced, external_space);
 
     // `settled` is already where it belongs.
     reactor.add_test_window(settled, WindowServerId::new(902), Some(builtin_space), builtin);
     assert!(reactor.assign_test_window_to_workspace(builtin_space, settled, workspaces[0]));
     reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, settled));
-    reactor.layout_manager.layout_engine.set_window_display_home(
-        &mut reactor.state.display_memory,
-        settled,
-        builtin_space,
-    );
+    reactor.set_test_window_display_home(settled, builtin_space);
 
     reactor.handle_event(Event::Command(Command::Reactor(
         ReactorCommand::RedistributeWindows,
     )));
 
     let displaced_now = reactor
-        .state
-        .windows
+        .windows()
         .workspace_info_for_window(displaced)
         .expect("displaced window keeps an assignment");
     assert_eq!(
@@ -2248,8 +2355,7 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     );
 
     let settled_now = reactor
-        .state
-        .windows
+        .windows()
         .workspace_info_for_window(settled)
         .expect("settled window keeps an assignment");
     assert_eq!(
@@ -2282,8 +2388,7 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
         command_space: Some(external_space),
     });
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
 
     reactor.publish_animation_display_for(Some(built_in_space));
     let (_, published) = animation_rx.try_recv().expect("a display should be published");
@@ -2321,8 +2426,7 @@ fn the_animation_overlay_takes_the_scale_of_its_display() {
     );
     screens[1].scale = 1.0;
     reactor.handle_event(space_state_event_from_screens(screens));
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let mut pictures = reactor.connect_test_pictures();
 
     let mut scale_for = |reactor: &mut Reactor, space: u64| {
@@ -2364,8 +2468,8 @@ fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
             other => panic!("expected the display, got {other:?}"),
         }
     };
-    reactor.config.settings.bar.enabled = true;
+    reactor.settings_mut().bar.enabled = true;
     assert!(!picture_bar(&mut reactor));
-    reactor.config.settings.bar.enabled = false;
+    reactor.settings_mut().bar.enabled = false;
     assert!(picture_bar(&mut reactor));
 }

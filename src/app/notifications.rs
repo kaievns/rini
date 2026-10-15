@@ -119,6 +119,126 @@ const CLOCK_CHANGED: [&str; 2] = [
     "kCFTimeZoneSystemTimeZoneDidChangeNotification",
 ];
 
+/// The notification center a name is observed on. The workspace's is observed for the shared
+/// workspace's notifications; the distributed one delivers immediately, even while rini is hidden.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Center {
+    Workspace,
+    Default,
+    Distributed,
+}
+
+/// The method of `NotificationCenterInner` a notification is delivered to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Receiver {
+    ScreenChanged,
+    App,
+    Wake,
+    Sleep,
+    Session,
+    DockPref,
+    MenuBarPref,
+    Power,
+    Clock,
+    KeyboardLayout,
+}
+
+impl Receiver {
+    fn selector(self) -> objc2::runtime::Sel {
+        match self {
+            Receiver::ScreenChanged => sel!(recvScreenChangedEvent:),
+            Receiver::App => sel!(recvAppEvent:),
+            Receiver::Wake => sel!(recvWakeEvent:),
+            Receiver::Sleep => sel!(recvSleepEvent:),
+            Receiver::Session => sel!(recvSessionEvent:),
+            Receiver::DockPref => sel!(recvDockPrefChanged:),
+            Receiver::MenuBarPref => sel!(recvMenuBarPrefChanged:),
+            Receiver::Power => sel!(recvPowerEvent:),
+            Receiver::Clock => sel!(recvClockChanged:),
+            Receiver::KeyboardLayout => sel!(recvKeyboardLayoutChanged:),
+        }
+    }
+}
+
+/// Every notification observed, in the order it is registered: its center, its receiver and its
+/// name. Names are by value, as a center matches them; each AppKit constant's is checked in the
+/// tests.
+const OBSERVED: [(Center, Receiver, &str); 17] = [
+    (
+        Center::Workspace,
+        Receiver::ScreenChanged,
+        "NSWorkspaceActiveDisplayDidChangeNotification",
+    ),
+    (
+        Center::Workspace,
+        Receiver::ScreenChanged,
+        "NSWorkspaceActiveSpaceDidChangeNotification",
+    ),
+    (
+        Center::Default,
+        Receiver::ScreenChanged,
+        "NSApplicationDidChangeScreenParametersNotification",
+    ),
+    (
+        Center::Workspace,
+        Receiver::Wake,
+        "NSWorkspaceDidWakeNotification",
+    ),
+    (
+        Center::Workspace,
+        Receiver::Sleep,
+        "NSWorkspaceWillSleepNotification",
+    ),
+    (
+        Center::Workspace,
+        Receiver::App,
+        "NSWorkspaceDidActivateApplicationNotification",
+    ),
+    (
+        Center::Workspace,
+        Receiver::App,
+        "NSWorkspaceDidDeactivateApplicationNotification",
+    ),
+    (
+        Center::Workspace,
+        Receiver::Session,
+        "NSWorkspaceSessionDidResignActiveNotification",
+    ),
+    (
+        Center::Workspace,
+        Receiver::Session,
+        "NSWorkspaceSessionDidBecomeActiveNotification",
+    ),
+    (Center::Default, Receiver::DockPref, "com.apple.dock.prefchanged"),
+    (
+        Center::Default,
+        Receiver::MenuBarPref,
+        "AppleInterfaceMenuBarHidingChangedNotification",
+    ),
+    (
+        Center::Default,
+        Receiver::Power,
+        "NSProcessInfoPowerStateDidChangeNotification",
+    ),
+    (Center::Default, Receiver::Clock, CLOCK_CHANGED[0]),
+    (Center::Default, Receiver::Clock, CLOCK_CHANGED[1]),
+    (
+        Center::Distributed,
+        Receiver::KeyboardLayout,
+        "com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged",
+    ),
+    (
+        Center::Distributed,
+        Receiver::Session,
+        "com.apple.screenIsLocked",
+    ),
+    (
+        Center::Distributed,
+        Receiver::Session,
+        "com.apple.screenIsUnlocked",
+    ),
+];
+
 impl NotificationCenterInner {
     fn new(events_tx: wm_controller::Sender, spaces_tx: spaces::Sender) -> Retained<Self> {
         let instance = Instance {
@@ -323,133 +443,40 @@ impl NotificationCenter {
     pub fn new(events_tx: wm_controller::Sender, spaces_tx: spaces::Sender) -> Self {
         let handler = NotificationCenterInner::new(events_tx.clone(), spaces_tx);
 
-        // SAFETY: Selector must have signature fn(&self, &NSNotification)
-        let register_unsafe =
-            |selector, notif_name, center: &Retained<NSNotificationCenter>, object| unsafe {
-                center.addObserver_selector_name_object(
-                    &handler,
-                    selector,
-                    Some(notif_name),
-                    Some(object),
-                );
-            };
-
         let workspace = &NSWorkspace::sharedWorkspace();
         let workspace_center = &workspace.notificationCenter();
         let default_center = &NSNotificationCenter::defaultCenter();
         let distributed_center = &NSDistributedNotificationCenter::defaultCenter();
-        unsafe {
-            use objc2_app_kit::*;
-            workspace_center.addObserver_selector_name_object(
-                &handler,
-                sel!(recvScreenChangedEvent:),
-                Some(&NSString::from_str(
-                    "NSWorkspaceActiveDisplayDidChangeNotification",
-                )),
-                Some(workspace),
-            );
-            register_unsafe(
-                sel!(recvScreenChangedEvent:),
-                NSWorkspaceActiveSpaceDidChangeNotification,
-                workspace_center,
-                workspace,
-            );
-            default_center.addObserver_selector_name_object(
-                &handler,
-                sel!(recvScreenChangedEvent:),
-                Some(NSApplicationDidChangeScreenParametersNotification),
-                None,
-            );
-            register_unsafe(
-                sel!(recvWakeEvent:),
-                NSWorkspaceDidWakeNotification,
-                workspace_center,
-                workspace,
-            );
-            register_unsafe(
-                sel!(recvSleepEvent:),
-                NSWorkspaceWillSleepNotification,
-                workspace_center,
-                workspace,
-            );
-            register_unsafe(
-                sel!(recvAppEvent:),
-                NSWorkspaceDidActivateApplicationNotification,
-                workspace_center,
-                workspace,
-            );
-            register_unsafe(
-                sel!(recvAppEvent:),
-                NSWorkspaceDidDeactivateApplicationNotification,
-                workspace_center,
-                workspace,
-            );
-            register_unsafe(
-                sel!(recvSessionEvent:),
-                NSWorkspaceSessionDidResignActiveNotification,
-                workspace_center,
-                workspace,
-            );
-            register_unsafe(
-                sel!(recvSessionEvent:),
-                NSWorkspaceSessionDidBecomeActiveNotification,
-                workspace_center,
-                workspace,
-            );
-            default_center.addObserver_selector_name_object(
-                &handler,
-                sel!(recvDockPrefChanged:),
-                Some(&NSString::from_str("com.apple.dock.prefchanged")),
-                None,
-            );
-            default_center.addObserver_selector_name_object(
-                &handler,
-                sel!(recvMenuBarPrefChanged:),
-                Some(&NSString::from_str(
-                    "AppleInterfaceMenuBarHidingChangedNotification",
-                )),
-                None,
-            );
-            default_center.addObserver_selector_name_object(
-                &handler,
-                sel!(recvPowerEvent:),
-                Some(&NSString::from_str(
-                    "NSProcessInfoPowerStateDidChangeNotification",
-                )),
-                None,
-            );
-            for name in CLOCK_CHANGED {
-                default_center.addObserver_selector_name_object(
-                    &handler,
-                    sel!(recvClockChanged:),
-                    Some(&NSString::from_str(name)),
-                    None,
-                );
+        for &(center, receiver, name) in &OBSERVED {
+            let name = NSString::from_str(name);
+            let selector = receiver.selector();
+            // SAFETY: each receiver's selector is a method of `NotificationCenterInner` with the
+            // signature fn(&self, &NSNotification).
+            unsafe {
+                match center {
+                    Center::Workspace => workspace_center.addObserver_selector_name_object(
+                        &handler,
+                        selector,
+                        Some(&name),
+                        Some(workspace),
+                    ),
+                    Center::Default => default_center.addObserver_selector_name_object(
+                        &handler,
+                        selector,
+                        Some(&name),
+                        None,
+                    ),
+                    Center::Distributed => distributed_center
+                        .addObserver_selector_name_object_suspensionBehavior(
+                            &handler,
+                            selector,
+                            Some(&name),
+                            None,
+                            NSNotificationSuspensionBehavior::DeliverImmediately,
+                        ),
+                }
             }
-            distributed_center.addObserver_selector_name_object_suspensionBehavior(
-                &handler,
-                sel!(recvKeyboardLayoutChanged:),
-                Some(&NSString::from_str(
-                    "com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged",
-                )),
-                None,
-                NSNotificationSuspensionBehavior::DeliverImmediately,
-            );
-            distributed_center.addObserver_selector_name_object_suspensionBehavior(
-                &handler,
-                sel!(recvSessionEvent:),
-                Some(&NSString::from_str("com.apple.screenIsLocked")),
-                None,
-                NSNotificationSuspensionBehavior::DeliverImmediately,
-            );
-            distributed_center.addObserver_selector_name_object_suspensionBehavior(
-                &handler,
-                sel!(recvSessionEvent:),
-                Some(&NSString::from_str("com.apple.screenIsUnlocked")),
-                None,
-                NSNotificationSuspensionBehavior::DeliverImmediately,
-            );
-        };
+        }
 
         init_power_state();
 
@@ -478,7 +505,10 @@ impl NotificationCenter {
 mod tests {
     use objc2_foundation::NSString;
 
-    use super::{CLOCK_CHANGED, should_leave_session_inactive_after_non_login_activation};
+    use super::{
+        CLOCK_CHANGED, Center, OBSERVED, Receiver,
+        should_leave_session_inactive_after_non_login_activation,
+    };
 
     unsafe extern "C" {
         static NSSystemClockDidChangeNotification: &'static NSString;
@@ -499,6 +529,120 @@ mod tests {
             foundation.map(|name| name.to_string()),
             CLOCK_CHANGED.map(String::from)
         );
+    }
+
+    /// `OBSERVED` is every notification on its center, delivered to its receiver, in registration
+    /// order, with each AppKit name its constant's value, so observing it by value observes the
+    /// constant.
+    #[test]
+    fn every_notification_is_observed_on_its_center_by_its_receiver() {
+        use Center::{Default, Distributed, Workspace};
+        use objc2_app_kit::*;
+        let appkit = |name: &NSString| name.to_string();
+        // SAFETY: each is an immutable `NSString` constant exported by AppKit.
+        let expected: Vec<(Center, Receiver, String)> = unsafe {
+            vec![
+                (
+                    Workspace,
+                    Receiver::ScreenChanged,
+                    "NSWorkspaceActiveDisplayDidChangeNotification".into(),
+                ),
+                (
+                    Workspace,
+                    Receiver::ScreenChanged,
+                    appkit(NSWorkspaceActiveSpaceDidChangeNotification),
+                ),
+                (
+                    Default,
+                    Receiver::ScreenChanged,
+                    appkit(NSApplicationDidChangeScreenParametersNotification),
+                ),
+                (Workspace, Receiver::Wake, appkit(NSWorkspaceDidWakeNotification)),
+                (
+                    Workspace,
+                    Receiver::Sleep,
+                    appkit(NSWorkspaceWillSleepNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::App,
+                    appkit(NSWorkspaceDidActivateApplicationNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::App,
+                    appkit(NSWorkspaceDidDeactivateApplicationNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::Session,
+                    appkit(NSWorkspaceSessionDidResignActiveNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::Session,
+                    appkit(NSWorkspaceSessionDidBecomeActiveNotification),
+                ),
+                (Default, Receiver::DockPref, "com.apple.dock.prefchanged".into()),
+                (
+                    Default,
+                    Receiver::MenuBarPref,
+                    "AppleInterfaceMenuBarHidingChangedNotification".into(),
+                ),
+                (
+                    Default,
+                    Receiver::Power,
+                    "NSProcessInfoPowerStateDidChangeNotification".into(),
+                ),
+                (Default, Receiver::Clock, CLOCK_CHANGED[0].into()),
+                (Default, Receiver::Clock, CLOCK_CHANGED[1].into()),
+                (
+                    Distributed,
+                    Receiver::KeyboardLayout,
+                    "com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged".into(),
+                ),
+                (Distributed, Receiver::Session, "com.apple.screenIsLocked".into()),
+                (
+                    Distributed,
+                    Receiver::Session,
+                    "com.apple.screenIsUnlocked".into(),
+                ),
+            ]
+        };
+        let observed: Vec<(Center, Receiver, String)> = OBSERVED
+            .iter()
+            .map(|&(center, receiver, name)| (center, receiver, name.to_string()))
+            .collect();
+        assert_eq!(observed, expected);
+    }
+
+    /// Each name is observed once on its center, and the session is followed both on the
+    /// workspace and through the distributed lock and unlock.
+    #[test]
+    fn each_name_is_observed_once_and_the_session_on_both_centers() {
+        for (index, &(center, _, name)) in OBSERVED.iter().enumerate() {
+            assert!(
+                !OBSERVED[..index].iter().any(|&(c, _, n)| c == center && n == name),
+                "{name} twice"
+            );
+        }
+        let session: Vec<(Center, &str)> = OBSERVED
+            .iter()
+            .filter(|(_, receiver, _)| *receiver == Receiver::Session)
+            .map(|&(center, _, name)| (center, name))
+            .collect();
+        assert_eq!(session, [
+            (
+                Center::Workspace,
+                "NSWorkspaceSessionDidResignActiveNotification"
+            ),
+            (
+                Center::Workspace,
+                "NSWorkspaceSessionDidBecomeActiveNotification"
+            ),
+            (Center::Distributed, "com.apple.screenIsLocked"),
+            (Center::Distributed, "com.apple.screenIsUnlocked"),
+        ]);
     }
 
     #[test]

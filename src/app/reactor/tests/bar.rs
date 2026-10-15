@@ -198,7 +198,7 @@ fn a_glyph_click_focuses_its_window() {
 #[test]
 fn a_bar_turned_off_is_sent_an_empty_model() {
     let mut desk = desk();
-    let mut config = desk.reactor.config.clone();
+    let mut config = desk.reactor.config().clone();
     config.settings.bar.enabled = false;
     desk.reactor.handle_test_batch(vec![Event::ConfigUpdated(Box::new(config))]);
     assert_eq!(models(&mut desk.bar), vec![BarModel::default()]);
@@ -222,7 +222,7 @@ fn a_config_file_that_cannot_be_used_marks_every_bar_until_one_can() {
     let sent = models(&mut desk.bar).pop().expect("the mark is cleared");
     assert!(sent.displays.iter().all(|display| !display.config_failed));
 
-    let mut config = desk.reactor.config.clone();
+    let mut config = desk.reactor.config().clone();
     config.settings.mark_failed_config = false;
     desk.reactor.handle_test_batch(vec![
         Event::ConfigUpdated(Box::new(config)),

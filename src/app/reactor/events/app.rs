@@ -1,13 +1,14 @@
-use rini_core::ids::WindowId;
+use rini_core::ids::{WindowId, pid_t};
+use rustc_hash::FxHashMap as HashMap;
 use tracing::debug;
 
 use crate::app::reactor::AppState;
 use crate::app::reactor::events::{EventOutcome, WindowDiscoveryRequest, window};
-use crate::app::reactor::managers::{AppManager, DragManager};
+use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::state::RiniState;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
-use crate::windows::domain::transaction::TransactionManager;
+use crate::windows::domain::transaction::WindowTxStore;
 use crate::workspaces::LayoutEvent;
 
 #[derive(Debug)]
@@ -20,7 +21,7 @@ pub struct ApplicationLaunchedPayload {
 }
 
 pub fn handle_application_launched(
-    apps: &mut AppManager,
+    apps: &mut HashMap<pid_t, AppState>,
     payload: ApplicationLaunchedPayload,
 ) -> anyhow::Result<EventOutcome> {
     let ApplicationLaunchedPayload {
@@ -30,7 +31,7 @@ pub fn handle_application_launched(
         visible_windows,
         window_server_info,
     } = payload;
-    apps.apps.insert(pid, AppState { info: info.clone(), handle });
+    apps.insert(pid, AppState { info: info.clone(), handle });
     Ok(EventOutcome::window_membership_changed(false, true)
         .with_window_server_updates(window_server_info)
         .with_discovery(WindowDiscoveryRequest {
@@ -44,11 +45,11 @@ pub fn handle_application_launched(
 /// An application rini holds a thread for answers through that thread. One it never watched has no
 /// thread to answer, so the native-fullscreen records the window server alone gave it go here.
 pub fn handle_application_terminated(
-    apps: &AppManager,
+    apps: &HashMap<pid_t, AppState>,
     state: &mut RiniState,
     pid: i32,
 ) -> anyhow::Result<EventOutcome> {
-    if !apps.apps.contains_key(&pid) {
+    if !apps.contains_key(&pid) {
         state.windows.remove_windows_for_app(pid);
         return Ok(EventOutcome::no_change());
     }
@@ -59,13 +60,13 @@ pub fn handle_application_terminated(
 /// No Accessibility destruction follows once the thread has stopped, so each window still held goes
 /// here, and with them the application's native-fullscreen records.
 pub fn handle_application_thread_terminated(
-    apps: &mut AppManager,
+    apps: &mut HashMap<pid_t, AppState>,
     state: &mut RiniState,
-    transactions: &TransactionManager,
+    transactions: &WindowTxStore,
     drag: &mut DragManager,
     pid: i32,
 ) -> anyhow::Result<EventOutcome> {
-    apps.apps.remove(&pid);
+    apps.remove(&pid);
     let mut outcome = EventOutcome::window_membership_changed(false, true);
     let windows: Vec<WindowId> = state.windows.window_ids_for_pid(pid).collect();
     for window in windows {

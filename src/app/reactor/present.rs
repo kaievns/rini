@@ -9,9 +9,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{WindowId, WindowServerId};
 
 use crate::windows::domain::request::Request;
-#[cfg(test)]
-use crate::windows::domain::transaction::WindowTxStore;
-use crate::windows::domain::transaction::{TransactionId, TransactionManager};
+use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::workspaces::WindowStore;
 
 /// The frame-writing capability: record a destination, and number the write.
@@ -19,11 +17,11 @@ pub(crate) struct Present<'a> {
     windows: &'a mut WindowStore,
     /// `&` rather than `&mut` because the transaction store is interior-mutable. It is shared with
     /// the app threads, which report against it.
-    transactions: &'a TransactionManager,
+    transactions: &'a WindowTxStore,
 }
 
 impl<'a> Present<'a> {
-    pub(crate) fn new(windows: &'a mut WindowStore, transactions: &'a TransactionManager) -> Self {
+    pub(crate) fn new(windows: &'a mut WindowStore, transactions: &'a WindowTxStore) -> Self {
         Self { windows, transactions }
     }
 
@@ -38,8 +36,8 @@ impl<'a> Present<'a> {
     pub(crate) fn commit(&mut self, window: WindowId, to: CGRect) -> TransactionId {
         let txid = match self.server_id(window) {
             Some(wsid) => {
-                let txid = self.transactions.generate_next_txid(wsid);
-                self.transactions.update_txid_entries([(wsid, txid, to)]);
+                let txid = self.transactions.next_txid(wsid);
+                self.transactions.insert(wsid, txid, to);
                 txid
             }
             None => TransactionId::default(),
@@ -65,14 +63,16 @@ impl<'a> Present<'a> {
         for &(window, to) in frames {
             if let Some(wsid) = self.server_id(window) {
                 if entries.is_empty() {
-                    txid = self.transactions.generate_next_txid(wsid);
+                    txid = self.transactions.next_txid(wsid);
                 } else {
-                    self.transactions.set_last_sent_txid(wsid, txid);
+                    self.transactions.set_last_txid(wsid, txid);
                 }
                 entries.push((wsid, txid, to));
             }
         }
-        self.transactions.update_txid_entries(entries);
+        for (wsid, txid, to) in entries {
+            self.transactions.insert(wsid, txid, to);
+        }
         for &(window, to) in frames {
             if let Some(state) = self.windows.window_mut(window) {
                 state.frame_monotonic = to;
@@ -161,17 +161,14 @@ mod tests {
     fn a_commit_records_the_destination_before_the_request_goes_out() {
         let window = WindowId::new(10, 1);
         let mut store = store_with(&[(window, Some(WindowServerId::new(1)))]);
-        let transactions = TransactionManager::new(WindowTxStore::new());
+        let transactions = WindowTxStore::new();
         let mut present = Present::new(&mut store, &transactions);
 
         let txid = present.commit(window, frame(500.0));
 
         assert_eq!(store.window(window).unwrap().frame_monotonic, frame(500.0));
-        assert_eq!(
-            transactions.get_target_frame(WindowServerId::new(1)),
-            Some(frame(500.0))
-        );
-        assert_eq!(transactions.get_last_sent_txid(WindowServerId::new(1)), txid);
+        assert_eq!(transactions.target(&WindowServerId::new(1)), Some(frame(500.0)));
+        assert_eq!(transactions.last_txid(&WindowServerId::new(1)), txid);
     }
 
     /// A window with no window-server id cannot have its report matched, but rini still knows where
@@ -180,7 +177,7 @@ mod tests {
     fn a_window_with_no_server_id_still_gets_its_frame_recorded() {
         let window = WindowId::new(10, 1);
         let mut store = store_with(&[(window, None)]);
-        let transactions = TransactionManager::new(WindowTxStore::new());
+        let transactions = WindowTxStore::new();
         let mut present = Present::new(&mut store, &transactions);
 
         let txid = present.commit(window, frame(500.0));
@@ -208,7 +205,7 @@ mod tests {
             (windows[1], Some(ids[1])),
             (windows[2], Some(ids[2])),
         ]);
-        let transactions = TransactionManager::new(WindowTxStore::new());
+        let transactions = WindowTxStore::new();
         let mut present = Present::new(&mut store, &transactions);
 
         let txid = present.commit_app_batch(&[
@@ -218,14 +215,10 @@ mod tests {
         ]);
 
         for id in ids {
-            assert_eq!(
-                transactions.get_last_sent_txid(id),
-                txid,
-                "{id:?} is out of the batch"
-            );
+            assert_eq!(transactions.last_txid(&id), txid, "{id:?} is out of the batch");
         }
-        assert_eq!(transactions.get_target_frame(ids[1]), Some(frame(100.0)));
-        assert_eq!(transactions.get_target_frame(ids[2]), Some(frame(200.0)));
+        assert_eq!(transactions.target(&ids[1]), Some(frame(100.0)));
+        assert_eq!(transactions.target(&ids[2]), Some(frame(200.0)));
     }
 
     #[test]
@@ -235,7 +228,7 @@ mod tests {
             (windows[0], None),
             (windows[1], Some(WindowServerId::new(2))),
         ]);
-        let transactions = TransactionManager::new(WindowTxStore::new());
+        let transactions = WindowTxStore::new();
         let mut present = Present::new(&mut store, &transactions);
 
         let txid =
@@ -244,7 +237,7 @@ mod tests {
         assert_eq!(store.window(windows[0]).unwrap().frame_monotonic, frame(10.0));
         assert_eq!(store.window(windows[1]).unwrap().frame_monotonic, frame(20.0));
         assert_eq!(
-            transactions.get_last_sent_txid(WindowServerId::new(2)),
+            transactions.last_txid(&WindowServerId::new(2)),
             txid,
             "the first window with an id mints it, not the first window"
         );
@@ -253,7 +246,7 @@ mod tests {
     #[test]
     fn an_empty_batch_numbers_nothing() {
         let mut store = WindowStore::default();
-        let transactions = TransactionManager::new(WindowTxStore::new());
+        let transactions = WindowTxStore::new();
         let mut present = Present::new(&mut store, &transactions);
         assert_eq!(present.commit_app_batch(&[]), TransactionId::default());
     }

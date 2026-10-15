@@ -64,6 +64,8 @@ pub(crate) struct EventOutcome {
     pub(crate) layout_responses: Vec<(EventResponse, Option<SpaceId>)>,
     pub(crate) arrange: ArrangeRequest,
     pub(crate) focused_window: Option<WindowId>,
+    /// A layout event of the work already taken out before the arrange focused a window.
+    pub(crate) focus_landed_before_arrange: bool,
     pub(crate) refresh_window_notifications: bool,
     pub(crate) refresh_focus_follows_mouse: bool,
 }
@@ -105,6 +107,7 @@ impl EventOutcome {
     /// so the strip still needs regrouping over whatever the click put in front of it.
     pub(crate) fn focus_landed(&self) -> bool {
         self.focused_window.is_some()
+            || self.focus_landed_before_arrange
             || self
                 .layout_events
                 .iter()
@@ -147,6 +150,7 @@ impl EventOutcome {
             mut layout_responses,
             arrange,
             focused_window,
+            focus_landed_before_arrange,
             refresh_window_notifications,
             refresh_focus_follows_mouse,
         } = other;
@@ -191,8 +195,100 @@ impl EventOutcome {
             self.arrange.window_was_destroyed |= arrange.window_was_destroyed;
         }
         self.focused_window = focused_window.or(self.focused_window);
+        self.focus_landed_before_arrange |= focus_landed_before_arrange;
         self.refresh_window_notifications |= refresh_window_notifications;
         self.refresh_focus_follows_mouse |= refresh_focus_follows_mouse;
+    }
+
+    /// Takes in work a step of carrying this outcome out handed back, AHEAD of what is left of this
+    /// one: the step that asked for it has already been taken, so its queued requests go first and
+    /// a single-valued request of this outcome keeps the last word.
+    pub(crate) fn absorb_ahead(&mut self, earlier: Self) {
+        let rest = std::mem::replace(self, earlier);
+        self.absorb(rest);
+    }
+
+    /// Moves the work carried out before the arrange into an outcome of its own, or `None` when none
+    /// is queued; the arrange and what follows it stay in `self`.
+    pub(crate) fn take_work_before_arrange(&mut self) -> Option<Self> {
+        use std::mem::take;
+        // Exhaustive for the reason `absorb` is: a new field has to say which side of the arrange
+        // it is carried out on.
+        let Self {
+            window_server_updates,
+            discoveries,
+            recompute_active_spaces,
+            repair_spaces_after_mission_control,
+            refresh_after_mission_control,
+            force_refresh_all_windows,
+            wm_events: _,
+            app_requests: _,
+            topology_reassignments,
+            forgotten_windows,
+            confirmed_window_spaces,
+            fullscreen_restorations,
+            raise_requests: _,
+            make_key_windows: _,
+            mouse_warps: _,
+            pre_layout_window_frame_writes,
+            drag_swap_evaluations,
+            dispatch_mouse_up,
+            close_window: _,
+            service_config_update: _,
+            stdout_lines: _,
+            reapply_app_rules,
+            finalize_created_windows,
+            layout_events,
+            layout_responses,
+            arrange: _,
+            focused_window: _,
+            focus_landed_before_arrange,
+            refresh_window_notifications: _,
+            refresh_focus_follows_mouse: _,
+        } = self;
+        let queued = *recompute_active_spaces
+            || *repair_spaces_after_mission_control
+            || *refresh_after_mission_control
+            || *force_refresh_all_windows
+            || *dispatch_mouse_up
+            || !window_server_updates.is_empty()
+            || !discoveries.is_empty()
+            || !topology_reassignments.is_empty()
+            || !forgotten_windows.is_empty()
+            || !confirmed_window_spaces.is_empty()
+            || !fullscreen_restorations.is_empty()
+            || !pre_layout_window_frame_writes.is_empty()
+            || !drag_swap_evaluations.is_empty()
+            || !reapply_app_rules.is_empty()
+            || !finalize_created_windows.is_empty()
+            || !layout_events.is_empty()
+            || !layout_responses.is_empty();
+        if !queued {
+            return None;
+        }
+        *focus_landed_before_arrange |= layout_events
+            .iter()
+            .any(|event| matches!(event, LayoutEvent::WindowFocused(..)));
+        Some(Self {
+            window_server_updates: take(window_server_updates),
+            discoveries: take(discoveries),
+            recompute_active_spaces: take(recompute_active_spaces),
+            repair_spaces_after_mission_control: take(repair_spaces_after_mission_control),
+            refresh_after_mission_control: take(refresh_after_mission_control),
+            force_refresh_all_windows: take(force_refresh_all_windows),
+            topology_reassignments: take(topology_reassignments),
+            forgotten_windows: take(forgotten_windows),
+            confirmed_window_spaces: take(confirmed_window_spaces),
+            fullscreen_restorations: take(fullscreen_restorations),
+            pre_layout_window_frame_writes: take(pre_layout_window_frame_writes),
+            drag_swap_evaluations: take(drag_swap_evaluations),
+            dispatch_mouse_up: take(dispatch_mouse_up),
+            reapply_app_rules: take(reapply_app_rules),
+            finalize_created_windows: take(finalize_created_windows),
+            layout_events: take(layout_events),
+            layout_responses: take(layout_responses),
+            ..Self::default()
+        })
     }
 
     /// The event changed geometry or layout state and requires one arrange pass.
@@ -231,6 +327,7 @@ impl EventOutcome {
                 space_scope: None,
             },
             focused_window: None,
+            focus_landed_before_arrange: false,
             refresh_window_notifications: false,
             refresh_focus_follows_mouse: false,
         }
@@ -608,6 +705,178 @@ mod tests {
         outer.absorb(EventOutcome::default());
 
         assert_eq!(outer.focused_window, Some(window));
+    }
+
+    // --- absorb_ahead: work handed back mid-drain -----------------------------------------------
+
+    /// Work a step handed back was asked for by a step already taken, so it queues ahead of the
+    /// rest of the outcome being carried out.
+    #[test]
+    fn work_handed_back_queues_ahead_of_the_rest() {
+        let mut rest = EventOutcome::default().with_stdout_line("rest".into());
+        rest.absorb_ahead(EventOutcome::default().with_stdout_line("handed back".into()));
+        assert_eq!(rest.stdout_lines, ["handed back", "rest"]);
+    }
+
+    /// The outcome being carried out decided its single-valued requests after the step that handed
+    /// work back, so its choice stands; where it made none, the handed-back one does.
+    #[test]
+    fn the_rest_keeps_the_last_word_on_a_single_valued_request() {
+        let (outer, inner) = (WindowId::new(1, 1), WindowId::new(2, 1));
+        let mut rest = EventOutcome::focus_changed(Some(outer), false);
+        rest.absorb_ahead(EventOutcome::focus_changed(Some(inner), false));
+        assert_eq!(rest.focused_window, Some(outer));
+
+        let mut rest = EventOutcome::default();
+        rest.absorb_ahead(EventOutcome::focus_changed(Some(inner), false));
+        assert_eq!(rest.focused_window, Some(inner));
+    }
+
+    /// Both arranges are one: their passes add, as two absorbed requests' do.
+    #[test]
+    fn work_handed_back_merges_its_arrange_into_the_rest() {
+        let mut rest = EventOutcome::layout_changed(false);
+        rest.absorb_ahead(EventOutcome::layout_changed(true));
+        assert_eq!(rest.arrange.passes_to_run(false), Some(2));
+        assert!(rest.arrange.is_resize);
+    }
+
+    /// What two steps of one round leave is collected in the order they were handed back, then
+    /// taken in ahead of the rest: the first's work goes first and the second's focus beats it.
+    #[test]
+    fn work_handed_back_twice_in_a_round_keeps_the_order_it_was_handed_back_in() {
+        let (first, second, own) = (WindowId::new(1, 1), WindowId::new(2, 1), WindowId::new(3, 1));
+        let mut handed_back = EventOutcome::default();
+        handed_back.absorb(
+            EventOutcome::focus_changed(Some(first), false).with_stdout_line("first".into()),
+        );
+        handed_back.absorb(
+            EventOutcome::focus_changed(Some(second), false).with_stdout_line("second".into()),
+        );
+
+        let mut rest = EventOutcome::default().with_stdout_line("rest".into());
+        rest.absorb_ahead(handed_back);
+        assert_eq!(rest.stdout_lines, ["first", "second", "rest"]);
+        assert_eq!(rest.focused_window, Some(second));
+
+        let mut handed_back = EventOutcome::default();
+        handed_back.absorb(EventOutcome::focus_changed(Some(first), false));
+        handed_back.absorb(EventOutcome::focus_changed(Some(second), false));
+        let mut rest = EventOutcome::focus_changed(Some(own), false);
+        rest.absorb_ahead(handed_back);
+        assert_eq!(rest.focused_window, Some(own));
+    }
+
+    // --- take_work_before_arrange --------------------------------------------------------------
+
+    #[test]
+    fn nothing_queued_is_no_work_before_the_arrange() {
+        assert!(EventOutcome::default().take_work_before_arrange().is_none());
+    }
+
+    /// Each request carried out before the arrange is taken, whole, so a step handing one back has
+    /// it carried out before the arrange, once.
+    #[test]
+    fn each_request_carried_out_before_the_arrange_is_taken() {
+        let window = WindowId::new(1, 1);
+        let space = SpaceId::new(1);
+        let wsid = WindowServerId::new(7);
+        let requests = [
+            EventOutcome::default().with_window_server_updates(vec![WindowServerInfo {
+                pid: 1,
+                id: wsid,
+                layer: 0,
+                frame: CGRect::default(),
+                min_frame: Default::default(),
+                max_frame: Default::default(),
+            }]),
+            EventOutcome::default().with_discovery(WindowDiscoveryRequest {
+                pid: 1,
+                new: Vec::new(),
+                known_visible: Vec::new(),
+                app_info: None,
+            }),
+            EventOutcome::default().with_active_space_recompute(),
+            EventOutcome::default().with_mission_control_recovery(),
+            EventOutcome::default().with_force_window_refresh(),
+            EventOutcome::default().with_topology_reassignment(window, space),
+            EventOutcome::default().with_forgotten_window(window),
+            EventOutcome::default().with_confirmed_window_space(wsid, space),
+            EventOutcome::default().with_fullscreen_restoration(wsid, space, window),
+            EventOutcome::default().with_pre_layout_window_frame_write(window, CGRect::default()),
+            EventOutcome::default().with_drag_swap_evaluation(window, CGRect::default()),
+            EventOutcome::default().with_mouse_up_dispatch(),
+            EventOutcome::default().with_app_rule_reapply(window),
+            EventOutcome::default().with_created_window_finalization(window),
+            EventOutcome::default().with_layout_event(LayoutEvent::WindowAdded(space, window)),
+            EventOutcome::default().with_layout_response(EventResponse::default(), None),
+        ];
+        for (index, mut outcome) in requests.into_iter().enumerate() {
+            assert!(outcome.take_work_before_arrange().is_some(), "request {index}");
+            assert!(
+                outcome.take_work_before_arrange().is_none(),
+                "request {index} again"
+            );
+        }
+    }
+
+    /// The arrange, and what follows it, is carried out once, so asking for it is no work before.
+    #[test]
+    fn what_follows_the_arrange_is_no_work_before_it() {
+        let window = WindowId::new(1, 1);
+        let requests = [
+            EventOutcome::layout_changed(false),
+            EventOutcome::focus_changed(Some(window), true).with_focus_follows_mouse_refresh(),
+            EventOutcome::default().with_app_request(1, Request::GetVisibleWindows),
+            EventOutcome::default().with_make_key_window(1, WindowServerId::new(7)),
+            EventOutcome::default().with_mouse_warp(CGPoint::default()),
+            EventOutcome::default().with_close_window(None),
+            EventOutcome::default().with_stdout_line("line".into()),
+        ];
+        for (index, mut outcome) in requests.into_iter().enumerate() {
+            assert!(outcome.take_work_before_arrange().is_none(), "request {index}");
+        }
+    }
+
+    /// Taking the work before the arrange leaves the arrange and what follows it where they were.
+    #[test]
+    fn taking_the_work_before_the_arrange_leaves_the_rest() {
+        let (space, window) = (SpaceId::new(1), WindowId::new(1, 1));
+        let mut outcome = EventOutcome::layout_changed(false)
+            .with_layout_event(LayoutEvent::WindowAdded(space, window))
+            .with_app_request(1, Request::GetVisibleWindows);
+
+        let work = outcome.take_work_before_arrange().expect("a layout event is queued");
+
+        assert_eq!(work.layout_events.len(), 1);
+        assert!(!work.arrange.requested && work.app_requests.is_empty());
+        assert!(outcome.layout_events.is_empty());
+        assert!(outcome.arrange.requested);
+        assert_eq!(outcome.app_requests.len(), 1);
+    }
+
+    /// A focus in the work taken before the arrange still lands: the regroup after the arrange
+    /// reads it from what is left.
+    #[test]
+    fn a_focus_in_the_work_taken_before_the_arrange_still_lands() {
+        let focus = LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1));
+        let mut outcome = EventOutcome::layout_changed(false).with_layout_event(focus);
+
+        outcome.take_work_before_arrange().expect("a layout event is queued");
+
+        assert!(outcome.layout_events.is_empty());
+        assert!(outcome.focus_landed());
+        let mut rest = EventOutcome::default();
+        rest.absorb_ahead(outcome);
+        assert!(rest.focus_landed());
+    }
+
+    #[test]
+    fn work_taken_before_the_arrange_with_no_focus_lands_none() {
+        let added = LayoutEvent::WindowAdded(SpaceId::new(1), WindowId::new(1, 1));
+        let mut outcome = EventOutcome::layout_changed(false).with_layout_event(added);
+        outcome.take_work_before_arrange().expect("a layout event is queued");
+        assert!(!outcome.focus_landed());
     }
 
     // --- absorb: the arrange request -----------------------------------------------------------

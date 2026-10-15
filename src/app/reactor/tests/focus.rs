@@ -2,14 +2,17 @@
 //! per-application main window.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
-use rini_geometry::space::OverlayVector;
+use rini_geometry::space::{OverlayVector, ScreenSize};
 use rini_ipc::protocol::WorkspaceSelector;
 use test_log::test;
 
 use super::fixtures::*;
+use crate::app::reactor::events::window as window_workflow;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::request::Request;
+use crate::workspaces as layout;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -37,8 +40,7 @@ fn forwarded_space_snapshot_respects_toggled_space_activation_policy() {
 #[test]
 fn passive_command_space_change_does_not_override_clicked_window_focus() {
     let (mut apps, mut reactor) = test_context();
-    let (raise_manager_tx, mut raise_manager_rx) = channels::channel();
-    reactor.communication_manager.raise_manager_tx = raise_manager_tx;
+    let mut raise_manager_rx = reactor.connect_test_raises();
 
     let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let right = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
@@ -79,7 +81,7 @@ fn passive_command_space_change_does_not_override_clicked_window_focus() {
     ));
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout().focused_window(),
         Some(old_focus),
         "a passive display snapshot must leave focus ownership to the AX click event"
     );
@@ -94,7 +96,7 @@ fn passive_command_space_change_does_not_override_clicked_window_focus() {
         Quiet::No,
     ));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout().focused_window(),
         Some(destination_focus),
         "the subsequent AX focus event should select the window that activated the display"
     );
@@ -121,8 +123,7 @@ fn discovery_does_not_replay_another_apps_global_main_window() {
     let app_two_window = WindowId::new(2, 1);
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, app_two_window));
     let info = reactor
-        .state
-        .windows
+        .windows()
         .window(app_two_window)
         .expect("app two window should be tracked")
         .info
@@ -132,7 +133,7 @@ fn discovery_does_not_replay_another_apps_global_main_window() {
 
     assert_eq!(reactor.main_window(), Some(WindowId::new(1, 1)));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout().focused_window(),
         Some(app_two_window),
         "app-scoped discovery must not replay another app's global main window"
     );
@@ -141,8 +142,7 @@ fn discovery_does_not_replay_another_apps_global_main_window() {
 #[test]
 fn handle_layout_response_includes_handles_for_raise_and_focus_windows() {
     let (mut apps, mut reactor) = test_context();
-    let (raise_manager_tx, mut raise_manager_rx) = channels::channel();
-    reactor.communication_manager.raise_manager_tx = raise_manager_tx;
+    let mut raise_manager_rx = reactor.connect_test_raises();
 
     reactor.handle_events(apps.make_app(1, make_windows(1)));
     reactor.handle_events(apps.make_app(2, make_windows(1)));
@@ -222,7 +222,7 @@ fn carbon_activation_is_forwarded_during_refresh_quarantine() {
 
     reactor.handle_events(apps.make_app(pid, make_windows(1)));
     let _ = apps.requests();
-    reactor.refresh_quarantine_manager.sleeping = true;
+    reactor.quarantine_mut().sleeping = true;
 
     reactor.handle_event(Event::ApplicationGloballyActivated(pid));
     assert!(
@@ -239,7 +239,7 @@ fn focus_follows_mouse_emits_focus_without_explicit_arrange() {
     let window = WindowId::new(7, 1);
 
     let outcome = window_workflow::handle_mouse_moved_over_window(
-        &reactor.app_manager,
+        reactor.apps(),
         window_workflow::MouseMovedPayload {
             window: Some(window),
             should_sync: true,
@@ -279,18 +279,14 @@ fn resolved_activation_without_main_window_does_not_choose_arbitrary_app_window(
     reactor.handle_event(Event::ApplicationMainWindowChanged(pid, None, Quiet::No));
     reactor.handle_event(Event::ApplicationActivated(pid, Quiet::No));
 
-    assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace_idx(space),
-        Some(0)
-    );
+    assert_eq!(reactor.layout().active_workspace_idx(space), Some(0));
 }
 
 #[test]
 fn menu_open_state_is_cleared_when_owner_deactivates() {
     let mut reactor = test_reactor();
-    reactor.config.settings.focus_follows_mouse = true;
-    let (event_tap_tx, mut event_tap_rx) = channels::channel();
-    reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
+    reactor.settings_mut().focus_follows_mouse = true;
+    let mut event_tap_rx = reactor.connect_test_event_tap();
 
     reactor.handle_event(Event::MenuOpened(1));
     let disable = event_tap_rx.try_recv().expect("menu-open should update event tap").1;
@@ -298,7 +294,7 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
         disable,
         crate::input::platform::input_tap::Request::SetFocusFollowsMouseEnabled(false)
     ));
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Open(1));
+    assert_eq!(*reactor.menu_state(), MenuState::Open(1));
 
     reactor.handle_event(Event::ApplicationDeactivated(1));
     let enable = event_tap_rx
@@ -309,19 +305,29 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
         enable,
         crate::input::platform::input_tap::Request::SetFocusFollowsMouseEnabled(true)
     ));
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Closed);
+    assert_eq!(*reactor.menu_state(), MenuState::Closed);
+}
+
+#[test]
+fn menu_open_state_is_cleared_when_owner_globally_deactivates() {
+    let mut reactor = test_reactor();
+    reactor.handle_event(Event::MenuOpened(1));
+    reactor.handle_event(Event::ApplicationGloballyDeactivated(2));
+    assert_eq!(*reactor.menu_state(), MenuState::Open(1));
+
+    reactor.handle_event(Event::ApplicationGloballyDeactivated(1));
+    assert_eq!(*reactor.menu_state(), MenuState::Closed);
 }
 
 #[test]
 fn stale_menu_open_state_is_cleared_when_other_app_activates() {
     let mut reactor = test_reactor();
-    reactor.config.settings.focus_follows_mouse = true;
-    let (event_tap_tx, mut event_tap_rx) = channels::channel();
-    reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
+    reactor.settings_mut().focus_follows_mouse = true;
+    let mut event_tap_rx = reactor.connect_test_event_tap();
 
     reactor.handle_event(Event::MenuOpened(1));
     let _ = event_tap_rx.try_recv().expect("menu-open should update event tap");
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Open(1));
+    assert_eq!(*reactor.menu_state(), MenuState::Open(1));
 
     reactor.handle_event(Event::ApplicationGloballyActivated(2));
     let enable = event_tap_rx
@@ -332,7 +338,7 @@ fn stale_menu_open_state_is_cleared_when_other_app_activates() {
         enable,
         crate::input::platform::input_tap::Request::SetFocusFollowsMouseEnabled(true)
     ));
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Closed);
+    assert_eq!(*reactor.menu_state(), MenuState::Closed);
 }
 
 /// The strip is one z-order group (`raise_order::regroup_tiled`): focus landing on a strip window while a floating
@@ -342,7 +348,8 @@ fn stale_menu_open_state_is_cleared_when_other_app_activates() {
 /// (parked on workspace 2, reported off screen by the window server) landed on a Ghostty window
 /// this way and remembered Ghostty for the next time.
 mod switch_focus {
-    use crate::app::reactor::{choose_switch_focus, switch_focus_within_workspace};
+    use crate::app::reactor::activation::switch_focus_within_workspace;
+    use crate::app::reactor::focus_heuristics::choose_switch_focus;
 
     /// macOS picks the app's main window on cmd-tab. When the user was last in another window of
     /// the app on the same workspace, that one is the switch's focus; otherwise the pick stands.
@@ -410,14 +417,14 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
 
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(floater));
+    assert!(reactor.layout().is_window_floating(floater));
 
     // Sit on the rightmost column and keep walking right.
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, right));
     for _ in 0..3 {
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
         assert_ne!(
-            reactor.layout_manager.layout_engine.focused_window(),
+            reactor.layout().focused_window(),
             Some(floater),
             "walking off the end of the strip must not focus a floating window"
         );
@@ -445,11 +452,10 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
-    reactor.main_window_tracker.set_focus_for_test(leaving);
+    reactor.set_test_focus(leaving);
 
     let mut pictures = reactor.connect_test_pictures();
-    let (transitions_tx, mut transitions_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(transitions_tx);
+    let mut transitions_rx = reactor.connect_test_transitions();
 
     // A click elsewhere, rini's own raise coming back, and the window already key reported again.
     for window in [arriving, leaving, leaving] {
@@ -475,7 +481,7 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
         !asked.iter().any(|command| matches!(command, Asked::Refresh(_))),
         "the reactor refreshes neither end itself"
     );
-    let frame = |window: WindowId| reactor.state.windows.window(window).unwrap().frame_monotonic;
+    let frame = |window: WindowId| reactor.test_frame(window);
     let mut turned = Vec::new();
     while let Ok((_, event)) = transitions_rx.try_recv() {
         if let Engine::LooksTurned(windows) = event {
@@ -506,7 +512,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
@@ -514,8 +520,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, last_column));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
@@ -532,10 +537,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
         vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
         "the strip's end: one bounce to the left carrying both columns"
     );
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(last_column)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(last_column));
 
     reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
     assert_eq!(
@@ -543,10 +545,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
         vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
         "the top of the stack: one bounce downward"
     );
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(last_column)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(last_column));
 
     // A step that lands somewhere is a switch, not a bounce.
     reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
@@ -563,7 +562,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
@@ -571,8 +570,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, last_column));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
@@ -592,7 +590,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
         "the strip's end: one bounce to the left carrying both columns"
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout().focused_window(),
         Some(last_column),
         "the window stays put and stays focused"
     );
@@ -628,31 +626,25 @@ fn a_focus_report_from_rinis_own_raise_does_not_move_the_selection() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, intended));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(intended)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(intended));
 
-    reactor.raise_echo.expect(
+    reactor.raise_echo_mut().expect(
         [intended, echoed].into_iter(),
         Some(intended),
         std::time::Instant::now(),
     );
     reactor.handle_event(Event::WindowServerFocusChanged(echoed, space));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout().focused_window(),
         Some(intended),
         "the echo must not become the selection"
     );
 
     // The user going somewhere is still honoured, even to a window the same raise touched, once the
     // cascade is over.
-    reactor.raise_echo = crate::windows::domain::focus::RaiseEcho::default();
+    *reactor.raise_echo_mut() = crate::windows::domain::focus::RaiseEcho::default();
     reactor.handle_event(Event::WindowServerFocusChanged(echoed, space));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(echoed)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(echoed));
 }
 
 mod main_window_tracking {
@@ -864,7 +856,7 @@ mod a_panel_taking_the_focus_report {
         );
         // What the app thread reports at launch; `add_test_app` registers the app with the reactor only.
         for (pid, main_window) in [(1, main()), (2, elsewhere())] {
-            let _ = reactor.main_window_tracker.handle_event(FocusEvent::ApplicationLaunched {
+            let _ = reactor.focus_tracker_mut().handle_event(FocusEvent::ApplicationLaunched {
                 pid,
                 is_frontmost: pid == 1,
                 main_window: Some(main_window),
@@ -953,22 +945,16 @@ fn a_late_report_for_an_earlier_press_does_not_pull_the_focus_back() {
 
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(third)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(third));
 
     reactor.handle_event(Event::WindowServerFocusChanged(second, space));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout().focused_window(),
         Some(third),
         "the first press's late report is an echo"
     );
     reactor.handle_event(Event::WindowServerFocusChanged(third, space));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(third)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(third));
 }
 
 /// When the raise manager reports it has finished, a report is the user again once the cascade is
@@ -990,10 +976,7 @@ fn a_report_after_the_raises_have_run_is_followed() {
     std::thread::sleep(std::time::Duration::from_millis(450));
     reactor.handle_event(Event::WindowServerFocusChanged(second, space));
 
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(second)
-    );
+    assert_eq!(reactor.layout().focused_window(), Some(second));
 }
 
 /// The reported case: after a restart nothing moves, so no layout pass asked for a single picture,
@@ -1020,7 +1003,7 @@ fn the_first_pass_to_lay_a_window_out_pictures_it() {
     // Settled, as a restart finds it: every window already where the saved layout puts it.
     reactor.update_layout(false, false, None);
     reactor.update_layout(false, false, None);
-    reactor.pictured_windows.clear();
+    reactor.forget_pictured_windows();
     let mut pictures = reactor.connect_test_pictures();
     let mut warmed_by_pass = || {
         reactor.update_layout(false, false, None);
@@ -1055,17 +1038,16 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
         reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
     };
     let mut asked = reactor.connect_test_pictures();
-    let pictures = reactor.communication_manager.pictures.clone();
     add(&mut reactor, early, 901, workspaces[0]);
     reactor.update_layout(false, false, None);
 
     // The late window arrives and is settled into place with no pictures service listening.
-    reactor.communication_manager.pictures = None;
+    let pictures = reactor.take_test_pictures();
     add(&mut reactor, late, 902, workspaces[1]);
     reactor.update_layout(false, false, None);
     reactor.update_layout(false, false, None);
     pictures_asked(&mut asked);
-    reactor.communication_manager.pictures = pictures;
+    reactor.restore_test_pictures(pictures);
 
     reactor.update_layout(false, false, None);
     let warmed = asked_at(
@@ -1074,4 +1056,33 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
     );
     assert!(warmed.contains(&late), "{warmed:?}");
     assert!(!warmed.contains(&early), "pictured once already: {warmed:?}");
+}
+
+/// Mouse follows focus to the focused window's centre, except during a workspace switch, which
+/// holds the warp until its layout lands.
+#[test]
+fn focus_warps_the_mouse_to_its_centre_and_a_switch_holds_the_warp() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    reactor.handle_events(apps.make_app(1, make_windows(1)));
+    apps.simulate_until_quiet(&mut reactor);
+    let wid = WindowId::new(1, 1);
+    let centre = reactor.test_frame(wid).mid();
+
+    reactor.settings_mut().mouse_follows_focus = false;
+    assert_eq!(reactor.warp_for_focus(wid), None);
+
+    reactor.settings_mut().mouse_follows_focus = true;
+    assert_eq!(reactor.warp_for_focus(wid), Some(centre));
+    assert_eq!(reactor.workspace_switches().pending_workspace_mouse_warp, None);
+
+    reactor
+        .workspace_switches_mut()
+        .start_workspace_switch(WorkspaceSwitchOrigin::Auto);
+    assert_eq!(reactor.warp_for_focus(wid), None);
+    assert_eq!(
+        reactor.workspace_switches().pending_workspace_mouse_warp,
+        Some(wid)
+    );
 }

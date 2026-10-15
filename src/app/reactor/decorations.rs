@@ -49,7 +49,7 @@ impl Reactor {
     /// floats. Whether it holds focus is the fold's to try both ways (`rules::decoration`), and whether
     /// it is urgent `decoration_of`'s to say.
     fn rule_context(&self, window: WindowId) -> WindowRuleContext<'_> {
-        let app = self.app_manager.apps.get(&window.pid).map(|app| &app.info);
+        let app = self.apps.get(&window.pid).map(|app| &app.info);
         let info = self.state.windows.window(window).map(|state| &state.info);
         WindowRuleContext {
             app_bundle_id: app.and_then(|app| app.bundle_id.as_deref()),
@@ -59,7 +59,7 @@ impl Reactor {
             ax_subrole: info.and_then(|info| info.ax_subrole.as_deref()),
             is_modal: info.is_some_and(|info| info.is_modal),
             state: RuleState {
-                floating: self.layout_manager.layout_engine.is_window_floating(window),
+                floating: self.layout_engine.is_window_floating(window),
                 ..RuleState::default()
             },
         }
@@ -88,7 +88,7 @@ impl Reactor {
         if one_width && !rules::shape_borders(settings) {
             return borders;
         }
-        let workspaces = self.layout_manager.layout_engine.virtual_workspace_manager();
+        let workspaces = self.layout_engine.virtual_workspace_manager();
         let scale_of = |window| {
             let space =
                 workspaces.workspace_info_for_window_any(&self.state.windows, window)?.space;
@@ -117,7 +117,7 @@ impl Reactor {
     /// Hands the layout the border each window wears now; whether any changed.
     pub(super) fn refresh_borders(&mut self) -> bool {
         let borders = self.borders();
-        self.layout_manager.layout_engine.set_borders(borders)
+        self.layout_engine.set_borders(borders)
     }
 
     /// The rings with `focus` holding focus: each workspace's active window on every display rini
@@ -128,7 +128,7 @@ impl Reactor {
         if !self.config.settings.decorations.draws_bands() {
             return Rings::default();
         }
-        let engine = &self.layout_manager.layout_engine;
+        let engine = &self.layout_engine;
         let workspaces = engine.virtual_workspace_manager();
         let active: Vec<(SpaceId, VirtualWorkspaceId, Option<WindowId>)> = self
             .space_state
@@ -155,7 +155,7 @@ impl Reactor {
 
     /// The rings as rini's layout has them now: its focused window holding focus.
     pub(super) fn layout_rings(&self) -> Rings {
-        self.rings_with(self.layout_manager.layout_engine.focused_window())
+        self.rings_with(self.layout_engine.focused_window())
     }
 
     /// What `window` wears through a pass ending with `rings`.
@@ -207,7 +207,7 @@ impl Reactor {
         };
         let key = self.main_window_tracker.key_window().filter(managed);
         let rings = self.rings_with(key);
-        let engine = &self.layout_manager.layout_engine;
+        let engine = &self.layout_engine;
         let mission_control = self.is_mission_control_active();
         let affinity = self.affinity();
         let windows = self

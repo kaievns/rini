@@ -247,7 +247,7 @@ fn a_window_macos_takes_into_native_fullscreen_is_sent_held() {
     let mut desk = desk();
     let left = desk.left;
     focus(&mut desk, left_ghostty(), left);
-    let _ = desk.reactor.state.windows.suspend_window_to_native_fullscreen(
+    let _ = desk.reactor.windows_mut().suspend_window_to_native_fullscreen(
         left_ghostty(),
         Some(WindowServerId::new(901)),
         Some(left),
@@ -290,7 +290,7 @@ fn a_window_on_a_space_its_display_is_not_showing_is_sent_no_band() {
 #[test]
 fn each_window_gives_its_border_out_of_its_slot_at_its_own_displays_scale() {
     let mut desk = desk();
-    let decorations = &mut desk.reactor.config.settings.decorations;
+    let decorations = &mut desk.reactor.settings_mut().decorations;
     decorations.border.on = true;
     decorations.border.band.width = 1.5;
     let left_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
@@ -312,7 +312,7 @@ fn each_window_gives_its_border_out_of_its_slot_at_its_own_displays_scale() {
 #[test]
 fn with_only_borders_on_every_managed_window_is_sent_its_border_and_whether_it_holds_focus() {
     let mut desk = desk();
-    let decorations = &mut desk.reactor.config.settings.decorations;
+    let decorations = &mut desk.reactor.settings_mut().decorations;
     decorations.focus_ring.on = false;
     decorations.border.on = true;
     let left = desk.left;
@@ -321,7 +321,7 @@ fn with_only_borders_on_every_managed_window_is_sent_its_border_and_whether_it_h
         let window = sent(&model, wsid);
         assert_eq!(
             window.decoration.border,
-            Some(desk.reactor.config.settings.decorations.border.band),
+            Some(desk.reactor.settings().decorations.border.band),
             "{wsid}"
         );
         assert_eq!(window.decoration.ring, None, "{wsid}");
@@ -348,7 +348,7 @@ fn focus_moving_recolours_the_two_windows_it_moved_between() {
         Paint::Solid(Colour::rgb(0xff0000)),
         Paint::Solid(Colour::rgb(0x00ff00)),
     );
-    let decorations = &mut desk.reactor.config.settings.decorations;
+    let decorations = &mut desk.reactor.settings_mut().decorations;
     decorations.border.on = true;
     decorations.rules = vec![
         DecorationRule {
@@ -416,7 +416,7 @@ fn toggling_floating_refolds_and_relays_the_window_out() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
     reactor.handle_test_batch(Vec::new());
     let slots = test_layout(&mut reactor, space, screen);
-    reactor.config.settings.decorations.rules = ruled(DecorationRule {
+    reactor.settings_mut().decorations.rules = ruled(DecorationRule {
         border: border(Some(true), Some(6.0)),
         ..rule_for(RuleMatch {
             is_floating: Some(false),
@@ -444,7 +444,7 @@ fn toggling_floating_refolds_and_relays_the_window_out() {
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     reactor.handle_test_batch(Vec::new());
     let model = models(&mut rest).pop().expect("sent");
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(window));
+    assert!(reactor.layout().is_window_floating(window));
     assert_eq!(
         (
             worn_border(&model, &reactor, window),
@@ -475,7 +475,7 @@ fn a_title_a_border_rule_names_lays_the_strip_out_again() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     apps.requests();
-    reactor.config.settings.decorations.rules = ruled(DecorationRule {
+    reactor.settings_mut().decorations.rules = ruled(DecorationRule {
         border: border(Some(true), Some(6.0)),
         ..rule_for(RuleMatch::title("^Wide$"))
     });
@@ -501,7 +501,7 @@ fn a_title_a_border_rule_names_lays_the_strip_out_again() {
 #[test]
 fn a_rule_radius_reaches_the_tile_and_the_rest_panel() {
     let mut desk = desk();
-    desk.reactor.config.settings.decorations.rules = ruled(DecorationRule {
+    desk.reactor.settings_mut().decorations.rules = ruled(DecorationRule {
         corner_radius: Some(9.0),
         ..rule_for(RuleMatch::app("com.mitchellh.ghostty"))
     });
@@ -536,7 +536,7 @@ fn an_application_asking_for_attention_is_sent_urgent_until_one_of_its_windows_h
     let urgent =
         |model: &RestModel| [901, 902, 903, 904].map(|wsid| sent(model, wsid).decoration.urgent);
     assert_eq!(urgent(&model), [false, true, true, false]);
-    let ring = desk.reactor.config.settings.decorations.focus_ring.band;
+    let ring = desk.reactor.settings().decorations.focus_ring.band;
     assert_eq!(
         sent(&model, 903).style().ring,
         Some(ring.urgent),
@@ -596,7 +596,7 @@ fn reload_config(
     reactor: &mut Reactor,
     change: impl FnOnce(&mut crate::decorations::settings::DecorationSettings),
 ) {
-    let mut config = reactor.config.clone();
+    let mut config = reactor.config().clone();
     change(&mut config.settings.decorations);
     reactor.handle_test_batch(vec![Event::ConfigUpdated(Box::new(config))]);
 }
@@ -607,10 +607,10 @@ fn reload_config(
 #[test]
 fn with_the_ring_and_the_border_off_the_rest_windows_are_turned_off_and_nothing_is_followed() {
     let mut desk = desk();
-    assert!(desk.reactor.rest.following.on(), "the ring on by default");
+    assert!(desk.reactor.rest_follows_focus(), "the ring on by default");
     reload(&mut desk, |decorations| decorations.focus_ring.on = false);
     assert_eq!(words(&mut desk.rest), vec![None], "turned off, once");
-    assert!(!desk.reactor.rest.following.on());
+    assert!(!desk.reactor.rest_follows_focus());
     let left = desk.left;
     desk.reactor.handle_test_batch(vec![
         Event::ApplicationGloballyActivated(left_zen().pid),
@@ -633,13 +633,13 @@ fn with_the_ring_and_the_border_off_the_rest_windows_are_turned_off_and_nothing_
         sent(model, 902).decoration.ring.map(|band| band.width),
         Some(6.0)
     );
-    assert!(desk.reactor.rest.following.on());
+    assert!(desk.reactor.rest_follows_focus());
     reload(&mut desk, |decorations| {
         decorations.focus_ring.on = false;
         decorations.border.on = true;
     });
     assert!(
-        matches!(&words(&mut desk.rest)[..], [Some(_)]) && desk.reactor.rest.following.on(),
+        matches!(&words(&mut desk.rest)[..], [Some(_)]) && desk.reactor.rest_follows_focus(),
         "the border alone keeps it on"
     );
 }
@@ -662,7 +662,7 @@ fn a_rule_turning_one_windows_ring_on_keeps_the_rest_windows_on() {
     let [Some(model)] = &words(&mut desk.rest)[..] else {
         panic!("still on, with the rule")
     };
-    assert!(desk.reactor.rest.following.on());
+    assert!(desk.reactor.rest_follows_focus());
     let ringed = |wsid| sent(model, wsid).decoration.ring.is_some();
     assert_eq!([901, 902, 903, 904].map(ringed), [true, false, false, true]);
     reload(&mut desk, |decorations| decorations.rules.clear());
@@ -711,9 +711,8 @@ fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
     apps.make_app_and_settle(&mut reactor, 1, make_windows(4));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
     apps.simulate_until_quiet(&mut reactor);
-    reactor.config.settings.animate = true;
-    let (transitions_tx, mut transitions_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(transitions_tx);
+    reactor.settings_mut().animate = true;
+    let mut transitions_rx = reactor.connect_test_transitions();
     reactor.handle_test_batch(Vec::new());
     told(&mut rest);
     let press = |reactor: &mut Reactor, direction| {

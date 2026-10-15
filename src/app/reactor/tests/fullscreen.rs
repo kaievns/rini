@@ -11,8 +11,7 @@ use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::layout::settings::Edges;
-use crate::windows::domain::info::AppInfo;
-use crate::windows::domain::request::{AppThreadHandle, Request};
+use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -30,7 +29,7 @@ fn forwarded_space_state_updates_fullscreen_spaces() {
         },
     ));
 
-    assert!(reactor.space_state.fullscreen_spaces.contains(&fullscreen_space));
+    assert!(reactor.space_state().fullscreen_spaces.contains(&fullscreen_space));
 }
 
 #[test]
@@ -46,7 +45,7 @@ fn known_fullscreen_window_appearance_removes_window_from_layout() {
     make_active_app(&mut apps, &mut reactor, 1, make_windows(1), Some(wid));
 
     assert!(has_window_in_layout(&mut reactor, user_space, frame, wid));
-    let wsid = reactor.state.windows.window(wid).unwrap().info.sys_id.unwrap();
+    let wsid = reactor.windows().window(wid).unwrap().info.sys_id.unwrap();
 
     window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
@@ -56,8 +55,7 @@ fn known_fullscreen_window_appearance_removes_window_from_layout() {
     );
     assert!(
         reactor
-            .state
-            .windows
+            .windows()
             .native_fullscreen_record_for_window_server_id(wsid)
             .is_some_and(|record| record.fullscreen_space == fullscreen_space),
         "fullscreen transition should record suspended window state"
@@ -76,7 +74,7 @@ fn known_window_server_appearance_restores_same_workspace_after_fullscreen() {
     reactor.handle_event(space_state_event(vec![frame], vec![Some(user_space)]));
     make_active_app(&mut apps, &mut reactor, 1, make_windows(1), Some(wid));
 
-    let wsid = reactor.state.windows.window(wid).unwrap().info.sys_id.unwrap();
+    let wsid = reactor.windows().window(wid).unwrap().info.sys_id.unwrap();
     window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
     assert!(!has_window_in_layout(&mut reactor, user_space, frame, wid));
 
@@ -101,14 +99,8 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(user_space)]));
 
-    let (app_tx, mut app_rx) = crate::app::channels::channel();
-    reactor.app_manager.apps.insert(pid, AppState {
-        info: AppInfo {
-            bundle_id: Some("com.test.pending-fullscreen".to_string()),
-            localized_name: Some("Pending Fullscreen".to_string()),
-        },
-        handle: AppThreadHandle::from_sender(app_tx),
-    });
+    let mut app_rx =
+        reactor.add_test_app_listening(pid, "com.test.pending-fullscreen", "Pending Fullscreen");
 
     reactor.track_test_window_server_info(wsid, pid, frame);
 
@@ -116,8 +108,7 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
 
     assert!(
         reactor
-            .state
-            .windows
+            .windows()
             .pending_native_fullscreen_record_for_window_server_id(wsid)
             .is_some_and(|record| {
                 record.pid == pid
@@ -149,14 +140,13 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
 
     assert!(
         reactor
-            .state
-            .windows
+            .windows()
             .pending_native_fullscreen_record_for_window_server_id(wsid)
             .is_none(),
         "binding the AX window id should consume the pending fullscreen record"
     );
     assert!(
-        reactor.state.windows.native_fullscreen_record_for_window(wid).is_none(),
+        reactor.windows().native_fullscreen_record_for_window(wid).is_none(),
         "once the window is back on its user space, the fullscreen lifecycle should retire"
     );
     assert_eq!(
@@ -167,8 +157,14 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
 
 #[test]
 fn fullscreen_does_not_suppress_other_same_pid_windows() {
-    let (mut reactor, original_wid, original_wsid, user_space, _other_space, frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: original_wid,
+        server_id: original_wsid,
+        space1: user_space,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let second_wid = WindowId::new(original_wid.pid, 1002);
     let second_wsid = WindowServerId::new(10002);
@@ -202,16 +198,18 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
 
 #[test]
 fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
-    let (mut reactor, original_wid, original_wsid, user_space, other_space, frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: original_wid,
+        server_id: original_wsid,
+        space1: user_space,
+        space2: other_space,
+        frame,
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let duplicate_wid = WindowId::new(original_wid.pid, 27481);
     let duplicate_wsid = WindowServerId::new(27481);
-    let active_workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(user_space)
-        .expect("active workspace");
+    let active_workspace = reactor.layout().active_workspace(user_space).expect("active workspace");
 
     window_server_appeared(
         &mut reactor,
@@ -278,8 +276,14 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
 
 #[test]
 fn fullscreen_restore_uses_live_rekeyed_window_id() {
-    let (mut reactor, old_wid, wsid, user_space, _other_space, frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: old_wid,
+        server_id: wsid,
+        space1: user_space,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let new_wid = WindowId::new(old_wid.pid, 1999);
 
@@ -288,7 +292,7 @@ fn fullscreen_restore_uses_live_rekeyed_window_id() {
     rekey_window(&mut reactor, old_wid, new_wid);
 
     assert!(
-        reactor.state.windows.window(old_wid).is_none(),
+        reactor.windows().window(old_wid).is_none(),
         "rekey should retire the old AX window id before fullscreen restore"
     );
 
@@ -313,7 +317,7 @@ fn forwarded_space_state_does_not_clear_existing_fullscreen_tracks_when_snapshot
         window_id,
         tracked_workspace
     ));
-    let _ = reactor.state.windows.suspend_window_to_native_fullscreen(
+    let _ = reactor.windows_mut().suspend_window_to_native_fullscreen(
         window_id,
         Some(WindowServerId::new(1)),
         Some(tracked_user_space),
@@ -328,8 +332,7 @@ fn forwarded_space_state_does_not_clear_existing_fullscreen_tracks_when_snapshot
 
     assert!(
         reactor
-            .state
-            .windows
+            .windows()
             .native_fullscreen_record_for_window(window_id)
             .is_some_and(|record| record.fullscreen_space == fullscreen_space),
         "empty forwarded fullscreen state must not clear existing fullscreen exit tracking"
@@ -359,11 +362,11 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
 
     reactor.handle_event(space_state_event_from_screens(screens_for(user_space)));
     assert_eq!(
-        reactor.state.display_memory.affinity.space_for_display(&display_uuid),
+        reactor.display_affinity().space_for_display(&display_uuid),
         Some(user_space)
     );
 
-    reactor.space_state.fullscreen_spaces.insert(fullscreen_space);
+    reactor.space_state_mut().fullscreen_spaces.insert(fullscreen_space);
     reactor.handle_event(space_state_event_from_screens(
         screens_for(user_space)
             .into_iter()
@@ -374,14 +377,14 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
             .collect(),
     ));
     assert_eq!(
-        reactor.state.display_memory.affinity.space_for_display(&display_uuid),
+        reactor.display_affinity().space_for_display(&display_uuid),
         Some(user_space),
         "fullscreen spaces should not replace display->user-space history"
     );
 
     reactor.handle_event(space_state_event_from_screens(screens_for(user_space)));
     assert_eq!(
-        reactor.state.display_memory.affinity.space_for_display(&display_uuid),
+        reactor.display_affinity().space_for_display(&display_uuid),
         Some(user_space)
     );
 }
@@ -400,7 +403,7 @@ fn fullscreen_transition_preserves_other_display_space() {
         Some(left_space_2),
         Some(right_space_1),
     ]));
-    reactor.space_state.fullscreen_spaces.insert(right_fullscreen);
+    reactor.space_state_mut().fullscreen_spaces.insert(right_fullscreen);
 
     reactor.handle_event(space_state_event(vec![left, right], vec![
         Some(left_space_2),
@@ -429,7 +432,7 @@ fn user_space_switch_is_allowed_while_other_display_already_fullscreen() {
         Some(left_space_2),
         Some(right_space_1),
     ]));
-    reactor.space_state.fullscreen_spaces.insert(right_fullscreen);
+    reactor.space_state_mut().fullscreen_spaces.insert(right_fullscreen);
     reactor.handle_event(space_state_event(vec![left, right], vec![
         Some(left_space_2),
         None,
@@ -468,7 +471,7 @@ fn fullscreen_screen_params_preserves_window_layout() {
 
     // Simulate sleep/wake while fullscreen: ScreenParametersChanged arrives
     // with the fullscreen space id.
-    reactor.space_state.fullscreen_spaces.insert(fullscreen_space);
+    reactor.space_state_mut().fullscreen_spaces.insert(fullscreen_space);
     reactor.handle_event(space_state_event_from_screens(vec![ScreenInfo {
         is_builtin: false,
         id: rini_core::ids::ScreenId::new(0),
@@ -483,7 +486,8 @@ fn fullscreen_screen_params_preserves_window_layout() {
 
     // The fullscreen space must not become the active space for the screen.
     assert_eq!(
-        reactor.space_state.screens[0].space, None,
+        reactor.space_state().screens[0].space,
+        None,
         "fullscreen space should be nulled out, not stored as screen space"
     );
 
@@ -500,8 +504,13 @@ fn fullscreen_screen_params_preserves_window_layout() {
 
 #[test]
 fn fullscreen_startup_applies_app_rules_to_hidden_user_space_windows() {
-    let (reactor, wid, user_space, _default_workspace, target_workspace) =
-        fullscreen_startup_fixture(true, false);
+    let FullscreenStartup {
+        reactor,
+        window: wid,
+        user_space,
+        secondary_workspace: target_workspace,
+        ..
+    } = fullscreen_startup_fixture(true, false);
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
@@ -516,8 +525,13 @@ fn fullscreen_startup_applies_app_rules_to_hidden_user_space_windows() {
 
 #[test]
 fn fullscreen_startup_discovery_preserves_existing_hidden_assignment_without_app_rules() {
-    let (reactor, wid, user_space, default_workspace, secondary_workspace) =
-        fullscreen_startup_fixture(false, true);
+    let FullscreenStartup {
+        reactor,
+        window: wid,
+        user_space,
+        default_workspace,
+        secondary_workspace,
+    } = fullscreen_startup_fixture(false, true);
 
     assert_ne!(secondary_workspace, default_workspace);
     assert_eq!(
@@ -541,7 +555,7 @@ fn unfullscreen_restores_window_tracking() {
 
     // Record the window as fullscreened.
     let window_id = WindowId::new(1, 1);
-    let _ = reactor.state.windows.suspend_window_to_native_fullscreen(
+    let _ = reactor.windows_mut().suspend_window_to_native_fullscreen(
         window_id,
         Some(WindowServerId::new(1)),
         Some(user_space),
@@ -569,15 +583,21 @@ fn unfullscreen_restores_window_tracking() {
 
     // The fullscreen track should be removed.
     assert!(
-        reactor.state.windows.native_fullscreen_record_for_window(window_id).is_none(),
+        reactor.windows().native_fullscreen_record_for_window(window_id).is_none(),
         "Fullscreen track should be removed from space manager"
     );
 }
 
 #[test]
 fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
-    let (mut reactor, old_wid, wsid, user_space, _other_space, full_screen) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: old_wid,
+        server_id: wsid,
+        space1: user_space,
+        frame: full_screen,
+        ..
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let new_wid = WindowId::new(old_wid.pid, 99);
 
@@ -589,8 +609,8 @@ fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
         old_wid
     ));
 
-    reactor.space_state.fullscreen_spaces.insert(fullscreen_space);
-    let _ = reactor.state.windows.suspend_window_to_native_fullscreen(
+    reactor.space_state_mut().fullscreen_spaces.insert(fullscreen_space);
+    let _ = reactor.windows_mut().suspend_window_to_native_fullscreen(
         old_wid,
         Some(wsid),
         Some(user_space),
@@ -600,7 +620,7 @@ fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
 
     rekey_window(&mut reactor, old_wid, new_wid);
     assert!(
-        reactor.state.windows.window(old_wid).is_none(),
+        reactor.windows().window(old_wid).is_none(),
         "rekey should retire the old AX id before the fullscreen exit snapshot arrives"
     );
 
@@ -614,9 +634,15 @@ fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
 
 #[test]
 fn floating_window_toggles_to_fullscreen_within_gaps() {
-    let (mut reactor, wid, space1, screen, _floating_frame) = reactor_with_floating_window();
+    let Floating {
+        mut reactor,
+        window: wid,
+        space: space1,
+        screen,
+        ..
+    } = reactor_with_floating_window();
     // Assymetric gaps to prevent swapped left/right or swapped width/height bugs from passing
-    reactor.config.settings.layout.gaps.struts = Edges {
+    reactor.settings_mut().layout.gaps.struts = Edges {
         top: 10.,
         left: 20.,
         bottom: 30.,
@@ -662,7 +688,7 @@ fn a_window_back_from_fullscreen_is_still_offered_when_its_fullscreen_space_repo
         has_window_in_layout(&mut reactor, user_space, frame, call),
         "leaving a fullscreen space is not entering one"
     );
-    assert!(reactor.state.windows.native_fullscreen_record_for_window(call).is_none());
+    assert!(reactor.windows().native_fullscreen_record_for_window(call).is_none());
 
     let offered: Vec<WindowId> = reactor
         .probe_switch_candidates(SwitchScope::Everything)

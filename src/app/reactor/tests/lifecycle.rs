@@ -15,10 +15,9 @@ use crate::workspaces::{LayoutCommand, LayoutEvent};
 #[test]
 fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
     let mut reactor = test_reactor();
-    let (wm_tx, mut wm_rx) = channels::channel();
-    reactor.communication_manager.wm_sender = Some(wm_tx);
+    let mut wm_rx = reactor.connect_test_hotkeys();
 
-    let mut updated = reactor.config.clone();
+    let mut updated = reactor.config().clone();
     updated.settings.focus_follows_mouse = !updated.settings.focus_follows_mouse;
     updated.settings.mouse_follows_focus = !updated.settings.mouse_follows_focus;
 
@@ -52,17 +51,16 @@ fn the_transitions_engine_is_told_whether_to_write_its_journal_as_it_is_connecte
             told.push(settings);
         }
     }
-    assert_eq!(told, [reactor.config.settings.journal]);
+    assert_eq!(told, [reactor.settings().journal]);
     assert!(!told[0].write, "not written by default");
 }
 
 #[test]
 fn a_config_reload_tells_the_transitions_engine_whether_to_write_its_journal() {
     let mut reactor = test_reactor();
-    let (transitions_tx, mut transitions_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(transitions_tx);
+    let mut transitions_rx = reactor.connect_test_transitions();
 
-    let mut updated = reactor.config.clone();
+    let mut updated = reactor.config().clone();
     updated.settings.journal.write = true;
     reactor.handle_event(Event::ConfigUpdated(Box::new(updated)));
 
@@ -77,7 +75,14 @@ fn a_config_reload_tells_the_transitions_engine_whether_to_write_its_journal() {
 
 #[test]
 fn known_window_server_appearance_restores_layout_membership_without_reassignment() {
-    let (mut reactor, wid, wsid, user_space, _other_space, frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1: user_space,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
 
     reactor.send_layout_event(LayoutEvent::WindowAdded(user_space, wid));
     assert!(has_window_in_layout(&mut reactor, user_space, frame, wid));
@@ -175,11 +180,11 @@ fn lifecycle_events_are_quarantined_during_sleep_and_session_inactivity() {
     let mut reactor = test_reactor();
     let space = SpaceId::new(8);
 
-    reactor.refresh_quarantine_manager.sleeping = true;
+    reactor.quarantine_mut().sleeping = true;
     assert!(reactor.should_quarantine_space_lifecycle_event(&Event::SpaceCreated(space)));
 
-    reactor.refresh_quarantine_manager.sleeping = false;
-    reactor.refresh_quarantine_manager.session_inactive = true;
+    reactor.quarantine_mut().sleeping = false;
+    reactor.quarantine_mut().session_inactive = true;
     assert!(reactor.should_quarantine_space_lifecycle_event(&Event::SpaceDestroyed(space)));
 }
 
@@ -206,11 +211,7 @@ fn discovery_restore_transition_readds_window_to_layout() {
         "restored window must return to layout when discovery reports it visible again"
     );
     assert!(
-        reactor
-            .state
-            .windows
-            .window(wid)
-            .is_some_and(|window| !window.info.is_minimized),
+        reactor.windows().window(wid).is_some_and(|window| !window.info.is_minimized),
         "reactor state must clear the minimized flag after restore"
     );
 }
@@ -278,7 +279,7 @@ fn current_ax_destruction_after_quarantine_release_removes_window() {
     reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    assert!(reactor.state.windows.record(wid).is_none());
+    assert!(reactor.windows().record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
 }
 
@@ -291,12 +292,12 @@ fn ax_invalidation_during_refresh_quarantine_is_deferred_without_layout_mutation
 
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
-    reactor.refresh_quarantine_manager.display_churn_active = true;
+    reactor.quarantine_mut().display_churn_active = true;
 
     reactor.handle_event(Event::WindowDestroyed(wid));
 
     assert!(
-        reactor.state.windows.window(wid).is_some(),
+        reactor.windows().window(wid).is_some(),
         "unstable AX invalidation must not discard logical window state",
     );
     assert!(
@@ -337,9 +338,9 @@ fn genuine_close_during_sleep_recovery_does_not_leave_layout_ghost() {
     reactor.handle_event(Event::SpaceStateChanged(recovered));
     reactor.discover_test_windows(1, vec![], vec![survivor]);
 
-    assert!(reactor.state.windows.record(closed).is_none());
+    assert!(reactor.windows().record(closed).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, closed));
-    assert!(reactor.state.windows.contains_window(survivor));
+    assert!(reactor.windows().contains_window(survivor));
     assert!(has_window_in_layout(&mut reactor, space, screen, survivor));
     assert_eq!(
         test_layout(&mut reactor, space, screen).len(),
@@ -376,7 +377,7 @@ fn last_window_close_during_sleep_recovery_does_not_leave_layout_ghost() {
     reactor.handle_event(Event::SpaceStateChanged(recovered));
     reactor.discover_test_windows(1, vec![], vec![]);
 
-    assert!(reactor.state.windows.record(closed).is_none());
+    assert!(reactor.windows().record(closed).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, closed));
     assert!(test_layout(&mut reactor, space, screen).is_empty());
 }
@@ -397,7 +398,7 @@ fn empty_active_space_membership_during_wake_race_does_not_blank_known_active_wi
     reactor.refresh_window_server_snapshot_for_active_spaces();
 
     assert!(
-        reactor.state.windows.is_window_visible(wsid),
+        reactor.windows().is_window_visible(wsid),
         "a transient empty active-space WS-id result after wake must not blank windows we already know belong to the active space"
     );
     assert!(
@@ -408,7 +409,13 @@ fn empty_active_space_membership_during_wake_race_does_not_blank_known_active_wi
 
 #[test]
 fn floating_window_toggle_off_restore_previous_frame() {
-    let (mut reactor, wid, space1, screen, floating_frame) = reactor_with_floating_window();
+    let Floating {
+        mut reactor,
+        window: wid,
+        space: space1,
+        screen,
+        floating_frame,
+    } = reactor_with_floating_window();
     // Turn on
     reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
     // Turn off
@@ -430,7 +437,13 @@ fn floating_window_toggle_off_restore_previous_frame() {
 /// and write.
 #[test]
 fn autosave_preserves_floating_restore_frame() {
-    let (mut reactor, wid, space1, screen, floating_frame) = reactor_with_floating_window();
+    let Floating {
+        mut reactor,
+        window: wid,
+        space: space1,
+        screen,
+        floating_frame,
+    } = reactor_with_floating_window();
 
     let dir = std::env::temp_dir().join(format!("rini-autosave-test-{}", std::process::id()));
     let path = dir.join("layout.ron");
@@ -444,12 +457,7 @@ fn autosave_preserves_floating_restore_frame() {
     // transiently in this harness. That is fine and is why the reactor logs and
     // continues instead of propagating. What must hold is that ATTEMPTING the save
     // does not disturb live state.
-    let _ = reactor.layout_manager.layout_engine.autosave_current_layout(
-        path.clone(),
-        &reactor.state.windows,
-        &reactor.state.display_memory,
-        active,
-    );
+    let _ = reactor.autosave_test_layout(path.clone(), active);
     reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
 
     let laid_out = laid_out_frame(&mut reactor, space1, screen, wid).expect("window laid out");
@@ -469,17 +477,11 @@ fn an_autosave_forgets_a_space_the_display_moved_off_and_left_empty() {
     let (old, new) = (SpaceId::new(1), SpaceId::new(2));
     let dir = std::env::temp_dir().join(format!("rini-vacant-autosave-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    reactor.autosave_path = Some(dir.join("layout.ron"));
+    reactor.set_test_autosave_path(dir.join("layout.ron"));
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(old)]));
     reactor.handle_event(space_state_event(vec![screen], vec![Some(new)]));
-    let spaces = || {
-        reactor
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .initialized_spaces()
-    };
+    let spaces = || reactor.layout().virtual_workspace_manager().initialized_spaces();
     assert!(
         spaces().contains(&old),
         "the fixture has the old space to forget"
@@ -489,11 +491,7 @@ fn an_autosave_forgets_a_space_the_display_moved_off_and_left_empty() {
     let _ = std::fs::remove_dir_all(&dir);
 
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .initialized_spaces(),
+        reactor.layout().virtual_workspace_manager().initialized_spaces(),
         vec![new]
     );
 }
@@ -505,7 +503,7 @@ fn an_autosave_keeps_an_empty_desktop_macos_still_lists_off_screen() {
     let (other, shown) = (SpaceId::new(1), SpaceId::new(2));
     let dir = std::env::temp_dir().join(format!("rini-listed-autosave-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    reactor.autosave_path = Some(dir.join("layout.ron"));
+    reactor.set_test_autosave_path(dir.join("layout.ron"));
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(other)]));
     reactor.handle_event(space_state_event_with(
@@ -518,11 +516,7 @@ fn an_autosave_keeps_an_empty_desktop_macos_still_lists_off_screen() {
     reactor.save_layout_now();
     let _ = std::fs::remove_dir_all(&dir);
 
-    let mut spaces = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .initialized_spaces();
+    let mut spaces = reactor.layout().virtual_workspace_manager().initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -548,11 +542,7 @@ fn the_quit_save_keeps_an_empty_desktop_macos_still_lists_off_screen() {
     let _ = std::fs::remove_dir_all(&dir);
 
     saved.unwrap();
-    let mut spaces = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .initialized_spaces();
+    let mut spaces = reactor.layout().virtual_workspace_manager().initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -567,7 +557,7 @@ fn a_save_forgets_nothing_when_the_window_server_did_not_list_the_spaces() {
     let dir = std::env::temp_dir().join(format!("rini-unlisted-save-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    reactor.autosave_path = Some(dir.join("autosave.ron"));
+    reactor.set_test_autosave_path(dir.join("autosave.ron"));
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(other)]));
     reactor.handle_event(space_state_event_with(
@@ -583,11 +573,7 @@ fn a_save_forgets_nothing_when_the_window_server_did_not_list_the_spaces() {
     let _ = std::fs::remove_dir_all(&dir);
 
     saved.unwrap();
-    let mut spaces = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .initialized_spaces();
+    let mut spaces = reactor.layout().virtual_workspace_manager().initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -608,11 +594,54 @@ fn the_quit_save_forgets_a_space_the_display_moved_off_and_left_empty() {
 
     saved.unwrap();
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .initialized_spaces(),
+        reactor.layout().virtual_workspace_manager().initialized_spaces(),
         vec![new]
     );
+}
+
+/// A discovery hands work back mid-drain, the layout events that add its window. They are sent
+/// where it hands them back, so the pass the added window's layout event runs goes ahead of this
+/// outcome's frame write ahead of the layout, which comes after the discovery, and the deferred
+/// request still goes last.
+#[test]
+fn a_discovery_lays_its_window_out_where_it_hands_it_back() {
+    let (mut apps, mut reactor) = test_context();
+    let space = SpaceId::new(1);
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+
+    let (first, added) = (WindowId::new(1, 1), WindowId::new(1, 3));
+    let mut info = make_window(3);
+    let wsid = WindowServerId::new(10_003);
+    info.sys_id = Some(wsid);
+    reactor.track_test_window_server_info(wsid, 1, info.frame);
+    reactor.windows_mut().set_window_server_space(wsid, Some(space));
+    let placed = CGRect::new(CGPoint::new(5., 5.), CGSize::new(300., 200.));
+    let outcome = EventOutcome::layout_changed(false)
+        .with_discovery(crate::app::reactor::events::WindowDiscoveryRequest {
+            pid: 1,
+            new: vec![(added, info)],
+            known_visible: vec![first, WindowId::new(1, 2), added],
+            app_info: None,
+        })
+        .with_pre_layout_window_frame_write(first, placed)
+        .with_app_request(1, Request::GetVisibleWindows);
+    reactor.apply_event_outcome(outcome);
+
+    let sent: Vec<_> = apps
+        .requests()
+        .into_iter()
+        .map(|request| match request {
+            Request::SetWindowFrame(window, frame, ..) => (Some(window), Some(frame == placed)),
+            Request::GetVisibleWindows => (None, None),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(sent, [
+        (Some(added), Some(false)),
+        (Some(first), Some(true)),
+        (None, None)
+    ]);
 }

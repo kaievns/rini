@@ -1111,54 +1111,16 @@ const FN_LIMIT: usize = 100;
 const FILE_LIMIT: usize = 1500;
 
 /// The functions over `FN_LIMIT`, each at its size now as its ceiling: file, name, ceiling.
-const LONG_FNS: [(&str, &str, usize); 23] = [
+const LONG_FNS: [(&str, &str, usize); 5] = [
     ("crates/rini-ipc/src/mach.rs", "mach_server_begin", 101),
     ("src/animation/domain/choreography/slide.rs", "retarget", 156),
     ("src/animation/domain/motion/plan.rs", "merge_plans", 202),
-    ("src/app/config/kdl/apply.rs", "apply", 137),
-    ("src/app/config/kdl/apply.rs", "apply_binds", 105),
-    ("src/app/config/kdl/apply.rs", "window_rule", 124),
-    ("src/app/notifications.rs", "new", 130),
-    ("src/app/reactor/animation.rs", "animate_layout", 151),
-    ("src/app/reactor/events/command.rs", "handle_command_layout", 105),
-    (
-        "src/app/reactor/events/space.rs",
-        "handle_window_server_appeared",
-        162,
-    ),
-    (
-        "src/app/reactor/events/window.rs",
-        "handle_window_frame_changed",
-        148,
-    ),
-    (
-        "src/app/reactor/events/window_discovery.rs",
-        "emit_layout_events",
-        147,
-    ),
-    ("src/app/reactor/mod.rs", "apply_event_outcome", 212),
-    ("src/app/reactor/mod.rs", "dispatch_workflow", 274),
-    (
-        "src/app/reactor/mod.rs",
-        "handle_authoritative_space_snapshot",
-        190,
-    ),
-    ("src/app/reactor/mod.rs", "handle_layout_response", 190),
-    ("src/app/reactor/mod.rs", "maybe_swap_on_drag", 111),
-    (
-        "src/app/reactor/mod.rs",
-        "on_windows_discovered_with_app_info",
-        142,
-    ),
-    ("src/app/reactor/mod.rs", "start_strip_switch", 132),
-    ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
     ("src/displays/screen.rs", "refresh_snapshot", 106),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
-    ("src/main.rs", "main", 287),
 ];
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
-const LONG_FILES: [(&str, usize); 1] = [("src/app/reactor/mod.rs", 4502)];
+const LONG_FILES: [(&str, usize); 0] = [];
 
 /// `source` with every comment blanked, so a `//` inside a string is not a comment, and with
 /// `literals` every string and character literal's contents replaced by `x` too, so a brace or a
@@ -1800,5 +1762,118 @@ fn a_long_snake_name_is_read_whole_from_its_span() {
     let source = "pub(crate) fn a_b_c_d() {}\nstruct S {\n    pub e_f_g_h: u8,\n    i_j_k_l: u8,\n}\n// fn m_n_o_p\nuse a::b;\nfn q_r_s_t(f: fn(u8)) {} fn u_v_w_x() {}";
     assert_eq!(declared_names(source), vec![
         "a_b_c_d", "e_f_g_h", "i_j_k_l", "q_r_s_t", "u_v_w_x"
+    ]);
+}
+
+/// The fields `pub struct Reactor` declares, by name.
+fn reactor_fields(source: &str) -> Vec<String> {
+    let lines = code_lines_in(source);
+    let start = lines
+        .iter()
+        .position(|(_, line)| line == "pub struct Reactor {")
+        .expect("src/app/reactor/mod.rs declares `pub struct Reactor`");
+    lines[start + 1..]
+        .iter()
+        .take_while(|(_, line)| line != "}")
+        .filter_map(|(_, line)| {
+            let line = match line.strip_prefix("pub") {
+                Some(rest) if rest.starts_with('(') => rest.split_once(')')?.1.trim_start(),
+                Some(rest) if rest.starts_with(' ') => rest.trim_start(),
+                _ => line,
+            };
+            let (name, _) = line.split_once(':')?;
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                .then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Each `reactor.<field>` in `code` that reads the field rather than calling a method of that name,
+/// a chain broken across lines included.
+fn reactor_field_reaches(code: &str, fields: &[String]) -> Vec<String> {
+    let mut joined = String::with_capacity(code.len());
+    let mut chars = code.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !c.is_whitespace() {
+            joined.push(c);
+            continue;
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if !joined.ends_with('.') && chars.peek() != Some(&'.') {
+            joined.push(' ');
+        }
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    joined
+        .match_indices("reactor.")
+        .filter(|(at, _)| !joined[..*at].ends_with(ident))
+        .filter_map(|(at, matched)| {
+            let rest = &joined[at + matched.len()..];
+            let name = &rest[..rest.find(|c: char| !ident(c)).unwrap_or(rest.len())];
+            let called = rest[name.len()..].starts_with('(');
+            (fields.iter().any(|field| field == name) && !called).then(|| format!("reactor.{name}"))
+        })
+        .collect()
+}
+
+/// A reactor test reads and arranges the reactor through the accessors in `reactor/testing.rs`, so a
+/// store can move without touching the cases.
+#[test]
+fn a_reactor_test_reaches_no_field_of_the_reactor() {
+    let mod_rs = Path::new("src/app/reactor/mod.rs");
+    let fields = reactor_fields(&fs::read_to_string(mod_rs).expect("readable source"));
+    assert!(fields.len() > 30, "read the fields: {fields:?}");
+    let files = rust_files(Path::new("src/app/reactor"));
+    let mut reaches = Vec::new();
+    for path in test_files(&files) {
+        if path.ends_with("testing.rs") {
+            continue;
+        }
+        let code: Vec<String> = code_lines(&path).into_iter().map(|(_, line)| line).collect();
+        for reach in reactor_field_reaches(&code.join("\n"), &fields) {
+            reaches.push(format!("{}: {reach}", slash(&path)));
+        }
+    }
+    for path in &files {
+        let source = fs::read_to_string(path).expect("readable source");
+        let inline = inline_test_ranges(&source);
+        let code: Vec<String> = code_lines_in(&source)
+            .into_iter()
+            .filter(|(line, _)| inline.iter().any(|lines| lines.contains(line)))
+            .map(|(_, line)| line)
+            .collect();
+        for reach in reactor_field_reaches(&code.join("\n"), &fields) {
+            reaches.push(format!("{}: {reach}", slash(path)));
+        }
+    }
+    assert!(
+        reaches.is_empty(),
+        "read these through an accessor in src/app/reactor/testing.rs:\n{}",
+        reaches.join("\n")
+    );
+}
+
+#[test]
+fn a_field_reach_is_found_across_lines_and_a_call_of_the_same_name_is_not() {
+    let source = "pub struct Reactor {\n    pub config: Config,\n    \
+                  pub(crate) state: RiniState,\n    pub(super) refocus: X,\n    \
+                  pub(in crate::app) publisher: Y,\n    last_strip_layout:\n        \
+                  HashMap<(SpaceId, crate::a::B), Vec<u8>>,\n    rest: RestFeed,\n}\n";
+    let fields = reactor_fields(source);
+    assert_eq!(fields, [
+        "config",
+        "state",
+        "refocus",
+        "publisher",
+        "last_strip_layout",
+        "rest"
+    ]);
+    let code = "reactor.state.windows; strip\n    .reactor\n    .config\n    .settings;\nreactor.rest(); \
+                desk.reactor.rest.on(); my_reactor.state; reactor.restless;";
+    assert_eq!(reactor_field_reaches(code, &fields), [
+        "reactor.state",
+        "reactor.config",
+        "reactor.rest"
     ]);
 }

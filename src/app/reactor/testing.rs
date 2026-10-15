@@ -1,22 +1,29 @@
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::SameAs;
+use rustc_hash::FxHashMap as HashMap;
 use tracing::debug;
 
-use super::{Event, EventOutcome, Reactor, ScreenInfo, TransactionId};
+use super::{Event, EventOutcome, MenuState, Reactor, ScreenInfo, TransactionId};
 use crate::app::channels;
-use crate::app::config::Config;
+use crate::app::config::{Config, LayoutSettings, Settings};
+use crate::app::reactor::state::RiniState;
 use crate::app::system_reads::SystemReads;
 use crate::displays::domain::topology::ForwardedSpaceState;
+use crate::transitions::domain::request::Cause;
+use crate::windows::domain::focus::{MainWindowTracker, RaiseEcho};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use crate::windows::domain::transaction::{Requested, WindowTxStore};
 use crate::windows::platform::window_server::{FakeWindowServer, Listed};
+use crate::workspaces::domain::display_affinity::DisplayAffinity;
 use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::domain::window_store::WindowStore;
 use crate::workspaces::{LayoutCommand, LayoutEngine};
 
 impl Reactor {
@@ -69,8 +76,7 @@ impl Reactor {
         &mut self,
         space: rini_core::ids::SpaceId,
     ) -> Vec<crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId> {
-        self.layout_manager
-            .layout_engine
+        self.layout_engine
             .virtual_workspace_manager_mut()
             .list_workspaces(space)
             .iter()
@@ -96,7 +102,7 @@ impl Reactor {
         &self,
         space: rini_core::ids::SpaceId,
     ) -> Option<crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId> {
-        self.layout_manager.layout_engine.active_workspace(space)
+        self.layout_engine.active_workspace(space)
     }
 
     pub fn test_workspace_for_window(
@@ -104,10 +110,11 @@ impl Reactor {
         space: rini_core::ids::SpaceId,
         wid: WindowId,
     ) -> Option<crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId> {
-        self.layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .workspace_for_window(&self.state.windows, space, wid)
+        self.layout_engine.virtual_workspace_manager().workspace_for_window(
+            &self.state.windows,
+            space,
+            wid,
+        )
     }
 
     pub fn test_window_server_id(&self, wid: WindowId) -> WindowServerId {
@@ -119,9 +126,7 @@ impl Reactor {
     }
 
     pub fn test_active_workspace_windows(&self, space: SpaceId) -> Vec<WindowId> {
-        self.layout_manager
-            .layout_engine
-            .windows_in_active_workspace(&self.state.windows, space)
+        self.layout_engine.windows_in_active_workspace(&self.state.windows, space)
     }
 
     pub fn test_workspace_windows(
@@ -129,7 +134,7 @@ impl Reactor {
         space: SpaceId,
         workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
     ) -> Vec<WindowId> {
-        self.layout_manager.layout_engine.virtual_workspace_manager().workspace_windows(
+        self.layout_engine.virtual_workspace_manager().workspace_windows(
             &self.state.windows,
             space,
             workspace,
@@ -142,10 +147,12 @@ impl Reactor {
         wid: WindowId,
         workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
     ) -> bool {
-        self.layout_manager
-            .layout_engine
-            .virtual_workspace_manager_mut()
-            .assign_window_to_workspace(&mut self.state.windows, space, wid, workspace)
+        self.layout_engine.virtual_workspace_manager_mut().assign_window_to_workspace(
+            &mut self.state.windows,
+            space,
+            wid,
+            workspace,
+        )
     }
 
     pub fn set_test_active_workspace(
@@ -153,14 +160,13 @@ impl Reactor {
         space: SpaceId,
         workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
     ) -> bool {
-        self.layout_manager
-            .layout_engine
+        self.layout_engine
             .virtual_workspace_manager_mut()
             .set_active_workspace(space, workspace)
     }
 
     pub fn handle_test_workspace_command(&mut self, space: SpaceId, command: &LayoutCommand) {
-        let _ = self.layout_manager.layout_engine.handle_virtual_workspace_command(
+        let _ = self.layout_engine.handle_virtual_workspace_command(
             &mut self.state.windows,
             &mut self.state.display_memory,
             space,
@@ -210,10 +216,26 @@ impl Reactor {
 
     /// Where the active workspace's strip had each window at the last pass.
     pub fn test_strip_layout(&self, space: SpaceId) -> Vec<(WindowId, CGRect)> {
-        let workspace = self.layout_manager.layout_engine.active_workspace(space);
+        let workspace = self.layout_engine.active_workspace(space);
         workspace
             .and_then(|workspace| self.last_strip_layout.get(&(space, workspace)).cloned())
             .unwrap_or_default()
+    }
+
+    /// The tiled frames of `space`'s active workspace on `screen`, at their strip coordinates and
+    /// in strip order, the strip spending what it held as a pass does.
+    pub fn test_tiled_layout(&mut self, space: SpaceId, screen: CGRect) -> Vec<(WindowId, CGRect)> {
+        let gaps = self.config.settings.layout.gaps.effective_for_display(None);
+        let engine = &mut self.layout_engine;
+        let Some(workspace) = engine.active_workspace(space) else {
+            return Vec::new();
+        };
+        let frames: HashMap<WindowId, CGRect> = engine
+            .calculate_layout_for_workspace(&self.state.windows, space, workspace, screen, &gaps)
+            .into_iter()
+            .collect();
+        let strip = engine.ordered_windows_in_active_workspace(space);
+        strip.into_iter().filter_map(|wid| Some((wid, *frames.get(&wid)?))).collect()
     }
 
     /// Wire in the rest windows, returning what they are sent.
@@ -266,7 +288,7 @@ impl Reactor {
     pub fn set_test_app_rules(&mut self, rules: Vec<crate::windows::domain::rules::WindowRule>) {
         self.config.virtual_workspaces.app_rules = rules;
         let settings = self.config.virtual_workspaces.clone();
-        self.layout_manager.layout_engine.update_virtual_workspace_settings(&settings);
+        self.layout_engine.update_virtual_workspace_settings(&settings);
     }
 
     pub fn add_test_app(&mut self, pid: pid_t) {
@@ -274,14 +296,25 @@ impl Reactor {
     }
 
     pub fn add_test_app_with_info(&mut self, pid: pid_t, bundle_id: &str, name: &str) {
-        let (app_tx, _app_rx) = channels::channel();
-        self.app_manager.apps.insert(pid, super::AppState {
+        let _ = self.add_test_app_listening(pid, bundle_id, name);
+    }
+
+    /// Register an app with the reactor, returning what its thread is asked.
+    pub fn add_test_app_listening(
+        &mut self,
+        pid: pid_t,
+        bundle_id: &str,
+        name: &str,
+    ) -> channels::Receiver<Request> {
+        let (app_tx, app_rx) = channels::channel();
+        self.apps.insert(pid, super::AppState {
             info: AppInfo {
                 bundle_id: Some(bundle_id.to_string()),
                 localized_name: Some(name.to_string()),
             },
             handle: AppThreadHandle::from_sender(app_tx),
         });
+        app_rx
     }
 
     pub fn add_test_window(
@@ -366,6 +399,263 @@ impl Reactor {
                 is_manageable,
                 ignore_app_rule: false,
             });
+    }
+}
+
+/// What a test reads and arranges of the reactor's stores, so a case names what it looks at rather
+/// than where the reactor keeps it.
+impl Reactor {
+    pub(crate) fn windows(&self) -> &WindowStore { &self.state.windows }
+
+    pub(crate) fn windows_mut(&mut self) -> &mut WindowStore { &mut self.state.windows }
+
+    pub(crate) fn rini_state(&self) -> &RiniState { &self.state }
+
+    pub(crate) fn layout(&self) -> &LayoutEngine { &self.layout_engine }
+
+    pub(crate) fn layout_mut(&mut self) -> &mut LayoutEngine { &mut self.layout_engine }
+
+    pub(crate) fn display_affinity(&self) -> &DisplayAffinity {
+        &self.state.display_memory.affinity
+    }
+
+    pub(crate) fn display_affinity_mut(&mut self) -> &mut DisplayAffinity {
+        &mut self.state.display_memory.affinity
+    }
+
+    pub(crate) fn config(&self) -> &Config { &self.config }
+
+    pub(crate) fn config_mut(&mut self) -> &mut Config { &mut self.config }
+
+    pub(crate) fn settings(&self) -> &Settings { &self.config.settings }
+
+    pub(crate) fn settings_mut(&mut self) -> &mut Settings { &mut self.config.settings }
+
+    /// Change the layout settings and hand them to the layout, as a config reload does.
+    pub(crate) fn set_test_layout_settings(&mut self, edit: impl FnOnce(&mut LayoutSettings)) {
+        edit(&mut self.config.settings.layout);
+        self.layout_engine.set_layout_settings(&self.config.settings.layout);
+    }
+
+    pub(crate) fn transactions(&self) -> &WindowTxStore { &self.transactions }
+
+    pub(crate) fn transactions_mut(&mut self) -> &mut WindowTxStore { &mut self.transactions }
+
+    /// Record a write of `frame` to `wsid` as sent and not yet echoed, returning its transaction.
+    pub(crate) fn pend_test_frame(&mut self, wsid: WindowServerId, frame: CGRect) -> TransactionId {
+        let txid = self.transactions.next_txid(wsid);
+        self.transactions.insert(wsid, txid, frame);
+        txid
+    }
+
+    pub(crate) fn reads(&self) -> &SystemReads { &self.reads }
+
+    pub(crate) fn reads_mut(&mut self) -> &mut SystemReads { &mut self.reads }
+
+    pub(crate) fn space_state(&self) -> &ForwardedSpaceState { &self.space_state }
+
+    pub(crate) fn space_state_mut(&mut self) -> &mut ForwardedSpaceState { &mut self.space_state }
+
+    /// The space snapshot held while Mission Control is open.
+    pub(crate) fn pending_space_change(&self) -> Option<&ForwardedSpaceState> {
+        self.pending_space_change.as_ref()
+    }
+
+    pub(super) fn quarantine(&self) -> &super::managers::RefreshQuarantineManager {
+        &self.refresh_quarantine_manager
+    }
+
+    pub(super) fn quarantine_mut(&mut self) -> &mut super::managers::RefreshQuarantineManager {
+        &mut self.refresh_quarantine_manager
+    }
+
+    pub(super) fn drag(&self) -> &super::managers::DragManager { &self.drag_manager }
+
+    pub(super) fn drag_mut(&mut self) -> &mut super::managers::DragManager {
+        &mut self.drag_manager
+    }
+
+    pub(super) fn workspace_switches_mut(
+        &mut self,
+    ) -> &mut super::managers::WorkspaceSwitchManager {
+        &mut self.workspace_switch_manager
+    }
+
+    pub(crate) fn menu_state(&self) -> &MenuState { &self.menu_state }
+
+    pub(crate) fn focus_tracker(&self) -> &MainWindowTracker { &self.main_window_tracker }
+
+    pub(crate) fn focus_tracker_mut(&mut self) -> &mut MainWindowTracker {
+        &mut self.main_window_tracker
+    }
+
+    pub(crate) fn raise_echo_mut(&mut self) -> &mut RaiseEcho { &mut self.raise_echo }
+
+    pub(crate) fn cause(&self) -> &Cause { &self.cause }
+
+    pub(crate) fn set_test_cause(&mut self, cause: Cause) { self.cause = cause; }
+
+    pub(crate) fn switch_is_open(&self) -> bool { self.live_switch.is_some() }
+
+    /// Whether the rest windows follow focus.
+    pub(crate) fn rest_follows_focus(&self) -> bool { self.rest.following.on() }
+
+    /// Forget which windows a layout pass has asked a picture of.
+    pub(crate) fn forget_pictured_windows(&mut self) { self.pictured_windows.clear(); }
+
+    /// Hold `pid`'s next refresh until Mission Control closes.
+    pub(crate) fn defer_test_refresh_past_mission_control(&mut self, pid: pid_t) {
+        self.mission_control_manager.pending_mission_control_refresh.insert(pid);
+    }
+
+    /// Autosave to `path`, which a test owns.
+    pub(crate) fn set_test_autosave_path(&mut self, path: PathBuf) {
+        self.autosave_path = Some(path);
+    }
+
+    pub(crate) fn apps(&self) -> &HashMap<pid_t, super::AppState> { &self.apps }
+
+    /// The frame rini last knew `wid` at.
+    pub(crate) fn test_frame(&self, wid: WindowId) -> CGRect {
+        self.state
+            .windows
+            .window(wid)
+            .expect("test window should be tracked")
+            .frame_monotonic
+    }
+
+    pub(crate) fn set_test_frame(&mut self, wid: WindowId, frame: CGRect) {
+        self.state
+            .windows
+            .window_mut(wid)
+            .expect("test window should be tracked")
+            .frame_monotonic = frame;
+    }
+
+    /// Wire in a flight engine, returning what it is sent.
+    pub(crate) fn connect_test_transitions(
+        &mut self,
+    ) -> crate::transitions::platform::engine::Receiver {
+        let (tx, rx) = channels::channel();
+        self.communication_manager.transitions_tx = Some(tx);
+        rx
+    }
+
+    /// Wire in a raise manager, returning what it is sent.
+    pub(crate) fn connect_test_raises(&mut self) -> crate::windows::domain::raise::Receiver {
+        let (tx, rx) = channels::channel();
+        self.communication_manager.raise_manager_tx = tx;
+        rx
+    }
+
+    /// Wire in the input tap, returning what it is sent.
+    pub(crate) fn connect_test_event_tap(&mut self) -> crate::input::platform::input_tap::Receiver {
+        let (tx, rx) = channels::channel();
+        self.communication_manager.event_tap_tx = Some(tx);
+        rx
+    }
+
+    /// Wire in the hotkey controller, returning what it is sent.
+    pub(crate) fn connect_test_hotkeys(
+        &mut self,
+    ) -> channels::Receiver<crate::app::hotkeys::WmEvent> {
+        let (tx, rx) = channels::channel();
+        self.communication_manager.wm_sender = Some(tx);
+        rx
+    }
+
+    /// Take the pictures service away, returning it to be put back with
+    /// [`Reactor::restore_test_pictures`].
+    pub(crate) fn take_test_pictures(
+        &mut self,
+    ) -> Option<crate::pictures::platform::service::Pictures> {
+        self.communication_manager.pictures.take()
+    }
+
+    pub(crate) fn restore_test_pictures(
+        &mut self,
+        pictures: Option<crate::pictures::platform::service::Pictures>,
+    ) {
+        self.communication_manager.pictures = pictures;
+    }
+
+    pub(super) fn workspace_switches(&self) -> &super::managers::WorkspaceSwitchManager {
+        &self.workspace_switch_manager
+    }
+
+    /// The active workspace's layout of `space` on `screen`, the only screen, with the display's
+    /// gaps and each window at the frame rini last knew it at.
+    pub(crate) fn test_layout_with_virtual_workspaces(
+        &mut self,
+        space: SpaceId,
+        screen: CGRect,
+    ) -> Vec<(WindowId, CGRect)> {
+        let gaps = self.config.settings.layout.gaps.effective_for_display(None);
+        let windows = &self.state.windows;
+        self.layout_engine.calculate_layout_with_virtual_workspaces(
+            windows,
+            space,
+            screen,
+            &gaps,
+            |window| windows.window(window).map(|state| state.frame_monotonic),
+            &[screen],
+        )
+    }
+
+    /// Write the layout file at `path` the way an autosave does.
+    pub(crate) fn autosave_test_layout(
+        &mut self,
+        path: PathBuf,
+        active_space: Option<SpaceId>,
+    ) -> std::io::Result<()> {
+        self.layout_engine.autosave_current_layout(
+            path,
+            &self.state.windows,
+            &self.state.display_memory,
+            active_space,
+        )
+    }
+
+    /// Carry `old`'s workspaces over to `new`, as a space id change does.
+    pub(crate) fn remap_test_space(&mut self, old: SpaceId, new: SpaceId) {
+        self.layout_engine.remap_space(
+            &mut self.state.windows,
+            &mut self.state.display_memory,
+            old,
+            new,
+        );
+    }
+
+    /// Home `window` to the display showing `space`.
+    pub(crate) fn set_test_window_display_home(&mut self, window: WindowId, space: SpaceId) {
+        self.layout_engine
+            .set_window_display_home(&mut self.state.display_memory, window, space);
+    }
+
+    /// Hand the window-destroyed reducer `window` over the reactor's own stores.
+    pub(crate) fn reduce_test_window_destroyed(
+        &mut self,
+        window: WindowId,
+    ) -> anyhow::Result<EventOutcome> {
+        super::events::window::handle_window_destroyed(
+            &mut self.state,
+            &self.transactions,
+            &mut self.drag_manager,
+            super::events::window::WindowDestroyedPayload { window },
+        )
+    }
+
+    /// Hand the mouse-up reducer `payload` over the reactor's own stores.
+    pub(crate) fn reduce_test_mouse_up(
+        &mut self,
+        payload: super::events::drag::MouseUpPayload,
+    ) -> anyhow::Result<EventOutcome> {
+        super::events::drag::handle_mouse_up(
+            &mut self.state,
+            &mut self.layout_engine,
+            &mut self.drag_manager,
+            payload,
+        )
     }
 }
 

@@ -53,7 +53,7 @@ impl Reactor {
     /// A display showing no user space (a native fullscreen one) has no bar. Its windows are listed in
     /// the order `query diagnostics` lists them.
     pub(super) fn bar_input(&self) -> BarInput {
-        let workspaces = self.layout_manager.layout_engine.virtual_workspace_manager();
+        let workspaces = self.layout_engine.virtual_workspace_manager();
         let displays = self
             .space_state
             .screens
