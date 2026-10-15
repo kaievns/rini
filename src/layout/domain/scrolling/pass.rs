@@ -1,6 +1,7 @@
 //! One layout pass over a strip: each column's width and start and where the selected column
 //! stands (`Geometry`), the scroll offset the pending `ScrollIntent` resolves to
-//! (`LayoutState::resolve_scroll`), and every window's frame at that offset (`LayoutState::frames`).
+//! (`LayoutState::resolve_scroll`), and every window's frame at that offset
+//! (`LayoutState::frames`).
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
@@ -124,16 +125,16 @@ impl LayoutState {
         let max_ratio = settings.max_column_width_ratio;
         let base_ratio =
             ScrollingLayoutSystem::clamp_base_ratio(self.column_width_ratio, min_ratio, max_ratio);
+        // A maximised column must be width 1.0 here as well as in its frame: these widths are what
+        // reserve horizontal space in the strip, and reserving the ordinary width laid the next
+        // column out on top of it.
+        //
+        // A lone column keeps its width; expanding it tied a window's size to its neighbours. See
+        // "Column width" in `src/layout/docs/strip.md`.
         let widths: Vec<f64> =
             self.columns
                 .iter()
                 .map(|col| {
-                    // A maximised column must be width 1.0 here as well as in its frame: these widths
-                    // are what reserve horizontal space in the strip, and reserving the ordinary width
-                    // laid the next column out on top of it.
-                    //
-                    // A lone column keeps its width; expanding it tied a window's size to its
-                    // neighbours. See "Column width" in `src/layout/docs/strip.md`.
                     let (kind, ratio) =
                         ScrollingLayoutSystem::laid_out_ratio(self, col, min_ratio, max_ratio);
                     let limits = column_limits(col.windows.iter().filter_map(|wid| {
@@ -283,8 +284,9 @@ impl LayoutState {
                     CGSize::new(column_width.round(), row_height.round()),
                 );
                 if self.fullscreen_within_gaps.contains(wid) {
-                    // The tiling rect's SIZE at the column's own x: keeping the strip-relative x is
-                    // what lets the column keep scrolling with the strip (`src/layout/docs/strip.md`).
+                    // The tiling rect's SIZE at the column's own x: keeping the strip-relative x
+                    // is what lets the column keep scrolling with the strip
+                    // (`src/layout/docs/strip.md`).
                     frame = CGRect::new(
                         CGPoint::new(x.round(), tiling.origin.y.round()),
                         CGSize::new(tiling.size.width.round(), tiling.size.height.round()),
