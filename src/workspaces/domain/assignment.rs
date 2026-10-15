@@ -84,10 +84,6 @@ impl WorkspaceAssignments {
         self.by_workspace.get(&key).map_or(0, HashSet::len)
     }
 
-    pub fn has_assignments_in_space(&self, space: SpaceId) -> bool {
-        self.by_workspace.keys().any(|key| key.space == space)
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = (WindowId, WindowWorkspaceInfo)> + '_ {
         self.by_window.iter().map(|(&w, &a)| (w, a))
     }

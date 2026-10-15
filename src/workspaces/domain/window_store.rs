@@ -92,10 +92,6 @@ impl WindowStore {
         self.assignments.window_count(space, workspace_id)
     }
 
-    pub fn has_workspace_assignments_in_space(&self, space: SpaceId) -> bool {
-        self.assignments.has_assignments_in_space(space)
-    }
-
     pub fn iter_workspace_assignments(
         &self,
     ) -> impl Iterator<Item = (WindowId, WindowWorkspaceInfo)> + '_ {
