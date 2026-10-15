@@ -947,16 +947,22 @@ mod tests {
             xs
         }
 
-        /// Row `row` of a `rows`-stack maximized, the stack left or right of the other column, the
-        /// maximized column going in left or right of what is left of the stack. The stack's rows are
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Side {
+            Left,
+            Right,
+        }
+
+        /// Row `row` of a `rows`-stack maximized, the stack on one `Side` of the other column, the
+        /// maximized column going in on one `Side` of what is left of the stack. The stack's rows are
         /// windows 1 to `rows`, the other column the last; the strip before and after.
         fn maximize(
             rows: usize,
             row: usize,
-            stack_left: bool,
-            goes_left: bool,
+            stack: Side,
+            goes: Side,
         ) -> (Vec<ScreenRect>, Vec<ScreenRect>) {
-            let (stack_x, other_x) = if stack_left {
+            let (stack_x, other_x) = if stack == Side::Left {
                 (3.0, 866.0)
             } else {
                 (866.0, 3.0)
@@ -965,8 +971,12 @@ mod tests {
             before.push(column(other_x, 1)[0]);
 
             // Columns after, in strip order: 0 the other, 1 what is left of the stack, 2 the maximized.
-            let mut order = if goes_left { vec![2, 1] } else { vec![1, 2] };
-            if stack_left {
+            let mut order = if goes == Side::Left {
+                vec![2, 1]
+            } else {
+                vec![1, 2]
+            };
+            if stack == Side::Left {
                 order.push(0);
             } else {
                 order.insert(0, 0);
@@ -1071,14 +1081,12 @@ mod tests {
         fn a_maximize_and_its_restore_move_the_rest_only_along_the_strip() {
             for rows in [2, 3] {
                 for row in 0..rows {
-                    for stack_left in [true, false] {
-                        for goes_left in [true, false] {
-                            let (before, after) = maximize(rows, row, stack_left, goes_left);
+                    for stack in [Side::Left, Side::Right] {
+                        for goes in [Side::Left, Side::Right] {
+                            let (before, after) = maximize(rows, row, stack, goes);
                             let resized = WindowId::new(1, row as u32 + 1);
                             let case = format!(
-                                "row {row} of a {rows}-stack {}, maximized going in {}",
-                                if stack_left { "left" } else { "right" },
-                                if goes_left { "left" } else { "right" }
+                                "row {row} of a {rows}-stack {stack:?}, maximized going in {goes:?}"
                             );
                             holds_its_row(
                                 &format!("maximize {case}"),

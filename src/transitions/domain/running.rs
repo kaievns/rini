@@ -725,12 +725,11 @@ fn entrance_tile<P: Clone>(
         worn: entrance.worn,
         radius,
     };
-    tile.flying(
-        (entrance_from(entrance.to), entrance.to),
-        snapshot.clone(),
+    let drawn = Drawn {
+        snapshot: snapshot.clone(),
         clipped,
-        true,
-    )
+    };
+    tile.flying((entrance_from(entrance.to), entrance.to), drawn, true)
 }
 
 /// Whose a tile is, and how it stacks and what it wears: what a tile is made of beside where it
@@ -744,14 +743,20 @@ pub(in crate::transitions) struct TileOf {
     pub(in crate::transitions) radius: Option<f64>,
 }
 
+/// The picture a tile is drawn with, clipped to the tile's corner or whole.
+#[derive(Clone, Debug)]
+pub(in crate::transitions) struct Drawn<P> {
+    pub(in crate::transitions) snapshot: P,
+    pub(in crate::transitions) clipped: bool,
+}
+
 impl TileOf {
-    /// Its tile flying `from` to `to` on `snapshot`, `clipped` or whole and drawn `focused` or not,
-    /// at no depth until `restack` bands it.
+    /// Its tile flying `from` to `to` `drawn` so and drawn `focused` or not, at no depth until
+    /// `restack` bands it.
     pub(in crate::transitions) fn flying<P>(
         self,
         (from, to): (OverlayRect, OverlayRect),
-        snapshot: P,
-        clipped: bool,
+        Drawn { snapshot, clipped }: Drawn<P>,
         focused: bool,
     ) -> OverlayTile<P> {
         OverlayTile {
@@ -896,7 +901,11 @@ mod tests {
             worn: Worn::default(),
             radius: None,
         };
-        tile.flying((from, to), test_picture(to.size), false, false)
+        let drawn = Drawn {
+            snapshot: test_picture(to.size),
+            clipped: false,
+        };
+        tile.flying((from, to), drawn, false)
     }
 
     fn layout(waits: Waits) -> Shape {

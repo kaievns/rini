@@ -1716,13 +1716,20 @@ mod tests {
             group.members.iter().map(|m| m.window).collect()
         }
 
-        fn strip_window(idx: u32, frame: SurfaceRect, pinned: bool, floating: bool) -> OnSurface {
+        fn tiled(idx: u32, frame: SurfaceRect) -> OnSurface {
             OnSurface {
                 window: wid(idx),
                 frame,
-                pinned,
-                floating,
+                pinned: false,
+                floating: false,
                 from: None,
+            }
+        }
+
+        fn floating(idx: u32, frame: SurfaceRect) -> OnSurface {
+            OnSurface {
+                floating: true,
+                ..tiled(idx, frame)
             }
         }
 
@@ -1852,8 +1859,7 @@ mod tests {
         /// The 3:27:20 pan: 22 survivors scrolled 574pt. One group, 22 members, one travel.
         #[test]
         fn the_3_27_20_pan_is_one_group_of_twenty_two() {
-            let windows: Vec<OnSurface> =
-                (0..22).map(|i| strip_window(i + 1, column(i as f64), false, false)).collect();
+            let windows: Vec<OnSurface> = (0..22).map(|i| tiled(i + 1, column(i as f64))).collect();
             let from_offset = SurfacePoint::new(-574.0, 0.0);
             let to_offset = SurfacePoint::new(0.0, 0.0);
             let plan = surface_plan(&windows, from_offset, to_offset);
@@ -1880,10 +1886,10 @@ mod tests {
         #[test]
         fn pinned_windows_are_floating_with_zero_travel() {
             let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
-            let windows = vec![
-                strip_window(1, column(0.0), false, false),
-                strip_window(2, settings, true, true),
-            ];
+            let windows = vec![tiled(1, column(0.0)), OnSurface {
+                pinned: true,
+                ..floating(2, settings)
+            }];
             let plan = surface_plan(
                 &windows,
                 SurfacePoint::new(-574.0, 0.0),
@@ -1902,10 +1908,7 @@ mod tests {
         #[test]
         fn a_switch_moves_the_floating_container_by_the_surface_travel() {
             let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
-            let windows = vec![
-                strip_window(1, column(0.0), false, false),
-                strip_window(2, settings, false, true),
-            ];
+            let windows = vec![tiled(1, column(0.0)), floating(2, settings)];
             let from_offset = SurfacePoint::new(0.0, 0.0);
             let to_offset = SurfacePoint::new(0.0, 1117.0);
             let plan = surface_plan(&windows, from_offset, to_offset);

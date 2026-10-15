@@ -9,9 +9,10 @@
 use std::collections::HashMap;
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::ScreenRect;
+use rini_geometry::space::{Rect, ScreenRect};
 
 use super::timing::HANDOVER_THRESHOLD_PT;
+use super::travel::is_moving;
 
 /// How far the real windows were from their tiles at lift. See `report_handover_error`.
 #[derive(Debug, Clone, PartialEq)]
@@ -62,10 +63,14 @@ pub(in crate::transitions) fn handover_report(
     report
 }
 
-/// Whether a composed pass is worth an overlay flight.
+/// Whether a composed pass, its drawable tiles going from and to `tiles`, is worth an overlay
+/// flight: one of them moves, or a flight is `running` for it to join.
 /// See "Layout changes" in `src/transitions/docs/coordination.md`.
-pub(in crate::transitions) fn worth_flying(moving_drawable: bool, running: bool) -> bool {
-    moving_drawable || running
+pub(in crate::transitions) fn worth_flying<U>(
+    mut tiles: impl Iterator<Item = (Rect<U>, Rect<U>)>,
+    running: bool,
+) -> bool {
+    running || tiles.any(|(from, to)| is_moving(from, to))
 }
 
 #[cfg(test)]
@@ -255,11 +260,8 @@ mod tests {
         };
         use crate::animation::domain::motion::surface::surface_travel;
         use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
-        use crate::transitions::domain::travel::is_moving;
 
-        fn moving_drawable(tiles: &[(ScreenRect, ScreenRect)]) -> bool {
-            tiles.iter().any(|(from, to)| is_moving(*from, *to))
-        }
+        const NO_TILES: [(ScreenRect, ScreenRect); 0] = [];
 
         fn shifted(frame: ScreenRect, dx: f64, dy: f64) -> ScreenRect {
             ScreenRect::new(
@@ -284,7 +286,7 @@ mod tests {
         #[test]
         fn a_pass_where_nothing_drawable_moves_does_not_fly() {
             assert!(
-                !worth_flying(false, false),
+                !worth_flying(NO_TILES.into_iter(), false),
                 "a still-only composition flew, hiding the new window until its picture landed"
             );
         }
@@ -292,22 +294,22 @@ mod tests {
         /// A window with no picture is an entrance, not a tile; nothing drawable moves.
         #[test]
         fn a_floating_open_over_a_still_strip_does_not_fly() {
-            let s1 = rect(0.0, 32.0, 860.0, 1081.0);
+            let s1: ScreenRect = rect(0.0, 32.0, 860.0, 1081.0);
             let s2 = rect(867.0, 32.0, 859.0, 1081.0);
-            let tiles = vec![(s1, s1), (s2, s2)];
+            let tiles = [(s1, s1), (s2, s2)];
             assert!(
-                !worth_flying(moving_drawable(&tiles), false),
+                !worth_flying(tiles.iter().copied(), false),
                 "the entrance, a floating window with no picture, is reserved and never drawn here"
             );
         }
 
         #[test]
         fn a_strip_open_that_moves_a_neighbour_flies() {
-            let before = rect(0.0, 32.0, 1720.0, 1081.0);
+            let before: ScreenRect = rect(0.0, 32.0, 1720.0, 1081.0);
             let after = rect(0.0, 32.0, 860.0, 1081.0);
-            let tiles = vec![(before, after)];
+            let tiles = [(before, after)];
             assert!(
-                worth_flying(moving_drawable(&tiles), false),
+                worth_flying(tiles.iter().copied(), false),
                 "the opened window's own reservation aside"
             );
         }
@@ -321,19 +323,22 @@ mod tests {
                 SurfacePoint::new(867.0, 0.0),
                 false,
             );
-            let tiles = vec![(
+            let tiles = [(
                 from_overlay_space(from, DISPLAY),
                 from_overlay_space(to, DISPLAY),
             )];
-            assert!(worth_flying(moving_drawable(&tiles), false));
+            assert!(worth_flying(tiles.iter().copied(), false));
         }
 
         #[test]
         fn a_still_pass_joining_a_running_flight_flies() {
-            let s1 = rect(0.0, 32.0, 860.0, 1081.0);
-            let tiles = vec![(s1, s1)];
-            assert!(worth_flying(moving_drawable(&tiles), true));
-            assert!(worth_flying(false, true), "even with nothing drawable at all");
+            let s1: ScreenRect = rect(0.0, 32.0, 860.0, 1081.0);
+            let tiles = [(s1, s1)];
+            assert!(worth_flying(tiles.iter().copied(), true));
+            assert!(
+                worth_flying(NO_TILES.into_iter(), true),
+                "even with nothing drawable at all"
+            );
         }
 
         #[test]
@@ -347,7 +352,7 @@ mod tests {
                 let mut tiles = Vec::with_capacity(count);
                 let mut any_moving = false;
                 for _ in 0..count {
-                    let from = rng.on_screen();
+                    let from: ScreenRect = rng.on_screen();
                     let to = if all_still || rng.coin() {
                         from
                     } else {
@@ -362,7 +367,7 @@ mod tests {
                     tiles.push((from, to));
                 }
                 let running = rng.coin();
-                let flies = worth_flying(moving_drawable(&tiles), running);
+                let flies = worth_flying(tiles.iter().copied(), running);
                 assert_eq!(flies, any_moving || running, "seed 81");
                 if !flies {
                     grounded += 1;
@@ -391,9 +396,10 @@ mod tests {
             );
             assert_eq!(moving(&plan).len(), 1);
             assert_eq!(members(moving(&plan)[0]), vec![window(3), window(4)]);
-            assert!(!worth_flying(false, false));
-            assert!(worth_flying(true, false));
-            assert!(worth_flying(false, true));
+            let tiles = survivors.iter().map(|(_, from, to, _)| (*from, *to));
+            assert!(worth_flying(tiles, false));
+            assert!(!worth_flying(NO_TILES.into_iter(), false));
+            assert!(worth_flying(NO_TILES.into_iter(), true));
         }
     }
 }

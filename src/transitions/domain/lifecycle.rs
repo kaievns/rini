@@ -411,6 +411,13 @@ pub struct EndWatch {
     pub behind: Vec<WindowId>,
 }
 
+/// What a tick heard had arrived where it ends (`Event::Tick`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Arrived {
+    settled: bool,
+    landed: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Phase {
     /// Waiting for the frame-zero pictures, overlay not up.
@@ -806,7 +813,9 @@ impl Coordinator {
                     }
                 }
             }
-            Event::Tick { settled, landed } => self.tick(settled, landed, now, &mut out),
+            Event::Tick { settled, landed } => {
+                self.tick(Arrived { settled, landed }, now, &mut out)
+            }
             Event::Abandon => {
                 // Whatever never showed still has to be placed, and the hold released.
                 if let State::Flying(f) = std::mem::take(&mut self.state) {
@@ -1088,7 +1097,8 @@ impl Coordinator {
         }
     }
 
-    fn tick(&mut self, settled: bool, landed: bool, now: Instant, out: &mut Vec<Command>) {
+    fn tick(&mut self, arrived: Arrived, now: Instant, out: &mut Vec<Command>) {
+        let Arrived { settled, landed } = arrived;
         let State::Flying(f) = &mut self.state else { return };
         if f.held_change.is_some_and(|(_, _, since)| now >= since + CHANGE_EVERY) {
             f.swap_held_change(out);

@@ -64,16 +64,23 @@ pub fn pointer_window(cache: PointerCache, hint: Option<WindowServerId>) -> Poin
 /// nothing.
 pub fn wants_keyboard_events(bound_hotkeys: usize) -> bool { bound_hotkeys > 0 }
 
+/// The three switches that decide whether the tap asks for mouse-move events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseMoveSwitches {
+    /// Event processing is on.
+    pub processing: bool,
+    /// The focus-follows-mouse setting.
+    pub configured: bool,
+    /// The runtime flag that suppresses focus-follows-mouse during a drag or an animation.
+    pub live: bool,
+}
+
 /// Whether the tap should ask for mouse-move events.
 ///
-/// Needs both halves of focus-follows-mouse: the setting, and the runtime flag that suppresses it
-/// during a drag or an animation. Event processing being off overrules both.
-pub fn wants_mouse_move_events(
-    event_processing_enabled: bool,
-    focus_follows_mouse_configured: bool,
-    focus_follows_mouse_enabled: bool,
-) -> bool {
-    event_processing_enabled && focus_follows_mouse_configured && focus_follows_mouse_enabled
+/// Needs both halves of focus-follows-mouse: the setting, and the runtime flag. Event processing
+/// being off overrules both.
+pub fn wants_mouse_move_events(switches: MouseMoveSwitches) -> bool {
+    switches.processing && switches.configured && switches.live
 }
 
 /// Whether a left-button press is the second click of a double-click.
@@ -193,14 +200,22 @@ mod tests {
 
     #[test]
     fn mouse_moves_need_the_setting_and_the_runtime_flag_and_processing() {
-        assert!(wants_mouse_move_events(true, true, true));
+        let on = MouseMoveSwitches {
+            processing: true,
+            configured: true,
+            live: true,
+        };
+        assert!(wants_mouse_move_events(on));
         assert!(
-            !wants_mouse_move_events(false, true, true),
+            !wants_mouse_move_events(MouseMoveSwitches { processing: false, ..on }),
             "processing off overrules both"
         );
-        assert!(!wants_mouse_move_events(true, false, true), "not configured");
         assert!(
-            !wants_mouse_move_events(true, true, false),
+            !wants_mouse_move_events(MouseMoveSwitches { configured: false, ..on }),
+            "not configured"
+        );
+        assert!(
+            !wants_mouse_move_events(MouseMoveSwitches { live: false, ..on }),
             "suppressed at runtime, during a drag or an animation"
         );
     }

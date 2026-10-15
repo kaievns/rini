@@ -28,7 +28,7 @@ use crate::transitions::domain::admission::{
 use crate::transitions::domain::flight::worth_flying;
 use crate::transitions::domain::lifecycle::{Kind, Start, TileSummary, drawn_focused};
 use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
-use crate::transitions::domain::running::{Composed, Shape, restack};
+use crate::transitions::domain::running::{Composed, Drawn, Shape, restack};
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 
 /// What every request of a layout pass is composed against: the display and its scale, the focus
@@ -136,8 +136,10 @@ impl FlightEngine {
             "overlay animation composition"
         );
 
-        let moving_drawable = tiles.iter().any(|tile| is_moving(tile.from, tile.to));
-        if !worth_flying(moving_drawable, self.running.is_some()) {
+        if !worth_flying(
+            tiles.iter().map(|tile| (tile.from, tile.to)),
+            self.running.is_some(),
+        ) {
             self.abandon();
             return;
         }
@@ -230,7 +232,10 @@ impl FlightEngine {
             source: snapshot.source,
             covered: snapshot.coverage.covered,
         };
-        let clipped = snapshot.source.clips();
+        let drawn = Drawn {
+            clipped: snapshot.source.clips(),
+            snapshot,
+        };
         let (focus, losing) = pass.focus;
         let focused = drawn_focused(request.window, focus, losing);
         let tile = pass.stacking.tile_of(
@@ -243,7 +248,7 @@ impl FlightEngine {
             to_overlay_space(start, pass.display),
             to_overlay_space(end, pass.display),
         );
-        composed.tiles.push(tile.flying(path, snapshot, clipped, focused));
+        composed.tiles.push(tile.flying(path, drawn, focused));
         composed.resolved.push((request.window, start, end, request.floating));
         flies
     }
@@ -286,7 +291,10 @@ impl FlightEngine {
                     "entrance from spawn"
                 );
                 self.pictures.insert(request.window, snapshot.clone());
-                let clipped = snapshot.source.clips();
+                let drawn = Drawn {
+                    clipped: snapshot.source.clips(),
+                    snapshot,
+                };
                 let from_o = to_overlay_space(from, pass.display);
                 let to_o = to_overlay_space(to, pass.display);
                 // Already at its slot (a cold cache, not an open): a still tile.
@@ -302,7 +310,7 @@ impl FlightEngine {
                 if !standing {
                     tile.server_order = Some(0);
                 }
-                composed.tiles.push(tile.flying((from_o, to_o), snapshot, clipped, focused));
+                composed.tiles.push(tile.flying((from_o, to_o), drawn, focused));
                 if standing {
                     composed.resolved.push((request.window, from, to, request.floating));
                 } else {
@@ -445,7 +453,10 @@ impl FlightEngine {
                         misshapen += 1;
                     }
                     waits.push_strip(window.window, self.landing(window.window, to.size.respace()));
-                    let clipped = snapshot.source.clips();
+                    let drawn = Drawn {
+                        clipped: snapshot.source.clips(),
+                        snapshot,
+                    };
                     let focused = drawn_focused(window.window, drawing_focus, losing);
                     let tile = stacking.tile_of(
                         window.window,
@@ -453,7 +464,7 @@ impl FlightEngine {
                         window.floating,
                         window.worn,
                     );
-                    tiles.push(tile.flying((from, to), snapshot, clipped, focused));
+                    tiles.push(tile.flying((from, to), drawn, focused));
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
                 None => missing += 1,
