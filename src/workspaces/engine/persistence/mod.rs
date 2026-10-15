@@ -73,7 +73,7 @@ impl WindowFingerprint {
 pub(super) struct PersistenceState {
     #[serde(default, rename = "persisted_windows")]
     windows: HashMap<WindowId, WindowFingerprint>,
-    /// The native space active at the last save, which a save never forgets.
+    /// The native space active at the last save, laid out or not, which a save never forgets.
     #[serde(default)]
     saved_active_space: Option<u64>,
     #[serde(skip)]

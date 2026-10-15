@@ -439,6 +439,41 @@ fn a_save_forgets_only_the_spaces_nothing_lists_remembers_or_holds() {
         .expect("what is left still validates");
 }
 
+/// The space active at a save is the saved active space whether or not rini has laid anything out
+/// on it yet, so the next save keeps the focus remembered on it though macOS has stopped listing it.
+#[test]
+fn a_save_keeps_the_space_active_at_the_last_save_though_it_has_no_layout() {
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let [laid_out, active] = [1, 4616].map(SpaceId::new);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(laid_out, CGSize::new(1200.0, 800.0)),
+    );
+    let workspace = engine.active_workspace(laid_out).unwrap();
+    engine.virtual_workspace_manager.set_last_focused_window(
+        active,
+        workspace,
+        Some(WindowId::new(9, 1)),
+    );
+    assert!(!engine.workspace_layouts.spaces().contains(&active), "fixture: no layout on it");
+    let path = std::env::temp_dir().join(format!(
+        "rini-saved-active-space-test-{}.ron",
+        std::process::id(),
+    ));
+
+    engine.autosave_current_layout(path.clone(), &window_store, &memory, Some(active)).unwrap();
+    let _ = std::fs::remove_file(path);
+
+    assert!(engine.forget_vacant_spaces(&window_store, &memory, &[laid_out]).is_empty());
+    assert_eq!(
+        engine.virtual_workspace_manager.last_focused_window(active, workspace),
+        Some(WindowId::new(9, 1))
+    );
+}
+
 /// Until the startup restore has moved the saved spaces onto this session's ids, every one of them
 /// looks dead.
 #[test]

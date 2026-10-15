@@ -56,17 +56,17 @@ the strip fresh.
 - A save MUST NOT write a value it could not read. "Could not read" and "is not set" are different
   answers, and writing the second for the first erases what was remembered.
 - The autosave and the quit save MUST forget what is kept under a native space that macOS no longer
-  lists on any attached display, on screen or off, that no display is remembered on, that is not the
-  saved active space, and that no window is on: its layouts, which workspace it showed and the focus
-  remembered on it. macOS mints a new space id on every reconnect and never reissues one, so such a
-  space is one nothing reaches again. A Desktop macOS still lists MUST stay though no screen shows
-  it, because switching back to it shows the workspace it showed, and a save MUST forget nothing
-  while the window server has not listed the spaces, since the screens alone leave every Desktop off
-  screen out. A space a display is remembered on MUST stay, windows or none, because the next start
-  moves its layouts and the workspace it showed onto the display's new id; a space a window is on
-  MUST stay, because that window can come back to it. Nothing is forgotten before the startup
-  restore has moved the saved spaces onto this session's ids, since until then every one of them
-  looks dead.
+  lists on any attached display, on screen or off, that no display is remembered on, that was not
+  the active space at the last save, laid out or not, and that no window is on: its layouts, which
+  workspace it showed and the focus remembered on it. macOS mints a new space id on every reconnect
+  and never reissues one, so such a space is one nothing reaches again. A Desktop macOS still lists
+  MUST stay though no screen shows it, because switching back to it shows the workspace it showed,
+  and a save MUST forget nothing while the window server has not listed the spaces, since the
+  screens alone leave every Desktop off screen out. A space a display is remembered on MUST stay,
+  windows or none, because the next start moves its layouts and the workspace it showed onto the
+  display's new id; a space a window is on MUST stay, because that window can come back to it.
+  Nothing is forgotten before the startup restore has moved the saved spaces onto this session's
+  ids, since until then every one of them looks dead.
 
 > **Reported 2026-10-15.** The dead-code sweep found Kai's `~/.rini/layout.ron` holding 68 workspace
 > layouts over 17 native space ids, only 3 of them mapped to a display. Kai's decision: fix it. On

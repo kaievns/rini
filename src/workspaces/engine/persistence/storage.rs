@@ -300,9 +300,7 @@ impl LayoutEngine {
         active_space: Option<SpaceId>,
     ) -> std::io::Result<()> {
         self.refresh_window_fingerprints(window_store);
-        self.persistence.set_saved_active_space(
-            active_space.filter(|space| self.workspace_layouts.spaces().contains(space)),
-        );
+        self.persistence.set_saved_active_space(active_space);
         self.save(memory, path)
     }
 
@@ -316,9 +314,7 @@ impl LayoutEngine {
         active_space: Option<SpaceId>,
     ) -> std::io::Result<()> {
         self.refresh_window_fingerprints(window_store);
-        self.persistence.set_saved_active_space(
-            active_space.filter(|space| self.workspace_layouts.spaces().contains(space)),
-        );
+        self.persistence.set_saved_active_space(active_space);
         for (window, state) in window_store.iter_windows() {
             if self.floating.is_floating(window) {
                 // Floating and tiled are mutually exclusive persisted representations.
