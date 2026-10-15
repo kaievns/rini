@@ -50,6 +50,32 @@ fn it_ignores_stale_resize_events() {
     );
 }
 
+/// A column is as wide as the share of the screen its settings give, read again when they change.
+#[test]
+fn a_column_is_as_wide_as_the_share_of_the_screen_its_settings_give() {
+    let OneWindow {
+        mut reactor,
+        window,
+        space1,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
+    reactor.send_layout_event(LayoutEvent::WindowAdded(space1, window));
+    let mut width_at = |ratio: f64| {
+        reactor.set_test_layout_settings(|layout| layout.scrolling.column_width_ratio = ratio);
+        laid_out_frame(&mut reactor, space1, frame, window)
+            .expect("laid out")
+            .size
+            .width
+    };
+    for ratio in [0.4, 0.8] {
+        assert!(
+            (width_at(ratio) - ratio * frame.size.width).abs() < 1e-6,
+            "{ratio}"
+        );
+    }
+}
+
 #[test]
 fn appeared_reassigns_window_without_pending_rini_move() {
     let OneWindow {
