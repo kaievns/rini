@@ -282,8 +282,11 @@ in `src/app/docs/README.md`.
 
 `dispatch_workflow` (`src/app/reactor/dispatch.rs`) is a dispatch table: one arm per event
 variant, every arm delegating. It names every variant once, so the match stays exhaustive, and
-hands each to its family's dispatcher. A family's catch-all leaves the focus report's raise,
-which is what the variants with nothing of their own to carry out left before the split.
+hands each to its family's dispatcher. A variant with nothing of its own to carry out, such as
+`ApplicationMainWindowChanged`, has an arm that leaves the focus report's raise. A family's
+catch-all fails a debug assertion, so any test that sends a variant to a family with no arm for
+it fails rather than leaving only the raise, held by
+`a_variant_routed_to_the_wrong_family_fails_the_suite`.
 
 #### 3.2.1 The raise list's order was thrown away by its own batching
 

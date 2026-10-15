@@ -24,6 +24,17 @@ impl Dispatch {
     fn focus_changed(&self) -> EventOutcome {
         EventOutcome::focus_changed(self.raised_window, self.update_notifications)
     }
+
+    /// What a family's dispatcher leaves for a variant `dispatch_workflow` routed to it that it
+    /// has no arm for: the focus report's raise, and a failed debug assertion.
+    fn misrouted(&self, event: &Event) -> EventOutcome {
+        debug_assert!(
+            false,
+            "{} routed to the wrong family",
+            <&'static str>::from(event)
+        );
+        self.focus_changed()
+    }
 }
 
 impl Reactor {
@@ -108,8 +119,8 @@ impl Reactor {
         }
     }
 
-    /// An application launching, going, losing its thread and activating. Anything else leaves
-    /// only the focus report's raise: a main-window report needs no more than the focus tracking.
+    /// An application launching, going, losing its thread, activating, and its main window
+    /// changing, which needs no more than the focus tracking and leaves the focus report's raise.
     fn dispatch_application_event(
         &mut self,
         event: Event,
@@ -164,7 +175,8 @@ impl Reactor {
                 dispatch.duplicate_global_activation,
                 dispatch.update_notifications,
             ),
-            _ => Ok(dispatch.focus_changed()),
+            Event::ApplicationMainWindowChanged(..) => Ok(dispatch.focus_changed()),
+            other => Ok(dispatch.misrouted(&other)),
         }
     }
 
@@ -223,7 +235,7 @@ impl Reactor {
                 self.apply_overlay_frames(frames);
                 Ok(EventOutcome::no_change())
             }
-            _ => Ok(dispatch.focus_changed()),
+            other => Ok(dispatch.misrouted(&other)),
         }
     }
 
@@ -269,7 +281,7 @@ impl Reactor {
                 &mut self.communication_manager,
                 sender,
             )),
-            _ => Ok(dispatch.focus_changed()),
+            other => Ok(dispatch.misrouted(&other)),
         }
     }
 
@@ -326,7 +338,7 @@ impl Reactor {
                 self.bar_clock_changed();
                 Ok(EventOutcome::no_change())
             }
-            _ => Ok(dispatch.focus_changed()),
+            other => Ok(dispatch.misrouted(&other)),
         }
     }
 
@@ -357,5 +369,43 @@ impl Reactor {
                 self.on_move_window_to_display(selector, window_id)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::reactor::testing::test_reactor;
+    use crate::windows::domain::request::Quiet;
+
+    fn focus_report(raised_window: Option<WindowId>) -> Dispatch {
+        Dispatch {
+            raised_window,
+            update_notifications: true,
+            duplicate_global_activation: false,
+        }
+    }
+
+    #[test]
+    fn a_main_window_change_leaves_only_the_focus_report() {
+        let mut reactor = test_reactor();
+        let raised = WindowId::new(1, 1);
+        let outcome = reactor
+            .dispatch_application_event(
+                Event::ApplicationMainWindowChanged(1, Some(raised), Quiet::No),
+                &focus_report(Some(raised)),
+            )
+            .unwrap();
+        assert_eq!(outcome.focused_window, Some(raised));
+        assert!(outcome.refresh_window_notifications);
+        assert!(outcome.layout_events.is_empty() && outcome.app_requests.is_empty());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "system_woke routed to the wrong family")]
+    fn a_variant_routed_to_the_wrong_family_fails_the_suite() {
+        let mut reactor = test_reactor();
+        let _ = reactor.dispatch_input_event(Event::SystemWoke, &focus_report(None));
     }
 }
