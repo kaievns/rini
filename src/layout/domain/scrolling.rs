@@ -4832,6 +4832,26 @@ mod tests {
     }
 
     #[test]
+    fn a_layout_file_column_has_a_width_only_where_it_is_marked_given_one() {
+        let cases = [
+            ("width_offset:0.2,width_overridden:false", None),
+            ("width_offset:0.2,width_dragged:true", None),
+            (
+                "width_offset:0.2,width_overridden:true,width_dragged:false",
+                Some(GivenWidth::Bounded(0.2)),
+            ),
+            (
+                "width_offset:0.2,width_overridden:true,width_dragged:true",
+                Some(GivenWidth::Unbounded(0.2)),
+            ),
+        ];
+        for (fields, width) in cases {
+            let column: Column = ron::from_str(&format!("(windows:[],{fields})")).unwrap();
+            assert_eq!(column.width, width, "{fields}");
+        }
+    }
+
+    #[test]
     fn a_dragged_width_survives_a_save_and_restore() {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));

@@ -487,7 +487,8 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   key `width_dragged`, which older rinis read too, and carried with the width
   (`ColumnWidth::Unbounded`, which the file holds as an `Offset` with the mark beside it, as
   `src/workspaces/docs/launch-memory.md` says); a key or a preset below 1.0 clears it, and the
-  preset 1.0 sets it.
+  preset 1.0 sets it. A file column without `width_overridden` takes the default ratio, whatever
+  offset or mark it holds.
 - **An app answering rini's write changes nothing.** The reactor drops a report within 0.1pt of
   rini's write before the layout sees it (`same_as`). A report off on one axis, a terminal snapping
   its height to its cell grid for one, still carried the other, and both were taken: the width was
