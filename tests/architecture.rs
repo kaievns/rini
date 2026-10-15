@@ -5,6 +5,7 @@
 //! holds them: `docs/architecture.md`.
 
 use std::fs;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 const FEATURES: [&str; 11] = [
@@ -95,7 +96,10 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Lines with the comments stripped, so prose about `platform` is not a dependency on it.
 fn code_lines(path: &Path) -> Vec<(usize, String)> {
-    let source = fs::read_to_string(path).expect("readable source");
+    code_lines_in(&fs::read_to_string(path).expect("readable source"))
+}
+
+fn code_lines_in(source: &str) -> Vec<(usize, String)> {
     let mut in_block = false;
     let mut out = Vec::new();
     for (n, raw) in source.lines().enumerate() {
@@ -324,25 +328,118 @@ fn rini_taps_no_trackpad_gesture() {
     );
 }
 
-/// The code of `path` above its first top-level `#[cfg(test)]`, comments stripped.
-fn production_lines(path: &Path) -> Vec<(usize, String)> {
-    let source = fs::read_to_string(path).expect("readable source");
-    let tests_from = source
-        .lines()
-        .position(|line| line.starts_with("#[cfg(test)]"))
-        .map_or(usize::MAX, |n| n + 1);
-    code_lines(path).into_iter().filter(|(line, _)| *line < tests_from).collect()
+/// A module only a test builds: the 1-based lines of one written inline, or the name of one in a
+/// file of its own.
+#[derive(Debug, PartialEq)]
+enum TestModule {
+    Inline(RangeInclusive<usize>),
+    File(String),
+}
+
+/// The modules `source` declares under `#[cfg(test)]`. rustfmt closes an inline module with a `}` at
+/// the indent of its `mod`, so a raw string holding such a line can end one early, never late.
+fn test_modules(source: &str) -> Vec<TestModule> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out = Vec::new();
+    let mut n = 0;
+    while n < lines.len() {
+        if lines[n].trim() != "#[cfg(test)]" {
+            n += 1;
+            continue;
+        }
+        let start = n;
+        n += 1;
+        while lines.get(n).is_some_and(|l| l.trim().starts_with(['#', '/'])) {
+            n += 1;
+        }
+        let Some(item) = lines.get(n) else { break };
+        let Some((name, inline)) = module_declared(item) else {
+            continue;
+        };
+        if !inline {
+            out.push(TestModule::File(name.to_string()));
+            continue;
+        }
+        let close = format!("{}}}", &item[..item.len() - item.trim_start().len()]);
+        let end = (n + 1..lines.len()).find(|&m| lines[m] == close).unwrap_or_else(|| {
+            panic!("`mod {name}` at line {} has no `{close}` closing it", n + 1)
+        });
+        out.push(TestModule::Inline(start + 1..=end + 1));
+        n = end + 1;
+    }
+    out
+}
+
+/// The name of the module `line` declares, and whether its body is inline.
+fn module_declared(line: &str) -> Option<(&str, bool)> {
+    let mut decl = line.trim();
+    if let Some(rest) = decl.strip_prefix("pub") {
+        let rest = rest.strip_prefix('(').and_then(|r| r.split_once(')')).map_or(rest, |(_, r)| r);
+        decl = rest.trim_start();
+    }
+    let decl = decl.strip_prefix("mod ")?;
+    match decl.strip_suffix(" {") {
+        Some(name) => Some((name, true)),
+        None => decl.strip_suffix(';').map(|name| (name, false)),
+    }
+}
+
+/// The files among `files` that only a test builds: each one a `#[cfg(test)] mod x;` names, and
+/// every file below it.
+fn test_files(files: &[PathBuf]) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for path in files {
+        let source = fs::read_to_string(path).expect("readable source");
+        let parent = path.parent().expect("a file has a directory");
+        let stem = path.file_stem().expect("a file has a name");
+        let dir = match stem.to_str() {
+            Some("mod" | "lib" | "main") => parent.to_path_buf(),
+            _ => parent.join(stem),
+        };
+        for module in test_modules(&source) {
+            if let TestModule::File(name) = module {
+                roots.push(dir.join(name));
+            }
+        }
+    }
+    files
+        .iter()
+        .filter(|f| roots.iter().any(|root| f.with_extension("") == *root || f.starts_with(root)))
+        .cloned()
+        .collect()
+}
+
+/// The code of `source` that builds outside a test, comments stripped: all of it but its inline
+/// `#[cfg(test)]` modules.
+fn production_lines_in(source: &str) -> Vec<(usize, String)> {
+    let inline: Vec<RangeInclusive<usize>> = test_modules(source)
+        .into_iter()
+        .filter_map(|module| match module {
+            TestModule::Inline(lines) => Some(lines),
+            TestModule::File(_) => None,
+        })
+        .collect();
+    code_lines_in(source)
+        .into_iter()
+        .filter(|(line, _)| !inline.iter().any(|lines| lines.contains(line)))
+        .collect()
 }
 
 /// rini's panic hook aborts before an unwind reaches a `catch_unwind`, so a catch outside a test is
 /// code that never runs (specs/service.md).
 #[test]
 fn no_panic_is_caught_outside_a_test() {
+    let files: Vec<PathBuf> = rust_files(Path::new("src"))
+        .into_iter()
+        .chain(rust_files(Path::new("crates")))
+        .collect();
+    let tests = test_files(&files);
     let mut broken = Vec::new();
-    for path in rust_files(Path::new("src")).into_iter().chain(rust_files(Path::new("crates"))) {
-        for (line, code) in production_lines(&path) {
+    for path in files.iter().filter(|path| !tests.contains(path)) {
+        let source = fs::read_to_string(path).expect("readable source");
+        for (line, code) in production_lines_in(&source) {
             if code.contains("catch_unwind") {
-                broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+                broken.push(format!("{}:{line}: {}", slash(path), code.trim()));
             }
         }
     }
@@ -351,6 +448,78 @@ fn no_panic_is_caught_outside_a_test() {
         "a panic aborts rini and launchd relaunches it, so these catches never run:\n{}",
         broken.join("\n")
     );
+}
+
+#[test]
+fn only_a_cfg_test_module_is_left_out_of_the_production_lines() {
+    let source = r#"#[cfg(test)]
+use std::panic::catch_unwind;
+
+#[cfg(test)]
+fn helper() { catch_unwind(|| ()); }
+
+#[cfg(test)]
+#[allow(non_snake_case)]
+mod tests {
+    fn inner() {
+        catch_unwind(|| ());
+    }
+}
+
+mod outer {
+    #[cfg(test)]
+    pub(crate) mod nested {
+        fn inner() { catch_unwind(|| ()); }
+    }
+
+    fn production() { catch_unwind(|| ()); }
+}
+
+#[cfg(test)]
+pub(crate) mod testing;
+"#;
+    let caught: Vec<usize> = production_lines_in(source)
+        .into_iter()
+        .filter(|(_, code)| code.contains("catch_unwind"))
+        .map(|(line, _)| line)
+        .collect();
+    assert_eq!(caught, vec![2, 5, 21]);
+    assert_eq!(
+        test_modules(source),
+        vec![
+            TestModule::Inline(7..=13),
+            TestModule::Inline(16..=19),
+            TestModule::File("testing".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_file_cfg_test_names_and_every_file_below_it_are_test_files() {
+    let files = rust_files(Path::new("src"));
+    let tests = test_files(&files);
+    for name in [
+        "src/app/reactor/testing.rs",
+        "src/app/reactor/tests/mod.rs",
+        "src/app/reactor/tests/spaces.rs",
+        "src/app/hotkeys/lower/tests.rs",
+        "src/animation/domain/motion/testing.rs",
+    ] {
+        assert!(
+            tests.contains(&PathBuf::from(name)),
+            "{name} is not read as a test file"
+        );
+    }
+    for name in [
+        "src/app/reactor/mod.rs",
+        "src/app/hotkeys/lower.rs",
+        "src/animation/domain/motion.rs",
+    ] {
+        assert!(
+            !tests.contains(&PathBuf::from(name)),
+            "{name} is read as a test file"
+        );
+    }
 }
 
 #[test]
