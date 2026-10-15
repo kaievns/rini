@@ -231,15 +231,16 @@ impl LayoutEngine {
         result
     }
 
-    /// Forget every native space no display shows or remembers and no window is on, so the file
-    /// does not keep a strip per space id for every reconnect there ever was. `live` is the spaces
-    /// the attached displays show. Nothing is forgotten before the startup restore has run, since
-    /// until then the saved spaces have not been moved onto this session's ids.
+    /// Forget every native space macOS no longer lists, no display is remembered on and no window
+    /// is on, so the file does not keep a strip per space id for every reconnect there ever was.
+    /// `listed` is every space macOS lists on the attached displays, on screen or not. Nothing is
+    /// forgotten before the startup restore has run, since until then the saved spaces have not
+    /// been moved onto this session's ids.
     pub fn forget_vacant_spaces(
         &mut self,
         window_store: &WindowStore,
         memory: &DisplayMemory,
-        live: &[SpaceId],
+        listed: &[SpaceId],
     ) -> Vec<SpaceId> {
         if self.startup_restore_pending {
             return Vec::new();
@@ -252,7 +253,7 @@ impl LayoutEngine {
                 .into_iter()
                 .map(|(space, _, _)| space),
         );
-        let mut kept: HashSet<SpaceId> = live.iter().copied().collect();
+        let mut kept: HashSet<SpaceId> = listed.iter().copied().collect();
         kept.extend(
             saved
                 .iter()

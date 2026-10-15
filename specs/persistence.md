@@ -51,11 +51,13 @@ the strip fresh.
   answers, and writing the second for the first erases what was remembered.
 - A save MUST NOT write an origin hint that has no corresponding saved layout: a stale observation is
   worse than none, because it makes a portable file look unambiguous.
-- The autosave and the quit save MUST forget what is kept under a native space that no attached
-  display shows, that no display is remembered on, that is not the saved active space, and that no
-  window is on: its layouts, which workspace it showed and the focus remembered on it. macOS mints a
-  new space id on every reconnect and never reissues one, so such a space is one nothing reaches
-  again. A space a display is remembered on MUST stay, windows or none, because the next start moves
+- The autosave and the quit save MUST forget what is kept under a native space that macOS no longer
+  lists on any attached display, on screen or off, that no display is remembered on, that is not the
+  saved active space, and that no window is on: its layouts, which workspace it showed and the focus
+  remembered on it. macOS mints a new space id on every reconnect and never reissues one, so such a
+  space is one nothing reaches again. A Desktop macOS still lists MUST stay though no screen shows
+  it, because switching back to it shows the workspace it showed. A space a display is remembered on
+  MUST stay, windows or none, because the next start moves
   its layouts and the workspace it showed onto the display's new id; a space a window is on MUST stay,
   because that window can come back to it. Nothing is forgotten before the startup restore has moved
   the saved spaces onto this session's ids, since until then every one of them looks dead.

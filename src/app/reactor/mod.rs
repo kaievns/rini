@@ -1591,14 +1591,8 @@ impl Reactor {
                 );
             }
             Event::Command(Command::Reactor(ReactorCommand::SaveAndExit)) => {
-                let active_space = self.active_display_space();
-                let live: Vec<SpaceId> = self.space_state.iter_known_spaces().collect();
-                return command_workflow::handle_command_reactor_save_and_exit(
-                    &self.state,
-                    &mut self.layout_manager,
-                    active_space,
-                    &live,
-                );
+                let saved = self.save_layout_before_exit(rini_core::paths::restore_file());
+                return command_workflow::handle_command_reactor_save_and_exit(saved);
             }
             Event::Command(Command::Reactor(ReactorCommand::SaveLayout { path })) => {
                 let active_space = self.active_display_space();
@@ -5827,6 +5821,17 @@ impl Reactor {
     }
 
     /// Write the layout file immediately, bypassing the debounce.
+    pub(crate) fn save_layout_before_exit(&mut self, path: std::path::PathBuf) -> std::io::Result<()> {
+        let active_space = self.active_display_space();
+        command_workflow::save_layout_before_exit(
+            &self.state,
+            &mut self.layout_manager,
+            path,
+            active_space,
+            &self.space_state.listed_spaces(),
+        )
+    }
+
     pub(crate) fn save_layout_now(&mut self) {
         let Some(path) = self.autosave_path.clone() else {
             return;
@@ -5845,17 +5850,17 @@ impl Reactor {
             &mut self.state.display_memory,
             &connected,
         );
-        let live: Vec<SpaceId> = self.space_state.iter_known_spaces().collect();
         self.layout_manager.layout_engine.forget_vacant_spaces(
             &self.state.windows,
             &self.state.display_memory,
-            &live,
+            &self.space_state.listed_spaces(),
         );
         // autosave_current_layout, NOT save_current_layout: the latter also
         // normalizes floating-versus-tiled ownership and rewrites stored floating
-        // frames, which are mutations to live state. Running them on every layout
-        // change broke un-fullscreening a floating window, because the frame it
-        // should return to had already been overwritten.
+        // frames. Running that on every layout change broke un-fullscreening a
+        // floating window, because the frame it should return to had already been
+        // overwritten. The only live state an autosave changes is the forgetting
+        // above, of spaces macOS no longer lists and no window is on.
         if let Err(e) = self.layout_manager.layout_engine.autosave_current_layout(
             path.clone(),
             &self.state.windows,

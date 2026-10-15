@@ -382,14 +382,14 @@ fn app_close_removes_saved_fingerprints() {
 }
 
 /// Each native space id macOS stops using left four empty strips in the file for good. A save forgets
-/// a space only when no display shows it or is remembered on it and no window is on it.
+/// a space only when macOS no longer lists it, no display is remembered on it and no window is on it.
 #[test]
-fn a_save_forgets_only_the_spaces_nothing_shows_remembers_or_holds() {
+fn a_save_forgets_only_the_spaces_nothing_lists_remembers_or_holds() {
     let mut engine = test_engine();
     let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let [live, remembered, laid_out, floating, vacant] = [1, 22, 494, 4620, 4615].map(SpaceId::new);
-    for space in [live, remembered, laid_out, floating, vacant] {
+    let [listed, remembered, laid_out, floating, vacant] = [1, 22, 494, 4620, 4615].map(SpaceId::new);
+    for space in [listed, remembered, laid_out, floating, vacant] {
         let _ = engine.handle_event(
             &mut window_store,
             &mut memory,
@@ -420,13 +420,13 @@ fn a_save_forgets_only_the_spaces_nothing_shows_remembers_or_holds() {
     assert!(!vacant_layouts.is_empty());
 
     assert_eq!(
-        engine.forget_vacant_spaces(&window_store, &memory, &[live]),
+        engine.forget_vacant_spaces(&window_store, &memory, &[listed]),
         vec![vacant]
     );
 
     assert_eq!(
         engine.workspace_layouts.spaces().into_iter().collect::<Vec<_>>(),
-        vec![live, remembered, laid_out, floating]
+        vec![listed, remembered, laid_out, floating]
     );
     assert_eq!(engine.virtual_workspace_manager.active_workspace(vacant), None);
     for (_, workspace, layout) in vacant_layouts {

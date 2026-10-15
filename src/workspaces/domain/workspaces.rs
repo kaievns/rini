@@ -321,8 +321,9 @@ impl WorkspaceLayouts {
     }
 }
 
-/// The native spaces a save forgets: those in `saved` that are neither `kept` (shown by a display
-/// now, a display's remembered space, or the saved active space) nor `occupied` by any window.
+/// The native spaces a save forgets: those in `saved` that are neither `kept` (listed by macOS on
+/// an attached display, a display's remembered space, or the saved active space) nor `occupied` by
+/// any window.
 ///
 /// macOS mints a new space id for a display on every reconnect and never reissues an old one, so a
 /// space that is neither is one nothing can reach again. See "Saving" in `specs/persistence.md`.
@@ -385,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn a_space_nothing_shows_remembers_or_holds_is_vacant() {
+    fn a_space_nothing_lists_remembers_or_holds_is_vacant() {
         let saved = [1, 22, 30, 382, 4615].map(SpaceId::new).into_iter().collect();
         let kept = spaces(&[1, 22]);
         let occupied = spaces(&[382]);
