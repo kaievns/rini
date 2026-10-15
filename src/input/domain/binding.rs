@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn every_action_name_is_kebab_case_and_counted() {
-        assert_eq!(Action::VARIANTS.len(), 66);
+        assert_eq!(Action::VARIANTS.len(), 65);
         for name in Action::VARIANTS {
             assert!(
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
