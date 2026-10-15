@@ -1,6 +1,6 @@
-//! The focuslab tools' tests, run with the rest: a change to the journal's lines makes
-//! `the_sample_the_tools_read_is_what_the_journal_writes` regenerate the sample, and these say whether
-//! `tools/focuslab/journal.py` still reads it.
+//! The focuslab tools' tests, run with the rest: a change to the journal's lines fails
+//! `the_sample_the_tools_read_is_what_the_journal_writes` until the sample is written again to match,
+//! and these say whether `tools/focuslab/journal.py` still reads it.
 
 use std::process::Command;
 

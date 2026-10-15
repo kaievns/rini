@@ -12,8 +12,9 @@ warning and reads on the main connection. No window list or
 picture is read through `CGWindowList`, which takes no connection and waits on the main one.
 `a_read_that_waits_on_core_animation_is_made_on_the_read_connection` in `tests/architecture.rs`
 fails if a call that waits is passed anything but `*READ_CONNECTION`, and
-`no_window_list_or_picture_is_read_through_cg_window_list` if `CGWindowListCopyWindowInfo` or
-`CGWindowListCreateImage` is called anywhere in `src/`.
+`no_read_waits_on_the_main_connection_whatever_it_is_given` if `CGWindowListCopyWindowInfo`,
+`CGWindowListCreateImage` or any other read in its `WAITS_ON_THE_MAIN_CONNECTION` is called
+anywhere in `src/` or `crates/`.
 
 Data, sources and how to run them again:
 [`docs/data/2026-10-08-skylight-lock/`](../../../docs/data/2026-10-08-skylight-lock/).

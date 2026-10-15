@@ -202,7 +202,7 @@ measured.
 
 Between flights macOS draws each window, and rini draws the ring and the border around the windows
 that wear them in windows of its own, one above each, holding `Bands` laid exactly as a tile's
-(`a_tile_wears_its_ring_as_dressed_and_as_focus_turns`, `every_band_rounds_on_the_continuous_curve_at_its_outset`).
+(`a_tile_wears_its_ring_as_dressed_and_as_worn_and_a_turn_leaves_it`, `every_band_rounds_on_the_continuous_curve_at_its_outset`).
 
 **The windows.** Borderless, non-activating `NSPanel`s on rini's main connection, click-through,
 clear, with no shadow, collection `[.moveToActiveSpace, .transient, .ignoresCycle,

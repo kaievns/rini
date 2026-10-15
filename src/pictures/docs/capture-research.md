@@ -2,7 +2,7 @@
 
 Measured constraints on picturing windows, the desktop and the bar for the overlay: what each capture
 route costs, what it returns, and what that forced on the design. The early numbers come from spikes
-in `/tmp/sls-spike` run on 2026-08-16, against a live 1728x1117 built-in Retina display at 2x backing
+run on 2026-08-16, whose sources were not kept ("Reproducing" names each), against a live 1728x1117 built-in Retina display at 2x backing
 scale, with 35 real app windows across 4 rini workspaces; later sections date their own. The code is
 `src/pictures/`. How the overlay draws what these routes return is
 `src/animation/docs/capture-overlay-research.md`.
@@ -389,7 +389,9 @@ flight, or on the main thread, which runs the renderer. Every capture runs on th
 
 ## Reproducing
 
-Spikes live in `/tmp/sls-spike`. Build them with:
+The 2026-08-16 spikes below were not kept: the table names each and the question it answered. The
+sources of the 2026-10-08 materials spikes are kept in `docs/data/2026-10-08-materials/`. Build a
+spike with:
 
 ```
 swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight <name>.swift -o <name>

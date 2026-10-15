@@ -211,8 +211,8 @@ file 1500, counting neither comments, blank lines nor `#[cfg(test)]` code. The o
 either limit are `LONG_FNS` and `LONG_FILES` in `tests/architecture.rs`, each with a
 ceiling at its size: an entry may not grow, a change that shrinks one lowers its ceiling to
 the new size, and an entry leaves the list once it is back under
-(`no_function_or_file_grows_past_its_limit`). Those lists are the only record of a
-function's or a file's size; no doc quotes one.
+(`no_function_or_file_grows_past_its_limit`). Those lists are the record of how long each
+function and file is now; a doc that needs a size points at them.
 
 `cargo test -p rini-geometry` still builds plain Rust instead of linking AppKit.
 `cargo test` on the application does link it, so the win is now "this module has
@@ -254,12 +254,15 @@ Code points at the doc by path when a reader would otherwise be stuck. When code
 its docs move with it — and since a feature's docs now live inside the feature, moving a
 folder moves both.
 
-Four tests in `tests/architecture.rs` hold this rather than good intentions:
+Five tests in `tests/architecture.rs` hold this rather than good intentions:
 `every_feature_and_crate_documents_itself` requires the READMEs to exist,
 `every_domain_and_reactor_module_is_named_in_its_readme` requires each one to name, by its path
 from the feature's root, every module of its `domain/` (and `src/app/docs/README.md` every module
 of `reactor/` and `reactor/events/`),
 `every_documented_path_resolves` fails on any path into `src/`, `crates/`, `tests/`, `docs/`,
-`specs/` or `tools/` that the docs, the code or the tools mention and that no longer exists, and
+`specs/` or `tools/` that the docs, the code or the tools mention and that no longer exists,
+`every_long_name_a_doc_cites_is_still_defined` fails on a backticked snake_case name of four words
+or more in the docs, a test's included, that is no longer a function or a field (the names quoted
+from other code are `OTHERS_NAMES`, the ones recorded as deleted `GONE_NAMES`), and
 `every_spec_is_listed_in_the_index` stops a spec nothing links to. A stale sentence reads exactly like
 a current one, which is why none of this is left to discipline.

@@ -1,7 +1,9 @@
 # Cleanup, round 1
 
-The six items agreed after `8274c0b`, all closed in `5d6e86e`..`9ea1079`. Kept because the
-reasoning about what NOT to change is the part worth keeping.
+The items agreed after `8274c0b`, worked in `5d6e86e`..`9ea1079`: section 0 is closed, and
+sections 1 and 2 are partly done, each saying what is still open. Kept because the reasoning about
+what NOT to change is the part worth keeping. Line numbers and sizes below are as they were when written; the
+sizes held now are `LONG_FNS` and `LONG_FILES` in `tests/architecture.rs`.
 
 Baseline at `8274c0b`: **55,915 non-test code lines, 1,242 tests, 0 warnings**.
 
@@ -66,7 +68,7 @@ rewards keeping logic where it cannot be tested, which is the opposite of what t
 | `workspace_focus::cycle_step` | `(idx + len - 1) % len` inline | the indices are unsigned, so stepping back from 0 underflows unless the length is added first |
 | `boundary::strip_edge` (extracted as `focus_stays_on_this_display`) | two conditions inline | applies to the horizontal axis only; up and down move through the workspace stack, so applying it to all four directions would silently disable vertical navigation between displays. Later absorbed the `isolate_displays` setting, which is gone: one answer to "is this an end" and "may this cross" |
 
-`handle_command` stays 265 lines for the same reason `dispatch_workflow` does: it is a match on a
+`handle_command` stayed long for the same reason `dispatch_workflow` does: it is a match on a
 command enum where the arms delegate. Its 40-line prelude resolving `(space, workspace_id, layout)`
 is the part that is not a dispatch, and it is shared by every arm.
 
@@ -80,7 +82,7 @@ Still open, and named by the RULE rather than by line count this time:
 | `"next"` / `"prev"` | `:2628` | matched as magic NAMES before the name lookup, so a workspace a user actually names "next" cannot be selected by name. Undocumented trap |
 | `center_rect` | `:2327` | centre a size in a rect. Trivial, pure, untested |
 
-`on_windows_on_screen_updated` (171) and `move_window_to_space` (145) carry no rules worth
+`on_windows_on_screen_updated` and `move_window_to_space` carry no rules worth
 extracting: both sequence store mutations on `was_floating` branches, which is orchestration. The
 one candidate is a three-tier target-workspace fallback at `:3091`. They were on the earlier list
 because they are long, which was the wrong reason.
@@ -144,7 +146,7 @@ a window-server id but no window-server RECORD, because an id the server will no
 the window is not on screen. So `register_window` needs a `WindowServerInfo` hint, which is what the
 `peer()` helper in the test module is for.
 
-Still untested in there: `handle_notification` (166), `handle_request`'s other arms, and
-`handle_raise_request` (134), which is async and drives activation waits. No `TODO` or `FIXME` is
+Still untested in there: `handle_notification`, `handle_request`'s other arms, and
+`handle_raise_request`, which is async and drives activation waits. No `TODO` or `FIXME` is
 left in `app_actor.rs`; two of the questions they asked are answered on evidence in
 `src/windows/docs/admission-and-raise-findings.md`.

@@ -1,8 +1,9 @@
 //! The tree's rules, checked against the tree.
 //!
-//! A ratchet: the files that already break the macOS rule are named in `MIXED`, and nothing else may
-//! join them. The rules in prose, why they are these rules, and why a test rather than the compiler
-//! holds them: `docs/architecture.md`.
+//! Ratchets: what already breaks a rule is named, and nothing else may join it. The files that break
+//! the macOS rule are `MIXED`, the functions and files past the size limits `LONG_FNS` and
+//! `LONG_FILES`. The rules in prose, why they are these rules, and why a test rather than the
+//! compiler holds them: `docs/architecture.md`.
 
 use std::fs;
 use std::ops::RangeInclusive;
@@ -558,6 +559,19 @@ fn every_feature_and_its_layers_are_declared() {
     }
 }
 
+/// The map at the top of `src/lib.rs` names every feature.
+#[test]
+fn the_crate_map_names_every_feature() {
+    let map = fs::read_to_string("src/lib.rs").expect("readable src/lib.rs");
+    let unnamed: Vec<&str> = FEATURES
+        .iter()
+        .chain(["app"].iter())
+        .copied()
+        .filter(|feature| !map.contains(&format!("//! src/{feature}/ ")))
+        .collect();
+    assert!(unnamed.is_empty(), "src/lib.rs's map of the tree leaves out: {unnamed:?}");
+}
+
 /// Every feature and every crate carries its own `docs/README.md`.
 ///
 /// The convention is in `docs/architecture.md` under "Where documentation lives". It is a test
@@ -1073,7 +1087,7 @@ fn production_size(source: &str) -> (usize, Vec<FnSpan>) {
     let mut fns = Vec::new();
     for (index, line) in lines.iter().enumerate() {
         let number = index + 1;
-        let Some((name, column)) = fn_declared(line) else {
+        let Some((name, column)) = fns_declared(line).next() else {
             continue;
         };
         if excluded.iter().any(|lines| lines.contains(&number)) {
@@ -1095,24 +1109,19 @@ fn production_size(source: &str) -> (usize, Vec<FnSpan>) {
     (total, fns)
 }
 
-/// The name a `fn` on `line` declares, and the column after it.
-fn fn_declared(line: &str) -> Option<(String, usize)> {
+/// The names the `fn`s on `line` declare, each with the column after it.
+fn fns_declared(line: &str) -> impl Iterator<Item = (String, usize)> + '_ {
     let bytes = line.as_bytes();
     let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut from = 0;
-    while let Some(at) = line[from..].find("fn ") {
-        let start = from + at;
-        from = start + 3;
+    line.match_indices("fn ").filter_map(move |(start, _)| {
         if start > 0 && ident(bytes[start - 1]) {
-            continue;
+            return None;
         }
-        let rest = line[from..].trim_start();
+        let rest = line[start + 3..].trim_start();
         let name: String = rest.bytes().take_while(|&b| ident(b)).map(char::from).collect();
-        if !name.is_empty() && !name.as_bytes()[0].is_ascii_digit() {
-            return Some((name, line.len() - rest.len()));
-        }
-    }
-    None
+        (!name.is_empty() && !name.as_bytes()[0].is_ascii_digit())
+            .then(|| (name, line.len() - rest.len()))
+    })
 }
 
 /// The 0-based line of the brace closing the body of the `fn` that starts at `lines[index]`, or
@@ -1410,4 +1419,169 @@ fn a_path_is_named_only_whole() {
     assert!(!names_path(readme, "domain/rules.rs"));
     assert!(!names_path(readme, "domain/zoom.rs"));
     assert!(!names_path(readme, "domain/raise_order.rs"));
+}
+
+/// Names the docs quote that rini does not define: the window server's and SkyLight's internals as
+/// disassembled, and yabai's and niri's functions as read from their source.
+const OTHERS_NAMES: [&str; 13] = [
+    "managed_display_set_current_space",
+    "post_space_lifecycle_notification",
+    "managed_space_update_membership",
+    "sls_transaction_commit_ca",
+    "hw_capture_window_list_common",
+    "window_list_create_image_from_array_internal",
+    "window_manager_animate_window_list_async",
+    "scripting_addition_swap_window_proxy_in",
+    "scripting_addition_swap_window_proxy_out",
+    "window_manager_set_window_frame",
+    "sls_window_disable_shadow",
+    "is_centering_focused_column",
+    "compute_new_view_offset",
+];
+
+/// Names the docs record as deleted: the audits' findings as they were found, and rift's options
+/// a spec says are gone.
+const GONE_NAMES: [&str; 13] = [
+    "focus_stays_on_this_display",
+    "current_reported_space_for_window_id",
+    "capture_composite_via_skylight",
+    "broadcast_window_title_changed",
+    "broadcast_focused_window_changed",
+    "last_space_for_display_uuid",
+    "space_for_display_uuid",
+    "workspace_step_at_boundary",
+    "should_buffer_topology_updates",
+    "should_quarantine_window_space_event",
+    "consume_or_expel_window",
+    "focus_follows_mouse_disable_hotkey",
+    "mouse_hides_on_focus",
+];
+
+/// The snake_case name of four words or more an inline code span `span` holds, path and call
+/// parentheses aside: `a_b_c_d`, `module::a_b_c_d`, `a_b_c_d()`.
+fn long_snake_name(span: &str) -> Option<&str> {
+    let path = span.strip_suffix("()").unwrap_or(span);
+    let (prefix, name) = path.rsplit_once("::").unwrap_or(("", path));
+    let identifier = |part: &str| {
+        part.starts_with(|c: char| c.is_alphabetic() || c == '_')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+    let words: Vec<&str> = name.split('_').collect();
+    let snake = words.len() >= 4
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && words.iter().all(|word| {
+            !word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        });
+    (snake && (prefix.is_empty() || prefix.split("::").all(identifier))).then_some(name)
+}
+
+/// The inline code spans of `text` outside its fenced blocks, each with its 1-based line.
+fn code_spans(text: &str) -> Vec<(usize, &str)> {
+    let mut fenced = false;
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        out.extend(line.split('`').skip(1).step_by(2).map(|span| (n + 1, span)));
+    }
+    out
+}
+
+/// The names `source` declares as a function or a field.
+fn declared_names(source: &str) -> Vec<String> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    for (_, code) in code_lines_in(source) {
+        out.extend(fns_declared(&code).map(|(name, _)| name));
+        let field = code.trim_start();
+        let field = field.strip_prefix("pub").map_or(field, |rest| {
+            let rest = rest.strip_prefix('(').and_then(|r| r.split_once(')')).map_or(rest, |(_, r)| r);
+            rest.trim_start()
+        });
+        if let Some((name, _)) = field.split_once(':')
+            && !name.is_empty()
+            && name.chars().all(ident)
+            && !field[name.len()..].starts_with("::")
+        {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// The markdown the identifier check reads: the root README, `docs/`, `specs/`, and every feature's
+/// and crate's own `docs/`.
+fn documentation() -> Vec<PathBuf> {
+    let mut files = vec![PathBuf::from("README.md")];
+    for dir in ["docs", "specs"] {
+        collect_markdown(Path::new(dir), &mut files);
+    }
+    let mut inside = Vec::new();
+    for dir in ["src", "crates"] {
+        collect_markdown(Path::new(dir), &mut inside);
+    }
+    files.extend(inside.into_iter().filter(|path| slash(path).contains("/docs/")));
+    files.sort();
+    files
+}
+
+/// Every function a doc names by a snake_case name of four words or more, the tests included, is
+/// still a function or a field in `src/`, `crates/` or `tests/`, so renaming a test a doc cites fails
+/// here. The names rini quotes from other code are `OTHERS_NAMES`, and the ones a doc records as
+/// deleted are `GONE_NAMES`.
+#[test]
+fn every_long_name_a_doc_cites_is_still_defined() {
+    let mut defined = std::collections::HashSet::new();
+    for path in ["src", "crates", "tests"].iter().flat_map(|dir| rust_files(Path::new(dir))) {
+        defined.extend(declared_names(&fs::read_to_string(&path).expect("readable source")));
+    }
+    let mut broken = Vec::new();
+    let mut cited = std::collections::HashSet::new();
+    for path in documentation() {
+        let text = fs::read_to_string(&path).expect("readable doc");
+        for (line, span) in code_spans(&text) {
+            let Some(name) = long_snake_name(span) else { continue };
+            cited.insert(name.to_string());
+            let listed = OTHERS_NAMES.contains(&name) || GONE_NAMES.contains(&name);
+            if !defined.contains(name) && !listed {
+                broken.push(format!("{}:{line}: `{name}`", slash(&path)));
+            }
+        }
+    }
+    for name in OTHERS_NAMES.iter().chain(GONE_NAMES.iter()) {
+        if defined.contains(*name) {
+            broken.push(format!("`{name}` is defined in rini: remove it from its list"));
+        } else if !cited.contains(*name) {
+            broken.push(format!("`{name}` is cited by no doc: remove it from its list"));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "these name a function or a field rini no longer has. Name the one that holds it now, or \
+         record it as gone:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_long_snake_name_is_read_whole_from_its_span() {
+    assert_eq!(long_snake_name("every_spec_is_listed"), Some("every_spec_is_listed"));
+    assert_eq!(long_snake_name("reactor::query::a_b_c_d()"), Some("a_b_c_d"));
+    assert_eq!(long_snake_name("three_word_name"), None);
+    assert_eq!(long_snake_name("WAITS_ON_THE_MAIN"), None);
+    assert_eq!(long_snake_name("src/a_b_c_d.rs"), None);
+    assert_eq!(long_snake_name("a_b_c_d(x)"), None);
+    assert_eq!(long_snake_name("a__b_c_d"), None);
+    let doc = "`one_two_three_four` and `x`\n```\n`five_six_seven_eight`\n```\nlast `y`";
+    assert_eq!(code_spans(doc), vec![(1, "one_two_three_four"), (1, "x"), (5, "y")]);
+    let source = "pub(crate) fn a_b_c_d() {}\nstruct S {\n    pub e_f_g_h: u8,\n    i_j_k_l: u8,\n}\n// fn m_n_o_p\nuse a::b;\nfn q_r_s_t(f: fn(u8)) {} fn u_v_w_x() {}";
+    assert_eq!(
+        declared_names(source),
+        vec!["a_b_c_d", "e_f_g_h", "i_j_k_l", "q_r_s_t", "u_v_w_x"]
+    );
 }
