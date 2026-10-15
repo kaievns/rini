@@ -11,7 +11,7 @@ use crate::layout::domain::edge_drag::Drag;
 use crate::windows::domain::info::{WindowInfo as Window, WindowServerInfo};
 use crate::windows::domain::manageable::{Facts, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
-use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
+use crate::windows::domain::transaction::{Requested, TransactionId, WindowTxStore};
 use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server::WindowServer;
@@ -209,20 +209,41 @@ pub enum FrameChangeDisposition {
     NeedsGeometryAnalysis,
 }
 
-#[allow(clippy::too_many_arguments, reason = "P4.8")]
+/// One frame report as the classifier reads it, with what the reactor knows as it arrives.
+#[derive(Debug)]
+pub struct FrameReport {
+    pub window: WindowId,
+    pub frame: CGRect,
+    pub last_seen: Option<TransactionId>,
+    pub requested: Requested,
+    /// The button as the app reported it, which the classifier fills from `pointer` where the
+    /// button decides what the report means.
+    pub mouse_state: Option<MouseState>,
+    /// The button as the pointer reads now.
+    pub pointer: Option<MouseState>,
+    pub mission_control_active: bool,
+    /// The report reads as a title-bar zoom.
+    pub zoom: bool,
+}
+
+/// Whether `report` is settled here or needs its geometry analysed, filling in its mouse state
+/// from the pointer where that decides.
 pub fn classify_window_frame_change(
     state: &mut crate::app::reactor::state::RiniState,
     transactions: &WindowTxStore,
     drag: &mut DragManager,
-    wid: WindowId,
-    new_frame: CGRect,
-    last_seen: Option<TransactionId>,
-    requested: bool,
-    mouse_state: &mut Option<MouseState>,
-    pointer: Option<MouseState>,
-    mission_control_active: bool,
-    zoom: bool,
+    report: &mut FrameReport,
 ) -> FrameChangeDisposition {
+    let FrameReport {
+        window: wid,
+        frame: new_frame,
+        last_seen,
+        requested: Requested(requested),
+        ref mut mouse_state,
+        pointer,
+        mission_control_active,
+        zoom,
+    } = *report;
     let Some(window) = state.windows.window(wid) else {
         query_mouse_for_active_drag(drag, mouse_state, pointer);
         return FrameChangeDisposition::Handled;
@@ -664,56 +685,28 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments, reason = "P4.8")]
+    /// A report of `frame` for the one window with the button `mouse`, that rini did not ask for,
+    /// outside Mission Control and no zoom.
+    fn report(frame: CGRect, last_seen: Option<TransactionId>, mouse: MouseState) -> FrameReport {
+        FrameReport {
+            window: wid(),
+            frame,
+            last_seen,
+            requested: Requested(false),
+            mouse_state: Some(mouse),
+            pointer: None,
+            mission_control_active: false,
+            zoom: false,
+        }
+    }
+
     fn classify(
         state: &mut RiniState,
         transactions: &WindowTxStore,
         drag: &mut DragManager,
-        new_frame: CGRect,
-        last_seen: Option<TransactionId>,
-        requested: bool,
-        mouse: MouseState,
-        mission_control: bool,
+        mut report: FrameReport,
     ) -> FrameChangeDisposition {
-        classify_zoom(
-            state,
-            transactions,
-            drag,
-            new_frame,
-            last_seen,
-            requested,
-            mouse,
-            mission_control,
-            false,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments, reason = "P4.8")]
-    fn classify_zoom(
-        state: &mut RiniState,
-        transactions: &WindowTxStore,
-        drag: &mut DragManager,
-        new_frame: CGRect,
-        last_seen: Option<TransactionId>,
-        requested: bool,
-        mouse: MouseState,
-        mission_control: bool,
-        zoom: bool,
-    ) -> FrameChangeDisposition {
-        let mut mouse = Some(mouse);
-        classify_window_frame_change(
-            state,
-            transactions,
-            drag,
-            wid(),
-            new_frame,
-            last_seen,
-            requested,
-            &mut mouse,
-            None,
-            mission_control,
-            zoom,
-        )
+        classify_window_frame_change(state, transactions, drag, &mut report)
     }
 
     fn handled(d: &FrameChangeDisposition) -> bool { matches!(d, FrameChangeDisposition::Handled) }
@@ -726,11 +719,7 @@ mod tests {
             &mut empty,
             &tx,
             &mut drag(),
-            rect(5.0, 5.0),
-            None,
-            false,
-            MouseState::Up,
-            false,
+            report(rect(5.0, 5.0), None, MouseState::Up),
         );
         assert!(handled(&d));
     }
@@ -741,16 +730,10 @@ mod tests {
         let tx = WindowTxStore::new();
         let mut dr = drag();
         dr.skip_layout_for_window = Some(wid());
-        let d = classify(
-            &mut s,
-            &tx,
-            &mut dr,
-            rect(5.0, 5.0),
-            None,
-            false,
-            MouseState::Up,
-            true,
-        );
+        let d = classify(&mut s, &tx, &mut dr, FrameReport {
+            mission_control_active: true,
+            ..report(rect(5.0, 5.0), None, MouseState::Up)
+        });
         assert!(handled(&d));
         assert!(matches!(dr.drag_state, DragState::Inactive));
         assert_eq!(
@@ -776,11 +759,7 @@ mod tests {
             &mut s,
             &tx,
             &mut drag(),
-            rect(9.0, 9.0),
-            Some(stale),
-            false,
-            MouseState::Up,
-            false,
+            report(rect(9.0, 9.0), Some(stale), MouseState::Up),
         );
         assert!(handled(&d));
         assert_eq!(
@@ -802,11 +781,7 @@ mod tests {
             &mut s,
             &tx,
             &mut drag(),
-            rect(50.0, 50.0),
-            Some(txid),
-            false,
-            MouseState::Up,
-            false,
+            report(rect(50.0, 50.0), Some(txid), MouseState::Up),
         );
         assert!(handled(&d));
         assert_eq!(
@@ -830,11 +805,7 @@ mod tests {
             &mut s,
             &tx,
             &mut drag(),
-            rect(9.0, 9.0),
-            Some(txid),
-            false,
-            MouseState::Down,
-            false,
+            report(rect(9.0, 9.0), Some(txid), MouseState::Down),
         );
         assert!(!handled(&d), "the user's drag is real geometry");
         assert_eq!(tx.target(&wsid), None, "rini stops waiting for its own write");
@@ -848,23 +819,15 @@ mod tests {
         let tx = WindowTxStore::new();
         let txid = TransactionId::default().next();
         tx.insert(wsid, txid, rect(50.0, 50.0));
-        let mut reported = None;
+        let mut reported = FrameReport {
+            mouse_state: None,
+            pointer: Some(MouseState::Down),
+            ..report(rect(9.0, 9.0), Some(txid), MouseState::Up)
+        };
 
-        let d = classify_window_frame_change(
-            &mut s,
-            &tx,
-            &mut drag(),
-            wid(),
-            rect(9.0, 9.0),
-            Some(txid),
-            false,
-            &mut reported,
-            Some(MouseState::Down),
-            false,
-            false,
-        );
+        let d = classify_window_frame_change(&mut s, &tx, &mut drag(), &mut reported);
         assert!(!handled(&d), "the held pointer makes it the user's drag");
-        assert_eq!(reported, Some(MouseState::Down));
+        assert_eq!(reported.mouse_state, Some(MouseState::Down));
         assert_eq!(tx.target(&wsid), None);
     }
 
@@ -872,16 +835,10 @@ mod tests {
     fn a_frame_rini_asked_for_lands_without_analysis() {
         let mut s = state();
         let tx = WindowTxStore::new();
-        let d = classify(
-            &mut s,
-            &tx,
-            &mut drag(),
-            rect(12.0, 12.0),
-            None,
-            true,
-            MouseState::Up,
-            false,
-        );
+        let d = classify(&mut s, &tx, &mut drag(), FrameReport {
+            requested: Requested(true),
+            ..report(rect(12.0, 12.0), None, MouseState::Up)
+        });
         assert!(handled(&d));
         assert_eq!(
             s.windows.window(wid()).unwrap().frame_monotonic,
@@ -897,11 +854,7 @@ mod tests {
             &mut s,
             &tx,
             &mut drag(),
-            rect(300.0, 300.0),
-            None,
-            false,
-            MouseState::Up,
-            false,
+            report(rect(300.0, 300.0), None, MouseState::Up),
         );
         assert!(!handled(&d));
         assert_eq!(
@@ -921,31 +874,18 @@ mod tests {
         let txid = TransactionId::default().next();
         tx.insert(wsid, txid, rect(50.0, 50.0));
 
-        let d = classify_zoom(
-            &mut s,
-            &tx,
-            &mut drag(),
-            rect(9.0, 9.0),
-            Some(txid),
-            false,
-            MouseState::Up,
-            false,
-            true,
-        );
+        let d = classify(&mut s, &tx, &mut drag(), FrameReport {
+            zoom: true,
+            ..report(rect(9.0, 9.0), Some(txid), MouseState::Up)
+        });
         assert!(!handled(&d), "the zoom is the app's, not an echo");
         assert_eq!(tx.target(&wsid), None, "nothing is waited for any more");
 
-        let d = classify_zoom(
-            &mut s,
-            &tx,
-            &mut drag(),
-            rect(9.0, 9.0),
-            None,
-            false,
-            MouseState::Up,
-            true,
-            true,
-        );
+        let d = classify(&mut s, &tx, &mut drag(), FrameReport {
+            mission_control_active: true,
+            zoom: true,
+            ..report(rect(9.0, 9.0), None, MouseState::Up)
+        });
         assert!(handled(&d), "Mission Control still moves every window");
     }
 }

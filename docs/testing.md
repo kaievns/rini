@@ -291,7 +291,6 @@ Nothing else in the repo cites an id; a comment or a doc names the work in words
 
 | Id | Task | Done when |
 |---|---|---|
-| P4.8 | Small enums: `Pass` for `update_layout(bool, bool, ..)`, `Press`, `Axis`, the repaint subsets in `StageSummary`/`Flight` | no fn with 2+ bool parameters (`clippy::fn_params_excessive_bools` denied) |
 | P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`; replace `static mut SERVER` in `rini-ipc` | clippy clean with both denied; 0 `static mut` in the repo |
 
 `unsafe_op_in_unsafe_fn` is not in `[workspace.lints]`. Edition 2024 warns on it already, and

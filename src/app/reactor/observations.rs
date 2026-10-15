@@ -234,26 +234,28 @@ impl Reactor {
         mouse_state: Option<MouseState>,
         raised_window: Option<WindowId>,
     ) -> anyhow::Result<EventOutcome> {
-        let mission_control_active = self.is_mission_control_active();
-        let mut mouse_state = mouse_state;
         let zoom = if requested.0 {
             None
         } else {
             self.title_bar_zoom(window, new_frame)
         };
+        let mut report = window_workflow::FrameReport {
+            window,
+            frame: new_frame,
+            last_seen,
+            requested,
+            mouse_state,
+            pointer: (self.reads.mouse)(),
+            mission_control_active: self.is_mission_control_active(),
+            zoom: zoom.is_some(),
+        };
         let disposition = window_workflow::classify_window_frame_change(
             &mut self.state,
             &self.transactions,
             &mut self.drag_manager,
-            window,
-            new_frame,
-            last_seen,
-            requested.0,
-            &mut mouse_state,
-            (self.reads.mouse)(),
-            mission_control_active,
-            zoom.is_some(),
+            &mut report,
         );
+        let mouse_state = report.mouse_state;
         // A mouse release still has to terminate an open drag session, including on the paths the
         // reducer returns early from: frame acknowledgements and no-op geometry changes.
         let ends_a_drag = mouse_state == Some(MouseState::Up) && self.is_in_drag();
