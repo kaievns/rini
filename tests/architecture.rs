@@ -1802,8 +1802,11 @@ fn reactor_fields(source: &str) -> Vec<String> {
         .iter()
         .take_while(|(_, line)| line != "}")
         .filter_map(|(_, line)| {
-            let line =
-                line.strip_prefix("pub(crate) ").or(line.strip_prefix("pub ")).unwrap_or(line);
+            let line = match line.strip_prefix("pub") {
+                Some(rest) if rest.starts_with('(') => rest.split_once(')')?.1.trim_start(),
+                Some(rest) if rest.starts_with(' ') => rest.trim_start(),
+                _ => line,
+            };
             let (name, _) = line.split_once(':')?;
             name.chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -1879,9 +1882,19 @@ fn a_reactor_test_reaches_no_field_of_the_reactor() {
 
 #[test]
 fn a_field_reach_is_found_across_lines_and_a_call_of_the_same_name_is_not() {
-    let source = "pub struct Reactor {\n    pub config: Config,\n    pub(crate) state: RiniState,\n    last_strip_layout:\n        HashMap<(SpaceId, crate::a::B), Vec<u8>>,\n    rest: RestFeed,\n}\n";
+    let source = "pub struct Reactor {\n    pub config: Config,\n    \
+                  pub(crate) state: RiniState,\n    pub(super) refocus: X,\n    \
+                  pub(in crate::app) publisher: Y,\n    last_strip_layout:\n        \
+                  HashMap<(SpaceId, crate::a::B), Vec<u8>>,\n    rest: RestFeed,\n}\n";
     let fields = reactor_fields(source);
-    assert_eq!(fields, ["config", "state", "last_strip_layout", "rest"]);
+    assert_eq!(fields, [
+        "config",
+        "state",
+        "refocus",
+        "publisher",
+        "last_strip_layout",
+        "rest"
+    ]);
     let code = "reactor.state.windows; strip\n    .reactor\n    .config\n    .settings;\nreactor.rest(); \
                 desk.reactor.rest.on(); my_reactor.state; reactor.restless;";
     assert_eq!(reactor_field_reaches(code, &fields), [
