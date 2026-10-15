@@ -27,6 +27,7 @@ impl Reactor {
         // `update_layout`, which autosaves; a test that wants to exercise autosave sets a temp path.
         reactor.autosave_path = None;
         reactor.space_kinds = SpaceKinds::for_tests();
+        reactor.display_churn = || false;
         reactor
     }
 

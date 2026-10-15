@@ -126,10 +126,10 @@ impl SpaceKinds {
 
 /// What the window server says about displays and spaces right now.
 ///
-/// Three reads, injected rather than called, for the same reason as [`SpaceKinds`]: each one used to
-/// sit behind a `#[cfg(test)]` branch inside the function that consumed it, so those rules ran a
-/// different body under test than the one that ships. A test names its own reader; the production
-/// reader is the only one `AuthorityState::runtime` installs.
+/// Four reads, injected rather than called, for the same reason as [`SpaceKinds`]: the first three
+/// used to sit behind a `#[cfg(test)]` branch inside the function that consumed it, so those rules
+/// ran a different body under test than the one that ships. A test names its own reader; the
+/// production reader is the only one `AuthorityState::runtime` installs.
 #[derive(Clone, Copy)]
 pub struct LiveDisplays {
     /// The display whose menu bar macOS considers active.
@@ -138,6 +138,9 @@ pub struct LiveDisplays {
     pub(crate) active_space: fn() -> Option<SpaceId>,
     /// Every managed space, per display UUID.
     pub(crate) spaces_per_display: fn() -> HashMap<String, Vec<SpaceId>>,
+    /// No window has moved, appeared or gone for `WINDOWSERVER_QUIET_US`. The clock behind it is
+    /// process-wide and every reactor test sets it, so a test that read it would see the others.
+    pub(crate) window_server_quiet: fn() -> bool,
 }
 
 impl LiveDisplays {
@@ -147,17 +150,22 @@ impl LiveDisplays {
             active_menu_bar_display: crate::displays::screen::active_menu_bar_display_uuid,
             active_space: crate::displays::screen::get_active_space_number,
             spaces_per_display: crate::displays::screen::managed_display_space_ids,
+            window_server_quiet: || {
+                window_server::windowserver_quiet_for_us(window_server::WINDOWSERVER_QUIET_US)
+            },
         }
     }
 
     /// A reader that knows nothing, which is what a test gets unless it says otherwise. Every rule
     /// over these has a path for "the window server did not answer", and that is the path a test
-    /// takes by default.
+    /// takes by default. A window server that has reported nothing is a quiet one, as it is to the
+    /// production reader before the first window event.
     pub(crate) fn silent() -> Self {
         Self {
             active_menu_bar_display: || None,
             active_space: || None,
             spaces_per_display: HashMap::default,
+            window_server_quiet: || true,
         }
     }
 }
@@ -1246,7 +1254,7 @@ impl SpacesActor {
                 }
                 return;
             }
-            if !window_server::windowserver_quiet_for_us(window_server::WINDOWSERVER_QUIET_US) {
+            if !(self.state.live.window_server_quiet)() {
                 if !self.retry_display_stabilization(expected_epoch, attempt) {
                     self.finish_display_churn(expected_epoch, true);
                 }

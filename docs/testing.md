@@ -74,8 +74,13 @@ set_window_ordered_in_override(wsid, Some(false));
 set_window_spaces_override(wsid, Some(vec![space.get()]));
 ```
 
-Reset each to `None` at the end of the test. They are thread-locals and the suite
-runs single-threaded, so a leftover override leaks into whatever runs next.
+An override lasts as long as the thread that set it, and libtest runs every test on a
+thread of its own, at one test thread as at many. A probe of two tests at
+`RUST_TEST_THREADS=1`: `a` ran on `ThreadId(2)` and set a thread-local to 7, `b` ran on
+`ThreadId(3)` and read 0. So no override reaches another test, and the
+`*_override(.., None)` calls at the end of tests do nothing for isolation. They are left
+in place: a reset part-way through a test does change what its next step reads, and
+telling those apart from the trailing ones is site by site.
 
 ### How this was found
 
@@ -85,6 +90,30 @@ of `handle_authoritative_space_snapshot` put the loss inside
 `finalize_space_change`, and printing the authoritative window list showed the
 developer's own desktop in it. `std::backtrace::Backtrace::force_capture()` in the
 `WindowRemoved` handler named the second one.
+
+## A process static is shared by every test
+
+A `static` is one value for the whole test binary, so in a parallel run a test that reads
+one sees whatever a test beside it wrote. A reset when the writer ends is not enough on
+its own: the reader can run in the middle. Each static a test writes is held one of two
+ways:
+
+- **Injected at its reader**, so no test reads the static at all. The reader takes a
+  function, the production one reads the static, and a test's default answers for it.
+- **Held for the test's lifetime** by a guard modelled on
+  `display_churn::hold_for_test`: a mutex, so one such test runs at a time, and a reset in
+  `Drop`, so the value is clear when the test ends, pass or fail
+  (`a_test_that_panics_holding_the_flag_leaves_it_clear`).
+
+| static | tests that write it | tests that read it | held by |
+|---|---|---|---|
+| `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | none: the reactor reads its own `display_churn` field, false under test | `hold_for_test` around every writer |
+| `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | every reactor test that handles a window event | none: the spaces actor reads `LiveDisplays::window_server_quiet` | injection |
+| `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the reactor and the app actor read the initial value | nothing yet; a test that writes one injects it first |
+| `SAVE_TEMP_COUNTER` (`src/workspaces/engine/persistence/mod.rs`) | persistence tests | none read its value; it only makes temp names unique | nothing needed |
+
+The tests that hold this: `a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag` and
+`display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it`.
 
 ## The test suite runs single-threaded on purpose
 
