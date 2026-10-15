@@ -773,10 +773,6 @@ impl LayoutState {
     }
 }
 
-/// Whether a reported length is the slot length the strip laid out, as drawn, to within the point a
-/// window's own rounding or its app's snapping takes off it.
-fn answers_slot(reported: f64, slot: f64) -> bool { (reported - slot.round()).abs() <= 1.0 }
-
 /// The scroll offset that keeps the selected column where it was on screen after the gap between
 /// columns changed. The offset is in strip points and every column start includes the gaps before
 /// it, so a wider gap slides the selected column right by one gap change per column ahead of it
@@ -1518,14 +1514,9 @@ impl ScrollingLayoutSystem {
         let (kind, ratio) =
             Self::laid_out_ratio(state, &state.columns[col_idx], min_ratio, max_ratio);
         let held_to_viewport = holds_viewport(kind, ratio, tiling.size.width);
-        let (width_kept, height_kept) = match state.laid_out_slot_of(wid).filter(|_| drag.is_none())
-        {
-            Some(slot) => (
-                answers_slot(new_frame.size.width, slot.width) || held_to_viewport,
-                !stacked || answers_slot(new_frame.size.height, slot.height),
-            ),
-            None => (false, false),
-        };
+        let slot = state.laid_out_slot_of(wid).filter(|_| drag.is_none());
+        let (width_kept, height_kept) =
+            tile::kept_axes(slot, new_frame.size, held_to_viewport, stacked);
         if width_kept && height_kept {
             return;
         }
@@ -1900,7 +1891,7 @@ mod tests {
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
 
-    use super::{Column, Pin, Place, ScrollingLayoutSystem, View, answers_slot, rebased_offset};
+    use super::{Column, Pin, Place, ScrollingLayoutSystem, View, rebased_offset};
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::{Drag, End};
     use crate::layout::domain::tile;
@@ -6889,16 +6880,6 @@ mod tests {
             assert!(!column.width_overridden, "{column:?}");
             assert!(!column.height_overridden, "{column:?}");
         }
-    }
-
-    #[test]
-    fn a_report_answers_the_slot_as_drawn_within_a_point() {
-        assert!(answers_slot(860.0, 859.5));
-        assert!(answers_slot(859.0, 859.5));
-        assert!(answers_slot(861.0, 859.5));
-        assert!(!answers_slot(858.0, 859.5));
-        assert!(answers_slot(367.0, 368.333));
-        assert!(!answers_slot(366.0, 368.333));
     }
 
     /// A1 of [A1,A2,A3] and B of [A][B]. Ghostty's 1pt short in height used to come back as a width
