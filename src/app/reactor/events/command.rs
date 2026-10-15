@@ -36,31 +36,9 @@ pub fn handle_command_layout(
         visible_space_centers,
     } = payload;
     info!(?cmd);
-    let is_workspace_switch = matches!(
-        cmd,
-        LayoutCommand::NextWorkspace(_)
-            | LayoutCommand::PrevWorkspace(_)
-            | LayoutCommand::SwitchToWorkspace(_)
-            | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
-            | LayoutCommand::SwitchToLastWorkspace
-    );
-    let requires_workspace_space = matches!(
-        cmd,
-        LayoutCommand::NextWorkspace(_)
-            | LayoutCommand::PrevWorkspace(_)
-            | LayoutCommand::SwitchToWorkspace(_)
-            | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
-            | LayoutCommand::SwitchToLastWorkspace
-    );
-    let is_virtual_workspace_command = matches!(
-        cmd,
-        LayoutCommand::NextWorkspace(_)
-            | LayoutCommand::PrevWorkspace(_)
-            | LayoutCommand::SwitchToWorkspace(_)
-            | LayoutCommand::MoveWindowToWorkspace { .. }
-            | LayoutCommand::SwitchToLastWorkspace
-    );
-    let workspace_space = if requires_workspace_space {
+    let is_workspace_switch = is_workspace_switch(&cmd);
+    let is_virtual_workspace_command = is_virtual_workspace_command(&cmd);
+    let workspace_space = if is_workspace_switch {
         if let Some(space) = command_space {
             store_current_floating_positions(state, layout, space);
         }
@@ -75,33 +53,15 @@ pub fn handle_command_layout(
     }
 
     let response = match &cmd {
-        LayoutCommand::NextWorkspace(_)
-        | LayoutCommand::PrevWorkspace(_)
-        | LayoutCommand::SwitchToWorkspace(_)
-        | LayoutCommand::SwitchToLastWorkspace => {
-            if let Some(space) = workspace_space {
-                layout.handle_virtual_workspace_command(
-                    &mut state.windows,
-                    &mut state.display_memory,
-                    space,
-                    &cmd,
-                )
-            } else {
-                EventResponse::default()
-            }
-        }
-        LayoutCommand::MoveWindowToWorkspace { .. } => {
-            if let Some(space) = command_space {
-                layout.handle_virtual_workspace_command(
-                    &mut state.windows,
-                    &mut state.display_memory,
-                    space,
-                    &cmd,
-                )
-            } else {
-                EventResponse::default()
-            }
-        }
+        cmd if is_virtual_workspace_command => match command_space {
+            Some(space) => layout.handle_virtual_workspace_command(
+                &mut state.windows,
+                &mut state.display_memory,
+                space,
+                cmd,
+            ),
+            None => EventResponse::default(),
+        },
         _ => {
             if visible_spaces.is_empty() {
                 warn!("Layout command ignored: no active spaces");
@@ -132,6 +92,32 @@ pub fn handle_command_layout(
     Ok(EventOutcome::layout_changed(false)
         .with_layout_response(response, workspace_space)
         .with_arrange_space_scope(arrange_space_scope))
+}
+
+/// A command that switches the workspace shown: it starts a workspace switch and acts on the
+/// command space.
+fn is_workspace_switch(cmd: &LayoutCommand) -> bool {
+    matches!(
+        cmd,
+        LayoutCommand::NextWorkspace(_)
+            | LayoutCommand::PrevWorkspace(_)
+            | LayoutCommand::SwitchToWorkspace(_)
+            | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
+            | LayoutCommand::SwitchToLastWorkspace
+    )
+}
+
+/// A command the virtual workspaces carry out rather than the layout: the switches, and moving a
+/// window to a workspace whether or not focus follows it.
+fn is_virtual_workspace_command(cmd: &LayoutCommand) -> bool {
+    matches!(
+        cmd,
+        LayoutCommand::NextWorkspace(_)
+            | LayoutCommand::PrevWorkspace(_)
+            | LayoutCommand::SwitchToWorkspace(_)
+            | LayoutCommand::MoveWindowToWorkspace { .. }
+            | LayoutCommand::SwitchToLastWorkspace
+    )
 }
 
 fn current_floating_positions(
@@ -387,6 +373,32 @@ mod tests {
     use crate::windows::domain::state::WindowState;
 
     fn wid() -> WindowId { WindowId::new(1, 1) }
+
+    /// Every workspace switch is a virtual-workspace command; moving a window without following
+    /// it is one too, and switches nothing; a layout command is neither.
+    #[test]
+    fn a_switch_is_a_workspace_command_and_a_move_switches_only_when_focus_follows() {
+        use rini_ipc::protocol::WorkspaceSelector;
+        let moved = |follow| LayoutCommand::MoveWindowToWorkspace {
+            workspace: WorkspaceSelector::Index(1),
+            follow,
+            window_id: None,
+        };
+        for switch in [
+            LayoutCommand::NextWorkspace(None),
+            LayoutCommand::PrevWorkspace(None),
+            LayoutCommand::SwitchToWorkspace(2),
+            LayoutCommand::SwitchToLastWorkspace,
+            moved(true),
+        ] {
+            assert!(is_workspace_switch(&switch), "{switch:?}");
+            assert!(is_virtual_workspace_command(&switch), "{switch:?}");
+        }
+        assert!(!is_workspace_switch(&moved(false)));
+        assert!(is_virtual_workspace_command(&moved(false)));
+        assert!(!is_workspace_switch(&LayoutCommand::NextWindow));
+        assert!(!is_virtual_workspace_command(&LayoutCommand::NextWindow));
+    }
 
     fn screen(space: Option<SpaceId>) -> ScreenInfo {
         ScreenInfo {
