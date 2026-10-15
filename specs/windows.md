@@ -80,8 +80,9 @@ as visible rather than absent. The reverse — an id the server does not report 
   during launch and under load, and retiring on it deletes live windows.
 - A window absent from `kAXWindowsAttribute` MUST NOT be retired: that attribute is space-filtered and
   cannot say whether a window still exists globally.
-- A record of a window MUST NOT be forgotten while it still holds anything — a pending frame write, an
-  observed space, a rule decision.
+- A record of a window MUST NOT be forgotten while it still holds anything: its Accessibility state,
+  a window-server id or a rule decision. The record of a window-server id MUST NOT be forgotten while
+  it holds an observed space, a visibility or the window it belongs to.
 - A window that leaves MUST take its pictures with it, once, whichever way it leaves: closed, closed
   while minimised or unmanaged, found gone when its application's windows are looked at again, left
   behind by its application quitting, or found again under a new identity for the same window-server
@@ -90,7 +91,7 @@ as visible rather than absent. The reverse — an id the server does not report 
   replaced while the window lives.
 
 > **Found 2026-09-23, not reported.** The prune check tested four of a record's nine fields. A record
-> holding only a pending frame write was pruned and the write forgotten.
+> holding only one of the other five was pruned and what it held forgotten.
 
 > **Reported 2026-10-06.** "fix that runaway thread and stale cache cleaning". Fixed.
 >

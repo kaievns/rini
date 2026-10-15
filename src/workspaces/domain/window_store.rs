@@ -4,17 +4,12 @@
 //! the two can never disagree.
 use std::ops::{Deref, DerefMut};
 
-use crate::windows::domain::catalogue::{
-    NativeFullscreenRecord, NativeFullscreenTransition, WindowCatalogue,
-};
+use crate::windows::domain::catalogue::{NativeFullscreenRecord, WindowCatalogue};
 use crate::windows::domain::state::WindowState;
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, WindowServerId, pid_t};
 
-pub use crate::windows::domain::catalogue::{
-    PendingNativeFullscreenRecord, PendingWindowOperation, WindowPlacement, WindowRecord,
-    WindowVisibility,
-};
+pub use crate::windows::domain::catalogue::{PendingNativeFullscreenRecord, WindowRecord};
 
 use crate::workspaces::VirtualWorkspaceId;
 pub use crate::workspaces::domain::assignment::{WindowWorkspaceInfo, WorkspaceAssignments};
@@ -138,7 +133,6 @@ impl WindowStore {
         window_server_id: Option<WindowServerId>,
         fallback_last_known_user_space: Option<SpaceId>,
         fullscreen_space: SpaceId,
-        transition: NativeFullscreenTransition,
     ) -> NativeFullscreenRecord {
         let assigned_space = self.assignments.info_for_window(window_id).map(|a| a.space);
         self.catalogue.suspend_window_to_native_fullscreen(
@@ -147,7 +141,6 @@ impl WindowStore {
             assigned_space,
             fallback_last_known_user_space,
             fullscreen_space,
-            transition,
         )
     }
 
@@ -198,7 +191,6 @@ impl WindowStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::windows::domain::catalogue::NativeFullscreenTransition;
     use crate::workspaces::domain::virtual_workspace::WorkspaceStore;
 
     #[test]
@@ -261,7 +253,6 @@ mod tests {
             Some(wsid),
             Some(space),
             fullscreen_space,
-            NativeFullscreenTransition::Suspended,
         );
 
         window_store.transfer_persistent_window_metadata(from, to);
@@ -286,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn app_cleanup_removes_all_indexes_and_pending_operations() {
+    fn app_cleanup_removes_all_indexes() {
         let mut store = WindowStore::default();
         let wid = WindowId::new(4, 1);
         let wsid = WindowServerId::new(55);
@@ -302,7 +293,6 @@ mod tests {
                 workspace_id,
             },
         );
-        store.begin_operation(wid, None, Some(SpaceId::new(9)));
 
         store.remove_windows_for_app(wid.pid);
 

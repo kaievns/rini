@@ -14,7 +14,6 @@ use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server::compute_window_manageability;
 use crate::workspaces::LayoutEvent;
-use crate::workspaces::WindowVisibility;
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
@@ -142,7 +141,6 @@ pub fn handle_window_minimized(
     if let Some(ws_id) = server_id {
         state.windows.mark_window_hidden(ws_id);
     }
-    state.windows.set_visibility(wid, WindowVisibility::Minimized);
     Ok(
         crate::app::reactor::events::EventOutcome::window_membership_changed(false, false)
             .with_layout_event(LayoutEvent::WindowRemoved(wid)),
@@ -183,7 +181,6 @@ pub fn handle_window_deminiaturized(
     if let Some(window) = state.windows.window_mut(wid) {
         window.is_manageable = is_manageable;
     }
-    state.windows.set_visibility(wid, WindowVisibility::Visible);
 
     let mut outcome = crate::app::reactor::events::EventOutcome::no_change();
     if is_manageable && let Some(space) = active_space {

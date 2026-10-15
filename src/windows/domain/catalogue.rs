@@ -10,46 +10,11 @@ use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::state::WindowState;
 use rini_core::ids::{WindowId, WindowServerId};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum WindowVisibility {
-    #[default]
-    Unknown,
-    Visible,
-    Hidden,
-    Minimized,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-/// Where rini puts a window: in the strip, or free.
-///
-/// There is no `NativeFullscreen` variant. There was, it was set on suspend and read nowhere, and
-/// every reader asked `NativeFullscreenRecord` instead — which is keyed both by window and by
-/// window-server id and is the single source of truth for "macOS has this window". A second one
-/// would be a second thing to keep in step.
-pub enum WindowPlacement {
-    #[default]
-    Tiled,
-    Floating,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PendingWindowOperation {
-    pub generation: u64,
-    pub requested_frame: Option<objc2_core_foundation::CGRect>,
-    pub requested_space: Option<SpaceId>,
-}
-
 /// The complete reactor-owned state for one AX window identity.
 #[derive(Debug, Default)]
 pub struct WindowRecord {
     state: Option<WindowState>,
     window_server_id: Option<WindowServerId>,
-    native_space: Option<SpaceId>,
-    visibility: WindowVisibility,
-    placement: WindowPlacement,
-    pending_operation: Option<PendingWindowOperation>,
-    operation_generation: u64,
-    rule_floating: bool,
     last_rule_decision: bool,
 }
 
@@ -60,80 +25,18 @@ impl WindowRecord {
     /// function until someone decides whether the new field counts as something to remember. A
     /// predicate that lists only some fields is how a record either leaks forever or gets dropped
     /// while still holding something, and neither shows up until much later.
-    ///
-    /// It used to list four of the nine. `native_space` and `pending_operation` were not among them,
-    /// so a record holding only a pending frame write was pruned and the write forgotten.
     fn remembers_nothing(&self) -> bool {
         let Self {
             state,
             window_server_id,
-            native_space,
-            visibility,
-            placement,
-            pending_operation,
-            operation_generation,
-            rule_floating,
             last_rule_decision,
         } = self;
-        state.is_none()
-            && window_server_id.is_none()
-            && native_space.is_none()
-            && *visibility == WindowVisibility::default()
-            && *placement == WindowPlacement::default()
-            && pending_operation.is_none()
-            && *operation_generation == 0
-            && !*rule_floating
-            && !*last_rule_decision
-    }
-
-    /// Last frame observed from Accessibility/WindowServer.
-    pub fn observed_frame(&self) -> Option<objc2_core_foundation::CGRect> {
-        self.state.as_ref().map(|state| state.info.frame)
-    }
-
-    /// Latest frame accepted by the reactor, including its own completed writes.
-    pub fn frame(&self) -> Option<objc2_core_foundation::CGRect> {
-        self.state.as_ref().map(|state| state.frame_monotonic)
-    }
-
-    pub fn requested_frame(&self) -> Option<objc2_core_foundation::CGRect> {
-        self.pending_operation.and_then(|operation| operation.requested_frame)
-    }
-
-    pub fn is_manageable(&self) -> bool {
-        self.state.as_ref().is_some_and(|state| state.is_manageable)
-    }
-
-    pub fn is_effectively_manageable(&self) -> bool {
-        self.state.as_ref().is_some_and(WindowState::is_effectively_manageable)
+        state.is_none() && window_server_id.is_none() && !*last_rule_decision
     }
 
     pub fn window_server_id(&self) -> Option<WindowServerId> {
         self.window_server_id
     }
-
-    pub fn native_space(&self) -> Option<SpaceId> {
-        self.native_space
-    }
-
-    pub fn visibility(&self) -> WindowVisibility {
-        self.visibility
-    }
-
-    pub fn placement(&self) -> WindowPlacement {
-        self.placement
-    }
-
-    pub fn pending_operation(&self) -> Option<PendingWindowOperation> {
-        self.pending_operation
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeFullscreenTransition {
-    EnterRequested,
-    Suspended,
-    ExitRequested,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +48,6 @@ pub struct NativeFullscreenRecord {
     pub assigned_space: Option<SpaceId>,
     pub last_known_user_space: Option<SpaceId>,
     pub fullscreen_space: SpaceId,
-    pub transition: NativeFullscreenTransition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +56,6 @@ pub struct PendingNativeFullscreenRecord {
     pub window_server_id: WindowServerId,
     pub last_known_user_space: Option<SpaceId>,
     pub fullscreen_space: SpaceId,
-    pub transition: NativeFullscreenTransition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,7 +63,6 @@ struct PendingNativeFullscreenState {
     pid: i32,
     last_known_user_space: Option<SpaceId>,
     fullscreen_space: SpaceId,
-    transition: NativeFullscreenTransition,
 }
 
 #[derive(Debug, Default)]
@@ -302,10 +202,6 @@ impl WindowCatalogue {
             .flat_map(|windows| windows.iter().copied())
     }
 
-    pub fn iter_window_server_ids(&self) -> impl Iterator<Item = WindowServerId> + '_ {
-        self.window_servers.keys().copied()
-    }
-
     pub fn iter_tracked_window_server_ids(&self) -> impl Iterator<Item = WindowServerId> + '_ {
         self.window_servers
             .iter()
@@ -400,7 +296,6 @@ impl WindowCatalogue {
                 None,
                 pending_record.last_known_user_space,
                 pending_record.fullscreen_space,
-                pending_record.transition,
             );
         } else if let Some(original_window_id) = self.native_fullscreen_original_window(window_id)
             && let Some(mut native_record) =
@@ -432,9 +327,6 @@ impl WindowCatalogue {
         let record = self.server_record_mut(wsid);
         let changed = !record.visible;
         record.visible = true;
-        if let Some(window_id) = record.window_id {
-            self.windows.entry(window_id).or_default().visibility = WindowVisibility::Visible;
-        }
         changed
     }
 
@@ -452,10 +344,6 @@ impl WindowCatalogue {
         for wsid in known_wsids {
             if let Some(record) = self.window_servers.get_mut(&wsid) {
                 record.visible = false;
-                if let Some(window_id) = record.window_id {
-                    self.windows.entry(window_id).or_default().visibility =
-                        WindowVisibility::Hidden;
-                }
             }
             self.prune_window_server_record(wsid);
         }
@@ -465,9 +353,6 @@ impl WindowCatalogue {
         let changed = self.window_servers.get(&wsid).is_some_and(|record| record.visible);
         if let Some(record) = self.window_servers.get_mut(&wsid) {
             record.visible = false;
-            if let Some(window_id) = record.window_id {
-                self.windows.entry(window_id).or_default().visibility = WindowVisibility::Hidden;
-            }
         }
         self.prune_window_server_record(wsid);
         changed
@@ -498,11 +383,7 @@ impl WindowCatalogue {
     }
 
     pub fn set_window_server_space(&mut self, wsid: WindowServerId, space: Option<SpaceId>) {
-        let record = self.server_record_mut(wsid);
-        record.space = space;
-        if let Some(window_id) = record.window_id {
-            self.windows.entry(window_id).or_default().native_space = space;
-        }
+        self.server_record_mut(wsid).space = space;
         self.prune_window_server_record(wsid);
     }
 
@@ -524,7 +405,6 @@ impl WindowCatalogue {
             && let Some(record) = self.windows.get_mut(&wid)
         {
             record.window_server_id = None;
-            record.native_space = None;
         }
         self.prune_window_server_record(wsid);
         wid
@@ -539,7 +419,6 @@ impl WindowCatalogue {
         assigned_space: Option<SpaceId>,
         fallback_last_known_user_space: Option<SpaceId>,
         fullscreen_space: SpaceId,
-        transition: NativeFullscreenTransition,
     ) -> NativeFullscreenRecord {
         let original_window_id =
             self.native_fullscreen_original_window(window_id).unwrap_or(window_id);
@@ -558,12 +437,9 @@ impl WindowCatalogue {
                 .or(fallback_last_known_user_space)
                 .or_else(|| existing.and_then(|record| record.last_known_user_space)),
             fullscreen_space,
-            transition,
         };
-        // The entry is created if it is absent — a window can go fullscreen before rini has one for
-        // it, and the rekey path needs something to carry the record across. Its PLACEMENT is left
-        // alone: that says what the window will be again when it comes back, and
-        // `NativeFullscreenRecord` is what says macOS has it now.
+        // The entry is created if it is absent: a window can go fullscreen before rini has one for
+        // it, and the rekey path needs something to carry the record across.
         self.windows.entry(window_id).or_default();
         self.app_windows.entry(window_id.pid).or_default().insert(window_id);
         self.upsert_native_fullscreen_record(record)
@@ -575,7 +451,6 @@ impl WindowCatalogue {
         window_server_id: WindowServerId,
         fallback_last_known_user_space: Option<SpaceId>,
         fullscreen_space: SpaceId,
-        transition: NativeFullscreenTransition,
     ) -> PendingNativeFullscreenRecord {
         let state = {
             let existing = self
@@ -587,7 +462,6 @@ impl WindowCatalogue {
                 last_known_user_space: fallback_last_known_user_space
                     .or_else(|| existing.and_then(|record| record.last_known_user_space)),
                 fullscreen_space,
-                transition,
             }
         };
         self.server_record_mut(window_server_id).pending_native_fullscreen = Some(state);
@@ -596,7 +470,6 @@ impl WindowCatalogue {
             window_server_id,
             last_known_user_space: state.last_known_user_space,
             fullscreen_space: state.fullscreen_space,
-            transition: state.transition,
         }
     }
 
@@ -644,7 +517,6 @@ impl WindowCatalogue {
                 window_server_id: wsid,
                 last_known_user_space: record.last_known_user_space,
                 fullscreen_space: record.fullscreen_space,
-                transition: record.transition,
             })
     }
 
@@ -659,17 +531,7 @@ impl WindowCatalogue {
         window_id: WindowId,
     ) -> Option<NativeFullscreenRecord> {
         let original_window_id = self.native_fullscreen_original_window(window_id)?;
-        let record = self.remove_native_fullscreen_record_by_original_window(original_window_id)?;
-        // Re-derived rather than remembered: an app rule may have started floating this window
-        // while macOS had it.
-        if let Some(window) = self.windows.get_mut(&record.current_window_id) {
-            window.placement = if window.rule_floating {
-                WindowPlacement::Floating
-            } else {
-                WindowPlacement::Tiled
-            };
-        }
-        Some(record)
+        self.remove_native_fullscreen_record_by_original_window(original_window_id)
     }
 
     pub fn restore_window_from_native_fullscreen_by_window_server_id(
@@ -685,14 +547,8 @@ impl WindowCatalogue {
         self.restore_window_from_native_fullscreen(current_window_id)
     }
 
-    pub fn is_window_native_fullscreen_suspended(&self, window_id: WindowId) -> bool {
-        self.native_fullscreen_record_for_window(window_id)
-            .is_some_and(|record| record.transition == NativeFullscreenTransition::Suspended)
-    }
-
     pub fn is_window_server_id_native_fullscreen_suspended(&self, wsid: WindowServerId) -> bool {
-        self.native_fullscreen_record_for_window_server_id(wsid)
-            .is_some_and(|record| record.transition == NativeFullscreenTransition::Suspended)
+        self.native_fullscreen_record_for_window_server_id(wsid).is_some()
     }
 
     pub fn pending_native_fullscreen_pid_for_window_server_id(
@@ -703,41 +559,24 @@ impl WindowCatalogue {
             .map(|record| record.pid)
     }
 
-    /// Move rule metadata and placement from an old AX window id to a new one when
-    /// macOS rekeys the same WindowServer window across sleep/wake or similar
-    /// churn. The caller remains responsible for replacing any layout/window
-    /// state that still references `from`.
+    /// Move the rule decision and any native-fullscreen record from an old AX window id to a new
+    /// one when macOS rekeys the same WindowServer window across sleep/wake or similar churn. The
+    /// caller remains responsible for replacing any layout/window state that still references
+    /// `from`.
     pub fn transfer_persistent_window_metadata(&mut self, from: WindowId, to: WindowId) {
         if from == to {
             return;
         }
 
-        let (rule_floating, last_rule_decision, placement, visibility, pending, generation) =
-            match self.windows.get(&from) {
-                Some(record) => (
-                    record.rule_floating,
-                    record.last_rule_decision,
-                    record.placement,
-                    record.visibility,
-                    record.pending_operation,
-                    record.operation_generation,
-                ),
-                None => return,
-            };
+        let Some(last_rule_decision) = self.windows.get(&from).map(|r| r.last_rule_decision) else {
+            return;
+        };
 
-        let target = self.windows.entry(to).or_default();
-        target.rule_floating |= rule_floating;
-        target.last_rule_decision |= last_rule_decision;
-        target.placement = placement;
-        target.visibility = visibility;
-        target.pending_operation = pending;
-        target.operation_generation = target.operation_generation.max(generation);
+        self.windows.entry(to).or_default().last_rule_decision |= last_rule_decision;
         self.app_windows.entry(to.pid).or_default().insert(to);
 
         if let Some(source) = self.windows.get_mut(&from) {
-            source.rule_floating = false;
             source.last_rule_decision = false;
-            source.pending_operation = None;
         }
 
         if let Some(original_window_id) = self.native_fullscreen_original_window(from)
@@ -753,31 +592,6 @@ impl WindowCatalogue {
         self.prune_window_record(from);
     }
 
-    pub fn set_rule_floating(&mut self, window_id: WindowId, value: bool) {
-        let record = self.windows.entry(window_id).or_default();
-        record.rule_floating = value;
-        record.placement = if value {
-            WindowPlacement::Floating
-        } else {
-            WindowPlacement::Tiled
-        };
-        self.prune_window_record(window_id);
-    }
-
-    pub fn clear_rule_floating(&mut self, window_id: WindowId) {
-        if let Some(record) = self.windows.get_mut(&window_id) {
-            record.rule_floating = false;
-            if record.placement == WindowPlacement::Floating {
-                record.placement = WindowPlacement::Tiled;
-            }
-        }
-        self.prune_window_record(window_id);
-    }
-
-    pub fn rule_floating(&self, window_id: WindowId) -> bool {
-        self.windows.get(&window_id).is_some_and(|record| record.rule_floating)
-    }
-
     pub fn set_last_rule_decision(&mut self, window_id: WindowId, value: bool) {
         self.windows.entry(window_id).or_default().last_rule_decision = value;
         self.app_windows.entry(window_id.pid).or_default().insert(window_id);
@@ -789,7 +603,6 @@ impl WindowCatalogue {
 
     pub fn clear_rule_metadata(&mut self, window_id: WindowId) {
         if let Some(record) = self.windows.get_mut(&window_id) {
-            record.rule_floating = false;
             record.last_rule_decision = false;
         }
         self.prune_window_record(window_id);
@@ -846,11 +659,6 @@ impl WindowCatalogue {
             return;
         }
 
-        for record in self.windows.values_mut() {
-            if record.native_space == Some(old_space) {
-                record.native_space = Some(new_space);
-            }
-        }
         for record in self.window_servers.values_mut() {
             if record.space == Some(old_space) {
                 record.space = Some(new_space);
@@ -902,49 +710,6 @@ impl WindowCatalogue {
         self.window_server_space(wsid)
     }
 
-    pub fn set_visibility(&mut self, window_id: WindowId, visibility: WindowVisibility) {
-        self.windows.entry(window_id).or_default().visibility = visibility;
-        self.app_windows.entry(window_id.pid).or_default().insert(window_id);
-    }
-
-    pub fn set_placement(&mut self, window_id: WindowId, placement: WindowPlacement) {
-        self.windows.entry(window_id).or_default().placement = placement;
-        self.app_windows.entry(window_id.pid).or_default().insert(window_id);
-    }
-
-    pub fn begin_operation(
-        &mut self,
-        window_id: WindowId,
-        requested_frame: Option<objc2_core_foundation::CGRect>,
-        requested_space: Option<SpaceId>,
-    ) -> PendingWindowOperation {
-        let record = self.windows.entry(window_id).or_default();
-        record.operation_generation = record.operation_generation.wrapping_add(1);
-        let operation = PendingWindowOperation {
-            generation: record.operation_generation,
-            requested_frame,
-            requested_space,
-        };
-        record.pending_operation = Some(operation);
-        self.app_windows.entry(window_id.pid).or_default().insert(window_id);
-        operation
-    }
-
-    pub fn confirm_operation(&mut self, window_id: WindowId, generation: u64) -> bool {
-        let Some(record) = self.windows.get_mut(&window_id) else {
-            return false;
-        };
-        if record
-            .pending_operation
-            .is_some_and(|operation| operation.generation == generation)
-        {
-            record.pending_operation = None;
-            true
-        } else {
-            false
-        }
-    }
-
     #[cfg(any(test, debug_assertions))]
     pub fn debug_assert_invariants(&self) {
         for (&wid, record) in &self.windows {
@@ -979,10 +744,7 @@ mod tests {
         window_store.set_window_server_space(wsid, Some(space));
 
         assert_eq!(window_store.window_server_space(wsid), Some(space));
-        assert_eq!(
-            window_store.iter_window_server_ids().collect::<Vec<_>>(),
-            vec![wsid]
-        );
+        assert!(window_store.window_servers.contains_key(&wsid));
     }
 
     #[test]
@@ -994,7 +756,7 @@ mod tests {
         window_store.set_window_server_space(wsid, None);
 
         assert_eq!(window_store.window_server_space(wsid), None);
-        assert!(window_store.iter_window_server_ids().next().is_none());
+        assert!(window_store.window_servers.is_empty());
     }
 
     #[test]
@@ -1011,7 +773,6 @@ mod tests {
             None,
             Some(user_space),
             fullscreen_space,
-            NativeFullscreenTransition::Suspended,
         );
 
         assert_eq!(record.assigned_space, None);
@@ -1062,7 +823,6 @@ mod tests {
             None,
             Some(user_space),
             fullscreen_space,
-            NativeFullscreenTransition::Suspended,
         );
 
         window_store.remove_window(wid);
@@ -1093,7 +853,6 @@ mod tests {
             wsid,
             Some(user_space),
             fullscreen_space,
-            NativeFullscreenTransition::Suspended,
         );
         assert_eq!(pending.pid, wid.pid);
 
@@ -1128,7 +887,6 @@ mod tests {
             wsid,
             Some(user_space),
             fullscreen_space,
-            NativeFullscreenTransition::Suspended,
         );
         assert_eq!(pending.pid, pending_wid.pid);
 
@@ -1168,42 +926,6 @@ mod tests {
         store.debug_assert_invariants();
     }
 
-    #[test]
-    fn stale_operation_confirmation_cannot_clear_a_newer_request() {
-        let mut store = WindowCatalogue::default();
-        let wid = WindowId::new(2, 1);
-        let first = store.begin_operation(wid, None, Some(SpaceId::new(1)));
-        let second = store.begin_operation(wid, None, Some(SpaceId::new(2)));
-
-        assert!(!store.confirm_operation(wid, first.generation));
-        assert_eq!(
-            store.record(wid).and_then(WindowRecord::pending_operation),
-            Some(second)
-        );
-        assert!(store.confirm_operation(wid, second.generation));
-        assert_eq!(store.record(wid).and_then(WindowRecord::pending_operation), None);
-    }
-
-    #[test]
-    fn rekey_transfers_placement_and_pending_operation() {
-        let mut store = WindowCatalogue::default();
-        let from = WindowId::new(3, 1);
-        let to = WindowId::new(3, 2);
-        store.set_placement(from, WindowPlacement::Floating);
-        let pending = store.begin_operation(from, None, Some(SpaceId::new(8)));
-
-        store.transfer_persistent_window_metadata(from, to);
-
-        let target = store.record(to).expect("target record");
-        assert_eq!(target.placement(), WindowPlacement::Floating);
-        assert_eq!(target.pending_operation(), Some(pending));
-        assert_eq!(
-            store.record(from).and_then(WindowRecord::pending_operation),
-            None
-        );
-        store.debug_assert_invariants();
-    }
-
     // --- what counts as an empty record ------------------------------------------------------
 
     /// A default record remembers nothing, which is the whole premise: a record that has had nothing
@@ -1214,25 +936,13 @@ mod tests {
         assert!(WindowServerRecord::default().remembers_nothing());
     }
 
-    /// Every field, one at a time. The predicate listed four of the nine, and the five it missed were
-    /// silently discarded on prune.
+    /// Every field, one at a time: a field the predicate skips is silently discarded on prune.
     #[test]
     fn any_single_field_is_enough_to_keep_a_window_record() {
-        let holding: [(&str, fn(&mut WindowRecord)); 7] = [
+        let holding: [(&str, fn(&mut WindowRecord)); 2] = [
             ("window_server_id", |r| {
                 r.window_server_id = Some(WindowServerId::new(1))
             }),
-            ("native_space", |r| r.native_space = Some(SpaceId::new(1))),
-            ("visibility", |r| r.visibility = WindowVisibility::Visible),
-            ("placement", |r| r.placement = WindowPlacement::Floating),
-            ("pending_operation", |r| {
-                r.pending_operation = Some(PendingWindowOperation {
-                    generation: 1,
-                    requested_frame: None,
-                    requested_space: None,
-                })
-            }),
-            ("rule_floating", |r| r.rule_floating = true),
             ("last_rule_decision", |r| r.last_rule_decision = true),
         ];
         for (name, set) in holding {
@@ -1240,15 +950,6 @@ mod tests {
             set(&mut record);
             assert!(!record.remembers_nothing(), "{name} alone must keep the record");
         }
-    }
-
-    /// `operation_generation` is a counter, so a non-zero one means an operation happened. It was not
-    /// in the old predicate either.
-    #[test]
-    fn a_bumped_operation_generation_keeps_a_window_record() {
-        let mut record = WindowRecord::default();
-        record.operation_generation = 1;
-        assert!(!record.remembers_nothing());
     }
 
     #[test]
@@ -1265,27 +966,6 @@ mod tests {
             set(&mut record);
             assert!(!record.remembers_nothing(), "{name} alone must keep the record");
         }
-    }
-
-    /// The consequence the old predicate had: a record holding only a pending frame write was pruned
-    /// and the write forgotten.
-    #[test]
-    fn a_record_holding_only_a_pending_operation_survives_a_prune() {
-        let mut catalogue = WindowCatalogue::default();
-        let window = WindowId::new(3, 1);
-        catalogue.windows.entry(window).or_default().pending_operation =
-            Some(PendingWindowOperation {
-                generation: 7,
-                requested_frame: None,
-                requested_space: None,
-            });
-
-        catalogue.prune_window_record(window);
-
-        assert!(
-            catalogue.record(window).is_some(),
-            "a pending frame write is something to remember"
-        );
     }
 
     /// And the case that must still prune, or the catalogue grows without bound.

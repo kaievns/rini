@@ -293,7 +293,7 @@ order and is tested for it.
 
 New, found while resolving the native-fullscreen question: `WindowPlacement::NativeFullscreen` was
 write-only, set on suspend and read nowhere because every reader asked `NativeFullscreenRecord`.
-DONE — the variant is deleted and placement now says what the window will be when it comes back. The
+DONE — the variant is deleted, and `WindowPlacement` with it, since nothing read the rest either. The
 `or_default()` that set it was load-bearing for a different reason: it created the catalogue entry
 for a window that goes fullscreen before rini has one, which the rekey path needs. A test caught
 that immediately.
@@ -437,5 +437,3 @@ reachable only by running the binary.
 - `ResizeOrientation::Smart`, `MoveNode`, `ContainerTreeNode.weight` and
   `layout_kind`: all carry live values in a scrolling layout.
 - `enum_dispatch`: removed in `118e35d`.
-- `is_effectively_manageable` appears in `catalogue.rs:70` and `state.rs:30`, but
-  the first delegates to the second. One implementation.
