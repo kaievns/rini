@@ -76,10 +76,11 @@ that bounced first.
 
 **It is a screen test, run only while Kai is away.** It posts key presses and focus commands, and
 the pans and switches move their windows. It refuses (exit 2) unless the HID idle time is at least
-300s, or no input has come since the last battery or `measure.sh` session marked the machine quiet
-(`<out>/.quiet_since`). `inputwatch` watches throughout: the first event the battery did not post,
-a cursor warp aside, stops it before its next press (exit 3). Run or stopped, it puts focus back
-on the window focused at its start, or on the `comms` window when none was.
+300s, or no input has come since the last battery, `measure.sh` session or `screenrec.sh` recording
+marked the machine quiet (`<out>/.quiet_since`). `inputwatch` watches throughout: the first event
+the battery did not post, a cursor warp aside, stops it before its next press (exit 3). Run or
+stopped, it puts focus back on the window focused at its start, or on the `comms` window when none
+was.
 
 **No picture is written.** `rec` reduces each frame to numbers as it arrives: the share of a 64x40
 grid with any alpha, a signature of its colours (an unchanged picture repeats it) and the pane
@@ -208,7 +209,8 @@ Kai's fold left is `43:a`, full width `3:a`, focus up and down the stack `34:a` 
 **It is a screen test, run only while Kai is away**, with the battery's guard: `screenrec.sh`
 refuses unless the HID idle time is at least 300s or no input came since the last battery or
 recording marked the machine quiet, stops on the first input it did not post (exit 3), and puts
-focus back. `lab.sh` opens windows and switches workspace, so it waits for the same. Ghostty 1.3
+focus back, on an interrupt too. Like a battery, a recording no input stopped marks the machine quiet
+as it ends, interrupted or not, so a battery can follow it at once. `lab.sh` opens windows and switches workspace, so it waits for the same. Ghostty 1.3
 asks once whether it may run `pattern.py`. Close the lab windows with `kill -9` on their pids, which
 saves no window state.
 
