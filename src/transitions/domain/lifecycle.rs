@@ -465,7 +465,16 @@ struct HeldMerge {
     ends: Vec<(WindowId, ScreenRect)>,
     /// The repainted pictures delivered there under `generation` or later, held for the latest
     /// pass's merge: under their generation, at their frame, and why.
-    repainted: Vec<(Generation, WindowId, ScreenRect, Why)>,
+    repainted: Vec<Delivery>,
+}
+
+/// A picture delivered for `window` at `frame` under `generation`, and why it was taken.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Delivery {
+    generation: Generation,
+    window: WindowId,
+    frame: ScreenRect,
+    why: Why,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -767,10 +776,9 @@ impl Coordinator {
                 || f.held_back.is_some_and(|(held, at)| held == generation && at == frame));
         targets
             || f.held_merge.as_ref().is_some_and(|merge| {
-                merge
-                    .repainted
-                    .iter()
-                    .any(|(held, w, at, _)| *held == generation && *w == window && *at == frame)
+                merge.repainted.iter().any(|held| {
+                    held.generation == generation && held.window == window && held.frame == frame
+                })
             })
     }
 
@@ -834,7 +842,8 @@ impl Coordinator {
                 }
             }
             Event::Picture { generation, window, frame, why } => {
-                self.picture(generation, window, frame, why, now, &mut out)
+                let delivery = Delivery { generation, window, frame, why };
+                self.picture(delivery, now, &mut out)
             }
             // A merge's retarget watches the window again, or reports the window losing focus given up on
             // lost again under the new generation: one lost under the generation before is dropped.
@@ -1031,21 +1040,13 @@ impl Coordinator {
             hold_no_longer(f, window, now, out);
         }
         f.snap_landed(out);
-        for (generation, window, frame, why) in held.map(|held| held.repainted).unwrap_or_default()
-        {
-            self.picture(generation, window, frame, why, now, out);
+        for delivery in held.map(|held| held.repainted).unwrap_or_default() {
+            self.picture(delivery, now, out);
         }
     }
 
-    fn picture(
-        &mut self,
-        generation: Generation,
-        window: WindowId,
-        frame: ScreenRect,
-        why: Why,
-        now: Instant,
-        out: &mut Vec<Command>,
-    ) {
+    fn picture(&mut self, delivery: Delivery, now: Instant, out: &mut Vec<Command>) {
+        let Delivery { generation, window, frame, why } = delivery;
         let State::Flying(f) = &mut self.state else { return };
         // Every delivery is in the cache, so the window's face now is too; frame zero's was taken at
         // the press, before any turn.
@@ -1056,8 +1057,8 @@ impl Coordinator {
             && generation >= held.generation
             && held.ends.iter().any(|(w, end)| *w == window && near(frame, *end, END_SLACK))
         {
-            held.repainted.retain(|(_, w, _, _)| *w != window);
-            held.repainted.push((generation, window, frame, why));
+            held.repainted.retain(|held| held.window != window);
+            held.repainted.push(delivery);
             hold_no_longer(f, window, now, out);
             return;
         }
