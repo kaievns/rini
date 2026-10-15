@@ -8,8 +8,6 @@ use tracing::{error, warn};
 use crate::layout::ScrollingLayoutSystem;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleDecision;
-#[cfg(test)]
-use crate::windows::domain::rules::{RuleMatch, WindowRule};
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use crate::workspaces::{Direction, WindowStore, WindowWorkspaceInfo};
@@ -297,31 +295,6 @@ impl WorkspaceStore {
         }
 
         window_store.remap_space(old_space, new_space);
-    }
-
-    /// Add a workspace to the global list. Every display gains it.
-    ///
-    /// `space` is still taken so the caller's display gets initialised, but the new
-    /// workspace is not owned by it.
-    #[cfg(test)]
-    pub fn create_workspace(
-        &mut self,
-        space: SpaceId,
-        name: String,
-    ) -> Result<VirtualWorkspaceId, WorkspaceError> {
-        self.ensure_space_initialized(space);
-        if self.workspace_order.len() >= self.max_workspaces {
-            return Err(WorkspaceError::InconsistentState(format!(
-                "Maximum workspace limit ({}) reached",
-                self.max_workspaces
-            )));
-        }
-
-        let workspace = VirtualWorkspace::new(name, &self.layout_settings);
-        let workspace_id = self.workspaces.insert(workspace);
-        self.workspace_order.push(workspace_id);
-
-        Ok(workspace_id)
     }
 
     pub fn last_workspace(&self, space: SpaceId) -> Option<VirtualWorkspaceId> {
@@ -984,7 +957,8 @@ mod tests {
     use rini_core::ids::{SpaceId, WindowId};
 
     use super::*;
-    use crate::windows::domain::rules::{AppRuleEngine, RuleState, WindowRuleContext};
+    use crate::windows::domain::rules::{AppRuleEngine, RuleMatch, WindowRule, WindowRuleContext};
+    use crate::workspaces::settings::numbered_names;
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {
         match result {
@@ -996,58 +970,49 @@ mod tests {
         }
     }
 
-    /// `rules`' decision for a window, applied as production applies the one the layout engine
-    /// makes.
-    #[allow(clippy::too_many_arguments, reason = "P3.8")]
+    /// `rules`' decision for `window` opening on `space` as `context` describes it, applied as
+    /// production applies the one the layout engine makes.
     fn decide(
         manager: &mut WorkspaceStore,
         rules: &AppRuleEngine,
         window_store: &mut WindowStore,
-        window_id: WindowId,
+        window: WindowId,
         space: SpaceId,
-        app_bundle_id: Option<&str>,
-        app_name: Option<&str>,
-        window_title: Option<&str>,
-        ax_role: Option<&str>,
-        ax_subrole: Option<&str>,
+        context: WindowRuleContext,
     ) -> Result<AppRuleResult, WorkspaceError> {
-        let decision = rules.evaluate(WindowRuleContext {
-            app_bundle_id,
-            app_name,
-            window_title,
-            ax_role,
-            ax_subrole,
-            is_modal: false,
-            state: RuleState::default(),
-        });
-        manager.apply_app_rule_decision(window_store, window_id, space, decision)
+        let decision = rules.evaluate(context);
+        manager.apply_app_rule_decision(window_store, window, space, decision)
     }
 
-    #[allow(clippy::too_many_arguments, reason = "P3.8")]
     fn assign(
         manager: &mut WorkspaceStore,
         rules: &AppRuleEngine,
         window_store: &mut WindowStore,
-        window_id: WindowId,
+        window: WindowId,
         space: SpaceId,
-        app_id: Option<&str>,
-        app_name: Option<&str>,
-        window_title: Option<&str>,
-        ax_role: Option<&str>,
-        ax_subrole: Option<&str>,
+        context: WindowRuleContext,
     ) -> AppRuleEffects {
-        expect_managed(decide(
-            manager,
-            rules,
-            window_store,
-            window_id,
-            space,
-            app_id,
-            app_name,
-            window_title,
-            ax_role,
-            ax_subrole,
-        ))
+        expect_managed(decide(manager, rules, window_store, window, space, context))
+    }
+
+    /// A window of the app `bundle_id`, with nothing else known about it.
+    fn app(bundle_id: &str) -> WindowRuleContext<'_> {
+        WindowRuleContext {
+            app_bundle_id: Some(bundle_id),
+            ..WindowRuleContext::default()
+        }
+    }
+
+    /// A store configured with `N` numbered workspaces, and their ids in order.
+    fn numbered<const N: usize>() -> (WorkspaceStore, [VirtualWorkspaceId; N]) {
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: numbered_names(N),
+            ..VirtualWorkspaceSettings::default()
+        };
+        let mut store = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let ids: Vec<_> =
+            store.list_workspaces(SpaceId::new(1)).into_iter().map(|(id, _)| id).collect();
+        (store, ids.try_into().expect("one id per name"))
     }
 
     #[test]
@@ -1071,33 +1036,26 @@ mod tests {
 
     #[test]
     fn test_virtual_workspace_creation() {
-        let mut manager = WorkspaceStore::new();
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: vec!["Main".into(), "Test Workspace".into()],
+            ..VirtualWorkspaceSettings::default()
+        };
+        let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
 
         let space = SpaceId::new(1);
-        assert_eq!(
-            manager.list_workspaces(space).len(),
-            manager.workspace_order.len()
-        );
+        let workspaces = manager.list_workspaces(space);
+        assert_eq!(workspaces.len(), manager.workspace_order.len());
 
-        let ws_id = manager.create_workspace(space, "Test Workspace".to_string()).unwrap();
-        assert!(
-            manager
-                .list_workspaces(space)
-                .iter()
-                .any(|(id, name)| *id == ws_id && name == "Test Workspace")
-        );
-
-        let workspace = manager.workspace_info(ws_id).unwrap();
-        assert_eq!(workspace.name, "Test Workspace");
+        let (ws_id, name) = workspaces[1].clone();
+        assert_eq!(name, "Test Workspace");
+        assert_eq!(manager.workspace_info(ws_id).unwrap().name, "Test Workspace");
     }
 
     #[test]
     fn test_window_assignment() {
         let mut window_store = WindowStore::default();
-        let mut manager = WorkspaceStore::new();
+        let (mut manager, [ws1_id, ws2_id]) = numbered();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
-        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
 
         let window1 = WindowId::new(1, 1);
         let window2 = WindowId::new(1, 2);
@@ -1125,10 +1083,8 @@ mod tests {
     #[test]
     fn reassignment_updates_authoritative_workspace_index() {
         let mut window_store = WindowStore::default();
-        let mut manager = WorkspaceStore::new();
+        let (mut manager, [ws1_id, ws2_id]) = numbered();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
-        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window = WindowId::new(9, 1);
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws1_id));
@@ -1154,10 +1110,8 @@ mod tests {
     #[test]
     fn reassignment_clears_stale_last_focused_on_source_workspace() {
         let mut window_store = WindowStore::default();
-        let mut manager = WorkspaceStore::new();
+        let (mut manager, [ws1_id, ws2_id]) = numbered();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
-        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window = WindowId::new(9, 1);
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws1_id));
@@ -1214,8 +1168,10 @@ mod tests {
     #[test]
     fn preserves_workspace_ordinal_across_transient_space_id_churn() {
         let mut window_store = WindowStore::default();
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: numbered_names(3),
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let rules = AppRuleEngine::new(&settings.app_rules);
         let old_space = SpaceId::new(1);
@@ -1240,11 +1196,7 @@ mod tests {
             &mut window_store,
             window,
             new_space,
-            None,
-            None,
-            None,
-            None,
-            None,
+            WindowRuleContext::default(),
         );
 
         assert_eq!(assignment.workspace_id, expected_target_workspace);
@@ -1262,8 +1214,10 @@ mod tests {
     #[test]
     fn a_new_window_lands_on_its_own_displays_active_workspace() {
         let mut window_store = WindowStore::default();
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.workspace_names = crate::workspaces::settings::numbered_names(4);
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: numbered_names(4),
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let rules = AppRuleEngine::new(&settings.app_rules);
         let builtin = SpaceId::new(1);
@@ -1282,11 +1236,7 @@ mod tests {
             &mut window_store,
             on_builtin,
             builtin,
-            None,
-            None,
-            None,
-            None,
-            None,
+            WindowRuleContext::default(),
         );
         let external_assignment = assign(
             &mut manager,
@@ -1294,11 +1244,7 @@ mod tests {
             &mut window_store,
             on_external,
             external,
-            None,
-            None,
-            None,
-            None,
-            None,
+            WindowRuleContext::default(),
         );
 
         assert_eq!(
@@ -1320,7 +1266,7 @@ mod tests {
     fn an_app_rule_pins_the_workspace_on_whichever_display_it_opens_on() {
         let mut window_store = WindowStore::default();
         let settings = VirtualWorkspaceSettings {
-            workspace_names: crate::workspaces::settings::numbered_names(4),
+            workspace_names: numbered_names(4),
             app_rules: vec![WindowRule {
                 open_on_workspace: Some("3".into()),
                 ..WindowRule::when(RuleMatch::app("com.example.editor"))
@@ -1348,11 +1294,7 @@ mod tests {
                 &mut window_store,
                 window,
                 space,
-                Some("com.example.editor"),
-                None,
-                None,
-                None,
-                None,
+                app("com.example.editor"),
             );
             assert_eq!(
                 assignment.workspace_id, workspaces[2].0,
@@ -1372,8 +1314,10 @@ mod tests {
     #[test]
     fn moving_to_a_busy_display_keeps_the_windows_workspace() {
         let mut window_store = WindowStore::default();
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: numbered_names(3),
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let rules = AppRuleEngine::new(&settings.app_rules);
         let old_space = SpaceId::new(1);
@@ -1408,11 +1352,7 @@ mod tests {
             &mut window_store,
             moved_window,
             new_space,
-            None,
-            None,
-            None,
-            None,
-            None,
+            WindowRuleContext::default(),
         );
 
         assert_eq!(
@@ -1439,8 +1379,10 @@ mod tests {
     #[test]
     fn topology_reassignment_preserves_workspace_ordinal_with_destination_assignments() {
         let mut window_store = WindowStore::default();
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: numbered_names(3),
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let source_space = SpaceId::new(1);
         let destination_space = SpaceId::new(2);
@@ -1482,12 +1424,14 @@ mod tests {
     #[test]
     fn unmanaged_rule_does_not_reassign_window_during_transient_space_id_churn() {
         let mut window_store = WindowStore::default();
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
-        settings.app_rules = vec![WindowRule {
-            manage: Some(false),
-            ..WindowRule::when(RuleMatch::app("com.example.unmanaged"))
-        }];
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: numbered_names(3),
+            app_rules: vec![WindowRule {
+                manage: Some(false),
+                ..WindowRule::when(RuleMatch::app("com.example.unmanaged"))
+            }],
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let rules = AppRuleEngine::new(&settings.app_rules);
         let old_space = SpaceId::new(1);
@@ -1512,11 +1456,7 @@ mod tests {
             &mut window_store,
             window,
             new_space,
-            Some("com.example.unmanaged"),
-            None,
-            None,
-            None,
-            None,
+            app("com.example.unmanaged"),
         );
 
         assert!(matches!(result, Ok(AppRuleResult::Unmanaged)));
@@ -1532,10 +1472,8 @@ mod tests {
 
     #[test]
     fn test_active_workspace_switching() {
-        let mut manager = WorkspaceStore::new();
+        let (mut manager, [ws1_id, ws2_id]) = numbered();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
-        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
 
         assert!(manager.set_active_workspace(space, ws1_id));
         assert_eq!(manager.active_workspace(space), Some(ws1_id));
@@ -1561,10 +1499,8 @@ mod tests {
                 _ => true,
             }
         }
-        let mut manager = WorkspaceStore::new();
+        let (mut manager, [ws1_id, ws2_id]) = numbered();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
-        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window1 = WindowId::new(1, 1);
         let window2 = WindowId::new(1, 2);
 
@@ -1582,9 +1518,11 @@ mod tests {
 
     #[test]
     fn default_workspace_setting_applied() {
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.workspace_names = crate::workspaces::settings::numbered_names(5);
-        settings.default_workspace = 3;
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: numbered_names(5),
+            default_workspace: 3,
+            ..VirtualWorkspaceSettings::default()
+        };
 
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
 
@@ -1598,11 +1536,8 @@ mod tests {
     #[test]
     fn test_workspace_navigation() {
         let window_store = WindowStore::default();
-        let mut manager = WorkspaceStore::new();
+        let (manager, [ws1_id, ws2_id, ws3_id]) = numbered();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
-        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
-        let ws3_id = manager.create_workspace(space, "WS3".to_string()).unwrap();
 
         assert_eq!(
             manager.next_workspace(&window_store, space, ws1_id, None),
@@ -1661,7 +1596,7 @@ mod tests {
     fn workspace_navigation_stops_at_the_ends() {
         let mut window_store = WindowStore::default();
         let settings = VirtualWorkspaceSettings {
-            workspace_names: crate::workspaces::settings::numbered_names(4),
+            workspace_names: numbered_names(4),
             ..VirtualWorkspaceSettings::default()
         };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
@@ -1755,11 +1690,7 @@ mod tests {
             &mut window_store,
             w_float,
             space1,
-            Some("com.example.test"),
-            None,
-            None,
-            None,
-            None,
+            app("com.example.test"),
         );
         assert!(assignment.floating);
 
@@ -1772,11 +1703,7 @@ mod tests {
             &mut window_store,
             w_float,
             space1,
-            Some("com.example.test"),
-            None,
-            None,
-            None,
-            None,
+            app("com.example.test"),
         );
         assert!(assignment_again.floating);
 
@@ -1788,11 +1715,10 @@ mod tests {
             &mut window_store,
             w_name,
             space1,
-            None,
-            Some("MyCalendarApp"),
-            None,
-            None,
-            None,
+            WindowRuleContext {
+                app_name: Some("MyCalendarApp"),
+                ..WindowRuleContext::default()
+            },
         )
         .workspace_id;
         let coding_idx = 1; // the Calendar rule points to "coding", the second workspace
@@ -1808,11 +1734,10 @@ mod tests {
             &mut window_store,
             w_pref,
             space1,
-            Some("com.example.foo"),
-            None,
-            Some("App Preferences"),
-            None,
-            None,
+            WindowRuleContext {
+                window_title: Some("App Preferences"),
+                ..app("com.example.foo")
+            },
         )
         .workspace_id;
         let ws_dialog = assign(
@@ -1821,11 +1746,10 @@ mod tests {
             &mut window_store,
             w_dialog,
             space1,
-            Some("com.example.foo"),
-            None,
-            Some("Dialog 42"),
-            None,
-            None,
+            WindowRuleContext {
+                window_title: Some("Dialog 42"),
+                ..app("com.example.foo")
+            },
         )
         .workspace_id;
         let expected_pref = manager.list_workspaces(space1).first().unwrap().0;
@@ -1841,11 +1765,11 @@ mod tests {
             &mut window_store,
             w_ax,
             space1,
-            Some("com.example.special"),
-            None,
-            None,
-            Some("AXWindow"),
-            Some("AXDialog"),
+            WindowRuleContext {
+                ax_role: Some("AXWindow"),
+                ax_subrole: Some("AXDialog"),
+                ..app("com.example.special")
+            },
         );
         assert!(ax_assignment.floating);
 
@@ -1857,11 +1781,7 @@ mod tests {
             &mut window_store,
             w_named,
             space1,
-            Some("com.example.name"),
-            None,
-            None,
-            None,
-            None,
+            app("com.example.name"),
         )
         .workspace_id;
         let coding_ws =
@@ -1876,11 +1796,10 @@ mod tests {
             &mut window_store,
             w_tie,
             space1,
-            Some("com.example.tie"),
-            None,
-            Some("Editor - Untitled"),
-            None,
-            None,
+            WindowRuleContext {
+                window_title: Some("Editor - Untitled"),
+                ..app("com.example.tie")
+            },
         )
         .workspace_id;
         let expected_specific = manager.list_workspaces(space1).get(2).unwrap().0; // the title rule points to the third
@@ -1894,11 +1813,7 @@ mod tests {
             &mut window_store,
             w_bw,
             space1,
-            Some("app.zen-browser.zen"),
-            None,
-            None,
-            None,
-            None,
+            app("app.zen-browser.zen"),
         );
         assert!(!bw_initial_assignment.floating);
         let bw_updated_assignment = assign(
@@ -1907,11 +1822,10 @@ mod tests {
             &mut window_store,
             w_bw,
             space1,
-            Some("app.zen-browser.zen"),
-            None,
-            Some("Bitwarden Login"),
-            None,
-            None,
+            WindowRuleContext {
+                window_title: Some("Bitwarden Login"),
+                ..app("app.zen-browser.zen")
+            },
         );
         assert_eq!(
             bw_initial_assignment.workspace_id,
@@ -1927,11 +1841,7 @@ mod tests {
             &mut window_store,
             w_bw2,
             space2,
-            Some("app.zen-browser.zen"),
-            None,
-            None,
-            None,
-            None,
+            app("app.zen-browser.zen"),
         );
         assert!(!bw2_initial_assignment.floating);
         let bw2_updated_assignment = assign(
@@ -1940,11 +1850,10 @@ mod tests {
             &mut window_store,
             w_bw2,
             space2,
-            Some("app.zen-browser.zen"),
-            None,
-            Some("Bitwarden Vault"),
-            None,
-            None,
+            WindowRuleContext {
+                window_title: Some("Bitwarden Vault"),
+                ..app("app.zen-browser.zen")
+            },
         );
         // The general rule places it; the title rule then floats it where it already is.
         let expected = manager.list_workspaces(space2).get(2).unwrap().0;
