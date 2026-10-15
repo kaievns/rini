@@ -108,9 +108,9 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
         self.focused.remove(&window);
     }
 
-    /// `look` shows `window` focused: a transition that flies the window parked draws it so from its
+    /// `face` shows `window` focused: a transition that flies the window parked draws it so from its
     /// first frame.
-    pub fn keep_focused(&mut self, window: WindowId, look: T) { self.focused.insert(window, look); }
+    pub fn keep_focused(&mut self, window: WindowId, face: T) { self.focused.insert(window, face); }
 
     pub fn focused(&self, window: WindowId) -> Option<&T> { self.focused.get(&window) }
 
@@ -118,7 +118,7 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
     pub fn focused_faces(&self) -> impl Iterator<Item = (&WindowId, &T)> { self.focused.iter() }
 
     /// Drops `window`'s focused face if it is still what `still` says: a newer capture showed
-    /// different content, which the look would fly over.
+    /// different content, which the face would fly over.
     pub fn drop_focused_if(&mut self, window: WindowId, still: impl FnOnce(&T) -> bool) -> bool {
         let stale = self.focused.get(&window).is_some_and(still);
         if stale {
@@ -287,18 +287,18 @@ mod tests {
     #[test]
     fn a_focused_face_is_kept_until_stale_or_forgotten() {
         let mut cache = cache();
-        let look = coverage((859.0, 1081.0), (859.0, 1081.0));
-        cache.keep_focused(wid(1), look);
-        assert_eq!(cache.focused(wid(1)), Some(&look));
+        let face = coverage((859.0, 1081.0), (859.0, 1081.0));
+        cache.keep_focused(wid(1), face);
+        assert_eq!(cache.focused(wid(1)), Some(&face));
         assert!(
-            !cache.drop_focused_if(wid(1), |held| *held != look),
-            "not the look checked"
+            !cache.drop_focused_if(wid(1), |held| *held != face),
+            "not the face checked"
         );
-        assert!(cache.drop_focused_if(wid(1), |held| *held == look));
+        assert!(cache.drop_focused_if(wid(1), |held| *held == face));
         assert!(cache.focused(wid(1)).is_none());
 
-        cache.keep_focused(wid(2), look);
-        cache.insert(wid(2), look);
+        cache.keep_focused(wid(2), face);
+        cache.insert(wid(2), face);
         cache.forget(wid(2));
         assert!(cache.focused(wid(2)).is_none(), "gone with the window");
         assert!(cache.get(wid(2)).is_none());
@@ -307,13 +307,13 @@ mod tests {
     #[test]
     fn a_focused_faces_copy_replaces_only_the_face_it_was_made_of() {
         let mut cache = cache();
-        let look = coverage((859.0, 1081.0), (859.0, 1081.0));
+        let face = coverage((859.0, 1081.0), (859.0, 1081.0));
         let copy = coverage((859.0, 1081.0), (859.5, 1081.0));
-        cache.keep_focused(wid(1), look);
-        assert!(!cache.replace_focused_if(wid(1), |held| *held != look, copy));
-        assert!(cache.replace_focused_if(wid(1), |held| *held == look, copy));
+        cache.keep_focused(wid(1), face);
+        assert!(!cache.replace_focused_if(wid(1), |held| *held != face, copy));
+        assert!(cache.replace_focused_if(wid(1), |held| *held == face, copy));
         assert_eq!(cache.focused(wid(1)), Some(&copy));
-        assert!(!cache.replace_focused_if(wid(2), |_| true, copy), "no look");
+        assert!(!cache.replace_focused_if(wid(2), |_| true, copy), "no face");
     }
 
     fn tag(client: u32, generation: u64) -> Tag {
@@ -324,7 +324,7 @@ mod tests {
     }
 
     /// A client names a delivered picture by the tag it came under: only the window's last delivery
-    /// answers, and only under that exact tag, so a look named for a picture since superseded is
+    /// answers, and only under that exact tag, so a face named for a picture since superseded is
     /// never kept.
     #[test]
     fn a_delivered_picture_is_found_under_its_own_tag_only() {

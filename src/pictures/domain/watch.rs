@@ -137,7 +137,7 @@ pub enum Watch {
     },
     /// Armed by the window's focus report: captured where it ends every `every`, `tries` times at most,
     /// until its band print changes from the last picture delivered of it as the watch starts, even
-    /// when another watch delivered the changed look first, or until the cache refuses a capture; an
+    /// when another watch delivered the changed face first, or until the cache refuses a capture; an
     /// end not there yet is looked for every `LANDING_POLL` between those rounds. `losing`, the window
     /// focus leaves and where it ends, is captured in the same rounds and done the same way on its
     /// own, but never handed to ScreenCaptureKit, and reported lost when it is done with no change;

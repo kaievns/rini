@@ -60,7 +60,7 @@ check, then a spec or deletion:
 - **A timeout on reactor queries.** A query waits on the reactor with no limit
   (`src/app/reactor/query.rs`). It is the first step of the reactor rework, which I parked on
   2026-10-06.
-- **One picture per window.** Each window keeps a focused look beside its picture
+- **One picture per window.** Each window keeps a focused face beside its picture
   (`specs/animation.md`, "Focus changing during a flight"). Dropping it saves memory. I parked it
   on 2026-10-06, to come back to.
 - **A zoom and arc look for moves and navigation.** Spiked and parked on 2026-10-01.

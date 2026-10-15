@@ -366,7 +366,7 @@ for it at most 80ms ("Nothing is captured on the main thread on the way in"
 below). This matches the original instinct that only on-screen and incoming
 windows need fresh pixels, and the rest can be refreshed occasionally: through
 ScreenCaptureKit for the windows off the strip, and through SkyLight for a window
-on screen whose look a change of focus turned, which keeps its blur only that way
+on screen whose face a change of focus turned, which keeps its blur only that way
 ("The schedule" in `README.md`).
 
 **Staleness is acceptable for a window that was off screen.** The bitmap is on

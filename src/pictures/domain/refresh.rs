@@ -100,7 +100,7 @@ enum End {
 
 impl<C> Refreshes<C> {
     /// Owes each target a picture, its face turned at `asked` and looked at from `from` on, and holds
-    /// every window already owed one until then too: a press that turns a look may start a flight,
+    /// every window already owed one until then too: a press that turns a face may start a flight,
     /// whose hold comes after it, and the windows of one change are looked at together. A window
     /// already owed one is owed it afresh: its face has turned again.
     pub fn ask(&mut self, targets: Vec<PictureTarget>, asked: Instant, from: Instant) {
@@ -484,7 +484,7 @@ mod tests {
         assert!(refreshes.owed().next().is_none());
     }
 
-    /// A press that turns a look may also start a flight, whose hold reaches the service after the
+    /// A press that turns a face may also start a flight, whose hold reaches the service after the
     /// refresh: every window already being looked at waits for the new refresh's start too, and is
     /// looked at in its round. A window whose face turns again is owed afresh, judged from its next
     /// captures, its capture held dropped; a forgotten one is owed nothing, and what its round saw is

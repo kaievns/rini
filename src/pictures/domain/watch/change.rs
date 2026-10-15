@@ -94,7 +94,7 @@ impl Turning {
         out: &mut Outcome,
     ) {
         let (client, window) = (tag.client, self.target.window);
-        // A landing may have delivered the changed look first: the change is judged from what was
+        // A landing may have delivered the changed face first: the change is judged from what was
         // delivered before it, not from the latest delivery.
         let judged = self.baseline.take().or_else(|| prints.get(&(client, window)).cloned());
         news(prints, client, window, band);

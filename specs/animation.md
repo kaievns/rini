@@ -308,7 +308,7 @@ destination for a window already moving.
   before the motion starts as once it moves. A picture taken at its
   new size MUST NOT be drawn before the window has repainted there, not even to show its focus turn;
   one that has not by the lift is never drawn, and the lift shows the window. Until then the tile
-  keeps the look its picture from the press shows, the title bar and controls macOS draws focused or
+  keeps the face its picture from the press shows, the title bar and controls macOS draws focused or
   not, while its hairline, shadow, ring and border turn as any window's: a window that never settles,
   as one streaming output, and a window a resize only shrinks inside the picture it starts with,
   turn their own face with the lift. A window MUST count as repainted at its new size only once two
@@ -662,14 +662,14 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   once; in flight, each one no picture of the flight showed after the change MUST be asked for at the
   quiet after the lift, the window losing focus that ends clipped or parked among them. A focus change
   alters a window's face and never its size, and a picture that still fits was never taken again for
-  its own sake, so a window kept the look it had until it was resized, and its tile turned at the lift.
+  its own sake, so a window kept the face it had until it was resized, and its tile turned at the lift.
 - Pictured again at rest, a window wholly on the overlay's display MUST be pictured with its blur and
   with its face turned. Both windows of one change MUST be looked at together, and each MUST be
   pictured once, with the face it settled on. A capture of the window alone has no blur, and a picture
   with its blur is never replaced by one without, so a window with a material kept its old face until a
   flight next pictured it on screen; a capture made as the change is reported shows the face from
   before the app repaints; the picture held from before can differ in its title band for reasons
-  other than focus, so the turn is judged only from captures taken after the change; and a look has
+  other than focus, so the turn is judged only from captures taken after the change; and a face has
   settled once two captures in a row, the later taken 70ms or more after the change, show the same
   title band, past the 68ms (p90) the app takes to repaint. Looked at one window at a time, a click
   took twice the rounds, and every capture went to the cache and to every client as news.
@@ -678,7 +678,7 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   waits for. A press MUST cancel the polling of a window being pictured again at rest, and the quiet
   MUST ask again for each window the flight did not picture at least 70ms after its face turned: the
   app repaints up to 68ms after the change (p90), so a picture taken sooner, frame zero's among them,
-  can show the look from before. A call already out when the press comes cannot be recalled, so at
+  can show the face from before. A call already out when the press comes cannot be recalled, so at
   most one SkyLight call at rest MAY be ahead of a frame zero.
 - A window with a material that is not wholly on the overlay's display when it is pictured again at
   rest, clipped, parked or on another display, keeps its blurred picture, and its face turns when a
@@ -717,8 +717,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 
 > **Reported 2026-10-05.** "about focus refresh. are you pushing new images on every scan or only once
 > when they change?" Every capture of a refresh went to the cache and to every client, identical or
-> not, and a window whose first look already showed the turn was captured all six times. A window is
-> now pictured once, with the look it settled on.
+> not, and a window whose first capture already showed the turn was captured all six times. A window is
+> now pictured once, with the face it settled on.
 
 > **Reported 2026-10-03.** "fcache doesn't bother me … windows arrive in focus every single time". The
 > prototype flew a focus target parked off the display with its last focused picture, which can be

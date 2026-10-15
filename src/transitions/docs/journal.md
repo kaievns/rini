@@ -211,7 +211,7 @@ ring loses its oldest marks, and its header says how many.
 
 While the journal is written, `Journalled` gives a burst, every mark since the last one, at each
 `ReportSettled`: the quiet after a lift, or an abandon. It gives none between a `ReportUp` and its
-`ReportSettled`, so nothing touches the disk while a transition is up. Marks pushed at rest, a look
+`ReportSettled`, so nothing touches the disk while a transition is up. Marks pushed at rest, a face
 turned with nothing flying or a slow main-thread turn, go with the next burst. On the `transitions` thread a write is one `Vec`
 copied out of the ring and one channel send; the `journal` thread formats and appends.
 

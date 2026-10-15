@@ -337,7 +337,7 @@ impl<P, O, C> Schedule<P, O, C> {
     /// Windows on screen, wanted now: see [`OnScreen`].
     pub fn ask_on_screen(&mut self, ask: OnScreen) { self.watches.ask(ask) }
 
-    /// Windows whose look has just turned, pictured afresh at rest (see [`Refreshes`]) from
+    /// Windows whose face has just turned, pictured afresh at rest (see [`Refreshes`]) from
     /// `SETTLE_BEFORE_STARTING` on, every refresh already owed held until then too. Asked while held,
     /// they are cancelled as they arrive, and asked again at the release.
     pub fn refresh(&mut self, targets: Vec<PictureTarget>, now: Instant) {
@@ -416,7 +416,7 @@ impl<P, O, C> Schedule<P, O, C> {
     }
 
     /// What the window server and the captures said of the windows `Next::Refresh` named, with the
-    /// capture of each the cache would take: the capture each window whose look settled is pictured
+    /// capture of each the cache would take: the capture each window whose face settled is pictured
     /// with, once (see [`Refreshes::seen`]). One a refresh cannot capture through SkyLight is owed a
     /// ScreenCaptureKit capture at background priority.
     pub fn refreshed(

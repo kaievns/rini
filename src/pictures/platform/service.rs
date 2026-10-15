@@ -127,10 +127,10 @@ struct Shared {
 /// Every picture of `window` and all that is known of it, gone.
 fn forget_window(
     shared: &mut Shared,
-    looks_checked: &mut HashMap<WindowId, (Instant, Instant)>,
+    faces_checked: &mut HashMap<WindowId, (Instant, Instant)>,
     window: WindowId,
 ) {
-    forget_pictures(shared, looks_checked, window);
+    forget_pictures(shared, faces_checked, window);
     shared.learned.forget(WindowServerId::from(window));
 }
 
@@ -138,13 +138,13 @@ fn forget_window(
 /// What is known of it stays: a window pictured twice shares its server id with the managed one.
 fn forget_pictures(
     shared: &mut Shared,
-    looks_checked: &mut HashMap<WindowId, (Instant, Instant)>,
+    faces_checked: &mut HashMap<WindowId, (Instant, Instant)>,
     window: WindowId,
 ) {
     shared.cache.forget(window);
     shared.schedule.forget(window);
     shared.delivered.forget(window);
-    looks_checked.remove(&window);
+    faces_checked.remove(&window);
 }
 
 /// The pictures of the display the overlay flies on. Which display that is, the schedule holds.
@@ -452,7 +452,7 @@ impl Pictures {
             shared: pictures.shared.clone(),
             transitions: pictures.transitions.clone(),
             applied_transitions: 0,
-            looks_checked: HashMap::new(),
+            faces_checked: HashMap::new(),
             sinks,
         };
         std::thread::Builder::new()
@@ -480,9 +480,9 @@ impl Pictures {
     /// Windows on screen, captured now through SkyLight and delivered under the ask's tag.
     pub fn ask_on_screen(&self, ask: OnScreen) { self.commands.send(Command::AskOnScreen(ask)) }
 
-    /// Fresh pictures of windows whose look has just turned, whatever the cache holds of them, once
+    /// Fresh pictures of windows whose face has just turned, whatever the cache holds of them, once
     /// nothing holds the service: through SkyLight, blur and all, where the window server has a window
-    /// wholly on the display, every window due in one round until each one's look has settled, and
+    /// wholly on the display, every window due in one round until each one's face has settled, and
     /// put once; through ScreenCaptureKit at background priority anywhere else.
     pub fn refresh(&self, targets: Vec<PictureTarget>) {
         self.commands.send(Command::Refresh(targets))
@@ -568,10 +568,10 @@ impl Pictures {
         held.desktop = Some(desktop);
     }
 
-    /// `look` held as `window`'s focused face, as a delivery kept focused would hold it.
+    /// `face` held as `window`'s focused face, as a delivery kept focused would hold it.
     #[cfg(test)]
-    pub fn hold_focused(&self, window: WindowId, look: Picture) {
-        self.lock().cache.keep_focused(window, look)
+    pub fn hold_focused(&self, window: WindowId, face: Picture) {
+        self.lock().cache.keep_focused(window, face)
     }
 
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.
@@ -670,7 +670,7 @@ struct Service<C: Capturer> {
     applied_transitions: u64,
     /// The focused face and the newer picture last compared for each window, by when each was taken:
     /// a pair is compared once.
-    looks_checked: HashMap<WindowId, (Instant, Instant)>,
+    faces_checked: HashMap<WindowId, (Instant, Instant)>,
     sinks: Vec<Sink>,
 }
 
@@ -717,8 +717,8 @@ impl<C: Capturer> Service<C> {
                 shared.schedule.hint(hint, now)
             }
             Command::KeepFocused(tag, window) => {
-                if let Some(look) = shared.delivered.under(tag, window).cloned() {
-                    shared.cache.keep_focused(window, look);
+                if let Some(face) = shared.delivered.under(tag, window).cloned() {
+                    shared.cache.keep_focused(window, face);
                 }
             }
             Command::Hold(hold) => {
@@ -732,7 +732,7 @@ impl<C: Capturer> Service<C> {
                     self.at_rest();
                 }
             }
-            Command::Forget(window) => forget_window(&mut shared, &mut self.looks_checked, window),
+            Command::Forget(window) => forget_window(&mut shared, &mut self.faces_checked, window),
             Command::SetDisplay { display, picture_bar } => {
                 let Shared { schedule, display: held, .. } = &mut *shared;
                 set_display(schedule, held, display, picture_bar, now);
@@ -794,24 +794,24 @@ impl<C: Capturer> Service<C> {
             shared
                 .cache
                 .focused_faces()
-                .filter_map(|(window, look)| {
+                .filter_map(|(window, face)| {
                     let newer =
-                        shared.cache.get(*window).filter(|newer| newer.taken > look.taken)?;
-                    Some((*window, look.clone(), newer.clone()))
+                        shared.cache.get(*window).filter(|newer| newer.taken > face.taken)?;
+                    Some((*window, face.clone(), newer.clone()))
                 })
                 .collect()
         };
-        for (window, look, newer) in pairs {
-            let pair = (look.taken, newer.taken);
-            if self.looks_checked.insert(window, pair) == Some(pair) {
+        for (window, face, newer) in pairs {
+            let pair = (face.taken, newer.taken);
+            if self.faces_checked.insert(window, pair) == Some(pair) {
                 continue;
             }
-            let stale = match (body_samples(&look.image), body_samples(&newer.image)) {
-                (Some(look), Some(newer)) => bodies_differ(&look, &newer),
+            let stale = match (body_samples(&face.image), body_samples(&newer.image)) {
+                (Some(face), Some(newer)) => bodies_differ(&face, &newer),
                 _ => true,
             };
             if stale {
-                let taken = look.taken;
+                let taken = face.taken;
                 self.shared
                     .lock()
                     .unwrap()
@@ -1261,7 +1261,7 @@ mod tests {
         ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == frame()));
         assert!(
             delivered.under(tag(3), wid(1)).is_some(),
-            "recorded, so it can be kept as a look"
+            "recorded, so it can be kept as a focused face"
         );
 
         let mut blurred = sized(859.0, 1081.0);
@@ -1809,7 +1809,7 @@ mod tests {
             shared: shared.clone(),
             transitions: Arc::default(),
             applied_transitions: 0,
-            looks_checked: HashMap::new(),
+            faces_checked: HashMap::new(),
             sinks: Vec::new(),
         };
         (service, shared, commands)
