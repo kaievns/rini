@@ -69,33 +69,37 @@ Animation transaction of the connection it is given (a window query, a SkyLight 
 connection's lock and waited for the commit of rini's own windows that the main thread, waiting for
 the same lock, was making: both stopped 500ms, until SkyLight timed the wait out. A read that waits
 on the main connection whatever it is given (`CGWindowList`, the on-screen list, a space's window
-list, whether a window is ordered in) is not made: the same answer is read another way. Writes to rini's own windows stay on the main connection, which owns
-them. Each call, which connection it takes and why, and the measurements: `window-server-reads.md`.
+list, whether a window is ordered in) is not made: the same answer is read another way. Writes to
+rini's own windows stay on the main connection, which owns them. Each call, which connection it
+takes and why, and the measurements: `window-server-reads.md`.
 
 **The window server is a port.** Every query and command a rule or an actor outside
 `window_server.rs` makes of the window server is a method of the `WindowServer` trait
 (`platform/window_server/port.rs`): the windows and their frames, parents, levels, sub-levels,
 spaces, order, suitability and corners, the space lists, the depths, the window under the cursor and
-at a point, the key window and process, the listings and the name each window's owner goes by, and the two commands, `make_key_window` and
-`take_stack_place`. Whether a space is a user space is not a read of the port: `window_space` picks a
-window's home with the caller's classifier, the spaces actor's and the reactor's `SpaceKinds`, so a
-test states that fact once (`a_window_destroyed_on_its_user_space_while_also_on_a_login_space_is_destroyed_there`). A consumer holds an `Arc<dyn WindowServer>`, cloned to each thread that asks:
-production passes `window_server::live()`, which is `LiveWindowServer`, the SkyLight calls, and
-which panics in a test build (`a_test_build_never_takes_the_live_window_server`); a test
-passes a clone of an `Arc<FakeWindowServer>` (`platform/window_server/fake.rs`) and keeps the other
-to state answers (`set_window_ordered_in(id, Some(false))`, one `set_` per fact) and to read the
-commands it was given (`commands()`). A read the live window server answers from another read's
-answer is answered from the same stated fact, so a test cannot state a pair production never
-produces: stickiness from the spaces (`a_window_is_sticky_exactly_when_it_is_stated_on_more_than_one_space`),
-the level from the window's layer (`a_window_s_level_is_the_layer_it_was_stated_with`), the depths
-from the on-screen list (`the_depths_are_the_stated_on_screen_list_without_the_desktop`), the window
-under the cursor from the window at a point (`the_window_under_the_cursor_is_the_window_at_a_point`). A trait object rather than a struct of fn pointers like
-`SpaceKinds`, because the fake keeps what a test stated and what it was told, which a fn pointer
-cannot capture. The fake answers "unknown", `None` or an empty list, to every read nothing was
-stated for, and only records a command (`every_read_answers_unknown_with_no_setup`,
-`make_key_window_and_take_stack_place_only_record`): a negative answer retires a window, so a fake
-must never guess one. The rules over the answers take them as values (`domain/manageable.rs`,
-`domain/stack.rs`, `domain/home_space.rs`), so a rule's test needs no port at all.
+at a point, the key window and process, the listings and the name each window's owner goes by, and
+the two commands, `make_key_window` and `take_stack_place`. Whether a space is a user space is not a
+read of the port: `window_space` picks a window's home with the caller's classifier, the spaces
+actor's and the reactor's `SpaceKinds`, so a test states that fact once
+(`a_window_destroyed_on_its_user_space_while_also_on_a_login_space_is_destroyed_there`). A consumer
+holds an `Arc<dyn WindowServer>`, cloned to each thread that asks: production passes
+`window_server::live()`, which is `LiveWindowServer`, the SkyLight calls, and which panics in a test
+build (`a_test_build_never_takes_the_live_window_server`); a test passes a clone of an
+`Arc<FakeWindowServer>` (`platform/window_server/fake.rs`) and keeps the other to state answers
+(`set_window_ordered_in(id, Some(false))`, one `set_` per fact) and to read the commands it was
+given (`commands()`). A read the live window server answers from another read's answer is answered
+from the same stated fact, so a test cannot state a pair production never produces: stickiness from
+the spaces (`a_window_is_sticky_exactly_when_it_is_stated_on_more_than_one_space`), the level from
+the window's layer (`a_window_s_level_is_the_layer_it_was_stated_with`), the depths from the
+on-screen list (`the_depths_are_the_stated_on_screen_list_without_the_desktop`), the window under
+the cursor from the window at a point (`the_window_under_the_cursor_is_the_window_at_a_point`). A
+trait object rather than a struct of fn pointers like `SpaceKinds`, because the fake keeps what a
+test stated and what it was told, which a fn pointer cannot capture. The fake answers "unknown",
+`None` or an empty list, to every read nothing was stated for, and only records a command
+(`every_read_answers_unknown_with_no_setup`, `make_key_window_and_take_stack_place_only_record`): a
+negative answer retires a window, so a fake must never guess one. The rules over the answers take
+them as values (`domain/manageable.rs`, `domain/stack.rs`, `domain/home_space.rs`), so a rule's test
+needs no port at all.
 
 Every caller holds the port; `window_server` offers no free function of a read's or a command's
 name to call around it (`the_window_server_is_reached_only_through_its_port`). The reactor holds its

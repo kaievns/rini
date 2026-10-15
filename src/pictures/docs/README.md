@@ -66,15 +66,16 @@ engine, the reactor and the switcher each hold a `Pictures` handle.
 | hands over | `insert`, for the flight engine's one capture of its own, of a window that has just opened |
 
 Every read and capture the thread makes goes through the `Capturer` it was started with
-(`platform/capturer.rs`), so its rounds run in a test against `FakeCapturer`: a refresh that stops at a
-press asked mid-round (`a_refresh_makes_no_call_once_a_transition_is_asked_and_a_watch_round_makes_every_one`),
-what it leaves unseen (`a_window_whose_call_a_press_stopped_is_not_seen`), the calls a set is split
-into (`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`), no picture and the
-desktop's windows dropped after a misshapen call (`a_misshapen_batch_leaves_the_desktop_windows_to_be_listed_again`) and
-what a round reads once (`what_a_round_knows_is_read_once_and_only_once_a_window_is_wanted`). The
-handle's own captures, the desktop and the bar `dressing` composites on the caller's thread, do not
-go through it: they list the windows through the `WindowServer` port the caller hands `dressing`,
-the flight engine's own.
+(`platform/capturer.rs`), so its rounds run in a test against `FakeCapturer`: a refresh that stops
+at a press asked mid-round
+(`a_refresh_makes_no_call_once_a_transition_is_asked_and_a_watch_round_makes_every_one`), what it
+leaves unseen (`a_window_whose_call_a_press_stopped_is_not_seen`), the calls a set is split into
+(`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`), no picture and the
+desktop's windows dropped after a misshapen call
+(`a_misshapen_batch_leaves_the_desktop_windows_to_be_listed_again`) and what a round reads once
+(`what_a_round_knows_is_read_once_and_only_once_a_window_is_wanted`). The handle's own captures, the
+desktop and the bar `dressing` composites on the caller's thread, do not go through it: they list
+the windows through the `WindowServer` port the caller hands `dressing`, the flight engine's own.
 
 Asks, refreshes, watches, hints, holds and forgets are messages, applied in order on the thread, every
 one already queued before the next call is made, so the newest wins. Reads are not: they lock the shared state and
@@ -302,10 +303,10 @@ own id, and every flight and the switcher draw it by that id. Why: "The pictures
 
 ## Reading order
 
-`domain/coverage.rs` → `domain/cache.rs` → `domain/route.rs` → `platform/picture.rs` → `domain/region.rs` →
-`domain/knowledge.rs` → `domain/schedule.rs` → `domain/watch.rs` → `domain/refresh.rs` →
-`platform/service.rs` → `platform/capturer.rs` → `platform/skylight.rs` → `platform/measure.rs` →
-`platform/screencapturekit.rs`.
+`domain/coverage.rs` → `domain/cache.rs` → `domain/route.rs` → `platform/picture.rs` →
+`domain/region.rs` → `domain/knowledge.rs` → `domain/schedule.rs` → `domain/watch.rs` →
+`domain/refresh.rs` → `platform/service.rs` → `platform/capturer.rs` → `platform/skylight.rs` →
+`platform/measure.rs` → `platform/screencapturekit.rs`.
 
 ## Detail
 

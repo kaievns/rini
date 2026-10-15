@@ -47,11 +47,10 @@ the frames a bar draw puts, and `BarPanel::draw` still decides the order it puts
 
 Reach for the seam where the read is made; a rule below it takes the answers as values and needs
 none. Each boundary has one seam but the window server, which has more: `WindowServer`; the spaces
-actor's `LiveDisplays`
-(the active space, the menu-bar display, each display's spaces and the quiet clock) and
-`SpaceKinds` (each space's kind), beside the port; the pictures thread's `Capturer`, which makes
-its captures as well as its reads; and the flight engine's `Capture`, the one capture it takes
-itself, of a window that just opened, beside the `WindowServer` it reads.
+actor's `LiveDisplays` (the active space, the menu-bar display, each display's spaces and the quiet
+clock) and `SpaceKinds` (each space's kind), beside the port; the pictures thread's `Capturer`,
+which makes its captures as well as its reads; and the flight engine's `Capture`, the one capture it
+takes itself, of a window that just opened, beside the `WindowServer` it reads.
 
 | what the code asks | seam | production | a test passes |
 |---|---|---|---|
@@ -64,8 +63,8 @@ itself, of a window that just opened, beside the `WindowServer` it reads.
 | the window server and ScreenCaptureKit, from the pictures thread | `Capturer`, a type parameter (`src/pictures/platform/capturer.rs`) | `MacCapturer` | `FakeCapturer`, answering from the frames a test gives it and recording every call |
 | the screens, for `ScreenCache`: the displays, their uuids and scales, the main and the built-in display, the menu bar and the Dock, the space each display shows | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are, whose menu bar is hidden, Dock not shown and spaces unknown until stated |
 
-Every caller of the window server holds the port, and `window_server` offers no free function of
-a read's or a command's name to call around it (`the_window_server_is_reached_only_through_its_port`).
+Every caller of the window server holds the port, and `window_server` offers no free function of a
+read's or a command's name to call around it (`the_window_server_is_reached_only_through_its_port`).
 The reactor reads through its `SystemReads`, the flight engine through its `Parts`
 (`the_flight_engine_reads_the_window_server_only_through_its_port`), the app actor through its
 `AxWorld`'s `server()` (`the_app_actor_reaches_the_platform_only_through_its_world`), and the spaces
@@ -81,14 +80,15 @@ A test asks the window server through `FakeWindowServer`, handed to the code und
 `WindowServer` port. Every read of the fake answers "unknown" until the test states an answer
 (`every_read_answers_unknown_with_no_setup`), and a command is recorded, never carried out
 (`make_key_window_and_take_stack_place_only_record`), so no test reads the live window server or
-makes a real window key. The live port is out of a test's reach: `window_server::live()` panics in a test build and nothing outside
-`window_server` builds a `LiveWindowServer` (`a_test_build_never_takes_the_live_window_server`), so a
-test that builds a production reactor or actor through it fails rather than reading SkyLight. Before the port,
-`window_server.rs` answered from thread-local overrides under `cfg(test)`, and four of those fakes
-fell through to the real window server when no override was set, which made reactor tests depend
-on the windows the developer happened to have open; seven reads, `window_parent`, the stickiness
-check, the space type, `server_frame`, `key_focused_window`, `get_window_at_point` and the
-sub-level, had no test answer at all, and `make_key_window` was carried out.
+makes a real window key. The live port is out of a test's reach: `window_server::live()` panics in a
+test build and nothing outside `window_server` builds a `LiveWindowServer`
+(`a_test_build_never_takes_the_live_window_server`), so a test that builds a production reactor or
+actor through it fails rather than reading SkyLight. Before the port, `window_server.rs` answered
+from thread-local overrides under `cfg(test)`, and four of those fakes fell through to the real
+window server when no override was set, which made reactor tests depend on the windows the developer
+happened to have open; seven reads, `window_parent`, the stickiness check, the space type,
+`server_frame`, `key_focused_window`, `get_window_at_point` and the sub-level, had no test answer at
+all, and `make_key_window` was carried out.
 
 Two tests flapped on that, and which of the two failed changed through the day as
 windows opened and closed:
@@ -285,8 +285,8 @@ An allow over a whole crate or file, `#![allow]`, is one of these, held by
 
 The quality roadmap the ids come from is a plan kept outside the repo, so the row of every id an
 allow cites is copied here. `every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing` holds the
-table to the ids the allows cite, both ways, so a row goes with the last allow that cites it. Nothing
-else in the repo cites an id; a comment or a doc names the work in words
+table to the ids the allows cite, both ways, so a row goes with the last allow that cites it.
+Nothing else in the repo cites an id; a comment or a doc names the work in words
 (`a_roadmap_id_is_cited_only_in_an_allow_s_reason_or_docs_testing`):
 
 | Id | Task | Done when |
