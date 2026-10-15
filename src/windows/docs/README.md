@@ -77,7 +77,9 @@ them. Each call, which connection it takes and why, and the measurements: `windo
 (`platform/window_server/port.rs`): the windows and their frames, parents, levels, sub-levels,
 spaces, order, suitability and corners, the space lists, the depths, the window under the cursor and
 at a point, the key window and process, the listings, and the two commands, `make_key_window` and
-`take_stack_place`. A consumer holds an `Arc<dyn WindowServer>`, cloned to each thread that asks:
+`take_stack_place`. Whether a space is a user space is not a read of the port: `window_space` picks a
+window's home with the caller's classifier, the spaces actor's and the reactor's `SpaceKinds`, so a
+test states that fact once (`a_window_destroyed_on_its_user_space_while_also_on_a_login_space_is_destroyed_there`). A consumer holds an `Arc<dyn WindowServer>`, cloned to each thread that asks:
 production passes `window_server::live()`, which is `LiveWindowServer`, the SkyLight calls, and
 which panics in a test build (`a_test_build_never_takes_the_live_window_server`); a test
 passes a clone of an `Arc<FakeWindowServer>` (`platform/window_server/fake.rs`) and keeps the other

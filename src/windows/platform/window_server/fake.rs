@@ -38,7 +38,6 @@ struct Answers {
     parents: HashMap<WindowServerId, WindowServerId>,
     sub_levels: HashMap<WindowServerId, c_int>,
     spaces: HashMap<WindowServerId, Vec<SpaceId>>,
-    user_spaces: HashMap<SpaceId, bool>,
     ordered_in: HashMap<WindowServerId, bool>,
     suitable: HashMap<WindowServerId, bool>,
     space_lists: HashMap<u64, Vec<u32>>,
@@ -98,10 +97,6 @@ impl FakeWindowServer {
     /// The spaces `id` is on, which `window_is_sticky` counts; none is unknown.
     pub fn set_window_spaces(&self, id: WindowServerId, spaces: Vec<SpaceId>) -> &Self {
         self.stating(|a| state(&mut a.spaces, id, (!spaces.is_empty()).then_some(spaces)))
-    }
-
-    pub fn set_space_is_user(&self, space: SpaceId, user: Option<bool>) -> &Self {
-        self.stating(|a| state(&mut a.user_spaces, space, user))
     }
 
     pub fn set_window_ordered_in(&self, id: WindowServerId, ordered_in: Option<bool>) -> &Self {
@@ -192,10 +187,6 @@ impl WindowServer for FakeWindowServer {
 
     fn window_spaces(&self, id: WindowServerId) -> Vec<SpaceId> {
         self.answer(|a| a.spaces.get(&id).cloned().unwrap_or_default())
-    }
-
-    fn space_is_user(&self, space: SpaceId) -> Option<bool> {
-        self.answer(|a| a.user_spaces.get(&space).copied())
     }
 
     fn window_ordered_in(&self, id: WindowServerId) -> Option<bool> {
@@ -297,8 +288,7 @@ mod tests {
         assert_eq!(ws.window_level(window), None);
         assert_eq!(ws.window_sub_level(window), None);
         assert!(ws.window_spaces(window).is_empty());
-        assert_eq!(ws.space_is_user(space), None);
-        assert_eq!(ws.window_space(window), None);
+        assert_eq!(ws.window_space(window, &|_| true), None);
         assert_eq!(ws.window_ordered_in(window), None);
         assert_eq!(ws.app_window_suitability(window), None);
         assert!(ws.space_window_list_for_connection(&[space.get()]).is_empty());
@@ -370,18 +360,16 @@ mod tests {
     }
 
     #[test]
-    fn a_window_s_home_is_the_user_space_among_the_spaces_it_is_on() {
+    fn a_window_s_home_is_the_space_its_caller_calls_a_user_one() {
         let ws = FakeWindowServer::default();
         let (fullscreen, desktop) = (SpaceId::new(9), SpaceId::new(4));
         ws.set_window_spaces(id(5), vec![fullscreen, desktop]);
+        assert_eq!(ws.window_space(id(5), &|space| space == desktop), Some(desktop));
         assert_eq!(
-            ws.window_space(id(5)),
+            ws.window_space(id(5), &|_| false),
             Some(fullscreen),
-            "with no space known for a user one"
+            "with no user space among them, the first listed"
         );
-        ws.set_space_is_user(fullscreen, Some(false))
-            .set_space_is_user(desktop, Some(true));
-        assert_eq!(ws.window_space(id(5)), Some(desktop));
     }
 
     #[test]

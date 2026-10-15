@@ -180,7 +180,8 @@ impl SpaceAffinity<'_> {
         observation: Option<SpaceId>,
     ) -> Option<SpaceId> {
         let pending = self.pending_target_space_for_window_server_id(wsid);
-        let live = self.live_spaces.get(wsid, |id| self.window_server.window_space(id));
+        let is_user = |space| self.space_kinds.is_user(space);
+        let live = self.live_spaces.get(wsid, |id| self.window_server.window_space(id, &is_user));
         let prior = self.windows.window_server_space(wsid);
 
         let resolved = match (observation, pending) {

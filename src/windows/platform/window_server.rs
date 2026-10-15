@@ -650,10 +650,6 @@ impl WindowServer for LiveWindowServer {
             .collect()
     }
 
-    fn space_is_user(&self, space: SpaceId) -> Option<bool> {
-        Some(unsafe { SLSSpaceGetType(*G_CONNECTION, space.get()) } == 0)
-    }
-
     fn window_ordered_in(&self, id: WindowServerId) -> Option<bool> {
         let query = WindowIterator::new(&[id])?;
         if query.advance()?.window_id() != id.as_u32() {

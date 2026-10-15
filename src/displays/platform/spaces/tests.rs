@@ -214,6 +214,31 @@ fn confirmed_window_move_forwards_membership_without_space_switch() {
     assert_no_reactor_event(&mut reactor_rx);
 }
 
+/// The actor's own classifier picks a window's home among its spaces, so a window listed on a
+/// login space before the user space it was destroyed on has not moved.
+#[test]
+fn a_window_destroyed_on_its_user_space_while_also_on_a_login_space_is_destroyed_there() {
+    let (mut actor, mut wm_rx, mut reactor_rx) = build_actor_with_a_non_user_space();
+    let origin = SpaceId::new(11);
+    let wsid = WindowServerId::new(77);
+
+    actor.state.forwarded.screens = vec![make_screen(Some(origin))];
+    actor.state.last_sent_spaces = Some(vec![Some(origin)]);
+    actor.state.forwarded.visible_window_spaces.insert(wsid, origin);
+    actor
+        .hand_window_server()
+        .set_window_spaces(wsid, vec![SpaceId::new(NON_USER_SPACE), origin]);
+
+    actor.handle_event(Notification::WindowServerDestroyed(wsid, origin));
+
+    assert!(matches!(
+        recv_reactor(&mut reactor_rx),
+        OutEvent::WindowServerDestroyed(id, space, SpaceEventKind::User)
+            if id == wsid && space == origin
+    ));
+    assert_no_wm_event(&mut wm_rx);
+}
+
 #[test]
 fn active_space_changed_waits_for_confirmed_refresh() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();

@@ -42,8 +42,6 @@ pub trait WindowServer: Any + Send + Sync {
     fn window_sub_level(&self, id: WindowServerId) -> Option<c_int>;
     /// The spaces the window server places `id` on.
     fn window_spaces(&self, id: WindowServerId) -> Vec<SpaceId>;
-    /// Whether `space` is a user space, a Desktop, rather than a fullscreen or a system one.
-    fn space_is_user(&self, space: SpaceId) -> Option<bool>;
     /// Whether the window server has `id` ordered in.
     fn window_ordered_in(&self, id: WindowServerId) -> Option<bool>;
     /// Whether `id` is a top-level application window, a document or a floating one.
@@ -79,13 +77,14 @@ pub trait WindowServer: Any + Send + Sync {
         sub_level: Option<c_int>,
     );
 
-    /// The space `id` calls home (`home_space`).
-    fn window_space(&self, id: WindowServerId) -> Option<SpaceId> {
-        home_space(
-            self.window_spaces(id)
-                .into_iter()
-                .map(|space| (space, self.space_is_user(space))),
-        )
+    /// The space `id` calls home (`home_space`), `is_user` the caller's classifier, so whether a
+    /// space is a user space is stated in one place.
+    fn window_space(
+        &self,
+        id: WindowServerId,
+        is_user: &dyn Fn(SpaceId) -> bool,
+    ) -> Option<SpaceId> {
+        home_space(self.window_spaces(id).into_iter().map(|space| (space, is_user(space))))
     }
 
     /// The depth of every window on screen but the desktop's, 0 being frontmost.

@@ -314,7 +314,8 @@ impl SpacesActor {
             return;
         }
         self.state.forwarded.visible_window_spaces.remove(&wsid);
-        let current_space = self.window_server.window_space(wsid);
+        let kinds = self.state.space_kinds;
+        let current_space = self.window_server.window_space(wsid, &|space| kinds.is_user(space));
         let Some(kind) = self.state.space_kinds.classify(sid) else {
             return;
         };
@@ -434,7 +435,7 @@ impl SpacesActor {
         &self,
         screens: &[ScreenInfo],
     ) -> HashMap<WindowServerId, SpaceId> {
-        let ws = &self.window_server;
+        let (ws, kinds) = (&self.window_server, self.state.space_kinds);
         let listed: Vec<_> = active_spaces(screens)
             .into_iter()
             .map(|space| {
@@ -442,7 +443,7 @@ impl SpacesActor {
                 let homes = ids
                     .into_iter()
                     .map(WindowServerId::new)
-                    .map(|wsid| (wsid, ws.window_space(wsid)));
+                    .map(|wsid| (wsid, ws.window_space(wsid, &|space| kinds.is_user(space))));
                 (space, homes.collect())
             })
             .collect();
