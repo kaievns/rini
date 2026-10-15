@@ -134,7 +134,8 @@ enum Outcome {
 struct State<W: AxWorld> {
     pid: pid_t,
     bundle_id: Option<String>,
-    /// Everything this thread asks of Accessibility. Production installs `MacAx`; a test installs a
+    /// Everything this thread asks of the platform: Accessibility, the window server through
+    /// `server()`, the pointer state and Command-W. Production installs `MacAx`; a test installs a
     /// fake whose elements are plain numbers. See `platform/ax/world.rs`.
     ax: W,
     events_tx: Box<dyn EventSink>,
@@ -1569,8 +1570,7 @@ mod tests {
     use objc2_core_graphics::CGError;
 
     use super::*;
-    use crate::windows::platform::ax::world::FakeAx;
-    use crate::windows::platform::mouse::MouseState;
+    use crate::windows::platform::ax::world::{FakeAx, MouseState};
 
     /// Collects what the actor told the reactor.
     #[derive(Clone, Default)]

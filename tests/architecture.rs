@@ -369,8 +369,26 @@ fn the_tap_decides_a_key_event_only_through_the_key_router() {
 
 /// What the per-app thread would reach the platform through past its `AxWorld`. The world is what a
 /// test fakes, so a call past it reads the live window server or posts a real key event
-/// (src/windows/platform/ax/world.rs).
+/// (src/windows/platform/ax/world.rs). A test may set `FakeAx`'s fields of these names, but takes
+/// no path through either module: the types it needs come from the world too.
 const PAST_THE_WORLD: [&str; 2] = ["window_server", "mouse"];
+
+/// Whether `code` names a path through `module`, as `module::` with no identifier running into it.
+fn names_path_through(code: &str, module: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    code.match_indices(&format!("{module}::"))
+        .any(|(at, _)| !code[..at].ends_with(word))
+}
+
+#[test]
+fn a_path_through_a_module_is_named_only_whole() {
+    assert!(names_path_through(
+        "use crate::windows::platform::mouse::MouseState;",
+        "mouse"
+    ));
+    assert!(!names_path_through("let m = ax.mouse;", "mouse"));
+    assert!(!names_path_through("fake_window_server::new()", "window_server"));
+}
 
 #[test]
 fn the_app_actor_reaches_the_platform_only_through_its_world() {
@@ -381,6 +399,13 @@ fn the_app_actor_reaches_the_platform_only_through_its_world() {
         for name in PAST_THE_WORLD {
             if names_identifier(&code, name) {
                 broken.push(format!("{}:{line}: {name} in {}", slash(path), code.trim()));
+            }
+        }
+    }
+    for (line, code) in code_lines_in(&source) {
+        for name in PAST_THE_WORLD {
+            if names_path_through(&code, name) {
+                broken.push(format!("{}:{line}: {name}:: in {}", slash(path), code.trim()));
             }
         }
     }

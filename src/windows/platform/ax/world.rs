@@ -24,7 +24,8 @@ use super::element::{AXUIElement, Error as AxError};
 use super::enhanced_ui::EnhancedUi;
 use super::observer::Observer;
 use crate::windows::domain::info::{WindowInfo, WindowServerInfo};
-use crate::windows::platform::mouse::{self, MouseState};
+use crate::windows::platform::mouse;
+pub use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server::{self, WindowServer};
 
 /// One window or application, as the world in use names it.
