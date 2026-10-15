@@ -382,9 +382,9 @@ decoration. Each window of a stack is inset by its own, inside slots laid out as
 - **Limits are the slot's.** `column_limits` and each stacked row count the border on both sides of
   each limit a window reports (`tile::slot_limits`); counted without it, a window's minimum would
   leave the slot 2·border short, and the window would be clamped below its own minimum.
-- **Reports come back once, as slots.** `on_window_resized` reads the report and the drag's start
-  as slots on entry (`tile::slot_of`), so the dragged side, the dragged width, the ratio
-  (`constraints::ratio_of_column_width`, see "Mouse resize"), the heights
+- **Reports come back once, as slots.** `on_window_resized` reads the `ResizeReport`'s frame and
+  its drag's start as slots on entry (`tile::slot_of`), so the dragged side, the dragged width, the
+  ratio (`constraints::ratio_of_column_width`, see "Mouse resize"), the heights
   a stacked edge trades and the right edge a left-edge drag keeps are all a slot's, and a dragged
   column keeps its slot width whole: the window lands where it was let go. The reactor's
   `DragSession::start_frame` stays the window's frame.

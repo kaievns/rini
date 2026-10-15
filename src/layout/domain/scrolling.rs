@@ -818,6 +818,16 @@ fn rebased_offset(
     (gap != previous_gap && previous_rel.is_finite()).then_some(selected_start - previous_rel)
 }
 
+/// A window's report of its new frame, as `ScrollingLayoutSystem::on_window_resized` reads it: the
+/// `border` it wears, and the mouse `drag` that resized it, `None` for any other resize.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResizeReport {
+    pub window: WindowId,
+    pub drag: Option<Drag>,
+    pub frame: CGRect,
+    pub border: f64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ScrollingLayoutSystem {
     layouts: slotmap::SlotMap<LayoutId, LayoutState>,
@@ -1434,17 +1444,19 @@ impl ScrollingLayoutSystem {
     /// for any other resize: the app's own, or a window rule's size, and then an axis within a point
     /// of the slot the last pass gave the window is the app answering rini's write, which changes
     /// nothing. See "Mouse resize" in `src/layout/docs/strip.md`.
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     pub fn on_window_resized(
         &mut self,
         layout: LayoutId,
-        wid: WindowId,
-        drag: Option<Drag>,
-        new_frame: CGRect,
-        border: f64,
+        report: ResizeReport,
         screen: CGRect,
         gaps: &Gaps,
     ) {
+        let ResizeReport {
+            window: wid,
+            drag,
+            frame: new_frame,
+            border,
+        } = report;
         let drag = drag.map(|drag| Drag {
             from: tile::slot_of(drag.from, border),
             ..drag
@@ -1717,13 +1729,23 @@ mod tests {
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
 
-    use super::{Column, Pin, Place, ScrollingLayoutSystem, View, rebased_offset};
+    use super::{Column, Pin, Place, ResizeReport, ScrollingLayoutSystem, View, rebased_offset};
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::column_width::{ColumnWidth, GivenWidth};
     use crate::layout::domain::edge_drag::{Drag, End};
     use crate::layout::domain::tile;
     use crate::layout::settings::{CenterFocusedColumn, Gaps, ScrollingLayoutSettings};
     use crate::layout::{Direction, LayoutId, ResizeOrientation, WindowLayoutConstraints};
+
+    /// `window`'s app resizing it to `frame`, with no border and no drag.
+    fn resized(window: WindowId, frame: CGRect) -> ResizeReport {
+        ResizeReport {
+            window,
+            drag: None,
+            frame,
+            border: 0.0,
+        }
+    }
 
     fn wid(pid: pid_t, idx: u32) -> WindowId {
         WindowId {
@@ -2563,7 +2585,15 @@ mod tests {
         new_f1.size.height = f1_before.size.height + 100.0;
 
         let drag = Drag::report(f1_before, new_f1, None);
-        system.on_window_resized(layout, w1, Some(drag), new_f1, 0.0, screen, &gaps);
+        system.on_window_resized(
+            layout,
+            ResizeReport {
+                drag: Some(drag),
+                ..resized(w1, new_f1)
+            },
+            screen,
+            &gaps,
+        );
 
         // 3. Re-calculate layout and verify resized heights are preserved
         let frames_after = render(&mut system, layout, screen, &gaps);
@@ -2901,7 +2931,7 @@ mod tests {
             full.origin,
             CGSize::new(full.size.width - 6.0, full.size.height - 4.0),
         );
-        system.on_window_resized(layout, w1, None, settled, 0.0, screen, &gaps);
+        system.on_window_resized(layout, resized(w1, settled), screen, &gaps);
         assert_eq!(
             frame_for(&render(&mut system, layout, screen, &gaps), w1).size.width,
             full.size.width,
@@ -4102,7 +4132,7 @@ mod tests {
     /// The app sizing `wid` itself, then a pass.
     fn app_sizes(system: &mut ScrollingLayoutSystem, layout: LayoutId, wid: WindowId, width: f64) {
         assert!(system.select_window(layout, wid));
-        system.on_window_resized(layout, wid, None, xw(0.0, width), 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(layout, resized(wid, xw(0.0, width)), KAI_SCREEN, &kai_s_gaps());
         render(system, layout, KAI_SCREEN, &kai_s_gaps());
     }
 
@@ -4129,7 +4159,15 @@ mod tests {
         for &to in reports {
             let drag = Drag::report(from, to, end);
             end = drag.end;
-            system.on_window_resized(layout, wid, Some(drag), to, 0.0, KAI_SCREEN, &kai_s_gaps());
+            system.on_window_resized(
+                layout,
+                ResizeReport {
+                    drag: Some(drag),
+                    ..resized(wid, to)
+                },
+                KAI_SCREEN,
+                &kai_s_gaps(),
+            );
         }
     }
 
@@ -4242,10 +4280,7 @@ mod tests {
 
         system.on_window_resized(
             layout,
-            w[1],
-            None,
-            xw(39.0, 1440.0),
-            0.0,
+            resized(w[1], xw(39.0, 1440.0)),
             KAI_SCREEN,
             &kai_s_gaps(),
         );
@@ -4263,7 +4298,7 @@ mod tests {
         drag(&mut system, layout, w[1], from, to);
 
         let report = CGRect::new(from.origin, CGSize::new(1443.0, from.size.height));
-        system.on_window_resized(layout, w[1], None, report, 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(layout, resized(w[1], report), KAI_SCREEN, &kai_s_gaps());
         assert_eq!(laid_out_xw(&mut system, layout, w[1]).1, 1148.0);
     }
 
@@ -4366,10 +4401,7 @@ mod tests {
         assert_eq!(laid_out_xw(&mut system, layout, w[1]).1, 860.0, "a half");
         system.on_window_resized(
             layout,
-            w[1],
-            None,
-            xw(39.0, 1443.0),
-            0.0,
+            resized(w[1], xw(39.0, 1443.0)),
             KAI_SCREEN,
             &kai_s_gaps(),
         );
@@ -4479,7 +4511,7 @@ mod tests {
         let full = frame_for(&render(&mut system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
         let short = CGRect::new(full.origin, CGSize::new(1702.0, full.size.height));
 
-        system.on_window_resized(layout, w[1], None, short, 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(layout, resized(w[1], short), KAI_SCREEN, &kai_s_gaps());
         assert_eq!(laid_out_xw(&mut system, layout, w[1]), (3.0, 1722.0), "kept");
 
         system.cycle_preset_column_width(layout);
@@ -4557,7 +4589,12 @@ mod tests {
                 frame.origin,
                 CGSize::new(width.unwrap_or(frame.size.width), frame.size.height),
             );
-            system.on_window_resized(layout, w[1], None, frame, border, KAI_SCREEN, &kai_s_gaps());
+            system.on_window_resized(
+                layout,
+                ResizeReport { border, ..resized(w[1], frame) },
+                KAI_SCREEN,
+                &kai_s_gaps(),
+            );
         };
         let held = |system: &mut ScrollingLayoutSystem, layout, w: &[WindowId], how: &str| {
             assert_eq!(
@@ -4600,7 +4637,16 @@ mod tests {
         let from = frame_for(&frames, w[1]);
         let to = CGRect::new(from.origin, CGSize::new(1722.0 - 2.0 * border, from.size.height));
         let drag = Drag::report(from, to, None);
-        system.on_window_resized(layout, w[1], Some(drag), to, border, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(
+            layout,
+            ResizeReport {
+                drag: Some(drag),
+                border,
+                ..resized(w[1], to)
+            },
+            KAI_SCREEN,
+            &kai_s_gaps(),
+        );
         held(&mut system, layout, &w, "dragged across");
     }
 
@@ -4891,10 +4937,7 @@ mod tests {
         let (mut system, layout, w) = kai_s_strip();
         system.on_window_resized(
             layout,
-            w[1],
-            None,
-            xw(500.0, 982.0),
-            0.0,
+            resized(w[1], xw(500.0, 982.0)),
             KAI_SCREEN,
             &kai_s_gaps(),
         );
@@ -5098,7 +5141,7 @@ mod tests {
         drag(&mut system, layout, w[1], from, out);
 
         let grown = at_yh(&mut system, layout, w[1], 275.0, 568.0);
-        system.on_window_resized(layout, w[1], None, grown, 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(layout, resized(w[1], grown), KAI_SCREEN, &kai_s_gaps());
 
         let rows: Vec<(f64, f64)> =
             w.iter().map(|&id| laid_out_yh(&mut system, layout, id)).collect();
@@ -5635,7 +5678,7 @@ mod tests {
         for _ in 0..3 {
             let width = xw_in(&mod_r(&mut system, layout), w[1]).1;
             let report = CGRect::new(CGPoint::new(0.0, 3.0), CGSize::new(width, 1061.0));
-            system.on_window_resized(layout, w[1], None, report, 0.0, KAI_SCREEN, &kai_s_gaps());
+            system.on_window_resized(layout, resized(w[1], report), KAI_SCREEN, &kai_s_gaps());
             kai_s_frames(&mut system, layout);
             assert!(kept_place(&system, layout).is_some(), "{width}");
         }
@@ -6688,7 +6731,7 @@ mod tests {
             (frame.size.height - short.1).max(own.min_height),
         );
         let report = CGRect::new(frame.origin, size);
-        system.on_window_resized(layout, window, None, report, 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(layout, resized(window, report), KAI_SCREEN, &kai_s_gaps());
         kai_s_frames_under(system, layout, limits);
     }
 
@@ -6924,10 +6967,11 @@ mod tests {
             let drag = Drag::report(from, to, None);
             system.on_window_resized(
                 layout,
-                wid,
-                Some(drag),
-                to,
-                BORDER,
+                ResizeReport {
+                    drag: Some(drag),
+                    border: BORDER,
+                    ..resized(wid, to)
+                },
                 KAI_SCREEN,
                 &kai_s_gaps(),
             );
@@ -6955,19 +6999,16 @@ mod tests {
             let (mut with_border, other, _) = kai_s_strip();
             plain.on_window_resized(
                 layout,
-                w[1],
-                None,
-                xw(600.0, 700.0),
-                0.0,
+                resized(w[1], xw(600.0, 700.0)),
                 KAI_SCREEN,
                 &kai_s_gaps(),
             );
             with_border.on_window_resized(
                 other,
-                w[1],
-                None,
-                window_xw(604.0, 692.0),
-                BORDER,
+                ResizeReport {
+                    border: BORDER,
+                    ..resized(w[1], window_xw(604.0, 692.0))
+                },
                 KAI_SCREEN,
                 &kai_s_gaps(),
             );
@@ -7035,10 +7076,11 @@ mod tests {
             let drag = Drag::report(reported(from), reported(to), None);
             with_border.on_window_resized(
                 other,
-                w[1],
-                Some(drag),
-                reported(to),
-                BORDER,
+                ResizeReport {
+                    drag: Some(drag),
+                    border: BORDER,
+                    ..resized(w[1], reported(to))
+                },
                 KAI_SCREEN,
                 &kai_s_gaps(),
             );

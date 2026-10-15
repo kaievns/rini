@@ -6,6 +6,7 @@ use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
+use crate::layout::domain::scrolling::ResizeReport;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, RuleState, WindowRuleContext};
 use crate::workspaces::domain::app_rules::{
@@ -251,10 +252,12 @@ impl LayoutEngine {
         let _ = tree.select_window(layout, resize.window);
         tree.on_window_resized(
             layout,
-            resize.window,
-            None,
-            new_frame,
-            border,
+            ResizeReport {
+                window: resize.window,
+                drag: None,
+                frame: new_frame,
+                border,
+            },
             screen_frame,
             &gaps,
         );

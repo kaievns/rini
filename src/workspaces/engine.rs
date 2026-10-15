@@ -7,6 +7,7 @@ use tracing::{debug, warn};
 use super::{Direction, FloatingManager, LayoutId, ScrollingLayoutSystem, WorkspaceLayouts};
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::edge_drag::Drag;
+use crate::layout::domain::scrolling::ResizeReport;
 use crate::layout::domain::tile::Borders;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
@@ -608,10 +609,12 @@ impl LayoutEngine {
             let border = self.borders.of(wid);
             self.workspace_tree_mut(ws_id).on_window_resized(
                 layout,
-                wid,
-                drag,
-                new_frame,
-                border,
+                ResizeReport {
+                    window: wid,
+                    drag,
+                    frame: new_frame,
+                    border,
+                },
                 screen_frame,
                 &gaps,
             );
