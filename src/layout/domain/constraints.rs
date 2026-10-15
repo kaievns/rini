@@ -261,6 +261,32 @@ pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
         }
     }
 
+    let remaining = grow(growable, &weights, &mins, &maxs, &mut lengths, remaining);
+
+    if remaining <= f64::EPSILON {
+        let used: f64 = lengths.iter().sum();
+        let drift = usable - used;
+        if drift.abs() > f64::EPSILON
+            && let Some(idx) = (0..n).rfind(|&idx| lengths[idx] > 0.0)
+        {
+            lengths[idx] = (lengths[idx] + drift).max(0.0);
+        }
+    }
+
+    lengths
+}
+
+/// Shares `remaining` among the `growable` segments by weight, equally when no weight is positive.
+/// A segment whose share falls outside its bounds takes its bound, and the others share again what
+/// is left. Returns what no segment could take.
+fn grow(
+    mut growable: Vec<usize>,
+    weights: &[f64],
+    mins: &[f64],
+    maxs: &[Option<f64>],
+    lengths: &mut [f64],
+    mut remaining: f64,
+) -> f64 {
     while !growable.is_empty() && remaining > f64::EPSILON {
         let total_weight: f64 = growable.iter().map(|&idx| weights[idx]).sum();
         let use_equal_weights = total_weight <= f64::EPSILON;
@@ -299,23 +325,12 @@ pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
         remaining = (remaining - clamped_sum).max(0.0);
         growable.retain(|idx| !clamped.contains(idx));
     }
-
-    if remaining <= f64::EPSILON {
-        let used: f64 = lengths.iter().sum();
-        let drift = usable - used;
-        if drift.abs() > f64::EPSILON
-            && let Some(idx) = (0..n).rfind(|&idx| lengths[idx] > 0.0)
-        {
-            lengths[idx] = (lengths[idx] + drift).max(0.0);
-        }
-    }
-
-    lengths
+    remaining
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AxisConstraints, ColumnKind, column_ratio, solve_axis_lengths};
+    use super::{AxisConstraints, ColumnKind, column_ratio, grow, solve_axis_lengths};
 
     /// The bounds the shipped config uses, where the maximum is deliberately well below 1.0.
     const MIN: f64 = 0.33333;
@@ -482,6 +497,46 @@ mod tests {
         assert_eq!(solved.len(), 2);
         assert!((solved[0] - 600.0).abs() < 0.001);
         assert!((solved[1] - 600.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn segments_with_no_weight_grow_equally() {
+        let mut lengths = vec![0.0; 2];
+        let left = grow(
+            vec![0, 1],
+            &[0.0, 0.0],
+            &[0.0, 0.0],
+            &[None, None],
+            &mut lengths,
+            800.0,
+        );
+        assert_eq!(lengths, vec![400.0, 400.0]);
+        assert_eq!(left, 0.0);
+    }
+
+    #[test]
+    fn a_capped_segment_takes_its_maximum_and_the_others_share_the_rest() {
+        let mut lengths = vec![0.0; 3];
+        let maxs = [Some(100.0), None, None];
+        let left = grow(
+            vec![0, 1, 2],
+            &[1.0, 1.0, 3.0],
+            &[0.0; 3],
+            &maxs,
+            &mut lengths,
+            900.0,
+        );
+        assert_eq!(lengths, vec![100.0, 200.0, 600.0]);
+        assert_eq!(left, 0.0);
+    }
+
+    #[test]
+    fn what_no_capped_segment_takes_is_left_over() {
+        let mut lengths = vec![0.0; 2];
+        let maxs = [Some(100.0), Some(200.0)];
+        let left = grow(vec![0, 1], &[1.0, 1.0], &[0.0; 2], &maxs, &mut lengths, 900.0);
+        assert_eq!(lengths, vec![100.0, 200.0]);
+        assert_eq!(left, 600.0);
     }
 }
 
