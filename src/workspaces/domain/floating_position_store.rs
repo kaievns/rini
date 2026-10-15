@@ -22,7 +22,7 @@ impl FloatingPositionStore {
         for (&(_, workspace, window), frame) in &self.positions {
             // A workspace exists on every display, so a floating frame under any native
             // space is legitimate.
-            if !workspaces.workspaces.contains_key(workspace) {
+            if !workspaces.contains_workspace(workspace) {
                 return Err(format!(
                     "floating frame for window {window:?} references missing workspace {workspace:?}"
                 ));

@@ -17,16 +17,23 @@ new_key_type! {
     pub struct VirtualWorkspaceId;
 }
 
-impl std::fmt::Display for VirtualWorkspaceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let dbg = format!("{:?}", self);
-        let digits: String = dbg.chars().filter(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = digits.parse::<u64>() {
-            write!(f, "{:08}", n)
-        } else {
-            write!(f, "{}", dbg)
-        }
-    }
+/// The workspace a display shows, and the one it showed before, which a switch back returns to. A
+/// file holds it as the pair `(previous, current)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ShownPair", into = "ShownPair")]
+struct ShownWorkspace {
+    previous: Option<VirtualWorkspaceId>,
+    current: VirtualWorkspaceId,
+}
+
+type ShownPair = (Option<VirtualWorkspaceId>, VirtualWorkspaceId);
+
+impl From<ShownPair> for ShownWorkspace {
+    fn from((previous, current): ShownPair) -> Self { Self { previous, current } }
+}
+
+impl From<ShownWorkspace> for ShownPair {
+    fn from(shown: ShownWorkspace) -> Self { (shown.previous, shown.current) }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,11 +51,11 @@ pub enum WorkspaceError {
 /// workspace.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VirtualWorkspace {
-    pub name: String,
+    name: String,
     /// Focused window per display: a workspace owns one strip per display.
     last_focused: HashMap<SpaceId, WindowId>,
     #[serde(default = "default_layout_system_kind")]
-    pub layout_system: ScrollingLayoutSystem,
+    layout_system: ScrollingLayoutSystem,
 }
 
 fn default_layout_system_kind() -> ScrollingLayoutSystem {
@@ -63,6 +70,10 @@ impl VirtualWorkspace {
             layout_system: Self::create_layout_system(settings),
         }
     }
+
+    pub fn name(&self) -> &str { &self.name }
+
+    pub fn layout_system(&self) -> &ScrollingLayoutSystem { &self.layout_system }
 
     pub fn create_layout_system(settings: &LayoutSettings) -> ScrollingLayoutSystem {
         crate::layout::ScrollingLayoutSystem::new(&settings.scrolling)
@@ -115,12 +126,11 @@ impl VirtualWorkspace {
 /// duplicated membership from surviving topology churn or discovery refreshes.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkspaceStore {
-    pub workspaces: SlotMap<VirtualWorkspaceId, VirtualWorkspace>,
+    workspaces: SlotMap<VirtualWorkspaceId, VirtualWorkspace>,
     /// The workspace list, shared by every display; which one a display shows is
     /// `active_workspace_per_space`. See "One workspace list" in `src/workspaces/docs/workspaces-and-displays.md`.
     workspace_order: Vec<VirtualWorkspaceId>,
-    pub active_workspace_per_space:
-        HashMap<SpaceId, (Option<VirtualWorkspaceId>, VirtualWorkspaceId)>,
+    active_workspace_per_space: HashMap<SpaceId, ShownWorkspace>,
     #[serde(skip)]
     max_workspaces: usize,
     #[serde(skip)]
@@ -128,7 +138,7 @@ pub struct WorkspaceStore {
     #[serde(skip)]
     default_workspace: usize,
     #[serde(skip)]
-    pub layout_settings: LayoutSettings,
+    layout_settings: LayoutSettings,
 }
 
 impl Default for WorkspaceStore {
@@ -210,7 +220,10 @@ impl WorkspaceStore {
         if !self.active_workspace_per_space.contains_key(&space) {
             let default_idx = self.default_workspace.min(self.workspace_order.len() - 1);
             if let Some(&default_id) = self.workspace_order.get(default_idx) {
-                self.active_workspace_per_space.insert(space, (None, default_id));
+                self.active_workspace_per_space.insert(space, ShownWorkspace {
+                    previous: None,
+                    current: default_id,
+                });
             }
         }
     }
@@ -248,8 +261,8 @@ impl WorkspaceStore {
             }
         }
 
-        for (space, &(previous, active)) in &self.active_workspace_per_space {
-            if !self.workspace_order.contains(&active) {
+        for (space, &ShownWorkspace { previous, current }) in &self.active_workspace_per_space {
+            if !self.workspace_order.contains(&current) {
                 return Err(format!(
                     "native space {} is showing a workspace that does not exist",
                     space.get()
@@ -299,11 +312,11 @@ impl WorkspaceStore {
     }
 
     pub fn last_workspace(&self, space: SpaceId) -> Option<VirtualWorkspaceId> {
-        self.active_workspace_per_space.get(&space)?.0
+        self.active_workspace_per_space.get(&space)?.previous
     }
 
     pub fn active_workspace(&self, space: SpaceId) -> Option<VirtualWorkspaceId> {
-        self.active_workspace_per_space.get(&space).map(|tuple| tuple.1)
+        self.active_workspace_per_space.get(&space).map(|shown| shown.current)
     }
 
     pub fn active_workspace_idx(&self, space: SpaceId) -> Option<u64> {
@@ -321,13 +334,16 @@ impl WorkspaceStore {
         workspace_id: VirtualWorkspaceId,
     ) -> bool {
         trace_misc("set_active_workspace", || {
-            let active = self.active_workspace_per_space.get(&space).map(|tuple| tuple.1);
+            let previous = self.active_workspace(space);
 
             // No "does this workspace belong to this display" check any more: every
             // workspace exists on every display.
 
             if self.workspaces.contains_key(workspace_id) {
-                self.active_workspace_per_space.insert(space, (active, workspace_id));
+                self.active_workspace_per_space.insert(space, ShownWorkspace {
+                    previous,
+                    current: workspace_id,
+                });
                 true
             } else {
                 error!(
@@ -572,6 +588,37 @@ impl WorkspaceStore {
     pub fn workspace_info(&self, workspace_id: VirtualWorkspaceId) -> Option<&VirtualWorkspace> {
         self.workspaces.get(workspace_id)
     }
+
+    pub fn contains_workspace(&self, workspace_id: VirtualWorkspaceId) -> bool {
+        self.workspaces.contains_key(workspace_id)
+    }
+
+    pub fn workspace_count(&self) -> usize { self.workspaces.len() }
+
+    /// `workspace_id`'s strips. Panics when there is no such workspace, as indexing does.
+    pub fn layout_system(&self, workspace_id: VirtualWorkspaceId) -> &ScrollingLayoutSystem {
+        &self.workspaces[workspace_id].layout_system
+    }
+
+    /// `workspace_id`'s strips, to change. Panics when there is no such workspace, as indexing does.
+    pub fn layout_system_mut(
+        &mut self,
+        workspace_id: VirtualWorkspaceId,
+    ) -> &mut ScrollingLayoutSystem {
+        &mut self.workspaces[workspace_id].layout_system
+    }
+
+    /// Every workspace's strips, to change, by workspace.
+    pub fn layout_systems_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (VirtualWorkspaceId, &mut ScrollingLayoutSystem)> {
+        self.workspaces
+            .iter_mut()
+            .map(|(id, workspace)| (id, &mut workspace.layout_system))
+    }
+
+    #[cfg(test)]
+    pub fn forget_every_workspace(&mut self) { self.workspaces.clear(); }
 
     pub fn transfer_window_identity(&mut self, from: WindowId, to: WindowId) {
         if from == to {
@@ -1031,6 +1078,52 @@ mod tests {
         assert_eq!(store.rule_workspace(space, Some(&rule), None), Ok(web));
     }
 
+    /// A display starts on the default with nothing before it, and each switch makes what it showed
+    /// the one before; a workspace that does not exist changes neither.
+    #[test]
+    fn a_switch_makes_the_shown_workspace_the_one_before() {
+        let mut store = WorkspaceStore::new();
+        let space = SpaceId::new(1);
+        let ids: Vec<_> = store.list_workspaces(space).into_iter().map(|(id, _)| id).collect();
+        let shown =
+            |store: &WorkspaceStore| (store.last_workspace(space), store.active_workspace(space));
+        assert_eq!(shown(&store), (None, Some(ids[0])));
+
+        let steps = [
+            (ids[1], true, (Some(ids[0]), Some(ids[1]))),
+            (ids[2], true, (Some(ids[1]), Some(ids[2]))),
+            (ids[2], true, (Some(ids[2]), Some(ids[2]))),
+            (
+                VirtualWorkspaceId::default(),
+                false,
+                (Some(ids[2]), Some(ids[2])),
+            ),
+        ];
+        for (to, switched, after) in steps {
+            assert_eq!(store.set_active_workspace(space, to), switched, "{to:?}");
+            assert_eq!(shown(&store), after, "{to:?}");
+        }
+    }
+
+    /// A file holds what a display shows as the pair `(previous, current)`.
+    #[test]
+    fn what_a_display_shows_is_written_as_the_pair_before_and_now() {
+        let mut store = WorkspaceStore::new();
+        let space = SpaceId::new(1);
+        let ids: Vec<_> = store.list_workspaces(space).into_iter().map(|(id, _)| id).collect();
+        assert!(store.set_active_workspace(space, ids[1]));
+        let written = ron::ser::to_string(&store).unwrap();
+        assert!(
+            written.contains(
+                "active_workspace_per_space:{(1):(Some((idx:1,version:1)),(idx:2,version:1))}"
+            ),
+            "{written}"
+        );
+        let read: WorkspaceStore = ron::from_str(&written).unwrap();
+        assert_eq!(read.last_workspace(space), Some(ids[0]));
+        assert_eq!(read.active_workspace(space), Some(ids[1]));
+    }
+
     #[test]
     fn a_reload_that_declares_one_more_workspace_adds_it_and_nothing_else() {
         let settings = |names: &[&str]| VirtualWorkspaceSettings {
@@ -1064,7 +1157,7 @@ mod tests {
 
         let (ws_id, name) = workspaces[1].clone();
         assert_eq!(name, "Test Workspace");
-        assert_eq!(manager.workspace_info(ws_id).unwrap().name, "Test Workspace");
+        assert_eq!(manager.workspace_info(ws_id).unwrap().name(), "Test Workspace");
     }
 
     #[test]

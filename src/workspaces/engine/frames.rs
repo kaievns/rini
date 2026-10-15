@@ -313,7 +313,7 @@ impl LayoutEngine {
         gaps: &Gaps,
     ) -> Vec<(WindowId, CGRect)> {
         let constraints = &self.window_layout_constraints;
-        let system = &mut self.virtual_workspace_manager.workspaces[ws_id].layout_system;
+        let system = self.virtual_workspace_manager.layout_system_mut(ws_id);
         system.calculate_layout(layout, screen, constraints, &self.borders, gaps)
     }
 }

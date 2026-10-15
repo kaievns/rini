@@ -449,16 +449,14 @@ impl LayoutEngine {
         // The store may already have dropped the record (for example after
         // WindowDestroyed). Layout membership is only a projection, so scrub
         // every tree when its authoritative assignment is unavailable.
-        let ws_ids: Vec<_> = self.virtual_workspace_manager.workspaces.keys().collect();
-        for ws_id in ws_ids {
-            self.workspace_tree_mut(ws_id).remove_window(wid);
+        for (_, system) in self.virtual_workspace_manager.layout_systems_mut() {
+            system.remove_window(wid);
         }
     }
 
     pub(super) fn remove_window_from_all_tiling_trees(&mut self, wid: WindowId) {
-        let ws_ids: Vec<_> = self.virtual_workspace_manager.workspaces.keys().collect();
-        for ws_id in ws_ids {
-            self.workspace_tree_mut(ws_id).remove_window(wid);
+        for (_, system) in self.virtual_workspace_manager.layout_systems_mut() {
+            system.remove_window(wid);
         }
     }
 

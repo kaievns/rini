@@ -162,8 +162,8 @@ impl LayoutEngine {
         };
         let layout = self.workspace_layouts.active(space, workspace_id)?;
         let workspace = self.virtual_workspace_manager.workspace_info(workspace_id)?;
-        let selected_window = workspace.layout_system.selected_window(layout);
-        let container_tree = workspace.layout_system.container_tree(layout);
+        let selected_window = workspace.layout_system().selected_window(layout);
+        let container_tree = workspace.layout_system().container_tree(layout);
 
         Some(WorkspaceLayoutQuerySnapshot {
             workspace_id,
@@ -181,12 +181,12 @@ impl LayoutEngine {
 
     /// Get mutable access to a workspace's layout system.
     fn workspace_tree_mut(&mut self, ws_id: VirtualWorkspaceId) -> &mut ScrollingLayoutSystem {
-        &mut self.virtual_workspace_manager.workspaces[ws_id].layout_system
+        self.virtual_workspace_manager.layout_system_mut(ws_id)
     }
 
     /// Get immutable access to a workspace's layout system.
     fn workspace_tree(&self, ws_id: VirtualWorkspaceId) -> &ScrollingLayoutSystem {
-        &self.virtual_workspace_manager.workspaces[ws_id].layout_system
+        self.virtual_workspace_manager.layout_system(ws_id)
     }
 
     /// Get the active workspace and layout for a space.
@@ -199,7 +199,7 @@ impl LayoutEngine {
     /// Every workspace laid out on `space` at `size`, each keeping a layout per size it has had.
     fn expose_layouts(&mut self, space: SpaceId, size: CGSize) {
         for (id, _) in self.virtual_workspace_manager_mut().list_workspaces(space) {
-            let tree = &mut self.virtual_workspace_manager.workspaces[id].layout_system;
+            let tree = self.virtual_workspace_manager.layout_system_mut(id);
             self.workspace_layouts.ensure_active_for_workspace(space, size, id, tree);
         }
     }
@@ -231,8 +231,8 @@ impl LayoutEngine {
     pub fn set_layout_settings(&mut self, settings: &LayoutSettings) {
         self.layout_settings = settings.clone();
 
-        for (_, ws) in self.virtual_workspace_manager.workspaces.iter_mut() {
-            ws.layout_system.update_settings(&settings.scrolling);
+        for (_, system) in self.virtual_workspace_manager.layout_systems_mut() {
+            system.update_settings(&settings.scrolling);
         }
     }
 
@@ -544,8 +544,8 @@ impl LayoutEngine {
         memory: &mut DisplayMemory,
         pid: pid_t,
     ) {
-        for (_, ws) in self.virtual_workspace_manager.workspaces.iter_mut() {
-            ws.layout_system.remove_windows_for_app(pid);
+        for (_, system) in self.virtual_workspace_manager.layout_systems_mut() {
+            system.remove_windows_for_app(pid);
         }
         self.floating.remove_all_for_pid(pid);
         self.window_layout_constraints.retain(|wid, _| wid.pid != pid);
@@ -807,7 +807,7 @@ impl LayoutEngine {
     ) -> Option<String> {
         self.virtual_workspace_manager
             .workspace_info(workspace_id)
-            .map(|ws| ws.name.clone())
+            .map(|ws| ws.name().to_owned())
     }
 
     pub fn windows_in_active_workspace(
@@ -880,8 +880,8 @@ impl LayoutEngine {
         // is matched. Remove that projection before replacement; LayoutSystem::replace_window is
         // not required to deduplicate and otherwise the same window can survive in two workspaces.
         self.remove_window_from_all_tiling_trees(to);
-        for (_, workspace) in self.virtual_workspace_manager.workspaces.iter_mut() {
-            workspace.layout_system.replace_window(from, to);
+        for (_, system) in self.virtual_workspace_manager.layout_systems_mut() {
+            system.replace_window(from, to);
         }
         self.virtual_workspace_manager.transfer_window_identity(from, to);
         self.floating_positions.transfer_window_identity(from, to);
@@ -1867,7 +1867,7 @@ mod tests {
         fx.engine
             .virtual_workspace_manager
             .update_settings(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
-        fx.engine.virtual_workspace_manager.workspaces.clear();
+        fx.engine.virtual_workspace_manager.forget_every_workspace();
         fx.memory.affinity.set_display_space("display-a", space);
         fx.engine.floating.add_floating(wid);
 

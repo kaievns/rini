@@ -160,17 +160,13 @@ impl LayoutEngine {
         window: WindowId,
         keep: (SpaceId, VirtualWorkspaceId),
     ) {
-        let workspace_ids: Vec<_> = self.virtual_workspace_manager.workspaces.keys().collect();
-        for workspace in workspace_ids {
-            let Some(entry) = self.virtual_workspace_manager.workspaces.get_mut(workspace) else {
-                continue;
-            };
+        for (workspace, system) in self.virtual_workspace_manager.layout_systems_mut() {
             // A workspace's layout system holds one strip per display, so "keep" identifies
             // a workspace, not a (space, workspace) pair. Removing from every OTHER workspace
             // is still right; removing the other displays' strips of the SAME workspace is
             // not, and would delete the window from the display it legitimately sits on.
             if workspace != keep.1 {
-                entry.layout_system.remove_window(window);
+                system.remove_window(window);
             }
         }
     }
