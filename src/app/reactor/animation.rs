@@ -246,7 +246,7 @@ impl AnimationManager {
                 look: crate::animation::domain::choreography::Look::default(),
                 cause: reactor.cause,
             };
-            if reactor.send_flight(Some(space), flight) {
+            if reactor.send_flight(space, flight) {
                 trace!(count, "handed the layout to the overlay animation engine");
             }
         }

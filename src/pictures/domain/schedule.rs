@@ -29,9 +29,8 @@ pub enum Priority {
     Repaint,
     /// A focus target ending clipped by the display's edge, which SkyLight cannot picture whole.
     Focus,
-    /// Every window on the display, after a display change or on the debug command; and a window
-    /// refreshed at rest that the window server does not have wholly on the display, or that SkyLight
-    /// never captured, whose turned look keeps the size the cache holds it at.
+    /// A window refreshed at rest that the window server does not have wholly on the display, or that
+    /// SkyLight never captured, whose turned look keeps the size the cache holds it at.
     Background,
     /// Windows named for a later transition or the switcher: skipped where the picture held fits and is
     /// fresh.

@@ -3663,7 +3663,7 @@ impl Reactor {
             look,
         );
 
-        self.send_flight(Some(space), crate::transitions::platform::engine::Event::AnimateSurface {
+        self.send_flight(space, crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -3769,7 +3769,7 @@ impl Reactor {
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         tracing::debug!(?direction, windows = windows.len(), "edge bounce");
-        self.send_flight(Some(space), crate::transitions::platform::engine::Event::Bounce {
+        self.send_flight(space, crate::transitions::platform::engine::Event::Bounce {
             windows,
             overshoot,
             final_frames: layout
@@ -3939,7 +3939,7 @@ impl Reactor {
             );
         }
 
-        self.send_flight(Some(space), crate::transitions::platform::engine::Event::AnimateSurface {
+        self.send_flight(space, crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -4040,16 +4040,15 @@ impl Reactor {
         self.publish_animation_display_for(None);
     }
 
-    /// Hands the flight engine `event`, a flight over the display holding `space` (`None` for no
-    /// particular one), told first which display that is, and notes the display and the press for
-    /// the rest windows, which hold what the flight changes from now (`publish_rest`). Whether the engine
-    /// runs to take it.
+    /// Hands the flight engine `event`, a flight over the display holding `space`, told first which
+    /// display that is, and notes the display and the press for the rest windows, which hold what the
+    /// flight changes from now (`publish_rest`). Whether the engine runs to take it.
     pub(super) fn send_flight(
         &mut self,
-        space: Option<SpaceId>,
+        space: SpaceId,
         event: crate::transitions::platform::engine::Event,
     ) -> bool {
-        let display = self.publish_animation_display_for(space);
+        let display = self.publish_animation_display_for(Some(space));
         let Some(tx) = &self.communication_manager.transitions_tx else { return false };
         let pressed = event.pressed();
         _ = tx.send(event);
@@ -4076,8 +4075,8 @@ impl Reactor {
     /// There is one overlay, so it has to sit on the display whose windows are about to move. Choosing the
     /// ACTIVE display instead put a built-in workspace switch on the external screen whenever the cursor
     /// was over there: the external showed the built-in's windows sliding while the built-in's own windows
-    /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
-    /// have no particular display in mind. The display's bounds, as the overlay covers them.
+    /// snapped with no animation. `space` is `None` only for a config reload, which has no particular
+    /// display in mind. The display's bounds, as the overlay covers them.
     pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) -> Option<ScreenRect> {
         let wanted = space.or_else(|| self.active_display_space());
         let screen = self
