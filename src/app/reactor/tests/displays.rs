@@ -1054,6 +1054,51 @@ fn display_churn_snapshot_ack_triggers_visible_window_refresh() {
 }
 
 #[test]
+fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    let focused = WindowId::new(1, 2);
+
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(2));
+    reactor.set_test_focus(focused);
+    let layout = test_layout(&mut reactor, space, screen);
+    apps.requests();
+
+    reactor.handle_event(Event::DisplayChurnBegin);
+    assert!(reactor.refresh_quarantine_manager.display_churn_active);
+    assert_eq!(reactor.refresh_quarantine_state(), RefreshQuarantineState::DisplayChurn);
+
+    reactor.handle_event(Event::SessionDidResignActive);
+    assert!(reactor.refresh_quarantine_manager.session_inactive);
+    assert!(!reactor.refresh_quarantine_manager.awaiting_post_session_snapshot);
+    assert_eq!(reactor.refresh_quarantine_state(), RefreshQuarantineState::SessionInactive);
+
+    reactor.handle_event(Event::SystemWillSleep);
+    assert!(reactor.refresh_quarantine_manager.sleeping);
+    assert!(!reactor.refresh_quarantine_manager.awaiting_post_wake_snapshot);
+    assert_eq!(reactor.refresh_quarantine_state(), RefreshQuarantineState::Sleeping);
+
+    reactor.handle_event(Event::SystemWoke);
+    assert!(reactor.refresh_quarantine_manager.sleeping);
+    assert!(reactor.refresh_quarantine_manager.awaiting_post_wake_snapshot);
+    assert!(reactor.refresh_quarantine_manager.pending_visible_refresh);
+
+    reactor.refresh_quarantine_manager.pending_visible_refresh = false;
+    reactor.handle_event(Event::SessionDidBecomeActive);
+    assert!(reactor.refresh_quarantine_manager.session_inactive);
+    assert!(reactor.refresh_quarantine_manager.awaiting_post_session_snapshot);
+    assert!(reactor.refresh_quarantine_manager.pending_visible_refresh);
+
+    assert_eq!(reactor.main_window_tracker.key_window(), Some(focused));
+    assert_eq!(test_layout(&mut reactor, space, screen), layout);
+    assert!(
+        !apps.requests().iter().any(|request| matches!(request, Request::Raise(..))),
+        "a quarantine event is not a focus edge, so nothing is raised"
+    );
+}
+
+#[test]
 fn display_churn_end_refresh_is_idempotent_without_topology_change() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));

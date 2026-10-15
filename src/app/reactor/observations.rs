@@ -35,56 +35,52 @@ use super::events::drag as interaction_workflow;
 use super::events::space as topology_workflow;
 use super::events::system as system_workflow;
 use super::events::window as window_workflow;
-use super::{Event, Reactor};
+use super::Reactor;
 
+/// The five events that move the refresh quarantine: sleep, wake, session activation and display
+/// churn. Wake also has the bars read the clock again. None of them is a focus edge, so focus
+/// tracking passes them by.
 impl Reactor {
-    /// The six events that move the refresh quarantine: sleep, wake, session activation and display
-    /// churn. Wake also has the bars read the clock again.
-    ///
-    /// They are answered before focus tracking runs, because none of them is a focus change and the
-    /// quarantine has to close before the snapshot that follows is trusted. `None` means the event is
-    /// not one of them.
-    pub(super) fn on_quarantine_event(
-        &mut self,
-        event: &Event,
-    ) -> Option<anyhow::Result<EventOutcome>> {
+    pub(super) fn on_system_will_sleep(&mut self) -> EventOutcome {
         let quarantine = &mut self.refresh_quarantine_manager;
-        match event {
-            Event::SystemWillSleep => {
-                quarantine.sleeping = true;
-                quarantine.awaiting_post_wake_snapshot = false;
-                // Sleep is the last chance to persist before a possible reboot, so write out any
-                // debounced change rather than risk losing it.
-                if self.autosave_pending {
-                    self.save_layout_now();
-                }
-                Some(Ok(EventOutcome::default()))
-            }
-            Event::SystemWoke => {
-                quarantine.sleeping = true;
-                quarantine.awaiting_post_wake_snapshot = true;
-                let outcome = system_workflow::handle_system_woke();
-                self.defer_visible_refresh(true);
-                self.bar_clock_changed();
-                Some(Ok(outcome))
-            }
-            Event::SessionDidResignActive => {
-                quarantine.session_inactive = true;
-                quarantine.awaiting_post_session_snapshot = false;
-                Some(Ok(EventOutcome::default()))
-            }
-            Event::SessionDidBecomeActive => {
-                quarantine.session_inactive = true;
-                quarantine.awaiting_post_session_snapshot = true;
-                self.defer_visible_refresh(true);
-                Some(Ok(EventOutcome::default()))
-            }
-            Event::DisplayChurnBegin => {
-                quarantine.display_churn_active = true;
-                Some(Ok(EventOutcome::default()))
-            }
-            _ => None,
+        quarantine.sleeping = true;
+        quarantine.awaiting_post_wake_snapshot = false;
+        // Sleep is the last chance to persist before a possible reboot, so write out any
+        // debounced change rather than risk losing it.
+        if self.autosave_pending {
+            self.save_layout_now();
         }
+        EventOutcome::default()
+    }
+
+    pub(super) fn on_system_woke(&mut self) -> EventOutcome {
+        let quarantine = &mut self.refresh_quarantine_manager;
+        quarantine.sleeping = true;
+        quarantine.awaiting_post_wake_snapshot = true;
+        let outcome = system_workflow::handle_system_woke();
+        self.defer_visible_refresh(true);
+        self.bar_clock_changed();
+        outcome
+    }
+
+    pub(super) fn on_session_did_resign_active(&mut self) -> EventOutcome {
+        let quarantine = &mut self.refresh_quarantine_manager;
+        quarantine.session_inactive = true;
+        quarantine.awaiting_post_session_snapshot = false;
+        EventOutcome::default()
+    }
+
+    pub(super) fn on_session_did_become_active(&mut self) -> EventOutcome {
+        let quarantine = &mut self.refresh_quarantine_manager;
+        quarantine.session_inactive = true;
+        quarantine.awaiting_post_session_snapshot = true;
+        self.defer_visible_refresh(true);
+        EventOutcome::default()
+    }
+
+    pub(super) fn on_display_churn_begin(&mut self) -> EventOutcome {
+        self.refresh_quarantine_manager.display_churn_active = true;
+        EventOutcome::default()
     }
 }
 

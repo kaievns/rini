@@ -434,7 +434,45 @@ impl Event {
                 FocusEvent::ApplicationMainWindowChanged(pid, wid, quiet)
             }
             &Event::WindowServerFocusChanged(wid, _) => FocusEvent::WindowServerFocusChanged(wid),
-            _ => return None,
+            Event::ApplyOverlayFrames(_)
+            | Event::SpaceStateChanged(_)
+            | Event::ActiveDisplayChanged { .. }
+            | Event::ApplicationTerminated(_)
+            | Event::WindowsDiscovered { .. }
+            | Event::WindowCreated(..)
+            | Event::WindowServerDestroyed(..)
+            | Event::WindowServerAppeared(..)
+            | Event::SpaceCreated(_)
+            | Event::SpaceDestroyed(_)
+            | Event::WindowMinimized(_)
+            | Event::WindowDeminiaturized(_)
+            | Event::WindowFrameChanged(..)
+            | Event::WindowTitleChanged(..)
+            | Event::MenuOpened(_)
+            | Event::MenuClosed(_)
+            | Event::MouseUp
+            | Event::LeftMouseDown(_)
+            | Event::Switch(_)
+            | Event::SwitchPicked(_)
+            | Event::BarAction(_)
+            | Event::MouseMoved(_)
+            | Event::SystemWoke
+            | Event::ClockChanged
+            | Event::SystemWillSleep
+            | Event::SessionDidResignActive
+            | Event::SessionDidBecomeActive
+            | Event::DisplayChurnBegin
+            | Event::MissionControlNativeEntered
+            | Event::MissionControlNativeExited
+            | Event::RaiseCompleted { .. }
+            | Event::RaiseTimeout { .. }
+            | Event::RaisesIdle { .. }
+            | Event::AttentionChanged(_)
+            | Event::Query(_)
+            | Event::Command(_)
+            | Event::RegisterWmSender(_)
+            | Event::ConfigUpdated(_)
+            | Event::ConfigFileRead { .. } => return None,
         })
     }
 }
@@ -1096,7 +1134,46 @@ impl Reactor {
             Event::MouseMoved(_) => None,
             Event::WindowServerDestroyed(wsid, ..) => Some(wsid.as_u32()),
             Event::WindowServerAppeared(wsid, ..) => Some(wsid.as_u32()),
-            _ => None,
+            Event::ApplyOverlayFrames(_)
+            | Event::SpaceStateChanged(_)
+            | Event::ActiveDisplayChanged { .. }
+            | Event::ApplicationLaunched { .. }
+            | Event::ApplicationTerminated(_)
+            | Event::ApplicationThreadTerminated(_)
+            | Event::ApplicationActivated(..)
+            | Event::ApplicationDeactivated(_)
+            | Event::ApplicationGloballyActivated(_)
+            | Event::ApplicationGloballyDeactivated(_)
+            | Event::ApplicationMainWindowChanged(..)
+            | Event::WindowServerFocusChanged(..)
+            | Event::WindowsDiscovered { .. }
+            | Event::SpaceCreated(_)
+            | Event::SpaceDestroyed(_)
+            | Event::WindowTitleChanged(..)
+            | Event::MenuOpened(_)
+            | Event::MenuClosed(_)
+            | Event::MouseUp
+            | Event::LeftMouseDown(_)
+            | Event::Switch(_)
+            | Event::SwitchPicked(_)
+            | Event::BarAction(_)
+            | Event::SystemWoke
+            | Event::ClockChanged
+            | Event::SystemWillSleep
+            | Event::SessionDidResignActive
+            | Event::SessionDidBecomeActive
+            | Event::DisplayChurnBegin
+            | Event::MissionControlNativeEntered
+            | Event::MissionControlNativeExited
+            | Event::RaiseCompleted { .. }
+            | Event::RaiseTimeout { .. }
+            | Event::RaisesIdle { .. }
+            | Event::AttentionChanged(_)
+            | Event::Query(_)
+            | Event::Command(_)
+            | Event::RegisterWmSender(_)
+            | Event::ConfigUpdated(_)
+            | Event::ConfigFileRead { .. } => None,
         };
         if let Some(wsid) = wsid {
             window_server::note_windowserver_activity(wsid);
@@ -1133,20 +1210,56 @@ impl Reactor {
             return false;
         }
 
-        matches!(
-            event,
+        match event {
             Event::WindowCreated(..)
-                | Event::WindowDestroyed(..)
-                | Event::WindowServerDestroyed(..)
-                | Event::WindowServerAppeared(..)
-                | Event::WindowFrameChanged(..)
-                | Event::WindowMinimized(..)
-                | Event::WindowDeminiaturized(..)
-                | Event::WindowTitleChanged(..)
-                | Event::WindowsDiscovered { .. }
-                | Event::SpaceCreated(..)
-                | Event::SpaceDestroyed(..)
-        )
+            | Event::WindowDestroyed(..)
+            | Event::WindowServerDestroyed(..)
+            | Event::WindowServerAppeared(..)
+            | Event::WindowFrameChanged(..)
+            | Event::WindowMinimized(..)
+            | Event::WindowDeminiaturized(..)
+            | Event::WindowTitleChanged(..)
+            | Event::WindowsDiscovered { .. }
+            | Event::SpaceCreated(..)
+            | Event::SpaceDestroyed(..) => true,
+            Event::ApplyOverlayFrames(_)
+            | Event::SpaceStateChanged(_)
+            | Event::ActiveDisplayChanged { .. }
+            | Event::ApplicationLaunched { .. }
+            | Event::ApplicationTerminated(_)
+            | Event::ApplicationThreadTerminated(_)
+            | Event::ApplicationActivated(..)
+            | Event::ApplicationDeactivated(_)
+            | Event::ApplicationGloballyActivated(_)
+            | Event::ApplicationGloballyDeactivated(_)
+            | Event::ApplicationMainWindowChanged(..)
+            | Event::WindowServerFocusChanged(..)
+            | Event::MenuOpened(_)
+            | Event::MenuClosed(_)
+            | Event::MouseUp
+            | Event::LeftMouseDown(_)
+            | Event::Switch(_)
+            | Event::SwitchPicked(_)
+            | Event::BarAction(_)
+            | Event::MouseMoved(_)
+            | Event::SystemWoke
+            | Event::ClockChanged
+            | Event::SystemWillSleep
+            | Event::SessionDidResignActive
+            | Event::SessionDidBecomeActive
+            | Event::DisplayChurnBegin
+            | Event::MissionControlNativeEntered
+            | Event::MissionControlNativeExited
+            | Event::RaiseCompleted { .. }
+            | Event::RaiseTimeout { .. }
+            | Event::RaisesIdle { .. }
+            | Event::AttentionChanged(_)
+            | Event::Query(_)
+            | Event::Command(_)
+            | Event::RegisterWmSender(_)
+            | Event::ConfigUpdated(_)
+            | Event::ConfigFileRead { .. } => false,
+        }
     }
 
     fn should_quarantine_space_lifecycle_event(&self, event: &Event) -> bool {
@@ -1265,10 +1378,6 @@ impl Reactor {
     fn dispatch_workflow(&mut self, event: Event) -> anyhow::Result<EventOutcome> {
         self.live_spaces.clear();
         self.log_event(&event);
-
-        if let Some(outcome) = self.on_quarantine_event(&event) {
-            return outcome;
-        }
 
         let should_update_notifications = Self::should_update_notifications(&event);
         let duplicate_global_activation = matches!(
@@ -1529,7 +1638,15 @@ impl Reactor {
             })) => {
                 return self.on_move_window_to_display(selector, window_id);
             }
-            _ => (),
+            Event::SystemWillSleep => return Ok(self.on_system_will_sleep()),
+            Event::SystemWoke => return Ok(self.on_system_woke()),
+            Event::SessionDidResignActive => return Ok(self.on_session_did_resign_active()),
+            Event::SessionDidBecomeActive => return Ok(self.on_session_did_become_active()),
+            Event::DisplayChurnBegin => return Ok(self.on_display_churn_begin()),
+            // Focus tracking above is all a main-window report needs.
+            Event::ApplicationMainWindowChanged(..) => (),
+            // Answered by `handle_loop_event` before the event path.
+            Event::Query(_) => (),
         }
 
         Ok(EventOutcome::focus_changed(
