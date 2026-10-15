@@ -46,7 +46,7 @@ fn it_sends_writes_when_stale_read_state_looks_same_as_written_state() {
 
 #[test]
 fn duplicate_minimize_deminimize_and_unknown_window_events_do_not_arrange() {
-    let (mut reactor, wid, _wsid, _space1, _space2, _frame) = reactor_with_window_on_space1();
+    let OneWindow { mut reactor, window: wid, .. } = reactor_with_window_on_space1();
 
     reactor.dispatch_workflow(Event::WindowMinimized(wid)).unwrap();
     let duplicate_minimize = reactor.dispatch_workflow(Event::WindowMinimized(wid)).unwrap();

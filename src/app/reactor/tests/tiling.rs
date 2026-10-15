@@ -53,7 +53,14 @@ fn it_ignores_stale_resize_events() {
 
 #[test]
 fn appeared_reassigns_window_without_pending_rini_move() {
-    let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_on_space1();
 
     // No pending transaction: this is a genuine external space change, so Rini should
     // follow it and reassign the window to the reported space.
@@ -73,7 +80,13 @@ fn appeared_reassigns_window_without_pending_rini_move() {
 
 #[test]
 fn matching_rini_frame_clears_pending_target() {
-    let (mut reactor, wid, wsid, _space1, _space2, frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let target_frame = CGRect::new(
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
@@ -135,7 +148,13 @@ fn matching_rini_frame_clears_pending_target() {
 
 #[test]
 fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
-    let (mut reactor, wid, wsid, _space1, _space2, frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let target_frame = CGRect::new(
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
@@ -183,7 +202,12 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
 
 #[test]
 fn genuine_external_frame_changes_invalidate_layout() {
-    let (mut reactor, wid, _wsid, _space1, _space2, frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let moved_frame = CGRect::new(
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
@@ -205,7 +229,13 @@ fn genuine_external_frame_changes_invalidate_layout() {
 
 #[test]
 fn stale_and_inactive_frame_events_request_no_arrange_passes() {
-    let (mut reactor, wid, wsid, _space1, _space2, frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let target_frame = CGRect::new(
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
@@ -271,7 +301,12 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
 
 #[test]
 fn external_resize_requests_one_arrange_pass() {
-    let (mut reactor, wid, _wsid, _space1, _space2, frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let resized = CGRect::new(
         frame.origin,
         CGSize::new(frame.size.width + 80.0, frame.size.height + 40.0),
@@ -2483,7 +2518,13 @@ mod title_bar_zoom {
 
     #[test]
     fn a_floating_window_is_left_to_its_app() {
-        let (mut reactor, wid, space, screen, floating_frame) = reactor_with_floating_window();
+        let Floating {
+            mut reactor,
+            window: wid,
+            space,
+            screen,
+            floating_frame,
+        } = reactor_with_floating_window();
         let before = laid_out_frame(&mut reactor, space, screen, wid);
 
         reactor.handle_event(Event::LeftMouseDown(LeftPress {

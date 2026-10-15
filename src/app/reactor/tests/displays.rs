@@ -130,8 +130,14 @@ fn active_display_update_only_changes_command_context() {
 /// `keep_assigned_for_scrolling` prevents that for every tiled window.
 #[test]
 fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_display() {
-    let (mut reactor, wid, _wsid, space1, _space2, frame, screen2) =
-        reactor_with_window_on_space1_two_displays();
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        space1,
+        frame,
+        screen2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
     let moved = CGRect::new(
         CGPoint::new(screen2.origin.x + 100.0, frame.origin.y),
         frame.size,
@@ -203,8 +209,15 @@ fn an_unmanageable_window_is_not_tiled_when_its_frame_comes_back_on_screen() {
 
 #[test]
 fn cross_display_drag_clears_source_floating_position() {
-    let (mut reactor, wid, _wsid, space1, space2, initial_frame, screen2) =
-        reactor_with_window_on_space1_two_displays();
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        space1,
+        space2,
+        frame: initial_frame,
+        screen2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
     let source_workspace =
         reactor.layout_engine.active_workspace(space1).expect("source workspace");
     let target_workspace =
@@ -268,7 +281,14 @@ fn cross_display_drag_clears_source_floating_position() {
 
 #[test]
 fn stale_user_space_disappearance_does_not_restore_old_display_assignment() {
-    let (mut reactor, wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
 
@@ -290,7 +310,14 @@ fn stale_user_space_disappearance_does_not_restore_old_display_assignment() {
 
 #[test]
 fn stale_user_space_appearance_does_not_restore_old_display_assignment() {
-    let (mut reactor, wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
 
@@ -311,7 +338,14 @@ fn stale_user_space_appearance_does_not_restore_old_display_assignment() {
 
 #[test]
 fn multi_active_visible_window_appearance_keeps_display_assignment_and_visibility() {
-    let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
 
@@ -329,7 +363,14 @@ fn multi_active_visible_window_appearance_keeps_display_assignment_and_visibilit
 
 #[test]
 fn multi_active_visible_window_disappearance_does_not_reassign_between_display_spaces() {
-    let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
 
@@ -390,7 +431,13 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
 
 #[test]
 fn recent_cross_display_move_ignores_conflicting_geometry_space_change() {
-    let (mut reactor, wid, wsid, _space1, space2, _) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
     let conflicting_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(800., 600.));
 
     reactor.handle_event(Event::WindowFrameChanged(
@@ -843,8 +890,14 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
 
 #[test]
 fn authoritative_active_window_snapshot_reassigns_window_across_active_displays() {
-    let (mut reactor, wid, wsid, space1, space2, _initial_frame, _screen2) =
-        reactor_with_window_on_space1_two_displays();
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
@@ -926,8 +979,15 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
 
 #[test]
 fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
-    let (mut reactor, wid, wsid, space1, space2, _initial_frame, screen2) =
-        reactor_with_window_on_space1_two_displays();
+    let OneWindowTwoDisplays {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        screen2,
+        ..
+    } = reactor_with_window_on_space1_two_displays();
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
 
     reactor.window_server().set_window_spaces(wsid, vec![space2]);
@@ -1165,8 +1225,14 @@ fn display_churn_end_refresh_is_idempotent_without_topology_change() {
 
 #[test]
 fn ax_destruction_removes_window_on_known_inactive_space_outside_churn() {
-    let (mut reactor, wid, wsid, active_space, inactive_space, _frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1: active_space,
+        space2: inactive_space,
+        ..
+    } = reactor_with_window_on_space1();
     let inactive_workspace = reactor.test_workspace(inactive_space, 0);
     assert!(reactor.assign_test_window_to_workspace(inactive_space, wid, inactive_workspace));
     reactor.state.windows.set_window_server_space(wsid, Some(inactive_space));

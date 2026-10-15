@@ -77,7 +77,14 @@ fn a_config_reload_tells_the_transitions_engine_whether_to_write_its_journal() {
 
 #[test]
 fn known_window_server_appearance_restores_layout_membership_without_reassignment() {
-    let (mut reactor, wid, wsid, user_space, _other_space, frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1: user_space,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
 
     reactor.send_layout_event(LayoutEvent::WindowAdded(user_space, wid));
     assert!(has_window_in_layout(&mut reactor, user_space, frame, wid));
@@ -408,7 +415,13 @@ fn empty_active_space_membership_during_wake_race_does_not_blank_known_active_wi
 
 #[test]
 fn floating_window_toggle_off_restore_previous_frame() {
-    let (mut reactor, wid, space1, screen, floating_frame) = reactor_with_floating_window();
+    let Floating {
+        mut reactor,
+        window: wid,
+        space: space1,
+        screen,
+        floating_frame,
+    } = reactor_with_floating_window();
     // Turn on
     reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
     // Turn off
@@ -430,7 +443,13 @@ fn floating_window_toggle_off_restore_previous_frame() {
 /// and write.
 #[test]
 fn autosave_preserves_floating_restore_frame() {
-    let (mut reactor, wid, space1, screen, floating_frame) = reactor_with_floating_window();
+    let Floating {
+        mut reactor,
+        window: wid,
+        space: space1,
+        screen,
+        floating_frame,
+    } = reactor_with_floating_window();
 
     let dir = std::env::temp_dir().join(format!("rini-autosave-test-{}", std::process::id()));
     let path = dir.join("layout.ron");

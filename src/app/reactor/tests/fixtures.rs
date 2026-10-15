@@ -1,7 +1,6 @@
 //! Fixtures for the reactor's tests: the reactors, apps and windows the cases are built on.
 //!
-//! They were defined among the tests themselves, at lines 779 through 5103 of one file, so "how do
-//! I get a reactor with a floating window" meant scrolling for it.
+//! A fixture hands back a struct that names its parts, so a case takes the ones it needs by name.
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::{WindowServerId, pid_t};
 use rini_geometry::space::SurfacePoint;
@@ -12,11 +11,48 @@ use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
 
-/// Builds a reactor with `space1` active on a screen and a single tiled window
-/// (`wid`/`wsid`) assigned to `space1`. `space2` exists with workspaces so it can
-/// be a reassignment target. Returns the pieces the `appeared` tests need.
-pub fn reactor_with_window_on_space1()
--> (Reactor, WindowId, WindowServerId, SpaceId, SpaceId, CGRect) {
+/// A reactor with one tiled window and the spaces it is about.
+pub struct OneWindow {
+    pub reactor: Reactor,
+    pub window: WindowId,
+    pub server_id: WindowServerId,
+    pub space1: SpaceId,
+    pub space2: SpaceId,
+    pub frame: CGRect,
+}
+
+/// [`OneWindow`] on two displays, `screen2` the second display's frame.
+pub struct OneWindowTwoDisplays {
+    pub reactor: Reactor,
+    pub window: WindowId,
+    pub server_id: WindowServerId,
+    pub space1: SpaceId,
+    pub space2: SpaceId,
+    pub frame: CGRect,
+    pub screen2: CGRect,
+}
+
+/// A reactor with one floating window on `space`, remembered at `floating_frame`.
+pub struct Floating {
+    pub reactor: Reactor,
+    pub window: WindowId,
+    pub space: SpaceId,
+    pub screen: CGRect,
+    pub floating_frame: CGRect,
+}
+
+/// A reactor started while its one display showed a fullscreen space over `user_space`.
+pub struct FullscreenStartup {
+    pub reactor: Reactor,
+    pub window: WindowId,
+    pub user_space: SpaceId,
+    pub default_workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
+    pub secondary_workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
+}
+
+/// `space1` active on a 1440x900 screen with one tiled window assigned to it at `frame`, the
+/// whole screen. `space2` exists with workspaces so it can be a reassignment target.
+pub fn reactor_with_window_on_space1() -> OneWindow {
     let mut reactor = test_reactor();
     let pid = 1;
     let frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
@@ -40,11 +76,19 @@ pub fn reactor_with_window_on_space1()
         Some(space1)
     );
 
-    (reactor, wid, wsid, space1, space2, frame)
+    OneWindow {
+        reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        frame,
+    }
 }
 
-pub fn reactor_with_window_moved_to_space2()
--> (Reactor, WindowId, WindowServerId, SpaceId, SpaceId, CGRect) {
+/// Two displays, the window assigned to both spaces and moved onto `space2` at `frame`, its write
+/// there still pending.
+pub fn reactor_with_window_moved_to_space2() -> OneWindow {
     let mut reactor = test_reactor();
     let pid = 1;
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
@@ -76,18 +120,18 @@ pub fn reactor_with_window_moved_to_space2()
         Some(space2)
     );
 
-    (reactor, wid, wsid, space1, space2, moved_frame)
+    OneWindow {
+        reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        frame: moved_frame,
+    }
 }
 
-pub fn reactor_with_window_on_space1_two_displays() -> (
-    Reactor,
-    WindowId,
-    WindowServerId,
-    SpaceId,
-    SpaceId,
-    CGRect,
-    CGRect,
-) {
+/// Two displays side by side, the window tiled on `space1` at `frame`.
+pub fn reactor_with_window_on_space1_two_displays() -> OneWindowTwoDisplays {
     let mut reactor = test_reactor();
     let pid = 1;
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
@@ -112,11 +156,25 @@ pub fn reactor_with_window_on_space1_two_displays() -> (
 
     assert!(reactor.assign_test_window_to_workspace(space1, wid, space1_workspace));
 
-    (reactor, wid, wsid, space1, space2, initial_frame, screen2)
+    OneWindowTwoDisplays {
+        reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        frame: initial_frame,
+        screen2,
+    }
 }
 
-pub fn reactor_with_floating_window() -> (Reactor, WindowId, SpaceId, CGRect, CGRect) {
-    let (mut reactor, wid, _wsid, space1, _space2, screen) = reactor_with_window_on_space1();
+pub fn reactor_with_floating_window() -> Floating {
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        space1,
+        frame: screen,
+        ..
+    } = reactor_with_window_on_space1();
     reactor.send_layout_event(LayoutEvent::WindowAdded(space1, wid));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space1, wid));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
@@ -131,7 +189,13 @@ pub fn reactor_with_floating_window() -> (Reactor, WindowId, SpaceId, CGRect, CG
         .layout_engine
         .store_floating_position(space1, workspace, wid, floating_frame);
 
-    (reactor, wid, space1, screen, floating_frame)
+    Floating {
+        reactor,
+        window: wid,
+        space: space1,
+        screen,
+        floating_frame,
+    }
 }
 
 pub fn window_server_appeared(
@@ -163,13 +227,7 @@ pub fn window_server_destroyed(
 pub fn fullscreen_startup_fixture(
     with_app_rule: bool,
     preserve_workspace: bool,
-) -> (
-    Reactor,
-    WindowId,
-    SpaceId,
-    crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
-    crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
-) {
+) -> FullscreenStartup {
     let mut workspace_cfg = crate::app::config::VirtualWorkspaceSettings {
         workspace_names: crate::workspaces::settings::numbered_names(2),
         ..crate::app::config::VirtualWorkspaceSettings::default()
@@ -217,7 +275,13 @@ pub fn fullscreen_startup_fixture(
         vec![wid],
     );
 
-    (reactor, wid, user_space, default_workspace, secondary_workspace)
+    FullscreenStartup {
+        reactor,
+        window: wid,
+        user_space,
+        default_workspace,
+        secondary_workspace,
+    }
 }
 
 pub fn rekey_window(reactor: &mut Reactor, old_wid: WindowId, new_wid: WindowId) {

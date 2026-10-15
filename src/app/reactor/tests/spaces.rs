@@ -170,7 +170,14 @@ fn user_space_window_server_destroyed_removes_window_when_window_server_is_gone(
 
 #[test]
 fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pending_target() {
-    let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
     let space1_workspace = reactor.test_workspace(space1, 0);
 
     assert!(reactor.assign_test_window_to_workspace(space1, wid, space1_workspace));
@@ -195,7 +202,14 @@ fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pend
 
 #[test]
 fn stale_user_space_appearance_is_ignored_when_authoritative_window_space_differs() {
-    let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
     reactor.window_server().set_window_spaces(wsid, vec![space2]);
 
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
@@ -213,8 +227,14 @@ fn stale_user_space_appearance_is_ignored_when_authoritative_window_space_differ
 
 #[test]
 fn central_space_resolution_prefers_recent_move_target_over_stale_server_space() {
-    let (mut reactor, wid, wsid, space1, space2, moved_frame) =
-        reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        frame: moved_frame,
+    } = reactor_with_window_moved_to_space2();
 
     reactor.state.windows.set_window_server_space(wsid, Some(space1));
 
@@ -231,7 +251,14 @@ fn central_space_resolution_prefers_recent_move_target_over_stale_server_space()
 
 #[test]
 fn active_space_membership_refresh_does_not_overwrite_recent_move_target() {
-    let (mut reactor, wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
 
     reactor.refresh_active_space_window_membership(vec![(wsid, Some(space1))]);
 
@@ -382,7 +409,13 @@ fn native_space_resolution_policy_table() {
     // A direct observation from the old space is stale while Rini's target is
     // still pending.
     {
-        let (reactor, _wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
+        let OneWindow {
+            reactor,
+            server_id: wsid,
+            space1,
+            space2,
+            ..
+        } = reactor_with_window_moved_to_space2();
         cases.push((
             "stale origin",
             reactor.affinity().resolve_native_space(wsid, Some(space1)),
@@ -392,7 +425,12 @@ fn native_space_resolution_policy_table() {
 
     // A direct observation of the target confirms the pending move.
     {
-        let (reactor, _wid, wsid, _space1, space2, _) = reactor_with_window_moved_to_space2();
+        let OneWindow {
+            reactor,
+            server_id: wsid,
+            space2,
+            ..
+        } = reactor_with_window_moved_to_space2();
         let resolved = reactor.affinity().resolve_native_space(wsid, Some(space2));
         reactor.clear_pending_target_if_confirmed_space(wsid, space2);
         cases.push(("confirmed target", resolved, Some(space2)));
@@ -400,7 +438,12 @@ fn native_space_resolution_policy_table() {
 
     // With no pending Rini move, a live WindowServer observation is an external move.
     {
-        let (reactor, _wid, wsid, _space1, space2, _) = reactor_with_window_on_space1();
+        let OneWindow {
+            reactor,
+            server_id: wsid,
+            space2,
+            ..
+        } = reactor_with_window_on_space1();
         reactor.window_server().set_window_spaces(wsid, vec![space2]);
         let resolved = reactor.affinity().resolve_native_space(wsid, Some(space2));
         cases.push(("newer external move", resolved, Some(space2)));
@@ -408,7 +451,12 @@ fn native_space_resolution_policy_table() {
 
     // With only an accepted prior observation, a partial sample keeps it.
     {
-        let (reactor, _wid, wsid, space1, _space2, _) = reactor_with_window_on_space1();
+        let OneWindow {
+            reactor,
+            server_id: wsid,
+            space1,
+            ..
+        } = reactor_with_window_on_space1();
         cases.push((
             "partial observation",
             reactor.affinity().resolve_native_space(wsid, None),
@@ -459,7 +507,13 @@ fn classifier_with_a_non_user_space() -> SpaceKinds {
 /// read `#[cfg(test)] { true }`, so under test there was no such thing as a non-user space.
 #[test]
 fn a_window_is_not_followed_onto_a_non_user_space() {
-    let (mut reactor, wid, wsid, active_space, _other, _frame) = reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1: active_space,
+        ..
+    } = reactor_with_window_on_space1();
     reactor.reads.space_kinds = classifier_with_a_non_user_space();
     let login_space = SpaceId::new(NON_USER_SPACE);
 
@@ -483,8 +537,14 @@ fn a_window_is_not_followed_onto_a_non_user_space() {
 /// rather than of the snapshot plumbing: here the window DOES follow.
 #[test]
 fn a_window_is_followed_onto_an_inactive_user_space() {
-    let (mut reactor, wid, wsid, active_space, other_space, _frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1: active_space,
+        space2: other_space,
+        ..
+    } = reactor_with_window_on_space1();
     reactor.reads.space_kinds = classifier_with_a_non_user_space();
     assert_ne!(other_space, SpaceId::new(NON_USER_SPACE));
 

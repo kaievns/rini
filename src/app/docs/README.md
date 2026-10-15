@@ -141,7 +141,7 @@ file you open to change one is the size of that subject rather than of the react
 | `bar.rs` | what each display's bar is sent after a batch, and what a click on it does |
 | `reads.rs` | what the reactor asks of the machine: only its `SystemReads`, every read unknown in a test until stated |
 | `decorations.rs` | what the rest windows are sent after a batch: each window's ring and border, whether it holds focus or asks for attention, and the rules that dress it |
-| `fixtures.rs` | the reactors, apps and windows the cases are built on |
+| `fixtures.rs` | the reactors, apps and windows the cases are built on, each handed back as a struct naming its parts (`OneWindow`, `Floating`, ...) |
 
 `tiling.rs` is not `layout.rs` because a module named `layout` inside `tests` shadows the
 `layout` alias the siblings use for `crate::workspaces`.

@@ -167,8 +167,14 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
 
 #[test]
 fn fullscreen_does_not_suppress_other_same_pid_windows() {
-    let (mut reactor, original_wid, original_wsid, user_space, _other_space, frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: original_wid,
+        server_id: original_wsid,
+        space1: user_space,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let second_wid = WindowId::new(original_wid.pid, 1002);
     let second_wsid = WindowServerId::new(10002);
@@ -202,8 +208,14 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
 
 #[test]
 fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
-    let (mut reactor, original_wid, original_wsid, user_space, other_space, frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: original_wid,
+        server_id: original_wsid,
+        space1: user_space,
+        space2: other_space,
+        frame,
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let duplicate_wid = WindowId::new(original_wid.pid, 27481);
     let duplicate_wsid = WindowServerId::new(27481);
@@ -275,8 +287,14 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
 
 #[test]
 fn fullscreen_restore_uses_live_rekeyed_window_id() {
-    let (mut reactor, old_wid, wsid, user_space, _other_space, frame) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: old_wid,
+        server_id: wsid,
+        space1: user_space,
+        frame,
+        ..
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let new_wid = WindowId::new(old_wid.pid, 1999);
 
@@ -497,8 +515,13 @@ fn fullscreen_screen_params_preserves_window_layout() {
 
 #[test]
 fn fullscreen_startup_applies_app_rules_to_hidden_user_space_windows() {
-    let (reactor, wid, user_space, _default_workspace, target_workspace) =
-        fullscreen_startup_fixture(true, false);
+    let FullscreenStartup {
+        reactor,
+        window: wid,
+        user_space,
+        secondary_workspace: target_workspace,
+        ..
+    } = fullscreen_startup_fixture(true, false);
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
@@ -513,8 +536,13 @@ fn fullscreen_startup_applies_app_rules_to_hidden_user_space_windows() {
 
 #[test]
 fn fullscreen_startup_discovery_preserves_existing_hidden_assignment_without_app_rules() {
-    let (reactor, wid, user_space, default_workspace, secondary_workspace) =
-        fullscreen_startup_fixture(false, true);
+    let FullscreenStartup {
+        reactor,
+        window: wid,
+        user_space,
+        default_workspace,
+        secondary_workspace,
+    } = fullscreen_startup_fixture(false, true);
 
     assert_ne!(secondary_workspace, default_workspace);
     assert_eq!(
@@ -573,8 +601,14 @@ fn unfullscreen_restores_window_tracking() {
 
 #[test]
 fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
-    let (mut reactor, old_wid, wsid, user_space, _other_space, full_screen) =
-        reactor_with_window_on_space1();
+    let OneWindow {
+        mut reactor,
+        window: old_wid,
+        server_id: wsid,
+        space1: user_space,
+        frame: full_screen,
+        ..
+    } = reactor_with_window_on_space1();
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let new_wid = WindowId::new(old_wid.pid, 99);
 
@@ -611,7 +645,13 @@ fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
 
 #[test]
 fn floating_window_toggles_to_fullscreen_within_gaps() {
-    let (mut reactor, wid, space1, screen, _floating_frame) = reactor_with_floating_window();
+    let Floating {
+        mut reactor,
+        window: wid,
+        space: space1,
+        screen,
+        ..
+    } = reactor_with_floating_window();
     // Assymetric gaps to prevent swapped left/right or swapped width/height bugs from passing
     reactor.config.settings.layout.gaps.struts = Edges {
         top: 10.,

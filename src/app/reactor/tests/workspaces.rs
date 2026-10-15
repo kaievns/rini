@@ -251,8 +251,14 @@ fn workspace_queries_are_isolated_per_macos_space() {
 
 #[test]
 fn discovery_prefers_authoritative_space_over_geometry_when_displays_overlap_workspaces() {
-    let (mut reactor, wid, wsid, space1, space2, _moved_frame) =
-        reactor_with_window_moved_to_space2();
+    let OneWindow {
+        mut reactor,
+        window: wid,
+        server_id: wsid,
+        space1,
+        space2,
+        ..
+    } = reactor_with_window_moved_to_space2();
     let conflicting_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(800., 600.));
 
     reactor
