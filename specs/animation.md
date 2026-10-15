@@ -875,7 +875,10 @@ finds where a moved pair starts and puts the look's staging of it on the strip,
 picture where it ends is waited for,
 `src/transitions/domain/frame_writes.rs` which frames are written and in what order,
 `src/transitions/domain/travel.rs` where each tile starts and ends, a parked window's along its place
-on the strip, and whether a pass moves or resizes anything far enough to fly, and `src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
+on the strip, and whether a pass moves or resizes anything far enough to fly,
+`src/transitions/domain/running.rs` what a flight composed, how a later pass, an entrance and each
+picture change it and how its tiles band in depth, and `src/transitions/platform/engine.rs` is the
+actor that carries them out, on a thread of its own,
 which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
 what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.

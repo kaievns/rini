@@ -1,78 +1,28 @@
-//! How the flight engine makes a tile: whose it is, how it stacks and what it wears, read once for
-//! a pass's windows, where the window server has each window (`frames_of`, `live_frame`), and the
-//! tile it flies on.
+//! What the flight engine reads to make a tile: how deep each of a pass's windows is and the radius
+//! it rounds at, read once for all of them (`Stacking`), where the window server has each window
+//! (`frames_of`, `live_frame`), and what a tile's rules read of a captured picture (`TilePicture`
+//! for `Picture`).
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::space::{FromCg, OverlayRect, ScreenRect};
+use rini_geometry::space::{FromCg, PointSpace, ScreenRect, Size};
 
-use crate::animation::domain::motion::plan::entrance_from;
-use crate::animation::platform::overlay::OverlayTile;
 use crate::decorations::domain::style::Worn;
+use crate::pictures::domain::route::Route;
 use crate::pictures::platform::picture::Picture;
-use crate::transitions::domain::admission::PendingEntrance;
+use crate::transitions::domain::running::{TileOf, TilePicture};
 use crate::windows::platform::window_server::WindowServer;
 
-/// The tile for a reserved entrance whose picture has landed, `clipped` or whole and rounded at
-/// `radius`: frontmost and focused, since a window is raised on open and about to hold focus.
-pub(super) fn entrance_tile(
-    entrance: &PendingEntrance,
-    snapshot: &Picture,
-    clipped: bool,
-    radius: Option<f64>,
-) -> OverlayTile {
-    let tile = TileOf {
-        window: entrance.window,
-        floating: entrance.floating,
-        server_order: Some(0),
-        worn: entrance.worn,
-        radius,
-    };
-    tile.flying(
-        (entrance_from(entrance.to), entrance.to),
-        snapshot.clone(),
-        clipped,
-        true,
-    )
-}
+impl TilePicture for Picture {
+    fn source(&self) -> Route { self.source }
 
-/// Whose a tile is, and how it stacks and what it wears: what a tile is made of beside where it
-/// flies and the picture it is drawn with.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct TileOf {
-    pub(super) window: WindowId,
-    pub(super) floating: bool,
-    pub(super) server_order: Option<usize>,
-    pub(super) worn: Worn,
-    pub(super) radius: Option<f64>,
-}
+    fn carries_blur(&self) -> bool { self.carries_blur }
 
-impl TileOf {
-    /// Its tile flying `from` to `to` on `snapshot`, `clipped` or whole and drawn `focused` or not,
-    /// at no depth until `restack` bands it.
-    pub(super) fn flying(
-        self,
-        (from, to): (OverlayRect, OverlayRect),
-        snapshot: Picture,
-        clipped: bool,
-        focused: bool,
-    ) -> OverlayTile {
-        OverlayTile {
-            window: self.window,
-            from,
-            to,
-            snapshot,
-            from_corner: None,
-            floating: self.floating,
-            server_order: self.server_order,
-            depth: 0,
-            focused,
-            worn: self.worn,
-            radius: self.radius,
-            clipped,
-        }
-    }
+    fn taken(&self) -> Instant { self.taken }
+
+    fn fits<U: PointSpace>(&self, size: Size<U>) -> bool { Picture::fits(self, size) }
 }
 
 /// What the window server says of a pass's windows, one query for all of them: how deep each is,
