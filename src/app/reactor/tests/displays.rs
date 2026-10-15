@@ -710,7 +710,6 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
 
 #[test]
 fn it_preserves_layout_after_login_screen() {
-    // TODO: This would be better tested with a more complete simulation.
     let (mut apps, mut reactor) = test_context();
     let space = SpaceId::new(1);
     let full_screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));

@@ -179,7 +179,6 @@ pub(crate) fn identify_stale_windows(
     let known_visible_set: HashSet<WindowId> = known_visible.iter().cloned().collect();
     let pending_refresh = snapshot.pending_refresh;
 
-    // TODO: Rewrite it
     let has_visible_window_server_ids = state
         .windows
         .iter_visible_window_server_ids()
