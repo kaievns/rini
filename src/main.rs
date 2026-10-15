@@ -5,14 +5,15 @@ use clap::Parser;
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
 use rini::app::boot::{Cli, Commands};
+use rini::app::config::Config;
 use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
 use rini::app::hotkeys::WmController;
 use rini::app::launch_agent::handle_service_command;
-use rini::app::logging as log;
 use rini::app::notifications::NotificationCenter;
 use rini::app::reactor::{self, Reactor};
 use rini::app::startup::execute_startup_commands;
+use rini::app::{channels, logging as log};
 use rini::displays::platform::mission_control::NativeMissionControl;
 use rini::displays::platform::spaces::{Notification as SpacesNotification, SpacesActor};
 use rini::displays::platform::window_notify as window_notify_actor;
@@ -100,89 +101,12 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
 fn main() {
     sigpipe::reset();
     let opt = Cli::parse();
-
-    if let Some(Commands::Service { service }) = &opt.command {
-        match handle_service_command(service) {
-            Ok(msg) => {
-                println!("{}", msg);
-                process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("{}", e);
-                process::exit(1);
-            }
-        }
-    }
-
-    let mtm = prepare_process();
-    preflight();
-
-    let config_path = rini::app::boot::config_path(opt.config.clone());
-    if opt.validate {
-        match rini::app::boot::validate_config(&config_path) {
-            Ok(line) => println!("{line}"),
-            Err(report) => {
-                eprintln!("{report}");
-                process::exit(1);
-            }
-        }
-        let path = restore_file();
-        match LayoutEngine::load(path.clone()) {
-            Ok(_) => println!("Saved layout file is valid: {}", path.display()),
-            Err(error) => {
-                eprintln!(
-                    "Could not load the saved layout file at {}: {error}",
-                    path.display()
-                );
-                process::exit(1);
-            }
-        }
-        process::exit(0);
-    }
-
-    // The fallback rule is `app::boot::config_or_default`, which is also where its tests are: this
-    // path is only reachable by running the binary.
-    let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
-    let config_usable = complaint.is_none();
-    if let Some(complaint) = complaint {
-        eprintln!("{complaint}");
-    }
-    rini::app::boot::apply_no_animate(&mut config.settings, opt.no_animate);
+    let (mtm, config_path) = start(&opt);
+    let (config, config_usable) = read_config(&config_path, opt.no_animate);
 
     execute_startup_commands(&config.settings.run_on_start);
 
-    // Restore is ON by default, so a restart or redeploy keeps window sizes, workspaces
-    // and strip positions.
-    //
-    // It was opt-in for a while because enabling it exposed two latent bugs in a code
-    // path nothing had exercised. Restored workspaces kept a stale layout MODE, and
-    // windows belonging to a display that had since been unplugged were restored at
-    // that display's coordinates — measured at x=-1680 with no display there — and
-    // stranded, with nothing to migrate them back. A single dock/undock cycle then
-    // produced a layout only fixable by deleting ~/.rini/layout.ron.
-    //
-    // Both are handled now. The layout mode is migrated on restore, and
-    // release_windows_saved_on_absent_displays gives up the saved slots of any display
-    // that is not attached while keeping each window's display affinity, so those
-    // windows lay out fresh on a live display and return to their own display when it
-    // is plugged back in.
-    let fresh = || LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout);
-    let (mut layout, display_memory) = if !opt.no_restore {
-        let path = restore_file();
-        match load_saved_layout(path.clone()) {
-            Ok(loaded) => loaded,
-            Err(error) => {
-                eprintln!(
-                    "Could not restore the saved layout file at {}; starting with a fresh \
-                     layout: {error}",
-                    path.display()
-                );
-                (fresh(), DisplayMemory::default())
-            }
-        }
-    } else {
-        (fresh(), DisplayMemory::default())
-    };
+    let (mut layout, display_memory) = restored_layout(&config, opt.no_restore);
     layout.finish_loading(&config.virtual_workspaces, &config.settings.layout);
     let (event_tap_tx, event_tap_rx) = rini::app::channels::channel();
     let window_tx_store = WindowTxStore::new();
@@ -197,24 +121,7 @@ fn main() {
     let (following, server_reads) = rini::displays::event::Following::new();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
 
-    // Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
-    // so the service names neither the flight engine nor the switcher.
-    let pictures = rini::pictures::platform::service::Pictures::start(vec![
-        Box::new({
-            let transitions_tx = transitions_tx.clone();
-            move |landed| {
-                transitions_tx.send(rini::transitions::platform::engine::Event::Pictures(landed))
-            }
-        }),
-        Box::new({
-            let switcher_tx = switcher_tx.clone();
-            move |landed| {
-                if let rini::pictures::event::Event::Taken { window, .. } = landed {
-                    switcher_tx.send(rini::switcher::platform::actor::Event::Landed(window));
-                }
-            }
-        }),
-    ]);
+    let pictures = start_pictures(&transitions_tx, &switcher_tx);
 
     let reactor = Reactor::spawn(
         config.clone(),
@@ -234,9 +141,394 @@ fn main() {
         events_tx.send(reactor::Event::ConfigFileRead { usable: false });
     }
 
-    // The band the bar keeps clear is the spaces actor's to apply, so it hears of every accepted
-    // change directly rather than through the reactor.
-    let config_tx = ConfigActor::spawn_with_path(
+    let config_tx = spawn_config_actor(&config, &events_tx, &spaces_tx, &config_path);
+    ConfigWatcher::spawn(config_tx.clone(), config_path.clone());
+    serve_ipc(&reactor, &config_tx);
+
+    let (wm_controller, wm_controller_sender) = WmController::new(
+        config.clone(),
+        config_tx.clone(),
+        events_tx.clone(),
+        event_tap_tx.clone(),
+        Some(window_tx_store.clone()),
+    );
+    events_tx.send(reactor::Event::RegisterWmSender(wm_controller_sender.clone()));
+
+    let spaces = SpacesActor::new(
+        spaces_rx,
+        spaces_tx.clone(),
+        Box::new(wm_controller_sender.clone()),
+        config.settings.top_band(),
+    );
+    let window_notify =
+        window_notify(&events_tx, &spaces_tx, &rest_tx, following.clone(), server_reads);
+    let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
+
+    // Which applications ask for attention, read from LaunchServices on a thread of its own.
+    rini::windows::platform::attention::spawn(Box::new(events_tx.clone()));
+
+    let process = process_actor(&wm_controller_sender);
+    let event_tap = input_tap(&config, &wm_controller_sender, event_tap_rx, &events_tx);
+    let cursor_warp = cursor_warp(&config, cursor_warp_rx);
+
+    // The decorations drawn at rest, on the main thread for AppKit: a rest window above each window
+    // whose band shows, told what each wears and when each flight begins by the reactor. From a
+    // flight's begin they draw nothing until the renderer places them, a tick before the lift once
+    // the flight has landed or in the lift's drain, so the lift shows each band where its tile had it.
+    let (rest, rest_handover) =
+        rini::decorations::platform::rest::RestActor::new(rest_rx, rest_tx.clone(), following, mtm);
+    let (render_tx, render_rx) = rini::app::channels::channel();
+    let renderer = renderer(render_rx, &transitions_tx, rest_handover, mtm);
+    spawn_transitions(flight_engine_parts(
+        transitions_rx,
+        &transitions_tx,
+        pictures.clone(),
+        render_tx,
+        &events_tx,
+        &bar_tx,
+    ));
+    let switcher = switcher_actor(switcher_rx, mtm, &events_tx, pictures);
+    let bar = bar_actor(bar_rx, bar_tx, mtm, &events_tx);
+    let mission_control = NativeMissionControl::new(events_tx.clone());
+
+    tune_the_system(&config);
+    spawn_input(event_tap);
+
+    // Every main-thread turn over a frame goes to the flight engine's journal.
+    let _turns = rini_runloop::run_loop::TurnObserver::install({
+        let transitions_tx = transitions_tx.clone();
+        move |turn| transitions_tx.send(rini::transitions::platform::engine::Event::MainTurn(turn))
+    });
+
+    run_main_thread(
+        mtm,
+        QuietActors {
+            wm_controller,
+            notification_center,
+            spaces,
+            window_notify,
+            mission_control,
+            process,
+            cursor_warp,
+        },
+        DrawingActors { renderer, switcher, bar, rest },
+    );
+}
+
+/// The actors on the main thread that draw nothing.
+struct QuietActors {
+    wm_controller: WmController,
+    notification_center: NotificationCenter,
+    spaces: SpacesActor,
+    window_notify: window_notify_actor::WindowNotify,
+    mission_control: NativeMissionControl,
+    process: ProcessActor,
+    cursor_warp: rini::displays::platform::cursor_warp::CursorWarp,
+}
+
+/// The actors on the main thread because AppKit and Core Animation require it.
+struct DrawingActors {
+    renderer: rini::animation::platform::renderer::Renderer,
+    switcher: rini::switcher::platform::actor::SwitcherActor,
+    bar: rini::bar::platform::actor::BarActor,
+    rest: rini::decorations::platform::rest::RestActor,
+}
+
+/// Every main-thread actor joined on the main thread's executor, each supervised.
+fn run_main_thread(mtm: MainThreadMarker, quiet: QuietActors, drawing: DrawingActors) {
+    Executor::run_main(mtm, async move {
+        join!(
+            supervise("wm_controller", quiet.wm_controller.run()),
+            supervise(
+                "notification_center",
+                quiet.notification_center.watch_for_notifications()
+            ),
+            supervise("spaces", quiet.spaces.run()),
+            supervise("window_notify", quiet.window_notify.run()),
+            supervise("mc_native", quiet.mission_control.run()),
+            supervise("process_actor", quiet.process.run()),
+            supervise("cursor_warp", quiet.cursor_warp.run()),
+            supervise("renderer", drawing.renderer.run()),
+            supervise("switcher", drawing.switcher.run()),
+            supervise("bar", drawing.bar.run()),
+            supervise("rest", drawing.rest.run()),
+        );
+    });
+}
+
+/// The process prepared and its prerequisites checked, after a `service` subcommand or
+/// `--validate` has run and exited; the config file's path.
+fn start(opt: &Cli) -> (MainThreadMarker, std::path::PathBuf) {
+    if let Some(Commands::Service { service }) = &opt.command {
+        run_service_command(service);
+    }
+
+    let mtm = prepare_process();
+    preflight();
+
+    let config_path = rini::app::boot::config_path(opt.config.clone());
+    if opt.validate {
+        validate_and_exit(&config_path);
+    }
+    (mtm, config_path)
+}
+
+/// The config, or the defaults when the file cannot be used, said so on stderr; and whether the
+/// file could be used.
+fn read_config(config_path: &std::path::Path, no_animate: bool) -> (Config, bool) {
+    // The fallback rule is `app::boot::config_or_default`, which is also where its tests are: this
+    // path is only reachable by running the binary.
+    let (mut config, complaint) = rini::app::boot::config_or_default(config_path);
+    let config_usable = complaint.is_none();
+    if let Some(complaint) = complaint {
+        eprintln!("{complaint}");
+    }
+    rini::app::boot::apply_no_animate(&mut config.settings, no_animate);
+    (config, config_usable)
+}
+
+/// The IPC server the CLI talks to, or the process exited saying why it could not start.
+fn serve_ipc(reactor: &reactor::ReactorHandle, config_tx: &rini::app::config::actor::Sender) {
+    if let Err(err) = ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
+        reactor.clone(),
+        config_tx.clone(),
+    )) {
+        eprintln!("{}", err);
+        process::exit(1);
+    }
+}
+
+fn process_actor(wm_controller_sender: &rini::app::hotkeys::Sender) -> ProcessActor {
+    ProcessActor::new({
+        let sender = wm_controller_sender.clone();
+        move |event| sender.send(event.into())
+    })
+}
+
+/// The event tap, told of the input settings and Low Power Mode, and handing each left press to
+/// the reactor.
+fn input_tap(
+    config: &Config,
+    wm_controller_sender: &rini::app::hotkeys::Sender,
+    event_tap_rx: channels::Receiver<rini::input::platform::input_tap::Request>,
+    events_tx: &reactor::Sender,
+) -> InputTap {
+    let input_settings = rini::input::settings::InputSettings::from(config);
+    let mut event_tap = InputTap::new(
+        &input_settings,
+        rini::app::power::is_low_power_mode_enabled(),
+        Box::new(wm_controller_sender.clone()),
+        event_tap_rx,
+    );
+    event_tap.set_on_left_press(reactor::Event::left_press_sink(events_tx.clone()));
+    event_tap
+}
+
+/// Warping needs no main-thread access and no permissions, so it is just another
+/// actor. It stays parked until the reactor sends it geometry for two or more displays.
+fn cursor_warp(
+    config: &Config,
+    cursor_warp_rx: channels::Receiver<rini::displays::platform::cursor_warp::Request>,
+) -> rini::displays::platform::cursor_warp::CursorWarp {
+    rini::displays::platform::cursor_warp::CursorWarp::new(
+        config.settings.warp_cursor_between_stacked_displays,
+        config.settings.stacked_display_upper_is,
+        config.settings.stacked_display_lower_top_at,
+        cursor_warp_rx,
+    )
+}
+
+/// The renderer owns the overlay, on the main thread because Core Animation requires it, and plays
+/// what the flight engine draws. The engine has a thread of its own, and is made there: its timers
+/// run on the loop that makes them. Both stay idle until the reactor sends display geometry and
+/// something to animate.
+fn renderer(
+    render_rx: channels::Receiver<rini::animation::platform::renderer::Batch>,
+    transitions_tx: &channels::Sender<rini::transitions::platform::engine::Event>,
+    rest_handover: rini::decorations::platform::rest::Handover,
+    mtm: MainThreadMarker,
+) -> rini::animation::platform::renderer::Renderer {
+    rini::animation::platform::renderer::Renderer::new(
+        render_rx,
+        Box::new({
+            let transitions_tx = transitions_tx.clone();
+            move |answer| {
+                transitions_tx.send(rini::transitions::platform::engine::Event::Rendered(answer))
+            }
+        }),
+        rest_handover,
+        mtm,
+    )
+}
+
+/// The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
+/// Animation require it. Idle until a switch opens, and it builds its window on first use.
+/// A click on a popup row goes to the reactor, which owns the selection; wired here because the
+/// switcher may not name the app layer.
+fn switcher_actor(
+    switcher_rx: channels::Receiver<rini::switcher::platform::actor::Event>,
+    mtm: MainThreadMarker,
+    events_tx: &reactor::Sender,
+    pictures: rini::pictures::platform::service::Pictures,
+) -> rini::switcher::platform::actor::SwitcherActor {
+    rini::switcher::platform::actor::SwitcherActor::new(
+        switcher_rx,
+        mtm,
+        std::rc::Rc::new({
+            let events_tx = events_tx.clone();
+            move |window| events_tx.send(reactor::Event::SwitchPicked(window))
+        }),
+        pictures,
+    )
+}
+
+/// Every display's bar, on the main thread for AppKit. It is sent what it shows by the reactor, and
+/// a click on it goes back there; wired here because the bar may not name the app layer.
+fn bar_actor(
+    bar_rx: channels::Receiver<rini::bar::platform::actor::Event>,
+    bar_tx: channels::Sender<rini::bar::platform::actor::Event>,
+    mtm: MainThreadMarker,
+    events_tx: &reactor::Sender,
+) -> rini::bar::platform::actor::BarActor {
+    rini::bar::platform::actor::BarActor::new(
+        bar_rx,
+        bar_tx,
+        mtm,
+        std::rc::Rc::new({
+            let events_tx = events_tx.clone();
+            move |action| events_tx.send(reactor::Event::BarAction(action))
+        }),
+    )
+}
+
+/// The notice that every Space starts inactive, when it does, and the system settings rini runs
+/// under: a one-second Accessibility messaging timeout, no local events suppression after a warp,
+/// and no event state combining.
+fn tune_the_system(config: &Config) {
+    if config.settings.default_disable {
+        println!(
+            "NOTICE: rini starts with every Space inactive. Turn a Space on with the \
+             toggle-space-activated action (Mod+Z in rini.default.kdl), or write \
+             activate-spaces-by-default in the config to manage every Space from the start."
+        );
+    }
+
+    unsafe { AXUIElement::new_system_wide().set_messaging_timeout(1.0) };
+
+    CGSetLocalEventsSuppressionInterval(0.0);
+    CGEnableEventStateCombining(false);
+}
+
+/// Carries out a `service` subcommand and exits with its result.
+fn run_service_command(service: &rini::app::launch_agent::ServiceCommands) -> ! {
+    match handle_service_command(service) {
+        Ok(msg) => {
+            println!("{}", msg);
+            process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+    }
+}
+
+/// `--validate`: the config file and the saved layout checked, each reported, and the process
+/// exited with whether both are valid.
+fn validate_and_exit(config_path: &std::path::Path) -> ! {
+    match rini::app::boot::validate_config(config_path) {
+        Ok(line) => println!("{line}"),
+        Err(report) => {
+            eprintln!("{report}");
+            process::exit(1);
+        }
+    }
+    let path = restore_file();
+    match LayoutEngine::load(path.clone()) {
+        Ok(_) => println!("Saved layout file is valid: {}", path.display()),
+        Err(error) => {
+            eprintln!(
+                "Could not load the saved layout file at {}: {error}",
+                path.display()
+            );
+            process::exit(1);
+        }
+    }
+    process::exit(0);
+}
+
+/// The layout to start from and the display memory it was saved with: the saved one unless
+/// `no_restore`, and a fresh one when there is none or it cannot be read.
+///
+/// Restore is ON by default, so a restart or redeploy keeps window sizes, workspaces
+/// and strip positions.
+///
+/// It was opt-in for a while because enabling it exposed two latent bugs in a code
+/// path nothing had exercised. Restored workspaces kept a stale layout MODE, and
+/// windows belonging to a display that had since been unplugged were restored at
+/// that display's coordinates — measured at x=-1680 with no display there — and
+/// stranded, with nothing to migrate them back. A single dock/undock cycle then
+/// produced a layout only fixable by deleting ~/.rini/layout.ron.
+///
+/// Both are handled now. The layout mode is migrated on restore, and
+/// release_windows_saved_on_absent_displays gives up the saved slots of any display
+/// that is not attached while keeping each window's display affinity, so those
+/// windows lay out fresh on a live display and return to their own display when it
+/// is plugged back in.
+fn restored_layout(config: &Config, no_restore: bool) -> (LayoutEngine, DisplayMemory) {
+    let fresh = || LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout);
+    if !no_restore {
+        let path = restore_file();
+        match load_saved_layout(path.clone()) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                eprintln!(
+                    "Could not restore the saved layout file at {}; starting with a fresh \
+                     layout: {error}",
+                    path.display()
+                );
+                (fresh(), DisplayMemory::default())
+            }
+        }
+    } else {
+        (fresh(), DisplayMemory::default())
+    }
+}
+
+/// Every background picture rini draws, taken on the service's own thread. The app wires its sinks,
+/// so the service names neither the flight engine nor the switcher.
+fn start_pictures(
+    transitions_tx: &channels::Sender<rini::transitions::platform::engine::Event>,
+    switcher_tx: &channels::Sender<rini::switcher::platform::actor::Event>,
+) -> rini::pictures::platform::service::Pictures {
+    rini::pictures::platform::service::Pictures::start(vec![
+        Box::new({
+            let transitions_tx = transitions_tx.clone();
+            move |landed| {
+                transitions_tx.send(rini::transitions::platform::engine::Event::Pictures(landed))
+            }
+        }),
+        Box::new({
+            let switcher_tx = switcher_tx.clone();
+            move |landed| {
+                if let rini::pictures::event::Event::Taken { window, .. } = landed {
+                    switcher_tx.send(rini::switcher::platform::actor::Event::Landed(window));
+                }
+            }
+        }),
+    ])
+}
+
+/// The config actor, which tells the reactor of each change and the spaces actor of the band the
+/// bar keeps clear: that band is the spaces actor's to apply, so it hears of every accepted
+/// change directly rather than through the reactor.
+fn spawn_config_actor(
+    config: &Config,
+    events_tx: &reactor::Sender,
+    spaces_tx: &rini::displays::platform::spaces::Sender,
+    config_path: &std::path::Path,
+) -> rini::app::config::actor::Sender {
+    ConfigActor::spawn_with_path(
         config.clone(),
         Box::new({
             let events_tx = events_tx.clone();
@@ -251,36 +543,20 @@ fn main() {
                 }
             }
         }),
-        config_path.clone(),
-    );
+        config_path.to_path_buf(),
+    )
+}
 
-    ConfigWatcher::spawn(config_tx.clone(), config_path.clone());
-
-    if let Err(err) = ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
-        reactor.clone(),
-        config_tx.clone(),
-    )) {
-        eprintln!("{}", err);
-        process::exit(1);
-    }
-
-    let (wm_controller, wm_controller_sender) = WmController::new(
-        config.clone(),
-        config_tx.clone(),
-        events_tx.clone(),
-        event_tap_tx.clone(),
-        Some(window_tx_store.clone()),
-    );
-
-    events_tx.send(reactor::Event::RegisterWmSender(wm_controller_sender.clone()));
-
-    let spaces_actor = SpacesActor::new(
-        spaces_rx,
-        spaces_tx.clone(),
-        Box::new(wm_controller_sender.clone()),
-        config.settings.top_band(),
-    );
-    let wn_actor = window_notify_actor::WindowNotify::new(
+/// The window server's notifications rini follows, and the rest windows' reads of the windows they
+/// follow while `following` is on.
+fn window_notify(
+    events_tx: &reactor::Sender,
+    spaces_tx: &rini::displays::platform::spaces::Sender,
+    rest_tx: &channels::Sender<rini::decorations::platform::rest::Event>,
+    following: rini::displays::event::Following,
+    server_reads: std::sync::mpsc::Receiver<rini::displays::event::ToRead>,
+) -> window_notify_actor::WindowNotify {
+    window_notify_actor::WindowNotify::new(
         events_tx.clone(),
         spaces_tx.clone(),
         &[
@@ -308,64 +584,25 @@ fn main() {
             let rest_tx = rest_tx.clone();
             move |read| rest_tx.send(rini::decorations::platform::rest::Event::Server(read))
         })],
-        following.clone(),
+        following,
         server_reads,
-    );
+    )
+}
 
-    let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
-
-    // Which applications ask for attention, read from LaunchServices on a thread of its own.
-    rini::windows::platform::attention::spawn(Box::new(events_tx.clone()));
-
-    let process_actor = ProcessActor::new({
-        let sender = wm_controller_sender.clone();
-        move |event| sender.send(event.into())
-    });
-
-    let input_settings = rini::input::settings::InputSettings::from(&config);
-    let mut event_tap = InputTap::new(
-        &input_settings,
-        rini::app::power::is_low_power_mode_enabled(),
-        Box::new(wm_controller_sender.clone()),
-        event_tap_rx,
-    );
-    event_tap.set_on_left_press(reactor::Event::left_press_sink(events_tx.clone()));
-
-    // Warping needs no main-thread access and no permissions, so it is just another
-    // actor. It stays parked until the reactor sends it geometry for two or more displays.
-    let cursor_warp = rini::displays::platform::cursor_warp::CursorWarp::new(
-        config.settings.warp_cursor_between_stacked_displays,
-        config.settings.stacked_display_upper_is,
-        config.settings.stacked_display_lower_top_at,
-        cursor_warp_rx,
-    );
-
-    // The renderer owns the overlay, on the main thread because Core Animation requires it, and plays
-    // what the flight engine draws. The engine has a thread of its own, and is made there: its timers
-    // run on the loop that makes them. Both stay idle until the reactor sends display geometry and
-    // something to animate.
-    // The decorations drawn at rest, on the main thread for AppKit: a rest window above each window
-    // whose band shows, told what each wears and when each flight begins by the reactor. From a
-    // flight's begin they draw nothing until the renderer places them, a tick before the lift once
-    // the flight has landed or in the lift's drain, so the lift shows each band where its tile had it.
-    let (rest_actor, rest_handover) =
-        rini::decorations::platform::rest::RestActor::new(rest_rx, rest_tx.clone(), following, mtm);
-    let (render_tx, render_rx) = rini::app::channels::channel();
-    let renderer = rini::animation::platform::renderer::Renderer::new(
-        render_rx,
-        Box::new({
-            let transitions_tx = transitions_tx.clone();
-            move |answer| {
-                transitions_tx.send(rini::transitions::platform::engine::Event::Rendered(answer))
-            }
-        }),
-        rest_handover,
-        mtm,
-    );
-    let flight_engine = rini::transitions::platform::engine::Parts {
-        rx: transitions_rx,
+/// What the flight engine is made from: its channel, the pictures, the renderer it draws through,
+/// and where it places the real windows and tells the bar of a flight.
+fn flight_engine_parts(
+    rx: channels::Receiver<rini::transitions::platform::engine::Event>,
+    transitions_tx: &channels::Sender<rini::transitions::platform::engine::Event>,
+    pictures: rini::pictures::platform::service::Pictures,
+    render_tx: channels::Sender<rini::animation::platform::renderer::Batch>,
+    events_tx: &reactor::Sender,
+    bar_tx: &channels::Sender<rini::bar::platform::actor::Event>,
+) -> rini::transitions::platform::engine::Parts {
+    rini::transitions::platform::engine::Parts {
+        rx,
         tx: transitions_tx.clone(),
-        pictures: pictures.clone(),
+        pictures,
         client: rini::pictures::domain::watch::Client(1),
         draw: Box::new(move |batch| render_tx.send(batch)),
         place_frames: Box::new({
@@ -384,52 +621,12 @@ fn main() {
         clock: Box::new(std::time::Instant::now),
         window_server: rini::windows::platform::window_server::live(),
         capture: Box::new(rini::pictures::platform::skylight::capture_via_framed),
-    };
-    spawn_transitions(flight_engine);
-
-    // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
-    // Animation require it. Idle until a switch opens, and it builds its window on first use.
-    // A click on a popup row goes to the reactor, which owns the selection; wired here because the
-    // switcher may not name the app layer.
-    let switcher_actor = rini::switcher::platform::actor::SwitcherActor::new(
-        switcher_rx,
-        mtm,
-        std::rc::Rc::new({
-            let events_tx = events_tx.clone();
-            move |window| events_tx.send(reactor::Event::SwitchPicked(window))
-        }),
-        pictures,
-    );
-
-    // Every display's bar, on the main thread for AppKit. It is sent what it shows by the reactor, and
-    // a click on it goes back there; wired here because the bar may not name the app layer.
-    let bar_actor = rini::bar::platform::actor::BarActor::new(
-        bar_rx,
-        bar_tx,
-        mtm,
-        std::rc::Rc::new({
-            let events_tx = events_tx.clone();
-            move |action| events_tx.send(reactor::Event::BarAction(action))
-        }),
-    );
-
-    let mission_control_native = NativeMissionControl::new(events_tx.clone());
-
-    if config.settings.default_disable {
-        println!(
-            "NOTICE: rini starts with every Space inactive. Turn a Space on with the \
-             toggle-space-activated action (Mod+Z in rini.default.kdl), or write \
-             activate-spaces-by-default in the config to manage every Space from the start."
-        );
     }
+}
 
-    unsafe { AXUIElement::new_system_wide().set_messaging_timeout(1.0) };
-
-    CGSetLocalEventsSuppressionInterval(0.0);
-    CGEnableEventStateCombining(false);
-
-    // The event tap runs on a dedicated thread with its own CFRunLoop,
-    // isolated from main-thread stalls (layout, animation, SLS IPC).
+/// The event tap, on a dedicated thread with its own CFRunLoop, isolated from main-thread stalls
+/// (layout, animation, SLS IPC).
+fn spawn_input(event_tap: InputTap) {
     std::thread::Builder::new()
         .name("input".into())
         .spawn(move || {
@@ -437,31 +634,6 @@ fn main() {
             panic!("input thread exited");
         })
         .expect("failed to spawn input thread");
-
-    // Every main-thread turn over a frame goes to the flight engine's journal.
-    let _turns = rini_runloop::run_loop::TurnObserver::install({
-        let transitions_tx = transitions_tx.clone();
-        move |turn| transitions_tx.send(rini::transitions::platform::engine::Event::MainTurn(turn))
-    });
-
-    Executor::run_main(mtm, async move {
-        join!(
-            supervise("wm_controller", wm_controller.run()),
-            supervise(
-                "notification_center",
-                notification_center.watch_for_notifications()
-            ),
-            supervise("spaces", spaces_actor.run()),
-            supervise("window_notify", wn_actor.run()),
-            supervise("mc_native", mission_control_native.run()),
-            supervise("process_actor", process_actor.run()),
-            supervise("cursor_warp", cursor_warp.run()),
-            supervise("renderer", renderer.run()),
-            supervise("switcher", switcher_actor.run()),
-            supervise("bar", bar_actor.run()),
-            supervise("rest", rest_actor.run()),
-        );
-    });
 }
 
 /// The saved layout, without the saved windows neither the window server nor a running
