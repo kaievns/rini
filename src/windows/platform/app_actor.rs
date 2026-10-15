@@ -194,10 +194,7 @@ impl<W: AxWorld> Drop for State<W> {
 ///
 /// Formatting an `AXUIElement` is an Accessibility round-trip: its `Debug` delegates to the Core
 /// Foundation description, which queries the element for its role and title. So logging one costs a
-/// call to the application, and on a wedged application it blocks. The hot-path `trace!` had the
-/// field commented out for exactly that reason, but the error arm below still formatted the element —
-/// in the branch reached when the application is hung, which is the worst possible moment for another
-/// round-trip. Nine call sites threaded an element through this function to serve that one line.
+/// call to the application, and on a wedged application it blocks.
 fn trace<T>(
     desc: &str,
     about: impl std::fmt::Debug,
