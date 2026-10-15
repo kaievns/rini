@@ -39,15 +39,6 @@ impl Round for ic::CGPoint {
     }
 }
 
-impl Round for ic::CGSize {
-    fn rounded(&self) -> Self {
-        ic::CGSize {
-            width: self.width.round(),
-            height: self.height.round(),
-        }
-    }
-}
-
 pub trait IsWithin {
     fn is_within(&self, how_much: f64, other: Self) -> bool;
 }
