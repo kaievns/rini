@@ -12,6 +12,7 @@ windows are on this space" is a window-server query over window ids.
 | `domain/screen.rs` | `ScreenInfo` (a display's whole `bounds`, and the `frame` left for windows), `CoordinateConverter` (with `reframe`: where one of rini's own windows has to go, measured against where AppKit has it), `usable_frame` (what the menu bar and Dock leave), `menu_bar_inset`, `top_inset` (the menu bar's inset or a band reserved at the top, whichever is taller), the visible-space ordering |
 | `domain/snapshot.rs` | How the spaces actor builds the snapshot it forwards from the screens and the window server's answers, as functions over values: `SpaceKinds`, the classifier it is handed; `user_screens`, which nulls every space rini does not manage and keeps a display's user space while another enters fullscreen; `forward`, which measures a snapshot against what `Forwarded` kept of the last one (its `Topology`, the resized spaces, the space remaps and the display history they keep, the menu-bar and command spaces, the spaces each display owns); `visible_window_spaces`, which active space each window is on; `window_delta`, which windows a reconfiguration moved |
 | `domain/settling.rs` | When the spaces actor asks again: `refresh_retry` under `REFRESH_MAX_RETRIES`, `begins_display_churn`, and `settle`, which counts identical topology samples in `Stability` and says whether a churn's check forwards, checks again, or gives up at `DISPLAY_STABILIZE_MAX_ATTEMPTS` |
+| `domain/authority.rs` | What the spaces actor holds between notifications, as three machines, each changed only by its `next` over an edge: `Lifecycle`, the `Hold`s of sleep and the login window and the one release owed to the reactor once a hold comes off; `Churn`, the display reconfiguration under way (`ChurnRun`: its flags, its `Stability`, the windows before it) and the epoch a stale check is told apart by; `Refresh`, whether a screen refresh is `Pending` and whether a `SpaceSwitch` is unconfirmed |
 | `domain/frames.rs` | `latest`: which windows a burst of move and resize notifications names, each once, in the order to read their frames |
 | `domain/space_activation.rs` | Which spaces rini manages, and how activation transfers when macOS mints a new space id |
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot. It makes the reads, through the `WindowServer` port and `LiveDisplays` (`platform/spaces/live.rs`, with the `SpaceKinds` production hands it), and the domain decides; what it asks again is handed to a `Schedule` (`platform/spaces/schedule.rs`), the main queue in production and a record in tests, so a test runs every retry to its cap |
@@ -50,7 +51,7 @@ so the ordering is in the signature rather than in a comment.
 ## Reading order
 
 `domain/topology.rs` → `domain/screen.rs` → `domain/snapshot.rs` → `domain/settling.rs` →
-`platform/spaces.rs`, which wires those rules to the lifecycle signals and is worth reading last.
+`domain/authority.rs` → `platform/spaces.rs`, which wires those rules to the lifecycle signals and is worth reading last.
 
 ## Detail
 

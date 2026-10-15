@@ -1,7 +1,8 @@
 //! The authority on native displays and spaces: holds back every snapshot through lifecycle churn
 //! and forwards one coherent `ForwardedSpaceState` at a time. Why it holds back, and what it nulls
 //! out, is in `src/displays/docs/topology.md`; the rules it forwards by are
-//! `displays::domain::snapshot` and `displays::domain::settling`.
+//! `displays::domain::snapshot` and `displays::domain::settling`, and the state it holds between
+//! notifications is `displays::domain::authority`'s.
 use std::sync::Arc;
 
 use objc2_foundation::MainThreadMarker;
@@ -10,10 +11,11 @@ use rini_runloop::channel;
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 use rustc_hash::FxHashMap as HashMap;
 
-use crate::displays::domain::screen::{CoordinateConverter, ScreenInfo};
-use crate::displays::domain::settling::{
-    Settle, Stability, begins_display_churn, refresh_retry, settle,
+use crate::displays::domain::authority::{
+    Churn, ChurnEdge, ChurnStep, Hold, Lifecycle, LifecycleEdge, Refresh, RefreshEdge,
 };
+use crate::displays::domain::screen::{CoordinateConverter, ScreenInfo};
+use crate::displays::domain::settling::{Settle, begins_display_churn, refresh_retry, settle};
 use crate::displays::domain::snapshot::{
     Forwarded, Heard, SpaceKinds, Taken, active_spaces, forward, user_screens,
     visible_window_spaces, window_delta,
@@ -71,21 +73,14 @@ pub type Sender = channel::Sender<Notification>;
 pub type Receiver = channel::Receiver<Notification>;
 
 pub struct AuthorityState {
-    pub sleeping: bool,
-    pub session_inactive: bool,
-    pub display_churn_active: bool,
     pub last_sent_spaces: Option<Vec<Option<SpaceId>>>,
     pub quarantine_stats: QuarantineStats,
+    lifecycle: Lifecycle,
+    churn: Churn,
+    refresh: Refresh,
     forwarded: Forwarded,
     screen_cache: Option<ScreenCache>,
     last_converter: CoordinateConverter,
-    refresh_pending: bool,
-    display_churn_epoch: u64,
-    display_churn_flags: DisplayReconfigFlags,
-    stability: Stability,
-    awaiting_space_switch_confirmation: bool,
-    release_reactor_quarantine_on_next_forward: bool,
-    pre_churn_visible_window_spaces: HashMap<WindowServerId, SpaceId>,
     pending_topology_window_delta: Option<TopologyWindowDelta>,
     space_kinds: SpaceKinds,
     live: LiveDisplays,
@@ -94,21 +89,14 @@ pub struct AuthorityState {
 impl AuthorityState {
     fn new(space_kinds: SpaceKinds, live: LiveDisplays, screen_cache: Option<ScreenCache>) -> Self {
         Self {
-            sleeping: false,
-            session_inactive: false,
-            display_churn_active: false,
             last_sent_spaces: None,
             quarantine_stats: QuarantineStats::default(),
+            lifecycle: Lifecycle::default(),
+            churn: Churn::default(),
+            refresh: Refresh::default(),
             forwarded: Forwarded::default(),
             screen_cache,
             last_converter: CoordinateConverter::default(),
-            refresh_pending: false,
-            display_churn_epoch: 0,
-            display_churn_flags: DisplayReconfigFlags::empty(),
-            stability: Stability::default(),
-            awaiting_space_switch_confirmation: false,
-            release_reactor_quarantine_on_next_forward: false,
-            pre_churn_visible_window_spaces: HashMap::default(),
             pending_topology_window_delta: None,
             space_kinds,
             live,
@@ -122,9 +110,7 @@ impl AuthorityState {
     /// is part-formed: screens appear without spaces, spaces are reported on the wrong display, and a
     /// window's space is whatever it was before the transition started. Forwarding any of that makes
     /// the reactor act on it.
-    pub(crate) fn quarantined(&self) -> bool {
-        self.sleeping || self.session_inactive || self.display_churn_active
-    }
+    pub(crate) fn quarantined(&self) -> bool { self.lifecycle.holds() || self.churn.is_active() }
 }
 
 pub struct SpacesActor {
@@ -169,24 +155,20 @@ impl SpacesActor {
     fn handle_event(&mut self, event: Notification) {
         match event {
             Notification::SystemWillSleep => {
-                self.state.sleeping = true;
-                self.hold(OutEvent::SystemWillSleep);
+                self.hold(Hold::Sleep, OutEvent::SystemWillSleep);
                 self.with_screen_cache(|cache| cache.mark_sleeping(true));
             }
             Notification::SystemDidWake => {
-                self.state.sleeping = false;
                 self.events.send(OutEvent::SystemWoke);
                 self.with_screen_cache(|cache| cache.mark_sleeping(false));
-                self.resample();
+                self.resample(Hold::Sleep);
             }
             Notification::SessionDidResignActive => {
-                self.state.session_inactive = true;
-                self.hold(OutEvent::SessionDidResignActive);
+                self.hold(Hold::Session, OutEvent::SessionDidResignActive);
             }
             Notification::SessionDidBecomeActive => {
-                self.state.session_inactive = false;
                 self.events.send(OutEvent::SessionDidBecomeActive);
-                self.resample();
+                self.resample(Hold::Session);
             }
             Notification::ActiveDisplayChanged => self.handle_active_display_changed(),
             Notification::ActiveSpaceChanged => self.handle_active_space_changed(),
@@ -228,24 +210,24 @@ impl SpacesActor {
     }
 
     /// Enters a sleep or session quarantine: no snapshot releases the reactor's until it ends.
-    fn hold(&mut self, event: OutEvent) {
-        self.state.release_reactor_quarantine_on_next_forward = false;
+    fn hold(&mut self, hold: Hold, event: OutEvent) {
+        self.state.lifecycle = self.state.lifecycle.next(LifecycleEdge::On(hold));
         self.events.send(event);
     }
 
     /// Leaves a sleep or session quarantine. Wake is unstable, and the login window can replace
     /// every display's current space, so the screens are sampled afresh and the next snapshot
     /// forwarded releases the reactor's quarantine.
-    fn resample(&mut self) {
+    fn resample(&mut self, hold: Hold) {
+        self.state.lifecycle = self.state.lifecycle.next(LifecycleEdge::Off(hold));
         self.with_screen_cache(ScreenCache::mark_dirty);
-        if self.state.display_churn_active {
+        if self.state.churn.is_active() {
             self.schedule_display_stabilization(
-                self.state.display_churn_epoch,
+                self.state.churn.epoch(),
                 0,
                 DISPLAY_CHURN_QUIET_NS,
             );
         }
-        self.state.release_reactor_quarantine_on_next_forward = true;
         self.schedule_screen_refresh();
     }
 
@@ -323,7 +305,7 @@ impl SpacesActor {
     }
 
     fn handle_active_space_changed(&mut self) {
-        self.state.awaiting_space_switch_confirmation = true;
+        self.state.refresh = self.state.refresh.next(RefreshEdge::SpaceSwitched);
         if self.state.quarantined() || !self.try_forward_authoritative_snapshot(false, true) {
             self.schedule_screen_refresh_after(REFRESH_SPACE_SWITCH_DELAY_NS, 0);
         }
@@ -358,7 +340,7 @@ impl SpacesActor {
         self.state.last_converter = converter;
         let forwarded = self.build_forwarded_state(screens);
         self.state.last_sent_spaces = Some(spaces_of(&forwarded.screens));
-        self.state.awaiting_space_switch_confirmation = false;
+        self.state.refresh = self.state.refresh.next(RefreshEdge::Forwarded);
         self.events.send(OutEvent::SpaceStateUpdated(
             Box::new(forwarded),
             self.state.last_converter,
@@ -375,8 +357,8 @@ impl SpacesActor {
             spaces_per_display: (live.spaces_per_display)(),
         };
         let windows = self.visible_window_spaces_for_screens(&screens);
-        let releases_lifecycle_refresh_quarantine =
-            std::mem::take(&mut self.state.release_reactor_quarantine_on_next_forward);
+        let releases_lifecycle_refresh_quarantine = self.state.lifecycle.releases();
+        self.state.lifecycle = self.state.lifecycle.next(LifecycleEdge::Forwarded);
         let taken = Taken {
             screens,
             fullscreen_spaces,
@@ -409,7 +391,7 @@ impl SpacesActor {
         visible_window_spaces(
             &listed,
             &self.state.forwarded.visible_window_spaces,
-            self.state.release_reactor_quarantine_on_next_forward,
+            self.state.lifecycle.releases(),
         )
     }
 
@@ -417,10 +399,10 @@ impl SpacesActor {
         &mut self,
         epoch: u64,
         flags: DisplayReconfigFlags,
+        previous: HashMap<WindowServerId, SpaceId>,
         screens: &[ScreenInfo],
     ) {
         let current = self.visible_window_spaces_for_screens(screens);
-        let previous = std::mem::take(&mut self.state.pre_churn_visible_window_spaces);
         self.state.pending_topology_window_delta =
             Some(window_delta(epoch, flags, &previous, &current));
         self.state.forwarded.visible_window_spaces = current;
@@ -428,7 +410,7 @@ impl SpacesActor {
 
     fn process_screen_refresh(&mut self, attempt: u8) {
         if self.state.quarantined() {
-            self.state.refresh_pending = false;
+            self.end_refresh();
             return;
         }
         let kinds = self.state.space_kinds;
@@ -442,7 +424,7 @@ impl SpacesActor {
             }
             return;
         };
-        if self.state.awaiting_space_switch_confirmation
+        if self.state.refresh.awaits_space_switch()
             && self.state.last_sent_spaces.as_ref() == Some(&spaces_of(&screens))
             && let Some(next) = refresh_retry(attempt)
         {
@@ -450,15 +432,16 @@ impl SpacesActor {
             return;
         }
         self.forward_screen_parameters(screens, converter);
-        self.state.awaiting_space_switch_confirmation = false;
-        self.state.refresh_pending = false;
+        self.end_refresh();
     }
 
+    fn end_refresh(&mut self) { self.state.refresh = self.state.refresh.next(RefreshEdge::Ended); }
+
     fn finish_screen_refresh_attempts(&mut self) {
-        self.state.refresh_pending = false;
-        // Only a forwarded snapshot clears this flag, and only it releases the reactor's lifecycle
-        // quarantine, so the retries start over rather than leave the reactor held for good.
-        if self.state.release_reactor_quarantine_on_next_forward {
+        self.end_refresh();
+        // Only a forwarded snapshot releases the reactor's lifecycle quarantine, so the retries
+        // start over rather than leave the reactor held for good.
+        if self.state.lifecycle.releases() {
             self.schedule_screen_refresh_after(REFRESH_RETRY_DELAY_NS, 0);
         }
     }
@@ -468,7 +451,7 @@ impl SpacesActor {
         force: bool,
         require_complete_spaces: bool,
     ) -> bool {
-        if self.state.refresh_pending || self.state.display_churn_active {
+        if self.state.refresh.is_pending() || self.state.churn.is_active() {
             return false;
         }
         let Some((screens, converter)) = self.collect_state() else {
@@ -492,10 +475,10 @@ impl SpacesActor {
 
     /// A first attempt waits while a churn is under way, or another refresh is already pending.
     fn schedule_screen_refresh_after(&mut self, delay_ns: i64, attempt: u8) {
-        if attempt == 0 && (self.state.display_churn_active || self.state.refresh_pending) {
+        if attempt == 0 && (self.state.churn.is_active() || self.state.refresh.is_pending()) {
             return;
         }
-        self.state.refresh_pending = true;
+        self.state.refresh = self.state.refresh.next(RefreshEdge::Scheduled);
         self.schedule.after(delay_ns, Notification::ProcessScreenRefresh { attempt });
     }
 
@@ -509,19 +492,14 @@ impl SpacesActor {
     }
 
     fn begin_display_churn(&mut self, flags: DisplayReconfigFlags) -> u64 {
-        let was_active = self.state.display_churn_active;
-        self.state.display_churn_active = true;
-        self.state.display_churn_flags |= flags;
-        self.state.display_churn_epoch = self.state.display_churn_epoch.wrapping_add(1);
-        self.state.stability.reset();
+        let windows = &self.state.forwarded.visible_window_spaces;
+        let step = self.state.churn.next(ChurnEdge::Reconfigured(flags, windows));
         self.state.last_sent_spaces = None;
         display_churn::begin();
-        if !was_active {
-            self.state.pre_churn_visible_window_spaces =
-                self.state.forwarded.visible_window_spaces.clone();
+        if step == ChurnStep::Began {
             self.events.send(OutEvent::DisplayChurnBegin);
         }
-        self.state.display_churn_epoch
+        self.state.churn.epoch()
     }
 
     fn schedule_display_stabilization(&self, expected_epoch: u64, attempt: u8, delay_ns: i64) {
@@ -530,12 +508,15 @@ impl SpacesActor {
     }
 
     fn attempt_finish_display_churn(&mut self, expected_epoch: u64, attempt: u8) {
-        if expected_epoch != self.state.display_churn_epoch || !self.state.display_churn_active {
+        if self.state.churn.run_at(expected_epoch).is_none() {
             return;
         }
         let (screens, converter) = self.collect_state().unwrap_or_default();
         let (kinds, quiet) = (self.state.space_kinds, self.state.live.window_server_quiet);
-        match settle(&mut self.state.stability, &screens, kinds, quiet, attempt) {
+        let Some(run) = self.state.churn.run_at(expected_epoch) else {
+            return;
+        };
+        match settle(&mut run.stability, &screens, kinds, quiet, attempt) {
             Settle::Again(next) => self.schedule_display_stabilization(
                 expected_epoch,
                 next,
@@ -543,8 +524,8 @@ impl SpacesActor {
             ),
             Settle::GiveUp => self.finish_display_churn(expected_epoch, true),
             Settle::Forward => {
-                let flags = self.state.display_churn_flags;
-                self.synthesize_topology_window_delta(expected_epoch, flags, &screens);
+                let (flags, before) = (run.flags, std::mem::take(&mut run.windows_before));
+                self.synthesize_topology_window_delta(expected_epoch, flags, before, &screens);
                 // The settled snapshot acknowledges the reactor's churn quarantine.
                 self.forward_screen_parameters(screens, converter);
                 self.finish_display_churn(expected_epoch, false);
@@ -553,13 +534,9 @@ impl SpacesActor {
     }
 
     fn finish_display_churn(&mut self, expected_epoch: u64, schedule_refresh: bool) {
-        if expected_epoch != self.state.display_churn_epoch || !self.state.display_churn_active {
+        if self.state.churn.next(ChurnEdge::Ended(expected_epoch)) == ChurnStep::Stale {
             return;
         }
-        self.state.display_churn_active = false;
-        self.state.display_churn_epoch = self.state.display_churn_epoch.wrapping_add(1);
-        self.state.display_churn_flags = DisplayReconfigFlags::empty();
-        self.state.stability.reset();
         display_churn::end();
         if schedule_refresh {
             self.schedule_screen_refresh_after(0, 0);

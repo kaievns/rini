@@ -1,5 +1,6 @@
 //! What the display topology is and what rini decides about it, with no macOS in it.
 
+pub mod authority;
 pub mod frames;
 pub mod screen;
 pub mod settling;
