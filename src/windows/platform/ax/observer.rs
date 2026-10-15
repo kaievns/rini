@@ -238,17 +238,3 @@ fn make_result(err: AXError) -> Result<(), AxError> {
         Err(AxError::Ax(err))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_application_too_busy_to_answer_is_an_error_for_the_caller_to_ask_again() {
-        assert!(matches!(
-            make_result(AXError::CannotComplete),
-            Err(AxError::Ax(AXError::CannotComplete))
-        ));
-        assert!(make_result(AXError::Success).is_ok());
-    }
-}

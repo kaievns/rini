@@ -1196,22 +1196,33 @@ pub fn take_stack_place(
     level: Option<NSWindowLevel>,
     sub_level: Option<c_int>,
 ) {
-    let (level, sub_level) = stack_place_writes(level, sub_level);
-    // SAFETY: plain calls on rini's own connection and one of its own windows.
-    unsafe {
-        SLSSetWindowLevel(*G_CONNECTION, own.as_u32(), level);
-        if let Some(sub_level) = sub_level {
-            SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), sub_level);
+    for write in stack_place_writes(level, sub_level) {
+        // SAFETY: plain calls on rini's own connection and one of its own windows.
+        unsafe {
+            match write {
+                StackWrite::Level(level) => {
+                    SLSSetWindowLevel(*G_CONNECTION, own.as_u32(), level);
+                }
+                StackWrite::SubLevel(sub_level) => {
+                    SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), sub_level);
+                }
+            }
         }
     }
 }
 
-/// The level and the sub-level `take_stack_place` writes: no sub-level when none was read.
-fn stack_place_writes(
-    level: Option<NSWindowLevel>,
-    sub_level: Option<c_int>,
-) -> (c_int, Option<c_int>) {
-    (level.unwrap_or(NSNormalWindowLevel) as c_int, sub_level)
+/// One window server write `take_stack_place` makes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum StackWrite {
+    Level(c_int),
+    SubLevel(c_int),
+}
+
+/// The writes `take_stack_place` makes, in order: the level, then the sub-level only when one was
+/// read.
+fn stack_place_writes(level: Option<NSWindowLevel>, sub_level: Option<c_int>) -> Vec<StackWrite> {
+    let level = StackWrite::Level(level.unwrap_or(NSNormalWindowLevel) as c_int);
+    std::iter::once(level).chain(sub_level.map(StackWrite::SubLevel)).collect()
 }
 
 /// Whether one of the windows stacked above `candidate` sits wholly inside its frame at the same
@@ -1293,10 +1304,11 @@ mod stack_tests {
 
     #[test]
     fn an_unanswered_sub_level_is_not_written() {
-        assert_eq!(stack_place_writes(Some(3), Some(1)), (3, Some(1)));
-        assert_eq!(stack_place_writes(Some(3), Some(0)), (3, Some(0)));
-        assert_eq!(stack_place_writes(Some(3), None), (3, None));
-        assert_eq!(stack_place_writes(None, None), (NSNormalWindowLevel as c_int, None));
+        use StackWrite::{Level, SubLevel};
+        assert_eq!(stack_place_writes(Some(3), Some(1)), [Level(3), SubLevel(1)]);
+        assert_eq!(stack_place_writes(Some(3), Some(0)), [Level(3), SubLevel(0)]);
+        assert_eq!(stack_place_writes(Some(3), None), [Level(3)]);
+        assert_eq!(stack_place_writes(None, None), [Level(NSNormalWindowLevel as c_int)]);
     }
 
     fn info(layer: i32, w: f64, h: f64) -> WindowServerInfo {
