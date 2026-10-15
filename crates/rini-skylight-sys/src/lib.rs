@@ -13,7 +13,7 @@ use bitflags::bitflags;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use objc2_application_services::{AXError, AXUIElement};
 use objc2_core_foundation::{
-    CFArray, CFData, CFDictionary, CFNumber, CFString, CFType, CGPoint, CGRect, CGSize,
+    CFArray, CFDictionary, CFNumber, CFString, CFType, CGPoint, CGRect, CGSize,
 };
 use objc2_core_graphics::{CGError, CGEventSourceStateID, CGImage, CGWindowID};
 use objc2_foundation::NSArray;
@@ -334,7 +334,6 @@ unsafe extern "C" {
     pub fn CFRelease(cf: *mut CFType);
 
     pub fn _AXUIElementGetWindow(elem: *mut AXUIElement, wid: *mut CGWindowID) -> AXError;
-    pub fn _AXUIElementCreateWithRemoteToken(data: *mut CFData) -> *mut AXUIElement;
 
     pub fn CGEventCreate(source: *mut CFType) -> *mut CFType;
     pub fn CGEventSourceCreate(state: CGEventSourceStateID) -> *mut CFType;
