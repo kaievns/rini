@@ -1,6 +1,6 @@
 //! What the spaces actor reads of displays and spaces besides the `WindowServer` port, and the
 //! readers production hands it.
-use rini_core::ids::SpaceId;
+use rini_core::ids::{DisplayUuid, SpaceId};
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::displays::domain::snapshot::SpaceKinds;
@@ -25,11 +25,12 @@ impl SpaceKinds {
 #[derive(Clone, Copy)]
 pub struct LiveDisplays {
     /// The display whose menu bar macOS considers active.
-    pub(crate) active_menu_bar_display: fn() -> Option<String>,
+    pub(crate) active_menu_bar_display: fn() -> Option<DisplayUuid>,
     /// The space currently showing on that display.
     pub(crate) active_space: fn() -> Option<SpaceId>,
     /// Every managed space, per display UUID.
-    pub(crate) spaces_per_display: fn() -> HashMap<String, Vec<SpaceId>>,
+    pub(crate) spaces_per_display: fn() -> HashMap<DisplayUuid, Vec<SpaceId>>,
+
     /// No window has moved, appeared or gone for `WINDOWSERVER_QUIET_US`. The clock behind it is
     /// process-wide and every reactor test sets it, so a test that read it would see the others.
     pub(crate) window_server_quiet: fn() -> bool,

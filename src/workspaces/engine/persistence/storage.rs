@@ -391,7 +391,7 @@ impl LayoutEngine {
         &mut self,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
-        current_spaces: &[(SpaceId, String)],
+        current_spaces: &[(SpaceId, DisplayUuid)],
         expected_display_count: usize,
     ) {
         // The first forwarded snapshot can be empty or contain displays whose native space has
@@ -404,10 +404,8 @@ impl LayoutEngine {
             return;
         }
         let unique_spaces = current_spaces.iter().map(|(space, _)| *space).collect::<HashSet<_>>();
-        let unique_displays = current_spaces
-            .iter()
-            .map(|(_, display)| display.as_str())
-            .collect::<HashSet<_>>();
+        let unique_displays =
+            current_spaces.iter().map(|(_, display)| display).collect::<HashSet<_>>();
         if unique_spaces.len() != current_spaces.len()
             || unique_displays.len() != current_spaces.len()
         {
@@ -459,18 +457,18 @@ impl LayoutEngine {
     fn release_windows_saved_on_absent_displays(
         &mut self,
         memory: &mut DisplayMemory,
-        current_spaces: &[(SpaceId, String)],
+        current_spaces: &[(SpaceId, DisplayUuid)],
     ) {
-        let live_displays: HashSet<&str> =
-            current_spaces.iter().map(|(_, display)| display.as_str()).collect();
+        let live_displays: HashSet<&DisplayUuid> =
+            current_spaces.iter().map(|(_, display)| display).collect();
 
-        let absent: Vec<(SpaceId, String)> = self
+        let absent: Vec<(SpaceId, DisplayUuid)> = self
             .workspace_layouts
             .spaces()
             .into_iter()
             .filter_map(|space| {
                 let uuid = memory.affinity.display_for_space(space)?;
-                (!live_displays.contains(uuid)).then(|| (space, uuid.to_owned()))
+                (!live_displays.contains(uuid)).then(|| (space, uuid.clone()))
             })
             .collect();
         if absent.is_empty() {

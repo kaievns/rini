@@ -1,5 +1,5 @@
 use objc2_core_foundation::CGRect;
-use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId};
 use rini_geometry::SameAs;
 use tracing::{debug, trace};
 
@@ -199,7 +199,7 @@ pub struct WindowFrameChangedPayload {
     pub pending_target_space: Option<SpaceId>,
     pub assigned_space: Option<SpaceId>,
     pub keep_assigned_for_scrolling: bool,
-    pub screens: Vec<(SpaceId, CGRect, Option<String>)>,
+    pub screens: Vec<(SpaceId, CGRect, Option<DisplayUuid>)>,
     /// The report read as a title-bar zoom of a column on this strip.
     pub zoom: Option<(SpaceId, Zoom)>,
 }

@@ -10,7 +10,7 @@ fn screen(display: &str, x: f64, space: Option<u64>) -> ScreenInfo {
         id: ScreenId::new(1),
         frame,
         bounds: frame,
-        display_uuid: display.to_string(),
+        display_uuid: display.into(),
         name: None,
         space: space.map(SpaceId::new),
         scale: 2.0,

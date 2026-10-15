@@ -2,6 +2,7 @@
 //! Plain data with defaults; the config file fills it.
 use std::collections::BTreeMap;
 
+use rini_core::ids::DisplayUuid;
 use serde::Serialize;
 
 /// How the strip follows focus. niri's `center-focused-column`, without its `on-overflow`.
@@ -67,7 +68,7 @@ pub struct GapSettings {
     pub gaps: f64,
     pub struts: Edges,
     /// By display UUID.
-    pub per_display: BTreeMap<String, GapOverride>,
+    pub per_display: BTreeMap<DisplayUuid, GapOverride>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone, Default)]
@@ -86,7 +87,7 @@ pub struct Gaps {
 }
 
 impl GapSettings {
-    pub fn effective_for_display(&self, display_uuid: Option<&str>) -> Gaps {
+    pub fn effective_for_display(&self, display_uuid: Option<&DisplayUuid>) -> Gaps {
         let display = display_uuid.and_then(|uuid| self.per_display.get(uuid));
         let gaps = display.and_then(|d| d.gaps).unwrap_or(self.gaps);
         let struts = display.and_then(|d| d.struts).unwrap_or(self.struts);
@@ -145,7 +146,7 @@ mod tests {
             .per_display
             .insert("G".into(), GapOverride { gaps: Some(8.0), struts: None });
 
-        let struts_only = settings.effective_for_display(Some("D"));
+        let struts_only = settings.effective_for_display(Some(&DisplayUuid::new("D")));
         assert_eq!(struts_only.inner, 3.0);
         assert_eq!(struts_only.outer, Edges {
             top: 23.0,
@@ -154,7 +155,7 @@ mod tests {
             right: 3.0
         });
 
-        let gaps_only = settings.effective_for_display(Some("G"));
+        let gaps_only = settings.effective_for_display(Some(&DisplayUuid::new("G")));
         assert_eq!(gaps_only.inner, 8.0);
         assert_eq!(gaps_only.outer, Edges {
             top: 13.0,
@@ -164,7 +165,7 @@ mod tests {
         });
 
         assert_eq!(
-            settings.effective_for_display(Some("other")),
+            settings.effective_for_display(Some(&DisplayUuid::new("other"))),
             settings.effective_for_display(None)
         );
     }

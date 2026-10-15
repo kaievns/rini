@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::CGError;
-use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId, pid_t};
 
 use super::{Command, Listed, WindowServer, on_more_than_one_space};
 use crate::windows::domain::info::{WindowServerInfo, reported_radius};
@@ -50,7 +50,7 @@ struct Answers {
     on_screen: Vec<Listed>,
     every: Vec<Listed>,
     owners: HashMap<pid_t, String>,
-    desktop: HashMap<String, Vec<WindowServerId>>,
+    desktop: HashMap<DisplayUuid, Vec<WindowServerId>>,
     make_key_error: Option<CGError>,
 }
 
@@ -153,9 +153,13 @@ impl FakeWindowServer {
         self.stating(|a| state(&mut a.owners, pid, name.map(str::to_owned)))
     }
 
-    pub fn set_desktop_windows(&self, display_uuid: &str, ids: Vec<WindowServerId>) -> &Self {
+    pub fn set_desktop_windows(
+        &self,
+        display_uuid: &DisplayUuid,
+        ids: Vec<WindowServerId>,
+    ) -> &Self {
         self.stating(|a| {
-            a.desktop.insert(display_uuid.to_owned(), ids);
+            a.desktop.insert(display_uuid.clone(), ids);
         })
     }
 
@@ -253,7 +257,7 @@ impl WindowServer for FakeWindowServer {
         self.answer(|a| a.owners.get(&pid).cloned())
     }
 
-    fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId> {
+    fn desktop_windows(&self, display_uuid: &DisplayUuid) -> Vec<WindowServerId> {
         self.answer(|a| a.desktop.get(display_uuid).cloned().unwrap_or_default())
     }
 
@@ -312,8 +316,11 @@ mod tests {
         assert!(ws.on_screen_windows(true).is_empty());
         assert!(ws.every_window().is_empty());
         assert_eq!(ws.owner_name(1), None);
-        assert!(ws.desktop_windows("display").is_empty());
-        assert!(!ws.focus_desktop("display", CGRect::new(CGPoint::ZERO, CGSize::new(10.0, 10.0))));
+        assert!(ws.desktop_windows(&"display".into()).is_empty());
+        assert!(!ws.focus_desktop(
+            &"display".into(),
+            CGRect::new(CGPoint::ZERO, CGSize::new(10.0, 10.0))
+        ));
         assert_eq!(ws.stack_level(window), (None, None));
         assert_eq!(
             ws.with_server_facts(open(), window, None).server,
@@ -471,22 +478,22 @@ mod tests {
     fn the_desktop_made_key_is_the_one_below_the_app_layers_on_the_display_s_frame() {
         let ws = FakeWindowServer::default();
         let frame = CGRect::new(CGPoint::ZERO, CGSize::new(1000.0, 1000.0));
-        ws.set_desktop_windows("display", vec![id(1), id(2), id(3)])
+        ws.set_desktop_windows(&"display".into(), vec![id(1), id(2), id(3)])
             .set_window(id(1), Some(desktop(1, 0, 0.0)))
             .set_window(id(2), Some(desktop(2, -1, 2000.0)))
             .set_window(id(3), Some(desktop(3, -1, 0.0)));
 
-        assert!(ws.focus_desktop("display", frame));
+        assert!(ws.focus_desktop(&"display".into(), frame));
         assert_eq!(ws.commands(), [Command::MakeKeyWindow {
             pid: 50,
             window: id(3)
         }]);
-        assert!(!ws.focus_desktop("another display", frame));
+        assert!(!ws.focus_desktop(&"another display".into(), frame));
 
-        ws.set_desktop_windows("", vec![id(3)]);
+        ws.set_desktop_windows(&"".into(), vec![id(3)]);
         let reads = ws.reads();
         assert!(
-            !ws.focus_desktop("", frame),
+            !ws.focus_desktop(&"".into(), frame),
             "a display with no uuid has no desktop"
         );
         assert_eq!(ws.reads(), reads);
@@ -496,10 +503,10 @@ mod tests {
     fn no_desktop_is_focused_when_making_it_key_fails() {
         let ws = FakeWindowServer::default();
         let frame = CGRect::new(CGPoint::ZERO, CGSize::new(1000.0, 1000.0));
-        ws.set_desktop_windows("display", vec![id(3)])
+        ws.set_desktop_windows(&"display".into(), vec![id(3)])
             .set_window(id(3), Some(desktop(3, -1, 0.0)))
             .fail_make_key_window(Some(CGError::Failure));
-        assert!(!ws.focus_desktop("display", frame));
+        assert!(!ws.focus_desktop(&"display".into(), frame));
     }
 
     /// A window Accessibility calls a standard top-level one, its window-server facts unasked.

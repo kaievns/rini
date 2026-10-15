@@ -1,7 +1,7 @@
 //! What belongs to a display: each window's home, the strip order a replug rebuilds, and the
 //! width each window has on each display.
 
-use rini_core::ids::{SpaceId, WindowId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
 use tracing::debug;
 
 use crate::layout::LayoutId;
@@ -15,7 +15,7 @@ impl LayoutEngine {
         &mut self,
         memory: &mut DisplayMemory,
         space: SpaceId,
-        display_uuid: Option<String>,
+        display_uuid: Option<DisplayUuid>,
     ) {
         if let Some(uuid) = display_uuid {
             memory.affinity.set_display_space(&uuid, space);
@@ -72,7 +72,7 @@ impl LayoutEngine {
     pub fn sync_display_affinity(
         &mut self,
         memory: &mut DisplayMemory,
-        display_uuid: &str,
+        display_uuid: &DisplayUuid,
         live_windows: &[WindowId],
     ) {
         for window in live_windows {
@@ -99,7 +99,7 @@ impl LayoutEngine {
         &self,
         window_store: &WindowStore,
         memory: &DisplayMemory,
-        display_uuid: &str,
+        display_uuid: &DisplayUuid,
         target_space: SpaceId,
     ) -> Vec<WindowId> {
         memory
@@ -145,7 +145,7 @@ impl LayoutEngine {
         layout: LayoutId,
         window: WindowId,
     ) {
-        let Some(display) = memory.affinity.display_for_space(space).map(str::to_owned) else {
+        let Some(display) = memory.affinity.display_for_space(space).cloned() else {
             return;
         };
         match self.workspace_tree(workspace_id).carried_width(layout, window) {
@@ -186,7 +186,7 @@ impl LayoutEngine {
         layout: LayoutId,
         window: WindowId,
     ) {
-        let Some(display) = memory.affinity.display_for_space(space).map(str::to_owned) else {
+        let Some(on_display) = memory.affinity.display_for_space(space).cloned() else {
             debug!(
                 idx = window.idx.get(),
                 ?space,
@@ -194,9 +194,9 @@ impl LayoutEngine {
             );
             return;
         };
-        let found = memory.affinity.window_width(&display, window);
-        let on_display = display.clone();
-        debug!(idx = window.idx.get(), on_display, width = ?found, "applying a remembered width");
+        let found = memory.affinity.window_width(&on_display, window);
+        debug!(idx = window.idx.get(), %on_display, width = ?found, "applying a remembered width");
+
         let Some(width) = found else {
             return;
         };

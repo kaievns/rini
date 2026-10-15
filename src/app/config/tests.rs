@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use pretty_assertions::assert_eq;
+use rini_core::ids::DisplayUuid;
 use strum::VariantNames;
 
 use super::*;
@@ -297,7 +298,7 @@ fn gaps_and_struts_make_the_outer_gaps_and_a_display_replaces_each_as_a_whole() 
         },
         inner: 3.0
     });
-    assert_eq!(gaps.effective_for_display(Some("D1")), Gaps {
+    assert_eq!(gaps.effective_for_display(Some(&DisplayUuid::new("D1"))), Gaps {
         outer: Edges {
             top: 23.0,
             left: 3.0,
@@ -306,7 +307,7 @@ fn gaps_and_struts_make_the_outer_gaps_and_a_display_replaces_each_as_a_whole() 
         },
         inner: 3.0
     });
-    assert_eq!(gaps.effective_for_display(Some("D2")), Gaps {
+    assert_eq!(gaps.effective_for_display(Some(&DisplayUuid::new("D2"))), Gaps {
         outer: Edges {
             top: 8.0,
             left: 10.0,
@@ -315,6 +316,11 @@ fn gaps_and_struts_make_the_outer_gaps_and_a_display_replaces_each_as_a_whole() 
         },
         inner: 8.0
     });
+    let json = serde_json::to_value(gaps).expect("serialises");
+    assert_eq!(
+        json["per_display"]["D2"]["gaps"], 8.0,
+        "config get keys a display by its UUID"
+    );
 }
 
 #[test]

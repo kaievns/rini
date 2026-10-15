@@ -2,7 +2,7 @@
 //! answers it read: which space each screen may show, what changed since the snapshot before, which
 //! windows sit on which active space, and which windows a display reconfiguration moved.
 use objc2_core_foundation::CGSize;
-use rini_core::ids::SpaceId;
+use rini_core::ids::{DisplayUuid, SpaceId};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
@@ -60,8 +60,8 @@ pub struct Forwarded {
     pub screens: Vec<ScreenInfo>,
     pub has_seen_display_set: bool,
     /// The user space each display last showed, by display UUID.
-    pub last_user_space_by_display: HashMap<String, SpaceId>,
-    pub active_display_uuid: Option<String>,
+    pub last_user_space_by_display: HashMap<DisplayUuid, SpaceId>,
+    pub active_display_uuid: Option<DisplayUuid>,
     /// Which active space each window the window server listed is on.
     pub visible_window_spaces: HashMap<WindowServerId, SpaceId>,
 }
@@ -70,11 +70,11 @@ pub struct Forwarded {
 #[derive(Debug, Default)]
 pub struct Heard {
     /// The display whose menu bar is active.
-    pub active_display: Option<String>,
+    pub active_display: Option<DisplayUuid>,
     /// The space showing on that display.
     pub active_space: Option<SpaceId>,
     /// Every managed space, per display UUID; empty when the window server did not answer.
-    pub spaces_per_display: HashMap<String, Vec<SpaceId>>,
+    pub spaces_per_display: HashMap<DisplayUuid, Vec<SpaceId>>,
 }
 
 /// One snapshot to forward: its screens as `user_screens` left them, and what came with them.
@@ -122,11 +122,12 @@ fn keep_user_spaces_through_fullscreen(
     screens: &mut [ScreenInfo],
     kinds: SpaceKinds,
 ) {
-    let previous_by_display: HashMap<&str, &ScreenInfo> = previous
+    let previous_by_display: HashMap<&DisplayUuid, &ScreenInfo> = previous
         .iter()
         .filter_map(|screen| screen.display_uuid_opt().map(|uuid| (uuid, screen)))
         .collect();
-    let previous_space = |display: &str| previous_by_display.get(display).and_then(|s| s.space);
+    let previous_space =
+        |display: &DisplayUuid| previous_by_display.get(display).and_then(|s| s.space);
     let entering_fullscreen = screens.iter().any(|next| {
         next.display_uuid_opt().zip(next.space).is_some_and(|(display, space)| {
             kinds.is_fullscreen(space)
@@ -136,7 +137,7 @@ fn keep_user_spaces_through_fullscreen(
     if !entering_fullscreen {
         return;
     }
-    let previous_owner: HashMap<SpaceId, &str> = previous
+    let previous_owner: HashMap<SpaceId, &DisplayUuid> = previous
         .iter()
         .filter_map(|screen| Some((screen.space?, screen.display_uuid_opt()?)))
         .filter(|(space, _)| !kinds.is_fullscreen(*space))
@@ -172,7 +173,7 @@ pub fn forward(memory: &mut Forwarded, taken: Taken) -> ForwardedSpaceState {
     let menu_bar_space = menu_bar_space(screens, heard.active_space, previous);
     let command_space = command_space(
         screens,
-        heard.active_display.as_deref(),
+        heard.active_display.as_ref(),
         heard.active_space,
         previous,
     );
@@ -239,17 +240,17 @@ fn resized_spaces(previous: &[ScreenInfo], screens: &[ScreenInfo]) -> Vec<(Space
 /// sleep and wake macOS can briefly report the remaining display with the space of one that has not
 /// reappeared, and accepting it remaps that display's layout onto the wrong one.
 fn space_remaps(
-    history: &mut HashMap<String, SpaceId>,
+    history: &mut HashMap<DisplayUuid, SpaceId>,
     screens: &[ScreenInfo],
     allow_space_remap: bool,
 ) -> Vec<(SpaceId, SpaceId)> {
-    let current_owners: HashMap<SpaceId, &str> = screens
+    let current_owners: HashMap<SpaceId, &DisplayUuid> = screens
         .iter()
         .filter_map(|screen| Some((screen.space?, screen.display_uuid_opt()?)))
         .collect();
-    let historical_owners: HashMap<SpaceId, String> =
+    let historical_owners: HashMap<SpaceId, DisplayUuid> =
         history.iter().map(|(display, &space)| (space, display.clone())).collect();
-    let mut seen_displays: HashSet<&str> = HashSet::default();
+    let mut seen_displays: HashSet<&DisplayUuid> = HashSet::default();
     let mut remaps = Vec::new();
     for screen in screens {
         let (Some(space), Some(display)) = (screen.space, screen.display_uuid_opt()) else {
@@ -267,7 +268,7 @@ fn space_remaps(
         {
             remaps.push((before, space));
         }
-        history.insert(display.to_string(), space);
+        history.insert(display.clone(), space);
     }
     remaps
 }
@@ -276,7 +277,7 @@ fn space_remaps(
 /// the snapshot names, then whatever the one before named. A command has to land somewhere.
 fn command_space(
     screens: &[ScreenInfo],
-    active_display: Option<&str>,
+    active_display: Option<&DisplayUuid>,
     active_space: Option<SpaceId>,
     previous: &[ScreenInfo],
 ) -> Option<SpaceId> {
@@ -286,11 +287,11 @@ fn command_space(
 
 pub(crate) fn active_display_space(
     screens: &[ScreenInfo],
-    active_display: Option<&str>,
+    active_display: Option<&DisplayUuid>,
     active_space: Option<SpaceId>,
 ) -> Option<SpaceId> {
     active_display
-        .and_then(|uuid| screens.iter().find(|screen| screen.display_uuid == uuid))
+        .and_then(|uuid| screens.iter().find(|screen| screen.display_uuid == *uuid))
         .and_then(|screen| screen.space)
         .or_else(|| active_space.filter(|space| shown(screens, *space)))
         .or_else(|| screens.iter().find_map(|screen| screen.space))
@@ -317,13 +318,13 @@ fn shown(screens: &[ScreenInfo], space: SpaceId) -> bool {
 /// or the screens' own spaces when it did not answer: an empty list would say a display owns no
 /// spaces, which is never true of an attached display.
 fn spaces_per_display(
-    listed: HashMap<String, Vec<SpaceId>>,
+    listed: HashMap<DisplayUuid, Vec<SpaceId>>,
     screens: &[ScreenInfo],
-) -> (HashMap<String, Vec<SpaceId>>, bool) {
+) -> (HashMap<DisplayUuid, Vec<SpaceId>>, bool) {
     if !listed.is_empty() {
         return (listed, false);
     }
-    let mut from_screens: HashMap<String, Vec<SpaceId>> = HashMap::default();
+    let mut from_screens: HashMap<DisplayUuid, Vec<SpaceId>> = HashMap::default();
     for screen in screens {
         if let Some(space) = screen.space {
             from_screens.entry(screen.display_uuid.clone()).or_default().push(space);

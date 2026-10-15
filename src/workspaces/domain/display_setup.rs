@@ -17,7 +17,7 @@
 
 use std::fmt;
 
-use rini_core::ids::{WindowId, pid_t};
+use rini_core::ids::{DisplayUuid, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
@@ -39,9 +39,12 @@ impl SetupId {
     /// The arrangement these display UUIDs form. Empty ones are ignored: a screen whose UUID macOS
     /// has not reported yet must not become part of the name, or the arrangement is renamed the
     /// moment the UUID arrives.
-    pub fn of<'a>(displays: impl IntoIterator<Item = &'a str>) -> Self {
-        let mut uuids: Vec<&str> =
-            displays.into_iter().filter(|uuid| !uuid.trim().is_empty()).collect();
+    pub fn of<'a>(displays: impl IntoIterator<Item = &'a DisplayUuid>) -> Self {
+        let mut uuids: Vec<&str> = displays
+            .into_iter()
+            .map(DisplayUuid::as_str)
+            .filter(|uuid| !uuid.trim().is_empty())
+            .collect();
         uuids.sort_unstable();
         uuids.dedup();
         Self(uuids.join("+"))
@@ -60,12 +63,12 @@ impl fmt::Display for SetupId {
 #[serde(from = "SetupRecord", into = "SetupRecord")]
 pub struct Setup {
     /// Display each window belongs to, by display UUID.
-    pub window_home: HashMap<WindowId, String>,
+    pub window_home: HashMap<WindowId, DisplayUuid>,
     /// Last observed strip order per display, so a replug rebuilds adjacency rather than
     /// repatriating in arbitrary id order.
-    pub display_strip: HashMap<String, Vec<WindowId>>,
+    pub display_strip: HashMap<DisplayUuid, Vec<WindowId>>,
     /// Column width each window last had on each display.
-    pub window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
+    pub window_width: HashMap<DisplayUuid, HashMap<WindowId, ColumnWidth>>,
     /// Windows whose home the USER chose, rather than one rini inferred from where the window was.
     ///
     /// The difference matters to a display pin. A pin overrides a home that was merely observed —
@@ -78,9 +81,9 @@ pub struct Setup {
 #[derive(Serialize, Deserialize)]
 struct SetupRecord {
     #[serde(default)]
-    window_home: HashMap<WindowId, String>,
+    window_home: HashMap<WindowId, DisplayUuid>,
     #[serde(default)]
-    display_strip: HashMap<String, Vec<WindowId>>,
+    display_strip: HashMap<DisplayUuid, Vec<WindowId>>,
     #[serde(default)]
     window_width: StoredWidths,
     #[serde(
@@ -183,7 +186,7 @@ impl Setup {
     /// windows the user kept side by side come back with unrelated windows between them. Windows
     /// with a remembered position come first, in that order; anything homed here without one
     /// follows, in id order for determinism.
-    pub fn windows_homed_to(&self, display: &str) -> Vec<WindowId> {
+    pub fn windows_homed_to(&self, display: &DisplayUuid) -> Vec<WindowId> {
         let mut homed: Vec<WindowId> = self
             .window_home
             .iter()
@@ -208,25 +211,29 @@ mod tests {
 
     fn win(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
+    fn uuid(uuid: &str) -> DisplayUuid { DisplayUuid::new(uuid) }
+
+    fn of<const N: usize>(displays: [&str; N]) -> SetupId { SetupId::of(&displays.map(uuid)) }
+
     /// The order macOS lists screens in is not stable, and two names for one arrangement would make
     /// a replug pick between two remembered layouts at random.
     #[test]
     fn an_arrangement_has_one_name_whatever_order_the_displays_arrive_in() {
-        assert_eq!(SetupId::of(["a", "b"]), SetupId::of(["b", "a"]));
+        assert_eq!(of(["a", "b"]), of(["b", "a"]));
     }
 
     #[test]
     fn a_repeated_display_does_not_change_the_name() {
-        assert_eq!(SetupId::of(["a", "a", "b"]), SetupId::of(["a", "b"]));
+        assert_eq!(of(["a", "a", "b"]), of(["a", "b"]));
     }
 
     /// The three arrangements the user actually has: laptop alone, laptop plus external, external
     /// alone with the lid shut. All different, and none is a prefix-match for another.
     #[test]
     fn adding_or_removing_a_display_is_a_different_arrangement() {
-        let laptop = SetupId::of(["builtin"]);
-        let docked = SetupId::of(["builtin", "studio"]);
-        let lid_shut = SetupId::of(["studio"]);
+        let laptop = of(["builtin"]);
+        let docked = of(["builtin", "studio"]);
+        let lid_shut = of(["studio"]);
         assert_ne!(laptop, docked);
         assert_ne!(docked, lid_shut);
         assert_ne!(laptop, lid_shut);
@@ -236,26 +243,23 @@ mod tests {
     /// cannot be applied to the home monitor.
     #[test]
     fn two_different_externals_are_two_arrangements() {
-        assert_ne!(
-            SetupId::of(["builtin", "home-4k"]),
-            SetupId::of(["builtin", "office-4k"])
-        );
+        assert_ne!(of(["builtin", "home-4k"]), of(["builtin", "office-4k"]));
     }
 
     /// macOS reports an empty screen list mid-reconfiguration, and a screen whose UUID has not
     /// arrived yet reports an empty one. Neither may name an arrangement.
     #[test]
     fn a_nameless_display_is_not_part_of_the_arrangement() {
-        assert_eq!(SetupId::of(["builtin", ""]), SetupId::of(["builtin"]));
-        assert!(SetupId::of([""]).is_empty());
-        assert!(SetupId::of([]).is_empty());
+        assert_eq!(of(["builtin", ""]), of(["builtin"]));
+        assert!(of([""]).is_empty());
+        assert!(of([]).is_empty());
     }
 
     #[test]
     fn an_arrangement_that_remembers_nothing_says_so() {
         let mut setup = Setup::default();
         assert!(setup.is_empty());
-        setup.window_home.insert(win(1), "builtin".to_owned());
+        setup.window_home.insert(win(1), uuid("builtin"));
         assert!(!setup.is_empty());
     }
 
@@ -263,12 +267,16 @@ mod tests {
     fn strip_order_drives_the_order_windows_come_back_in() {
         let mut setup = Setup::default();
         for idx in [3, 1, 2] {
-            setup.window_home.insert(win(idx), "studio".to_owned());
+            setup.window_home.insert(win(idx), uuid("studio"));
         }
-        setup.display_strip.insert("studio".to_owned(), vec![win(3), win(1)]);
+        setup.display_strip.insert(uuid("studio"), vec![win(3), win(1)]);
 
         // The remembered pair first, in that order; the one with no recorded place follows.
-        assert_eq!(setup.windows_homed_to("studio"), vec![win(3), win(1), win(2)]);
+        assert_eq!(setup.windows_homed_to(&uuid("studio")), vec![
+            win(3),
+            win(1),
+            win(2)
+        ]);
     }
 
     /// A `Setup` as rini wrote and read it before a drag's width had a record, so a test can read
@@ -302,10 +310,10 @@ mod tests {
     #[test]
     fn a_dragged_width_is_written_so_a_rini_from_before_it_reads_the_file() {
         let mut setup = Setup::default();
-        setup.window_home.insert(win(1), "built-in".to_owned());
+        setup.window_home.insert(win(1), uuid("built-in"));
         setup.home_by_intent.insert(win(1));
-        setup.display_strip.insert("built-in".to_owned(), vec![win(1), win(2)]);
-        let widths = setup.window_width.entry("built-in".to_owned()).or_default();
+        setup.display_strip.insert(uuid("built-in"), vec![win(1), win(2)]);
+        let widths = setup.window_width.entry(uuid("built-in")).or_default();
         widths.insert(win(1), ColumnWidth::Unbounded(0.33797));
         widths.insert(win(2), ColumnWidth::Offset(0.25));
         let written = ron::ser::to_string(&setup).unwrap();
@@ -313,10 +321,11 @@ mod tests {
 
         let old: before_dragged_widths::Setup =
             ron::from_str(&written).expect("an older rini reads it");
-        assert_eq!(old.window_home, setup.window_home);
+        assert_eq!(old.window_home[&win(1)], "built-in");
         assert_eq!(old.home_by_intent, setup.home_by_intent);
-        assert_eq!(old.display_strip, setup.display_strip);
+        assert_eq!(old.display_strip["built-in"], [win(1), win(2)]);
         let old_widths = &old.window_width["built-in"];
+
         assert_eq!(
             old_widths[&win(1)],
             before_dragged_widths::ColumnWidth::Offset(0.33797)
@@ -328,45 +337,51 @@ mod tests {
 
         let read: Setup = ron::from_str(&written).unwrap();
         assert_eq!(
-            read.window_width["built-in"][&win(1)],
+            read.window_width[&uuid("built-in")][&win(1)],
             ColumnWidth::Unbounded(0.33797)
         );
-        assert_eq!(read.window_width["built-in"][&win(2)], ColumnWidth::Offset(0.25));
+        assert_eq!(
+            read.window_width[&uuid("built-in")][&win(2)],
+            ColumnWidth::Offset(0.25)
+        );
     }
 
     #[test]
     fn forgetting_a_window_clears_every_record_of_it() {
         let mut setup = Setup::default();
-        setup.window_home.insert(win(1), "studio".to_owned());
-        setup.display_strip.insert("studio".to_owned(), vec![win(1), win(2)]);
+        setup.window_home.insert(win(1), uuid("studio"));
+        setup.display_strip.insert(uuid("studio"), vec![win(1), win(2)]);
         setup
             .window_width
-            .entry("studio".to_owned())
+            .entry(uuid("studio"))
             .or_default()
             .insert(win(1), ColumnWidth::FullWidth);
 
         setup.forget_window(win(1));
 
         assert!(setup.window_home.is_empty());
-        assert_eq!(setup.display_strip["studio"], vec![win(2)]);
+        assert_eq!(setup.display_strip[&uuid("studio")], vec![win(2)]);
         assert!(setup.window_width.is_empty(), "an emptied map is dropped");
     }
 
     #[test]
     fn a_relaunched_window_carries_its_records_to_its_new_id() {
         let mut setup = Setup::default();
-        setup.window_home.insert(win(1), "studio".to_owned());
-        setup.display_strip.insert("studio".to_owned(), vec![win(1)]);
+        setup.window_home.insert(win(1), uuid("studio"));
+        setup.display_strip.insert(uuid("studio"), vec![win(1)]);
         setup
             .window_width
-            .entry("studio".to_owned())
+            .entry(uuid("studio"))
             .or_default()
             .insert(win(1), ColumnWidth::Offset(0.25));
 
         setup.rekey_window(win(1), win(9));
 
-        assert_eq!(setup.window_home[&win(9)], "studio");
-        assert_eq!(setup.display_strip["studio"], vec![win(9)]);
-        assert_eq!(setup.window_width["studio"][&win(9)], ColumnWidth::Offset(0.25));
+        assert_eq!(setup.window_home[&win(9)], uuid("studio"));
+        assert_eq!(setup.display_strip[&uuid("studio")], vec![win(9)]);
+        assert_eq!(
+            setup.window_width[&uuid("studio")][&win(9)],
+            ColumnWidth::Offset(0.25)
+        );
     }
 }

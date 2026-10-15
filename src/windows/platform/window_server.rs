@@ -12,7 +12,7 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::CGError;
 use once_cell::sync::Lazy;
-use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId, pid_t};
 use rini_skylight_sys::*;
 
 #[cfg(test)]
@@ -771,8 +771,8 @@ impl WindowServer for LiveWindowServer {
 
     fn owner_name(&self, pid: pid_t) -> Option<String> { Some(application_name(pid)) }
 
-    fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId> {
-        let uuid = CFString::from_str(display_uuid);
+    fn desktop_windows(&self, display_uuid: &DisplayUuid) -> Vec<WindowServerId> {
+        let uuid = CFString::from_str(display_uuid.as_str());
         let displays = CFArray::from_objects(&[&*uuid]);
         // SAFETY: the copied array is ours, and `CFRetained` releases it.
         let Some(windows) = NonNull::new(unsafe {

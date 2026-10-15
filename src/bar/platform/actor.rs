@@ -12,6 +12,7 @@ use objc2::MainThreadMarker;
 use objc2_core_foundation::CGRect;
 use objc2_core_graphics::CGDisplayBounds;
 use objc2_quartz_core::CATransaction;
+use rini_core::ids::DisplayUuid;
 use rini_runloop::channel;
 use rini_runloop::executor::sleep;
 use rustc_hash::FxHashMap as HashMap;
@@ -51,17 +52,17 @@ pub struct BarActor {
     mtm: MainThreadMarker,
     on_action: OnAction,
     /// Clicks from the bars' views, by display.
-    clicks: channel::Sender<(String, Target)>,
-    clicked: channel::Receiver<(String, Target)>,
+    clicks: channel::Sender<(DisplayUuid, Target)>,
+    clicked: channel::Receiver<(DisplayUuid, Target)>,
     /// A bar's window was moved or resized, by the bar itself or by macOS, or the screens changed.
     moves: channel::Sender<()>,
     moved: channel::Receiver<()>,
     model: BarModel,
     extras: Extras,
     /// By display uuid, as last pictured.
-    grounds: HashMap<String, Ground>,
+    grounds: HashMap<DisplayUuid, Ground>,
     /// The displays the watcher was last told to picture grounds for, with their bounds.
-    ground_displays: Vec<(String, CGRect)>,
+    ground_displays: Vec<(DisplayUuid, CGRect)>,
     clock: Timepiece,
     flight: bool,
     folding: Folding,
@@ -69,7 +70,7 @@ pub struct BarActor {
     refold_at: Option<Instant>,
     tray_open: bool,
     /// By display uuid. Made when a model first names the display, and kept.
-    panels: HashMap<String, BarPanel>,
+    panels: HashMap<DisplayUuid, BarPanel>,
     text: Text,
     watcher: Option<Watcher>,
     paused: bool,
@@ -181,7 +182,7 @@ impl BarActor {
         }
     }
 
-    fn click(&mut self, display: &str, target: Target) {
+    fn click(&mut self, display: &DisplayUuid, target: Target) {
         match pieces::click(target, display) {
             Click::Ask(action) => (self.on_action)(action),
             Click::Fold => {
@@ -228,7 +229,7 @@ impl BarActor {
     /// Draws every display's bar and orders out the rest. Inside a transaction the caller holds.
     fn draw_all(&mut self) {
         let clock = self.clock.show();
-        let mut drawn: Vec<&str> = Vec::new();
+        let mut drawn: Vec<&DisplayUuid> = Vec::new();
         for bar in &self.model.displays {
             let display = CGDisplayBounds(bar.screen);
             if display.size.width <= 0.0 {
@@ -271,7 +272,7 @@ impl BarActor {
             drawn.push(&bar.uuid);
         }
         for (uuid, panel) in self.panels.iter_mut() {
-            if !drawn.contains(&uuid.as_str()) {
+            if !drawn.contains(&uuid) {
                 panel.hide();
             }
         }
@@ -296,7 +297,7 @@ impl BarActor {
         let Some(watcher) = &self.watcher else {
             return;
         };
-        let displays: Vec<(String, CGRect)> = self
+        let displays: Vec<(DisplayUuid, CGRect)> = self
             .model
             .displays
             .iter()
@@ -322,8 +323,8 @@ impl BarActor {
 }
 
 /// Sends a click on `display`'s bar back to the actor, which owns what it changes.
-fn on_click(clicks: &channel::Sender<(String, Target)>, display: &str) -> OnClick {
-    let (clicks, display) = (clicks.clone(), display.to_string());
+fn on_click(clicks: &channel::Sender<(DisplayUuid, Target)>, display: &DisplayUuid) -> OnClick {
+    let (clicks, display) = (clicks.clone(), display.clone());
     Rc::new(move |target| clicks.send((display.clone(), target)))
 }
 
@@ -336,7 +337,7 @@ fn on_moved(moves: &channel::Sender<()>) -> OnMoved {
 
 enum Wake {
     Event(Event),
-    Click(String, Target),
+    Click(DisplayUuid, Target),
     Moved,
     Minute,
     Refold,

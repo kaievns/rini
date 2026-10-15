@@ -1,7 +1,7 @@
 //! The authoritative picture of displays and spaces the spaces actor hands the application:
 //! screens with their current space, what changed, and which windows sit on which active space.
 use objc2_core_foundation::{CGPoint, CGSize};
-use rini_core::ids::SpaceId;
+use rini_core::ids::{DisplayUuid, SpaceId};
 use rini_geometry::CGRectExt;
 use rini_ipc::protocol::{Direction, DisplaySelector, RelativeDisplay};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
@@ -30,11 +30,11 @@ pub struct ForwardedSpaceState {
     pub active_spaces: HashSet<SpaceId>,
     pub menu_bar_space: Option<SpaceId>,
     pub command_space: Option<SpaceId>,
-    pub display_space_ids: HashMap<String, Vec<SpaceId>>,
+    pub display_space_ids: HashMap<DisplayUuid, Vec<SpaceId>>,
     /// The window server did not list the spaces, so `display_space_ids` holds each screen's
     /// current space only.
     pub display_space_ids_from_screens: bool,
-    pub last_user_space_by_display: HashMap<String, SpaceId>,
+    pub last_user_space_by_display: HashMap<DisplayUuid, SpaceId>,
     pub space_remaps: Vec<(SpaceId, SpaceId)>,
     pub topology: Topology,
     pub releases_lifecycle_refresh_quarantine: bool,
@@ -150,7 +150,7 @@ impl ForwardedSpaceState {
             DisplaySelector::Relative(RelativeDisplay::Next) => self.screen_after(origin?),
             DisplaySelector::Index(index) => self.screens_in_physical_order().get(*index).copied(),
             DisplaySelector::Uuid(uuid) => {
-                self.screens.iter().find(|screen| screen.display_uuid == *uuid)
+                self.screens.iter().find(|screen| screen.display_uuid.as_str() == uuid)
             }
         }
     }
@@ -213,7 +213,7 @@ impl Topology {
         screens: &[ScreenInfo],
         has_seen_display_set: bool,
     ) -> Self {
-        let uuids = |screens: &[ScreenInfo]| -> HashSet<String> {
+        let uuids = |screens: &[ScreenInfo]| -> HashSet<DisplayUuid> {
             screens.iter().map(|screen| screen.display_uuid.clone()).collect()
         };
         let previous_displays = uuids(previous);
@@ -224,15 +224,13 @@ impl Topology {
         };
         let order_changed = previous
             .iter()
-            .map(|screen| screen.display_uuid.as_str())
-            .ne(screens.iter().map(|screen| screen.display_uuid.as_str()));
-        let previous_frames: HashMap<_, _> = previous
-            .iter()
-            .map(|screen| (screen.display_uuid.as_str(), screen.frame))
-            .collect();
+            .map(|screen| &screen.display_uuid)
+            .ne(screens.iter().map(|screen| &screen.display_uuid));
+        let previous_frames: HashMap<_, _> =
+            previous.iter().map(|screen| (&screen.display_uuid, screen.frame)).collect();
         let geometry_changed = screens.iter().any(|screen| {
             previous_frames
-                .get(screen.display_uuid.as_str())
+                .get(&screen.display_uuid)
                 .is_some_and(|before| *before != screen.frame)
         });
         if display_set == DisplaySet::Same && !order_changed && !geometry_changed {
@@ -299,7 +297,7 @@ pub fn analyze_space_snapshot(
     incoming: &ForwardedSpaceState,
 ) -> SpaceSnapshotAnalysis {
     let spaces = incoming.screens.iter().map(|screen| screen.space).collect();
-    let display_uuids: Vec<Option<String>> =
+    let display_uuids: Vec<Option<DisplayUuid>> =
         incoming.screens.iter().map(|screen| screen.display_uuid_owned()).collect();
     let authoritative_spaces: Vec<Option<SpaceId>> = incoming
         .screens
@@ -370,9 +368,9 @@ pub fn snapshot_is_committable(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplaySetDelta {
     /// Displays that were attached and are not any more, in the order they were attached.
-    pub departed: Vec<String>,
+    pub departed: Vec<DisplayUuid>,
     /// Displays that are attached and were not, in the order they are now attached.
-    pub arrived: Vec<String>,
+    pub arrived: Vec<DisplayUuid>,
     /// The attached set is the same as it was, so the current window assignments can be trusted.
     pub unchanged: bool,
 }
@@ -380,7 +378,7 @@ pub struct DisplaySetDelta {
 /// Compare two snapshots of the attached displays.
 ///
 /// Both slices carry one entry per screen, in screen order; a screen macOS cannot identify carries
-/// an empty string. Taking both lists up front is the point of the function: the caller used to
+/// an empty UUID. Taking both lists up front is the point of the function: the caller used to
 /// capture the previous set inline, one line before it replaced it, and the ordering was held in
 /// place by a comment.
 ///
@@ -393,12 +391,12 @@ pub struct DisplaySetDelta {
 /// against — but can never be matched, so it never appears in `arrived` and is not reported as
 /// `departed`. There is nothing to record about a display that cannot be named.
 pub fn display_set_delta(
-    previous: &[String],
-    current: &[String],
+    previous: &[DisplayUuid],
+    current: &[DisplayUuid],
     display_set_changed: bool,
 ) -> DisplaySetDelta {
-    let named = |uuids: &[String]| -> Vec<String> {
-        let mut seen: Vec<String> = Vec::new();
+    let named = |uuids: &[DisplayUuid]| -> Vec<DisplayUuid> {
+        let mut seen: Vec<DisplayUuid> = Vec::new();
         for uuid in uuids {
             if !uuid.is_empty() && !seen.iter().any(|kept| kept == uuid) {
                 seen.push(uuid.clone());
@@ -460,7 +458,7 @@ mod tests {
                     id: ScreenId::new(i as u32 + 1),
                     frame: *frame,
                     bounds: *frame,
-                    display_uuid: format!("uuid-{i}"),
+                    display_uuid: format!("uuid-{i}").into(),
                     name: None,
                     space: Some(SpaceId::new(i as u64 + 1)),
                     scale: 2.0,
@@ -833,7 +831,9 @@ mod tests {
         }
     }
 
-    fn uuids(list: &[&str]) -> Vec<String> { list.iter().map(|uuid| uuid.to_string()).collect() }
+    fn uuids(list: &[&str]) -> Vec<DisplayUuid> {
+        list.iter().map(|uuid| DisplayUuid::new(*uuid)).collect()
+    }
 
     #[test]
     fn nothing_attached_or_detached_is_no_delta() {

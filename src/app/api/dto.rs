@@ -98,7 +98,7 @@ impl From<RuntimeWorkspaceData> for protocol::WorkspaceData {
 impl From<RuntimeDisplayData> for protocol::DisplayData {
     fn from(value: RuntimeDisplayData) -> Self {
         Self {
-            uuid: value.info.display_uuid,
+            uuid: value.info.display_uuid.into(),
             name: value.info.name,
             screen_id: value.info.id.as_u32(),
             frame: protocol::Rect {
@@ -216,7 +216,7 @@ impl Serialize for RuntimeDisplayData {
         }
 
         let helper = DisplayDataSer {
-            uuid: &self.info.display_uuid,
+            uuid: self.info.display_uuid.as_str(),
             name: self.info.name.as_ref(),
             screen_id: self.info.id.as_u32(),
             frame: &self.info.frame,
@@ -255,7 +255,8 @@ impl<'de> Deserialize<'de> for RuntimeDisplayData {
             id: ScreenId::new(helper.screen_id),
             frame: helper.frame,
             bounds: helper.frame,
-            display_uuid: helper.uuid,
+            display_uuid: helper.uuid.into(),
+
             name: helper.name,
             space: helper.space.map(SpaceId::new),
             scale: crate::displays::domain::screen::ASSUMED_SCALE,
@@ -329,7 +330,7 @@ mod tests {
             id: ScreenId::new(7),
             frame: CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 400.0)),
             bounds: CGRect::new(CGPoint::new(10.0, 0.0), CGSize::new(300.0, 420.0)),
-            display_uuid: "display-uuid".to_string(),
+            display_uuid: "display-uuid".into(),
             name: Some("Primary".to_string()),
             space: Some(SpaceId::new(42)),
             scale: 2.0,

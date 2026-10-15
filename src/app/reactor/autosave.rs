@@ -1,5 +1,6 @@
 //! The layout file written: debounced after a layout change, and at once before exit.
 
+use rini_core::ids::DisplayUuid;
 use tracing::{debug, trace};
 
 use super::Reactor;
@@ -49,7 +50,7 @@ impl Reactor {
         let active_space = self.workspace_command_space();
         // Recorded here rather than by hooks on every move and resize: the memory is a projection of
         // where the windows are now, and this is the moment it gets written down.
-        let connected: Vec<String> = self
+        let connected: Vec<DisplayUuid> = self
             .space_state
             .screens
             .iter()

@@ -76,8 +76,8 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
 
     let insert = |store: &mut WindowStore, window: WindowId| {
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
@@ -125,9 +125,13 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
         before_quit,
         elsewhere,
     ));
-    memory.affinity.set_window_width(DISPLAY, before_quit, ColumnWidth::FullWidth);
+    memory.affinity.set_window_width(
+        &DisplayUuid::new(DISPLAY),
+        before_quit,
+        ColumnWidth::FullWidth,
+    );
 
-    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
     // The application quits and comes back with a different pid and window server id.
     let _ = engine.handle_event(
@@ -153,11 +157,11 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
     );
     assert_eq!(
         memory.affinity.window_home(after_relaunch),
-        Some(DISPLAY),
+        Some(&DisplayUuid::new(DISPLAY)),
         "and on the display it belonged to"
     );
     assert_eq!(
-        memory.affinity.window_width(DISPLAY, after_relaunch),
+        memory.affinity.window_width(&DisplayUuid::new(DISPLAY), after_relaunch),
         Some(ColumnWidth::FullWidth),
         "at the width it had there"
     );
@@ -192,8 +196,8 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
     window_store.insert_window(window, WindowState {
@@ -252,9 +256,10 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
         "parked away from the active workspace"
     );
 
-    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = crate::workspaces::domain::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    let topology =
+        crate::workspaces::domain::launch_memory::topology_key(&[DisplayUuid::new(DISPLAY)]);
     let slots = memory.launch.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "a parked window still has a slot");
     assert_eq!(
@@ -281,8 +286,8 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
     window_store.insert_window(window, WindowState {
@@ -316,9 +321,10 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
     memory.affinity.forget_window(window);
     assert_eq!(memory.affinity.window_home(window), None);
 
-    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = crate::workspaces::domain::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    let topology =
+        crate::workspaces::domain::launch_memory::topology_key(&[DisplayUuid::new(DISPLAY)]);
     let slots = memory.launch.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "remembered even with no home of its own");
     assert_eq!(
@@ -351,8 +357,8 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
     window_store.insert_window(window, WindowState {
@@ -377,11 +383,11 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
         ignore_app_rule: false,
     });
 
-    let topology = topology_key(&[DISPLAY.to_owned()]);
+    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
     memory.launch.remember("com.apple.TextEdit", &topology, vec![
         Slot {
             title: Some("Untitled".into()),
-            display_uuid: DISPLAY.to_owned(),
+            display_uuid: DisplayUuid::new(DISPLAY),
             workspace_index: 1,
             width: Some(ColumnWidth::FullWidth),
         }
@@ -419,7 +425,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
         other => panic!("expected a managed placement, got {other:?}"),
     }
     assert_eq!(
-        memory.affinity.window_width(DISPLAY, window),
+        memory.affinity.window_width(&DisplayUuid::new(DISPLAY), window),
         Some(ColumnWidth::FullWidth),
         "and given the width it had there"
     );
@@ -446,8 +452,8 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
     window_store.insert_window(window, WindowState {
@@ -486,11 +492,15 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
         engine.workspace_tree(ws_id).is_window_full_width(layout, window),
         "setup"
     );
-    assert_eq!(memory.affinity.window_width(DISPLAY, window), None, "setup");
+    assert_eq!(
+        memory.affinity.window_width(&DisplayUuid::new(DISPLAY), window),
+        None,
+        "setup"
+    );
 
-    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = topology_key(&[DISPLAY.to_owned()]);
+    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
     let slots = memory.launch.slots("app.zen-browser.zen", &topology);
     assert_eq!(slots.len(), 1);
     assert_eq!(
@@ -520,8 +530,8 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
     window_store.insert_window(window, WindowState {
@@ -558,9 +568,9 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
         ColumnWidth::Unbounded(0.33797),
     );
 
-    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = topology_key(&[DISPLAY.to_owned()]);
+    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
     let dragged = Some(ColumnWidth::Unbounded(0.33797));
     assert_eq!(
         memory.launch.slots("com.mitchellh.ghostty", &topology)[0].width,
@@ -599,8 +609,8 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, screen.size),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
 
     let insert = |store: &mut WindowStore, window: WindowId| {
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
@@ -640,9 +650,9 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
         "setup"
     );
 
-    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = topology_key(&[DISPLAY.to_owned()]);
+    let topology = topology_key(&[DisplayUuid::new(DISPLAY)]);
     let unbounded = |width: Option<ColumnWidth>| matches!(width, Some(ColumnWidth::Unbounded(offset)) if (offset - 0.3).abs() < 1e-9);
     let remembered = memory.launch.slots(APP, &topology)[0].width;
     assert!(unbounded(remembered), "{remembered:?}");
@@ -737,8 +747,8 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
     insert(&mut store, before_quit);
     let _ = engine.handle_event(
         &mut store,
@@ -755,9 +765,10 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
         &HashMap::default(),
         LayoutCommand::ToggleFullscreenWithinGaps.into(),
     );
-    engine.remember_launch_slots(&store, &mut memory, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
 
-    let topology = crate::workspaces::domain::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    let topology =
+        crate::workspaces::domain::launch_memory::topology_key(&[DisplayUuid::new(DISPLAY)]);
     assert_eq!(
         memory.launch.slots(APP, &topology)[0].width,
         Some(ColumnWidth::FullWidth),
@@ -776,8 +787,8 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    reloaded.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    reloaded.set_connected_displays(vec![DISPLAY.to_owned()]);
+    reloaded.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    reloaded.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
     insert(&mut store, after_relaunch);
     let _ = reloaded.handle_event(
         &mut store,
@@ -787,7 +798,7 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
 
     // The autosave fires while the width still cannot be read. This is the step that used to
     // destroy the record, and after it the window can never come back full width again.
-    reloaded.remember_launch_slots(&store, &mut memory, &[DISPLAY.to_owned()]);
+    reloaded.remember_launch_slots(&store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
     assert_eq!(
         memory.launch.slots(APP, &topology)[0].width,
         Some(ColumnWidth::FullWidth),

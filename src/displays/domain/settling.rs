@@ -1,7 +1,7 @@
 //! When the spaces actor asks again: how often a refresh retries, which display reconfigurations
 //! start a churn, and when a churn has settled, at two identical topology samples and a quiet
 //! window server (`src/displays/docs/topology.md`).
-use rini_core::ids::SpaceId;
+use rini_core::ids::{DisplayUuid, SpaceId};
 use rini_skylight_sys::DisplayReconfigFlags;
 
 use crate::displays::domain::screen::ScreenInfo;
@@ -40,7 +40,7 @@ pub fn begins_display_churn(flags: DisplayReconfigFlags) -> bool {
     )
 }
 
-type Fingerprint = Vec<(String, u64, u64, u64, u64, Option<u64>)>;
+type Fingerprint = Vec<(DisplayUuid, u64, u64, u64, u64, Option<u64>)>;
 
 /// The topology samples a churn has taken: the last one, and how many times in a row it was taken.
 #[derive(Debug, Default)]

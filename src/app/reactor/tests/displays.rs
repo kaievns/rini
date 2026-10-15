@@ -1,7 +1,7 @@
 //! What the reactor does when screens change: arrivals, departures, resolution changes,
 //! per-display workspaces, and which display a window calls home.
 use objc2_core_foundation::{CGPoint, CGSize};
-use rini_core::ids::{WindowServerId, pid_t};
+use rini_core::ids::{DisplayUuid, WindowServerId, pid_t};
 use rini_geometry::CGRectExt;
 use test_log::test;
 
@@ -1120,7 +1120,7 @@ fn a_settled_churn_s_snapshot_ends_the_churn_before_it_is_incorporated() {
     set_space_membership(&reactor, &[(space, &[])]);
     assert_eq!(
         reactor.display_affinity().window_home(closed),
-        Some("test-display-0")
+        Some(&DisplayUuid::new("test-display-0"))
     );
 
     reactor.handle_event(Event::DisplayChurnBegin);
@@ -1429,7 +1429,7 @@ fn clamshell_sleep_preserves_nested_layout_across_display_replacement() {
     reactor.handle_event(Event::SystemWoke);
     reactor.handle_event(Event::SessionDidBecomeActive);
     let mut screens = make_screen_snapshots(vec![internal_screen], vec![Some(space)]);
-    screens[0].display_uuid = "internal-display".to_string();
+    screens[0].display_uuid = "internal-display".into();
     let mut recovered = forwarded_space_state(screens);
     recovered.topology = Topology::Remap(DisplaySet::Changed);
     recovered.releases_lifecycle_refresh_quarantine = true;
@@ -1491,7 +1491,9 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The engine must know which display owns that space.
     assert_eq!(
-        reactor.display_affinity().space_for_display("test-display-1"),
+        reactor
+            .display_affinity()
+            .space_for_display(&DisplayUuid::new("test-display-1")),
         Some(external_space),
         "the external display's space must be recorded before unplugging"
     );
@@ -1505,7 +1507,9 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The mapping must SURVIVE the unplug — this is what prune_display_state destroyed.
     assert_eq!(
-        reactor.display_affinity().space_for_display("test-display-1"),
+        reactor
+            .display_affinity()
+            .space_for_display(&DisplayUuid::new("test-display-1")),
         Some(external_space),
         "unplugging must not forget which space belonged to the display"
     );
@@ -1655,7 +1659,7 @@ fn arranging_one_setup_does_not_disturb_another() {
         frame,
         bounds: frame,
         space: Some(space),
-        display_uuid: uuid.to_owned(),
+        display_uuid: uuid.into(),
         name: None,
         scale: 2.0,
     };
@@ -1682,7 +1686,10 @@ fn arranging_one_setup_does_not_disturb_another() {
         builtin_space,
         external_space,
     )));
-    assert_eq!(reactor.display_affinity().window_home(terminal), Some("studio"));
+    assert_eq!(
+        reactor.display_affinity().window_home(terminal),
+        Some(&DisplayUuid::new("studio"))
+    );
 
     // Undock, and DELIBERATELY put the terminal on the laptop: an intent, which is recorded.
     set_space_membership(&reactor, &[(builtin_space, &[901]), (external_space, &[])]);
@@ -1691,10 +1698,12 @@ fn arranging_one_setup_does_not_disturb_another() {
         |state| state.topology = Topology::Changed,
     ));
     reactor.handle_event(space_state_event_from_screens(vec![builtin(builtin_space)]));
-    reactor.display_affinity_mut().set_window_home(terminal, "builtin");
+    reactor
+        .display_affinity_mut()
+        .set_window_home(terminal, &DisplayUuid::new("builtin"));
     assert_eq!(
         reactor.display_affinity().window_home(terminal),
-        Some("builtin"),
+        Some(&DisplayUuid::new("builtin")),
         "the laptop arrangement now says the laptop"
     );
 
@@ -1706,7 +1715,7 @@ fn arranging_one_setup_does_not_disturb_another() {
     ));
     assert_eq!(
         reactor.display_affinity().window_home(terminal),
-        Some("studio"),
+        Some(&DisplayUuid::new("studio")),
         "the desk arrangement kept its own answer"
     );
     assert_eq!(
@@ -1749,7 +1758,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
             frame,
             bounds: frame,
             space: Some(space),
-            display_uuid: uuid.to_owned(),
+            display_uuid: uuid.into(),
             name: None,
             is_builtin,
             scale: 2.0,
@@ -1780,7 +1789,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
     ]));
     assert_eq!(
         reactor.display_affinity().window_home(slack),
-        Some("builtin"),
+        Some(&DisplayUuid::new("builtin")),
         "the pin decides, not where macOS happens to have put the window"
     );
 
@@ -1794,7 +1803,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
     reactor.handle_event(space_state_event_from_screens(vec![studio(external_space)]));
     assert_eq!(
         reactor.display_affinity().window_home(slack),
-        Some("studio"),
+        Some(&DisplayUuid::new("studio")),
         "with no internal display the pin is inert and the window lives where it can"
     );
 }
@@ -1821,7 +1830,7 @@ fn a_display_never_seen_before_takes_no_windows() {
         frame,
         bounds: frame,
         space: Some(space),
-        display_uuid: uuid.to_owned(),
+        display_uuid: uuid.into(),
         name: None,
         scale: 2.0,
     };
@@ -1851,7 +1860,7 @@ fn a_display_never_seen_before_takes_no_windows() {
     ]));
     assert_eq!(
         reactor.display_affinity().window_home(a),
-        Some("studio"),
+        Some(&DisplayUuid::new("studio")),
         "the docked arrangement records the studio display"
     );
 
@@ -1996,7 +2005,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     ]));
     assert_eq!(
         reactor.display_affinity().window_home(exile),
-        Some("test-display-1")
+        Some(&DisplayUuid::new("test-display-1"))
     );
 
     // Unplug, then let the built-in-only topology settle repeatedly, as it does in practice.
@@ -2011,7 +2020,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
 
     assert_eq!(
         reactor.display_affinity().window_home(exile),
-        Some("test-display-0"),
+        Some(&DisplayUuid::new("test-display-0")),
         "on the built-in alone the window IS on the built-in, and that arrangement says so"
     );
 
@@ -2029,7 +2038,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
 
     assert_eq!(
         reactor.display_affinity().window_home(exile),
-        Some("test-display-1"),
+        Some(&DisplayUuid::new("test-display-1")),
         "the docked arrangement kept its own record, so the replug has something to bring the \
          window back with"
     );
@@ -2167,7 +2176,7 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     ]));
     assert_eq!(
         reactor.display_affinity().window_home(doomed),
-        Some("test-display-1"),
+        Some(&DisplayUuid::new("test-display-1")),
         "test setup must home both windows to the external"
     );
 
@@ -2190,12 +2199,15 @@ fn closed_windows_do_not_keep_their_display_affinity() {
          has windows to bring back when it does not"
     );
     assert!(
-        !reactor.display_affinity().windows_homed_to("test-display-1").contains(&doomed),
+        !reactor
+            .display_affinity()
+            .windows_homed_to(&DisplayUuid::new("test-display-1"))
+            .contains(&doomed),
         "and it must be gone from the display's affinity list"
     );
     assert_eq!(
         reactor.display_affinity().window_home(survivor),
-        Some("test-display-1"),
+        Some(&DisplayUuid::new("test-display-1")),
         "the window that is still open keeps its home"
     );
 }

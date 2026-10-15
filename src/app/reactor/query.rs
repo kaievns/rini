@@ -1,7 +1,7 @@
 use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 
 use objc2_core_foundation::CGRect;
-use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, pid_t};
 use rini_ipc::protocol::{
     ApplicationData, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, LayoutStateData,
 };
@@ -482,7 +482,11 @@ impl StateView<'_> {
                 is_parked: !is_floating && visible_width <= 3.0,
                 is_floating,
                 is_focused: self.main_window == Some(window_id),
-                home_display: self.memory.affinity.window_home(window_id).map(str::to_owned),
+                home_display: self
+                    .memory
+                    .affinity
+                    .window_home(window_id)
+                    .map(DisplayUuid::to_string),
             });
         }
         column_origins.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -510,7 +514,7 @@ impl StateView<'_> {
 
         DiagnosticSpace {
             space_id: space.get(),
-            display_uuid: screen.display_uuid_owned(),
+            display_uuid: screen.display_uuid_opt().map(DisplayUuid::to_string),
             display_name: screen.name.clone(),
             display_frame: crate::app::api::dto::to_protocol_rect(screen.frame),
             is_active: self.is_space_active(space),
@@ -571,7 +575,8 @@ impl StateView<'_> {
         }
 
         Some(rini_ipc::protocol::DiagnosticDisplayCensus {
-            display_uuid,
+            display_uuid: display_uuid.into(),
+
             display_name: screen.name.clone(),
             homed,
             assigned,
@@ -726,7 +731,7 @@ mod tests {
                     id: ScreenId::new(i as u32 + 1),
                     frame: rect(i as f64 * 1000.0, 1000.0),
                     bounds: rect(i as f64 * 1000.0, 1000.0),
-                    display_uuid: format!("uuid-{space}"),
+                    display_uuid: format!("uuid-{space}").into(),
                     name: None,
                     space: Some(SpaceId::new(space)),
                     scale: 2.0,
@@ -872,7 +877,7 @@ mod tests {
         let displays = f.view().handle_displays_query();
         assert_eq!(displays.len(), 2);
         let uuids: Vec<_> = displays.iter().map(|d| d.info.display_uuid.clone()).collect();
-        assert_eq!(uuids, vec!["uuid-10".to_string(), "uuid-20".to_string()]);
+        assert_eq!(uuids, ["uuid-10", "uuid-20"]);
     }
 
     #[test]

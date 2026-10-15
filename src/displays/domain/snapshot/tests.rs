@@ -1,5 +1,5 @@
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_core::ids::ScreenId;
+use rini_core::ids::{DisplayUuid, ScreenId};
 
 use super::*;
 use crate::displays::domain::topology::DisplaySet;
@@ -11,7 +11,7 @@ fn screen(id: u32, display: &str, x: f64, width: f64, space: Option<u64>) -> Scr
         id: ScreenId::new(id),
         frame,
         bounds: frame,
-        display_uuid: display.to_string(),
+        display_uuid: display.into(),
         name: None,
         space: space.map(SpaceId::new),
         scale: 2.0,
@@ -93,7 +93,7 @@ fn the_active_display_names_the_command_space_over_the_active_space() {
     ];
 
     assert_eq!(
-        active_display_space(&screens, Some("right"), Some(space(1))),
+        active_display_space(&screens, Some(&DisplayUuid::new("right")), Some(space(1))),
         Some(space(2))
     );
 }
@@ -106,11 +106,11 @@ fn without_the_active_display_the_active_space_then_the_first_screen_names_it() 
     ];
 
     assert_eq!(
-        active_display_space(&screens, Some("missing"), Some(space(2))),
+        active_display_space(&screens, Some(&DisplayUuid::new("missing")), Some(space(2))),
         Some(space(2))
     );
     assert_eq!(
-        active_display_space(&screens, Some("missing"), None),
+        active_display_space(&screens, Some(&DisplayUuid::new("missing")), None),
         Some(space(1))
     );
     assert_eq!(
@@ -207,7 +207,10 @@ fn a_second_display_is_a_topology_change_that_remaps_the_first_display_s_new_spa
         space(51),
         CGSize::new(1000.0, 800.0)
     )]);
-    assert_eq!(memory.last_user_space_by_display.get("a"), Some(&space(41)));
+    assert_eq!(
+        memory.last_user_space_by_display.get(&DisplayUuid::new("a")),
+        Some(&space(41))
+    );
 }
 
 /// macOS can report the remaining display with the space of one not back from sleep yet. The
@@ -230,7 +233,7 @@ fn a_display_showing_another_display_s_space_takes_none_of_its_history() {
 
     assert!(state.space_remaps.is_empty());
     assert_eq!(
-        state.last_user_space_by_display.get("external"),
+        state.last_user_space_by_display.get(&DisplayUuid::new("external")),
         Some(&space(506))
     );
 }
@@ -255,7 +258,7 @@ fn a_space_on_two_screens_allows_no_remap() {
 #[test]
 fn the_window_server_s_space_list_stands_and_the_screens_stand_in_for_a_silent_one() {
     let screens = || vec![screen(1, "a", 0.0, 1000.0, Some(5))];
-    let listed = HashMap::from_iter([("a".to_string(), vec![space(5), space(6)])]);
+    let listed = HashMap::from_iter([("a".into(), vec![space(5), space(6)])]);
     let heard = Heard {
         spaces_per_display: listed.clone(),
         ..Heard::default()
@@ -271,7 +274,10 @@ fn the_window_server_s_space_list_stands_and_the_screens_stand_in_for_a_silent_o
         ),
         (listed, false)
     );
-    assert_eq!(silent.display_space_ids.get("a"), Some(&vec![space(5)]));
+    assert_eq!(
+        silent.display_space_ids.get(&DisplayUuid::new("a")),
+        Some(&vec![space(5)])
+    );
     assert!(silent.display_space_ids_from_screens);
 }
 
@@ -324,7 +330,7 @@ fn the_active_display_is_the_one_heard_while_attached_else_the_command_space_s()
         ]
     };
     let heard = |display: &str| Heard {
-        active_display: Some(display.to_string()),
+        active_display: Some(display.into()),
         ..Heard::default()
     };
     let mut memory = Forwarded::default();
@@ -333,10 +339,16 @@ fn the_active_display_is_the_one_heard_while_attached_else_the_command_space_s()
         heard: heard("b"),
         ..taken(screens())
     });
-    assert_eq!(memory.active_display_uuid.as_deref(), Some("b"));
+    assert_eq!(
+        memory.active_display_uuid.as_ref().map(DisplayUuid::as_str),
+        Some("b")
+    );
     forward(&mut memory, Taken {
         heard: heard("gone"),
         ..taken(screens())
     });
-    assert_eq!(memory.active_display_uuid.as_deref(), Some("a"));
+    assert_eq!(
+        memory.active_display_uuid.as_ref().map(DisplayUuid::as_str),
+        Some("a")
+    );
 }

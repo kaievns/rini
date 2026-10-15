@@ -230,7 +230,7 @@ pub fn fullscreen_startup_fixture(by: SecondWorkspaceBy) -> FullscreenStartup {
 
     reactor.handle_event(fullscreen_startup_space_state(
         screen,
-        "test-display-0".to_string(),
+        "test-display-0".into(),
         user_space,
         fullscreen_space,
     ));

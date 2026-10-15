@@ -2,7 +2,7 @@
 //! recorded under the attached displays, and the slot a relaunched window takes from it. See
 //! `src/workspaces/docs/launch-memory.md`.
 
-use rini_core::ids::{SpaceId, WindowId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
@@ -14,7 +14,7 @@ use crate::workspaces::engine::LayoutEngine;
 
 impl LayoutEngine {
     /// The displays attached right now, which is the topology the launch memory is keyed by.
-    pub fn set_connected_displays(&mut self, uuids: Vec<String>) {
+    pub fn set_connected_displays(&mut self, uuids: Vec<DisplayUuid>) {
         self.connected_displays = uuids;
     }
 
@@ -29,7 +29,7 @@ impl LayoutEngine {
         &mut self,
         window_store: &WindowStore,
         memory: &mut DisplayMemory,
-        connected: &[String],
+        connected: &[DisplayUuid],
     ) {
         use crate::workspaces::domain::launch_memory::{
             ProjectedSlot, ProjectedWidth, topology_key,
@@ -70,7 +70,8 @@ impl LayoutEngine {
                         .affinity
                         .window_home(window_id)
                         .or_else(|| memory.affinity.display_for_space(info.space))?
-                        .to_owned();
+                        .clone();
+
                     let index = self
                         .virtual_workspace_manager
                         .list_workspaces(info.space)

@@ -3,7 +3,7 @@
 //! Two different things that used to be one. `Mod+F` sizes a window to the usable space and leaves
 //! it on the strip; a native fullscreen window leaves the strip and stops being managed.
 use objc2_core_foundation::{CGPoint, CGSize};
-use rini_core::ids::{WindowServerId, pid_t};
+use rini_core::ids::{DisplayUuid, WindowServerId, pid_t};
 use rini_geometry::SameAs;
 use test_log::test;
 
@@ -331,7 +331,7 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
     let frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1280., 800.));
     let user_space = SpaceId::new(11);
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
-    let display_uuid = "11111111-1111-1111-1111-111111111111".to_string();
+    let display_uuid = DisplayUuid::new("11111111-1111-1111-1111-111111111111");
     let screens_for = |space: SpaceId| -> Vec<ScreenInfo> {
         vec![ScreenInfo {
             is_builtin: false,
@@ -463,7 +463,7 @@ fn fullscreen_screen_params_preserves_window_layout() {
         frame: full_screen,
         bounds: full_screen,
         space: None,
-        display_uuid: "test-display-0".to_string(),
+        display_uuid: "test-display-0".into(),
         name: None,
         scale: 2.0,
     }]));

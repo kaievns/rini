@@ -147,7 +147,7 @@ fn apply_input(input: InputPart, settings: &mut Settings) {
 fn apply_outputs(outputs: Vec<OutputPart>, settings: &mut Settings) {
     for output in outputs {
         let Some(layout) = output.layout else { continue };
-        let entry = settings.layout.gaps.per_display.entry(output.uuid).or_default();
+        let entry = settings.layout.gaps.per_display.entry(output.uuid.into()).or_default();
         if let Some(gaps) = layout.gaps {
             entry.gaps = Some(gaps.get());
         }

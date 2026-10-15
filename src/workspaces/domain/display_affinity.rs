@@ -19,7 +19,7 @@
 //! which display owns which native space is a fact about this session's hardware, not about one
 //! arrangement, and it is retained for unplugged displays too.
 
-use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +34,7 @@ pub struct DisplayAffinity {
     /// unplugged: that retained entry is the only thing that lets a replug find the
     /// layout it had before. Pruning it on unplug is what made reconnected displays
     /// come back empty.
-    display_space: HashMap<String, SpaceId>,
+    display_space: HashMap<DisplayUuid, SpaceId>,
     /// What each hardware arrangement remembers about the windows.
     #[serde(default)]
     setups: HashMap<SetupId, Setup>,
@@ -76,14 +76,14 @@ impl StoredWidth {
 }
 
 /// Widths per display and window, as a file holds them.
-pub type StoredWidths = HashMap<String, HashMap<WindowId, StoredWidth>>;
+pub type StoredWidths = HashMap<DisplayUuid, HashMap<WindowId, StoredWidth>>;
 
 /// The windows on each display whose stored width is unbounded.
-pub type UnboundedWidths = HashMap<String, HashSet<WindowId>>;
+pub type UnboundedWidths = HashMap<DisplayUuid, HashSet<WindowId>>;
 
 /// `widths` as a file holds them.
 pub fn store_widths(
-    widths: &HashMap<String, HashMap<WindowId, ColumnWidth>>,
+    widths: &HashMap<DisplayUuid, HashMap<WindowId, ColumnWidth>>,
 ) -> (StoredWidths, UnboundedWidths) {
     let mut stored = StoredWidths::default();
     let mut unbounded = UnboundedWidths::default();
@@ -103,7 +103,7 @@ pub fn store_widths(
 pub fn read_widths(
     stored: StoredWidths,
     unbounded: &UnboundedWidths,
-) -> HashMap<String, HashMap<WindowId, ColumnWidth>> {
+) -> HashMap<DisplayUuid, HashMap<WindowId, ColumnWidth>> {
     stored
         .into_iter()
         .map(|(display, windows)| {
@@ -157,9 +157,9 @@ impl DisplayAffinity {
     /// An arrangement of no displays is refused outright — macOS reports an empty screen list
     /// mid-reconfiguration, and switching to it would hand out the empty arrangement's records and
     /// then adopt the evacuation as the layout.
-    pub fn use_setup(&mut self, displays: impl IntoIterator<Item = String>) -> SetupChange {
-        let owned: Vec<String> = displays.into_iter().collect();
-        let id = SetupId::of(owned.iter().map(String::as_str));
+    pub fn use_setup(&mut self, displays: impl IntoIterator<Item = DisplayUuid>) -> SetupChange {
+        let owned: Vec<DisplayUuid> = displays.into_iter().collect();
+        let id = SetupId::of(&owned);
         if id.is_empty() {
             return SetupChange::Refused;
         }
@@ -206,19 +206,19 @@ impl DisplayAffinity {
 
     /// Record that `display` currently owns `space`, evicting any other claimant: a native space
     /// has one display, and two claimants make the affinity pass move windows forever.
-    pub fn set_display_space(&mut self, display: &str, space: SpaceId) {
+    pub fn set_display_space(&mut self, display: &DisplayUuid, space: SpaceId) {
         self.display_space.retain(|uuid, owned| *owned != space || uuid == display);
-        self.display_space.insert(display.to_owned(), space);
+        self.display_space.insert(display.clone(), space);
     }
 
-    pub fn space_for_display(&self, display: &str) -> Option<SpaceId> {
+    pub fn space_for_display(&self, display: &DisplayUuid) -> Option<SpaceId> {
         self.display_space.get(display).copied()
     }
 
-    pub fn display_for_space(&self, space: SpaceId) -> Option<&str> {
+    pub fn display_for_space(&self, space: SpaceId) -> Option<&DisplayUuid> {
         self.display_space
             .iter()
-            .find_map(|(uuid, owned)| (*owned == space).then_some(uuid.as_str()))
+            .find_map(|(uuid, owned)| (*owned == space).then_some(uuid))
     }
 
     /// Move every record naming `old_space` onto `new_space`.
@@ -228,7 +228,7 @@ impl DisplayAffinity {
         }
         // The display arriving on new_space wins over whatever previously claimed it, for
         // the same one-display-per-space reason as set_display_space.
-        let arriving: Vec<String> = self
+        let arriving: Vec<DisplayUuid> = self
             .display_space
             .iter()
             .filter(|(_, owned)| **owned == old_space)
@@ -247,9 +247,9 @@ impl DisplayAffinity {
     /// Only for paths that express intent. The forced reassignment that follows a
     /// display change must not call this, or the evacuation overwrites the very record
     /// the replug needs.
-    pub fn set_window_home(&mut self, window: WindowId, display: &str) {
+    pub fn set_window_home(&mut self, window: WindowId, display: &DisplayUuid) {
         let setup = self.setup_mut();
-        setup.window_home.insert(window, display.to_owned());
+        setup.window_home.insert(window, display.clone());
         // The user chose this, so a display pin must not talk them out of it later.
         setup.home_by_intent.insert(window);
     }
@@ -263,16 +263,16 @@ impl DisplayAffinity {
     ///
     /// Not recorded as chosen itself: the pin is re-applied on every settled topology, so it does not
     /// need remembering, and marking it would make it indistinguishable from a real move.
-    pub fn set_pinned_home(&mut self, window: WindowId, display: &str) -> bool {
+    pub fn set_pinned_home(&mut self, window: WindowId, display: &DisplayUuid) -> bool {
         let setup = self.setup_mut();
         if setup.home_was_chosen(window) {
             return false;
         }
-        let already = setup.window_home.get(&window).map(String::as_str) == Some(display);
+        let already = setup.window_home.get(&window) == Some(display);
         if already {
             return false;
         }
-        setup.window_home.insert(window, display.to_owned());
+        setup.window_home.insert(window, display.clone());
         true
     }
 
@@ -280,19 +280,19 @@ impl DisplayAffinity {
     ///
     /// Used at first sighting. A window that has been seen before keeps the display it
     /// was last deliberately placed on, even when it is currently parked elsewhere.
-    pub fn set_window_home_if_absent(&mut self, window: WindowId, display: &str) {
+    pub fn set_window_home_if_absent(&mut self, window: WindowId, display: &DisplayUuid) {
         self.setup_mut()
             .window_home
             .entry(window.to_owned())
-            .or_insert_with(|| display.to_owned());
+            .or_insert_with(|| display.clone());
     }
 
-    pub fn window_home(&self, window: WindowId) -> Option<&str> {
-        self.setup().window_home.get(&window).map(String::as_str)
+    pub fn window_home(&self, window: WindowId) -> Option<&DisplayUuid> {
+        self.setup().window_home.get(&window)
     }
 
     /// Windows homed to `display` in the arrangement in force, in the strip order last observed.
-    pub fn windows_homed_to(&self, display: &str) -> Vec<WindowId> {
+    pub fn windows_homed_to(&self, display: &DisplayUuid) -> Vec<WindowId> {
         self.setup().windows_homed_to(display)
     }
 
@@ -301,19 +301,24 @@ impl DisplayAffinity {
     /// Recorded continuously while the display is attached, so the last snapshot before an
     /// unplug is the arrangement the user actually left behind — including windows opened,
     /// dragged in, or reshuffled since they were first homed.
-    pub fn set_display_strip(&mut self, display: &str, windows: Vec<WindowId>) {
+    pub fn set_display_strip(&mut self, display: &DisplayUuid, windows: Vec<WindowId>) {
         if windows.is_empty() {
             self.setup_mut().display_strip.remove(display);
         } else {
-            self.setup_mut().display_strip.insert(display.to_owned(), windows);
+            self.setup_mut().display_strip.insert(display.clone(), windows);
         }
     }
 
     /// Remember the width `window` occupies on `display`.
-    pub fn set_window_width(&mut self, display: &str, window: WindowId, width: ColumnWidth) {
+    pub fn set_window_width(
+        &mut self,
+        display: &DisplayUuid,
+        window: WindowId,
+        width: ColumnWidth,
+    ) {
         self.setup_mut()
             .window_width
-            .entry(display.to_owned())
+            .entry(display.clone())
             .or_default()
             .insert(window, width);
     }
@@ -322,7 +327,7 @@ impl DisplayAffinity {
     ///
     /// Distinct from never having had one: toggling a deliberate width back off is an
     /// instruction to stop pinning it, not to keep the old value.
-    pub fn clear_window_width(&mut self, display: &str, window: WindowId) {
+    pub fn clear_window_width(&mut self, display: &DisplayUuid, window: WindowId) {
         let setup = self.setup_mut();
         if let Some(widths) = setup.window_width.get_mut(display) {
             widths.remove(&window);
@@ -333,7 +338,7 @@ impl DisplayAffinity {
     }
 
     /// The width `window` last had on `display`, if it ever had a deliberate one.
-    pub fn window_width(&self, display: &str, window: WindowId) -> Option<ColumnWidth> {
+    pub fn window_width(&self, display: &DisplayUuid, window: WindowId) -> Option<ColumnWidth> {
         self.setup().window_width.get(display)?.get(&window).copied()
     }
 
@@ -378,9 +383,11 @@ mod tests {
 
     fn win(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
-    fn docked() -> Vec<String> { vec!["builtin".to_owned(), "studio".to_owned()] }
+    fn uuid(uuid: &str) -> DisplayUuid { DisplayUuid::new(uuid) }
 
-    fn laptop() -> Vec<String> { vec!["builtin".to_owned()] }
+    fn docked() -> Vec<DisplayUuid> { vec![uuid("builtin"), uuid("studio")] }
+
+    fn laptop() -> Vec<DisplayUuid> { vec![uuid("builtin")] }
 
     /// The reported requirement. A window arranged one way while docked must not disturb how the
     /// laptop looks alone, and coming back must find the docked arrangement intact.
@@ -389,8 +396,8 @@ mod tests {
         let mut affinity = DisplayAffinity::default();
 
         affinity.use_setup(docked());
-        affinity.set_window_home(win(1), "studio");
-        affinity.set_window_width("studio", win(1), ColumnWidth::Offset(0.0));
+        affinity.set_window_home(win(1), &uuid("studio"));
+        affinity.set_window_width(&uuid("studio"), win(1), ColumnWidth::Offset(0.0));
 
         // Undocked: the same window is on the laptop, full width. Nothing about the docked
         // arrangement may change.
@@ -400,20 +407,20 @@ mod tests {
             None,
             "the laptop arrangement has not been told anything about this window yet"
         );
-        affinity.set_window_home(win(1), "builtin");
-        affinity.set_window_width("builtin", win(1), ColumnWidth::FullWidth);
+        affinity.set_window_home(win(1), &uuid("builtin"));
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
 
         affinity.use_setup(docked());
-        assert_eq!(affinity.window_home(win(1)), Some("studio"));
+        assert_eq!(affinity.window_home(win(1)), Some(&uuid("studio")));
         assert_eq!(
-            affinity.window_width("studio", win(1)),
+            affinity.window_width(&uuid("studio"), win(1)),
             Some(ColumnWidth::Offset(0.0))
         );
 
         affinity.use_setup(laptop());
-        assert_eq!(affinity.window_home(win(1)), Some("builtin"));
+        assert_eq!(affinity.window_home(win(1)), Some(&uuid("builtin")));
         assert_eq!(
-            affinity.window_width("builtin", win(1)),
+            affinity.window_width(&uuid("builtin"), win(1)),
             Some(ColumnWidth::FullWidth),
             "full width on the laptop alone, half when docked: the case one key per display cannot express"
         );
@@ -425,10 +432,10 @@ mod tests {
     fn a_pin_overrides_an_inferred_home() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        affinity.set_window_home_if_absent(win(1), "studio");
+        affinity.set_window_home_if_absent(win(1), &uuid("studio"));
 
-        assert!(affinity.set_pinned_home(win(1), "builtin"));
-        assert_eq!(affinity.window_home(win(1)), Some("builtin"));
+        assert!(affinity.set_pinned_home(win(1), &uuid("builtin")));
+        assert_eq!(affinity.window_home(win(1)), Some(&uuid("builtin")));
     }
 
     /// And never overrides one the user chose. "Unless I explicitly move it there."
@@ -436,12 +443,12 @@ mod tests {
     fn a_pin_leaves_a_chosen_home_alone() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        affinity.set_window_home(win(1), "studio");
+        affinity.set_window_home(win(1), &uuid("studio"));
 
-        assert!(!affinity.set_pinned_home(win(1), "builtin"));
+        assert!(!affinity.set_pinned_home(win(1), &uuid("builtin")));
         assert_eq!(
             affinity.window_home(win(1)),
-            Some("studio"),
+            Some(&uuid("studio")),
             "the window stays where the user put it"
         );
     }
@@ -452,12 +459,12 @@ mod tests {
     fn choosing_a_home_in_one_arrangement_does_not_free_the_pin_in_another() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        affinity.set_window_home(win(1), "studio");
+        affinity.set_window_home(win(1), &uuid("studio"));
 
         affinity.use_setup(laptop());
-        affinity.set_window_home_if_absent(win(1), "studio");
+        affinity.set_window_home_if_absent(win(1), &uuid("studio"));
         assert!(
-            affinity.set_pinned_home(win(1), "builtin"),
+            affinity.set_pinned_home(win(1), &uuid("builtin")),
             "the laptop arrangement never heard the user choose anything"
         );
     }
@@ -468,8 +475,8 @@ mod tests {
     fn re_applying_a_pin_that_already_holds_changes_nothing() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(laptop());
-        assert!(affinity.set_pinned_home(win(1), "builtin"));
-        assert!(!affinity.set_pinned_home(win(1), "builtin"));
+        assert!(affinity.set_pinned_home(win(1), &uuid("builtin")));
+        assert!(!affinity.set_pinned_home(win(1), &uuid("builtin")));
     }
 
     /// The television case. A display nobody has used before must not be handed a layout, and the
@@ -478,9 +485,9 @@ mod tests {
     fn an_arrangement_nobody_has_seen_remembers_nothing_and_says_so() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(laptop());
-        affinity.set_window_home(win(1), "builtin");
+        affinity.set_window_home(win(1), &uuid("builtin"));
 
-        let change = affinity.use_setup(vec!["builtin".to_owned(), "projector".to_owned()]);
+        let change = affinity.use_setup(vec![uuid("builtin"), uuid("projector")]);
         assert_eq!(change, SetupChange::New);
         assert!(
             !change.restores_windows(),
@@ -497,13 +504,13 @@ mod tests {
     fn returning_to_a_known_arrangement_restores_windows() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        affinity.set_window_home(win(1), "studio");
+        affinity.set_window_home(win(1), &uuid("studio"));
 
         affinity.use_setup(laptop());
         let change = affinity.use_setup(docked());
         assert_eq!(change, SetupChange::Known);
         assert!(change.restores_windows());
-        assert_eq!(affinity.windows_homed_to("studio"), vec![win(1)]);
+        assert_eq!(affinity.windows_homed_to(&uuid("studio")), vec![win(1)]);
     }
 
     /// macOS reports no screens at all mid-reconfiguration. Taking that as an arrangement would hand
@@ -512,12 +519,12 @@ mod tests {
     fn an_arrangement_of_no_displays_is_refused() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        affinity.set_window_home(win(1), "studio");
+        affinity.set_window_home(win(1), &uuid("studio"));
 
         assert_eq!(affinity.use_setup(Vec::new()), SetupChange::Refused);
         assert_eq!(
             affinity.window_home(win(1)),
-            Some("studio"),
+            Some(&uuid("studio")),
             "the arrangement in force is untouched"
         );
     }
@@ -527,15 +534,15 @@ mod tests {
     #[test]
     fn records_written_before_the_screens_settled_are_adopted() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), "builtin");
-        affinity.set_window_width("builtin", win(1), ColumnWidth::FullWidth);
+        affinity.set_window_home(win(1), &uuid("builtin"));
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
 
         let change = affinity.use_setup(laptop());
         assert_eq!(change, SetupChange::Adopted);
         assert!(change.restores_windows());
-        assert_eq!(affinity.window_home(win(1)), Some("builtin"));
+        assert_eq!(affinity.window_home(win(1)), Some(&uuid("builtin")));
         assert_eq!(
-            affinity.window_width("builtin", win(1)),
+            affinity.window_width(&uuid("builtin"), win(1)),
             Some(ColumnWidth::FullWidth)
         );
     }
@@ -545,7 +552,7 @@ mod tests {
     #[test]
     fn only_the_first_arrangement_adopts_the_unnamed_records() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), "builtin");
+        affinity.set_window_home(win(1), &uuid("builtin"));
         affinity.use_setup(laptop());
 
         assert_eq!(affinity.use_setup(docked()), SetupChange::New);
@@ -558,9 +565,9 @@ mod tests {
     fn forgetting_a_window_reaches_every_arrangement() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        affinity.set_window_home(win(1), "studio");
+        affinity.set_window_home(win(1), &uuid("studio"));
         affinity.use_setup(laptop());
-        affinity.set_window_home(win(1), "builtin");
+        affinity.set_window_home(win(1), &uuid("builtin"));
 
         affinity.forget_window(win(1));
 
@@ -578,15 +585,15 @@ mod tests {
     fn a_relaunch_rekeys_every_arrangement() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        affinity.set_window_home(win(1), "studio");
+        affinity.set_window_home(win(1), &uuid("studio"));
         affinity.use_setup(laptop());
-        affinity.set_window_home(win(1), "builtin");
+        affinity.set_window_home(win(1), &uuid("builtin"));
 
         affinity.rekey_window(win(1), win(7));
 
-        assert_eq!(affinity.window_home(win(7)), Some("builtin"));
+        assert_eq!(affinity.window_home(win(7)), Some(&uuid("builtin")));
         affinity.use_setup(docked());
-        assert_eq!(affinity.window_home(win(7)), Some("studio"));
+        assert_eq!(affinity.window_home(win(7)), Some(&uuid("studio")));
     }
 
     /// Naming the arrangement already in force changes nothing, so a settled topology that reports
@@ -602,7 +609,7 @@ mod tests {
             "a quick unplug and replug with nothing named in between still restores"
         );
         assert_eq!(
-            affinity.use_setup(vec!["studio".to_owned(), "builtin".to_owned()]),
+            affinity.use_setup(vec![uuid("studio"), uuid("builtin")]),
             SetupChange::Unchanged,
             "and the order the screens are reported in is not a change"
         );
@@ -611,69 +618,81 @@ mod tests {
     #[test]
     fn a_space_belongs_to_one_display_at_a_time() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_display_space("built-in", SpaceId::new(1));
+        affinity.set_display_space(&uuid("built-in"), SpaceId::new(1));
         // macOS handed space 1 to the external. The built-in must not still claim it.
-        affinity.set_display_space("external", SpaceId::new(1));
+        affinity.set_display_space(&uuid("external"), SpaceId::new(1));
 
-        assert_eq!(affinity.space_for_display("external"), Some(SpaceId::new(1)));
-        assert_eq!(affinity.space_for_display("built-in"), None);
-        assert_eq!(affinity.display_for_space(SpaceId::new(1)), Some("external"));
+        assert_eq!(
+            affinity.space_for_display(&uuid("external")),
+            Some(SpaceId::new(1))
+        );
+        assert_eq!(affinity.space_for_display(&uuid("built-in")), None);
+        assert_eq!(
+            affinity.display_for_space(SpaceId::new(1)),
+            Some(&uuid("external"))
+        );
     }
 
     #[test]
     fn reconnect_keeps_the_display_known_under_its_new_space_id() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_display_space("external", SpaceId::new(479));
+        affinity.set_display_space(&uuid("external"), SpaceId::new(479));
         affinity.remap_space(SpaceId::new(479), SpaceId::new(552));
 
-        assert_eq!(affinity.space_for_display("external"), Some(SpaceId::new(552)));
+        assert_eq!(
+            affinity.space_for_display(&uuid("external")),
+            Some(SpaceId::new(552))
+        );
         assert_eq!(affinity.display_for_space(SpaceId::new(479)), None);
     }
 
     #[test]
     fn remap_does_not_leave_two_displays_on_the_target_space() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_display_space("external", SpaceId::new(479));
-        affinity.set_display_space("built-in", SpaceId::new(552));
+        affinity.set_display_space(&uuid("external"), SpaceId::new(479));
+        affinity.set_display_space(&uuid("built-in"), SpaceId::new(552));
         // The external comes back and macOS gives it the id the built-in was using.
         affinity.remap_space(SpaceId::new(479), SpaceId::new(552));
 
-        assert_eq!(affinity.space_for_display("external"), Some(SpaceId::new(552)));
-        assert_eq!(affinity.space_for_display("built-in"), None);
+        assert_eq!(
+            affinity.space_for_display(&uuid("external")),
+            Some(SpaceId::new(552))
+        );
+        assert_eq!(affinity.space_for_display(&uuid("built-in")), None);
     }
 
     #[test]
     fn first_sighting_does_not_overwrite_a_deliberate_home() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), "external");
+        affinity.set_window_home(win(1), &uuid("external"));
         // Unplug parks the window on the built-in and it is seen there again.
-        affinity.set_window_home_if_absent(win(1), "built-in");
+        affinity.set_window_home_if_absent(win(1), &uuid("built-in"));
 
-        assert_eq!(affinity.window_home(win(1)), Some("external"));
-        assert_eq!(affinity.windows_homed_to("external"), vec![win(1)]);
+        assert_eq!(affinity.window_home(win(1)), Some(&uuid("external")));
+        assert_eq!(affinity.windows_homed_to(&uuid("external")), vec![win(1)]);
     }
 
     #[test]
     fn an_explicit_move_does_overwrite_the_home() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), "external");
-        affinity.set_window_home(win(1), "built-in");
+        affinity.set_window_home(win(1), &uuid("external"));
+        affinity.set_window_home(win(1), &uuid("built-in"));
 
-        assert_eq!(affinity.window_home(win(1)), Some("built-in"));
-        assert!(affinity.windows_homed_to("external").is_empty());
+        assert_eq!(affinity.window_home(win(1)), Some(&uuid("built-in")));
+        assert!(affinity.windows_homed_to(&uuid("external")).is_empty());
     }
 
     #[test]
     fn a_window_seen_on_a_new_display_is_re_homed_to_it() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), "external");
+        affinity.set_window_home(win(1), &uuid("external"));
         // Seen on the built-in while BOTH displays are attached: the user moved it, so the
         // built-in is its home now. Re-homing has to overwrite, not defer to the old value,
         // or a later replug of the external hauls the window back off the built-in.
-        affinity.set_window_home(win(1), "built-in");
+        affinity.set_window_home(win(1), &uuid("built-in"));
 
-        assert_eq!(affinity.window_home(win(1)), Some("built-in"));
-        assert!(affinity.windows_homed_to("external").is_empty());
+        assert_eq!(affinity.window_home(win(1)), Some(&uuid("built-in")));
+        assert!(affinity.windows_homed_to(&uuid("external")).is_empty());
     }
 
     #[test]
@@ -682,11 +701,11 @@ mod tests {
         // Ids deliberately out of visual order: sorting by WindowId would give 1, 2, 8, 9
         // and split the adjacent pair 8, 9 apart from where the user left them.
         for window in [win(1), win(8), win(9), win(2)] {
-            affinity.set_window_home(window, "external");
+            affinity.set_window_home(window, &uuid("external"));
         }
-        affinity.set_display_strip("external", vec![win(1), win(8), win(9), win(2)]);
+        affinity.set_display_strip(&uuid("external"), vec![win(1), win(8), win(9), win(2)]);
 
-        assert_eq!(affinity.windows_homed_to("external"), vec![
+        assert_eq!(affinity.windows_homed_to(&uuid("external")), vec![
             win(1),
             win(8),
             win(9),
@@ -698,20 +717,20 @@ mod tests {
     #[test]
     fn a_window_can_have_a_different_width_on_each_display() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
-        affinity.set_window_width("external", win(1), ColumnWidth::Offset(0.25));
+        affinity.set_window_width(&uuid("built-in"), win(1), ColumnWidth::FullWidth);
+        affinity.set_window_width(&uuid("external"), win(1), ColumnWidth::Offset(0.25));
 
         assert_eq!(
-            affinity.window_width("built-in", win(1)),
+            affinity.window_width(&uuid("built-in"), win(1)),
             Some(ColumnWidth::FullWidth)
         );
         assert_eq!(
-            affinity.window_width("external", win(1)),
+            affinity.window_width(&uuid("external"), win(1)),
             Some(ColumnWidth::Offset(0.25))
         );
         // A display it has never been on has no opinion, so the window adopts that
         // display's configured default rather than inheriting another display's size.
-        assert_eq!(affinity.window_width("third", win(1)), None);
+        assert_eq!(affinity.window_width(&uuid("third"), win(1)), None);
     }
 
     /// A dragged width comes back unbounded, so no display's bounds clamp it after a restart. Every
@@ -720,8 +739,8 @@ mod tests {
     #[test]
     fn a_dragged_width_round_trips_and_an_old_record_reads_as_before() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_width("built-in", win(1), ColumnWidth::Unbounded(0.33797));
-        affinity.set_window_width("built-in", win(2), ColumnWidth::Offset(0.25));
+        affinity.set_window_width(&uuid("built-in"), win(1), ColumnWidth::Unbounded(0.33797));
+        affinity.set_window_width(&uuid("built-in"), win(2), ColumnWidth::Offset(0.25));
 
         let written = ron::ser::to_string(&affinity).unwrap();
         assert!(written.contains("Offset(0.25)"), "{written}");
@@ -729,11 +748,11 @@ mod tests {
         assert!(!written.contains("Unbounded("), "{written}");
         let read: DisplayAffinity = ron::from_str(&written).unwrap();
         assert_eq!(
-            read.window_width("built-in", win(1)),
+            read.window_width(&uuid("built-in"), win(1)),
             Some(ColumnWidth::Unbounded(0.33797))
         );
         assert_eq!(
-            read.window_width("built-in", win(2)),
+            read.window_width(&uuid("built-in"), win(2)),
             Some(ColumnWidth::Offset(0.25))
         );
     }
@@ -743,22 +762,22 @@ mod tests {
     #[test]
     fn clearing_a_width_restores_the_display_default() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
-        affinity.clear_window_width("built-in", win(1));
+        affinity.set_window_width(&uuid("built-in"), win(1), ColumnWidth::FullWidth);
+        affinity.clear_window_width(&uuid("built-in"), win(1));
 
-        assert_eq!(affinity.window_width("built-in", win(1)), None);
+        assert_eq!(affinity.window_width(&uuid("built-in"), win(1)), None);
     }
 
     #[test]
     fn forgetting_a_window_drops_its_remembered_widths() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
-        affinity.set_window_width("built-in", win(2), ColumnWidth::Offset(0.1));
+        affinity.set_window_width(&uuid("built-in"), win(1), ColumnWidth::FullWidth);
+        affinity.set_window_width(&uuid("built-in"), win(2), ColumnWidth::Offset(0.1));
         affinity.forget_window(win(1));
 
-        assert_eq!(affinity.window_width("built-in", win(1)), None);
+        assert_eq!(affinity.window_width(&uuid("built-in"), win(1)), None);
         assert_eq!(
-            affinity.window_width("built-in", win(2)),
+            affinity.window_width(&uuid("built-in"), win(2)),
             Some(ColumnWidth::Offset(0.1)),
             "forgetting one window must not disturb another"
         );
@@ -769,12 +788,12 @@ mod tests {
     #[test]
     fn rekeying_carries_remembered_widths() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
+        affinity.set_window_width(&uuid("built-in"), win(1), ColumnWidth::FullWidth);
         affinity.rekey_window(win(1), win(7));
 
-        assert_eq!(affinity.window_width("built-in", win(1)), None);
+        assert_eq!(affinity.window_width(&uuid("built-in"), win(1)), None);
         assert_eq!(
-            affinity.window_width("built-in", win(7)),
+            affinity.window_width(&uuid("built-in"), win(7)),
             Some(ColumnWidth::FullWidth)
         );
     }
@@ -782,15 +801,21 @@ mod tests {
     #[test]
     fn forgetting_an_app_drops_widths_for_all_of_its_windows() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_width("built-in", WindowId::new(1, 1), ColumnWidth::FullWidth);
-        affinity.set_window_width("built-in", WindowId::new(1, 2), ColumnWidth::Offset(0.2));
-        affinity.set_window_width("built-in", WindowId::new(2, 1), ColumnWidth::Offset(0.3));
+        affinity.set_window_width(&uuid("built-in"), WindowId::new(1, 1), ColumnWidth::FullWidth);
+        affinity.set_window_width(&uuid("built-in"), WindowId::new(1, 2), ColumnWidth::Offset(0.2));
+        affinity.set_window_width(&uuid("built-in"), WindowId::new(2, 1), ColumnWidth::Offset(0.3));
         affinity.forget_app(1);
 
-        assert_eq!(affinity.window_width("built-in", WindowId::new(1, 1)), None);
-        assert_eq!(affinity.window_width("built-in", WindowId::new(1, 2)), None);
         assert_eq!(
-            affinity.window_width("built-in", WindowId::new(2, 1)),
+            affinity.window_width(&uuid("built-in"), WindowId::new(1, 1)),
+            None
+        );
+        assert_eq!(
+            affinity.window_width(&uuid("built-in"), WindowId::new(1, 2)),
+            None
+        );
+        assert_eq!(
+            affinity.window_width(&uuid("built-in"), WindowId::new(2, 1)),
             Some(ColumnWidth::Offset(0.3)),
             "another app's windows must survive"
         );
@@ -799,22 +824,25 @@ mod tests {
     #[test]
     fn a_window_homed_without_a_remembered_position_still_comes_back() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), "external");
-        affinity.set_window_home(win(5), "external");
+        affinity.set_window_home(win(1), &uuid("external"));
+        affinity.set_window_home(win(5), &uuid("external"));
         // Only one of them has a position; the other must not be silently dropped.
-        affinity.set_display_strip("external", vec![win(5)]);
+        affinity.set_display_strip(&uuid("external"), vec![win(5)]);
 
-        assert_eq!(affinity.windows_homed_to("external"), vec![win(5), win(1)]);
+        assert_eq!(affinity.windows_homed_to(&uuid("external")), vec![
+            win(5),
+            win(1)
+        ]);
     }
 
     #[test]
     fn forgetting_a_window_also_drops_it_from_every_strip() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), "external");
-        affinity.set_display_strip("external", vec![win(1), win(2)]);
+        affinity.set_window_home(win(1), &uuid("external"));
+        affinity.set_display_strip(&uuid("external"), vec![win(1), win(2)]);
         affinity.forget_window(win(1));
 
-        assert_eq!(affinity.setup().display_strip["external"], vec![win(2)]);
+        assert_eq!(affinity.setup().display_strip[&uuid("external")], vec![win(2)]);
         assert_eq!(affinity.window_home(win(1)), None);
     }
 }
@@ -828,6 +856,8 @@ mod observation_tests {
 
     fn win(idx: u32) -> WindowId { WindowId::new(500, idx) }
 
+    fn uuid(uuid: &str) -> DisplayUuid { DisplayUuid::new(uuid) }
+
     /// The bug behind "windows teleport between displays". A window homed to the built-in is SEEN on
     /// the external — because rini parked it there, or evacuated it, or laid it out there — and the
     /// settled-topology pass used to make that its new home. It then never came back on a replug.
@@ -838,13 +868,13 @@ mod observation_tests {
     #[test]
     fn seeing_a_window_on_another_display_does_not_re_home_it() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(1), BUILT_IN);
+        affinity.set_window_home(win(1), &uuid(BUILT_IN));
 
-        affinity.set_window_home_if_absent(win(1), EXTERNAL);
+        affinity.set_window_home_if_absent(win(1), &uuid(EXTERNAL));
 
         assert_eq!(
             affinity.window_home(win(1)),
-            Some(BUILT_IN),
+            Some(&uuid(BUILT_IN)),
             "an observation must not overwrite a home the user chose"
         );
     }
@@ -854,16 +884,16 @@ mod observation_tests {
     #[test]
     fn a_window_with_no_home_takes_the_display_it_is_seen_on() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home_if_absent(win(2), EXTERNAL);
-        assert_eq!(affinity.window_home(win(2)), Some(EXTERNAL));
+        affinity.set_window_home_if_absent(win(2), &uuid(EXTERNAL));
+        assert_eq!(affinity.window_home(win(2)), Some(&uuid(EXTERNAL)));
     }
 
     /// An explicit intent still moves it. This is what a drag and a move command call.
     #[test]
     fn an_explicit_move_re_homes_the_window() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_home(win(3), BUILT_IN);
-        affinity.set_window_home(win(3), EXTERNAL);
-        assert_eq!(affinity.window_home(win(3)), Some(EXTERNAL));
+        affinity.set_window_home(win(3), &uuid(BUILT_IN));
+        affinity.set_window_home(win(3), &uuid(EXTERNAL));
+        assert_eq!(affinity.window_home(win(3)), Some(&uuid(EXTERNAL)));
     }
 }

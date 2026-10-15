@@ -1,5 +1,5 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -79,7 +79,7 @@ pub enum LayoutEvent {
         wid: WindowId,
         drag: Option<Drag>,
         new_frame: CGRect,
-        screens: Vec<(SpaceId, CGRect, Option<String>)>,
+        screens: Vec<(SpaceId, CGRect, Option<DisplayUuid>)>,
     },
     /// The window's app zoomed it from its title bar, on the strip `space` is showing.
     WindowZoomed(SpaceId, WindowId),
@@ -131,7 +131,7 @@ pub struct LayoutEngine {
     layout_settings: LayoutSettings,
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
-    connected_displays: Vec<String>,
+    connected_displays: Vec<DisplayUuid>,
     persistence: PersistenceState,
     /// Set only while a saved-file startup restore is waiting for the first display snapshot.
     startup_restore_pending: bool,
@@ -594,7 +594,7 @@ impl LayoutEngine {
         wid: WindowId,
         drag: Option<Drag>,
         new_frame: CGRect,
-        screens: Vec<(SpaceId, CGRect, Option<String>)>,
+        screens: Vec<(SpaceId, CGRect, Option<DisplayUuid>)>,
     ) {
         for (space, screen_frame, display_uuid) in screens {
             let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
@@ -604,7 +604,8 @@ impl LayoutEngine {
                 );
                 continue;
             };
-            let gaps = self.layout_settings.gaps.effective_for_display(display_uuid.as_deref());
+            let gaps = self.layout_settings.gaps.effective_for_display(display_uuid.as_ref());
+
             let border = self.borders.of(wid);
             self.workspace_tree_mut(ws_id).on_window_resized(
                 layout,
@@ -1868,7 +1869,7 @@ mod tests {
             .virtual_workspace_manager
             .update_settings(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
         fx.engine.virtual_workspace_manager.forget_every_workspace();
-        fx.memory.affinity.set_display_space("display-a", space);
+        fx.memory.affinity.set_display_space(&"display-a".into(), space);
         fx.engine.floating.add_floating(wid);
 
         let _ = fx.event(LayoutEvent::WindowAdded(space, wid));
@@ -1961,7 +1962,7 @@ mod tests {
         let mut fx = EngineFixture::new();
         let space = SpaceId::new(97);
         let wid = WindowId::new(6003, 1);
-        fx.memory.affinity.set_display_space("built-in", space);
+        fx.memory.affinity.set_display_space(&"built-in".into(), space);
         fx.expose(space, CGSize::new(1000.0, 1000.0));
         let _ = fx.open(space, vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)]);
         let screen = fx.screens[&space];

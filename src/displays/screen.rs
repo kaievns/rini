@@ -12,7 +12,7 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{CGDisplayBounds, CGError, CGGetActiveDisplayList, CGMainDisplayID};
 use objc2_foundation::{MainThreadMarker, NSNumber, ns_string};
-use rini_core::ids::{ScreenId, SpaceId};
+use rini_core::ids::{DisplayUuid, ScreenId, SpaceId};
 use rini_skylight_sys::{
     CFRelease, CFUUIDCreateFromString, CFUUIDCreateString, CGDisplayCreateUUIDFromDisplayID,
     CGDisplayGetDisplayIDFromUUID, CGSCopyBestManagedDisplayForRect, CGSCopyManagedDisplaySpaces,
@@ -123,7 +123,8 @@ impl<S: System> ScreenCache<S> {
 
         let uuids: Vec<CFRetained<CFString>> =
             cg_screens.iter().map(|screen| self.system.display_uuid(screen)).collect();
-        let uuid_strings: Vec<String> = uuids.iter().map(|uuid| uuid.to_string()).collect();
+        let display_uuids: Vec<DisplayUuid> =
+            uuids.iter().map(|uuid| DisplayUuid::new(uuid.to_string())).collect();
 
         let union_max_y = cg_screens
             .iter()
@@ -134,7 +135,7 @@ impl<S: System> ScreenCache<S> {
 
         let screens: Vec<ScreenInfo> = cg_screens
             .iter()
-            .zip(&uuid_strings)
+            .zip(&display_uuids)
             .map(|(screen, uuid)| self.screen_info(screen, uuid, &chrome, &ns_screens))
             .collect();
         let screens = self.with_spaces(screens, &uuids);
@@ -148,7 +149,7 @@ impl<S: System> ScreenCache<S> {
     fn screen_info(
         &self,
         &CGScreenInfo { cg_id, bounds }: &CGScreenInfo,
-        uuid: &str,
+        uuid: &DisplayUuid,
         chrome: &Chrome,
         ns_screens: &[NSScreenInfo],
     ) -> ScreenInfo {
@@ -161,9 +162,9 @@ impl<S: System> ScreenCache<S> {
         let frame = chrome.frame_on(did, bounds, top_inset(menu_bar, self.top_band));
         let display_uuid = if uuid.is_empty() {
             warn!("Missing cached UUID for {:?}; using fallback", cg_id);
-            format!("cgdisplay-{}", cg_id.as_u32())
+            DisplayUuid::fallback(cg_id)
         } else {
-            uuid.to_owned()
+            uuid.clone()
         };
         let ns_screen = ns_screens.iter().find(|s| s.cg_id == cg_id);
         ScreenInfo {
@@ -491,8 +492,8 @@ pub fn get_active_space_number() -> Option<SpaceId> {
     active_menu_bar_display_uuid().and_then(|uuid| current_space_for_display_uuid(&uuid))
 }
 
-pub fn active_menu_bar_display_uuid() -> Option<String> {
-    active_menu_bar_display().map(|uuid| uuid.to_string())
+pub fn active_menu_bar_display_uuid() -> Option<DisplayUuid> {
+    active_menu_bar_display().map(|uuid| DisplayUuid::new(uuid.to_string()))
 }
 
 /// The CoreGraphics id of the display whose menu bar is active.
@@ -508,12 +509,12 @@ fn active_menu_bar_display() -> Option<CFRetained<CFString>> {
     }
 }
 
-pub fn current_space_for_display_uuid(display_uuid: &str) -> Option<SpaceId> {
+pub fn current_space_for_display_uuid(display_uuid: &DisplayUuid) -> Option<SpaceId> {
     if display_uuid.is_empty() {
         return None;
     }
 
-    let uuid = objc2_core_foundation::CFString::from_str(display_uuid);
+    let uuid = objc2_core_foundation::CFString::from_str(display_uuid.as_str());
     let id = unsafe {
         CGSManagedDisplayGetCurrentSpace(
             SLSMainConnectionID(),
@@ -532,8 +533,8 @@ pub fn displays_have_separate_spaces() -> bool {
     unsafe { SLSGetSpaceManagementMode(SLSMainConnectionID()) == 1 }
 }
 
-pub fn managed_display_space_ids() -> HashMap<String, Vec<SpaceId>> {
-    let mut out: HashMap<String, Vec<SpaceId>> = HashMap::default();
+pub fn managed_display_space_ids() -> HashMap<DisplayUuid, Vec<SpaceId>> {
+    let mut out: HashMap<DisplayUuid, Vec<SpaceId>> = HashMap::default();
     unsafe {
         let raw = CGSCopyManagedDisplaySpaces(SLSMainConnectionID());
         if raw.is_null() {
@@ -581,7 +582,7 @@ pub fn managed_display_space_ids() -> HashMap<String, Vec<SpaceId>> {
                 }
             }
 
-            out.insert(display_id, space_ids);
+            out.insert(DisplayUuid::new(display_id), space_ids);
         }
     }
 

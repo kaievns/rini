@@ -45,7 +45,7 @@ fn a_layout_from_an_older_schema_is_refused_and_says_why() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    engine.update_space_display(&mut memory, space, Some("studio-display".to_string()));
+    engine.update_space_display(&mut memory, space, Some("studio-display".into()));
 
     let written = engine.serialize_to_string(&memory);
     let v5 = written.replacen(r#""schema_version":6"#, r#""schema_version":5"#, 1);
@@ -64,7 +64,7 @@ fn a_layout_from_an_older_schema_is_refused_and_says_why() {
         "the error has to say what is wrong and what follows: {error}"
     );
     assert_eq!(
-        loaded.memory.affinity.space_for_display("studio-display"),
+        loaded.memory.affinity.space_for_display(&DisplayUuid::new("studio-display")),
         Some(space),
         "the refusal is about the layout"
     );
@@ -130,8 +130,8 @@ fn a_layout_from_a_newer_schema_is_refused_without_forgetting_the_displays() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    engine.update_space_display(&mut memory, space, Some("studio-display".to_string()));
-    memory.affinity.set_window_home(window, "studio-display");
+    engine.update_space_display(&mut memory, space, Some("studio-display".into()));
+    memory.affinity.set_window_home(window, &DisplayUuid::new("studio-display"));
 
     let written = engine.serialize_to_string(&memory);
     let from_the_future = written.replacen(r#""schema_version":6"#, r#""schema_version":99"#, 1);
@@ -146,11 +146,11 @@ fn a_layout_from_a_newer_schema_is_refused_without_forgetting_the_displays() {
     assert!(error.contains("newer than supported"), "{error}");
     assert_eq!(
         loaded.memory.affinity.window_home(window),
-        Some("studio-display"),
+        Some(&DisplayUuid::new("studio-display")),
         "the refusal is about the layout, not about which monitor the window lives on"
     );
     assert_eq!(
-        loaded.memory.affinity.space_for_display("studio-display"),
+        loaded.memory.affinity.space_for_display(&DisplayUuid::new("studio-display")),
         Some(space),
         "and the display still owns its space, so a replug has something to match"
     );
@@ -168,7 +168,7 @@ fn an_invalid_layout_is_refused_without_forgetting_the_displays() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    engine.update_space_display(&mut memory, space, Some("studio-display".to_string()));
+    engine.update_space_display(&mut memory, space, Some("studio-display".into()));
 
     // A workspace order naming a workspace the file does not carry: invalid topology.
     let written = engine.serialize_to_string(&memory);
@@ -186,7 +186,7 @@ fn an_invalid_layout_is_refused_without_forgetting_the_displays() {
 
     assert!(loaded.layout.is_err(), "an invalid topology is refused");
     assert_eq!(
-        loaded.memory.affinity.space_for_display("studio-display"),
+        loaded.memory.affinity.space_for_display(&DisplayUuid::new("studio-display")),
         Some(space),
         "the display memory is read before the layout is validated"
     );
@@ -360,7 +360,7 @@ fn a_schema_6_layout_file_loads_and_writes_back_the_same() {
         None,
     ]);
     let remembered: Vec<_> = (2..=4)
-        .map(|idx| loaded.memory.affinity.window_width(DISPLAY, w(idx)))
+        .map(|idx| loaded.memory.affinity.window_width(&DisplayUuid::new(DISPLAY), w(idx)))
         .collect();
     assert_eq!(remembered, [
         Some(ColumnWidth::Offset(-0.1)),
@@ -373,4 +373,27 @@ fn a_schema_6_layout_file_loads_and_writes_back_the_same() {
     let rewritten = engine.serialize_to_string(&loaded.memory);
     let value = |text: &str| ron::from_str::<ron::Value>(text).expect("a RON value");
     assert_eq!(value(&rewritten), value(SCHEMA_6_FILE));
+}
+
+/// The bytes schema 6 writes after loading `SCHEMA_6_FILE`. Its maps come out in hash order, which
+/// is not the file's own order, so the two files differ while holding the same values.
+const SCHEMA_6_RESAVED: &str = include_str!("layout-schema-6-resaved.ron");
+
+/// Every display UUID in the file is read and written as the bare string it was, so the file is
+/// written back to the byte.
+#[test]
+fn a_schema_6_layout_file_writes_back_the_bytes_schema_6_writes() {
+    let loaded = LayoutEngine::deserialize_file(SCHEMA_6_FILE).expect("the bytes parse");
+    let engine = loaded.layout.expect("the layout loads");
+    let rewritten = engine.serialize_to_string(&loaded.memory);
+    assert_eq!(rewritten, SCHEMA_6_RESAVED);
+    let display = DisplayUuid::new("37D8832A-2D66-02CA-B9F7-8F30A301B230");
+    assert_eq!(
+        loaded.memory.affinity.space_for_display(&display),
+        Some(SpaceId::new(52))
+    );
+    assert_eq!(
+        rewritten.matches(r#""37D8832A-2D66-02CA-B9F7-8F30A301B230""#).count(),
+        16
+    );
 }

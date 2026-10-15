@@ -35,7 +35,10 @@ fn a_test_reactor_reads_unknown_from_everything_it_was_not_told() {
         (reactor.reads().display_bounds)(rini_core::ids::ScreenId::new(1)),
         CGRect::ZERO
     );
-    assert!(!port.focus_desktop("test-display-0", CGRect::new(CGPoint::ZERO, CGSize::new(1., 1.))));
+    assert!(!port.focus_desktop(
+        &"test-display-0".into(),
+        CGRect::new(CGPoint::ZERO, CGSize::new(1., 1.))
+    ));
 }
 
 /// The flight decision reads Low Power Mode from the reactor's reads, so no bounce flies in it.
@@ -141,7 +144,7 @@ fn closing_the_last_window_of_the_workspace_makes_the_display_s_desktop_key() {
     let desktop = WindowServerId::new(900);
     reactor
         .window_server()
-        .set_desktop_windows("test-display-0", vec![desktop])
+        .set_desktop_windows(&"test-display-0".into(), vec![desktop])
         .set_window(
             desktop,
             Some(WindowServerInfo {

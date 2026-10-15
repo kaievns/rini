@@ -2,7 +2,7 @@
 //! observed from the live layout, windows moved back to a display that returns or on the
 //! redistribute command, and a window reassigned to the space macOS reports it on.
 
-use rini_core::ids::{SpaceId, WindowId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
 use tracing::{debug, info};
 
 use super::events::EventOutcome;
@@ -19,7 +19,7 @@ impl Reactor {
     /// caller's instruction to move nothing: see `display_setup` for why a display's identity, not
     /// just the number of displays, is what names an arrangement.
     pub(super) fn adopt_current_display_setup(&mut self) -> SetupChange {
-        let attached: Vec<String> = self
+        let attached: Vec<DisplayUuid> = self
             .space_state
             .screens
             .iter()
@@ -45,7 +45,7 @@ impl Reactor {
     fn apply_display_pins(&mut self) {
         let screens: Vec<ScreenInfo> =
             self.space_state.screens_in_physical_order().into_iter().cloned().collect();
-        let pins: Vec<(WindowId, String)> = self
+        let pins: Vec<(WindowId, DisplayUuid)> = self
             .state
             .windows
             .iter_windows()
@@ -63,7 +63,7 @@ impl Reactor {
                     return None;
                 };
                 let target = display_for_role(role, screens.iter())?;
-                Some((window, target.to_owned()))
+                Some((window, target.clone()))
             })
             .collect();
         // Not named `display`: that shadows tracing's own `display` helper inside the macro.
@@ -100,7 +100,7 @@ impl Reactor {
         // wherever macOS happens to have parked it. A new arrangement starts with every home absent,
         // so without this the pin would lapse on every dock.
         self.apply_display_pins();
-        let observations: Vec<(String, Vec<WindowId>)> = self
+        let observations: Vec<(DisplayUuid, Vec<WindowId>)> = self
             .space_state
             .screens
             .iter()
@@ -136,7 +136,7 @@ impl Reactor {
     /// guessing at it.
     pub(super) fn redistribute_windows(&mut self) -> EventOutcome {
         let mut outcome = EventOutcome::default();
-        let attached: Vec<(String, SpaceId)> = self
+        let attached: Vec<(DisplayUuid, SpaceId)> = self
             .space_state
             .screens
             .iter()
@@ -203,7 +203,10 @@ impl Reactor {
     /// deliberately placed on, and only windows whose home is this display move. Windows
     /// with no affinity for it are left exactly where they are, which is what keeps the
     /// other display's column order intact.
-    pub(super) fn repatriate_windows_to_display(&mut self, display_uuid: &str) -> EventOutcome {
+    pub(super) fn repatriate_windows_to_display(
+        &mut self,
+        display_uuid: &DisplayUuid,
+    ) -> EventOutcome {
         let mut outcome = EventOutcome::default();
         let Some(target_screen) = self
             .space_state
@@ -229,8 +232,9 @@ impl Reactor {
         }
 
         info!(
-            display_uuid,
+            %display_uuid,
             ?target_space,
+
             window_count = windows.len(),
             "Repatriating windows to their home display"
         );

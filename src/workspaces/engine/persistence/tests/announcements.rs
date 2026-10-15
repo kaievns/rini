@@ -26,8 +26,8 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
-    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.into()));
+    engine.set_connected_displays(vec![DISPLAY.into()]);
 
     let stacked = [WindowId::new(500, 1), WindowId::new(500, 2)];
     for window in stacked {

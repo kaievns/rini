@@ -3,6 +3,8 @@
 
 use std::time::{Duration, Instant};
 
+use rini_core::ids::DisplayUuid;
+
 use super::extras::{Kind, Vital};
 use super::format::{clock_label, date_label, until_next_minute};
 use super::glyphs;
@@ -190,10 +192,10 @@ pub enum Click {
     Tray,
 }
 
-pub fn click(target: Target, display: &str) -> Click {
+pub fn click(target: Target, display: &DisplayUuid) -> Click {
     match target {
         Target::Workspace(index) => Click::Ask(Action::ShowWorkspace {
-            display: display.to_string(),
+            display: display.clone(),
             index,
         }),
         Target::Window(window) => Click::Ask(Action::Focus(window)),
@@ -442,7 +444,7 @@ mod tests {
     #[test]
     fn a_numeral_asks_for_its_workspace_on_its_own_display() {
         assert_eq!(
-            click(Target::Workspace(2), "B5E7"),
+            click(Target::Workspace(2), &"B5E7".into()),
             Click::Ask(Action::ShowWorkspace {
                 display: "B5E7".into(),
                 index: 2
@@ -454,7 +456,7 @@ mod tests {
     fn a_glyph_asks_for_its_window() {
         let window = WindowId::new(804, 4);
         assert_eq!(
-            click(Target::Window(window), "d"),
+            click(Target::Window(window), &"d".into()),
             Click::Ask(Action::Focus(window))
         );
     }
@@ -462,8 +464,8 @@ mod tests {
     /// The fold and the tray are the bar's own, and never reach the window manager.
     #[test]
     fn the_fold_and_the_tray_stay_on_the_bar() {
-        assert_eq!(click(Target::Fold, "d"), Click::Fold);
-        assert_eq!(click(Target::Tray, "d"), Click::Tray);
+        assert_eq!(click(Target::Fold, &"d".into()), Click::Fold);
+        assert_eq!(click(Target::Tray, &"d".into()), Click::Tray);
     }
 
     const NEXT: Clock = Clock { minute: 6, ..CLOCK };

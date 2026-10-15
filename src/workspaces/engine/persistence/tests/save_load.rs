@@ -364,7 +364,7 @@ fn a_save_forgets_only_the_spaces_nothing_lists_remembers_or_holds() {
             LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
         );
     }
-    memory.affinity.set_display_space("external", remembered);
+    memory.affinity.set_display_space(&DisplayUuid::new("external"), remembered);
     let workspace = engine.active_workspace(laid_out).unwrap();
     let layout = engine.workspace_layouts.active(laid_out, workspace).unwrap();
     engine

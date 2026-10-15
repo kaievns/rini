@@ -1,4 +1,5 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::DisplayUuid;
 use rini_runloop::channel;
 
 use super::schedule::Recorded;
@@ -79,7 +80,7 @@ fn make_screen(space: Option<SpaceId>) -> ScreenInfo {
         id: rini_core::ids::ScreenId::new(1),
         frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)),
         bounds: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)),
-        display_uuid: "display-1".to_string(),
+        display_uuid: "display-1".into(),
         name: Some("Display".to_string()),
         space,
         scale: 2.0,
@@ -98,7 +99,7 @@ fn make_screen_with(
         id: rini_core::ids::ScreenId::new(screen_id),
         frame: CGRect::new(CGPoint::new(origin_x, 0.0), CGSize::new(width, 800.0)),
         bounds: CGRect::new(CGPoint::new(origin_x, 0.0), CGSize::new(width, 800.0)),
-        display_uuid: display_uuid.to_string(),
+        display_uuid: display_uuid.into(),
         name: Some(display_uuid.to_string()),
         space,
         scale: 2.0,
@@ -177,11 +178,11 @@ fn active_display_changed_skips_refresh_when_display_is_already_active() {
     );
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_active_display_changed_for(Some("display-left"));
+    actor.handle_active_display_changed_for(Some(&DisplayUuid::new("display-left")));
     assert_no_wm_event(&mut wm_rx);
     assert_no_reactor_event(&mut reactor_rx);
 
-    actor.handle_active_display_changed_for(Some("display-right"));
+    actor.handle_active_display_changed_for(Some(&DisplayUuid::new("display-right")));
     assert_no_wm_event(&mut wm_rx);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
@@ -651,7 +652,7 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
         OutEvent::SpaceStateUpdated(state, _) => {
             assert!(state.space_remaps.is_empty());
             assert_eq!(
-                state.last_user_space_by_display.get("external"),
+                state.last_user_space_by_display.get(&DisplayUuid::new("external")),
                 Some(&external_space_before_sleep)
             );
         }
@@ -1219,11 +1220,11 @@ fn build_actor_seeing_display_and_space() -> (
     let (wm_tx, wm_rx) = channel::channel();
     let (reactor_tx, reactor_rx) = channel::channel();
     let live = LiveDisplays {
-        active_menu_bar_display: || Some(ACTIVE_DISPLAY.to_string()),
+        active_menu_bar_display: || Some(ACTIVE_DISPLAY.into()),
         active_space: || Some(SpaceId::new(ACTIVE_SPACE)),
         spaces_per_display: || {
             let mut map = HashMap::default();
-            map.insert(ACTIVE_DISPLAY.to_string(), vec![
+            map.insert(ACTIVE_DISPLAY.into(), vec![
                 SpaceId::new(ACTIVE_SPACE),
                 SpaceId::new(99),
             ]);
@@ -1351,7 +1352,7 @@ fn the_spaces_a_display_owns_come_from_the_window_server() {
         panic!("expected a topology snapshot");
     };
     assert_eq!(
-        state.display_space_ids.get(ACTIVE_DISPLAY),
+        state.display_space_ids.get(&DisplayUuid::new(ACTIVE_DISPLAY)),
         Some(&vec![SpaceId::new(ACTIVE_SPACE), SpaceId::new(99)]),
         "both spaces, including the one nothing is showing"
     );
@@ -1379,7 +1380,10 @@ fn a_silent_window_server_falls_back_to_the_snapshot() {
     let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
         panic!("expected a topology snapshot");
     };
-    assert_eq!(state.display_space_ids.get("display-left"), Some(&vec![space]));
+    assert_eq!(
+        state.display_space_ids.get(&DisplayUuid::new("display-left")),
+        Some(&vec![space])
+    );
     assert!(
         state.display_space_ids_from_screens,
         "not a listing a save may prune by"

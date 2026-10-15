@@ -5,7 +5,7 @@
 //! asks for anything, and a burst of events that changes nothing on it costs it nothing.
 
 use objc2_core_foundation::CGRect;
-use rini_core::ids::WindowId;
+use rini_core::ids::{DisplayUuid, WindowId};
 
 use super::format::truncate;
 
@@ -25,7 +25,7 @@ pub struct BarInput {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayInput {
     /// The display's durable identity. Space ids change on every reconnect; this does not.
-    pub uuid: String,
+    pub uuid: DisplayUuid,
     /// The CoreGraphics display id, which is what the bar's window is placed by.
     pub screen: u32,
     /// The display's frame, which changes with its resolution and arrangement.
@@ -48,7 +48,7 @@ pub struct WindowInput {
 /// The focused window, and the display it is on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FocusInput {
-    pub display: String,
+    pub display: DisplayUuid,
     pub window: WindowId,
     pub app: String,
     pub title: String,
@@ -62,7 +62,7 @@ pub struct BarModel {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayBar {
-    pub uuid: String,
+    pub uuid: DisplayUuid,
     pub screen: u32,
     /// Never drawn. A display that is resized or moved makes a new model, and so is placed again.
     pub frame: CGRect,
@@ -109,7 +109,7 @@ pub struct FocusLabel {
 pub enum Action {
     /// Show workspace `index` on the display `display`, whichever display has focus.
     ShowWorkspace {
-        display: String,
+        display: DisplayUuid,
         index: usize,
     },
     Focus(WindowId),

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::CGError;
-use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::CGRectExt;
 
 use super::{Listed, depths};
@@ -67,7 +67,7 @@ pub trait WindowServer: Any + Send + Sync {
     /// names it: the application's, or its process's when it is none.
     fn owner_name(&self, pid: pid_t) -> Option<String>;
     /// The desktop windows the window server keeps for the display with `display_uuid`.
-    fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId>;
+    fn desktop_windows(&self, display_uuid: &DisplayUuid) -> Vec<WindowServerId>;
 
     /// Make `id`, a window of `pid`'s, the key window, as a click on it would.
     fn make_key_window(&self, pid: pid_t, id: WindowServerId) -> Result<(), CGError>;
@@ -96,7 +96,7 @@ pub trait WindowServer: Any + Send + Sync {
     /// Make the desktop window of `display_uuid` that sits within `frame` the key window, so the
     /// display holds focus with no app window on it. Whether one was made key; none is for a display
     /// with no uuid.
-    fn focus_desktop(&self, display_uuid: &str, frame: CGRect) -> bool {
+    fn focus_desktop(&self, display_uuid: &DisplayUuid, frame: CGRect) -> bool {
         if display_uuid.is_empty() {
             return false;
         }

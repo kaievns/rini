@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use objc2_core_foundation::CGSize;
-use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 

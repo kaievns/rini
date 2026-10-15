@@ -430,7 +430,7 @@ impl Reactor {
                 .settings
                 .layout
                 .gaps
-                .effective_for_display(display_uuid_opt.as_deref());
+                .effective_for_display(display_uuid_opt.as_ref());
             // A reconnected display's layout is NOT reattached here any more.
             //
             // This ran a whole-space remap on every layout pass, from the display's last

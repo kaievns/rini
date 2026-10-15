@@ -144,7 +144,7 @@ impl Reactor {
                 resize,
                 new_frame,
                 screen.frame,
-                Some(screen.display_uuid.as_str()),
+                Some(&screen.display_uuid),
             );
         }
     }

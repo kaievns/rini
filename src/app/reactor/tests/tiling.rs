@@ -1614,7 +1614,7 @@ impl Strip {
             id: rini_core::ids::ScreenId::new(0),
             frame: VISIBLE,
             bounds: DISPLAY,
-            display_uuid: "test-display-0".to_owned(),
+            display_uuid: "test-display-0".into(),
             name: None,
             space: Some(space),
             is_builtin: false,

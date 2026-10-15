@@ -309,7 +309,7 @@ mod tests {
                     id: ScreenId::new(i as u32 + 1),
                     frame: *frame,
                     bounds: *frame,
-                    display_uuid: format!("uuid-{i}"),
+                    display_uuid: format!("uuid-{i}").into(),
                     name: None,
                     space: Some(SpaceId::new(i as u64 + 1)),
                     scale: 2.0,

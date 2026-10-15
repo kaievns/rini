@@ -1,4 +1,4 @@
-use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{error, warn};
 
@@ -169,7 +169,7 @@ fn save_layout(
 pub struct ToggleSpacePayload {
     pub config: SpaceActivationConfig,
     pub space: Option<SpaceId>,
-    pub display_uuid: Option<String>,
+    pub display_uuid: Option<DisplayUuid>,
 }
 
 pub fn handle_command_reactor_toggle_space_activated(

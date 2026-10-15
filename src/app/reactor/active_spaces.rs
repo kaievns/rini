@@ -2,7 +2,7 @@
 //! active set recomputed from the screens, and each window's visibility and space reconciled
 //! against the active spaces' window lists.
 
-use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::debug;
 
@@ -42,7 +42,7 @@ impl Reactor {
         self.space_state.screens.clone()
     }
 
-    fn display_uuids_for_current_screens(&self) -> Vec<Option<String>> {
+    fn display_uuids_for_current_screens(&self) -> Vec<Option<DisplayUuid>> {
         self.space_state
             .screens
             .iter()

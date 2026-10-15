@@ -7,7 +7,7 @@
 use std::cmp::Ordering;
 
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_core::ids::{ScreenId, SpaceId};
+use rini_core::ids::{DisplayUuid, ScreenId, SpaceId};
 use rini_geometry::{CGRectDef, CGRectExt};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ pub struct ScreenInfo {
     /// The whole display, menu bar included.
     #[serde(with = "CGRectDef", default)]
     pub bounds: CGRect,
-    pub display_uuid: String,
+    pub display_uuid: DisplayUuid,
     pub name: Option<String>,
     pub space: Option<SpaceId>,
     /// The machine's own screen, as `CGDisplayIsBuiltin` reports it.
@@ -44,17 +44,11 @@ pub const ASSUMED_SCALE: f64 = 2.0;
 fn assumed_scale() -> f64 { ASSUMED_SCALE }
 
 impl ScreenInfo {
-    pub fn display_uuid_opt(&self) -> Option<&str> {
-        if self.display_uuid.is_empty() {
-            None
-        } else {
-            Some(self.display_uuid.as_str())
-        }
+    pub fn display_uuid_opt(&self) -> Option<&DisplayUuid> {
+        (!self.display_uuid.is_empty()).then_some(&self.display_uuid)
     }
 
-    pub fn display_uuid_owned(&self) -> Option<String> {
-        self.display_uuid_opt().map(|uuid| uuid.to_string())
-    }
+    pub fn display_uuid_owned(&self) -> Option<DisplayUuid> { self.display_uuid_opt().cloned() }
 }
 
 pub fn menu_bar_inset(hidden: bool, height: f64, notch_height: f64) -> f64 {

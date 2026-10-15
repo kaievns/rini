@@ -8,6 +8,7 @@
 //! This holds the same three facts keyed by bundle identifier and display topology instead. See
 //! `src/workspaces/docs/launch-memory.md` (in this crate).
 
+use rini_core::ids::DisplayUuid;
 use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +19,8 @@ use crate::workspaces::domain::display_affinity::StoredWidth;
 ///
 /// Sorted, so the same set of displays always produces the same key however the window server happens
 /// to enumerate them.
-pub fn topology_key(display_uuids: &[String]) -> String {
-    let mut sorted: Vec<&str> = display_uuids.iter().map(String::as_str).collect();
+pub fn topology_key(display_uuids: &[DisplayUuid]) -> String {
+    let mut sorted: Vec<&str> = display_uuids.iter().map(DisplayUuid::as_str).collect();
     sorted.sort_unstable();
     sorted.join("+")
 }
@@ -32,7 +33,7 @@ pub struct Slot {
     /// Title when it was recorded, for matching a relaunched window back to its own slot. Absent when
     /// the window had no title.
     pub title: Option<String>,
-    pub display_uuid: String,
+    pub display_uuid: DisplayUuid,
     pub workspace_index: usize,
     /// Absent when the window never had a deliberate width, in which case the configured default is
     /// still the right answer and nothing needs remembering.
@@ -44,7 +45,7 @@ pub struct Slot {
 struct SlotRecord {
     #[serde(default)]
     title: Option<String>,
-    display_uuid: String,
+    display_uuid: DisplayUuid,
     workspace_index: usize,
     #[serde(default)]
     width: Option<StoredWidth>,
@@ -97,7 +98,7 @@ pub enum ProjectedWidth {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectedSlot {
     pub title: Option<String>,
-    pub display_uuid: String,
+    pub display_uuid: DisplayUuid,
     pub workspace_index: usize,
     pub width: ProjectedWidth,
 }
@@ -229,7 +230,7 @@ mod tests {
     fn slot(title: &str, display: &str, workspace: usize) -> Slot {
         Slot {
             title: Some(title.to_owned()),
-            display_uuid: display.to_owned(),
+            display_uuid: display.into(),
             workspace_index: workspace,
             width: None,
         }
@@ -273,7 +274,7 @@ mod tests {
         let old: before_dragged_widths::Slot =
             ron::from_str(&written).expect("an older rini reads it");
         assert_eq!(old.title, dragged.title);
-        assert_eq!(old.display_uuid, dragged.display_uuid);
+        assert_eq!(dragged.display_uuid, old.display_uuid.as_str());
         assert_eq!(old.workspace_index, dragged.workspace_index);
         assert_eq!(
             old.width,
@@ -292,8 +293,8 @@ mod tests {
 
     #[test]
     fn the_same_displays_in_any_order_are_one_topology() {
-        let one = topology_key(&[BUILT_IN.to_owned(), EXTERNAL.to_owned()]);
-        let other = topology_key(&[EXTERNAL.to_owned(), BUILT_IN.to_owned()]);
+        let one = topology_key(&[DisplayUuid::new(BUILT_IN), DisplayUuid::new(EXTERNAL)]);
+        let other = topology_key(&[DisplayUuid::new(EXTERNAL), DisplayUuid::new(BUILT_IN)]);
         assert_eq!(one, other);
     }
 
@@ -301,14 +302,14 @@ mod tests {
     /// on the built-in when it is not, and the answer depends on which is connected.
     #[test]
     fn each_topology_remembers_its_own_answer() {
-        let docked = topology_key(&[BUILT_IN.to_owned(), EXTERNAL.to_owned()]);
-        let alone = topology_key(&[BUILT_IN.to_owned()]);
+        let docked = topology_key(&[DisplayUuid::new(BUILT_IN), DisplayUuid::new(EXTERNAL)]);
+        let alone = topology_key(&[DisplayUuid::new(BUILT_IN)]);
         let mut memory = LaunchMemory::default();
 
         memory.remember("com.mitchellh.ghostty", &docked, vec![
             Slot {
                 title: None,
-                display_uuid: EXTERNAL.to_owned(),
+                display_uuid: DisplayUuid::new(EXTERNAL),
                 workspace_index: 2,
                 width: Some(ColumnWidth::Offset(0.0)),
             }
@@ -317,7 +318,7 @@ mod tests {
         memory.remember("com.mitchellh.ghostty", &alone, vec![
             Slot {
                 title: None,
-                display_uuid: BUILT_IN.to_owned(),
+                display_uuid: DisplayUuid::new(BUILT_IN),
                 workspace_index: 0,
                 width: Some(ColumnWidth::FullWidth),
             }
@@ -429,7 +430,7 @@ mod tests {
     fn projected(title: Option<&str>, width: ProjectedWidth) -> ProjectedSlot {
         ProjectedSlot {
             title: title.map(str::to_owned),
-            display_uuid: BUILT_IN.to_owned(),
+            display_uuid: DisplayUuid::new(BUILT_IN),
             workspace_index: 0,
             width,
         }
@@ -438,7 +439,7 @@ mod tests {
     fn remembered(title: Option<&str>, width: Option<ColumnWidth>) -> Slot {
         Slot {
             title: title.map(str::to_owned),
-            display_uuid: BUILT_IN.to_owned(),
+            display_uuid: DisplayUuid::new(BUILT_IN),
             workspace_index: 0,
             width,
         }

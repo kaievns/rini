@@ -110,7 +110,7 @@ mod tests {
                 &mut memory,
                 LayoutEvent::SpaceExposed(space, CGSize::new(1440.0, 900.0)),
             );
-            engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
+            engine.update_space_display(&mut memory, space, Some(DISPLAY.into()));
             let windows = [WindowId::new(3, 1), WindowId::new(3, 2)];
             for window in windows {
                 let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(720.0, 900.0));
@@ -181,7 +181,7 @@ mod tests {
         }
 
         fn remembered(&self, window: WindowId) -> Option<ColumnWidth> {
-            self.memory.affinity.window_width(DISPLAY, window)
+            self.memory.affinity.window_width(&DISPLAY.into(), window)
         }
     }
 

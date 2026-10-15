@@ -2,7 +2,7 @@
 //! tiled rule asks for once the window has one.
 
 use objc2_core_foundation::CGRect;
-use rini_core::ids::{SpaceId, WindowId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
@@ -239,7 +239,7 @@ impl LayoutEngine {
         resize: AppRuleResize,
         new_frame: CGRect,
         screen_frame: CGRect,
-        display_uuid: Option<&str>,
+        display_uuid: Option<&DisplayUuid>,
     ) {
         let Some(layout) = self.workspace_layouts.active(resize.space, resize.workspace_id) else {
             return;

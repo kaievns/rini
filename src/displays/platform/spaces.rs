@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use objc2_foundation::MainThreadMarker;
-use rini_core::ids::SpaceId;
+use rini_core::ids::{DisplayUuid, SpaceId};
 use rini_runloop::channel;
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 use rustc_hash::FxHashMap as HashMap;
@@ -270,11 +270,11 @@ impl SpacesActor {
 
     fn handle_active_display_changed(&mut self) {
         let active_display_uuid = (self.state.live.active_menu_bar_display)();
-        self.handle_active_display_changed_for(active_display_uuid.as_deref());
+        self.handle_active_display_changed_for(active_display_uuid.as_ref());
     }
 
-    fn handle_active_display_changed_for(&mut self, active_display_uuid: Option<&str>) {
-        let known = self.state.forwarded.active_display_uuid.as_deref();
+    fn handle_active_display_changed_for(&mut self, active_display_uuid: Option<&DisplayUuid>) {
+        let known = self.state.forwarded.active_display_uuid.as_ref();
         if active_display_uuid.is_some() && active_display_uuid == known {
             return;
         }
@@ -288,10 +288,11 @@ impl SpacesActor {
                 .forwarded
                 .screens
                 .iter()
-                .find(|screen| screen.display_uuid == active_display_uuid)
+                .find(|screen| screen.display_uuid == *active_display_uuid)
                 .and_then(|screen| screen.space)
         {
-            self.state.forwarded.active_display_uuid = Some(active_display_uuid.to_string());
+            self.state.forwarded.active_display_uuid = Some(active_display_uuid.clone());
+
             self.events.send(OutEvent::ActiveDisplayChanged {
                 menu_bar_space: Some(active_space),
                 command_space: Some(active_space),

@@ -755,7 +755,7 @@ mod tests {
             id: ScreenId::new(id),
             frame,
             bounds: frame,
-            display_uuid: format!("display-{id}"),
+            display_uuid: format!("display-{id}").into(),
             name: None,
             space: None,
             is_builtin: id == 1,

@@ -15,7 +15,7 @@ use objc2_core_graphics::{
     CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGContext, CGDisplayBounds,
     CGEventSource, CGEventSourceStateID, CGEventType, CGImage, CGMainDisplayID,
 };
-use rini_core::ids::pid_t;
+use rini_core::ids::{DisplayUuid, pid_t};
 use tracing::debug;
 
 use crate::bar::domain::extras::{
@@ -66,7 +66,7 @@ pub struct Extras {
 enum Message {
     Extras(Command),
     /// The displays to picture the ground behind, by uuid, with their bounds.
-    Grounds(Vec<(String, CGRect)>),
+    Grounds(Vec<(DisplayUuid, CGRect)>),
 }
 
 /// Where the thread's pictures go.
@@ -106,7 +106,7 @@ impl Watcher {
     pub fn refresh(&self) { let _ = self.commands.send(Message::Extras(Command::Refresh)); }
 
     /// The displays whose grounds to picture, pictured at the next chance.
-    pub fn set_grounds(&self, displays: Vec<(String, CGRect)>) {
+    pub fn set_grounds(&self, displays: Vec<(DisplayUuid, CGRect)>) {
         let _ = self.commands.send(Message::Grounds(displays));
     }
 }
@@ -168,9 +168,9 @@ fn run(server: &dyn WindowServer, inbox: &Receiver<Message>, paused: &AtomicBool
 
 /// The displays whose grounds are pictured, when next, and what each last looked like.
 struct Grounds {
-    displays: Vec<(String, CGRect)>,
+    displays: Vec<(DisplayUuid, CGRect)>,
     timer: Timer,
-    hashes: HashMap<String, u64>,
+    hashes: HashMap<DisplayUuid, u64>,
 }
 
 impl Grounds {

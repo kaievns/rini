@@ -10,6 +10,7 @@
 //! explicitly move it there" means. And a role that nothing fills resolves to nothing, so closing the
 //! lid does not strand a window on a display that is not there.
 
+use rini_core::ids::DisplayUuid;
 use serde::Serialize;
 
 use crate::displays::domain::screen::ScreenInfo;
@@ -35,7 +36,7 @@ pub enum DisplayRole {
 pub fn display_for_role<'a>(
     role: DisplayRole,
     screens: impl IntoIterator<Item = &'a ScreenInfo>,
-) -> Option<&'a str> {
+) -> Option<&'a DisplayUuid> {
     screens
         .into_iter()
         .filter(|screen| !screen.display_uuid.is_empty())
@@ -43,7 +44,7 @@ pub fn display_for_role<'a>(
             DisplayRole::Internal => screen.is_builtin,
             DisplayRole::External => !screen.is_builtin,
         })
-        .map(|screen| screen.display_uuid.as_str())
+        .map(|screen| &screen.display_uuid)
 }
 
 #[cfg(test)]
@@ -58,7 +59,7 @@ mod tests {
             id: ScreenId::new(1),
             frame: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(1000.0, 1000.0)),
             bounds: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(1000.0, 1000.0)),
-            display_uuid: uuid.to_owned(),
+            display_uuid: uuid.into(),
             name: None,
             space: None,
             is_builtin,
@@ -74,7 +75,7 @@ mod tests {
         ];
         assert_eq!(
             display_for_role(DisplayRole::Internal, &screens),
-            Some("builtin")
+            Some(&DisplayUuid::new("builtin"))
         );
     }
 
@@ -84,7 +85,10 @@ mod tests {
             screen("builtin", 0.0, true),
             screen("studio", 1000.0, false),
         ];
-        assert_eq!(display_for_role(DisplayRole::External, &screens), Some("studio"));
+        assert_eq!(
+            display_for_role(DisplayRole::External, &screens),
+            Some(&DisplayUuid::new("studio"))
+        );
     }
 
     /// The reported escape hatch: "unless the lid is closed and external is the only one available".
@@ -109,7 +113,7 @@ mod tests {
         ];
         assert_eq!(
             display_for_role(DisplayRole::External, &screens),
-            Some("left-4k")
+            Some(&DisplayUuid::new("left-4k"))
         );
     }
 
@@ -120,7 +124,7 @@ mod tests {
         let screens = [screen("", 0.0, true), screen("builtin", 1000.0, true)];
         assert_eq!(
             display_for_role(DisplayRole::Internal, &screens),
-            Some("builtin")
+            Some(&DisplayUuid::new("builtin"))
         );
     }
 

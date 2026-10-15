@@ -8,6 +8,7 @@ use objc2_core_graphics::{
     CGBitmapContextCreateImage, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData,
     CGColorSpace, CGContext, CGImage, kCGColorSpaceSRGB,
 };
+use rini_core::ids::DisplayUuid;
 use rini_geometry::space::{FromCg, ScreenRect};
 
 use crate::bar::domain::ground::{self, BLUR};
@@ -19,7 +20,7 @@ use crate::windows::platform::window_server::WindowServer;
 
 /// One display's ground, `scale` pixels per point.
 pub struct Ground {
-    pub display: String,
+    pub display: DisplayUuid,
     pub picture: CFRetained<CGImage>,
     pub scale: f64,
 }

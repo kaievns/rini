@@ -3,7 +3,7 @@
 //! back from a native fullscreen space, and the snapshot held while Mission Control is open.
 
 use objc2_core_foundation::CGSize;
-use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::{info, warn};
 
@@ -203,7 +203,7 @@ impl Reactor {
 
     /// Which displays `screens` brings and takes away against the screens attached now.
     fn display_set_against(&self, screens: &[ScreenInfo], changed: bool) -> DisplaySetDelta {
-        let uuids = |screens: &[ScreenInfo]| -> Vec<String> {
+        let uuids = |screens: &[ScreenInfo]| -> Vec<DisplayUuid> {
             screens.iter().map(|screen| screen.display_uuid.clone()).collect()
         };
         display_set_delta(&uuids(&self.space_state.screens), &uuids(screens), changed)
@@ -237,7 +237,7 @@ impl Reactor {
     }
 
     /// Each window on a display leaving the set given that display as its home.
-    fn record_departing_display_homes(&mut self, departed: &[String]) {
+    fn record_departing_display_homes(&mut self, departed: &[DisplayUuid]) {
         for display_uuid in departed {
             let Some(departing_space) =
                 self.state.display_memory.affinity.space_for_display(display_uuid)
@@ -255,7 +255,7 @@ impl Reactor {
                 continue;
             }
             info!(
-                display_uuid,
+                %display_uuid,
                 ?departing_space,
                 window_count = residents.len(),
                 "Recording display affinity for windows on a departing display"
@@ -275,7 +275,7 @@ impl Reactor {
         self.space_state.screens = screens;
         // The topology the launch memory is keyed by. Set from here because this is the one place the
         // attached set is authoritatively replaced.
-        let connected: Vec<String> = self
+        let connected: Vec<DisplayUuid> = self
             .space_state
             .screens
             .iter()
@@ -327,7 +327,7 @@ impl Reactor {
             self.layout_engine.update_space_display(
                 &mut self.state.display_memory,
                 space,
-                Some(display_uuid.to_string()),
+                Some(display_uuid.clone()),
             );
         }
     }
@@ -337,7 +337,8 @@ impl Reactor {
     fn repatriate_arrivals(
         &mut self,
         setup_change: &SetupChange,
-        arrived: &[String],
+        arrived: &[DisplayUuid],
+
         outcome: &mut EventOutcome,
     ) {
         if !setup_change.restores_windows() && !arrived.is_empty() {

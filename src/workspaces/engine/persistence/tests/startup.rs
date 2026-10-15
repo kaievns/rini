@@ -230,7 +230,7 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
     let current_space = SpaceId::new(611);
     let later_space = SpaceId::new(612);
     let size = CGSize::new(1200.0, 800.0);
-    let display = "display-a".to_string();
+    let display = DisplayUuid::new("display-a");
     let mut snapshot = test_engine();
     let mut memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
@@ -324,12 +324,12 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
     );
 
     assert_eq!(
-        memory.affinity.space_for_display("display-a"),
+        memory.affinity.space_for_display(&DisplayUuid::new("display-a")),
         Some(space_b),
         "display-a must now be recorded on the space id it came back as"
     );
     assert_eq!(
-        memory.affinity.space_for_display("display-b"),
+        memory.affinity.space_for_display(&DisplayUuid::new("display-b")),
         Some(space_a),
         "and display-b on the other, without the two being confused"
     );
@@ -352,8 +352,8 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
     let builtin_space = SpaceId::new(630);
     let external_space = SpaceId::new(631);
     let size = CGSize::new(1200.0, 800.0);
-    let builtin = "display-builtin".to_string();
-    let external = "display-external".to_string();
+    let builtin = DisplayUuid::new("display-builtin");
+    let external = DisplayUuid::new("display-external");
 
     let mut snapshot = test_engine();
     let mut memory = DisplayMemory::default();
@@ -417,7 +417,7 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
     );
     assert_eq!(
         memory.affinity.window_home(on_external),
-        Some(external.as_str()),
+        Some(&external),
         "its display affinity must survive, so plugging the display back in returns it"
     );
     assert!(

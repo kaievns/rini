@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::SameAs;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::debug;
@@ -738,7 +738,7 @@ pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) 
             frame,
             bounds: frame,
             space,
-            display_uuid: format!("test-display-{idx}"),
+            display_uuid: format!("test-display-{idx}").into(),
             name: None,
             scale: 2.0,
         })
@@ -799,7 +799,7 @@ pub fn forwarded_space_state(screens: Vec<ScreenInfo>) -> ForwardedSpaceState {
 
 pub fn fullscreen_startup_space_state(
     screen: CGRect,
-    display_uuid: String,
+    display_uuid: DisplayUuid,
     user_space: SpaceId,
     fullscreen_space: SpaceId,
 ) -> Event {
