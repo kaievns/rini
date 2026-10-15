@@ -246,7 +246,7 @@ Largest methods, and what each one turned out to be:
 
 | method | lines | verdict |
 |---|---|---|
-| `handle_layout_response` | 303 → 248 | four rules extracted, one of them a bug fix |
+| `handle_layout_response` | 303 → 75 | four rules extracted, one of them a bug fix; the phases split off |
 | `dispatch_workflow` | 288 → 57 | a dispatch table, split by event family |
 | `apply_event_outcome` | 271 → 9 | three rules extracted; the drain split at the arrange, with no re-entry |
 | `handle_authoritative_space_snapshot` | 251 → 76 | the display-set comparison extracted; the settling split off |
@@ -255,7 +255,9 @@ Largest methods, and what each one turned out to be:
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
 `layout::domain::boundary` (`workspace_step_at_boundary`, deleted with the trackpad swipes), with
 15 tests between them.
-One of those extractions was a bug fix: see 3.2.1.
+One of those extractions was a bug fix: see 3.2.1. Its phases are methods of their own:
+`bounce_at_edge`, `switch_target`, `focus_without_raise`, `drop_focus_out_of_sight`,
+`raise_list` and `warp_for_focus`.
 
 `handle_authoritative_space_snapshot` gave up its display-set comparison to
 `displays::domain::topology::display_set_delta` with 9 tests. That one was a

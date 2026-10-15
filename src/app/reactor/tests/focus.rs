@@ -1095,3 +1095,35 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
     assert!(warmed.contains(&late), "{warmed:?}");
     assert!(!warmed.contains(&early), "pictured once already: {warmed:?}");
 }
+
+/// Mouse follows focus to the focused window's centre, except during a workspace switch, which
+/// holds the warp until its layout lands.
+#[test]
+fn focus_warps_the_mouse_to_its_centre_and_a_switch_holds_the_warp() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    reactor.handle_events(apps.make_app(1, make_windows(1)));
+    apps.simulate_until_quiet(&mut reactor);
+    let wid = WindowId::new(1, 1);
+    let centre = reactor.state.windows.window(wid).unwrap().frame_monotonic.mid();
+
+    reactor.config.settings.mouse_follows_focus = false;
+    assert_eq!(reactor.warp_for_focus(wid), None);
+
+    reactor.config.settings.mouse_follows_focus = true;
+    assert_eq!(reactor.warp_for_focus(wid), Some(centre));
+    assert_eq!(
+        reactor.workspace_switch_manager.pending_workspace_mouse_warp,
+        None
+    );
+
+    reactor
+        .workspace_switch_manager
+        .start_workspace_switch(WorkspaceSwitchOrigin::Auto);
+    assert_eq!(reactor.warp_for_focus(wid), None);
+    assert_eq!(
+        reactor.workspace_switch_manager.pending_workspace_mouse_warp,
+        Some(wid)
+    );
+}

@@ -2,7 +2,7 @@
 //! places every active space's windows after it.
 
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_core::ids::{SpaceId, WindowId};
+use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::{debug, trace};
 
@@ -10,7 +10,7 @@ use super::{Reactor, RefocusState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::displays::domain::screen::order_visible_spaces_by_position;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::raise_order;
-use crate::windows::domain::request::Quiet;
+use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use crate::workspaces::{self as layout, LayoutEngine, LayoutEvent};
 
 impl Reactor {
@@ -95,103 +95,23 @@ impl Reactor {
             self.moved_along_strip = moved;
         }
 
-        // The command ran into an end of the strip or of the workspace stack. The view bounces so
-        // the stop reads as an edge, not a dropped keypress. A blocked workspace step changed
-        // nothing and names no window, so it ends here: the switch-active focus fallbacks below
-        // would otherwise re-focus whatever sits under the cursor.
-        if let Some(direction) = edge_hit {
-            let space = workspace_switch_space.or_else(|| self.command_context_space());
-            if let Some(space) = space {
-                self.start_edge_bounce(space, direction);
-            }
-            if !changed && raise_windows.is_empty() && focus_window.is_none() {
-                self.workspace_switch_manager.mark_workspace_switch_inactive();
-                return;
-            }
+        let blocked = !changed && raise_windows.is_empty() && focus_window.is_none();
+        if self.bounce_at_edge(edge_hit, workspace_switch_space, blocked) {
+            return;
         }
 
-        // The window the switch is FOR: it is parked until the layout lands, so the window server
-        // may well report it off screen right now. The visibility filters below must not trade it
-        // for whichever window of the workspace happens to be visible (an auto-switch onto Kiro
-        // landed on a Ghostty window that way, and remembered Ghostty for the next time).
-        let mut switch_target: Option<WindowId> = None;
-        if let Some(space) = workspace_switch_space
-            && matches!(
-                self.workspace_switch_manager.workspace_switch_state,
-                WorkspaceSwitchState::Active
-            )
-        {
-            focus_window = self.visible_focus_candidate_in_active_workspace(space, focus_window);
-            switch_target = focus_window;
-        }
-
+        let switch_target = self.switch_target(workspace_switch_space, &mut focus_window);
         let original_focus = focus_window;
-
         let focus_quiet = workspace_switch_space.map_or(Quiet::No, |_| Quiet::Yes);
 
-        let handled_without_raise = if raise_windows.is_empty() && focus_window.is_none() {
-            if matches!(
-                self.workspace_switch_manager.workspace_switch_state,
-                WorkspaceSwitchState::Active
-            ) && !self.is_in_drag()
-            {
-                if let Some(wid) = self.window_id_under_cursor() {
-                    // Avoid duplicate focus events for the already focused window.
-                    if self.main_window() != Some(wid) {
-                        focus_window = Some(wid);
-                    }
-                    false
-                } else {
-                    let skip_center_warp = workspace_switch_space
-                        .map(|space| {
-                            self.layout_engine
-                                .windows_in_active_workspace(&self.state.windows, space)
-                                .is_empty()
-                        })
-                        .unwrap_or(false);
-                    if skip_center_warp {
-                        workspace_switch_space.is_some_and(|space| {
-                            self.focus_desktop_if_active_workspace_empty(space)
-                        })
-                    } else {
-                        let space = workspace_switch_space.or_else(|| self.command_context_space());
-                        self.try_focus_or_warp_without_raise(space, &mut focus_window)
-                    }
-                }
-            } else if let Some(space) = pending_refocus_space.take() {
-                if let Some(wid) = self.last_focused_window_in_space(space) {
-                    focus_window = Some(wid);
-                    false
-                } else if !self.is_in_drag() {
-                    self.try_focus_or_warp_without_raise(Some(space), &mut focus_window)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        if let Some(wid) = focus_window
-            && let Some(state) = self.state.windows.window(wid)
-            && let Some(wsid) = state.info.sys_id
-        {
-            let is_visible =
-                self.state.windows.is_window_visible(wsid) || switch_target == Some(wid);
-            let best_space = self.affinity().best_space_for_window_state(state);
-            if !is_visible {
-                focus_window = None;
-                if let Some(space) = workspace_switch_space
-                    && !self.is_in_drag()
-                {
-                    let _ = self.try_focus_or_warp_without_raise(Some(space), &mut focus_window);
-                }
-            } else if !best_space.is_some_and(|space| self.is_space_active(space)) {
-                focus_window = None;
-            }
-        }
+        let handled_without_raise = raise_windows.is_empty()
+            && focus_window.is_none()
+            && self.focus_without_raise(
+                workspace_switch_space,
+                &mut pending_refocus_space,
+                &mut focus_window,
+            );
+        self.drop_focus_out_of_sight(switch_target, workspace_switch_space, &mut focus_window);
 
         if raise_windows.is_empty() && focus_window.is_none() {
             if handled_without_raise {
@@ -214,6 +134,156 @@ impl Reactor {
             }
         }
 
+        let (raise_windows, app_handles) =
+            self.raise_list(raise_windows, original_focus, focus_window);
+        let focus_window = focus_window.filter(|wid| self.is_window_on_active_space(*wid));
+        if let Some(space) = workspace_switch_space {
+            self.layout_engine
+                .commit_workspace_focus(&mut self.state.windows, space, focus_window);
+        }
+        let batches = raise_order::group_by_app_and_space(&raise_windows, |wid| {
+            self.affinity().best_space_for_window_id(wid)
+        });
+        let focus_window_with_warp = focus_window.map(|wid| (wid, self.warp_for_focus(wid)));
+
+        self.dispatch_raise(raise_manager::Event::RaiseRequest(RaiseRequest {
+            raise_windows: batches,
+            focus_window: focus_window_with_warp,
+            app_handles,
+            focus_quiet,
+        }));
+    }
+
+    /// The view bounced when the command ran into an end of the strip or of the workspace stack, so
+    /// the stop reads as an edge, not a dropped keypress. Whether the response ends there: a blocked
+    /// workspace step changed nothing and names no window, and the switch-active focus fallbacks
+    /// would otherwise re-focus whatever sits under the cursor.
+    fn bounce_at_edge(
+        &mut self,
+        edge_hit: Option<layout::Direction>,
+        workspace_switch_space: Option<SpaceId>,
+        blocked: bool,
+    ) -> bool {
+        let Some(direction) = edge_hit else { return false };
+        let space = workspace_switch_space.or_else(|| self.command_context_space());
+        if let Some(space) = space {
+            self.start_edge_bounce(space, direction);
+        }
+        if blocked {
+            self.workspace_switch_manager.mark_workspace_switch_inactive();
+        }
+        blocked
+    }
+
+    /// The window a workspace switch is FOR, with `focus_window` moved onto the active workspace's
+    /// visible candidate; `None` outside an active switch.
+    ///
+    /// It is parked until the layout lands, so the window server may well report it off screen right
+    /// now. The visibility filters after this must not trade it for whichever window of the
+    /// workspace happens to be visible (an auto-switch onto Kiro landed on a Ghostty window that
+    /// way, and remembered Ghostty for the next time).
+    fn switch_target(
+        &mut self,
+        workspace_switch_space: Option<SpaceId>,
+        focus_window: &mut Option<WindowId>,
+    ) -> Option<WindowId> {
+        let space = workspace_switch_space?;
+        if !matches!(
+            self.workspace_switch_manager.workspace_switch_state,
+            WorkspaceSwitchState::Active
+        ) {
+            return None;
+        }
+        *focus_window = self.visible_focus_candidate_in_active_workspace(space, *focus_window);
+        *focus_window
+    }
+
+    /// Where focus goes when the response names no window and raises none: under an active switch
+    /// the window under the cursor, the empty workspace's desktop or a warp; otherwise a pending
+    /// refocus's last focused window. Whether focus was settled without a raise.
+    fn focus_without_raise(
+        &mut self,
+        workspace_switch_space: Option<SpaceId>,
+        pending_refocus_space: &mut Option<SpaceId>,
+        focus_window: &mut Option<WindowId>,
+    ) -> bool {
+        if matches!(
+            self.workspace_switch_manager.workspace_switch_state,
+            WorkspaceSwitchState::Active
+        ) && !self.is_in_drag()
+        {
+            if let Some(wid) = self.window_id_under_cursor() {
+                // Avoid duplicate focus events for the already focused window.
+                if self.main_window() != Some(wid) {
+                    *focus_window = Some(wid);
+                }
+                false
+            } else {
+                let skip_center_warp = workspace_switch_space
+                    .map(|space| {
+                        self.layout_engine
+                            .windows_in_active_workspace(&self.state.windows, space)
+                            .is_empty()
+                    })
+                    .unwrap_or(false);
+                if skip_center_warp {
+                    workspace_switch_space
+                        .is_some_and(|space| self.focus_desktop_if_active_workspace_empty(space))
+                } else {
+                    let space = workspace_switch_space.or_else(|| self.command_context_space());
+                    self.try_focus_or_warp_without_raise(space, focus_window)
+                }
+            }
+        } else if let Some(space) = pending_refocus_space.take() {
+            if let Some(wid) = self.last_focused_window_in_space(space) {
+                *focus_window = Some(wid);
+                false
+            } else if !self.is_in_drag() {
+                self.try_focus_or_warp_without_raise(Some(space), focus_window)
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    /// `focus_window` dropped when it is out of sight, the switch's own target excepted, or off
+    /// every active space; under a switch, a warp tried in its place.
+    fn drop_focus_out_of_sight(
+        &mut self,
+        switch_target: Option<WindowId>,
+        workspace_switch_space: Option<SpaceId>,
+        focus_window: &mut Option<WindowId>,
+    ) {
+        let Some(wid) = *focus_window else { return };
+        let Some(state) = self.state.windows.window(wid) else {
+            return;
+        };
+        let Some(wsid) = state.info.sys_id else { return };
+        let is_visible = self.state.windows.is_window_visible(wsid) || switch_target == Some(wid);
+        let best_space = self.affinity().best_space_for_window_state(state);
+        if !is_visible {
+            *focus_window = None;
+            if let Some(space) = workspace_switch_space
+                && !self.is_in_drag()
+            {
+                let _ = self.try_focus_or_warp_without_raise(Some(space), focus_window);
+            }
+        } else if !best_space.is_some_and(|space| self.is_space_active(space)) {
+            *focus_window = None;
+        }
+    }
+
+    /// The windows to raise, in raise order, and the handles of every application they and the
+    /// focus belong to: those on an active space and not parked, led by the strip group to lift
+    /// when focus lands behind a floating window.
+    fn raise_list(
+        &mut self,
+        raise_windows: Vec<WindowId>,
+        original_focus: Option<WindowId>,
+        focus_window: Option<WindowId>,
+    ) -> (Vec<WindowId>, HashMap<pid_t, AppThreadHandle>) {
         let mut app_handles = HashMap::default();
         for &wid in raise_windows.iter() {
             self.insert_app_handle_for_window(&mut app_handles, wid);
@@ -251,38 +321,20 @@ impl Reactor {
                 raise_windows = raise_order::lead_with_regroup(raise_windows, &regroup);
             }
         }
+        (raise_windows, app_handles)
+    }
 
-        let focus_window = focus_window.filter(|wid| self.is_window_on_active_space(*wid));
-        if let Some(space) = workspace_switch_space {
-            self.layout_engine
-                .commit_workspace_focus(&mut self.state.windows, space, focus_window);
+    /// Where the mouse goes with focus on `wid`: its centre when the mouse follows focus, except
+    /// during a workspace switch, which holds the warp until its layout lands.
+    pub(super) fn warp_for_focus(&mut self, wid: WindowId) -> Option<CGPoint> {
+        if !self.config.settings.mouse_follows_focus {
+            return None;
         }
-        let batches = raise_order::group_by_app_and_space(&raise_windows, |wid| {
-            self.affinity().best_space_for_window_id(wid)
-        });
-        let focus_window_with_warp = focus_window.map(|wid| {
-            let warp = if self.config.settings.mouse_follows_focus {
-                if self.workspace_switch_manager.workspace_switch_state
-                    == WorkspaceSwitchState::Active
-                {
-                    // During workspace switches, defer mouse warping until after layout completes.
-                    self.workspace_switch_manager.pending_workspace_mouse_warp = Some(wid);
-                    None
-                } else {
-                    self.affinity().window_center_on_known_screen(wid)
-                }
-            } else {
-                None
-            };
-            (wid, warp)
-        });
-
-        self.dispatch_raise(raise_manager::Event::RaiseRequest(RaiseRequest {
-            raise_windows: batches,
-            focus_window: focus_window_with_warp,
-            app_handles,
-            focus_quiet,
-        }));
+        if self.workspace_switch_manager.workspace_switch_state == WorkspaceSwitchState::Active {
+            self.workspace_switch_manager.pending_workspace_mouse_warp = Some(wid);
+            return None;
+        }
+        self.affinity().window_center_on_known_screen(wid)
     }
 
     pub(crate) fn visible_spaces_for_layout(
