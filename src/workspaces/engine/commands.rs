@@ -15,9 +15,10 @@ pub(super) mod workspace;
 
 /// The space a command acts on, its active workspace, and that workspace's active layout.
 ///
-/// Every family but the workspace one needs all three, and resolving them can fail: a space rini has
-/// not seen has no active workspace, and a workspace that has never been laid out has no active
-/// layout. Either means the command does nothing.
+/// The focus, arrange, resize and strip families need all three, and so do `ToggleFocusFloating` and
+/// a tiled window's `Maximize`. Resolving them can fail: a space rini has not seen has no active
+/// workspace, and a workspace that has never been laid out has no active layout. Either means the
+/// command does nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CommandTarget {
     pub(super) space: SpaceId,
