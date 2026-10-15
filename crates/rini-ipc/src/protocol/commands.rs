@@ -11,11 +11,12 @@ pub enum LayoutCommand {
     PrevWindow,
     MoveFocus(#[serde(rename = "direction")] Direction),
     MoveNode(Direction),
-    ToggleStack,
+    /// Give every window in the selected window's column a column of its own, in row order.
+    ExplodeColumn,
     /// Fold the selected window into the column on this side, or back out of the column it is in.
     ///
-    /// Symmetric, unlike `ToggleStack`, whose fold-out half explodes the whole column so a second
-    /// press never gets you back. One binding per side gives the same control both ways.
+    /// Symmetric: a second press puts the window back. One binding per side gives the same control
+    /// both ways.
     ToggleFold(Direction),
     ToggleFocusFloating,
     ToggleWindowFloating,
@@ -176,6 +177,15 @@ mod tests {
     fn no_wire_command_switches_the_native_space() {
         let sent = serde_json::json!({ "switch_space": "left" });
         assert!(serde_json::from_value::<ReactorCommand>(sent).is_err());
+    }
+
+    /// Kai kept only the explode half of `toggle_stack` on 2026-10-15 (`specs/strip.md`).
+    #[test]
+    fn the_explode_is_explode_column_and_toggle_stack_reads_as_nothing() {
+        let explode = serde_json::from_value::<LayoutCommand>(serde_json::json!("explode_column"));
+        assert_eq!(explode.unwrap(), LayoutCommand::ExplodeColumn);
+        let stack = serde_json::from_value::<LayoutCommand>(serde_json::json!("toggle_stack"));
+        assert!(stack.is_err());
     }
 
     #[test]

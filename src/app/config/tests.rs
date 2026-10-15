@@ -1117,6 +1117,18 @@ fn no_action_switches_the_native_space() {
     }
 }
 
+/// Kai kept only the explode half of `toggle-stack` on 2026-10-15 ("Folding" in `specs/strip.md`),
+/// so the old name is told where both halves went.
+#[test]
+fn toggle_stack_is_refused_for_explode_column_and_the_left_fold() {
+    let report = refused("binds {\n    Mod+Shift+Comma { toggle-stack; }\n}\n");
+    assert!(report.contains("unknown action `toggle-stack`"), "{report}");
+    assert!(report.contains("no longer rini's"), "{report}");
+    let (_, help) = report.split_once("help:").expect("a help line");
+    assert!(help.contains("`explode-column`"), "{report}");
+    assert!(help.contains("`toggle-fold-left`"), "{report}");
+}
+
 /// Every action decodes from its name, with the arguments it needs.
 #[test]
 fn every_action_name_decodes() {

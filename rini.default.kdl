@@ -344,8 +344,8 @@ binds {
     //   move-window-up-or-to-monitor-up / move-window-down-or-to-monitor-down
     //   toggle-fold-left / toggle-fold-right          fold the window into the column on that side, or back
     //                                                 out to the row it came from; pressing one key twice undoes it
-    //   toggle-stack                                  in a joined column, give every OTHER window its own column;
-    //                                                 otherwise move the window into the column on its left
+    //   explode-column                                give every window in the column its own column, in
+    //                                                 row order; a lone window stays as it is
     //   cycle-visible-windows / cycle-visible-windows-back   step through the windows on screen, wrapping
     //   toggle-window-floating
     //   switch-focus-between-floating-and-tiling
@@ -401,7 +401,7 @@ binds {
 
     Mod+Comma { toggle-fold-left; }
     Mod+Period { toggle-fold-right; }
-    Mod+Shift+Comma { toggle-stack; }
+    Mod+Shift+Comma { explode-column; }
 
     Mod+Shift+Space { toggle-window-floating; }
     Mod+F { maximize-column; }

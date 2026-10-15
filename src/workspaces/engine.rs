@@ -212,28 +212,6 @@ impl LayoutEngine {
             }
         }
     }
-
-    fn toggle_stack_for_workspace(
-        &mut self,
-        workspace_id: VirtualWorkspaceId,
-        layout: LayoutId,
-    ) -> EventResponse {
-        let unstacked_windows =
-            self.workspace_tree_mut(workspace_id).unstack_parent_of_selection(layout);
-        if !unstacked_windows.is_empty() {
-            return Self::response_for_raised_windows(unstacked_windows);
-        }
-
-        let stacked_windows = self
-            .workspace_tree_mut(workspace_id)
-            .apply_stacking_to_parent_of_selection(layout);
-        if !stacked_windows.is_empty() {
-            return Self::response_for_raised_windows(stacked_windows);
-        }
-
-        let visible_windows = self.workspace_tree(workspace_id).visible_windows_in_layout(layout);
-        Self::response_for_raised_windows(visible_windows)
-    }
 }
 
 impl LayoutEngine {
@@ -2047,7 +2025,7 @@ impl LayoutEngine {
             LayoutCommand::SwapWindows(..)
             | LayoutCommand::MoveNode(_)
             | LayoutCommand::ToggleFold(_)
-            | LayoutCommand::ToggleStack => self.handle_arrange_command(
+            | LayoutCommand::ExplodeColumn => self.handle_arrange_command(
                 window_store,
                 visible_spaces,
                 visible_space_centers,

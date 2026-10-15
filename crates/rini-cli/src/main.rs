@@ -232,8 +232,8 @@ enum WorkspaceCommands {
 enum LayoutCommands {
     /// Move the selected node in a direction
     MoveNode { direction: String },
-    /// Toggle stacked state for the selected container
-    ToggleStack,
+    /// Give every window in the selected window's column a column of its own
+    ExplodeColumn,
     /// Toggle floating on the focused selection (tree focus)
     ToggleFocusFloat,
     /// Swap two windows by window id (`WindowId { pid: ..., idx: ... }`)
@@ -517,7 +517,7 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<RiniCommand, String> {
     use rini_ipc::protocol::LayoutCommand as LC;
     Ok(RiniCommand::Layout(match cmd {
         LayoutCommands::MoveNode { direction } => LC::MoveNode(parse_direction(&direction)?),
-        LayoutCommands::ToggleStack => LC::ToggleStack,
+        LayoutCommands::ExplodeColumn => LC::ExplodeColumn,
         LayoutCommands::ToggleFocusFloat => LC::ToggleFocusFloating,
         LayoutCommands::SwapWindows { a, b } => {
             LC::SwapWindows(parse_window_id(&a)?.into(), parse_window_id(&b)?.into())
@@ -742,6 +742,26 @@ mod tests {
         let error = Cli::try_parse_from(["rini-cli", "execute", "space", "switch", "left"])
             .err()
             .expect("space switch parsed");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+    }
+
+    /// Kai kept only the explode half of `toggle-stack` on 2026-10-15 (`specs/strip.md`).
+    #[test]
+    fn layout_explode_column_is_the_explode_and_toggle_stack_is_gone() {
+        let cli = Cli::try_parse_from(["rini-cli", "execute", "layout", "explode-column"])
+            .unwrap_or_else(|e| panic!("explode-column: {e}"));
+        let Commands::Execute { command } = cli.command else {
+            panic!("explode-column is not an execute subcommand");
+        };
+        assert_eq!(
+            build_execute_request(command).unwrap(),
+            RiniRequest::ExecuteCommand {
+                command: RiniCommand::Layout(rini_ipc::protocol::LayoutCommand::ExplodeColumn),
+            }
+        );
+        let error = Cli::try_parse_from(["rini-cli", "execute", "layout", "toggle-stack"])
+            .err()
+            .expect("toggle-stack parsed");
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 

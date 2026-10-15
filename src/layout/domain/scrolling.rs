@@ -271,8 +271,7 @@ impl LayoutState {
 
     /// Take `wid` out of its column into a column of its own, on `side` of the one it left.
     ///
-    /// The one way a window leaves a stack. Unfolding, expelling and unstacking were four copies of
-    /// this, each with its own idea of where the new column goes and whether the weight travels.
+    /// The one way a window leaves a stack: an unfold, an explode and full width all take it.
     ///
     /// Returns the neighbour to fold it back beside, or `None` when it was alone and there was no
     /// stack to leave. Nothing is moved in that case.
@@ -2126,69 +2125,36 @@ impl ScrollingLayoutSystem {
         vec![selected]
     }
 
-    pub fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
-        let Some(state) = self.layout_state_mut(layout) else {
-            return Vec::new();
-        };
-        let (col_idx, _) = match state.selected_location() {
-            Some(loc) => loc,
-            None => return Vec::new(),
-        };
-        let Some(selected) = state.selected else {
-            return Vec::new();
-        };
-
-        // Move the SELECTED window into the PREVIOUS column.
-        //
-        // Was the other way round: it took the NEXT column's windows
-        // (col_idx + 1) and pulled them into the current one, so pressing the
-        // stack key stacked a window you had not chosen underneath the one you
-        // were looking at, and the selection stayed put. Confusing, and the
-        // opposite of niri's consume-window-into-column, which moves the current
-        // window into the column to its left.
-        //
-        // Only fall back to the next column when the selection is already in the
-        // first column, so the key still does something useful at the left edge.
-        let target_col = if col_idx > 0 {
-            col_idx - 1
-        } else if col_idx + 1 < state.columns.len() {
-            col_idx + 1
-        } else {
-            return Vec::new();
-        };
-
-        // Nothing to do if the selected window is the only one in its column and
-        // that column IS the target (cannot stack a window onto itself).
-        if state.columns[col_idx].windows.len() == 1 && target_col == col_idx {
-            return Vec::new();
-        }
-
-        state.move_window_to_column_end(selected, target_col);
-        vec![selected]
-    }
-
-    pub fn unstack_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+    /// Give every window in the selected window's column a column of its own, in their row order.
+    ///
+    /// Each leaves by `split_out`, as an unfold does: the windows above to the left of the column,
+    /// those below to its right, so the column stays the selected window's, with its width, and the
+    /// others start at the default width. The selection stays on the selected window and is revealed
+    /// as a fold reveals it. A lone window changes nothing. Returns the windows that left.
+    pub fn explode_column_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+        let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
         let Some((col_idx, row_idx)) = state.selected_location() else {
             return Vec::new();
         };
-        if state.columns[col_idx].windows.len() <= 1 {
+        let mut others = state.columns[col_idx].windows.clone();
+        if others.len() <= 1 {
             return Vec::new();
         }
-        let selected = state.columns[col_idx].windows[row_idx];
-        // Every window EXCEPT the selected one leaves, each to its own column, keeping their order.
-        // Splitting them right to left means each lands immediately after the column being emptied,
-        // so the row order becomes the column order.
-        let others: Vec<WindowId> = state.columns[col_idx]
-            .windows
-            .iter()
-            .copied()
-            .filter(|wid| *wid != selected)
-            .collect();
-        for wid in others.iter().rev() {
-            state.split_out(*wid, Direction::Right);
+        let selected = others.remove(row_idx);
+        for &wid in &others[..row_idx] {
+            state.split_out(wid, Direction::Left);
+        }
+        for &wid in others[row_idx..].iter().rev() {
+            state.split_out(wid, Direction::Right);
+        }
+        state.selected = Some(selected);
+        if reveals_only {
+            state.reveal_selected_without_direction();
+        } else {
+            state.align_scroll_to_selected();
         }
         others
     }
@@ -3582,53 +3548,67 @@ mod tests {
         );
     }
 
-    // ── stacking direction ──────────────────────────────────────────────────
+    // ── exploding a column ──────────────────────────────────────────────────
 
-    /// Mod+Comma moves the SELECTED window into the PREVIOUS column.
+    /// Whichever row is selected, the rows become the columns in their order, the selection stays
+    /// on the window it was on, and what comes back is every window that left.
     #[test]
-    fn stacking_moves_selected_window_into_previous_column() {
-        let settings = niri_settings(0.33333);
-        let mut system = ScrollingLayoutSystem::new(&settings);
-        let layout = system.create_layout();
-        let (w1, w2, w3) = (wid(1, 1), wid(1, 2), wid(1, 3));
-        for w in [w1, w2, w3] {
-            system.add_window_after_selection(layout, w);
+    fn exploding_a_column_of_three_gives_three_columns_in_row_order() {
+        for row in 0..3 {
+            let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
+            assert!(system.select_window(layout, w[row]));
+
+            let left = system.explode_column_of_selection(layout);
+
+            assert_eq!(
+                shape(&system, layout),
+                vec![vec![w[0]], vec![w[1]], vec![w[2]]],
+                "row {row}"
+            );
+            let others: Vec<WindowId> = w.iter().copied().filter(|&id| id != w[row]).collect();
+            assert_eq!(left, others, "row {row}");
+            assert_eq!(system.selected_window(layout), Some(w[row]), "row {row}");
         }
-
-        // Select the middle column and stack it leftwards.
-        assert!(system.select_window(layout, w2));
-        let moved = system.apply_stacking_to_parent_of_selection(layout);
-
-        assert_eq!(moved, vec![w2], "expected the SELECTED window to move");
-
-        let state = system.layouts.get(layout).expect("layout state");
-        assert!(
-            state.columns[0].windows.contains(&w1) && state.columns[0].windows.contains(&w2),
-            "w2 should now share the first column with w1, got {:?}",
-            state.columns.iter().map(|c| c.windows.clone()).collect::<Vec<_>>()
-        );
-        assert!(
-            state.columns.iter().any(|c| c.windows == vec![w3]),
-            "w3 should be untouched in its own column"
-        );
     }
 
-    /// From the first column there is no previous column, so fall forward instead
-    /// of doing nothing.
+    /// The selected window keeps the column and the width it was given; the others start at the
+    /// default width, as a window folded out does, and the selected one is on screen.
     #[test]
-    fn stacking_from_first_column_falls_back_to_next() {
-        let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
+    fn exploding_keeps_the_column_s_width_for_the_selected_window_alone() {
+        let (fresh, fresh_layout) = a_strip(&[&[1], &[2]]);
+        let default = laid_out_xw(&fresh, fresh_layout, wid(1, 1)).1;
+        let (mut system, layout) = a_strip(&[&[1, 2, 3]]);
+        assert!(system.select_window(layout, wid(1, 2)));
+        system.cycle_preset_column_width(layout);
+        let wide = laid_out_xw(&system, layout, wid(1, 2)).1;
+        assert!((wide - default).abs() > 1.0, "fixture: {wide} against {default}");
 
-        assert!(system.select_window(layout, w1));
-        let moved = system.apply_stacking_to_parent_of_selection(layout);
+        system.explode_column_of_selection(layout);
 
-        assert_eq!(moved, vec![w1]);
-        let state = system.layouts.get(layout).expect("layout state");
-        assert_eq!(state.columns.len(), 1, "expected a single stacked column");
+        let (x, width) = laid_out_xw(&system, layout, wid(1, 2));
+        assert_eq!(width, wide);
         assert!(
-            state.columns[0].windows.contains(&w1) && state.columns[0].windows.contains(&w2),
-            "both windows should share one column"
+            x >= 0.0 && x + width <= KAI_SCREEN.size.width,
+            "the selected window is on screen, at {x} and {width} wide"
         );
+        for other in [1, 3] {
+            assert_eq!(laid_out_xw(&system, layout, wid(1, other)).1, default, "{other}");
+        }
+    }
+
+    /// A window alone in its column has nothing to explode: the strip and its frames stay as they
+    /// were.
+    #[test]
+    fn exploding_a_lone_window_changes_nothing() {
+        let (mut system, layout) = a_strip(&[&[1], &[2]]);
+        assert!(system.select_window(layout, wid(1, 1)));
+        let before = kai_s_frames(&system, layout);
+
+        assert!(system.explode_column_of_selection(layout).is_empty());
+
+        assert_eq!(shape(&system, layout), ids(&[&[1], &[2]]));
+        assert_eq!(system.selected_window(layout), Some(wid(1, 1)));
+        assert_same_frames(&kai_s_frames(&system, layout), &before);
     }
 
     /// Only a changed gap re-bases the offset, and only once a layout has recorded where the selected
@@ -3735,15 +3715,12 @@ mod tests {
         );
     }
 
-    /// Stacking a window into another column must divide the height evenly, not let
-    /// the newcomer take almost everything.
-    ///
-    /// move_window_to_column_end carried the window's weight over from the column it
-    /// left, where as the sole window it held that column's entire share. Pushed into a
-    /// column of 1.0-weighted windows it dominated, collapsing the existing window to
-    /// its title bar.
+    /// Folding a lone window into another column must divide the height evenly, not let the
+    /// newcomer take almost everything: as the sole window it held its own column's entire share,
+    /// and carried into a column of 1.0-weighted windows that share collapses the window already
+    /// there to its title bar.
     #[test]
-    fn stacking_into_a_column_equalises_heights() {
+    fn folding_into_a_column_equalises_heights() {
         let settings = niri_settings(0.5);
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
@@ -3754,9 +3731,8 @@ mod tests {
         let screen = screen(1728.0, 1117.0);
         let gaps = Gaps::default();
 
-        // Stack w2 into w1's column.
         assert!(system.select_window(layout, w2));
-        system.apply_stacking_to_parent_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         let frames = render(&system, layout, screen, &gaps);
         let h1 = frame_for(&frames, w1).size.height;
@@ -3764,7 +3740,7 @@ mod tests {
 
         assert!(
             (h1 - h2).abs() <= 2.0,
-            "stacked windows should share the height evenly, got {h1} and {h2}"
+            "folded windows should share the height evenly, got {h1} and {h2}"
         );
         assert!(
             h1 > 100.0,
@@ -4185,9 +4161,8 @@ mod tests {
             "the neighbour must start after it: {wide:?} then {next:?}"
         );
     }
-    /// One key, both directions, and it comes back. `toggle_stack`'s fold-out half explodes the
-    /// whole column, so pressing it twice on a column of three does not return you to a column of
-    /// three; this does.
+    /// One key, both directions, and it comes back: a column of three folded out and back in is a
+    /// column of three again.
     #[test]
     fn folding_a_window_in_and_out_returns_it_to_the_same_row() {
         let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
@@ -4356,9 +4331,8 @@ mod tests {
         }
     }
 
-    /// Folding acts on the SELECTED window, never on whichever happens to be first. The reported
-    /// confusion was the old `toggle_stack` exploding a column and moving focus, but a fold that
-    /// fell back to the top of the strip would look identical, so it is pinned here.
+    /// Folding acts on the SELECTED window, never on whichever happens to be first: a fold that fell
+    /// back to the top of the strip folds a window the user is not looking at.
     #[test]
     fn folding_out_takes_the_selected_window_not_the_top_of_the_stack() {
         let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
@@ -6494,19 +6468,6 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
         assert_eq!(shape(&system, layout), ids(&[&[1, 2]]));
         assert_full_width_alone(&system, layout);
-    }
-
-    /// `toggle-stack` with a full-width window on either end of it.
-    #[test]
-    fn stacking_with_a_full_width_window_ends_its_full_width() {
-        for maximized in [1, 2] {
-            let (mut system, layout) = a_strip(&[&[1], &[2]]);
-            assert!(system.toggle_full_width(layout, wid(1, maximized)));
-            assert!(system.select_window(layout, wid(1, 2)));
-            system.apply_stacking_to_parent_of_selection(layout);
-            assert_eq!(shape(&system, layout), ids(&[&[1, 2]]), "{maximized}");
-            assert_full_width_alone(&system, layout);
-        }
     }
 
     /// [A][B1,B2] with A full width, swapped with B1 either way round.

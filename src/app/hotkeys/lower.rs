@@ -56,7 +56,7 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::MoveWindowUpOrToMonitorUp => layout(LayoutCommand::MoveNode(Direction::Up)),
         Action::ToggleFoldLeft => layout(LayoutCommand::ToggleFold(Direction::Left)),
         Action::ToggleFoldRight => layout(LayoutCommand::ToggleFold(Direction::Right)),
-        Action::ToggleStack => layout(LayoutCommand::ToggleStack),
+        Action::ExplodeColumn => layout(LayoutCommand::ExplodeColumn),
         Action::CycleVisibleWindows => layout(LayoutCommand::NextWindow),
         Action::CycleVisibleWindowsBack => layout(LayoutCommand::PrevWindow),
         Action::ToggleWindowFloating => layout(LayoutCommand::ToggleWindowFloating),

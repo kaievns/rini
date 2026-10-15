@@ -48,7 +48,8 @@ pub enum Action {
     MoveWindowUpOrToMonitorUp,
     ToggleFoldLeft,
     ToggleFoldRight,
-    ToggleStack,
+    /// Every window in the column gets a column of its own.
+    ExplodeColumn,
     /// The windows on screen, wrapping.
     CycleVisibleWindows,
     CycleVisibleWindowsBack,

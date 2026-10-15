@@ -2,7 +2,8 @@
 //!
 //! Two tables. `SCHEMA` is every node name each section takes, and a test decodes each entry, so it
 //! cannot list a name the decoder refuses. `NIRI` is the names niri has and rini does not, each with
-//! the reason, so a pasted niri snippet is told why rather than offered a lookalike.
+//! the reason, so a pasted niri snippet is told why rather than offered a lookalike. Beside them,
+//! `FORMER_ACTIONS` tells an older config what a rini action it names became.
 
 use knus::ast::{Document, SpannedNode};
 use knus::span::Span;
@@ -311,7 +312,10 @@ const MOVE_VERTICAL: &str = "rini's nearest is `move-window-down-or-to-monitor-d
                              `move-window-up-or-to-monitor-up`, which cross displays at the column's end";
 const FOLD: &str = "rini's nearest is `toggle-fold-left` or `toggle-fold-right`, whose fold-out lands \
                     on the side asked for";
-const STACK: &str = "rini's nearest is `toggle-stack`";
+const CONSUME: &str = "rini's nearest is `toggle-fold-left`, which moves the window into the column \
+                       on its left";
+const EXPEL: &str = "rini's nearest is `toggle-fold-left` or `toggle-fold-right` for the one window, \
+                     or `explode-column` for every window in the column";
 const FULLSCREEN: &str =
     "rini leaves native fullscreen to macOS; `maximize-column` fills the tiling area";
 const PREVIOUS_DISPLAY: &str =
@@ -381,8 +385,8 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("move-window-up-or-to-workspace-up", MOVE_VERTICAL),
     ("consume-or-expel-window-left", FOLD),
     ("consume-or-expel-window-right", FOLD),
-    ("consume-window-into-column", STACK),
-    ("expel-window-from-column", STACK),
+    ("consume-window-into-column", CONSUME),
+    ("expel-window-from-column", EXPEL),
     ("swap-window-left", MOVE_WINDOW),
     ("swap-window-right", MOVE_WINDOW),
     ("toggle-column-tabbed-display", "rini has no tabbed columns"),
@@ -478,6 +482,13 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("open-overview", "rini has no overview"),
     ("close-overview", "rini has no overview"),
 ];
+
+/// rini's own action names that are gone, with what does their job now.
+pub const FORMER_ACTIONS: &[(&str, &str)] = &[(
+    "toggle-stack",
+    "its two halves split: `explode-column` gives every window in a joined column its own column, \
+     and `toggle-fold-left` moves a lone window into the column on its left",
+)];
 
 /// Why a niri trigger that is not a key cannot be bound, judged by the key's last segment.
 pub fn niri_trigger(spec: &str) -> Option<&'static str> {
@@ -588,6 +599,9 @@ pub fn unknown_action(name: &str, span: &Span) -> Problem {
     if let Some((_, why)) = NIRI_ACTIONS.iter().find(|(niri, _)| *niri == name) {
         return Problem::at(span, message, "niri's, not rini's").help(*why);
     }
+    if let Some((_, why)) = FORMER_ACTIONS.iter().find(|(former, _)| *former == name) {
+        return Problem::at(span, message, "no longer rini's").help(*why);
+    }
     match suggest(name, Action::VARIANTS.iter().copied()) {
         Some(near) => Problem::at(span, message, format!("did you mean `{near}`?")),
         None => Problem::at(span, message, "not an action")
@@ -601,7 +615,7 @@ mod tests {
 
     #[test]
     fn levenshtein_counts_edits() {
-        assert_eq!(levenshtein("toggle-stak", "toggle-stack"), 1);
+        assert_eq!(levenshtein("toggle-fold-lef", "toggle-fold-left"), 1);
         assert_eq!(levenshtein("", "abc"), 3);
         assert_eq!(levenshtein("abc", "abc"), 0);
         assert_eq!(levenshtein("kitten", "sitting"), 3);
@@ -614,14 +628,15 @@ mod tests {
         assert_eq!(suggest("quit-everything-now", names), None);
     }
 
-    /// The niri table is about names rini refuses, so none of them may be a rini name.
+    /// The niri and former-action tables are about names rini refuses, so none of them may be a rini
+    /// name.
     #[test]
-    fn no_niri_name_is_also_a_rini_name() {
+    fn no_refused_name_is_also_a_rini_name() {
         for (path, name, _) in NIRI {
             let children = children_of(path).unwrap_or_else(|| panic!("`{path}` is not a section"));
             assert!(!children.contains(name), "{path} › {name} is rini's");
         }
-        for (name, _) in NIRI_ACTIONS {
+        for (name, _) in NIRI_ACTIONS.iter().chain(FORMER_ACTIONS) {
             assert!(!Action::VARIANTS.contains(name), "{name} is a rini action");
         }
     }

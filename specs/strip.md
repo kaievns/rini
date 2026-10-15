@@ -131,9 +131,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > when maximised came back off screen. Both now run on the one place the width keys keep.
 - **A full-width window MUST be alone in its column.** A fold key on it MUST end full width where it
   is and fold it as it folds any lone window; with no column on that side it MUST change nothing. A
-  window that comes to share a full-width column, by a fold, `toggle-stack` or a drag swap, MUST end
-  that column's full width where it is. Either way the window is drawn the column's width, never the
-  viewport's over the windows below or above it.
+  window that comes to share a full-width column, by a fold or a drag swap, MUST end that column's
+  full width where it is. Either way the window is drawn the column's width, never the viewport's
+  over the windows below or above it.
 - A full-width window MUST come back full-width after a restart.
 - **`Mod+R` only ever changes the column's width, and MUST NOT enter full width.** Its 100% step MUST
   make the whole column, every window in its stack, the whole viewport wide, gap included and with no
@@ -357,6 +357,16 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A folded window MUST NOT be squashed to its title bar. A column's stored heights are either
   deliberate pixel heights from a vertical resize or the equal ratios a freshly folded column starts
   at, and the two MUST NOT be conflated.
+- **`explode-column` (`Mod+Shift+Comma`) MUST give every window in the focused window's column a
+  column of its own in one press**, the rows becoming columns in their order. The focused window
+  MUST keep focus and its column's width; the others start at the default width, as a window folded
+  out does. On a window alone in its column it MUST change nothing. An action MUST NOT both explode
+  a column and join a lone window to its neighbour, as `toggle-stack` did: `toggle-fold-left` joins,
+  and a bind naming `toggle-stack` MUST be refused with where both halves went.
+
+> **Asked 2026-10-15.** `toggle-stack` exploded a joined column and otherwise moved the window into
+> the column on its left, which is `toggle-fold-left`'s fold-in. Kai: "i want one press explode,
+> how that's bundled with folding/unfolding code is up to you".
 
 > **Found 2026-10-09, not reported.** Folding and full width shared one record of where a window
 > came from, and neither checked that a full-width window was alone. A window folded out of

@@ -149,8 +149,8 @@ is borrowed.
   The move rides the ordinary layout pass, so it animates like a join or unjoin.
 - **A maximized window is alone in its column.** A window that comes to share a
   full-width column ends that column's full width where it is, as a width given
-  does (`keep_full_width_alone`, after a fold-in, a `toggle-stack` join, a full
-  width's own toggle back and a swap). Folding a maximized window in is the same
+  does (`keep_full_width_alone`, after a fold-in, a full width's own toggle back
+  and a swap). Folding a maximized window in is the same
   rule from the other end. Nothing stopped either before: on [A1,A2][B1] with A2
   maximized, the left fold key put A2 back into A1's column still maximized, A2
   at (3,3,1722,1074) over A1 at (3,3,1722,536), and folding B1 into a maximized
@@ -262,17 +262,20 @@ is borrowed.
 
 ## Joining
 
-`toggle-stack` moves the *selected* window into the *previous* column (niri's
-consume-into-column), falling back to the next column only in the first
-column. It used to pull the next column's windows into the current one, which
-stacked a window the user had not chosen and left the selection untouched.
+**`toggle-fold-left` and `toggle-fold-right` join and unjoin one window, and are what a
+fold key should be bound to.** A fold moves only the selected window in both directions,
+and each action takes a side, so one binding per side gives the same control each way
+(`Mod+Comma` left, `Mod+Period` right in `rini.default.kdl`).
 
-**`toggle-fold-left` and `toggle-fold-right` are the symmetric ones, and are what a
-fold key should be bound to.** `toggle-stack` is not a round trip: folding in moves one
-window, folding out explodes the whole column, so a second press on a column of three
-does not give you a column of three. A fold moves only the selected window in both
-directions, and each action takes a side, so one binding per side gives the same control
-each way (`Mod+Comma` left, `Mod+Period` right in `rini.default.kdl`).
+**`explode-column` takes a whole column apart in one press** (`Mod+Shift+Comma`). Every
+window but the selected one leaves by `split_out`, the rows above to the column's left and
+the rows below to its right, so the rows become the columns in their order and the column
+itself, with its width, stays the selected window's. The others start at the default
+width, as a window folded out does, and the selection is revealed as a fold reveals it.
+It records no fold origin, so it is not a fold the keys undo: a fold key afterwards joins
+a window to its neighbour at the bottom. A lone window changes nothing. It was one half of
+`toggle-stack`, whose other half, moving a lone window into the column on its left, was
+the left fold-in again; Kai kept the explode alone ("Folding" in `specs/strip.md`).
 
 Pressing one key twice returns the strip to its shape, which takes two different
 mechanisms:
@@ -317,7 +320,8 @@ There is no falling back to the other side at the ends of the strip. With both
 keys bound, that would make them agree in the first and last columns, which is
 the surprise this replaced.
 
-**One window leaves a stack one way.** `split_out` is that way. Unfolding,
+**One window leaves a stack one way.** `split_out` is that way, for an unfold, an
+explode and full width. Unfolding,
 expelling, unstacking and unjoining were four copies of the same removal, each
 with its own idea of where the new column goes and whether the height weight
 travelled with it — 164 lines that are now 35 plus its callers. The column left
@@ -331,8 +335,8 @@ scrolling layout each was a partial view of the fold: join was its fold-in
 half, unjoin its fold-out half, and consume-or-expel almost the whole thing but
 with the fold-out landing on the side asked for instead of the side the window
 came from, so it never round-tripped. What is left is the fold per side,
-`toggle-fold-left` and `toggle-fold-right`, and `toggle-stack`, which keeps its own
-meaning: it explodes a whole column rather than moving one window. That history is why
+`toggle-fold-left` and `toggle-fold-right`, and `explode-column`, which takes a whole
+column apart rather than moving one window. That history is why
 rini does not take niri's `consume-or-expel-window-left`: it is the one that never
 round-tripped.
 

@@ -109,9 +109,10 @@ take niri's default: off. They were on, and a default-on flag can only be writte
 rini-only actions keep rini's own words: `move-window-left` and `-right` (a lone window swaps
 columns, a stacked one leaves as a new column, which niri's `move-column-left` never does),
 `toggle-fold-left` and `-right` (niri's `consume-or-expel-window-left` never round-tripped:
-`src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `snap-strip`,
-`move-mouse-to-monitor-…` and `toggle-space-activated`. Every action and the wire command it
-lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
+`src/layout/docs/strip.md`), `explode-column` (niri expels one window at a time),
+`cycle-visible-windows`, `snap-strip`, `move-mouse-to-monitor-…` and `toggle-space-activated`. The
+retired `toggle-stack` is refused with where its two halves went. Every action and the wire command
+it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 
 ## What went with the TOML
 

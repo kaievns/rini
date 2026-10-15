@@ -59,7 +59,7 @@ fn table() -> Vec<(Action, Lowered)> {
         ),
         (Action::ToggleFoldLeft, layout(LayoutCommand::ToggleFold(Left))),
         (Action::ToggleFoldRight, layout(LayoutCommand::ToggleFold(Right))),
-        (Action::ToggleStack, layout(LayoutCommand::ToggleStack)),
+        (Action::ExplodeColumn, layout(LayoutCommand::ExplodeColumn)),
         (Action::CycleVisibleWindows, layout(LayoutCommand::NextWindow)),
         (
             Action::CycleVisibleWindowsBack,

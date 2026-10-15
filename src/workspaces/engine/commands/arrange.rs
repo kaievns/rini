@@ -98,9 +98,11 @@ impl LayoutEngine {
                     self.workspace_tree_mut(workspace_id).toggle_fold_of_selection(layout, side);
                 Self::response_for_raised_windows(raise_windows)
             }
-            LayoutCommand::ToggleStack => {
+            LayoutCommand::ExplodeColumn => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                self.toggle_stack_for_workspace(workspace_id, layout)
+                let raise_windows =
+                    self.workspace_tree_mut(workspace_id).explode_column_of_selection(layout);
+                Self::response_for_raised_windows(raise_windows)
             }
             other => {
                 debug_assert!(false, "{other:?} is not a arrange command");
