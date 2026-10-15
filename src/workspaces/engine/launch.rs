@@ -121,7 +121,7 @@ impl LayoutEngine {
         let tree = self.workspace_tree(workspace_id);
         let mut consulted = false;
         for layout in self.workspace_layouts.configurations_for(space, workspace_id) {
-            if let Some(width) = tree.column_width(layout, window) {
+            if let Some(width) = tree.carried_width(layout, window) {
                 return Some(Some(width));
             }
             consulted |= tree.contains_window(layout, window);

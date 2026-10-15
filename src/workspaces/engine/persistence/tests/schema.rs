@@ -350,7 +350,7 @@ fn a_schema_6_layout_file_loads_and_writes_back_the_same() {
     let shown = engine.virtual_workspace_manager.active_workspace(space).expect("a workspace");
     let layout = engine.workspace_layouts.active(space, shown).expect("a layout");
     let tree = engine.workspace_tree(shown);
-    let widths: Vec<_> = (1..=6).map(|idx| tree.column_width(layout, w(idx))).collect();
+    let widths: Vec<_> = (1..=6).map(|idx| tree.carried_width(layout, w(idx))).collect();
     assert_eq!(widths, [
         None,
         Some(ColumnWidth::Offset(-0.1)),

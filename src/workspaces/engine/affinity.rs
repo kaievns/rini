@@ -148,7 +148,7 @@ impl LayoutEngine {
         let Some(display) = memory.affinity.display_for_space(space).map(str::to_owned) else {
             return;
         };
-        match self.workspace_tree(workspace_id).column_width(layout, window) {
+        match self.workspace_tree(workspace_id).carried_width(layout, window) {
             Some(width) => memory.affinity.set_window_width(&display, window, width),
             // Toggled back to the default. Forget rather than pin, so the window follows
             // each display's configured ratio again.
@@ -200,6 +200,6 @@ impl LayoutEngine {
         let Some(width) = found else {
             return;
         };
-        self.workspace_tree_mut(workspace_id).set_column_width(layout, window, width);
+        self.workspace_tree_mut(workspace_id).set_carried_width(layout, window, width);
     }
 }

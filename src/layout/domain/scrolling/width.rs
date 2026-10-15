@@ -1,4 +1,4 @@
-//! A column's width: carried between layouts (`column_width`), full width as a mode
+//! A column's width: carried between layouts (`carried_width`), full width as a mode
 //! (`toggle_full_width`), the preset widths a key cycles through (`cycle_preset_column_width`), and
 //! the incremental resize keys (`resize_selection_by`).
 
@@ -17,7 +17,7 @@ impl ScrollingLayoutSystem {
     /// Needed so moving a window between workspaces or displays keeps the width the user gave
     /// it; a fresh column otherwise starts at the default ratio and the window appeared to
     /// reset to 50%.
-    pub fn column_width(&self, layout: LayoutId, wid: WindowId) -> Option<ColumnWidth> {
+    pub fn carried_width(&self, layout: LayoutId, wid: WindowId) -> Option<ColumnWidth> {
         let state = self.layout_state(layout)?;
         if state.fullscreen_within_gaps.contains(&wid) {
             return Some(ColumnWidth::FullWidth);
@@ -30,7 +30,7 @@ impl ScrollingLayoutSystem {
 
     /// Re-apply a width carried from another layout: full width as the mode, any other as the
     /// column's own.
-    pub fn set_column_width(&mut self, layout: LayoutId, wid: WindowId, width: ColumnWidth) {
+    pub fn set_carried_width(&mut self, layout: LayoutId, wid: WindowId, width: ColumnWidth) {
         let Some(given) = GivenWidth::from_carried(width) else {
             self.restore_window_full_width(layout, wid);
             return;

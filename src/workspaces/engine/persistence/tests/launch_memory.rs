@@ -552,7 +552,7 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
     );
     let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
-    engine.workspace_tree_mut(ws_id).set_column_width(
+    engine.workspace_tree_mut(ws_id).set_carried_width(
         layout,
         window,
         ColumnWidth::Unbounded(0.33797),

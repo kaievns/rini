@@ -5213,7 +5213,7 @@ mod tests {
         let w: Vec<WindowId> = (1..=ratios.len() as u32).map(|idx| wid(1, idx)).collect();
         for (&window, &ratio) in w.iter().zip(ratios) {
             system.add_window_after_selection(layout, window);
-            system.set_column_width(layout, window, ColumnWidth::Offset(ratio - 0.5));
+            system.set_carried_width(layout, window, ColumnWidth::Offset(ratio - 0.5));
         }
         assert!(system.select_window(layout, w[0]));
         kai_s_frames(&mut system, layout);
@@ -5709,8 +5709,8 @@ mod tests {
             system.add_window_after_selection(layout, window);
             kai_s_frames(&mut system, layout);
         }
-        system.set_column_width(layout, w[1], ColumnWidth::Offset(0.33333 - 0.5));
-        system.set_column_width(layout, w[2], ColumnWidth::Offset(0.33333 - 0.5));
+        system.set_carried_width(layout, w[1], ColumnWidth::Offset(0.33333 - 0.5));
+        system.set_carried_width(layout, w[2], ColumnWidth::Offset(0.33333 - 0.5));
         assert!(system.select_window(layout, w[0]));
         kai_s_frames(&mut system, layout);
         for direction in [Direction::Right, Direction::Right, Direction::Left] {
@@ -6959,8 +6959,8 @@ mod tests {
                 &kai_s_gaps(),
             );
             assert_eq!(
-                plain.column_width(layout, w[1]),
-                with_border.column_width(other, w[1])
+                plain.carried_width(layout, w[1]),
+                with_border.carried_width(other, w[1])
             );
             let slot = frame_for(&render(&mut plain, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
             assert_eq!(bordered(&mut with_border, other, w[1]), window_in(slot, BORDER));
