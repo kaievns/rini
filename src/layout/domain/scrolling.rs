@@ -1801,7 +1801,7 @@ impl ScrollingLayoutSystem {
     /// for any other resize: the app's own, or a window rule's size, and then an axis within a point
     /// of the slot the last pass gave the window is the app answering rini's write, which changes
     /// nothing. See "Mouse resize" in `src/layout/docs/strip.md`.
-    #[allow(clippy::too_many_arguments, reason = "P3.7")]
+    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     pub fn on_window_resized(
         &mut self,
         layout: LayoutId,

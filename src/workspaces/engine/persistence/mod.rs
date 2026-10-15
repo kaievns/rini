@@ -139,7 +139,7 @@ impl PersistenceState {
 }
 
 impl LayoutEngine {
-    #[allow(clippy::too_many_arguments, reason = "P3.9")]
+    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     pub(super) fn observe_window_for_persistence(
         &mut self,
         window_store: &mut WindowStore,

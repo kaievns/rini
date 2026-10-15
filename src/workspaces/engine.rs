@@ -1408,7 +1408,7 @@ impl LayoutEngine {
         }
     }
 
-    #[allow(clippy::too_many_arguments, reason = "P3.9")]
+    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     fn apply_app_rule_outcome(
         &mut self,
         window_store: &mut WindowStore,
@@ -1513,7 +1513,7 @@ impl LayoutEngine {
     /// The authoritative list: windows missing from it are gone, and windows in it rini has not
     /// placed are new. App rules are applied here, because this is where a window first arrives with
     /// its bundle id and title known.
-    #[allow(clippy::too_many_arguments, reason = "P3.9")]
+    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     fn on_windows_on_screen_updated(
         &mut self,
         window_store: &mut WindowStore,
@@ -2101,7 +2101,7 @@ impl LayoutEngine {
             CGRect::new(origin, size)
         };
 
-        #[allow(clippy::too_many_arguments, reason = "P3.9")]
+        #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
         fn ensure_visible_floating(
             engine: &mut LayoutEngine,
             positions: &mut HashMap<WindowId, CGRect>,
@@ -2675,7 +2675,7 @@ impl LayoutEngine {
         AfterRules::for_result(before, result.as_ref().map_err(|_| ()), in_layout_now)
     }
 
-    #[allow(clippy::too_many_arguments, reason = "P3.9")]
+    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     pub fn assign_window_with_app_info(
         &mut self,
         window_store: &mut WindowStore,

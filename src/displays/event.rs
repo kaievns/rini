@@ -12,10 +12,9 @@ use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant, reason = "P2.8")]
 pub enum Event {
     /// The authoritative screens/spaces snapshot. Sent after every accepted topology change.
-    SpaceStateUpdated(ForwardedSpaceState, CoordinateConverter),
+    SpaceStateUpdated(Box<ForwardedSpaceState>, CoordinateConverter),
     ActiveDisplayChanged {
         menu_bar_space: Option<SpaceId>,
         command_space: Option<SpaceId>,

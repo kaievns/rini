@@ -54,7 +54,10 @@ impl Timer {
     }
 
     /// `interval` of 0.0 makes a one-shot timer.
-    #[allow(clippy::arc_with_non_send_sync, reason = "P5.1")]
+    #[allow(
+        clippy::arc_with_non_send_sync,
+        reason = "CF retains and releases the info through the context's callbacks, on any thread"
+    )]
     fn new(fire_date: CFAbsoluteTime, interval: CFTimeInterval) -> Self {
         let inner = Arc::new(Mutex::new(TimerState {
             cf_timer: None,

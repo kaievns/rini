@@ -787,7 +787,10 @@ impl<W: AxWorld> State<W> {
         own
     }
 
-    #[allow(clippy::await_holding_refcell_ref, reason = "P3.11")]
+    #[allow(
+        clippy::await_holding_refcell_ref,
+        reason = "the RefMut moves into wait_for_activation, which drops it before its first await"
+    )]
     async fn handle_raise_request(
         this_ref: &RefCell<Self>,
         wids: Vec<WindowId>,
@@ -1048,7 +1051,10 @@ impl<W: AxWorld> State<W> {
         Ok(())
     }
 
-    #[allow(clippy::await_holding_refcell_ref, reason = "P3.11")]
+    #[allow(
+        clippy::await_holding_refcell_ref,
+        reason = "the RefMut is dropped before the first await"
+    )]
     async fn wait_for_activation(
         this_ref: &RefCell<Self>,
         mut this: std::cell::RefMut<'_, Self>,

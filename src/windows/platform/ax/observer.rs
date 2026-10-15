@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use objc2_application_services::{AXError, AXObserver, AXUIElement as RawAXUIElement};
 use objc2_core_foundation::{
@@ -17,7 +17,7 @@ use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 pub struct Observer {
     callback: Callback,
     observer: CFRetained<AXObserver>,
-    subscription_ctx: RefCell<HashMap<NotificationKey, Arc<SubscriptionContext>>>,
+    subscription_ctx: RefCell<HashMap<NotificationKey, Rc<SubscriptionContext>>>,
 }
 
 static_assertions::assert_not_impl_any!(Observer: Send);
@@ -34,8 +34,8 @@ struct SubscriptionContext {
 }
 
 enum Callback {
-    Data(Arc<dyn Fn(AXUIElement, usize)>),
-    Notification(Arc<dyn Fn(AXUIElement, &'static str)>),
+    Data(Rc<dyn Fn(AXUIElement, usize)>),
+    Notification(Rc<dyn Fn(AXUIElement, &'static str)>),
 }
 
 impl Observer {
@@ -95,14 +95,14 @@ impl<F: Fn(AXUIElement, usize) + 'static> ObserverBuilder<F> {
     /// Installs the observer with the supplied callback into the current
     /// thread's run loop.
     pub fn install(self, callback: F) -> Observer {
-        self.install_inner(Callback::Data(Arc::new(callback)))
+        self.install_inner(Callback::Data(Rc::new(callback)))
     }
 }
 
 impl<F: Fn(AXUIElement, &'static str) + 'static> ObserverBuilder<F> {
     /// Installs a callback that receives the registered notification name.
     pub fn install_with_notification(self, callback: F) -> Observer {
-        self.install_inner(Callback::Notification(Arc::new(callback)))
+        self.install_inner(Callback::Notification(Rc::new(callback)))
     }
 }
 
@@ -125,8 +125,8 @@ impl<F> ObserverBuilder<F> {
 impl Clone for Callback {
     fn clone(&self) -> Self {
         match self {
-            Self::Data(callback) => Self::Data(Arc::clone(callback)),
-            Self::Notification(callback) => Self::Notification(Arc::clone(callback)),
+            Self::Data(callback) => Self::Data(Rc::clone(callback)),
+            Self::Notification(callback) => Self::Notification(Rc::clone(callback)),
         }
     }
 }
@@ -154,11 +154,11 @@ impl Observer {
         &self,
         elem: &AXUIElement,
         notification: &'static str,
-        callback_ctx: Arc<SubscriptionContext>,
+        callback_ctx: Rc<SubscriptionContext>,
     ) -> Result<(), AxError> {
         let notification_cf = CFString::from_static_str(notification);
         let observer: &AXObserver = &self.observer;
-        let callback_data = Arc::as_ptr(&callback_ctx).cast_mut().cast();
+        let callback_data = Rc::as_ptr(&callback_ctx).cast_mut().cast();
         make_result(unsafe {
             observer.add_notification(
                 elem.as_concrete_TypeRef(),
@@ -168,24 +168,23 @@ impl Observer {
         })
     }
 
-    #[allow(clippy::arc_with_non_send_sync, reason = "P5.1")]
     fn subscription_context(
         &self,
         elem: &AXUIElement,
         notification: &'static str,
         data: usize,
-    ) -> Arc<SubscriptionContext> {
+    ) -> Rc<SubscriptionContext> {
         let key = (elem.raw_ptr(), notification);
         let mut subscription_ctx = self.subscription_ctx.borrow_mut();
         let ctx = subscription_ctx.entry(key).or_insert_with(|| {
-            Arc::new(SubscriptionContext {
+            Rc::new(SubscriptionContext {
                 callback: self.callback.clone(),
                 data: Cell::new(data),
                 notification,
             })
         });
         ctx.data.set(data);
-        Arc::clone(ctx)
+        Rc::clone(ctx)
     }
 
     pub fn remove_notification(
@@ -241,5 +240,28 @@ fn make_result(err: AXError) -> Result<(), AxError> {
         Ok(())
     } else {
         Err(AxError::Ax(err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A notification added again on the same element keeps the context its refcon points at and
+    /// takes the new data, so a notification already queued with that refcon still finds it.
+    #[test]
+    fn adding_a_notification_again_keeps_its_context_and_takes_the_new_data() {
+        let pid = std::process::id() as pid_t;
+        let observer = Observer::new(pid).expect("an observer of this process").install(|_, _| {});
+        let app = AXUIElement::application(pid);
+
+        let first = observer.subscription_context(&app, "AXFocusedWindowChanged", 1);
+        let again = observer.subscription_context(&app, "AXFocusedWindowChanged", 2);
+        let other = observer.subscription_context(&app, "AXWindowCreated", 3);
+
+        assert!(Rc::ptr_eq(&first, &again), "the same context");
+        assert_eq!(first.data.get(), 2, "with the new data");
+        assert!(!Rc::ptr_eq(&first, &other), "another notification has its own");
+        assert_eq!(other.data.get(), 3);
     }
 }

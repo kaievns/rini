@@ -26,7 +26,6 @@ use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::WindowTxStore;
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant, reason = "P2.8")]
 pub enum WmEvent {
     DiscoverRunningApps,
     AppEventsRegistered,

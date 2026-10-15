@@ -397,7 +397,7 @@ struct Composed {
 }
 
 /// What the coordinator is told of a stage.
-#[allow(clippy::too_many_arguments, reason = "P3.10")]
+#[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
 fn summary(
     tiles: Vec<TileSummary>,
     final_frames: Vec<(WindowId, ScreenRect)>,
@@ -2229,7 +2229,7 @@ impl FlightEngine {
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
     /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
     /// travel. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
-    #[allow(clippy::too_many_arguments, reason = "P3.10")]
+    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,

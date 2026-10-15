@@ -306,7 +306,7 @@ impl From<crate::displays::event::Event> for Event {
     fn from(event: crate::displays::event::Event) -> Self {
         use crate::displays::event::Event as D;
         match event {
-            D::SpaceStateUpdated(state, _converter) => Event::SpaceStateChanged(state),
+            D::SpaceStateUpdated(state, _converter) => Event::SpaceStateChanged(*state),
             D::ActiveDisplayChanged { menu_bar_space, command_space } => {
                 Event::ActiveDisplayChanged { menu_bar_space, command_space }
             }
@@ -3546,7 +3546,7 @@ impl Reactor {
     /// per-window path. `standing` is where the pass found each window and `laid_out` where the
     /// strip had it at the last pass: one away from where the shifted viewport draws it starts where
     /// it stands if on screen, else where the strip had it (`strip_move::start_where_standing`).
-    #[allow(clippy::too_many_arguments, reason = "P3.3")]
+    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     fn start_strip_pan(
         &mut self,
         space: SpaceId,

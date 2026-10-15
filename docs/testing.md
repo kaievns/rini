@@ -204,9 +204,12 @@ with warnings as errors, `cargo clippy --workspace --all-targets -- -D warnings`
 Every crate takes its lints from `[workspace.lints]` in `Cargo.toml` (`[lints] workspace = true`,
 held by `every_crate_inherits_the_workspace_lints`): clippy's defaults, plus `redundant_lifetimes`,
 `unused_macro_rules` and `allow_attributes_without_reason`. The last means every `#[allow]` says
-why. A lint allowed because a roadmap task will fix it names the quality roadmap's task id
-(`reason = "P3.9"`) and sits on the one item it covers; one allowed for good names what makes it
-right, such as a C name. The crate-wide allows are in the two `-sys` crates: their C names, and
+why, in one of three ways. One a roadmap task removes names the quality roadmap's task id
+(`reason = "P3.8"`) and sits on the one item it covers, and only when that task's done-criterion
+takes the lint away: splitting a function or a file leaves its parameter lists as long. One allowed
+for good names what makes it right, such as a C name, a reference count Core Foundation drives too,
+or a `RefMut` dropped before the await clippy counts it across. One no task removes says so: a long
+parameter list no task groups carries `reason = "no roadmap task groups them"`. The crate-wide allows are in the two `-sys` crates: their C names, and
 `rini-mach-sys`'s unsafe operations.
 
 `unsafe_op_in_unsafe_fn` is not in the table. Edition 2024 warns on it already, and

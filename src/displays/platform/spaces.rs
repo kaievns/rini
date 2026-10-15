@@ -543,8 +543,10 @@ impl SpacesActor {
         let forwarded = self.build_forwarded_state(screens);
         self.state.last_sent_spaces = Some(Self::screen_spaces(&forwarded.screens));
         self.state.awaiting_space_switch_confirmation = false;
-        self.events
-            .send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
+        self.events.send(OutEvent::SpaceStateUpdated(
+            Box::new(forwarded),
+            self.state.last_converter,
+        ));
     }
 
     fn build_forwarded_state(&mut self, screens: Vec<ScreenInfo>) -> ForwardedSpaceState {
