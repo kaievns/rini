@@ -1,12 +1,12 @@
 //! What the reactor holds back while the displays or the session are unstable: events dropped
 //! during display churn and while refreshes are blocked, and the one visible-window refresh owed
 //! until every quarantine lifts.
-use super::managers::{QuarantineSignal, RefreshQuarantineState, VisibleRefresh};
+use super::managers::{Churn, QuarantineSignal, RefreshQuarantineState, VisibleRefresh};
 use super::{Event, Reactor};
 
 impl Reactor {
     pub(super) fn should_quarantine_during_display_churn(&self, event: &Event) -> bool {
-        if !(self.reads.display_churn)() {
+        if !self.display_churning() {
             return false;
         }
 
@@ -48,6 +48,7 @@ impl Reactor {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
+            | Event::DisplayChurnEnd
             | Event::MissionControlNativeEntered
             | Event::MissionControlNativeExited
             | Event::RaiseCompleted { .. }
@@ -69,6 +70,12 @@ impl Reactor {
 
     pub(super) fn refresh_quarantine_state(&self) -> RefreshQuarantineState {
         self.refresh_quarantine_manager.state()
+    }
+
+    /// From the spaces actor's `DisplayChurnBegin` to its `DisplayChurnEnd`, or the snapshot ahead
+    /// of it, in the order the reactor hears them.
+    pub(super) fn display_churning(&self) -> bool {
+        self.refresh_quarantine_manager.churn() == Churn::Churning
     }
 
     pub(super) fn refreshes_blocked(&self) -> bool {

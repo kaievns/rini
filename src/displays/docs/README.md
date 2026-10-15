@@ -16,7 +16,7 @@ windows are on this space" is a window-server query over window ids.
 | `domain/space_activation.rs` | Which spaces rini manages, and how activation transfers when macOS mints a new space id |
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot. It makes the reads, through the `WindowServer` port and `LiveDisplays` (`platform/spaces/live.rs`, with the `SpaceKinds` production hands it), and the domain decides; what it asks again is handed to a `Schedule` (`platform/spaces/schedule.rs`), the main queue in production and a record in tests, so a test runs every retry to its cap |
 | `platform/space_query.rs` | Asking what a space is |
-| `platform/display_churn.rs`, `cgs_notify.rs` | Display reconfiguration and the CGS notification streams |
+| `platform/cgs_notify.rs` | The CGS notification streams |
 | `platform/window_notify.rs` | The actor over those streams: space events to the spaces actor, focus edges coalesced into `WindowServerFocusChanged`, and one `window-frames` thread that reads the window server for the application, in the order it was asked through `Following`'s queue (`ToRead`): every tracked window's moves and resizes, as `ServerFrame`s, each reorder, hide, unhide and close, as a `ServerOrder` with the level and sub-level read after a reorder or an unhide (`StackLevel`), and each window the application introduces, whole, as a `ServerIntro`, all handed to its `OnServerRead` callbacks, only while the application is `Following` them ("Live frames" in `live-frames.md`) |
 | `platform/cursor_warp.rs` | Carrying the pointer across the edge between two stacked displays, over their whole bounds |
 | `platform/mission_control.rs` | Detecting Mission Control, during which nothing may be moved, through the Dock's notifications: a subscription the Dock is too busy to answer is asked again on `src/windows/platform/ax/ask_again.rs`'s schedule for up to 60s |
@@ -28,6 +28,11 @@ churn and lock/login rather than forwarding a half-formed picture, resamples aft
 identical topology samples plus a quiet window server before it speaks. Treating an
 unstable snapshot as authoritative is what made rini remap every window onto fresh
 default workspaces.
+
+**The application hears a churn only as events.** `DisplayChurnBegin` when one starts and
+`DisplayChurnEnd` when it settles or is given up on, a settled one's snapshot queued ahead of its
+end. No flag is shared across threads, so the reactor reads the churn in the order of what it
+handles.
 
 **macOS mints a new space id on every reconnect.** One monitor was observed as 479,
 484, 487, 516, 552, 1138 in a single session. Nothing durable may be keyed by space

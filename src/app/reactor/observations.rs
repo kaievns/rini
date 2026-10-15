@@ -26,8 +26,8 @@ use crate::windows::domain::zoom::{self, Zoom};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::LayoutEvent;
 
-/// The five events that move the refresh quarantine: sleep, wake, session activation and display
-/// churn. Wake also has the bars read the clock again. None of them is a focus edge, so focus
+/// The six events that move the refresh quarantine: sleep, wake, the session resigning and
+/// activating, and display churn beginning and ending. Wake also has the bars read the clock again. None of them is a focus edge, so focus
 /// tracking passes them by.
 impl Reactor {
     pub(super) fn on_system_will_sleep(&mut self) -> EventOutcome {
@@ -59,6 +59,11 @@ impl Reactor {
 
     pub(super) fn on_display_churn_begin(&mut self) -> EventOutcome {
         self.quarantine_on(QuarantineSignal::ChurnBegan);
+        EventOutcome::default()
+    }
+
+    pub(super) fn on_display_churn_end(&mut self) -> EventOutcome {
+        self.quarantine_on(QuarantineSignal::ChurnEnded);
         EventOutcome::default()
     }
 }
@@ -531,6 +536,8 @@ impl Reactor {
         space_state: ForwardedSpaceState,
     ) -> anyhow::Result<EventOutcome> {
         let releases_lifecycle = space_state.releases_lifecycle_refresh_quarantine;
+        // A settled churn's snapshot is queued ahead of its DisplayChurnEnd.
+        self.quarantine_on(QuarantineSignal::ChurnEnded);
         let outcome = self.handle_authoritative_space_snapshot(space_state)?;
         self.quarantine_on(QuarantineSignal::Incorporated { releases_lifecycle });
         // Flush any debounced save now: after a display was plugged in or unplugged, the
@@ -638,6 +645,7 @@ impl Reactor {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
+            | Event::DisplayChurnEnd
             | Event::MissionControlNativeEntered
             | Event::MissionControlNativeExited
             | Event::RaiseCompleted { .. }

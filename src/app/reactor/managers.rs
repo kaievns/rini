@@ -112,12 +112,15 @@ pub(super) enum Session {
     AwaitingSnapshot,
 }
 
-/// Whether a display reconfiguration holds refreshes back.
+/// Whether a display reconfiguration holds window events and refreshes back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Churn {
     Steady,
-    /// From the spaces actor's `DisplayChurnBegin` until a snapshot is incorporated.
+    /// From the spaces actor's `DisplayChurnBegin` to its end: window events are dropped and
+    /// refreshes held.
     Churning,
+    /// Ended, with no snapshot incorporated since: refreshes are still held.
+    Settling,
 }
 
 /// The one visible-window refresh owed until every quarantine lifts.
@@ -144,6 +147,9 @@ pub(super) enum QuarantineSignal {
     SessionResigned,
     SessionActivated,
     ChurnBegan,
+    /// The spaces actor's `DisplayChurnEnd`, or a snapshot arriving, which it forwards only once a
+    /// churn is over.
+    ChurnEnded,
     /// A refresh asked for while refreshes are blocked.
     RefreshDeferred(VisibleRefresh),
     /// A forwarded snapshot, incorporated. Every one the spaces actor forwards is coherent, so each
@@ -191,6 +197,11 @@ impl RefreshQuarantineManager {
                 self.owe(VisibleRefresh::TRACKING_MISSION_CONTROL);
             }
             QuarantineSignal::ChurnBegan => self.churn = Churn::Churning,
+            QuarantineSignal::ChurnEnded => {
+                if self.churn == Churn::Churning {
+                    self.churn = Churn::Settling;
+                }
+            }
             QuarantineSignal::RefreshDeferred(refresh) => self.owe(refresh),
             QuarantineSignal::Incorporated { releases_lifecycle } => {
                 self.churn = Churn::Steady;
@@ -236,7 +247,6 @@ impl RefreshQuarantineManager {
     #[cfg(test)]
     pub(super) fn session(&self) -> Session { self.session }
 
-    #[cfg(test)]
     pub(super) fn churn(&self) -> Churn { self.churn }
 
     #[cfg(test)]
@@ -307,12 +317,13 @@ mod tests {
         const TRACKED: VisibleRefresh = VisibleRefresh { tracks_mission_control: true };
 
         /// Every signal, in the column order of the tables below.
-        const SIGNALS: [QuarantineSignal; 8] = [
+        const SIGNALS: [QuarantineSignal; 9] = [
             QuarantineSignal::WillSleep,
             QuarantineSignal::Woke,
             QuarantineSignal::SessionResigned,
             QuarantineSignal::SessionActivated,
             QuarantineSignal::ChurnBegan,
+            QuarantineSignal::ChurnEnded,
             QuarantineSignal::RefreshDeferred(UNTRACKED),
             QuarantineSignal::Incorporated { releases_lifecycle: true },
             QuarantineSignal::Incorporated { releases_lifecycle: false },
@@ -331,11 +342,11 @@ mod tests {
         fn wake_moves_on_every_signal_as_its_table_says() {
             use Wake::{Asleep, AwaitingSnapshot as Waiting, Awake};
             #[rustfmt::skip]
-            let table = [
-                //        sleep   woke     resign   active   churn    defer    released snapshot
-                (Awake,   [Asleep, Waiting, Awake,   Awake,   Awake,   Awake,   Awake,   Awake]),
-                (Asleep,  [Asleep, Waiting, Asleep,  Asleep,  Asleep,  Asleep,  Asleep,  Asleep]),
-                (Waiting, [Asleep, Waiting, Waiting, Waiting, Waiting, Waiting, Awake,   Waiting]),
+            let table: [(Wake, [Wake; SIGNALS.len()]); 3] = [
+                //        sleep   woke     resign   active   churn    ended    defer    released snapshot
+                (Awake,   [Asleep, Waiting, Awake,   Awake,   Awake,   Awake,   Awake,   Awake,   Awake]),
+                (Asleep,  [Asleep, Waiting, Asleep,  Asleep,  Asleep,  Asleep,  Asleep,  Asleep,  Asleep]),
+                (Waiting, [Asleep, Waiting, Waiting, Waiting, Waiting, Waiting, Waiting, Awake,   Waiting]),
             ];
             for (from, row) in table {
                 for (signal, to) in SIGNALS.into_iter().zip(row) {
@@ -350,11 +361,11 @@ mod tests {
         fn the_session_moves_on_every_signal_as_its_table_says() {
             use Session::{Active, AwaitingSnapshot as Waiting, Inactive};
             #[rustfmt::skip]
-            let table = [
-                //         sleep     woke      resign    active   churn     defer     released snapshot
-                (Active,   [Active,   Active,   Inactive, Waiting, Active,   Active,   Active,  Active]),
-                (Inactive, [Inactive, Inactive, Inactive, Waiting, Inactive, Inactive, Inactive, Inactive]),
-                (Waiting,  [Waiting,  Waiting,  Inactive, Waiting, Waiting,  Waiting,  Active,  Waiting]),
+            let table: [(Session, [Session; SIGNALS.len()]); 3] = [
+                //         sleep     woke      resign    active   churn     ended     defer     released  snapshot
+                (Active,   [Active,   Active,   Inactive, Waiting, Active,   Active,   Active,   Active,   Active]),
+                (Inactive, [Inactive, Inactive, Inactive, Waiting, Inactive, Inactive, Inactive, Inactive, Inactive]),
+                (Waiting,  [Waiting,  Waiting,  Inactive, Waiting, Waiting,  Waiting,  Waiting,  Active,   Waiting]),
             ];
             for (from, row) in table {
                 for (signal, to) in SIGNALS.into_iter().zip(row) {
@@ -367,12 +378,13 @@ mod tests {
 
         #[test]
         fn churn_moves_on_every_signal_as_its_table_says() {
-            use Churn::{Churning, Steady};
+            use Churn::{Churning, Settling, Steady};
             #[rustfmt::skip]
-            let table = [
-                //         sleep     woke      resign    active    churn     defer     released snapshot
-                (Steady,   [Steady,   Steady,   Steady,   Steady,   Churning, Steady,   Steady,  Steady]),
-                (Churning, [Churning, Churning, Churning, Churning, Churning, Churning, Steady,  Steady]),
+            let table: [(Churn, [Churn; SIGNALS.len()]); 3] = [
+                //         sleep     woke      resign    active    churn     ended     defer     released snapshot
+                (Steady,   [Steady,   Steady,   Steady,   Steady,   Churning, Steady,   Steady,   Steady,  Steady]),
+                (Churning, [Churning, Churning, Churning, Churning, Churning, Settling, Churning, Steady,  Steady]),
+                (Settling, [Settling, Settling, Settling, Settling, Churning, Settling, Settling, Steady,  Steady]),
             ];
             for (from, row) in table {
                 for (signal, to) in SIGNALS.into_iter().zip(row) {
@@ -397,6 +409,7 @@ mod tests {
                     SessionInactive,
                 ),
                 (Wake::Awake, Session::Active, Churn::Churning, DisplayChurn),
+                (Wake::Awake, Session::Active, Churn::Settling, DisplayChurn),
                 (Wake::Awake, Session::Active, Churn::Steady, Ready),
             ];
             for (wake, session, churn, state) in table {

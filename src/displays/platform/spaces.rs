@@ -23,7 +23,6 @@ use crate::displays::domain::topology::{
     snapshot_is_committable,
 };
 use crate::displays::event::{Event as OutEvent, EventSink};
-use crate::displays::platform::display_churn;
 use crate::displays::screen::ScreenCache;
 use crate::windows::platform::window_server::{self, WindowServer};
 
@@ -515,7 +514,6 @@ impl SpacesActor {
         self.state.display_churn_epoch = self.state.display_churn_epoch.wrapping_add(1);
         self.state.stability.reset();
         self.state.last_sent_spaces = None;
-        display_churn::begin();
         if !was_active {
             self.state.pre_churn_visible_window_spaces =
                 self.state.forwarded.visible_window_spaces.clone();
@@ -560,7 +558,7 @@ impl SpacesActor {
         self.state.display_churn_epoch = self.state.display_churn_epoch.wrapping_add(1);
         self.state.display_churn_flags = DisplayReconfigFlags::empty();
         self.state.stability.reset();
-        display_churn::end();
+        self.events.send(OutEvent::DisplayChurnEnd);
         if schedule_refresh {
             self.schedule_screen_refresh_after(0, 0);
         }

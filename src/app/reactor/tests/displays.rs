@@ -12,7 +12,6 @@ use crate::app::reactor::*;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
-use crate::windows::platform::window_server::FakeWindowServer;
 use crate::workspaces as layout;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
@@ -1012,7 +1011,7 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
 #[test]
 fn display_churn_quarantines_window_frame_and_membership_events() {
     let mut reactor = test_reactor();
-    reactor.reads_mut().display_churn = || true;
+    reactor.handle_event(Event::DisplayChurnBegin);
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
 
@@ -1063,33 +1062,53 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     );
 }
 
-/// A test reactor reads its own churn reader, never the process-wide flag a spaces test sets beside it.
+/// The churn is the reactor's own, heard in order: window events are dropped from the spaces
+/// actor's `DisplayChurnBegin` to its `DisplayChurnEnd`, and refreshes stay held until the snapshot
+/// after it.
 #[test]
-fn a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag() {
-    let reactor = test_reactor();
-    let _held = crate::displays::platform::display_churn::hold_for_test();
-    crate::displays::platform::display_churn::begin();
-    assert!(!reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
+fn window_events_pass_once_the_churn_ends_and_refreshes_once_its_snapshot_is_incorporated() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(1));
+    apps.requests();
+    let destroyed = Event::WindowDestroyed(WindowId::new(1, 1));
+
+    reactor.handle_event(Event::DisplayChurnBegin);
+    assert!(reactor.should_quarantine_during_display_churn(&destroyed));
+    assert!(reactor.refreshes_blocked());
+
+    reactor.handle_event(Event::DisplayChurnEnd);
+    assert!(!reactor.should_quarantine_during_display_churn(&destroyed));
+    assert_eq!(
+        reactor.refresh_quarantine_state(),
+        RefreshQuarantineState::DisplayChurn
+    );
+    reactor.check_for_new_windows();
+    assert!(apps.requests().is_empty(), "the refresh waits for the snapshot");
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    assert!(!reactor.refreshes_blocked());
+    assert_eq!(
+        apps.requests()
+            .into_iter()
+            .filter(|request| matches!(request, Request::GetVisibleWindows))
+            .count(),
+        1
+    );
 }
 
-/// The reads production builds take the process-wide churn flag; a test build gives them a fake
-/// window server, as it can give no other.
+/// A settled churn's snapshot comes ahead of its `DisplayChurnEnd`, so the snapshot itself ends the
+/// churn before it is incorporated, and the end that follows changes nothing.
 #[test]
-fn a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set() {
-    let reads = SystemReads::live_with(std::sync::Arc::new(FakeWindowServer::default()));
-    let reactor = Reactor::with_reads(
-        crate::app::config::Config::default(),
-        LayoutEngine::new(
-            &crate::app::config::VirtualWorkspaceSettings::default(),
-            &crate::app::config::LayoutSettings::default(),
-        ),
-        DisplayMemory::default(),
-        WindowTxStore::new(),
-        reads,
-    );
-    let _held = crate::displays::platform::display_churn::hold_for_test();
-    crate::displays::platform::display_churn::begin();
-    assert!(reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
+fn a_settled_churn_s_snapshot_ends_the_churn_ahead_of_its_end() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    reactor.handle_event(Event::DisplayChurnBegin);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    assert_eq!(reactor.quarantine().churn(), Churn::Steady);
+    reactor.handle_event(Event::DisplayChurnEnd);
+    assert_eq!(reactor.quarantine().churn(), Churn::Steady);
+    assert!(!reactor.refreshes_blocked());
 }
 
 #[test]

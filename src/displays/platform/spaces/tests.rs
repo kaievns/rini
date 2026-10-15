@@ -355,7 +355,6 @@ fn timed_refresh_does_not_forward_while_session_is_inactive() {
 
 #[test]
 fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_the_quarantine() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let left = SpaceId::new(71);
     let right = SpaceId::new(72);
@@ -430,7 +429,6 @@ fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_th
 
 #[test]
 fn quarantines_space_lifecycle_events_during_churn_until_snapshot() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, _wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(61);
 
@@ -449,7 +447,6 @@ fn quarantines_space_lifecycle_events_during_churn_until_snapshot() {
 
 #[test]
 fn display_setting_reconfig_starts_churn() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
     actor.handle_event(Notification::DisplayReconfigured {
@@ -481,7 +478,6 @@ fn benign_display_reconfig_does_not_start_churn() {
 
 #[test]
 fn physical_display_reconfig_starts_churn() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
     actor.handle_event(Notification::DisplayReconfigured {
@@ -953,7 +949,6 @@ fn fullscreen_transition_rewrites_cross_display_space_contamination_only() {
 
 #[test]
 fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let left = SpaceId::new(601);
     let right = SpaceId::new(602);
@@ -993,6 +988,10 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
+    assert!(matches!(
+        recv_reactor(&mut reactor_rx),
+        OutEvent::DisplayChurnEnd
+    ));
     assert_no_reactor_event(&mut reactor_rx);
 }
 
@@ -1000,7 +999,6 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
 /// behind the production one, which every reactor test running beside this one sets.
 #[test]
 fn display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     actor.state.live.window_server_quiet = || false;
     let (left, right) = (SpaceId::new(611), SpaceId::new(612));
@@ -1462,7 +1460,6 @@ fn run_checks(actor: &mut SpacesActor, scheduled: &Recorded) -> (Vec<u8>, Vec<No
 /// times, then ends unsettled with a refresh, forwarding nothing itself.
 #[test]
 fn a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let scheduled = actor.hand_schedule();
     actor.state.live.window_server_quiet = || false;
@@ -1488,13 +1485,16 @@ fn a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh(
         recv_reactor(&mut reactor_rx),
         OutEvent::DisplayChurnBegin
     ));
+    assert!(
+        matches!(recv_reactor(&mut reactor_rx), OutEvent::DisplayChurnEnd),
+        "a churn given up on tells the reactor it ended, with no snapshot ahead of it"
+    );
     assert_no_wm_event(&mut wm_rx);
 }
 
 /// With no screens to sample at all, the churn is checked up to the same cap.
 #[test]
 fn a_churn_with_no_screens_is_checked_up_to_its_cap_too() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
     let scheduled = actor.hand_schedule();
 
@@ -1514,7 +1514,6 @@ fn a_churn_with_no_screens_is_checked_up_to_its_cap_too() {
 /// A settled churn forwards on its second check, and schedules nothing after it.
 #[test]
 fn a_churn_that_settles_forwards_on_its_second_check_and_asks_nothing_more() {
-    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
     let scheduled = actor.hand_schedule();
     actor.state.forwarded.screens = vec![make_screen(Some(SpaceId::new(731)))];

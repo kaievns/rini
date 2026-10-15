@@ -229,6 +229,7 @@ pub enum Event {
     SessionDidBecomeActive,
 
     DisplayChurnBegin,
+    DisplayChurnEnd,
 
     MissionControlNativeEntered,
     MissionControlNativeExited,
@@ -290,6 +291,7 @@ impl From<crate::displays::event::Event> for Event {
             D::SessionDidResignActive => Event::SessionDidResignActive,
             D::SessionDidBecomeActive => Event::SessionDidBecomeActive,
             D::DisplayChurnBegin => Event::DisplayChurnBegin,
+            D::DisplayChurnEnd => Event::DisplayChurnEnd,
             D::MissionControlEntered => Event::MissionControlNativeEntered,
             D::MissionControlExited => Event::MissionControlNativeExited,
             D::WindowServerFocusChanged(window, space) => {
@@ -441,6 +443,7 @@ impl Event {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
+            | Event::DisplayChurnEnd
             | Event::MissionControlNativeEntered
             | Event::MissionControlNativeExited
             | Event::RaiseCompleted { .. }

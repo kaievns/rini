@@ -27,9 +27,6 @@ pub(crate) struct SystemReads {
     pub(crate) low_power: fn() -> bool,
     /// A display's whole bounds, menu bar and Dock included, in the overlay's coordinates.
     pub(crate) display_bounds: fn(ScreenId) -> CGRect,
-    /// Whether the spaces actor is mid display reconfiguration. The production flag is
-    /// process-wide, so a test that read it would be quarantined by a spaces test beside it.
-    pub(crate) display_churn: fn() -> bool,
     pub(crate) space_kinds: SpaceKinds,
     /// The running application `pid` is, for a window-server window of an app with no thread yet.
     pub(crate) running_app: fn(pid_t) -> Option<AppInfo>,
@@ -50,7 +47,6 @@ impl SystemReads {
             mouse: crate::windows::platform::mouse::get_mouse_state,
             low_power: crate::app::power::is_low_power_mode_enabled,
             display_bounds: |screen| objc2_core_graphics::CGDisplayBounds(screen.as_u32()),
-            display_churn: crate::displays::platform::display_churn::is_active,
             space_kinds: SpaceKinds::from_window_server(),
             running_app: |pid| {
                 objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
@@ -71,7 +67,6 @@ impl SystemReads {
             mouse: || None,
             low_power: || false,
             display_bounds: |_| CGRect::ZERO,
-            display_churn: || false,
             space_kinds: SpaceKinds::for_tests(),
             running_app: |_| None,
             note_activity: |_| {},

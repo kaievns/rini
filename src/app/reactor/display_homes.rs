@@ -86,7 +86,7 @@ impl Reactor {
     /// Cheap enough to run on every settled layout because it only walks the active
     /// workspace of each screen, which is what the layout pass just computed anyway.
     pub(super) fn sync_display_affinity_from_live_layout(&mut self) {
-        if (self.reads.display_churn)() {
+        if self.display_churning() {
             return;
         }
         // Closed windows keep their affinity otherwise, because the display-change path

@@ -31,7 +31,6 @@ fn a_test_reactor_reads_unknown_from_everything_it_was_not_told() {
     assert_eq!((reactor.reads().mouse)(), None);
     assert!((reactor.reads().running_app)(4242).is_none());
     assert!(!(reactor.reads().low_power)());
-    assert!(!(reactor.reads().display_churn)());
     assert_eq!(
         (reactor.reads().display_bounds)(rini_core::ids::ScreenId::new(1)),
         CGRect::ZERO
