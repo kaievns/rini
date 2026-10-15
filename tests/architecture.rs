@@ -1108,7 +1108,7 @@ const FN_LIMIT: usize = 100;
 const FILE_LIMIT: usize = 1500;
 
 /// The functions over `FN_LIMIT`, each at its size now as its ceiling: file, name, ceiling.
-const LONG_FNS: [(&str, &str, usize); 36] = [
+const LONG_FNS: [(&str, &str, usize); 35] = [
     ("crates/rini-ipc/src/mach.rs", "mach_server_begin", 101),
     ("src/animation/domain/choreography/slide.rs", "retarget", 156),
     ("src/animation/domain/motion/plan.rs", "merge_plans", 202),
@@ -1164,15 +1164,13 @@ const LONG_FNS: [(&str, &str, usize); 36] = [
     ("src/windows/platform/app_actor.rs", "handle_request", 132),
     ("src/workspaces/engine.rs", "handle_event_inner", 118),
     ("src/workspaces/engine.rs", "move_focus_internal", 106),
-    ("src/workspaces/engine.rs", "on_windows_on_screen_updated", 138),
 ];
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
-const LONG_FILES: [(&str, usize); 4] = [
+const LONG_FILES: [(&str, usize); 3] = [
     ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
     ("src/transitions/platform/engine.rs", 2187),
-    ("src/workspaces/engine.rs", 1996),
 ];
 
 /// `source` with every comment blanked, so a `//` inside a string is not a comment, and with

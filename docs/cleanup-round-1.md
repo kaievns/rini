@@ -81,8 +81,9 @@ tested in `workspaces/engine/frames.rs`, and `op_space` collapsed to
 |---|---|---|
 | `"next"` / `"prev"` | `move_window_to_workspace` | matched as magic NAMES before the name lookup, so a workspace a user actually names "next" cannot be selected by name. Undocumented trap |
 
-`on_windows_on_screen_updated` carries no rule worth extracting: it sequences store mutations on
-`was_floating` branches, which is orchestration. `move_window_to_space` and
+`on_windows_on_screen_updated` sequences store mutations on `was_floating` branches, which is
+orchestration; its one rule, whether a window's new constraints change a layout, is
+`constraints_change_layout` in `workspaces/engine/discovery.rs`. `move_window_to_space` and
 `move_window_to_workspace` share `take_window` and `place_window` with `toggle_window_floating`,
 and the target-workspace fallback of `move_window_to_space` is `ensure_active_workspace_info`.
 

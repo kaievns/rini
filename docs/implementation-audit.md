@@ -225,8 +225,7 @@ the memory again.
 Schema 5 nests the memory under its own key and `LoadedLayout` reads it BEFORE anything is
 validated. A file older than schema 6 is refused, its memory read only in the current shape.
 
-Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_workspaces`
-(203), `move_window_to_workspace` (175), `on_windows_on_screen_updated` (168).
+Its methods past the function limit are the ones `tests/architecture.rs` names in `LONG_FNS`.
 
 ### 3.2 `Reactor` holds every store and 41 event variants
 
