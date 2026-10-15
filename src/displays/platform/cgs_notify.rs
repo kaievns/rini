@@ -44,12 +44,19 @@ struct CallbackContext {
     sender: channels::Sender<EventData>,
 }
 
-/// Registers `event` with SkyLight, once per event type for the process.
+/// Registers `event` with SkyLight. MUST be called at most once per event type for the process: a
+/// second call registers the callback again over the first call's context, so the first receiver
+/// gets every event twice and the second receiver none.
 pub fn init(event: CGSEventType) -> i32 {
+    let mut callback_ctxs = CALLBACK_CTXS.write();
+    debug_assert!(
+        !callback_ctxs.contains_key(&event),
+        "cgs_notify::init({event}) called twice"
+    );
+
     let (tx, rx) = channels::channel::<EventData>();
     EVENT_RECEIVERS.lock().insert(event, Some(rx));
 
-    let mut callback_ctxs = CALLBACK_CTXS.write();
     let callback_ctx = callback_ctxs
         .entry(event)
         .or_insert_with(|| Box::new(CallbackContext { event_type: event, sender: tx }));

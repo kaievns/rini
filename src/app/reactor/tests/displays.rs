@@ -957,6 +957,7 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     let reactor = test_reactor();
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
+    let _held = crate::displays::platform::display_churn::hold_for_test();
     crate::displays::platform::display_churn::begin();
 
     let frame_changed = reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged(

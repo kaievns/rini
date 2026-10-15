@@ -323,7 +323,70 @@ fn timed_refresh_does_not_forward_while_session_is_inactive() {
 }
 
 #[test]
+fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_the_quarantine() {
+    let _held = display_churn::hold_for_test();
+    let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
+    let left = SpaceId::new(71);
+    let right = SpaceId::new(72);
+    actor.forward_screen_parameters(
+        vec![make_screen_with(1, "display-left", 0.0, 1000.0, Some(left))],
+        CoordinateConverter::default(),
+    );
+    let _ = recv_wm(&mut wm_rx);
+
+    actor.handle_event(Notification::SystemWillSleep);
+    actor.handle_event(Notification::DisplayReconfigured {
+        display_id: 2,
+        flags: rini_skylight_sys::DisplayReconfigFlags::ADD,
+    });
+    actor.handle_event(Notification::SystemDidWake);
+    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWillSleep));
+    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::DisplayChurnBegin));
+    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWoke));
+
+    actor.state.screens = vec![
+        make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
+        make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
+    ];
+    actor.handle_event(Notification::ProcessScreenRefresh { attempt: 0 });
+    actor.handle_event(Notification::ActiveSpaceChanged);
+    assert_no_wm_event(&mut wm_rx);
+
+    let epoch = actor.state.display_churn_epoch;
+    actor.handle_event(Notification::CheckDisplayStabilization { expected_epoch: epoch, attempt: 0 });
+    actor.handle_event(Notification::CheckDisplayStabilization { expected_epoch: epoch, attempt: 1 });
+
+    match recv_wm(&mut wm_rx) {
+        OutEvent::SpaceStateUpdated(state, _) => {
+            assert_eq!(
+                state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
+                vec![Some(left), Some(right)]
+            );
+            assert!(
+                state.releases_lifecycle_refresh_quarantine,
+                "the first snapshot forwarded after wake should release the reactor quarantine"
+            );
+        }
+        other => panic!("unexpected wm event: {other:?}"),
+    }
+    assert!(!actor.state.display_churn_active);
+
+    actor.forward_screen_parameters(
+        vec![
+            make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
+            make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
+        ],
+        CoordinateConverter::default(),
+    );
+    match recv_wm(&mut wm_rx) {
+        OutEvent::SpaceStateUpdated(state, _) => assert!(!state.releases_lifecycle_refresh_quarantine),
+        other => panic!("unexpected wm event: {other:?}"),
+    }
+}
+
+#[test]
 fn quarantines_space_lifecycle_events_during_churn_until_snapshot() {
+    let _held = display_churn::hold_for_test();
     let (mut actor, _wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(61);
 
@@ -343,6 +406,7 @@ fn quarantines_space_lifecycle_events_during_churn_until_snapshot() {
 
 #[test]
 fn display_setting_reconfig_starts_churn() {
+    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
     actor.handle_event(Notification::DisplayReconfigured {
@@ -376,6 +440,7 @@ fn benign_display_reconfig_does_not_start_churn() {
 
 #[test]
 fn physical_display_reconfig_starts_churn() {
+    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
     actor.handle_event(Notification::DisplayReconfigured {
@@ -933,6 +998,7 @@ fn fullscreen_transition_rewrites_cross_display_space_contamination_only() {
 
 #[test]
 fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
+    let _held = display_churn::hold_for_test();
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let left = SpaceId::new(601);
     let right = SpaceId::new(602);
