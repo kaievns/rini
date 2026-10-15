@@ -415,7 +415,7 @@ impl SpacesActor {
         }
         let kinds = self.state.space_kinds;
         let committable = self.collect_state().filter(|(screens, _)| {
-            snapshot_is_committable(&spaces_of(screens), true, |space| kinds.is_fullscreen(space))
+            snapshot_is_committable(&spaces_of(screens), |space| kinds.is_fullscreen(space))
         });
         let Some((screens, converter)) = committable else {
             match refresh_retry(attempt) {
@@ -455,7 +455,7 @@ impl SpacesActor {
         };
         let spaces = spaces_of(&screens);
         let kinds = self.state.space_kinds;
-        if !snapshot_is_committable(&spaces, true, |space| kinds.is_fullscreen(space))
+        if !snapshot_is_committable(&spaces, |space| kinds.is_fullscreen(space))
             || (!force && self.state.last_sent_spaces.as_ref() == Some(&spaces))
         {
             return false;

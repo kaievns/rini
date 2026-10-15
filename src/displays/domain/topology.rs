@@ -355,16 +355,14 @@ pub fn snapshot_spaces_are_coherent(
 /// Whether a snapshot can be forwarded as authoritative.
 ///
 /// An empty screen list is never authoritative — it is what macOS reports mid-reconfiguration, and
-/// treating it as the truth evacuates every window. `require_complete_spaces` additionally demands
-/// that every screen has a space: a screen whose space is still unknown means the sample was taken
-/// too early.
+/// treating it as the truth evacuates every window. Every screen must have a space: a screen whose
+/// space is still unknown means the sample was taken too early.
 pub fn snapshot_is_committable(
     spaces: &[Option<SpaceId>],
-    require_complete_spaces: bool,
     is_fullscreen: impl Fn(SpaceId) -> bool,
 ) -> bool {
     !spaces.is_empty()
-        && (!require_complete_spaces || spaces.iter().all(Option::is_some))
+        && spaces.iter().all(Option::is_some)
         && snapshot_spaces_are_coherent(spaces, is_fullscreen)
 }
 
@@ -953,20 +951,24 @@ mod tests {
     /// evacuates every window.
     #[test]
     fn no_screens_is_never_committable() {
-        assert!(!snapshot_is_committable(&[], false, never_fullscreen));
-        assert!(!snapshot_is_committable(&[], true, never_fullscreen));
+        assert!(!snapshot_is_committable(&[], never_fullscreen));
     }
 
     #[test]
-    fn an_unknown_space_blocks_a_complete_commit_only() {
+    fn an_unknown_space_blocks_a_commit() {
         let spaces = [Some(SpaceId::new(1)), None];
-        assert!(!snapshot_is_committable(&spaces, true, never_fullscreen));
-        assert!(snapshot_is_committable(&spaces, false, never_fullscreen));
+        assert!(!snapshot_is_committable(&spaces, never_fullscreen));
+    }
+
+    #[test]
+    fn a_complete_coherent_snapshot_is_committable() {
+        let spaces = [Some(SpaceId::new(1)), Some(SpaceId::new(2))];
+        assert!(snapshot_is_committable(&spaces, never_fullscreen));
     }
 
     #[test]
     fn an_incoherent_snapshot_is_never_committable() {
         let spaces = [Some(SpaceId::new(1)), Some(SpaceId::new(1))];
-        assert!(!snapshot_is_committable(&spaces, false, never_fullscreen));
+        assert!(!snapshot_is_committable(&spaces, never_fullscreen));
     }
 }
