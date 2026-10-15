@@ -13,7 +13,7 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 /// window's own records are keyed by pid and are expected to be useless on the next boot; these are not.
 #[test]
 fn launch_memory_survives_a_save_and_load() {
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::layout::ColumnWidth;
     use crate::workspaces::domain::launch_memory::{Slot, topology_key};
 
     let engine = test_engine();
@@ -61,7 +61,7 @@ fn launch_memory_survives_a_save_and_load() {
 /// workspace happens to be active at the time.
 #[test]
 fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::layout::ColumnWidth;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
@@ -336,7 +336,7 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
 /// cannot pass.
 #[test]
 fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::layout::ColumnWidth;
     use crate::workspaces::domain::launch_memory::{Slot, topology_key};
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
@@ -431,7 +431,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
 /// relaunched window came back at the default no matter what it had been.
 #[test]
 fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::layout::ColumnWidth;
     use crate::workspaces::domain::launch_memory::topology_key;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
@@ -505,7 +505,7 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
 /// column would come back clamped to `max-column-width`, 1148pt.
 #[test]
 fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save() {
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::layout::ColumnWidth;
     use crate::workspaces::domain::launch_memory::topology_key;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
@@ -552,9 +552,11 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
     );
     let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
-    engine
-        .workspace_tree_mut(ws_id)
-        .set_column_width_offset(layout, window, 0.33797, true);
+    engine.workspace_tree_mut(ws_id).set_column_width(
+        layout,
+        window,
+        ColumnWidth::Unbounded(0.33797),
+    );
 
     engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
@@ -578,8 +580,8 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
 /// held only to the viewport, not as the full-width mode. From the default 0.7, one step is 1.0.
 #[test]
 fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
+    use crate::layout::ColumnWidth;
     use crate::layout::domain::area::compute_tiling_area;
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
     use crate::workspaces::domain::launch_memory::topology_key;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
@@ -692,7 +694,7 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
 /// read it" was indistinguishable from "it has no width". See `ProjectedWidth`.
 #[test]
 fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::layout::ColumnWidth;
     use crate::workspaces::engine::LayoutCommand;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";

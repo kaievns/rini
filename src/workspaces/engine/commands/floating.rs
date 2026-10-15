@@ -80,11 +80,11 @@ mod tests {
     use rustc_hash::FxHashMap as HashMap;
 
     use super::*;
+    use crate::layout::ColumnWidth;
     use crate::layout::settings::LayoutSettings;
     use crate::windows::domain::info::WindowInfo;
     use crate::windows::domain::state::WindowState;
     use crate::workspaces::LayoutEvent;
-    use crate::workspaces::domain::display_affinity::ColumnWidth;
     use crate::workspaces::settings::VirtualWorkspaceSettings;
 
     const DISPLAY: &str = "display-a";

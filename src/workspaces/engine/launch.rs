@@ -6,8 +6,8 @@ use rini_core::ids::{SpaceId, WindowId};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
+use crate::layout::ColumnWidth;
 use crate::workspaces::WindowStore;
-use crate::workspaces::domain::display_affinity::ColumnWidth;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::LayoutEngine;
@@ -121,11 +121,8 @@ impl LayoutEngine {
         let tree = self.workspace_tree(workspace_id);
         let mut consulted = false;
         for layout in self.workspace_layouts.configurations_for(space, workspace_id) {
-            if tree.is_window_full_width(layout, window) {
-                return Some(Some(ColumnWidth::FullWidth));
-            }
-            if let Some((offset, unbounded)) = tree.column_width_offset(layout, window) {
-                return Some(Some(ColumnWidth::from_offset(offset, unbounded)));
+            if let Some(width) = tree.column_width(layout, window) {
+                return Some(Some(width));
             }
             consulted |= tree.contains_window(layout, window);
         }

@@ -9,6 +9,7 @@ pub use rini_ipc::protocol::{Direction, ResizeOrientation};
 pub mod domain;
 pub mod settings;
 
+pub use domain::column_width::ColumnWidth;
 pub use domain::scrolling::ScrollingLayoutSystem;
 
 slotmap::new_key_type! { pub struct LayoutId; }

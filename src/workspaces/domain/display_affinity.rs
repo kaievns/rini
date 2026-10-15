@@ -23,6 +23,7 @@ use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
+use crate::layout::ColumnWidth;
 use crate::workspaces::domain::display_setup::{Setup, SetupId};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -45,51 +46,6 @@ pub struct DisplayAffinity {
     current: SetupId,
 }
 
-/// The width a window occupied, as the layout means it rather than in points.
-///
-/// Points would not survive a resolution change or a move between displays of different
-/// widths, which is exactly when this record is consulted. A file holds it as a `StoredWidth`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ColumnWidth {
-    /// Full viewport width, as `Mod+F` produces. Kept distinct from `Offset` because it is a
-    /// MODE, not a ratio: it must stay full width on a display of any size, and it round-trips
-    /// back to the width it had when toggled off.
-    FullWidth,
-    /// A deliberate width, as an offset from the configured `column_width_ratio`.
-    Offset(f64),
-    /// An offset as `Offset` is, but unlike it held by no display's `min-column-width` or
-    /// `max-column-width`: the width a mouse drag gives, and the preset cycle's 100%.
-    Unbounded(f64),
-}
-
-impl ColumnWidth {
-    /// The record of a column's offset, by whether it is unbounded.
-    pub fn from_offset(offset: f64, unbounded: bool) -> Self {
-        if unbounded {
-            Self::Unbounded(offset)
-        } else {
-            Self::Offset(offset)
-        }
-    }
-
-    /// The width as a file holds it, and whether it is unbounded.
-    pub fn stored(self) -> (StoredWidth, bool) {
-        match self {
-            Self::FullWidth => (StoredWidth::FullWidth, false),
-            Self::Offset(offset) => (StoredWidth::Offset(offset), false),
-            Self::Unbounded(offset) => (StoredWidth::Offset(offset), true),
-        }
-    }
-
-    /// A width read from a file, given whether it is unbounded.
-    pub fn from_stored(width: StoredWidth, unbounded: bool) -> Self {
-        match width {
-            StoredWidth::FullWidth => Self::FullWidth,
-            StoredWidth::Offset(offset) => Self::from_offset(offset, unbounded),
-        }
-    }
-}
-
 /// A `ColumnWidth` as a file holds it: the two variants every rini reads. An unbounded width is
 /// held as its offset, and the mark beside it in a field an older rini skips, so going back to one
 /// keeps every width rather than refusing the file and the machine's memory with it.
@@ -97,6 +53,26 @@ impl ColumnWidth {
 pub enum StoredWidth {
     FullWidth,
     Offset(f64),
+}
+
+impl StoredWidth {
+    /// `width` as a file holds it, and whether it is unbounded.
+    pub fn of(width: ColumnWidth) -> (Self, bool) {
+        match width {
+            ColumnWidth::FullWidth => (Self::FullWidth, false),
+            ColumnWidth::Offset(offset) => (Self::Offset(offset), false),
+            ColumnWidth::Unbounded(offset) => (Self::Offset(offset), true),
+        }
+    }
+
+    /// The width it holds, given whether the file marks it unbounded.
+    pub fn read(self, unbounded: bool) -> ColumnWidth {
+        match self {
+            Self::FullWidth => ColumnWidth::FullWidth,
+            Self::Offset(offset) if unbounded => ColumnWidth::Unbounded(offset),
+            Self::Offset(offset) => ColumnWidth::Offset(offset),
+        }
+    }
 }
 
 /// Widths per display and window, as a file holds them.
@@ -113,7 +89,7 @@ pub fn store_widths(
     let mut unbounded = UnboundedWidths::default();
     for (display, windows) in widths {
         for (&window, &width) in windows {
-            let (width, is_unbounded) = width.stored();
+            let (width, is_unbounded) = StoredWidth::of(width);
             stored.entry(display.clone()).or_default().insert(window, width);
             if is_unbounded {
                 unbounded.entry(display.clone()).or_default().insert(window);
@@ -136,7 +112,7 @@ pub fn read_widths(
                 .into_iter()
                 .map(|(window, width)| {
                     let unbounded = marked.is_some_and(|set| set.contains(&window));
-                    (window, ColumnWidth::from_stored(width, unbounded))
+                    (window, width.read(unbounded))
                 })
                 .collect();
             (display, windows)
@@ -744,8 +720,8 @@ mod tests {
     #[test]
     fn a_dragged_width_round_trips_and_an_old_record_reads_as_before() {
         let mut affinity = DisplayAffinity::default();
-        affinity.set_window_width("built-in", win(1), ColumnWidth::from_offset(0.33797, true));
-        affinity.set_window_width("built-in", win(2), ColumnWidth::from_offset(0.25, false));
+        affinity.set_window_width("built-in", win(1), ColumnWidth::Unbounded(0.33797));
+        affinity.set_window_width("built-in", win(2), ColumnWidth::Offset(0.25));
 
         let written = ron::ser::to_string(&affinity).unwrap();
         assert!(written.contains("Offset(0.25)"), "{written}");

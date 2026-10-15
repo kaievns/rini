@@ -2,6 +2,7 @@
 
 pub mod area;
 pub mod boundary;
+pub mod column_width;
 pub mod constraints;
 pub mod edge_drag;
 pub mod preset_width;

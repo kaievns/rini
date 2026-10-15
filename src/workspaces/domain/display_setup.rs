@@ -21,8 +21,9 @@ use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
+use crate::layout::ColumnWidth;
 use crate::workspaces::domain::display_affinity::{
-    ColumnWidth, StoredWidths, UnboundedWidths, read_widths, store_widths,
+    StoredWidths, UnboundedWidths, read_widths, store_widths,
 };
 
 /// The set of displays attached at one moment, as a durable name.

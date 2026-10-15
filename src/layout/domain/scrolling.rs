@@ -4,6 +4,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::layout::domain::area::compute_tiling_area;
+use crate::layout::domain::column_width::GivenWidth;
 use crate::layout::domain::constraints::{
     ColumnKind, column_ratio, holds_viewport, ratio_of_column_width,
 };
@@ -72,31 +73,70 @@ struct KeptView {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(from = "ColumnRecord", into = "ColumnRecord")]
 struct Column {
     windows: Vec<WindowId>,
-    width_offset: f64,
-    #[serde(default)]
-    width_overridden: bool,
-    /// The width is held only to the viewport, not to `min-column-width` and `max-column-width`,
-    /// as a mouse drag or `Mod+R`'s 100% gives it.
-    #[serde(default, rename = "width_dragged")]
-    width_unbounded: bool,
-    #[serde(default)]
+    /// A width of its own, `None` while it takes the layout's `column_width_ratio`.
+    width: Option<GivenWidth>,
     height_weights: Vec<f64>,
     /// Whether `height_weights` are DESIRED PIXEL HEIGHTS from a deliberate vertical resize, rather
     /// than the equal ratios a freshly folded column starts at. The two are read differently and
     /// conflating them is what collapsed a folded window to its title bar.
+    height_overridden: bool,
+}
+
+/// A `Column` as a layout file holds it: its width an offset, whether it was given one, and whether
+/// the bounds hold it, a mark an older rini skips.
+#[derive(Serialize, Deserialize)]
+#[serde(rename = "Column")]
+struct ColumnRecord {
+    windows: Vec<WindowId>,
+    width_offset: f64,
+    #[serde(default)]
+    width_overridden: bool,
+    #[serde(default)]
+    width_dragged: bool,
+    #[serde(default)]
+    height_weights: Vec<f64>,
     #[serde(default)]
     height_overridden: bool,
 }
 
-impl Column {
-    /// A width of its own, as an offset from the default ratio, and whether the bounds hold it.
-    fn give_width(&mut self, offset: f64, unbounded: bool) {
-        self.width_offset = offset;
-        self.width_overridden = true;
-        self.width_unbounded = unbounded;
+impl From<ColumnRecord> for Column {
+    fn from(record: ColumnRecord) -> Self {
+        let width = match (record.width_overridden, record.width_dragged) {
+            (false, _) => None,
+            (true, false) => Some(GivenWidth::Bounded(record.width_offset)),
+            (true, true) => Some(GivenWidth::Unbounded(record.width_offset)),
+        };
+        Self {
+            windows: record.windows,
+            width,
+            height_weights: record.height_weights,
+            height_overridden: record.height_overridden,
+        }
     }
+}
+
+impl From<Column> for ColumnRecord {
+    fn from(column: Column) -> Self {
+        Self {
+            windows: column.windows,
+            width_offset: column.width.map_or(0.0, GivenWidth::offset),
+            width_overridden: column.width.is_some(),
+            width_dragged: matches!(column.width, Some(GivenWidth::Unbounded(_))),
+            height_weights: column.height_weights,
+            height_overridden: column.height_overridden,
+        }
+    }
+}
+
+impl Column {
+    /// Its offset from the layout's `column_width_ratio`: none while it has no width of its own.
+    fn width_offset(&self) -> f64 { self.width.map_or(0.0, GivenWidth::offset) }
+
+    /// Whether its width is held only to the viewport.
+    fn is_unbounded(&self) -> bool { matches!(self.width, Some(GivenWidth::Unbounded(_))) }
 
     fn ensure_height_weights(&mut self) {
         if self.height_weights.len() != self.windows.len() {
@@ -313,9 +353,7 @@ impl LayoutState {
         };
         self.columns.insert(insert_at, Column {
             windows: vec![wid],
-            width_offset: 0.0,
-            width_overridden: false,
-            width_unbounded: false,
+            width: None,
             height_weights: vec![weight],
             height_overridden: false,
         });
@@ -372,7 +410,7 @@ impl LayoutState {
         if self.fullscreen_within_gaps.contains(&wid) {
             return 1.0;
         }
-        self.column_width_ratio + self.columns[col_idx].width_offset
+        self.column_width_ratio + self.columns[col_idx].width_offset()
     }
 
     /// Whether this column holds a maximised window, and so occupies the whole viewport.
@@ -383,7 +421,7 @@ impl LayoutState {
     fn column_kind(&self, col: &Column) -> ColumnKind {
         if self.is_full_width_column(col) {
             ColumnKind::FullWidth
-        } else if col.width_unbounded {
+        } else if col.is_unbounded() {
             ColumnKind::Unbounded
         } else {
             ColumnKind::Bounded
@@ -444,11 +482,17 @@ impl LayoutState {
         }
     }
 
-    /// Give `wid`'s column an explicit ratio, unbounded or not, leaving full width if it was
-    /// maximised.
-    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64, unbounded: bool) {
+    /// Give `wid`'s column an explicit ratio, its offset given as `given` says, leaving full width
+    /// if it was maximised.
+    fn set_column_ratio(
+        &mut self,
+        wid: WindowId,
+        col_idx: usize,
+        ratio: f64,
+        given: fn(f64) -> GivenWidth,
+    ) {
         self.leave_full_width_in_place(wid);
-        self.columns[col_idx].give_width(ratio - self.column_width_ratio, unbounded);
+        self.columns[col_idx].width = Some(given(ratio - self.column_width_ratio));
     }
 
     fn locate(&self, wid: WindowId) -> Option<(usize, usize)> {
@@ -708,9 +752,7 @@ impl LayoutState {
     fn insert_column_after(&mut self, index: usize, wid: WindowId) {
         let column = Column {
             windows: vec![wid],
-            width_offset: 0.0,
-            width_overridden: false,
-            width_unbounded: false,
+            width: None,
             height_weights: vec![1.0],
             height_overridden: false,
         };
@@ -723,9 +765,7 @@ impl LayoutState {
     fn insert_column_at_end(&mut self, wid: WindowId) {
         self.columns.push(Column {
             windows: vec![wid],
-            width_offset: 0.0,
-            width_overridden: false,
-            width_unbounded: false,
+            width: None,
             height_weights: vec![1.0],
             height_overridden: false,
         });
@@ -753,9 +793,7 @@ impl LayoutState {
             if target >= self.columns.len() {
                 self.columns.push(Column {
                     windows: vec![window],
-                    width_offset: 0.0,
-                    width_overridden: false,
-                    width_unbounded: false,
+                    width: None,
                     height_weights: vec![1.0],
                     height_overridden: false,
                 });
@@ -814,7 +852,7 @@ impl ScrollingLayoutSystem {
         // width matching no preset, so Mod+R could never return a window to it and
         // every window looked subtly wrong.
         //
-        // Columns the user deliberately resized (width_overridden) keep their chosen
+        // Columns the user deliberately resized (a `width` of their own) keep their chosen
         // absolute width by re-basing the offset. Everything else returns to the new
         // default.
         let ratio_changed =
@@ -827,11 +865,9 @@ impl ScrollingLayoutSystem {
             for state in self.layouts.values_mut() {
                 state.column_width_ratio = settings.column_width_ratio;
                 for column in &mut state.columns {
-                    if column.width_overridden {
-                        column.width_offset += old_ratio - settings.column_width_ratio;
-                    } else {
-                        column.width_offset = 0.0;
-                    }
+                    column.width = column
+                        .width
+                        .map(|width| width.shifted(old_ratio - settings.column_width_ratio));
                 }
             }
         }
@@ -866,7 +902,7 @@ impl ScrollingLayoutSystem {
         let base_ratio = Self::clamp_base_ratio(state.column_width_ratio, min_ratio, max_ratio);
         (
             kind,
-            column_ratio(kind, base_ratio, col.width_offset, min_ratio, max_ratio),
+            column_ratio(kind, base_ratio, col.width_offset(), min_ratio, max_ratio),
         )
     }
 
@@ -1026,9 +1062,7 @@ impl ScrollingLayoutSystem {
             };
             state.columns.insert(insert_at, Column {
                 windows: vec![wid],
-                width_offset: 0.0,
-                width_overridden: false,
-                width_unbounded: false,
+                width: None,
                 height_weights: vec![weight],
                 height_overridden: false,
             });
@@ -1136,7 +1170,7 @@ impl ScrollingLayoutSystem {
                 rini_ipc::protocol::ContainerTreeNode {
                     node_type: rini_ipc::protocol::ContainerNodeType::Container,
                     layout_kind: Some(rini_ipc::protocol::LayoutKind::Vertical),
-                    weight: Some((state.column_width_ratio + column.width_offset).max(0.0)),
+                    weight: Some((state.column_width_ratio + column.width_offset()).max(0.0)),
                     window_id: None,
                     is_selected: false,
                     is_fullscreen_within_gaps: false,
@@ -1470,11 +1504,12 @@ impl ScrollingLayoutSystem {
             let centred = centres(col_idx, state.columns.len(), center, has_override);
             dragged_width(start.size.width, new_frame.size.width, centred)
         });
-        let kind = if side_drag.is_some() || state.columns[col_idx].width_unbounded {
-            ColumnKind::Unbounded
-        } else {
-            ColumnKind::Bounded
-        };
+        let (kind, given): (_, fn(f64) -> GivenWidth) =
+            if side_drag.is_some() || state.columns[col_idx].is_unbounded() {
+                (ColumnKind::Unbounded, GivenWidth::Unbounded)
+            } else {
+                (ColumnKind::Bounded, GivenWidth::Bounded)
+            };
         let read_back = ratio_of_column_width(kind, width, tiling.size.width, gaps.inner);
         let ratio = column_ratio(kind, read_back, 0.0, min_ratio, max_ratio);
         if let Some((start, _)) = side_drag
@@ -1484,11 +1519,11 @@ impl ScrollingLayoutSystem {
             if !full_width {
                 // The width before the drag, for the toggle back.
                 let offset = start.size.width / tiling.size.width - base_ratio;
-                state.columns[col_idx].give_width(offset, true);
+                state.columns[col_idx].width = Some(GivenWidth::Unbounded(offset));
                 state.enter_full_width(wid);
             }
         } else if !width_kept {
-            state.set_column_ratio(wid, col_idx, ratio, kind == ColumnKind::Unbounded);
+            state.set_column_ratio(wid, col_idx, ratio, given);
         }
 
         if !height_kept {
@@ -1690,6 +1725,7 @@ mod tests {
 
     use super::{Column, Pin, Place, ScrollingLayoutSystem, View, rebased_offset};
     use crate::layout::domain::area::compute_tiling_area;
+    use crate::layout::domain::column_width::{ColumnWidth, GivenWidth};
     use crate::layout::domain::edge_drag::{Drag, End};
     use crate::layout::domain::tile;
     use crate::layout::settings::{CenterFocusedColumn, Gaps, ScrollingLayoutSettings};
@@ -1951,9 +1987,7 @@ mod tests {
         let state = system.layouts.get_mut(layout).expect("layout state missing");
         state.columns = vec![Column {
             windows: vec![w1, w2],
-            width_offset: 0.0,
-            width_overridden: false,
-            width_unbounded: false,
+            width: None,
             height_weights: vec![1.0, 1.0],
             height_overridden: false,
         }];
@@ -2031,9 +2065,7 @@ mod tests {
         let state = system.layouts.get_mut(layout).expect("layout state missing");
         state.columns = vec![Column {
             windows: vec![locked, capped],
-            width_offset: 0.0,
-            width_overridden: false,
-            width_unbounded: false,
+            width: None,
             height_weights: vec![1.0, 1.0],
             height_overridden: false,
         }];
@@ -4794,9 +4826,7 @@ mod tests {
     fn a_dragged_column_is_written_so_a_rini_from_before_it_reads_it() {
         let column = Column {
             windows: vec![wid(1, 1)],
-            width_offset: 0.33797,
-            width_overridden: true,
-            width_unbounded: true,
+            width: Some(GivenWidth::Unbounded(0.33797)),
             ..Column::default()
         };
         let written = ron::ser::to_string(&column).unwrap();
@@ -4834,8 +4864,10 @@ mod tests {
         let state = restored.layout_state(layout).expect("layout");
         let (col_idx, _) = state.locate(w[1]).expect("column");
         let column = &state.columns[col_idx];
-        assert!(column.width_overridden && column.width_unbounded, "{column:?}");
-        assert_near(state.column_width_ratio + column.width_offset, 1.0, "ratio");
+        let Some(GivenWidth::Unbounded(offset)) = column.width else {
+            panic!("an unbounded width: {column:?}");
+        };
+        assert_near(state.column_width_ratio + offset, 1.0, "ratio");
         assert!(!restored.is_window_full_width(layout, w[1]));
         assert_eq!(laid_out_xw(&mut restored, layout, w[1]).1, 1722.0);
     }
@@ -5180,7 +5212,7 @@ mod tests {
         let w: Vec<WindowId> = (1..=ratios.len() as u32).map(|idx| wid(1, idx)).collect();
         for (&window, &ratio) in w.iter().zip(ratios) {
             system.add_window_after_selection(layout, window);
-            system.set_column_width_offset(layout, window, ratio - 0.5, false);
+            system.set_column_width(layout, window, ColumnWidth::Offset(ratio - 0.5));
         }
         assert!(system.select_window(layout, w[0]));
         kai_s_frames(&mut system, layout);
@@ -5676,8 +5708,8 @@ mod tests {
             system.add_window_after_selection(layout, window);
             kai_s_frames(&mut system, layout);
         }
-        system.set_column_width_offset(layout, w[1], 0.33333 - 0.5, false);
-        system.set_column_width_offset(layout, w[2], 0.33333 - 0.5, false);
+        system.set_column_width(layout, w[1], ColumnWidth::Offset(0.33333 - 0.5));
+        system.set_column_width(layout, w[2], ColumnWidth::Offset(0.33333 - 0.5));
         assert!(system.select_window(layout, w[0]));
         kai_s_frames(&mut system, layout);
         for direction in [Direction::Right, Direction::Right, Direction::Left] {
@@ -6674,7 +6706,7 @@ mod tests {
 
     fn assert_no_size_given(system: &mut ScrollingLayoutSystem, layout: LayoutId) {
         for column in &system.layout_state(layout).expect("layout").columns {
-            assert!(!column.width_overridden, "{column:?}");
+            assert_eq!(column.width, None, "{column:?}");
             assert!(!column.height_overridden, "{column:?}");
         }
     }
@@ -6711,7 +6743,7 @@ mod tests {
         answer(&mut system, layout, wid(1, 1), (1.0, 50.0));
 
         let column = &system.layout_state(layout).expect("layout").columns[0];
-        assert!(!column.width_overridden);
+        assert_eq!(column.width, None);
         assert!(column.height_overridden);
         assert_eq!(laid_out_xw(&mut system, layout, wid(1, 1)), (3.0, 860.0));
         assert_eq!(laid_out_yh(&mut system, layout, wid(1, 1)), (3.0, 318.0));
@@ -6761,7 +6793,7 @@ mod tests {
         answer(&mut system, layout, wid(1, 1), (50.0, 1.0));
 
         let column = &system.layout_state(layout).expect("layout").columns[0];
-        assert!(column.width_overridden);
+        assert!(column.width.is_some());
         assert!(!column.height_overridden);
         assert_eq!(laid_out_xw(&mut system, layout, wid(1, 1)), (3.0, 810.0));
         assert_eq!(laid_out_yh(&mut system, layout, wid(1, 1)), rows);
@@ -6926,8 +6958,8 @@ mod tests {
                 &kai_s_gaps(),
             );
             assert_eq!(
-                plain.column_width_offset(layout, w[1]),
-                with_border.column_width_offset(other, w[1])
+                plain.column_width(layout, w[1]),
+                with_border.column_width(other, w[1])
             );
             let slot = frame_for(&render(&mut plain, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
             assert_eq!(bordered(&mut with_border, other, w[1]), window_in(slot, BORDER));

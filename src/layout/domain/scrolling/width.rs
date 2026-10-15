@@ -1,38 +1,40 @@
-//! A column's width: carried between layouts (`column_width_offset`), full width as a mode
+//! A column's width: carried between layouts (`column_width`), full width as a mode
 //! (`toggle_full_width`), the preset widths a key cycles through (`cycle_preset_column_width`), and
 //! the incremental resize keys (`resize_selection_by`).
 
 use rini_core::ids::WindowId;
 
 use super::ScrollingLayoutSystem;
+use crate::layout::domain::column_width::{ColumnWidth, GivenWidth};
 use crate::layout::domain::constraints::{ColumnKind, column_ratio};
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::{LayoutId, ResizeOrientation};
 
 impl ScrollingLayoutSystem {
-    /// The width a window's column carries, if it has been sized away from the default, and
-    /// whether it is unbounded, held only to the viewport.
+    /// The width a window carries to another layout: full width when it is maximised, else its
+    /// column's own width, `None` while the column takes the default ratio.
     ///
     /// Needed so moving a window between workspaces or displays keeps the width the user gave
     /// it; a fresh column otherwise starts at the default ratio and the window appeared to
     /// reset to 50%.
-    pub fn column_width_offset(&self, layout: LayoutId, wid: WindowId) -> Option<(f64, bool)> {
+    pub fn column_width(&self, layout: LayoutId, wid: WindowId) -> Option<ColumnWidth> {
         let state = self.layout_state(layout)?;
+        if state.fullscreen_within_gaps.contains(&wid) {
+            return Some(ColumnWidth::FullWidth);
+        }
         let (col_idx, _) = state.locate(wid)?;
-        let column = state.columns.get(col_idx)?;
         // Only a deliberately sized column is worth carrying. An untouched one should adopt
         // the destination's default, which may differ (a wider display, a different config).
-        column.width_overridden.then_some((column.width_offset, column.width_unbounded))
+        state.columns.get(col_idx)?.width.map(GivenWidth::carried)
     }
 
-    /// Re-apply a width carried from another column.
-    pub fn set_column_width_offset(
-        &mut self,
-        layout: LayoutId,
-        wid: WindowId,
-        offset: f64,
-        unbounded: bool,
-    ) {
+    /// Re-apply a width carried from another layout: full width as the mode, any other as the
+    /// column's own.
+    pub fn set_column_width(&mut self, layout: LayoutId, wid: WindowId, width: ColumnWidth) {
+        let Some(given) = GivenWidth::from_carried(width) else {
+            self.restore_window_full_width(layout, wid);
+            return;
+        };
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -40,15 +42,15 @@ impl ScrollingLayoutSystem {
             return;
         };
         if let Some(column) = state.columns.get_mut(col_idx) {
-            column.give_width(offset, unbounded);
+            column.width = Some(given);
         }
     }
 
     /// Whether this window's column occupies the whole viewport width.
     ///
-    /// Separate from `column_width_offset` because full width is a MODE rather than a ratio:
-    /// it stays full on a display of any size, so it cannot be represented as an offset from
-    /// the configured default and survive a move between displays.
+    /// Full width is a MODE rather than a ratio: it stays full on a display of any size, so it
+    /// cannot be represented as an offset from the configured default and survive a move between
+    /// displays.
     pub fn is_window_full_width(&self, layout: LayoutId, wid: WindowId) -> bool {
         self.layout_state(layout)
             .is_some_and(|state| state.fullscreen_within_gaps.contains(&wid))
@@ -131,13 +133,14 @@ impl ScrollingLayoutSystem {
             return Vec::new();
         };
 
-        let (ratio, unbounded) = match next_preset(state.ratio_of(selected, col_idx), &presets) {
-            Some(PresetWidth::Full) => (1.0, true),
-            Some(PresetWidth::Ratio(ratio)) => (ratio, false),
-            None => return Vec::new(),
-        };
+        let (ratio, given): (f64, fn(f64) -> GivenWidth) =
+            match next_preset(state.ratio_of(selected, col_idx), &presets) {
+                Some(PresetWidth::Full) => (1.0, GivenWidth::Unbounded),
+                Some(PresetWidth::Ratio(ratio)) => (ratio, GivenWidth::Bounded),
+                None => return Vec::new(),
+            };
         let place = reveals_only.then(|| state.place_of(selected)).flatten();
-        state.set_column_ratio(selected, col_idx, ratio, unbounded);
+        state.set_column_ratio(selected, col_idx, ratio, given);
         state.selected = Some(selected);
         state.rescroll_after_width(selected, place, reveals_only);
 
@@ -209,7 +212,7 @@ impl ScrollingLayoutSystem {
         }
         let clamped = column_ratio(ColumnKind::Bounded, current, amount, min_ratio, max_ratio);
         let place = reveals_only.then(|| state.place_of(selected)).flatten();
-        state.set_column_ratio(selected, col_idx, clamped, false);
+        state.set_column_ratio(selected, col_idx, clamped, GivenWidth::Bounded);
         state.rescroll_after_width(selected, place, reveals_only);
     }
 }
