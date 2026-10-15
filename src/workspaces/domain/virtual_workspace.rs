@@ -726,56 +726,15 @@ impl WorkspaceStore {
             display: _,
         } = rule_decision
         {
-            let target_workspace_id = if let Some(ref ws_sel) = workspace {
-                let maybe_idx: Option<usize> = match ws_sel {
-                    WorkspaceSelector::Index(i) => Some(*i),
-                    WorkspaceSelector::Name(name) => {
-                        let workspaces = self.list_workspaces(space);
-                        match workspaces.iter().position(|(_, n)| n == name) {
-                            Some(idx) => Some(idx),
-                            None => {
-                                tracing::warn!(
-                                    "App rule references workspace name '{}' which could not be resolved for space {:?}; falling back to default workspace",
-                                    name,
-                                    space
-                                );
-                                None
-                            }
-                        }
-                    }
-                };
-
-                if let Some(workspace_idx) = maybe_idx {
-                    let len = self.workspace_order.len();
-                    if workspace_idx >= len {
-                        tracing::warn!(
-                            "App rule references non-existent workspace index {}, falling back to active workspace",
-                            workspace_idx
-                        );
-                        self.get_default_workspace(space)?
-                    } else {
-                        let workspaces = self.list_workspaces(space);
-                        if let Some((workspace_id, _)) = workspaces.get(workspace_idx) {
-                            *workspace_id
-                        } else {
-                            tracing::warn!(
-                                "App rule references invalid workspace index {}, falling back to active workspace",
-                                workspace_idx
-                            );
-                            self.get_default_workspace(space)?
-                        }
-                    }
-                } else if let Some(existing_assignment) = existing_assignment {
-                    existing_assignment.workspace_id
-                } else {
-                    self.get_default_workspace(space)?
-                }
-            } else {
-                if let Some(existing_assignment) = existing_assignment {
-                    existing_assignment.workspace_id
-                } else {
-                    self.get_default_workspace(space)?
-                }
+            let target_workspace_id =
+                self.rule_workspace(space, workspace.as_ref(), existing_assignment)?;
+            let effects = AppRuleEffects {
+                workspace_id: target_workspace_id,
+                floating,
+                position,
+                size,
+                focus,
+                prev_rule_decision,
             };
 
             if let Some(existing_assignment) = existing_assignment {
@@ -785,28 +744,27 @@ impl WorkspaceStore {
                 }
                 return Ok(AppRuleResult::Managed(AppRuleEffects {
                     workspace_id: existing_assignment.workspace_id,
-                    floating,
-                    position,
-                    size,
-                    focus,
-                    prev_rule_decision,
+                    ..effects
                 }));
             }
 
             if self.assign_window_to_workspace(window_store, space, window_id, target_workspace_id)
             {
-                return Ok(AppRuleResult::Managed(AppRuleEffects {
-                    workspace_id: target_workspace_id,
-                    floating,
-                    position,
-                    size,
-                    focus,
-                    prev_rule_decision,
-                }));
-            } else {
-                error!("Failed to assign window to workspace from app rule");
+                return Ok(AppRuleResult::Managed(effects));
             }
+            error!("Failed to assign window to workspace from app rule");
         }
+
+        let unruled = |workspace_id| {
+            AppRuleResult::Managed(AppRuleEffects {
+                workspace_id,
+                floating: false,
+                position: None,
+                size: None,
+                focus: false,
+                prev_rule_decision,
+            })
+        };
 
         // No matching app rule: preserve the current workspace assignment if one
         // already exists. Discovery/refresh passes must not silently fall back to
@@ -817,29 +775,65 @@ impl WorkspaceStore {
                 error!("Failed to preserve existing window workspace assignment");
                 return Err(WorkspaceError::AssignmentFailed);
             }
-            return Ok(AppRuleResult::Managed(AppRuleEffects {
-                workspace_id: existing_assignment.workspace_id,
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                prev_rule_decision,
-            }));
+            return Ok(unruled(existing_assignment.workspace_id));
         }
 
         let default_workspace_id = self.get_default_workspace(space)?;
         if self.assign_window_to_workspace(window_store, space, window_id, default_workspace_id) {
-            Ok(AppRuleResult::Managed(AppRuleEffects {
-                workspace_id: default_workspace_id,
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                prev_rule_decision,
-            }))
+            Ok(unruled(default_workspace_id))
         } else {
             error!("Failed to assign window to default workspace");
             Err(WorkspaceError::AssignmentFailed)
+        }
+    }
+
+    /// The workspace a rule naming `selector` sends a window to on `space`: the one it names, else
+    /// the window's own, else the default. A name or index that names none is logged.
+    fn rule_workspace(
+        &mut self,
+        space: SpaceId,
+        selector: Option<&WorkspaceSelector>,
+        existing_assignment: Option<WindowWorkspaceInfo>,
+    ) -> Result<VirtualWorkspaceId, WorkspaceError> {
+        let named_index = match selector {
+            None => None,
+            Some(WorkspaceSelector::Index(i)) => Some(*i),
+            Some(WorkspaceSelector::Name(name)) => {
+                let workspaces = self.list_workspaces(space);
+                let index = workspaces.iter().position(|(_, n)| n == name);
+                if index.is_none() {
+                    tracing::warn!(
+                        "App rule references workspace name '{}' which could not be resolved for space {:?}; falling back to default workspace",
+                        name,
+                        space
+                    );
+                }
+                index
+            }
+        };
+
+        let Some(workspace_idx) = named_index else {
+            return match existing_assignment {
+                Some(existing_assignment) => Ok(existing_assignment.workspace_id),
+                None => self.get_default_workspace(space),
+            };
+        };
+        if workspace_idx >= self.workspace_order.len() {
+            tracing::warn!(
+                "App rule references non-existent workspace index {}, falling back to active workspace",
+                workspace_idx
+            );
+            return self.get_default_workspace(space);
+        }
+        match self.list_workspaces(space).get(workspace_idx) {
+            Some((workspace_id, _)) => Ok(*workspace_id),
+            None => {
+                tracing::warn!(
+                    "App rule references invalid workspace index {}, falling back to active workspace",
+                    workspace_idx
+                );
+                self.get_default_workspace(space)
+            }
         }
     }
 
@@ -1013,6 +1007,32 @@ mod tests {
         let ids: Vec<_> =
             store.list_workspaces(SpaceId::new(1)).into_iter().map(|(id, _)| id).collect();
         (store, ids.try_into().expect("one id per name"))
+    }
+
+    /// A rule's workspace is the one it names, by index or by name; a rule that names none, or a
+    /// name no workspace has, leaves the window in its own, else the one showing. An index past the
+    /// last workspace goes to the one showing even for a window that has its own.
+    #[test]
+    fn a_rule_workspace_is_the_named_one_else_the_windows_own_else_the_one_showing() {
+        let (mut store, [first, second, third]) = numbered::<3>();
+        let space = SpaceId::new(1);
+        let own = Some(WindowWorkspaceInfo { space, workspace_id: third });
+        let index = WorkspaceSelector::Index;
+        let name = |name: &str| WorkspaceSelector::Name(name.into());
+
+        assert_eq!(store.rule_workspace(space, Some(&index(1)), own), Ok(second));
+        assert_eq!(store.rule_workspace(space, Some(&name("2")), None), Ok(second));
+        assert_eq!(store.rule_workspace(space, None, own), Ok(third));
+        assert_eq!(store.rule_workspace(space, None, None), Ok(first));
+        assert_eq!(
+            store.rule_workspace(space, Some(&name("nowhere")), own),
+            Ok(third)
+        );
+        assert_eq!(
+            store.rule_workspace(space, Some(&name("nowhere")), None),
+            Ok(first)
+        );
+        assert_eq!(store.rule_workspace(space, Some(&index(7)), own), Ok(first));
     }
 
     #[test]
