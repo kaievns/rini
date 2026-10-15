@@ -10,8 +10,8 @@ use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use tracing::debug;
 
 use super::logged::Whole;
-use super::tiles::Stacking;
-use super::{Composed, FlightEngine, Shape, frames_of, live_frame, restack};
+use super::tiles::{Stacking, frames_of, live_frame};
+use super::{Composed, FlightEngine, Shape, restack};
 use crate::animation::domain::choreography::{Cue, Look};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::plan;

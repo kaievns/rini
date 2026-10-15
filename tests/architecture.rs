@@ -1180,7 +1180,7 @@ const LONG_FNS: [(&str, &str, usize); 37] = [
 const LONG_FILES: [(&str, usize); 4] = [
     ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
-    ("src/transitions/platform/engine.rs", 1765),
+    ("src/transitions/platform/engine.rs", 1620),
     ("src/workspaces/engine.rs", 2544),
 ];
 

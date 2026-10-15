@@ -1,10 +1,11 @@
 //! How the flight engine makes a tile: whose it is, how it stacks and what it wears, read once for
-//! a pass's windows, and the tile it flies on.
+//! a pass's windows, where the window server has each window (`frames_of`, `live_frame`), and the
+//! tile it flies on.
 
 use std::collections::HashMap;
 
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::space::OverlayRect;
+use rini_geometry::space::{FromCg, OverlayRect, ScreenRect};
 
 use crate::animation::domain::motion::plan::entrance_from;
 use crate::animation::platform::overlay::OverlayTile;
@@ -106,6 +107,26 @@ impl Stacking {
             radius: self.radii.get(&server_id).copied(),
         }
     }
+}
+
+/// The frame the window server has for each of `ids` it knows, in one query.
+pub(super) fn frames_of(
+    ws: &dyn WindowServer,
+    ids: &[WindowServerId],
+) -> HashMap<WindowServerId, ScreenRect> {
+    let windows = ws.get_windows(ids).into_iter();
+    windows.map(|info| (info.id, ScreenRect::from_cg(info.frame))).collect()
+}
+
+/// The frame the window server reports for a window, if it reports a real one: the reactor's
+/// `from` can be the previous pass's destination rather than where the window sits.
+///
+/// A zero-sized frame is macOS saying it has not laid the window out yet, which is not a position to
+/// animate from. The geometry decision is `travel::tile_path`; this is the read it needs.
+pub(super) fn live_frame(ws: &dyn WindowServer, server_id: WindowServerId) -> Option<ScreenRect> {
+    ws.get_window(server_id)
+        .map(|info| ScreenRect::from_cg(info.frame))
+        .filter(|frame| frame.size.width > 0.0 && frame.size.height > 0.0)
 }
 
 #[cfg(test)]

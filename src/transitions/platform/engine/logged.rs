@@ -1,12 +1,14 @@
-//! What the flight engine logs: geometry to the point, and what a merge changed.
+//! What the flight engine logs: geometry to the point, what a merge changed, and what the overlay
+//! was dressed with.
 
 use std::fmt;
 
-use rini_geometry::space::{OverlayPoint, Point, Rect, Size, Vector};
+use rini_geometry::space::{OverlayPoint, OverlayRect, Point, Rect, Size, Vector};
 use tracing::debug;
 
 use crate::animation::domain::motion::plan::{FlightPlan, PlanDelta};
 use crate::animation::domain::motion::score::{Node, Score, Value};
+use crate::pictures::platform::service::Dressing;
 
 /// A frame, point, vector or size as the log gives it, to the point: a frame as its origin, then
 /// its size.
@@ -71,6 +73,27 @@ pub(super) fn merged(plan: &FlightPlan, score: &Score, delta: &PlanDelta, at: f6
             "member reparented"
         );
     }
+}
+
+/// Records what the overlay was dressed with; a black backdrop is only diagnosable after the fact.
+pub(super) fn dressed(path: &str, dressing: &Dressing, strip: Option<OverlayRect>) {
+    debug!(
+        path,
+        backdrop = dressing
+            .desktop
+            .as_ref()
+            .map(|b| format!("{} {:?}", Whole(b.coverage.covered), b.source))
+            .unwrap_or_else(|| "NONE".to_string()),
+        bar = dressing
+            .bar
+            .as_ref()
+            .map(|b| Whole(b.coverage.covered).to_string())
+            .unwrap_or_else(|| "NONE".to_string()),
+        strip = strip
+            .map(|strip| Whole(strip).to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        "overlay dressed"
+    );
 }
 
 #[cfg(test)]
