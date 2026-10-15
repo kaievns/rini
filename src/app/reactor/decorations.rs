@@ -129,7 +129,7 @@ impl Reactor {
             .filter_map(|screen| screen.space)
             .filter(|space| self.is_space_active(*space))
             .flat_map(|space| {
-                workspaces.existing_workspaces(space).into_iter().map(move |(workspace, _)| {
+                workspaces.existing_workspaces().into_iter().map(move |(workspace, _)| {
                     (space, workspace, engine.active_window(&self.state.windows, space, workspace))
                 })
             })

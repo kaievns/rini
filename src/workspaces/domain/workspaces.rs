@@ -46,15 +46,14 @@ impl WorkspaceLayouts {
         &self,
         workspaces: &crate::workspaces::WorkspaceStore,
     ) -> Result<(), String> {
-        for (&(space, workspace), info) in &self.map {
+        for (&(_, workspace), info) in &self.map {
             let Some(workspace_info) = workspaces.workspaces.get(workspace) else {
                 return Err(format!(
                     "layout state references missing workspace {workspace:?}"
                 ));
             };
-            // No space-ownership check: a workspace owns one strip per display, so having
-            // layout state under several native spaces is now correct rather than corrupt.
-            let _ = (space, workspace_info);
+            // A workspace owns one strip per display, so layout state under several native
+            // spaces is correct rather than corrupt.
             if info.configurations.is_empty() {
                 return Err(format!("workspace {workspace:?} has no layout configurations"));
             }
@@ -73,7 +72,7 @@ impl WorkspaceLayouts {
         }
 
         for space in workspaces.initialized_spaces() {
-            for (workspace, _) in workspaces.existing_workspaces(space) {
+            for (workspace, _) in workspaces.existing_workspaces() {
                 if !self.map.contains_key(&(space, workspace)) {
                     return Err(format!(
                         "workspace {workspace:?} on native space {} has no layout state",

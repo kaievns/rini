@@ -706,7 +706,6 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
             RestoreRequest::new(RestoreScope::Workspace, space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();

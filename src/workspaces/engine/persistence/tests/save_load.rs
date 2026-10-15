@@ -315,7 +315,7 @@ fn load_heals_disagreeing_tiled_and_floating_ownership() {
             },
         );
     }
-    let workspaces = engine.virtual_workspace_manager.existing_workspaces(space);
+    let workspaces = engine.virtual_workspace_manager.existing_workspaces();
     let active = engine.active_workspace(space).unwrap();
     let other = workspaces.iter().find(|(workspace, _)| *workspace != active).unwrap().0;
     let frame = objc2_core_foundation::CGRect::new(

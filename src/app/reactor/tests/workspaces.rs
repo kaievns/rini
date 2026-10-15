@@ -1982,7 +1982,7 @@ mod query_view {
                 .layout_manager
                 .layout_engine
                 .virtual_workspace_manager()
-                .existing_workspaces(never_seen)
+                .existing_workspaces()
                 .is_empty()
         );
     }

@@ -347,7 +347,7 @@ impl WorkspaceStore {
 
     pub fn active_workspace_idx(&self, space: SpaceId) -> Option<u64> {
         self.active_workspace(space).and_then(|active_ws_id| {
-            self.ordered_workspace_ids(space)
+            self.ordered_workspace_ids()
                 .iter()
                 .position(|id| *id == active_ws_id)
                 .map(|idx| idx as u64)
@@ -391,7 +391,7 @@ impl WorkspaceStore {
         skip_empty: Option<bool>,
         dir: Direction,
     ) -> Option<VirtualWorkspaceId> {
-        let ids = self.ordered_workspace_ids(space);
+        let ids = self.ordered_workspace_ids();
         if ids.is_empty() {
             return None;
         }
@@ -482,10 +482,10 @@ impl WorkspaceStore {
         }
 
         let source_index = self
-            .ordered_workspace_ids(existing_assignment.space)
+            .ordered_workspace_ids()
             .iter()
             .position(|&workspace_id| workspace_id == existing_assignment.workspace_id)?;
-        let target_workspace_id = *self.ordered_workspace_ids(space).get(source_index)?;
+        let target_workspace_id = *self.ordered_workspace_ids().get(source_index)?;
 
         self.assign_window_to_workspace(window_store, space, window_id, target_workspace_id)
             .then_some(target_workspace_id)
@@ -527,11 +527,9 @@ impl WorkspaceStore {
     pub fn set_last_rule_decision(
         &mut self,
         window_store: &mut WindowStore,
-        space: SpaceId,
         window_id: WindowId,
         value: bool,
     ) {
-        let _ = space;
         window_store.set_last_rule_decision(window_id, value);
     }
 
@@ -623,11 +621,7 @@ impl WorkspaceStore {
         self.workspaces.get(workspace_id)?.last_focused(space)
     }
 
-    pub fn workspace_info(
-        &self,
-        _space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-    ) -> Option<&VirtualWorkspace> {
+    pub fn workspace_info(&self, workspace_id: VirtualWorkspaceId) -> Option<&VirtualWorkspace> {
         self.workspaces.get(workspace_id)
     }
 
@@ -667,25 +661,21 @@ impl WorkspaceStore {
 
     pub fn list_workspaces(&mut self, space: SpaceId) -> Vec<(VirtualWorkspaceId, String)> {
         self.ensure_space_initialized(space);
-        self.existing_workspaces(space)
+        self.existing_workspaces()
     }
 
     /// Read workspace topology without creating missing state. Validation and restore planning
     /// must use this accessor so a failed transaction cannot initialize part of the live engine.
-    pub fn existing_workspaces(&self, space: SpaceId) -> Vec<(VirtualWorkspaceId, String)> {
-        self.ordered_workspace_ids(space)
+    pub fn existing_workspaces(&self) -> Vec<(VirtualWorkspaceId, String)> {
+        self.ordered_workspace_ids()
             .into_iter()
             .filter_map(|id| self.workspaces.get(id).map(|ws| (id, ws.name.clone())))
             .collect()
     }
 
-    /// Workspace index is creation/configuration order, represented by the stable slot-map key.
-    /// Serialized vectors are historical implementation detail and may have been reordered by an
-    /// older restore. All ordinal behavior must go through this canonical view.
-    fn ordered_workspace_ids(&self, _space: SpaceId) -> Vec<VirtualWorkspaceId> {
-        // One list for every display. The `space` argument is retained because callers are
-        // display-scoped and the ordinal is still meaningful per display, but the ORDER is
-        // global: index 2 is the same workspace on every display.
+    /// The one workspace list every display shares: index 2 is the same workspace on every
+    /// display. All ordinal behaviour goes through this view.
+    fn ordered_workspace_ids(&self) -> Vec<VirtualWorkspaceId> {
         self.workspace_order
             .iter()
             .copied()
@@ -967,7 +957,7 @@ impl WorkspaceStore {
             }
         }
 
-        let first_id = self.ordered_workspace_ids(space).first().copied().ok_or_else(|| {
+        let first_id = self.ordered_workspace_ids().first().copied().ok_or_else(|| {
             WorkspaceError::InconsistentState("No workspaces for space".to_string())
         })?;
 
@@ -1110,7 +1100,7 @@ mod tests {
                 .any(|(id, name)| *id == ws_id && name == "Test Workspace")
         );
 
-        let workspace = manager.workspace_info(space, ws_id).unwrap();
+        let workspace = manager.workspace_info(ws_id).unwrap();
         assert_eq!(workspace.name, "Test Workspace");
     }
 

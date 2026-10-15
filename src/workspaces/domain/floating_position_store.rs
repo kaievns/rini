@@ -21,15 +21,14 @@ pub struct FloatingPositionStore {
 
 impl FloatingPositionStore {
     pub fn validate_persisted(&self, workspaces: &WorkspaceStore) -> Result<(), String> {
-        for (&(space, workspace, window), frame) in &self.positions {
-            let Some(workspace_info) = workspaces.workspaces.get(workspace) else {
+        for (&(_, workspace, window), frame) in &self.positions {
+            // A workspace exists on every display, so a floating frame under any native
+            // space is legitimate.
+            if !workspaces.workspaces.contains_key(workspace) {
                 return Err(format!(
                     "floating frame for window {window:?} references missing workspace {workspace:?}"
                 ));
-            };
-            // A workspace exists on every display, so a floating frame under any native
-            // space is legitimate.
-            let _ = (space, workspace_info);
+            }
             if !frame.origin.x.is_finite()
                 || !frame.origin.y.is_finite()
                 || !frame.size.width.is_finite()

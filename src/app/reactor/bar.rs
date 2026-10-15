@@ -62,7 +62,7 @@ impl Reactor {
             .filter_map(|screen| {
                 let space = screen.space?;
                 let occupied = workspaces
-                    .existing_workspaces(space)
+                    .existing_workspaces()
                     .into_iter()
                     .map(|(workspace, _)| {
                         !workspaces

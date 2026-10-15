@@ -161,7 +161,7 @@ fn startup_restore_reapplies_configured_workspace_names() {
 
     let names = restored
         .virtual_workspace_manager
-        .existing_workspaces(space)
+        .existing_workspaces()
         .into_iter()
         .map(|(_, name)| name)
         .collect::<Vec<_>>();

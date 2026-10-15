@@ -82,7 +82,6 @@ fn workspace_restore_discards_unmatched_scoped_windows_and_floating_state() {
             RestoreRequest::new(RestoreScope::Workspace, space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
@@ -199,7 +198,6 @@ fn workspace_restore_keeps_current_windows_absent_from_snapshot() {
             RestoreRequest::new(RestoreScope::Workspace, space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
@@ -278,7 +276,7 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
     let target_workspace = engine.active_workspace(space).unwrap();
     let sibling_workspace = engine
         .virtual_workspace_manager
-        .existing_workspaces(space)
+        .existing_workspaces()
         .into_iter()
         .map(|(workspace, _)| workspace)
         .find(|workspace| *workspace != target_workspace)
@@ -324,7 +322,6 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
             RestoreRequest::new(RestoreScope::Workspace, space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
@@ -441,7 +438,6 @@ fn scoped_restore_does_not_consume_same_id_live_window_on_another_space() {
             RestoreRequest::new(RestoreScope::Workspace, target_space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
@@ -567,7 +563,6 @@ fn space_restore_uses_workspace_assignment_over_stale_window_server_space() {
             RestoreRequest::new(RestoreScope::Space, target_space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
@@ -623,13 +618,11 @@ fn space_restore_rejects_workspace_count_mismatch_before_mutating_layouts() {
         .add_window_after_selection(target_layout, sentinel);
 
     let error = engine
-        .restore_saved_layout(
+        .restore_layout(
             path.clone(),
-            RestoreScope::Space,
-            space,
+            RestoreRequest::new(RestoreScope::Space, space),
             &mut window_store,
             &mut memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap_err();
@@ -659,7 +652,7 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, size),
     );
-    let saved_workspaces = snapshot.virtual_workspace_manager.existing_workspaces(space);
+    let saved_workspaces = snapshot.virtual_workspace_manager.existing_workspaces();
     let saved_t = saved_workspaces[3].0;
     let saved_s = saved_workspaces[5].0;
     assert_eq!(snapshot.active_workspace(space), Some(saved_t));
@@ -693,7 +686,7 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, size),
     );
-    let target_s = engine.virtual_workspace_manager.existing_workspaces(space)[5].0;
+    let target_s = engine.virtual_workspace_manager.existing_workspaces()[5].0;
     assert!(engine.virtual_workspace_manager.set_active_workspace(space, target_s));
 
     engine
@@ -702,13 +695,12 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
             RestoreRequest::from_saved_file(RestoreScope::Workspace, space),
             &mut window_store,
             &mut memory,
-            &workspace_settings,
             &layout_settings,
         )
         .unwrap();
     let _ = std::fs::remove_file(path);
 
-    let restored = engine.virtual_workspace_manager.workspace_info(space, target_s).unwrap();
+    let restored = engine.virtual_workspace_manager.workspace_info(target_s).unwrap();
     assert_eq!(restored.name, "S");
 }
 
@@ -749,7 +741,7 @@ fn portable_restore_rejects_ambiguous_legacy_multi_space_files() {
     let target_workspace = engine.active_workspace(target_space).unwrap();
     let before_name = engine
         .virtual_workspace_manager
-        .workspace_info(target_space, target_workspace)
+        .workspace_info(target_workspace)
         .unwrap()
         .name
         .clone();
@@ -760,7 +752,6 @@ fn portable_restore_rejects_ambiguous_legacy_multi_space_files() {
             RestoreRequest::new(RestoreScope::Workspace, target_space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap_err();
@@ -768,11 +759,7 @@ fn portable_restore_rejects_ambiguous_legacy_multi_space_files() {
 
     assert!(error.to_string().contains("cannot choose a source"), "{error}");
     assert_eq!(
-        engine
-            .virtual_workspace_manager
-            .workspace_info(target_space, target_workspace)
-            .unwrap()
-            .name,
+        engine.virtual_workspace_manager.workspace_info(target_workspace).unwrap().name,
         before_name,
     );
 }
@@ -837,7 +824,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     let target_workspace = engine.active_workspace(target_space).unwrap();
     let target_name = engine
         .virtual_workspace_manager
-        .workspace_info(target_space, target_workspace)
+        .workspace_info(target_workspace)
         .unwrap()
         .name
         .clone();
@@ -847,17 +834,12 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
             RestoreRequest::new(RestoreScope::Workspace, target_space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
 
     assert_eq!(
-        engine
-            .virtual_workspace_manager
-            .workspace_info(target_space, target_workspace)
-            .unwrap()
-            .name,
+        engine.virtual_workspace_manager.workspace_info(target_workspace).unwrap().name,
         target_name,
     );
 
@@ -876,7 +858,6 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
             RestoreRequest::from_saved_file(RestoreScope::Workspace, target_space),
             &mut saved_store,
             &mut saved_target_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
@@ -884,7 +865,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     assert_eq!(
         saved_target
             .virtual_workspace_manager
-            .workspace_info(target_space, saved_workspace)
+            .workspace_info(saved_workspace)
             .unwrap()
             .name,
         target_name,
@@ -944,7 +925,6 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
             RestoreRequest::from_saved_file(RestoreScope::Workspace, current_a),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
@@ -1013,7 +993,6 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
             RestoreRequest::new(RestoreScope::Space, space),
             &mut window_store,
             &mut engine_memory,
-            &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();

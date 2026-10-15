@@ -2178,7 +2178,7 @@ impl Reactor {
             workspace_id,
             workspace_index: engine.active_workspace_idx(space),
             workspace_name: engine
-                .workspace_name(space, workspace_id)
+                .workspace_name(workspace_id)
                 .unwrap_or_else(|| format!("Workspace {workspace_id:?}")),
             display_uuid: self.display_uuid_for_space(space),
         })
