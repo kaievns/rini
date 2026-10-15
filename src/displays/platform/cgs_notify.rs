@@ -20,30 +20,21 @@ use rini_skylight_sys::{
     CGSEventType, SLSMainConnectionID, SLSRegisterConnectionNotifyProc,
     SLSRequestNotificationsForWindows, cid_t,
 };
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use rustc_hash::FxHashMap as HashMap;
 
 type Wid = u32;
 type Sid = u64;
 
 #[derive(Debug, Clone)]
 pub struct EventData {
-    pub event_type: CGSEventType,
     pub window_id: Option<Wid>,
-    pub window_ids: Option<Vec<Wid>>,
     pub space_id: Option<Sid>,
-    pub connection_id: Option<u32>,
-    pub count: Option<u32>,
-    pub payload: Option<Vec<u8>>,
-    pub len: usize,
 }
 
 static EVENT_RECEIVERS: Lazy<Mutex<HashMap<CGSEventType, Option<channels::Receiver<EventData>>>>> =
     Lazy::new(|| Mutex::new(HashMap::default()));
 
 static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
-
-static REGISTERED_EVENTS: Lazy<Mutex<HashSet<CGSEventType>>> =
-    Lazy::new(|| Mutex::new(HashSet::default()));
 
 static CALLBACK_CTXS: Lazy<RwLock<HashMap<CGSEventType, Box<CallbackContext>>>> =
     Lazy::new(|| RwLock::new(HashMap::default()));
@@ -53,23 +44,15 @@ struct CallbackContext {
     sender: channels::Sender<EventData>,
 }
 
+/// Registers `event` with SkyLight, once per event type for the process.
 pub fn init(event: CGSEventType) -> i32 {
-    if REGISTERED_EVENTS.lock().contains(&event) {
-        debug!("Event {} already registered, skipping", event);
-        return 1;
-    }
-
     let (tx, rx) = channels::channel::<EventData>();
     EVENT_RECEIVERS.lock().insert(event, Some(rx));
 
     let mut callback_ctxs = CALLBACK_CTXS.write();
-    let callback_ctx = callback_ctxs.entry(event).or_insert_with(|| {
-        Box::new(CallbackContext {
-            event_type: event,
-            sender: tx.clone(),
-        })
-    });
-    callback_ctx.sender = tx;
+    let callback_ctx = callback_ctxs
+        .entry(event)
+        .or_insert_with(|| Box::new(CallbackContext { event_type: event, sender: tx }));
 
     let raw: u32 = event.into();
     let callback_ctx_ptr = (&mut **callback_ctx as *mut CallbackContext).cast::<c_void>();
@@ -78,8 +61,6 @@ pub fn init(event: CGSEventType) -> i32 {
     };
 
     if res == 0 {
-        let mut registered = REGISTERED_EVENTS.lock();
-        registered.insert(event);
         debug!("registered {} (raw={}) callback, res={}", event, raw, res);
     } else {
         warn!("failed to register event {} (raw={}), res={}", event, raw, res);
@@ -120,19 +101,6 @@ fn read<T: Copy + Sized + 'static>(bytes: &[u8], off: usize) -> Option<T> {
     Some(unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const T) })
 }
 
-fn read_u32s(bytes: &[u8], off: usize, count: usize) -> Option<Vec<u32>> {
-    let byte_count = count.checked_mul(std::mem::size_of::<u32>())?;
-    if bytes.len() < off + byte_count {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(count);
-    for idx in 0..count {
-        out.push(read::<u32>(bytes, off + idx * std::mem::size_of::<u32>())?);
-    }
-    Some(out)
-}
-
 extern "C" fn connection_callback(
     event_raw: u32,
     data: *mut c_void,
@@ -156,10 +124,7 @@ extern "C" fn connection_callback(
     };
 
     let mut window_id = None;
-    let mut window_ids = None;
     let mut space_id = None;
-    let mut connection_id = None;
-    let mut count = None;
 
     match kind {
         CGSEventType::Known(KnownCGSEvent::SpaceWindowDestroyed)
@@ -177,8 +142,7 @@ extern "C" fn connection_callback(
         }
 
         CGSEventType::Known(KnownCGSEvent::SpaceCreated)
-        | CGSEventType::Known(KnownCGSEvent::SpaceDestroyed)
-        | CGSEventType::Known(KnownCGSEvent::SpaceCurrentChanged) => {
+        | CGSEventType::Known(KnownCGSEvent::SpaceDestroyed) => {
             if let Some(sid) = read::<u64>(bytes, 0) {
                 space_id = Some(sid)
             } else {
@@ -186,78 +150,12 @@ extern "C" fn connection_callback(
             }
         }
 
-        CGSEventType::Known(KnownCGSEvent::SpaceWindowBatchReassociated) => {
-            if let Some(sid) = read::<u64>(bytes, 0) {
-                space_id = Some(sid);
-            } else {
-                warn!("Skylight event {kind} payload too short for space id (len={len})");
-            }
-
-            match read::<u32>(bytes, std::mem::size_of::<u64>()) {
-                Some(n) => {
-                    count = Some(n);
-                    let expected = n as usize;
-                    let off = std::mem::size_of::<u64>() + std::mem::size_of::<u32>();
-                    match read_u32s(bytes, off, expected) {
-                        Some(ids) => {
-                            if let Some(first) = ids.first().copied() {
-                                window_id = Some(first);
-                            }
-                            window_ids = Some(ids);
-                        }
-                        None if expected == 0 => {
-                            window_ids = Some(Vec::new());
-                        }
-                        None => {
-                            warn!(
-                                "Skylight event {kind} payload too short for {expected} window ids (len={len})"
-                            );
-                        }
-                    }
-                }
-                None => {
-                    warn!("Skylight event {kind} payload too short for count (len={len})");
-                }
-            }
-        }
-
-        CGSEventType::Known(KnownCGSEvent::ManagedSpaceMembershipUpdated)
-        | CGSEventType::Known(KnownCGSEvent::SpaceWindowManagementCapabilitiesChanged) => {
-            // These appear to be space-management notifications. Observed call
-            // sites suggest a leading space identifier and sometimes a window id.
-            if let Some(sid) = read::<u64>(bytes, 0) {
-                space_id = Some(sid);
-                if let Some(wid) = read::<u32>(bytes, std::mem::size_of::<u64>()) {
-                    window_id = Some(wid);
-                }
-            } else if let Some(wid) = read::<u32>(bytes, 0) {
-                window_id = Some(wid);
-            } else if len != 0 {
-                warn!(
-                    "Skylight event {kind} payload did not match expected space/window layout (len={len})"
-                );
-            }
-        }
-
-        CGSEventType::Known(KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged)
-        | CGSEventType::Known(KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged) => {
-            if let Some(cid) = read::<u32>(bytes, 0) {
-                connection_id = Some(cid);
-            } else {
-                warn!("Skylight event {kind} payload too short for connection id (len={len})");
-            }
-        }
-
         CGSEventType::Known(KnownCGSEvent::WindowClosed)
         | CGSEventType::Known(KnownCGSEvent::WindowMoved)
         | CGSEventType::Known(KnownCGSEvent::WindowResized)
         | CGSEventType::Known(KnownCGSEvent::WindowReordered)
-        | CGSEventType::Known(KnownCGSEvent::WindowLevelChanged)
         | CGSEventType::Known(KnownCGSEvent::WindowUnhidden)
-        | CGSEventType::Known(KnownCGSEvent::WindowHidden)
-        | CGSEventType::Known(KnownCGSEvent::WindowManagerActivatingClickOrdering)
-        | CGSEventType::Known(KnownCGSEvent::WindowOrderingGroupChanged)
-        | CGSEventType::Known(KnownCGSEvent::WindowParentChanged) => {
+        | CGSEventType::Known(KnownCGSEvent::WindowHidden) => {
             if let Some(wid) = read::<u32>(bytes, 0) {
                 window_id = Some(wid);
             } else {
@@ -268,24 +166,9 @@ extern "C" fn connection_callback(
         _ => {}
     }
 
-    let payload = if bytes.is_empty() {
-        None
-    } else {
-        Some(bytes.to_vec())
-    };
+    let event_data = EventData { window_id, space_id };
 
-    let event_data = EventData {
-        event_type: kind,
-        window_id,
-        window_ids,
-        space_id,
-        connection_id,
-        count,
-        payload,
-        len,
-    };
-
-    trace!("received raw event: {:?}", event_data);
+    trace!("received raw event {kind} (len={len}): {:?}", event_data);
 
     if let Err(e) = sender.try_send(event_data) {
         debug!("Failed to send event {kind}: {e}");

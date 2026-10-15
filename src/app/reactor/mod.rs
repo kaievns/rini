@@ -593,7 +593,7 @@ impl Reactor {
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
         rest: Option<(crate::decorations::platform::rest::Sender, crate::displays::event::Following)>,
-        window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
+        window_tx_store: WindowTxStore,
         one_space: bool,
     ) -> ReactorHandle {
         let (events_tx, events) = channels::channel();
@@ -604,7 +604,7 @@ impl Reactor {
             display_memory,
             record,
             broadcast_tx,
-            window_notify,
+            window_tx_store,
             one_space,
         );
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
@@ -634,7 +634,7 @@ impl Reactor {
         display_memory: DisplayMemory,
         mut record: Record,
         broadcast_tx: BroadcastSender,
-        window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
+        window_tx_store: WindowTxStore,
         one_space: bool,
     ) -> Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
@@ -642,10 +642,6 @@ impl Reactor {
         // window server id is gone AND whose bundle is not running.
         record.start(&layout_engine, &display_memory);
         let (raise_manager_tx, _rx) = channels::channel();
-        let (window_notify_tx, window_tx_store) = match window_notify {
-            Some((tx, store)) => (Some(tx), store),
-            None => (None, WindowTxStore::new()),
-        };
         let reactor = Reactor {
             live_switch: None,
             switcher_tx: None,
@@ -701,7 +697,6 @@ impl Reactor {
             },
             notification_manager: managers::NotificationManager {
                 last_sls_notification_ids: Vec::new(),
-                _window_notify_tx: window_notify_tx,
             },
             transaction_manager: TransactionManager::new(window_tx_store),
             menu_manager: managers::MenuManager { menu_state: MenuState::Closed },

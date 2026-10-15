@@ -244,7 +244,6 @@ fn main() {
     };
     layout.finish_loading(&config.virtual_workspaces, &config.settings.layout);
     let (event_tap_tx, event_tap_rx) = rini::app::channels::channel();
-    let (wnd_tx, wnd_rx) = rini::app::channels::channel();
     let window_tx_store = WindowTxStore::new();
     let (cursor_warp_tx, cursor_warp_rx) = rini::app::channels::channel();
     let (transitions_tx, transitions_rx) = rini::app::channels::channel();
@@ -289,7 +288,7 @@ fn main() {
         Some(switcher_tx.clone()),
         Some(bar_tx.clone()),
         Some((rest_tx.clone(), following.clone())),
-        Some((wnd_tx.clone(), window_tx_store.clone())),
+        window_tx_store.clone(),
         opt.one,
     );
     let events_tx = reactor.sender();
@@ -372,12 +371,7 @@ fn main() {
     let wn_actor = window_notify_actor::WindowNotify::new(
         events_tx.clone(),
         spaces_tx.clone(),
-        wnd_rx,
         &[
-            // this event seems bugged
-            //CGSEventType::Known(KnownCGSEvent::SpaceCurrentChanged),
-            // repl for aboce
-            CGSEventType::Known(KnownCGSEvent::WorkspaceDidChange),
             CGSEventType::Known(KnownCGSEvent::ManagedSpaceMembershipUpdated),
             CGSEventType::Known(KnownCGSEvent::SpaceWindowManagementCapabilitiesChanged),
             CGSEventType::Known(KnownCGSEvent::SpaceWindowDestroyed),

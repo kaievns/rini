@@ -14,7 +14,6 @@ use tracing::{debug, trace};
 use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
-use rustc_hash::FxHashSet as HashSet;
 
 use crate::displays::domain::frames;
 use crate::displays::event::{
@@ -24,16 +23,6 @@ use crate::displays::event::{
 use crate::displays::platform::cgs_notify;
 use crate::displays::platform::spaces;
 use rini_core::ids::SpaceId;
-
-#[derive(Debug)]
-pub enum Request {
-    Subscribe(CGSEventType),
-    UpdateWindowNotifications(Vec<u32>),
-    Stop,
-}
-
-pub type Sender = rini_runloop::channel::Sender<Request>;
-pub type Receiver = rini_runloop::channel::Receiver<Request>;
 
 const FOCUS_WAKE_DEBOUNCE: Duration = Duration::from_millis(1);
 
@@ -50,9 +39,7 @@ impl FocusWakeSender {
 
 pub struct WindowNotify {
     spaces_tx: spaces::Sender,
-    requests_rx: Option<Receiver>,
-    subscribed: HashSet<CGSEventType>,
-    initial_events: Vec<CGSEventType>,
+    events: Vec<CGSEventType>,
     focus_wake: FocusWakeSender,
     following: Following,
 }
@@ -61,8 +48,7 @@ impl WindowNotify {
     pub fn new(
         displays_tx: impl EventSink + 'static,
         spaces_tx: spaces::Sender,
-        requests_rx: Receiver,
-        initial_events: &[CGSEventType],
+        events: &[CGSEventType],
         on_read: Vec<OnServerRead>,
         following: Following,
         reads: mpsc::Receiver<ToRead>,
@@ -72,76 +58,27 @@ impl WindowNotify {
         spawn_frame_reader(LIVE, on_read, reads);
         Self {
             spaces_tx,
-            requests_rx: Some(requests_rx),
-            subscribed: HashSet::default(),
-            initial_events: initial_events.iter().copied().collect(),
+            events: events.to_vec(),
             focus_wake: FocusWakeSender { wake: focus_wake_tx },
             following,
         }
     }
 
-    pub async fn run(mut self) {
-        let mut requests_rx = match self.requests_rx.take() {
-            Some(rx) => rx,
-            None => return,
-        };
-        for event in self.initial_events.drain(..) {
+    /// Subscribes to every event it was given, then never returns: `supervise` takes an actor that
+    /// returns for one that died.
+    pub async fn run(self) {
+        for event in self.events {
             match Self::subscribe(
                 event,
                 self.spaces_tx.clone(),
                 self.focus_wake.clone(),
                 self.following.clone(),
             ) {
-                Ok(()) => {
-                    self.subscribed.insert(event);
-                    debug!("initial subscription succeeded for event {}", event);
-                }
-                Err(code) => {
-                    debug!("initial subscribe for {} failed (res={})", event, code);
-                }
+                Ok(()) => debug!("subscribed to event {}", event),
+                Err(code) => debug!("subscribe for {} failed (res={})", event, code),
             }
         }
-
-        while let Some((span, request)) = requests_rx.recv().await {
-            let _g = span.enter();
-            if let Request::Stop = request {
-                debug!("received Stop request");
-                break;
-            }
-            self.handle_request(request);
-        }
-
-        debug!("WindowNotify actor exiting");
-    }
-
-    fn handle_request(&mut self, request: Request) {
-        match request {
-            Request::Subscribe(event) => {
-                if self.subscribed.contains(&event) {
-                    debug!("already subscribed to event {}", event);
-                    return;
-                }
-                match Self::subscribe(
-                    event,
-                    self.spaces_tx.clone(),
-                    self.focus_wake.clone(),
-                    self.following.clone(),
-                ) {
-                    Ok(()) => {
-                        self.subscribed.insert(event);
-                        debug!("subscribed to event {}", event);
-                    }
-                    Err(code) => {
-                        debug!("failed to register event {} (res={})", event, code);
-                    }
-                }
-            }
-            Request::UpdateWindowNotifications(window_ids) => {
-                cgs_notify::update_window_notifications(&window_ids);
-            }
-
-            Request::Stop => {}
-        }
+        std::future::pending::<()>().await
     }
 
     fn subscribe(
@@ -173,9 +110,6 @@ impl WindowNotify {
                             spaces_tx
                                 .send(spaces::Notification::SpaceCreated(SpaceId::new(space_id)));
                         }
-                    }
-                    CGSEventType::Known(KnownCGSEvent::SpaceCurrentChanged) => {
-                        spaces_tx.send(spaces::Notification::ActiveSpaceChanged);
                     }
                     CGSEventType::Known(KnownCGSEvent::ManagedSpaceMembershipUpdated)
                     | CGSEventType::Known(
