@@ -315,7 +315,7 @@ fn load_heals_disagreeing_tiled_and_floating_ownership() {
             },
         );
     }
-    let workspaces = engine.virtual_workspace_manager.existing_workspaces(space);
+    let workspaces = engine.virtual_workspace_manager.existing_workspaces();
     let active = engine.active_workspace(space).unwrap();
     let other = workspaces.iter().find(|(workspace, _)| *workspace != active).unwrap().0;
     let frame = objc2_core_foundation::CGRect::new(
@@ -379,4 +379,80 @@ fn app_close_removes_saved_fingerprints() {
 
     assert!(!engine.persistence.windows.contains_key(&window));
     assert!(!engine.persistence.pending_windows.contains(&window));
+}
+
+/// Each native space id macOS stops using left four empty strips in the file for good. A save forgets
+/// a space only when macOS no longer lists it, no display is remembered on it and no window is on it.
+#[test]
+fn a_save_forgets_only_the_spaces_nothing_lists_remembers_or_holds() {
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let [listed, remembered, laid_out, floating, vacant] = [1, 22, 494, 4620, 4615].map(SpaceId::new);
+    for space in [listed, remembered, laid_out, floating, vacant] {
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+        );
+    }
+    memory.affinity.set_display_space("external", remembered);
+    let workspace = engine.active_workspace(laid_out).unwrap();
+    let layout = engine.workspace_layouts.active(laid_out, workspace).unwrap();
+    engine
+        .workspace_tree_mut(workspace)
+        .add_window_after_selection(layout, WindowId::new(9, 1));
+    engine.floating_positions.store(
+        floating,
+        workspace,
+        WindowId::new(9, 2),
+        objc2_core_foundation::CGRect::new(
+            objc2_core_foundation::CGPoint::new(10.0, 20.0),
+            CGSize::new(400.0, 300.0),
+        ),
+    );
+    let vacant_layouts: Vec<_> = engine
+        .workspace_layouts
+        .all_layouts()
+        .into_iter()
+        .filter(|(space, _, _)| *space == vacant)
+        .collect();
+    assert!(!vacant_layouts.is_empty());
+
+    assert_eq!(
+        engine.forget_vacant_spaces(&window_store, &memory, &[listed]),
+        vec![vacant]
+    );
+
+    assert_eq!(
+        engine.workspace_layouts.spaces().into_iter().collect::<Vec<_>>(),
+        vec![listed, remembered, laid_out, floating]
+    );
+    assert_eq!(engine.virtual_workspace_manager.active_workspace(vacant), None);
+    for (_, workspace, layout) in vacant_layouts {
+        assert!(
+            !engine.workspace_tree(workspace).contains_layout(layout),
+            "its trees go too"
+        );
+    }
+    LayoutEngine::deserialize_from_str(&engine.serialize_to_string(&memory))
+        .expect("what is left still validates");
+}
+
+/// Until the startup restore has moved the saved spaces onto this session's ids, every one of them
+/// looks dead.
+#[test]
+fn nothing_is_forgotten_before_the_startup_restore() {
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(SpaceId::new(4615), CGSize::new(1200.0, 800.0)),
+    );
+    engine.startup_restore_pending = true;
+
+    assert!(engine.forget_vacant_spaces(&window_store, &memory, &[]).is_empty());
+    assert!(engine.workspace_layouts.spaces().contains(&SpaceId::new(4615)));
 }

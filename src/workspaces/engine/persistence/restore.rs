@@ -93,9 +93,8 @@ impl RestorePlan {
         let source_active = snapshot.virtual_workspace_manager.active_workspace(source_space);
         let mappings = match request.scope {
             RestoreScope::Space => {
-                let source = snapshot.virtual_workspace_manager.existing_workspaces(source_space);
-                let target =
-                    engine.virtual_workspace_manager.existing_workspaces(request.active_space);
+                let source = snapshot.virtual_workspace_manager.existing_workspaces();
+                let target = engine.virtual_workspace_manager.existing_workspaces();
                 // A space restore is all-or-nothing. `zip` silently truncates, which would split
                 // layout ownership between the snapshot and the pre-restore state.
                 if source.len() != target.len() {
@@ -130,9 +129,8 @@ impl RestorePlan {
                     // therefore read S's ordinal from the saved native space, regardless of which
                     // workspace happened to be active when Rini last quit.
                     RestoreSource::CurrentSpace => {
-                        let target_workspaces = engine
-                            .virtual_workspace_manager
-                            .existing_workspaces(request.active_space);
+                        let target_workspaces =
+                            engine.virtual_workspace_manager.existing_workspaces();
                         let target_index = target_workspaces
                             .iter()
                             .position(|(workspace, _)| *workspace == target_workspace)
@@ -143,7 +141,7 @@ impl RestorePlan {
                             })?;
                         snapshot
                             .virtual_workspace_manager
-                            .existing_workspaces(source_space)
+                            .existing_workspaces()
                             .get(target_index)
                             .map(|(workspace, _)| *workspace)
                             .ok_or_else(|| {
@@ -261,7 +259,7 @@ impl RestorePlan {
             // from an old saved snapshot.
             workspace.name = engine
                 .virtual_workspace_manager
-                .workspace_info(mapping.target_space, mapping.target_workspace)
+                .workspace_info(mapping.target_workspace)
                 .expect("target workspace was validated before extraction")
                 .name
                 .clone();
@@ -576,7 +574,6 @@ impl LayoutEngine {
         request: RestoreRequest,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
-        _virtual_workspace_config: &VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
     ) -> anyhow::Result<RestoreReport> {
         let loaded = Self::load_file(&path)?;
@@ -610,28 +607,6 @@ impl LayoutEngine {
             "Persisted layout restore completed"
         );
         Ok(report)
-    }
-
-    /// Compatibility wrapper for callers that only need the matched-window count.
-    pub fn restore_saved_layout(
-        &mut self,
-        path: PathBuf,
-        scope: RestoreScope,
-        active_space: SpaceId,
-        window_store: &mut WindowStore,
-        memory: &mut DisplayMemory,
-        virtual_workspace_config: &VirtualWorkspaceSettings,
-        layout_settings: &LayoutSettings,
-    ) -> anyhow::Result<usize> {
-        self.restore_layout(
-            path,
-            RestoreRequest::new(scope, active_space),
-            window_store,
-            memory,
-            virtual_workspace_config,
-            layout_settings,
-        )
-        .map(|report| report.matched)
     }
 
     /// Install all state participating in workspace ownership as one operation.

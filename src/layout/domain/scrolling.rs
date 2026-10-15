@@ -740,7 +740,7 @@ impl LayoutState {
             }
             self.columns[col_idx].ensure_height_weights();
             let window = self.columns[col_idx].windows.remove(row_idx);
-            let weight = self.columns[col_idx].height_weights.remove(row_idx);
+            self.columns[col_idx].height_weights.remove(row_idx);
             let removed_column = self.columns[col_idx].windows.is_empty();
             if removed_column {
                 self.columns.remove(col_idx);
@@ -762,17 +762,8 @@ impl LayoutState {
             } else {
                 self.columns[target].ensure_height_weights();
                 self.columns[target].windows.push(window);
-                // Equalise the column rather than carrying the old weight over.
-                //
-                // `weight` came from the column the window just left, where as the only
-                // window it held that column's entire share. Pushed into a column of
-                // 1.0-weighted windows it dominates: stacking two terminals collapsed the
-                // existing one to its title bar while the newcomer took the rest.
-                //
-                // Weights are relative, so resetting the column to all-1.0 divides the
-                // height evenly, which is what stacking should do. A deliberate vertical
-                // resize afterwards still sets its own weights.
-                let _ = weight;
+                // The weight from the column it left held that whole column's share, so
+                // carried over it would take nearly all of this one: stacking divides evenly.
                 self.columns[target].equalise_heights();
                 self.keep_full_width_alone(target);
             }

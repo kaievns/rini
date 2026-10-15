@@ -21,15 +21,14 @@ pub struct FloatingPositionStore {
 
 impl FloatingPositionStore {
     pub fn validate_persisted(&self, workspaces: &WorkspaceStore) -> Result<(), String> {
-        for (&(space, workspace, window), frame) in &self.positions {
-            let Some(workspace_info) = workspaces.workspaces.get(workspace) else {
+        for (&(_, workspace, window), frame) in &self.positions {
+            // A workspace exists on every display, so a floating frame under any native
+            // space is legitimate.
+            if !workspaces.workspaces.contains_key(workspace) {
                 return Err(format!(
                     "floating frame for window {window:?} references missing workspace {workspace:?}"
                 ));
-            };
-            // A workspace exists on every display, so a floating frame under any native
-            // space is legitimate.
-            let _ = (space, workspace_info);
+            }
             if !frame.origin.x.is_finite()
                 || !frame.origin.y.is_finite()
                 || !frame.size.width.is_finite()
@@ -65,6 +64,10 @@ impl FloatingPositionStore {
         locations.sort_unstable();
         locations.dedup();
         locations
+    }
+
+    pub fn spaces(&self) -> impl Iterator<Item = SpaceId> + '_ {
+        self.positions.keys().map(|(space, _, _)| *space)
     }
 
     pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
@@ -107,6 +110,7 @@ impl FloatingPositionStore {
         self.positions.entry((space, workspace, window)).or_insert(frame);
     }
 
+    #[cfg(test)]
     pub fn get(
         &self,
         space: SpaceId,
@@ -163,22 +167,6 @@ impl FloatingPositionStore {
 
     /// Replace one target workspace's saved floating frames from a snapshot.
     /// Clearing first is essential: restore is replacement, not a merge with stale target state.
-    pub fn replace_workspace_from(
-        &mut self,
-        source: &Self,
-        source_space: SpaceId,
-        source_workspace: VirtualWorkspaceId,
-        target_space: SpaceId,
-        target_workspace: VirtualWorkspaceId,
-    ) {
-        self.positions.retain(|(space, workspace, _), _| {
-            (*space, *workspace) != (target_space, target_workspace)
-        });
-        for (window, frame) in source.workspace_positions(source_space, source_workspace) {
-            self.store(target_space, target_workspace, window, frame);
-        }
-    }
-
     pub fn replace_workspace_positions(
         &mut self,
         target_space: SpaceId,
@@ -268,12 +256,10 @@ mod tests {
 
         source.store(source_space, workspace(), source_window, frame());
         target.store(target_space, workspace(), stale_target_window, frame());
-        target.replace_workspace_from(
-            &source,
-            source_space,
-            workspace(),
+        target.replace_workspace_positions(
             target_space,
             workspace(),
+            source.workspace_positions(source_space, workspace()),
         );
 
         assert_eq!(

@@ -8,14 +8,22 @@ use crate::workspaces::VirtualWorkspace;
 use crate::workspaces::{LayoutEvent, ScrollingLayoutSystem};
 
 #[test]
-fn persisted_layout_schema_is_versioned_and_legacy_files_still_load() {
+fn persisted_layout_schema_is_versioned_and_any_other_version_is_refused() {
     let engine = test_engine();
     let memory = DisplayMemory::default();
     let serialized = engine.serialize_to_string(&memory);
     assert!(serialized.contains("\"schema_version\":6"), "{serialized}");
+    LayoutEngine::deserialize_from_str(&serialized).unwrap();
 
-    let legacy = serialized.replacen("\"schema_version\":6,", "", 1);
-    LayoutEngine::deserialize_from_str(&legacy).unwrap();
+    let unversioned = serialized.replacen("\"schema_version\":6,", "", 1);
+    let error = match LayoutEngine::deserialize_from_str(&unversioned) {
+        Ok(_) => panic!("a file naming no schema version should be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("version 0 is older than 6"),
+        "{error}"
+    );
 
     let future = serialized.replacen("\"schema_version\":6", "\"schema_version\":7", 1);
     let error = match LayoutEngine::deserialize_from_str(&future) {
@@ -25,122 +33,41 @@ fn persisted_layout_schema_is_versioned_and_legacy_files_still_load() {
     assert!(error.to_string().contains("newer than supported"));
 }
 
-/// A v2 file on disk carried two separate display maps. Both must survive the upgrade,
-/// or every display looks unseen after it and a replug has nothing to match against.
+/// A file from before window records were kept per display arrangement is refused by name, and,
+/// like any refused layout, without forgetting what its memory section holds in today's shape.
 #[test]
-fn schema_v2_display_maps_are_folded_into_the_affinity_registry() {
-    let engine = test_engine();
-    let empty = DisplayMemory::default();
-    let v2 = engine
-        .serialize_to_string(&empty)
-        .replacen("\"schema_version\":6", "\"schema_version\":2", 1)
-        .replacen(
-            "\"display_memory\":(affinity:(display_space:{},setups:{},current:\"\"),\
-             launch:(apps:{}))",
-            "\"space_display_map\":{(7):Some(\"external-uuid\")},\
-             \"display_last_space\":{\"builtin-uuid\":(1)}",
-            1,
-        );
-    assert!(v2.contains("space_display_map"), "{v2}");
-
-    let loaded = LayoutEngine::deserialize_file(&v2).expect("v2 file must load");
-    let memory = loaded.memory;
-
-    assert_eq!(
-        memory.affinity.space_for_display("external-uuid"),
-        Some(SpaceId::new(7)),
-        "the space -> display map must carry over"
-    );
-    assert_eq!(
-        memory.affinity.space_for_display("builtin-uuid"),
-        Some(SpaceId::new(1)),
-        "the display -> space map must carry over"
-    );
-    let upgraded = loaded.layout.expect("the layout itself is fine");
-    let rewritten = upgraded.serialize_to_string(&memory);
-    assert!(
-        !rewritten.contains("space_display_map"),
-        "the upgraded file must be written in the new shape only"
-    );
-    assert!(
-        rewritten.contains("\"display_memory\":(affinity:(display_space:{"),
-        "and the memory must be nested under its own key: {rewritten}"
-    );
-    assert!(
-        rewritten.contains("\"external-uuid\":(7)") && rewritten.contains("\"builtin-uuid\":(1)"),
-        "with both displays inside it: {rewritten}"
-    );
-}
-
-/// A schema-4 file kept its display memory at the top level. Schema 5 nests it, and an upgrade must
-/// carry it across: a user's file is where the record of which monitor each window lives on actually
-/// is, and losing it on upgrade is the same outcome as never having had it.
-///
-/// Verified against a real 19-window file from `~/.rini/layout.ron` at the time of the change; the
-/// fixture here is built the same way so the check runs everywhere.
-#[test]
-fn a_schema_four_file_moves_its_display_memory_into_the_nested_record() {
+fn a_layout_from_an_older_schema_is_refused_and_says_why() {
     let mut engine = test_engine();
     let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(4615);
-    let window = WindowId::new(8, 1);
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     engine.update_space_display(&mut memory, space, Some("studio-display".to_string()));
-    memory.affinity.set_window_home(window, "studio-display");
 
-    // The schema-4 shape: both records at the top level, no nested one.
-    let v5 = engine.serialize_to_string(&memory);
-    let nested_start = v5.find(r#","display_memory":("#).expect("the v5 shape");
-    let nested_end = v5.find(r#","persisted_windows":"#).expect("the v5 shape");
-    let affinity = v5[nested_start..nested_end]
-        .trim_start_matches(r#","display_memory":(affinity:"#)
-        .rsplit_once(",launch:")
-        .expect("affinity then launch")
-        .0
-        .to_owned();
-    let v4 = format!(
-        "{}\"display_affinity\":{},\"launch_memory\":(apps:{{}}){}",
-        &v5[..nested_start + 1],
-        affinity,
-        &v5[nested_end..]
-    )
-    .replacen(r#""schema_version":6"#, r#""schema_version":4"#, 1);
-    assert!(
-        v4.contains(r#""display_affinity":"#),
-        "the fixture is in the old shape: {v4}"
-    );
-    assert!(
-        !v4.contains(r#""display_memory":"#),
-        "and only the old shape: {v4}"
-    );
+    let written = engine.serialize_to_string(&memory);
+    let v5 = written.replacen(r#""schema_version":6"#, r#""schema_version":5"#, 1);
+    assert_ne!(v5, written);
 
-    let loaded = LayoutEngine::deserialize_file(&v4).expect("a schema-4 file must parse");
-    assert!(loaded.layout.is_ok(), "and its layout must validate");
-    assert_eq!(
-        loaded.memory.affinity.window_home(window),
-        Some("studio-display"),
-        "the window's display comes across"
+    let loaded = LayoutEngine::deserialize_file(&v5).expect("the bytes still parse");
+
+    let error = match loaded.layout {
+        Ok(_) => panic!("an older schema is refused"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.contains("version 5 is older than 6")
+            && error.contains("per display arrangement")
+            && error.contains("laid out fresh"),
+        "the error has to say what is wrong and what follows: {error}"
     );
     assert_eq!(
         loaded.memory.affinity.space_for_display("studio-display"),
         Some(space),
-        "and so does the display's space"
-    );
-
-    let rewritten = loaded.layout.unwrap().serialize_to_string(&loaded.memory);
-    assert!(rewritten.contains(r#""schema_version":6"#));
-    assert!(
-        rewritten.contains(r#""display_memory":("#),
-        "written in the nested shape"
-    );
-    assert!(
-        !rewritten.contains(r#""display_affinity":"#),
-        "and not the old one"
+        "the refusal is about the layout"
     );
 }
 
@@ -165,7 +92,7 @@ fn a_layout_file_wrapped_in_the_old_layout_system_tag_is_refused_by_name() {
     );
     assert!(
         !current.contains("scrolling("),
-        "schema 5 must not write the tag itself: {current}"
+        "the current schema must not write the tag itself: {current}"
     );
 
     // A schema-3 file, as the previous build wrote them.
@@ -353,7 +280,8 @@ fn invalid_persisted_floating_frame_is_rejected() {
     assert!(error.to_string().contains("invalid floating frame"), "{error}");
 }
 
-/// A layout file written before this existed must still load, or an upgrade wipes the layout.
+/// A memory section missing a record reads it as empty: a file that remembers less, not one that
+/// cannot be read (`display_memory.rs`).
 #[test]
 fn a_file_without_launch_memory_still_loads() {
     let mut engine = test_engine();
@@ -366,10 +294,10 @@ fn a_file_without_launch_memory_still_loads() {
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let path =
-        std::env::temp_dir().join(format!("rini-launch-memory-legacy-{}.ron", std::process::id()));
+        std::env::temp_dir().join(format!("rini-launch-memory-missing-{}.ron", std::process::id()));
     engine.save(&mut memory, path.clone()).unwrap();
 
-    // Strip the record back out, as a file from before it existed would be.
+    // Strip the record back out.
     let written = std::fs::read_to_string(&path).unwrap();
     let stripped = written.replace(",launch:(apps:{})", "");
     assert_ne!(

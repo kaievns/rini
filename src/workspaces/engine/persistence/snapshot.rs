@@ -1,18 +1,10 @@
 use super::*;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 
-/// 4 dropped the `LayoutSystemKind` wrapper. Version 3 files tag every layout `scrolling((...))`
-/// for an enum that no longer exists, so they are refused rather than half-read.
-///
-/// 6 keys the window records by display ARRANGEMENT (`display_setup::SetupId`) instead of holding
-/// one set at the top of the affinity. A 5 file still loads — its records are read under their old
-/// names and adopted by the first arrangement named — but the reverse is not true, and the bump is
-/// what makes an older rini REFUSE a 6 file instead of reading it and finding no homes at all.
+/// 6 keys the window records by display ARRANGEMENT (`display_setup::SetupId`). It is also the
+/// oldest schema read: an older layout is refused, and the bump is what makes an older rini refuse a
+/// 6 file instead of reading it and finding no homes at all.
 pub(super) const CURRENT_SCHEMA_VERSION: u32 = 6;
-
-fn legacy_schema_version() -> u32 {
-    0
-}
 
 /// Owned, versioned representation of the layout file.
 ///
@@ -20,28 +12,17 @@ fn legacy_schema_version() -> u32 {
 /// service, or transient index must never silently alter the persistence schema again.
 #[derive(Deserialize)]
 pub(super) struct PersistedLayout {
-    #[serde(default = "legacy_schema_version")]
+    /// A file that names no version reads as 0, so it is refused as older rather than unparseable.
+    #[serde(default)]
     pub(super) schema_version: u32,
     pub(super) workspace_layouts: WorkspaceLayouts,
     pub(super) floating: FloatingManager,
     pub(super) floating_positions: FloatingPositionStore,
     pub(super) virtual_workspace_manager: WorkspaceStore,
-    /// What rini remembers about the machine, in its own section since schema 5. Validated on its
-    /// own, so a refused layout does not take it down: see `display_memory.rs`.
+    /// What rini remembers about the machine, in its own section. Validated on its own, so a
+    /// refused layout does not take it down: see `display_memory.rs`.
     #[serde(default)]
     pub(super) display_memory: DisplayMemory,
-    /// Schema 4 and earlier wrote these two at the top level. Folded into `display_memory` on load;
-    /// never written.
-    #[serde(default)]
-    pub(super) display_affinity: DisplayAffinity,
-    #[serde(default)]
-    pub(super) launch_memory: crate::workspaces::domain::launch_memory::LaunchMemory,
-    /// Schema v2 and earlier. Folded into `display_affinity` on load; never written.
-    #[serde(default)]
-    pub(super) space_display_map: HashMap<SpaceId, Option<String>>,
-    /// Schema v2 and earlier. Folded into `display_affinity` on load; never written.
-    #[serde(default)]
-    pub(super) display_last_space: HashMap<String, SpaceId>,
     #[serde(flatten)]
     pub(super) persistence: PersistenceState,
 }
@@ -77,30 +58,11 @@ impl PersistedLayout {
         .expect("persisted layout serialization must support all engine layout state")
     }
 
-    /// The display memory this file carries, whatever schema wrote it.
+    /// The display memory this file carries.
     ///
     /// Read separately from the layout, and before it is validated, so a layout that cannot be
     /// trusted does not also cost the machine's memory of which monitor each window lives on.
     pub(super) fn take_display_memory(&mut self) -> DisplayMemory {
-        // A v2 file carried two separate display maps that could disagree. Fold them into the
-        // registry so an upgrade keeps its display identities instead of coming back as if every
-        // display had never been seen.
-        if !self.space_display_map.is_empty() || !self.display_last_space.is_empty() {
-            self.display_affinity.absorb_legacy(
-                std::mem::take(&mut self.space_display_map),
-                std::mem::take(&mut self.display_last_space),
-            );
-        }
-        // Schema 4 and earlier wrote the two halves at the top level; 5 nests them. A file has one
-        // shape or the other, so whichever is non-empty is the one to use.
-        let legacy = std::mem::take(&mut self.display_affinity);
-        if !legacy.is_empty() {
-            self.display_memory.affinity = legacy;
-        }
-        let legacy = std::mem::take(&mut self.launch_memory);
-        if !legacy.is_empty() {
-            self.display_memory.launch = legacy;
-        }
         std::mem::take(&mut self.display_memory)
     }
 

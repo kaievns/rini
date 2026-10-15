@@ -394,7 +394,6 @@ binds {
     //   focus-workspace-previous                      the workspace shown before this one
     //   move-window-to-workspace N                    focus=true (default) follows the window
     //   move-window-to-workspace-up / -down           focus=true|false
-    //   create-workspace
     //   focus-monitor-left/-right/-up/-down/-next, focus-monitor MONITOR
     //   move-window-to-monitor-left/-right/-up/-down/-next, move-window-to-monitor MONITOR
     //   move-mouse-to-monitor-left/-right/-up/-down/-next, move-mouse-to-monitor MONITOR

@@ -54,6 +54,16 @@ impl ForwardedSpaceState {
         self.screens.iter().filter_map(|screen| screen.space)
     }
 
+    /// Every space macOS still lists on an attached display, the ones not on screen included, and
+    /// each screen's current space whether or not the list names it.
+    pub fn listed_spaces(&self) -> Vec<SpaceId> {
+        let mut listed: Vec<SpaceId> = self.iter_known_spaces().collect();
+        listed.extend(self.display_space_ids.values().flatten().copied());
+        listed.sort_unstable();
+        listed.dedup();
+        listed
+    }
+
     pub fn screen_for_point(&self, point: CGPoint) -> Option<&ScreenInfo> {
         self.screens.iter().find(|screen| screen.frame.contains(point))
     }
@@ -491,6 +501,16 @@ mod tests {
             Some(ScreenId::new(2))
         );
         assert!(s.screen_for_point(CGPoint::new(5000., 10.)).is_none());
+    }
+
+    #[test]
+    fn the_listed_spaces_are_the_desktops_off_screen_and_the_ones_on_it() {
+        let mut s = state(&[rect(0., 0.), rect(1000., 0.)]);
+        s.display_space_ids.insert("uuid-0".into(), vec![SpaceId::new(1), SpaceId::new(7)]);
+        assert_eq!(
+            s.listed_spaces(),
+            vec![SpaceId::new(1), SpaceId::new(2), SpaceId::new(7)]
+        );
     }
 
     fn snapshot(frames: &[CGRect]) -> ForwardedSpaceState {

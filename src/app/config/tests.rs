@@ -1026,6 +1026,12 @@ fn a_bind_naming_a_workspace_that_is_not_declared_is_refused() {
 }
 
 #[test]
+fn no_action_adds_a_workspace_the_config_does_not_name() {
+    let report = refused("binds {\n    Mod+N { create-workspace; }\n}\n");
+    assert!(report.contains("unknown action `create-workspace`"), "{report}");
+}
+
+#[test]
 fn a_misspelt_action_gets_a_suggestion_on_its_span() {
     let report = refused("binds {\n    Mod+J { focus-colum-left; }\n}\n");
     assert!(report.contains("unknown action `focus-colum-left`"), "{report}");

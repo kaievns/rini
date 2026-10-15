@@ -6,8 +6,8 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 ///
 /// The layout is a `Result` on purpose. Whether the saved strip can be trusted and whether the
 /// machine's memory can are two different questions, and the file answers them separately: a layout
-/// that fails validation, or one written by a newer schema, is refused without also forgetting which
-/// monitor each window lives on. Re-homing every window from scratch and landing every relaunched
+/// that fails validation, or one written by any schema but the current one, is refused without also
+/// forgetting which monitor each window lives on. Re-homing every window from scratch and landing every relaunched
 /// application in a default slot is a worse outcome than laying out the strip fresh.
 pub struct LoadedLayout {
     /// The saved layout, or why it was refused.
@@ -58,6 +58,7 @@ impl LayoutEngine {
         Self::deserialize_file(&buf)
     }
 
+    #[cfg(test)]
     pub fn deserialize_from_str(buf: &str) -> anyhow::Result<Self> {
         Self::deserialize_file(buf)?.layout
     }
@@ -95,6 +96,13 @@ impl LayoutEngine {
                 "layout schema version {} is newer than supported version {}",
                 schema_version,
                 CURRENT_SCHEMA_VERSION,
+            )));
+        }
+        if schema_version < CURRENT_SCHEMA_VERSION {
+            return Ok(refuse(anyhow::anyhow!(
+                "layout schema version {schema_version} is older than {CURRENT_SCHEMA_VERSION}, the \
+                 oldest this rini reads: it predates window records kept per display arrangement, \
+                 so the saved strip is ignored and laid out fresh"
             )));
         }
         if let Err(error) = persisted.virtual_workspace_manager.validate_persisted_topology() {
@@ -221,6 +229,55 @@ impl LayoutEngine {
             let _ = fs::remove_file(temporary);
         }
         result
+    }
+
+    /// Forget every native space macOS no longer lists, no display is remembered on and no window
+    /// is on, so the file does not keep a strip per space id for every reconnect there ever was.
+    /// `listed` is every space macOS lists on the attached displays, on screen or not. Nothing is
+    /// forgotten before the startup restore has run, since until then the saved spaces have not
+    /// been moved onto this session's ids.
+    pub fn forget_vacant_spaces(
+        &mut self,
+        window_store: &WindowStore,
+        memory: &DisplayMemory,
+        listed: &[SpaceId],
+    ) -> Vec<SpaceId> {
+        if self.startup_restore_pending {
+            return Vec::new();
+        }
+        let mut saved = self.workspace_layouts.spaces();
+        saved.extend(self.virtual_workspace_manager.initialized_spaces());
+        saved.extend(
+            self.virtual_workspace_manager
+                .persisted_focus_locations()
+                .into_iter()
+                .map(|(space, _, _)| space),
+        );
+        let mut kept: HashSet<SpaceId> = listed.iter().copied().collect();
+        kept.extend(
+            saved
+                .iter()
+                .copied()
+                .filter(|space| memory.affinity.display_for_space(*space).is_some()),
+        );
+        kept.extend(self.persistence.saved_active_space.map(SpaceId::new));
+        let mut occupied: HashSet<SpaceId> =
+            window_store.spaces_with_assignments().into_iter().collect();
+        occupied.extend(self.floating_positions.spaces());
+        for (space, workspace, layout) in self.workspace_layouts.all_layouts() {
+            if !self.workspace_tree(workspace).all_windows_in_layout(layout).is_empty() {
+                occupied.insert(space);
+            }
+        }
+
+        let vacant = crate::workspaces::domain::workspaces::vacant_spaces(&saved, &kept, &occupied);
+        for &space in &vacant {
+            for (workspace, layout) in self.workspace_layouts.forget_space(space) {
+                self.workspace_tree_mut(workspace).remove_layout(layout);
+            }
+            self.virtual_workspace_manager.forget_space(space);
+        }
+        vacant
     }
 
     /// Save a snapshot repeatedly and cheaply, without reshaping live layout state.

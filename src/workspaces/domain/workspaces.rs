@@ -46,15 +46,14 @@ impl WorkspaceLayouts {
         &self,
         workspaces: &crate::workspaces::WorkspaceStore,
     ) -> Result<(), String> {
-        for (&(space, workspace), info) in &self.map {
+        for (&(_, workspace), info) in &self.map {
             let Some(workspace_info) = workspaces.workspaces.get(workspace) else {
                 return Err(format!(
                     "layout state references missing workspace {workspace:?}"
                 ));
             };
-            // No space-ownership check: a workspace owns one strip per display, so having
-            // layout state under several native spaces is now correct rather than corrupt.
-            let _ = (space, workspace_info);
+            // A workspace owns one strip per display, so layout state under several native
+            // spaces is correct rather than corrupt.
             if info.configurations.is_empty() {
                 return Err(format!("workspace {workspace:?} has no layout configurations"));
             }
@@ -73,7 +72,7 @@ impl WorkspaceLayouts {
         }
 
         for space in workspaces.initialized_spaces() {
-            for (workspace, _) in workspaces.existing_workspaces(space) {
+            for (workspace, _) in workspaces.existing_workspaces() {
                 if !self.map.contains_key(&(space, workspace)) {
                     return Err(format!(
                         "workspace {workspace:?} on native space {} has no layout state",
@@ -300,6 +299,44 @@ impl WorkspaceLayouts {
     pub fn spaces(&self) -> std::collections::BTreeSet<SpaceId> {
         self.map.keys().map(|(sp, _)| *sp).collect()
     }
+
+    /// Drop every layout saved under `space`, answering which tree held each one so the caller can
+    /// drop it there too.
+    pub fn forget_space(
+        &mut self,
+        space: SpaceId,
+    ) -> Vec<(crate::workspaces::VirtualWorkspaceId, LayoutId)> {
+        let keys: Vec<_> = self.map.keys().filter(|(owner, _)| *owner == space).copied().collect();
+        let mut dropped = Vec::new();
+        for key in keys {
+            if let Some(info) = self.map.remove(&key) {
+                let mut layouts: Vec<LayoutId> =
+                    info.configurations.into_values().chain(info.last_saved).collect();
+                layouts.sort_unstable();
+                layouts.dedup();
+                dropped.extend(layouts.into_iter().map(|layout| (key.1, layout)));
+            }
+        }
+        dropped
+    }
+}
+
+/// The native spaces a save forgets: those in `saved` that are neither `kept` (listed by macOS on
+/// an attached display, a display's remembered space, or the saved active space) nor `occupied` by
+/// any window.
+///
+/// macOS mints a new space id for a display on every reconnect and never reissues an old one, so a
+/// space that is neither is one nothing can reach again. See "Saving" in `specs/persistence.md`.
+pub fn vacant_spaces(
+    saved: &std::collections::BTreeSet<SpaceId>,
+    kept: &rustc_hash::FxHashSet<SpaceId>,
+    occupied: &rustc_hash::FxHashSet<SpaceId>,
+) -> Vec<SpaceId> {
+    saved
+        .iter()
+        .copied()
+        .filter(|space| !kept.contains(space) && !occupied.contains(space))
+        .collect()
 }
 
 #[cfg(test)]
@@ -342,6 +379,51 @@ mod tests {
         let first = layouts.active(space, ws).unwrap();
         layouts.ensure_active_for_space(space, CGSize::new(1000.4, 799.6), [ws], &mut tree);
         assert_eq!(layouts.active(space, ws), Some(first));
+    }
+
+    fn spaces(ids: &[u64]) -> rustc_hash::FxHashSet<SpaceId> {
+        ids.iter().copied().map(SpaceId::new).collect()
+    }
+
+    #[test]
+    fn a_space_nothing_lists_remembers_or_holds_is_vacant() {
+        let saved = [1, 22, 30, 382, 4615].map(SpaceId::new).into_iter().collect();
+        let kept = spaces(&[1, 22]);
+        let occupied = spaces(&[382]);
+        assert_eq!(
+            vacant_spaces(&saved, &kept, &occupied),
+            vec![SpaceId::new(30), SpaceId::new(4615)]
+        );
+    }
+
+    /// A display's remembered space comes back under the display's new id at the next start, with
+    /// the workspace it showed, so it is kept with nothing on it.
+    #[test]
+    fn a_kept_space_is_not_vacant_however_empty() {
+        let saved = [110].map(SpaceId::new).into_iter().collect();
+        assert!(vacant_spaces(&saved, &spaces(&[110]), &spaces(&[])).is_empty());
+    }
+
+    /// A window on a space no display owns any more may still come back to it.
+    #[test]
+    fn an_occupied_space_is_not_vacant_however_dead() {
+        let saved = [494].map(SpaceId::new).into_iter().collect();
+        assert!(vacant_spaces(&saved, &spaces(&[]), &spaces(&[494])).is_empty());
+    }
+
+    #[test]
+    fn forgetting_a_space_drops_its_layouts_and_names_them() {
+        let mut layouts = WorkspaceLayouts::default();
+        let mut tree = ScrollingLayoutSystem::new(&Default::default());
+        let (gone, kept) = (SpaceId::new(30), SpaceId::new(1));
+        let ws = workspace();
+        layouts.ensure_active_for_space(gone, CGSize::new(1000.0, 800.0), [ws], &mut tree);
+        layouts.ensure_active_for_space(kept, CGSize::new(1000.0, 800.0), [ws], &mut tree);
+        let dropped = layouts.active(gone, ws).unwrap();
+
+        assert_eq!(layouts.forget_space(gone), vec![(ws, dropped)]);
+        assert_eq!(layouts.spaces().into_iter().collect::<Vec<_>>(), vec![kept]);
+        assert!(layouts.forget_space(gone).is_empty());
     }
 
     #[test]

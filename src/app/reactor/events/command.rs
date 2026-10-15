@@ -56,7 +56,6 @@ pub fn handle_command_layout(
             | LayoutCommand::PrevWorkspace(_)
             | LayoutCommand::SwitchToWorkspace(_)
             | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
-            | LayoutCommand::CreateWorkspace
             | LayoutCommand::SwitchToLastWorkspace
     );
     let is_virtual_workspace_command = matches!(
@@ -65,7 +64,6 @@ pub fn handle_command_layout(
             | LayoutCommand::PrevWorkspace(_)
             | LayoutCommand::SwitchToWorkspace(_)
             | LayoutCommand::MoveWindowToWorkspace { .. }
-            | LayoutCommand::CreateWorkspace
             | LayoutCommand::SwitchToLastWorkspace
     );
     let workspace_space = if requires_workspace_space {
@@ -86,7 +84,6 @@ pub fn handle_command_layout(
         LayoutCommand::NextWorkspace(_)
         | LayoutCommand::PrevWorkspace(_)
         | LayoutCommand::SwitchToWorkspace(_)
-        | LayoutCommand::CreateWorkspace
         | LayoutCommand::SwitchToLastWorkspace => {
             if let Some(space) = workspace_space {
                 layout.layout_engine.handle_virtual_workspace_command(
@@ -222,12 +219,23 @@ pub fn handle_command_reactor_serialize(
     Ok(EventOutcome::no_change().with_stdout_line(serialized?))
 }
 
-pub fn handle_command_reactor_save_and_exit(
+pub fn save_layout_before_exit(
     state: &RiniState,
     layout: &mut LayoutManager,
+    path: std::path::PathBuf,
     active_space: Option<SpaceId>,
+    listed: &[SpaceId],
+) -> std::io::Result<()> {
+    layout
+        .layout_engine
+        .forget_vacant_spaces(&state.windows, &state.display_memory, listed);
+    save_layout(state, layout, path, active_space)
+}
+
+pub fn handle_command_reactor_save_and_exit(
+    saved: std::io::Result<()>,
 ) -> anyhow::Result<EventOutcome> {
-    if let Err(e) = save_layout(state, layout, rini_core::paths::restore_file(), active_space) {
+    if let Err(e) = saved {
         error!("Could not save the layout file: {e}");
         // A quit request is conditional on a durable canonical save. Keep Rini running when the
         // snapshot cannot be committed so the user can fix the filesystem problem or retry

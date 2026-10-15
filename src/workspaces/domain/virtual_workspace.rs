@@ -1,4 +1,3 @@
-use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
@@ -10,7 +9,6 @@ use crate::windows::domain::rules::AppRuleDecision;
 use crate::windows::domain::rules::{RuleMatch, WindowRule};
 use crate::workspaces::Direction;
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
-use crate::workspaces::domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use crate::workspaces::{WindowStore, WindowWorkspaceInfo};
 use rini_core::ids::SpaceId;
@@ -39,8 +37,6 @@ impl std::fmt::Display for VirtualWorkspaceId {
 pub enum WorkspaceError {
     NoWorkspacesAvailable,
     AssignmentFailed,
-    InvalidWorkspaceId(VirtualWorkspaceId),
-    InvalidWorkspaceIndex(usize),
     InconsistentState(String),
 }
 
@@ -72,14 +68,6 @@ impl VirtualWorkspace {
         }
     }
 
-    pub fn tree(&self) -> &ScrollingLayoutSystem {
-        &self.layout_system
-    }
-
-    pub fn tree_mut(&mut self) -> &mut ScrollingLayoutSystem {
-        &mut self.layout_system
-    }
-
     pub fn create_layout_system(settings: &LayoutSettings) -> ScrollingLayoutSystem {
         crate::layout::ScrollingLayoutSystem::new(&settings.scrolling)
     }
@@ -102,11 +90,6 @@ impl VirtualWorkspace {
     /// Forget a window wherever it was focused, on any display.
     pub fn forget_focused_window(&mut self, window_id: WindowId) {
         self.last_focused.retain(|_, focused| *focused != window_id);
-    }
-
-    /// Drop per-display focus for a display that is gone.
-    pub fn forget_display(&mut self, space: SpaceId) {
-        self.last_focused.remove(&space);
     }
 
     /// Every (display, focused window) pair this workspace remembers.
@@ -142,7 +125,6 @@ pub struct WorkspaceStore {
     workspace_order: Vec<VirtualWorkspaceId>,
     pub active_workspace_per_space:
         HashMap<SpaceId, (Option<VirtualWorkspaceId>, VirtualWorkspaceId)>,
-    workspace_counter: usize,
     #[cfg(test)]
     #[serde(skip)]
     test_app_rules: crate::windows::domain::rules::AppRuleEngine,
@@ -179,7 +161,6 @@ impl WorkspaceStore {
             workspaces: SlotMap::default(),
             workspace_order: Vec::new(),
             active_workspace_per_space: HashMap::default(),
-            workspace_counter: 1,
             #[cfg(test)]
             test_app_rules: crate::windows::domain::rules::AppRuleEngine::new(&config.app_rules),
             max_workspaces: MAX_WORKSPACES,
@@ -299,6 +280,14 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    /// Forget a native space: which workspace it showed, and every focus remembered on it.
+    pub fn forget_space(&mut self, space: SpaceId) {
+        self.active_workspace_per_space.remove(&space);
+        for workspace in self.workspaces.values_mut() {
+            workspace.set_last_focused(space, None);
+        }
+    }
+
     /// Move a display's per-display state to the new native space id macOS mints on reconnect.
     /// Only the "showing" entry and per-display focus move; nothing is deleted.
     pub fn remap_space(
@@ -328,10 +317,11 @@ impl WorkspaceStore {
     ///
     /// `space` is still taken so the caller's display gets initialised, but the new
     /// workspace is not owned by it.
+    #[cfg(test)]
     pub fn create_workspace(
         &mut self,
         space: SpaceId,
-        name: Option<String>,
+        name: String,
     ) -> Result<VirtualWorkspaceId, WorkspaceError> {
         self.ensure_space_initialized(space);
         if self.workspace_order.len() >= self.max_workspaces {
@@ -340,12 +330,6 @@ impl WorkspaceStore {
                 self.max_workspaces
             )));
         }
-
-        let name = name.unwrap_or_else(|| {
-            let name = format!("Workspace {}", self.workspace_counter);
-            self.workspace_counter += 1;
-            name
-        });
 
         let workspace = VirtualWorkspace::new(name, &self.layout_settings);
         let workspace_id = self.workspaces.insert(workspace);
@@ -364,7 +348,7 @@ impl WorkspaceStore {
 
     pub fn active_workspace_idx(&self, space: SpaceId) -> Option<u64> {
         self.active_workspace(space).and_then(|active_ws_id| {
-            self.ordered_workspace_ids(space)
+            self.ordered_workspace_ids()
                 .iter()
                 .position(|id| *id == active_ws_id)
                 .map(|idx| idx as u64)
@@ -408,7 +392,7 @@ impl WorkspaceStore {
         skip_empty: Option<bool>,
         dir: Direction,
     ) -> Option<VirtualWorkspaceId> {
-        let ids = self.ordered_workspace_ids(space);
+        let ids = self.ordered_workspace_ids();
         if ids.is_empty() {
             return None;
         }
@@ -499,10 +483,10 @@ impl WorkspaceStore {
         }
 
         let source_index = self
-            .ordered_workspace_ids(existing_assignment.space)
+            .ordered_workspace_ids()
             .iter()
             .position(|&workspace_id| workspace_id == existing_assignment.workspace_id)?;
-        let target_workspace_id = *self.ordered_workspace_ids(space).get(source_index)?;
+        let target_workspace_id = *self.ordered_workspace_ids().get(source_index)?;
 
         self.assign_window_to_workspace(window_store, space, window_id, target_workspace_id)
             .then_some(target_workspace_id)
@@ -515,14 +499,6 @@ impl WorkspaceStore {
         window_id: WindowId,
     ) -> Option<VirtualWorkspaceId> {
         window_store.workspace_for_window(space, window_id)
-    }
-
-    pub fn workspace_for_window_any(
-        &self,
-        window_store: &WindowStore,
-        window_id: WindowId,
-    ) -> Option<VirtualWorkspaceId> {
-        window_store.workspace_info_for_window(window_id).map(|info| info.workspace_id)
     }
 
     pub fn workspace_info_for_window_any(
@@ -544,11 +520,9 @@ impl WorkspaceStore {
     pub fn set_last_rule_decision(
         &mut self,
         window_store: &mut WindowStore,
-        space: SpaceId,
         window_id: WindowId,
         value: bool,
     ) {
-        let _ = space;
         window_store.set_last_rule_decision(window_id, value);
     }
 
@@ -621,64 +595,6 @@ impl WorkspaceStore {
             .find_map(|(wid, info)| (info.space == space && wid.idx.get() == idx).then_some(wid))
     }
 
-    pub fn find_window_in_workspace_by_idx(
-        &self,
-        window_store: &WindowStore,
-        space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-        idx: u32,
-    ) -> Option<WindowId> {
-        self.workspaces.get(workspace_id).and_then(|_| {
-            self.workspace_windows(window_store, space, workspace_id)
-                .into_iter()
-                .find(|wid| wid.idx.get() == idx)
-        })
-    }
-
-    pub fn calculate_hidden_position(
-        &self,
-        screen_frame: CGRect,
-        original_frame: CGRect,
-        corner: HideCorner,
-        _app_bundle_id: Option<&str>,
-    ) -> CGRect {
-        HiddenWindowPlacement::calculate(screen_frame, original_frame, corner, &[])
-    }
-
-    pub fn calculate_hidden_position_multi(
-        &self,
-        screen_frame: CGRect,
-        original_frame: CGRect,
-        corner: HideCorner,
-        _app_bundle_id: Option<&str>,
-        all_screens: &[CGRect],
-    ) -> CGRect {
-        let others: Vec<_> =
-            all_screens.iter().copied().filter(|screen| *screen != screen_frame).collect();
-        HiddenWindowPlacement::calculate(screen_frame, original_frame, corner, &others)
-    }
-
-    pub fn is_hidden_position(
-        &self,
-        screen_frame: &CGRect,
-        rect: &CGRect,
-        _app_bundle_id: Option<&str>,
-    ) -> bool {
-        HiddenWindowPlacement::is_hidden(*screen_frame, *rect, &[])
-    }
-
-    pub fn is_hidden_position_multi(
-        &self,
-        screen_frame: &CGRect,
-        rect: &CGRect,
-        _app_bundle_id: Option<&str>,
-        all_screens: &[CGRect],
-    ) -> bool {
-        let others: Vec<_> =
-            all_screens.iter().copied().filter(|screen| *screen != *screen_frame).collect();
-        HiddenWindowPlacement::is_hidden(*screen_frame, *rect, &others)
-    }
-
     pub fn set_last_focused_window(
         &mut self,
         space: SpaceId,
@@ -698,11 +614,7 @@ impl WorkspaceStore {
         self.workspaces.get(workspace_id)?.last_focused(space)
     }
 
-    pub fn workspace_info(
-        &self,
-        _space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-    ) -> Option<&VirtualWorkspace> {
+    pub fn workspace_info(&self, workspace_id: VirtualWorkspaceId) -> Option<&VirtualWorkspace> {
         self.workspaces.get(workspace_id)
     }
 
@@ -742,46 +654,26 @@ impl WorkspaceStore {
 
     pub fn list_workspaces(&mut self, space: SpaceId) -> Vec<(VirtualWorkspaceId, String)> {
         self.ensure_space_initialized(space);
-        self.existing_workspaces(space)
+        self.existing_workspaces()
     }
 
     /// Read workspace topology without creating missing state. Validation and restore planning
     /// must use this accessor so a failed transaction cannot initialize part of the live engine.
-    pub fn existing_workspaces(&self, space: SpaceId) -> Vec<(VirtualWorkspaceId, String)> {
-        self.ordered_workspace_ids(space)
+    pub fn existing_workspaces(&self) -> Vec<(VirtualWorkspaceId, String)> {
+        self.ordered_workspace_ids()
             .into_iter()
             .filter_map(|id| self.workspaces.get(id).map(|ws| (id, ws.name.clone())))
             .collect()
     }
 
-    /// Workspace index is creation/configuration order, represented by the stable slot-map key.
-    /// Serialized vectors are historical implementation detail and may have been reordered by an
-    /// older restore. All ordinal behavior must go through this canonical view.
-    fn ordered_workspace_ids(&self, _space: SpaceId) -> Vec<VirtualWorkspaceId> {
-        // One list for every display. The `space` argument is retained because callers are
-        // display-scoped and the ordinal is still meaningful per display, but the ORDER is
-        // global: index 2 is the same workspace on every display.
+    /// The one workspace list every display shares: index 2 is the same workspace on every
+    /// display. All ordinal behaviour goes through this view.
+    fn ordered_workspace_ids(&self) -> Vec<VirtualWorkspaceId> {
         self.workspace_order
             .iter()
             .copied()
             .filter(|id| self.workspaces.contains_key(*id))
             .collect()
-    }
-
-    pub fn rename_workspace(
-        &mut self,
-        space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-        new_name: String,
-    ) -> bool {
-        // A rename applies to the workspace itself, which every display shares.
-        let _ = space;
-        if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
-            workspace.name = new_name;
-            true
-        } else {
-            false
-        }
     }
 
     pub fn workspace_windows(
@@ -1036,7 +928,7 @@ impl WorkspaceStore {
             }
         }
 
-        let first_id = self.ordered_workspace_ids(space).first().copied().ok_or_else(|| {
+        let first_id = self.ordered_workspace_ids().first().copied().ok_or_else(|| {
             WorkspaceError::InconsistentState("No workspaces for space".to_string())
         })?;
 
@@ -1124,8 +1016,6 @@ pub struct WorkspaceStats {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::{CGPoint, CGSize};
-
     use super::*;
     use rini_core::ids::SpaceId;
     use rini_core::ids::WindowId;
@@ -1164,6 +1054,25 @@ mod tests {
     }
 
     #[test]
+    fn a_reload_that_declares_one_more_workspace_adds_it_and_nothing_else() {
+        let settings = |names: &[&str]| VirtualWorkspaceSettings {
+            workspace_names: names.iter().map(|name| name.to_string()).collect(),
+            ..Default::default()
+        };
+        let mut manager =
+            WorkspaceStore::new_with_config(&settings(&["a", "b"]), &LayoutSettings::default());
+        let space = SpaceId::new(1);
+        let names = |manager: &mut WorkspaceStore| -> Vec<String> {
+            manager.list_workspaces(space).into_iter().map(|(_, name)| name).collect()
+        };
+        assert_eq!(names(&mut manager), ["a", "b"]);
+
+        manager.update_settings(&settings(&["a", "b", "c"]), &LayoutSettings::default());
+
+        assert_eq!(names(&mut manager), ["a", "b", "c"]);
+    }
+
+    #[test]
     fn test_virtual_workspace_creation() {
         let mut manager = WorkspaceStore::new();
 
@@ -1173,7 +1082,7 @@ mod tests {
             manager.workspace_order.len()
         );
 
-        let ws_id = manager.create_workspace(space, Some("Test Workspace".to_string())).unwrap();
+        let ws_id = manager.create_workspace(space, "Test Workspace".to_string()).unwrap();
         assert!(
             manager
                 .list_workspaces(space)
@@ -1181,7 +1090,7 @@ mod tests {
                 .any(|(id, name)| *id == ws_id && name == "Test Workspace")
         );
 
-        let workspace = manager.workspace_info(space, ws_id).unwrap();
+        let workspace = manager.workspace_info(ws_id).unwrap();
         assert_eq!(workspace.name, "Test Workspace");
     }
 
@@ -1190,8 +1099,8 @@ mod tests {
         let mut window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
 
         let window1 = WindowId::new(1, 1);
         let window2 = WindowId::new(1, 2);
@@ -1223,8 +1132,8 @@ mod tests {
         let mut window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window = WindowId::new(9, 1);
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws1_id));
@@ -1254,8 +1163,8 @@ mod tests {
         let mut window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window = WindowId::new(9, 1);
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws1_id));
@@ -1620,8 +1529,8 @@ mod tests {
     fn test_active_workspace_switching() {
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
 
         assert!(manager.set_active_workspace(space, ws1_id));
         assert_eq!(manager.active_workspace(space), Some(ws1_id));
@@ -1649,8 +1558,8 @@ mod tests {
         }
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window1 = WindowId::new(1, 1);
         let window2 = WindowId::new(1, 2);
 
@@ -1686,9 +1595,9 @@ mod tests {
         let window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
-        let ws3_id = manager.create_workspace(space, Some("WS3".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
+        let ws3_id = manager.create_workspace(space, "WS3".to_string()).unwrap();
 
         assert_eq!(
             manager.next_workspace(&window_store, space, ws1_id, None),
@@ -2009,43 +1918,6 @@ mod tests {
         assert_eq!(bw2_initial_assignment.workspace_id, expected);
         assert_eq!(bw2_updated_assignment.workspace_id, expected);
         assert!(bw2_updated_assignment.floating);
-    }
-
-    #[test]
-    fn hidden_position_uses_corner_anchor_while_hiding_offscreen() {
-        let manager = WorkspaceStore::new();
-        let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 100.0));
-        let frame = CGRect::new(CGPoint::new(20.0, 37.0), CGSize::new(30.0, 20.0));
-
-        let hidden = manager.calculate_hidden_position_multi(
-            screen,
-            frame,
-            HideCorner::BottomRight,
-            None,
-            &[screen],
-        );
-
-        assert_eq!(hidden.origin.y, screen.max().y - 1.0);
-        assert_eq!(hidden.origin.x, screen.max().x - 1.0);
-    }
-
-    #[test]
-    fn hidden_position_flips_sides_to_avoid_neighboring_monitor_overlap() {
-        let manager = WorkspaceStore::new();
-        let primary = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 100.0));
-        let right_neighbor = CGRect::new(CGPoint::new(100.0, 0.0), CGSize::new(100.0, 100.0));
-        let frame = CGRect::new(CGPoint::new(20.0, 25.0), CGSize::new(30.0, 20.0));
-
-        let hidden = manager.calculate_hidden_position_multi(
-            primary,
-            frame,
-            HideCorner::BottomRight,
-            None,
-            &[primary, right_neighbor],
-        );
-
-        assert_eq!(hidden.origin.y, primary.max().y - 1.0);
-        assert_eq!(hidden.origin.x, primary.origin.x - frame.size.width + 1.0);
     }
 }
 

@@ -60,7 +60,7 @@ impl LayoutEngine {
                         edge_hit: None,
                         moved: None,
                     };
-                    self.apply_focus_response(window_store, space, workspace_id, layout, &response);
+                    self.apply_focus_response(space, workspace_id, layout, &response);
                     return response;
                 } else {
                     let focus_window = self
@@ -76,7 +76,7 @@ impl LayoutEngine {
                         edge_hit: None,
                         moved: None,
                     };
-                    self.apply_focus_response(window_store, space, workspace_id, layout, &response);
+                    self.apply_focus_response(space, workspace_id, layout, &response);
                     return response;
                 }
             }

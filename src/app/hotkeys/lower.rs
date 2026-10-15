@@ -88,7 +88,6 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::MoveWindowToWorkspaceUp(follow) => {
             move_to(WorkspaceSelector::Name("prev".into()), follow)
         }
-        Action::CreateWorkspace => layout(LayoutCommand::CreateWorkspace),
         Action::FocusMonitorLeft => reactor(R::FocusDisplay(direction(Direction::Left))),
         Action::FocusMonitorRight => reactor(R::FocusDisplay(direction(Direction::Right))),
         Action::FocusMonitorUp => reactor(R::FocusDisplay(direction(Direction::Up))),

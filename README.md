@@ -131,7 +131,7 @@ wedged rini cannot fall back to macOS's switcher, and Secure Input silences all 
 **Personal project, used daily on one machine.** It works well for me. I am not looking for users, I
 make breaking changes without warning, and config keys change when a better design needs them. The
 layout file makes two promises: a remembered width stays readable by an older rini
-(`specs/displays.md`), and a file from a newer schema is refused rather than half-read
+(`specs/displays.md`), and a file from an older or newer schema is refused rather than half-read
 (`specs/persistence.md`). If you want a stable macOS
 tiling window manager with a community behind it, use [rift](https://github.com/acsandmann/rift).
 

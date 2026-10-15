@@ -325,8 +325,8 @@ impl StateView<'_> {
 
         let space_id = space_id_param.or_else(|| self.default_space);
         let workspace_list: Vec<(crate::workspaces::VirtualWorkspaceId, String)> =
-            if let Some(space) = space_id {
-                self.engine.virtual_workspace_manager().existing_workspaces(space)
+            if space_id.is_some() {
+                self.engine.virtual_workspace_manager().existing_workspaces()
             } else {
                 Vec::new()
             };
@@ -416,7 +416,7 @@ impl StateView<'_> {
             return Vec::new();
         };
 
-        let workspace_list = self.engine.virtual_workspace_manager().existing_workspaces(space);
+        let workspace_list = self.engine.virtual_workspace_manager().existing_workspaces();
         let active_workspace = self.engine.active_workspace(space);
 
         workspace_list
@@ -564,7 +564,7 @@ impl StateView<'_> {
             let workspace_index = workspace.and_then(|workspace| {
                 engine
                     .virtual_workspace_manager()
-                    .existing_workspaces(space)
+                    .existing_workspaces()
                     .iter()
                     .position(|(candidate, _)| *candidate == workspace)
             });
@@ -577,7 +577,7 @@ impl StateView<'_> {
                 is_active: self.is_space_active(space),
                 workspace_id: workspace.map(|workspace| format!("{workspace:?}")),
                 workspace_name: workspace
-                    .and_then(|workspace| self.engine.workspace_name(space, workspace)),
+                    .and_then(|workspace| self.engine.workspace_name(workspace)),
                 workspace_index,
                 column_origins,
                 column_widths,
@@ -623,7 +623,7 @@ impl StateView<'_> {
                 .filter(|window| self.windows.contains_window(*window))
                 .count();
 
-            let workspaces = self.engine.virtual_workspace_manager().existing_workspaces(space);
+            let workspaces = self.engine.virtual_workspace_manager().existing_workspaces();
             let active_workspace = self.engine.active_workspace(space);
             let mut by_workspace = Vec::new();
             let mut census_windows = Vec::new();
@@ -804,7 +804,7 @@ impl StateView<'_> {
 
         for screen in &self.spaces.screens {
             if let Some(space) = screen.space {
-                let workspaces = self.engine.virtual_workspace_manager().existing_workspaces(space);
+                let workspaces = self.engine.virtual_workspace_manager().existing_workspaces();
                 let active_ws = self.engine.active_workspace(space);
 
                 let mut ws_entries = Vec::new();

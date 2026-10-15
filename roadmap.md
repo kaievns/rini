@@ -107,8 +107,8 @@ The things most likely to look like obvious next steps. The values behind some o
 - **Settings beyond niri's.** Where rini and niri share a concept, rini takes niri's settings and
   names. Where they differ, rini decides. No configuration GUI.
 - **Config stability.** Keys change when a better design needs them. The layout file promises only
-  that widths stay readable by an older rini (`specs/displays.md`) and that a newer schema is
-  refused (`specs/persistence.md`).
+  that widths stay readable by an older rini (`specs/displays.md`) and that a file of an older or
+  newer schema is refused (`specs/persistence.md`).
 - **Taking Cmd-Tab.** The private symbolic-hotkey route turns every degraded state into a dead key
   (`specs/switcher.md`).
 - **Trackpad gestures.** A swipe does what macOS does with it (`specs/input.md`).
