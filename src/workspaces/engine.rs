@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
@@ -8,7 +6,6 @@ use tracing::{debug, warn};
 
 use super::{Direction, FloatingManager, LayoutId, ScrollingLayoutSystem, WorkspaceLayouts};
 use crate::layout::WindowLayoutConstraints;
-use crate::layout::domain::boundary::strip_edge;
 use crate::layout::domain::edge_drag::Drag;
 use crate::layout::domain::tile::Borders;
 use crate::layout::settings::LayoutSettings;
@@ -26,6 +23,7 @@ mod commands;
 mod discovery;
 mod frames;
 mod moves;
+mod navigation;
 mod persistence;
 mod rules;
 
@@ -388,271 +386,6 @@ impl LayoutEngine {
             );
         }
         EventResponse::default()
-    }
-
-    fn filter_active_workspace_windows(
-        &self,
-        window_store: &WindowStore,
-        space: SpaceId,
-        windows: Vec<WindowId>,
-    ) -> Vec<WindowId> {
-        windows
-            .into_iter()
-            .filter(|wid| self.is_window_in_active_workspace(window_store, space, *wid))
-            .collect()
-    }
-
-    fn filter_active_workspace_window(
-        &self,
-        window_store: &WindowStore,
-        space: SpaceId,
-        window: Option<WindowId>,
-    ) -> Option<WindowId> {
-        window.filter(|wid| self.is_window_in_active_workspace(window_store, space, *wid))
-    }
-
-    fn apply_focus_response(
-        &mut self,
-        space: SpaceId,
-        ws_id: VirtualWorkspaceId,
-        layout: LayoutId,
-        response: &EventResponse,
-    ) {
-        if let Some(wid) = response.focus_window {
-            self.focused_window = Some(wid);
-            if self.floating.is_floating(wid) {
-                self.floating.set_last_focus(Some(wid));
-            } else {
-                let _ = self.workspace_tree_mut(ws_id).select_window(layout, wid);
-                self.virtual_workspace_manager.set_last_focused_window(space, ws_id, Some(wid));
-            }
-        }
-    }
-
-    /// Move focus from the floating layer back into the tiled strip.
-    ///
-    /// Extracted so the "fell off the end of the floating set" path and the
-    /// original "floating navigation could not proceed" path share one
-    /// implementation instead of duplicating it.
-    fn move_focus_escape_to_tiled(
-        &mut self,
-        window_store: &mut WindowStore,
-        space: SpaceId,
-        ws_id: VirtualWorkspaceId,
-        layout: LayoutId,
-    ) -> EventResponse {
-        let tiled_windows = self.filter_active_workspace_windows(
-            window_store,
-            space,
-            self.workspace_tree(ws_id).visible_windows_in_layout(layout),
-        );
-        if tiled_windows.is_empty() {
-            return EventResponse::default();
-        }
-        // Resume at the strip's own selection, falling back to the first column only when the
-        // strip has none. Taking `first()` unconditionally is why leaving a floating window
-        // always jumped to the leftmost column instead of back to where the strip was.
-        let focus_window = self
-            .workspace_tree(ws_id)
-            .selected_window(layout)
-            .filter(|wid| tiled_windows.contains(wid))
-            .or_else(|| tiled_windows.first().copied());
-        let response = EventResponse {
-            changed: true,
-            focus_window,
-            raise_windows: tiled_windows,
-            edge_hit: None,
-            moved: None,
-        };
-        self.apply_focus_response(space, ws_id, layout, &response);
-        response
-    }
-
-    fn move_focus_internal(
-        &mut self,
-        window_store: &mut WindowStore,
-        space: SpaceId,
-        visible_spaces: &[SpaceId],
-        visible_space_centers: &HashMap<SpaceId, CGPoint>,
-        direction: Direction,
-        is_floating: bool,
-    ) -> EventResponse {
-        let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
-            warn!(
-                "No active workspace/layout for space {:?}; move_focus ignored",
-                space
-            );
-            return EventResponse::default();
-        };
-
-        if is_floating {
-            // Floating windows are not strip members: navigation moves to the strip and resumes at its
-            // own selection. See "Navigation" in `src/layout/docs/strip.md`.
-            return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
-        }
-
-        let previous_selection = self.workspace_tree(ws_id).selected_window(layout);
-
-        let (focus_window_raw, raise_windows) =
-            self.workspace_tree_mut(ws_id).move_focus(layout, direction);
-        let focus_window =
-            self.filter_active_workspace_window(window_store, space, focus_window_raw);
-        let raise_windows =
-            self.filter_active_workspace_windows(window_store, space, raise_windows);
-        if focus_window.is_some() {
-            let response = EventResponse {
-                changed: true,
-                focus_window,
-                raise_windows,
-                edge_hit: None,
-                moved: None,
-            };
-            self.apply_focus_response(space, ws_id, layout, &response);
-            response
-        } else {
-            if let Some(prev_wid) = previous_selection {
-                let _ = self.workspace_tree_mut(ws_id).select_window(layout, prev_wid);
-            }
-            // A strip end stops here: each display is its own strip. Only a vertical command, which
-            // is not along a strip at all, may look to the adjacent display.
-            let adjacent_space = match strip_edge(direction) {
-                Some(_) => None,
-                None => self.next_space_for_direction(
-                    space,
-                    direction,
-                    visible_spaces,
-                    visible_space_centers,
-                ),
-            };
-
-            if let Some(new_space) = adjacent_space {
-                let Some((new_ws_id, new_layout)) = self.workspace_and_layout(new_space) else {
-                    debug!(
-                        "No active workspace/layout for adjacent space {:?}; skipping cross-space focus",
-                        new_space
-                    );
-                    return EventResponse::default();
-                };
-                let windows_in_new_space = self.filter_active_workspace_windows(
-                    window_store,
-                    new_space,
-                    self.workspace_tree(new_ws_id).visible_windows_in_layout(new_layout),
-                );
-                if let Some(target_window) = self
-                    .filter_active_workspace_window(
-                        window_store,
-                        new_space,
-                        self.workspace_tree(new_ws_id).window_in_direction(new_layout, direction),
-                    )
-                    .or_else(|| windows_in_new_space.first().copied())
-                {
-                    let _ =
-                        self.workspace_tree_mut(new_ws_id).select_window(new_layout, target_window);
-                    let response = EventResponse {
-                        changed: true,
-                        focus_window: Some(target_window),
-                        raise_windows: windows_in_new_space,
-                        edge_hit: None,
-                        moved: None,
-                    };
-                    self.apply_focus_response(new_space, new_ws_id, new_layout, &response);
-                    return response;
-                }
-            }
-
-            // The strip stops at its edge; it does not fall into the floating layer (`src/layout/docs/strip.md`).
-
-            let visible_windows = self.filter_active_workspace_windows(
-                window_store,
-                space,
-                self.workspace_tree(ws_id).visible_windows_in_layout(layout),
-            );
-
-            if let Some(fallback_focus) = self
-                .filter_active_workspace_window(window_store, space, previous_selection)
-                .or_else(|| visible_windows.first().copied())
-            {
-                // The strip stopped at its end.
-                let edge_hit = strip_edge(direction);
-                let response = EventResponse {
-                    changed: true,
-                    focus_window: Some(fallback_focus),
-                    raise_windows: vec![],
-                    edge_hit,
-                    moved: None,
-                };
-                self.apply_focus_response(space, ws_id, layout, &response);
-                return response;
-            }
-
-            EventResponse::default()
-        }
-    }
-
-    fn next_space_for_direction(
-        &self,
-        current_space: SpaceId,
-        direction: Direction,
-        visible_spaces: &[SpaceId],
-        space_centers: &HashMap<SpaceId, CGPoint>,
-    ) -> Option<SpaceId> {
-        if visible_spaces.len() <= 1 {
-            return None;
-        }
-
-        let current_center = space_centers.get(&current_space)?;
-        let mut candidates = Vec::new();
-        for &candidate_space in visible_spaces {
-            if candidate_space == current_space {
-                continue;
-            }
-            if let Some(candidate_center) = space_centers.get(&candidate_space)
-                && let Some(delta) =
-                    Self::directional_delta(direction, current_center, candidate_center)
-            {
-                candidates.push((candidate_space, delta));
-            }
-        }
-
-        if !candidates.is_empty() {
-            candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-            return Some(candidates[0].0);
-        }
-
-        match direction {
-            Direction::Left => {
-                visible_spaces.iter().rev().copied().find(|&space| space != current_space)
-            }
-            Direction::Right => {
-                visible_spaces.iter().copied().find(|&space| space != current_space)
-            }
-            Direction::Up | Direction::Down => None,
-        }
-    }
-
-    fn directional_delta(
-        direction: Direction,
-        current: &CGPoint,
-        candidate: &CGPoint,
-    ) -> Option<f64> {
-        match direction {
-            Direction::Left => {
-                let delta = current.x - candidate.x;
-                if delta > 0.0 { Some(delta) } else { None }
-            }
-            Direction::Right => {
-                let delta = candidate.x - current.x;
-                if delta > 0.0 { Some(delta) } else { None }
-            }
-            Direction::Up => {
-                let delta = candidate.y - current.y;
-                if delta > 0.0 { Some(delta) } else { None }
-            }
-            Direction::Down => {
-                let delta = current.y - candidate.y;
-                if delta > 0.0 { Some(delta) } else { None }
-            }
-        }
     }
 
     pub fn update_space_display(
@@ -1190,17 +923,7 @@ impl LayoutEngine {
                     );
                 }
             }
-            LayoutEvent::AppClosed(pid) => {
-                for (_, ws) in self.virtual_workspace_manager.workspaces.iter_mut() {
-                    ws.layout_system.remove_windows_for_app(pid);
-                }
-                self.floating.remove_all_for_pid(pid);
-                self.window_layout_constraints.retain(|wid, _| wid.pid != pid);
-                self.forget_persisted_app(memory, pid);
-
-                self.virtual_workspace_manager.remove_windows_for_app(window_store, pid);
-                self.floating_positions.remove_app(pid);
-            }
+            LayoutEvent::AppClosed(pid) => self.remove_app(window_store, memory, pid),
             LayoutEvent::WindowAdded(space, wid) => {
                 self.debug_tree(space);
                 self.add_window_to_layout(window_store, memory, space, wid);
@@ -1211,56 +934,9 @@ impl LayoutEngine {
             LayoutEvent::WindowRemovedPreserveFloating(wid) => {
                 self.remove_window_internal(window_store, memory, wid, true);
             }
-            LayoutEvent::WindowFocused(space, wid) => {
-                if self.floating.is_floating(wid) {
-                    self.focused_window = Some(wid);
-                    self.floating.set_last_focus(Some(wid));
-                } else if let Some((ws_id, layout)) = self.workspace_and_layout(space) {
-                    if !self.workspace_tree(ws_id).contains_window(layout, wid) {
-                        warn!(
-                            "WindowFocused ignored: wid={:?} not in active layout for space {:?}",
-                            wid, space
-                        );
-                        return EventResponse::default();
-                    }
-                    self.focused_window = Some(wid);
-                    let _ = self.workspace_tree_mut(ws_id).select_window(layout, wid);
-                    self.virtual_workspace_manager.set_last_focused_window(space, ws_id, Some(wid));
-                    return EventResponse {
-                        changed: true,
-                        ..EventResponse::default()
-                    };
-                } else {
-                    warn!(
-                        "No active workspace/layout for focused window {:?} on space {:?}",
-                        wid, space
-                    );
-                }
-            }
+            LayoutEvent::WindowFocused(space, wid) => return self.on_window_focused(space, wid),
             LayoutEvent::WindowResized { wid, drag, new_frame, screens } => {
-                for (space, screen_frame, display_uuid) in screens {
-                    let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
-                        debug!(
-                            "No active workspace/layout for resized window {:?} on space {:?}; skipping",
-                            wid, space
-                        );
-                        continue;
-                    };
-                    let gaps =
-                        self.layout_settings.gaps.effective_for_display(display_uuid.as_deref());
-                    let border = self.borders.of(wid);
-                    self.workspace_tree_mut(ws_id).on_window_resized(
-                        layout,
-                        wid,
-                        drag,
-                        new_frame,
-                        border,
-                        screen_frame,
-                        &gaps,
-                    );
-
-                    self.workspace_layouts.mark_last_saved(space, ws_id, layout);
-                }
+                self.on_window_resized(wid, drag, new_frame, screens);
             }
             LayoutEvent::WindowZoomed(space, wid) => {
                 let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
@@ -1270,6 +946,89 @@ impl LayoutEngine {
             }
         }
         EventResponse::default()
+    }
+
+    /// Every window of `pid` out of every strip and the floating layer, and forgotten.
+    fn remove_app(
+        &mut self,
+        window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
+        pid: pid_t,
+    ) {
+        for (_, ws) in self.virtual_workspace_manager.workspaces.iter_mut() {
+            ws.layout_system.remove_windows_for_app(pid);
+        }
+        self.floating.remove_all_for_pid(pid);
+        self.window_layout_constraints.retain(|wid, _| wid.pid != pid);
+        self.forget_persisted_app(memory, pid);
+
+        self.virtual_workspace_manager.remove_windows_for_app(window_store, pid);
+        self.floating_positions.remove_app(pid);
+    }
+
+    /// `wid` took focus: the floating layer's focus, or its strip's selection and the workspace's
+    /// focus memory when it is a column of the strip `space` shows. A tiled window that is not is
+    /// ignored.
+    fn on_window_focused(&mut self, space: SpaceId, wid: WindowId) -> EventResponse {
+        if self.floating.is_floating(wid) {
+            self.focused_window = Some(wid);
+            self.floating.set_last_focus(Some(wid));
+            return EventResponse::default();
+        }
+        let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
+            warn!(
+                "No active workspace/layout for focused window {:?} on space {:?}",
+                wid, space
+            );
+            return EventResponse::default();
+        };
+        if !self.workspace_tree(ws_id).contains_window(layout, wid) {
+            warn!(
+                "WindowFocused ignored: wid={:?} not in active layout for space {:?}",
+                wid, space
+            );
+            return EventResponse::default();
+        }
+        self.focused_window = Some(wid);
+        let _ = self.workspace_tree_mut(ws_id).select_window(layout, wid);
+        self.virtual_workspace_manager.set_last_focused_window(space, ws_id, Some(wid));
+        EventResponse {
+            changed: true,
+            ..EventResponse::default()
+        }
+    }
+
+    /// `wid` resized to `new_frame`, by `drag` or by its app, applied to the strip of each screen
+    /// it was laid out on.
+    fn on_window_resized(
+        &mut self,
+        wid: WindowId,
+        drag: Option<Drag>,
+        new_frame: CGRect,
+        screens: Vec<(SpaceId, CGRect, Option<String>)>,
+    ) {
+        for (space, screen_frame, display_uuid) in screens {
+            let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
+                debug!(
+                    "No active workspace/layout for resized window {:?} on space {:?}; skipping",
+                    wid, space
+                );
+                continue;
+            };
+            let gaps = self.layout_settings.gaps.effective_for_display(display_uuid.as_deref());
+            let border = self.borders.of(wid);
+            self.workspace_tree_mut(ws_id).on_window_resized(
+                layout,
+                wid,
+                drag,
+                new_frame,
+                border,
+                screen_frame,
+                &gaps,
+            );
+
+            self.workspace_layouts.mark_last_saved(space, ws_id, layout);
+        }
     }
 
     /// What the tree looks like as a command arrives. Only ever read from a log.
@@ -1324,50 +1083,6 @@ impl LayoutEngine {
             focus_window: Some(wid),
             edge_hit: None,
             moved: None,
-        }
-    }
-
-    /// Moves focus between the strip and the floating layer, without moving any window.
-    fn toggle_focus_floating(
-        &mut self,
-        window_store: &mut WindowStore,
-        space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-        layout: LayoutId,
-        is_floating: bool,
-    ) -> EventResponse {
-        if is_floating {
-            let selection = self.workspace_tree(workspace_id).selected_window(layout);
-            let mut raise_windows =
-                self.workspace_tree(workspace_id).visible_windows_in_layout(layout);
-            let focus_window = selection.or_else(|| raise_windows.pop());
-            let response = EventResponse {
-                changed: true,
-                raise_windows,
-                focus_window,
-                edge_hit: None,
-                moved: None,
-            };
-            self.apply_focus_response(space, workspace_id, layout, &response);
-            response
-        } else {
-            let floating_windows: Vec<WindowId> =
-                self.active_floating_windows_in_workspace(window_store, space);
-            let mut raise_windows: Vec<_> = floating_windows
-                .iter()
-                .copied()
-                .filter(|wid| Some(*wid) != self.floating.last_focus())
-                .collect();
-            let focus_window = self.floating.last_focus().or_else(|| raise_windows.pop());
-            let response = EventResponse {
-                changed: true,
-                raise_windows,
-                focus_window,
-                edge_hit: None,
-                moved: None,
-            };
-            self.apply_focus_response(space, workspace_id, layout, &response);
-            response
         }
     }
 
