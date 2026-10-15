@@ -9,11 +9,26 @@ use tracing::{info, warn};
 
 use super::events::EventOutcome;
 use super::{Reactor, RefocusState, StaleCleanupState};
+use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::{
-    ForwardedSpaceState, TopologyWindowDelta, display_set_delta,
+    DisplaySetDelta, ForwardedSpaceState, TopologyWindowDelta, display_set_delta,
 };
 use crate::windows::domain::request::Request;
 use crate::workspaces::LayoutEvent;
+use crate::workspaces::domain::display_affinity::SetupChange;
+
+/// What of a snapshot is carried out after its screens are taken in, unless Mission Control holds
+/// it.
+struct SnapshotSettlement {
+    spaces: Vec<Option<SpaceId>>,
+    authoritative_spaces: Vec<Option<SpaceId>>,
+    space_remaps: Vec<(SpaceId, SpaceId)>,
+    display_set: DisplaySetDelta,
+    resized_spaces: Vec<(SpaceId, CGSize)>,
+    topology_window_delta: Option<TopologyWindowDelta>,
+    releases_lifecycle_refresh_quarantine: bool,
+    should_force_refresh_layout: bool,
+}
 
 impl Reactor {
     pub(super) fn handle_authoritative_space_snapshot(
@@ -49,29 +64,13 @@ impl Reactor {
             ..
         } = space_state;
         self.space_state.active_window_spaces = active_window_spaces;
-        let activation_config = self.activation_cfg();
-        let crate::displays::domain::topology::SpaceSnapshotAnalysis {
-            spaces,
-            authoritative_spaces,
-            command_space_only_update,
-            invalidates_pending_targets,
-        } = analysis;
 
-        let current_display_spaces = screens
-            .iter()
-            .filter_map(|screen| screen.space.map(|space| (space, screen.display_uuid.clone())))
-            .collect::<Vec<_>>();
-        self.layout_engine.reconcile_startup_spaces(
-            &mut self.state.windows,
-            &mut self.state.display_memory,
-            &current_display_spaces,
-            screens.len(),
-        );
+        self.reconcile_startup_spaces(&screens);
 
         self.space_state.has_seen_display_set = has_seen_display_set;
         self.space_state.fullscreen_spaces = fullscreen_spaces;
         self.space_state.active_spaces = active_spaces;
-        if command_space_only_update {
+        if analysis.command_space_only_update {
             self.space_state.menu_bar_space = menu_bar_space;
             self.space_state.command_space = command_space;
             return Ok(outcome);
@@ -90,28 +89,12 @@ impl Reactor {
         self.space_state.last_user_space_by_display = last_user_space_by_display;
 
         if screens.is_empty() {
-            self.refocus_manager.stale_cleanup_state = StaleCleanupState::Suppressed;
-            if !self.space_state.screens.is_empty() {
-                self.space_state.screens.clear();
-                self.expose_all_spaces();
-            }
-            self.recompute_and_set_active_spaces(&[]);
-            self.update_complete_window_server_info(Vec::new());
-            outcome.absorb_ahead(self.try_apply_pending_space_change());
+            self.take_in_no_screens(&mut outcome);
             return Ok(outcome);
         }
 
         self.refocus_manager.stale_cleanup_state = StaleCleanupState::Enabled;
-        let display_set = display_set_delta(
-            &self
-                .space_state
-                .screens
-                .iter()
-                .map(|screen| screen.display_uuid.clone())
-                .collect::<Vec<_>>(),
-            &screens.iter().map(|screen| screen.display_uuid.clone()).collect::<Vec<_>>(),
-            display_set_changed,
-        );
+        let display_set = self.display_set_against(&screens, display_set_changed);
         // Capture affinity for a departing display BEFORE anything reacts to its absence.
         //
         // This is the only moment the truth is still available. `self.state.windows` still
@@ -120,7 +103,140 @@ impl Reactor {
         // the remaining display there is no way left to tell which of them had been on the
         // one that vanished. Recording it now is what lets a later replug move back exactly
         // the windows that were there, rather than whichever windows now occupy those slots.
-        for display_uuid in &display_set.departed {
+        self.record_departing_display_homes(&display_set.departed);
+        self.replace_screens(screens);
+        if analysis.invalidates_pending_targets {
+            self.clear_pending_hidden_window_targets();
+        }
+        if self.is_mission_control_active() {
+            self.pending_space_change = Some(pending_space_state);
+            return Ok(outcome);
+        }
+        Ok(self.settle_snapshot(
+            SnapshotSettlement {
+                spaces: analysis.spaces,
+                authoritative_spaces: analysis.authoritative_spaces,
+                space_remaps,
+                display_set,
+                resized_spaces,
+                topology_window_delta,
+                releases_lifecycle_refresh_quarantine,
+                should_force_refresh_layout,
+            },
+            outcome,
+        ))
+    }
+
+    /// A snapshot carried out once its screens are in and Mission Control is not holding it: the
+    /// spaces remapped, the display arrangement adopted, the active spaces recomputed, the windows
+    /// reconciled with the spaces and moved back to a display that arrived.
+    fn settle_snapshot(
+        &mut self,
+        settlement: SnapshotSettlement,
+        mut outcome: EventOutcome,
+    ) -> EventOutcome {
+        let SnapshotSettlement {
+            spaces,
+            authoritative_spaces,
+            space_remaps,
+            display_set,
+            resized_spaces,
+            topology_window_delta,
+            releases_lifecycle_refresh_quarantine,
+            should_force_refresh_layout,
+        } = settlement;
+        self.remap_spaces(space_remaps);
+        // Which hardware arrangement is in force. Every window record is scoped to it, so this has
+        // to be settled before anything below reads or writes one — the repatriation at the end of
+        // this function above all.
+        let setup_change = self.adopt_current_display_setup();
+        // Re-observe where windows are, and in what order, whenever the topology is settled.
+        //
+        // Only while the display set is UNCHANGED. During a display change the current
+        // assignments are mid-evacuation and would record the wrong display; on a settled
+        // topology they are exactly right.
+        if display_set.unchanged {
+            self.sync_display_affinity_from_live_layout();
+        }
+        let current_screens = self.screens_for_current_spaces();
+        self.space_activation_policy
+            .on_spaces_updated(self.activation_cfg(), &current_screens);
+        self.recompute_and_set_active_spaces(&authoritative_spaces);
+        self.restore_windows_after_fullscreen_exit(&spaces);
+
+        for (space, size) in resized_spaces {
+            if !self.is_space_active(space) {
+                continue;
+            }
+            self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
+            outcome = outcome.with_layout_event(LayoutEvent::SpaceExposed(space, size));
+        }
+        if let Some(delta) = topology_window_delta {
+            outcome.absorb(self.apply_topology_window_delta(delta));
+        }
+        let active_windows = self.authoritative_active_space_windows();
+        self.finalize_space_change(&spaces, active_windows, releases_lifecycle_refresh_quarantine);
+        outcome.absorb_ahead(self.try_apply_pending_space_change());
+        // Repatriate LAST, after finalize_space_change.
+        //
+        // Everything above this line derives window ownership from where macOS currently
+        // reports each window, and finalize_space_change's
+        // reconcile_windows_with_authoritative_spaces re-derives it for every tracked
+        // window. Repatriating before that point is silently undone: the moved windows are
+        // still physically on the old display when the reconciliation reads their position,
+        // so it puts them straight back. Running afterwards makes affinity the last word on
+        // a display arrival, which is the whole point of recording it.
+        //
+        // A display nobody has used before takes nothing, and that needs no check here: the records
+        // are scoped to the arrangement in force, an arrangement nobody has seen holds none, so
+        // there is nothing homed to the new display to move. Saying so in the log is worth it —
+        // "why did my windows not move onto the projector" has an answer — but a guard around the
+        // loop would be a branch that cannot change the outcome.
+        self.repatriate_arrivals(&setup_change, &display_set.arrived, &mut outcome);
+        if should_force_refresh_layout {
+            outcome = outcome.with_force_window_refresh().with_arrange_passes(1);
+        }
+        outcome
+    }
+
+    /// Which displays `screens` brings and takes away against the screens attached now.
+    fn display_set_against(&self, screens: &[ScreenInfo], changed: bool) -> DisplaySetDelta {
+        let uuids = |screens: &[ScreenInfo]| -> Vec<String> {
+            screens.iter().map(|screen| screen.display_uuid.clone()).collect()
+        };
+        display_set_delta(&uuids(&self.space_state.screens), &uuids(screens), changed)
+    }
+
+    /// The startup space ids reconciled with the spaces `screens` are on.
+    fn reconcile_startup_spaces(&mut self, screens: &[ScreenInfo]) {
+        let current_display_spaces = screens
+            .iter()
+            .filter_map(|screen| screen.space.map(|space| (space, screen.display_uuid.clone())))
+            .collect::<Vec<_>>();
+        self.layout_engine.reconcile_startup_spaces(
+            &mut self.state.windows,
+            &mut self.state.display_memory,
+            &current_display_spaces,
+            screens.len(),
+        );
+    }
+
+    /// A snapshot with no screens: stale cleanup suppressed, the screens forgotten and every space
+    /// exposed, no space active, and a held space change tried again.
+    fn take_in_no_screens(&mut self, outcome: &mut EventOutcome) {
+        self.refocus_manager.stale_cleanup_state = StaleCleanupState::Suppressed;
+        if !self.space_state.screens.is_empty() {
+            self.space_state.screens.clear();
+            self.expose_all_spaces();
+        }
+        self.recompute_and_set_active_spaces(&[]);
+        self.update_complete_window_server_info(Vec::new());
+        outcome.absorb_ahead(self.try_apply_pending_space_change());
+    }
+
+    /// Each window on a display leaving the set given that display as its home.
+    fn record_departing_display_homes(&mut self, departed: &[String]) {
+        for display_uuid in departed {
             let Some(departing_space) =
                 self.state.display_memory.affinity.space_for_display(display_uuid)
             else {
@@ -150,6 +266,10 @@ impl Reactor {
                 );
             }
         }
+    }
+
+    /// The attached screens replaced, and the launch memory and the cursor warp told of them.
+    fn replace_screens(&mut self, screens: Vec<ScreenInfo>) {
         self.space_state.screens = screens;
         // The topology the launch memory is keyed by. Set from here because this is the one place the
         // attached set is authoritatively replaced.
@@ -165,13 +285,11 @@ impl Reactor {
         // Pushing it from here rather than having the actor poll CGDisplayBounds keeps one
         // source of truth for the screen set.
         self.publish_cursor_warp_screens();
-        if invalidates_pending_targets {
-            self.clear_pending_hidden_window_targets();
-        }
-        if self.is_mission_control_active() {
-            self.pending_space_change = Some(pending_space_state);
-            return Ok(outcome);
-        }
+    }
+
+    /// The startup space ids the snapshot remaps moved onto their new ids, and each screen's space
+    /// recorded as its display's.
+    fn remap_spaces(&mut self, space_remaps: Vec<(SpaceId, SpaceId)>) {
         for (previous_space, space) in space_remaps {
             self.layout_engine.remap_space(
                 &mut self.state.windows,
@@ -210,66 +328,26 @@ impl Reactor {
                 Some(display_uuid.to_string()),
             );
         }
-        // Which hardware arrangement is in force. Every window record is scoped to it, so this has
-        // to be settled before anything below reads or writes one — the repatriation at the end of
-        // this function above all.
-        let setup_change = self.adopt_current_display_setup();
-        // Re-observe where windows are, and in what order, whenever the topology is settled.
-        //
-        // Only while the display set is UNCHANGED. During a display change the current
-        // assignments are mid-evacuation and would record the wrong display; on a settled
-        // topology they are exactly right.
-        if display_set.unchanged {
-            self.sync_display_affinity_from_live_layout();
-        }
-        let current_screens = self.screens_for_current_spaces();
-        self.space_activation_policy
-            .on_spaces_updated(activation_config, &current_screens);
-        self.recompute_and_set_active_spaces(&authoritative_spaces);
-        self.restore_windows_after_fullscreen_exit(&spaces);
+    }
 
-        for (space, size) in resized_spaces {
-            if !self.is_space_active(space) {
-                continue;
-            }
-            self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
-            outcome = outcome.with_layout_event(LayoutEvent::SpaceExposed(space, size));
-        }
-        if let Some(delta) = topology_window_delta {
-            outcome.absorb(self.apply_topology_window_delta(delta));
-        }
-        let active_windows = self.authoritative_active_space_windows();
-        self.finalize_space_change(&spaces, active_windows, releases_lifecycle_refresh_quarantine);
-        outcome.absorb_ahead(self.try_apply_pending_space_change());
-        // Repatriate LAST, after finalize_space_change.
-        //
-        // Everything above this line derives window ownership from where macOS currently
-        // reports each window, and finalize_space_change's
-        // reconcile_windows_with_authoritative_spaces re-derives it for every tracked
-        // window. Repatriating before that point is silently undone: the moved windows are
-        // still physically on the old display when the reconciliation reads their position,
-        // so it puts them straight back. Running afterwards makes affinity the last word on
-        // a display arrival, which is the whole point of recording it.
-        //
-        // A display nobody has used before takes nothing, and that needs no check here: the records
-        // are scoped to the arrangement in force, an arrangement nobody has seen holds none, so
-        // there is nothing homed to the new display to move. Saying so in the log is worth it —
-        // "why did my windows not move onto the projector" has an answer — but a guard around the
-        // loop would be a branch that cannot change the outcome.
-        if !setup_change.restores_windows() && !display_set.arrived.is_empty() {
+    /// The windows homed to each display that arrived moved back to it, unless the arrangement now
+    /// in force restores them itself.
+    fn repatriate_arrivals(
+        &mut self,
+        setup_change: &SetupChange,
+        arrived: &[String],
+        outcome: &mut EventOutcome,
+    ) {
+        if !setup_change.restores_windows() && !arrived.is_empty() {
             info!(
                 setup = %self.state.display_memory.affinity.current_setup(),
-                arrived = ?display_set.arrived,
+                arrived = ?arrived,
                 "a display arrangement nobody has seen: every window stays where it is"
             );
         }
-        for display_uuid in &display_set.arrived {
+        for display_uuid in arrived {
             outcome.absorb(self.repatriate_windows_to_display(display_uuid));
         }
-        if should_force_refresh_layout {
-            outcome = outcome.with_force_window_refresh().with_arrange_passes(1);
-        }
-        Ok(outcome)
     }
 
     /// Applies the space change held back during Mission Control once the screens it was taken on

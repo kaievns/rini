@@ -249,7 +249,7 @@ Largest methods, and what each one turned out to be:
 | `handle_layout_response` | 303 → 248 | four rules extracted, one of them a bug fix |
 | `dispatch_workflow` | 288 → 57 | a dispatch table, split by event family |
 | `apply_event_outcome` | 271 → 9 | three rules extracted; the drain split at the arrange, with no re-entry |
-| `handle_authoritative_space_snapshot` | 251 → 228 | the display-set comparison extracted |
+| `handle_authoritative_space_snapshot` | 251 → 76 | the display-set comparison extracted; the settling split off |
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
@@ -262,7 +262,9 @@ One of those extractions was a bug fix: see 3.2.1.
 correctness hazard rather than a length one: the previous display set was captured
 inline, one line before the field holding it was overwritten, and a comment was all
 that kept the two statements in that order. The function now takes both lists as
-arguments.
+arguments. The handler takes the screens in and holds the snapshot while Mission Control is
+open; `settle_snapshot` carries out the rest, from the space remaps to the windows moved back
+to a display that arrived, over a `SnapshotSettlement` of what the snapshot left for it.
 
 `apply_event_outcome` gave up three rules: `ArrangeRequest::passes_to_run`,
 `EventOutcome::focus_landed` and `notification_ids_to_publish` (`src/app/reactor/managers.rs`),
