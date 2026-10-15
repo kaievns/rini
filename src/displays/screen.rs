@@ -5,14 +5,13 @@ use std::mem::MaybeUninit;
 type CGDirectDisplayID = u32;
 use std::ptr::NonNull;
 
-use objc2::rc::Retained;
 use objc2::{ClassType, msg_send};
 use objc2_app_kit::NSScreen;
 use objc2_core_foundation::{
     CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize,
 };
 use objc2_core_graphics::{CGDisplayBounds, CGError, CGGetActiveDisplayList, CGMainDisplayID};
-use objc2_foundation::{MainThreadMarker, NSArray, NSNumber, ns_string};
+use objc2_foundation::{MainThreadMarker, NSNumber, ns_string};
 use tracing::{debug, warn};
 
 use crate::displays::domain::screen::{
@@ -23,8 +22,7 @@ use rini_core::ids::{ScreenId, SpaceId};
 use rini_skylight_sys::{
     CFRelease, CFUUIDCreateFromString, CFUUIDCreateString, CGDisplayCreateUUIDFromDisplayID,
     CGDisplayGetDisplayIDFromUUID, CGSCopyBestManagedDisplayForRect, CGSCopyManagedDisplaySpaces,
-    CGSCopyManagedDisplays, CGSCopySpaces, CGSGetActiveSpace, CGSManagedDisplayGetCurrentSpace,
-    CGSSpaceMask, CoreDockGetAutoHideEnabled, CoreDockGetOrientationAndPinning, G_CONNECTION,
+    CGSManagedDisplayGetCurrentSpace, CoreDockGetAutoHideEnabled, CoreDockGetOrientationAndPinning, G_CONNECTION,
     SLSCopyActiveMenuBarDisplayIdentifier, SLSGetDisplayMenubarHeight, SLSGetDockRectWithReason,
     SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode, SLSMainConnectionID,
 };
@@ -348,10 +346,7 @@ struct CGScreenInfo {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct NSScreenInfo {
-    frame: CGRect,
-    visible_frame: CGRect,
     cg_id: ScreenId,
     name: Option<String>,
     scale: f64,
@@ -426,8 +421,6 @@ impl System for Actual {
             .flat_map(|s| {
                 let name = s.localizedName().to_string();
                 Some(NSScreenInfo {
-                    frame: s.frame(),
-                    visible_frame: s.visibleFrame(),
                     cg_id: s.get_number().ok()?,
                     name: Some(name),
                     scale: s.backingScaleFactor(),
@@ -529,47 +522,6 @@ pub fn current_space_for_display_uuid(display_uuid: &str) -> Option<SpaceId> {
 
 pub fn displays_have_separate_spaces() -> bool {
     unsafe { SLSGetSpaceManagementMode(SLSMainConnectionID()) == 1 }
-}
-
-/// Utilities for querying the current system configuration. For diagnostic purposes only.
-#[allow(dead_code)]
-pub mod diagnostic {
-    use objc2_core_foundation::CFArray;
-
-    use super::*;
-
-    pub fn cur_space() -> SpaceId {
-        SpaceId::new(unsafe { CGSGetActiveSpace(SLSMainConnectionID()) })
-    }
-
-    pub fn visible_spaces() -> CFRetained<CFArray<SpaceId>> {
-        unsafe {
-            let arr = CGSCopySpaces(SLSMainConnectionID(), CGSSpaceMask::ALL_VISIBLE_SPACES);
-            CFRetained::from_raw(NonNull::new_unchecked(arr.cast::<CFArray<SpaceId>>()))
-        }
-    }
-
-    pub fn all_spaces() -> CFRetained<CFArray<SpaceId>> {
-        unsafe {
-            let arr = CGSCopySpaces(SLSMainConnectionID(), CGSSpaceMask::ALL_SPACES);
-            CFRetained::from_raw(NonNull::new_unchecked(arr.cast::<CFArray<SpaceId>>()))
-        }
-    }
-
-    pub fn managed_displays() -> CFRetained<CFArray> {
-        unsafe {
-            CFRetained::from_raw(NonNull::new_unchecked(CGSCopyManagedDisplays(
-                SLSMainConnectionID(),
-            )))
-        }
-    }
-
-    pub fn managed_display_spaces() -> Retained<NSArray> {
-        unsafe {
-            Retained::from_raw(CGSCopyManagedDisplaySpaces(SLSMainConnectionID()))
-                .expect("CGSCopyManagedDisplaySpaces returned null")
-        }
-    }
 }
 
 pub fn managed_display_space_ids() -> HashMap<String, Vec<SpaceId>> {
@@ -702,7 +654,7 @@ mod test {
     }
 
     #[test]
-    fn it_calculates_the_visible_frame() {
+    fn each_screen_s_frame_comes_from_its_display_s_bounds() {
         let stub = Stub {
             cg_screens: vec![
                 CGScreenInfo {
@@ -717,21 +669,11 @@ mod test {
             ns_screens: vec![
                 NSScreenInfo {
                     cg_id: ScreenId::new(3),
-                    frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
-                    visible_frame: CGRect::new(
-                        CGPoint::new(0.0, 76.0),
-                        CGSize::new(3840.0, 2059.0),
-                    ),
                     name: None,
                     scale: 2.0,
                 },
                 NSScreenInfo {
                     cg_id: ScreenId::new(1),
-                    frame: CGRect::new(CGPoint::new(3840.0, 98.0), CGSize::new(1512.0, 982.0)),
-                    visible_frame: CGRect::new(
-                        CGPoint::new(3840.0, 98.0),
-                        CGSize::new(1512.0, 950.0),
-                    ),
                     name: None,
                     scale: 2.0,
                 },
@@ -768,10 +710,8 @@ mod test {
     #[test]
     fn each_screen_carries_the_scale_its_display_reports() {
         let bounds = |x: f64| CGRect::new(CGPoint::new(x, 0.0), CGSize::new(1440.0, 900.0));
-        let ns_screen = |id: u32, x: f64, scale: f64| NSScreenInfo {
+        let ns_screen = |id: u32, scale: f64| NSScreenInfo {
             cg_id: ScreenId::new(id),
-            frame: bounds(x),
-            visible_frame: bounds(x),
             name: None,
             scale,
         };
@@ -780,7 +720,7 @@ mod test {
                 CGScreenInfo { cg_id: ScreenId::new(1), bounds: bounds(0.0) },
                 CGScreenInfo { cg_id: ScreenId::new(2), bounds: bounds(1440.0) },
             ],
-            ns_screens: vec![ns_screen(1, 0.0, 2.0), ns_screen(2, 1440.0, 1.0)],
+            ns_screens: vec![ns_screen(1, 2.0), ns_screen(2, 1.0)],
         };
         let (screens, _) = ScreenCache::new_with(stub).refresh().unwrap();
         let scale_of = |id: u32| screens.iter().find(|s| s.id == ScreenId::new(id)).unwrap().scale;
@@ -791,7 +731,6 @@ mod test {
     #[test]
     fn clears_cached_screen_identifiers_when_display_list_is_empty() {
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1440.0, 900.0));
-        let visible_frame = CGRect::new(CGPoint::new(0.0, 22.0), CGSize::new(1440.0, 878.0));
 
         let system = SequenceSystem::new(
             vec![
@@ -804,8 +743,6 @@ mod test {
             vec![
                 vec![NSScreenInfo {
                     cg_id: ScreenId::new(1),
-                    frame: bounds,
-                    visible_frame,
                     name: None,
                     scale: 2.0,
                 }],
@@ -838,8 +775,6 @@ mod test {
         };
         let ns_screen = NSScreenInfo {
             cg_id: ScreenId::new(1),
-            frame: bounds,
-            visible_frame: bounds,
             name: None,
             scale: 2.0,
         };
