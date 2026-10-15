@@ -30,7 +30,10 @@ the format, and every place rini knowingly differs from niri.
    whose every field is optional. Ranges are checked here, with the span. knus keeps no value of a
    node with an error anywhere in it and stops a struct at its first bad child, as niri's knuffel
    does, so a section with a problem is left out of the part. A bind block is the exception: it
-   decodes each bind on its own and carries their errors, so one bad bind leaves the rest.
+   decodes each bind on its own and carries their errors, so one bad bind leaves the rest. A bind
+   naming no rini action is reported by `suggest::unknown_action`: with niri's reason from
+   `NIRI_ACTIONS` when the action is niri's, with what does its job now from `FORMER_ACTIONS` when
+   it was rini's and is gone (`toggle-stack`), and otherwise with a suggestion.
 4. `kdl/apply.rs` lays whatever decoded over a `Config`, field by field, and runs the checks that
    need more than one node on the config that results: widths that nest, one `focus-at-startup`,
    unique workspace names, workspace names that exist, keys bound once. A check that needs a node

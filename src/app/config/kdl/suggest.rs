@@ -1,9 +1,10 @@
 //! What a name rini does not know was probably meant to be.
 //!
-//! Two tables. `SCHEMA` is every node name each section takes, and a test decodes each entry, so it
-//! cannot list a name the decoder refuses. `NIRI` is the names niri has and rini does not, each with
-//! the reason, so a pasted niri snippet is told why rather than offered a lookalike. Beside them,
-//! `FORMER_ACTIONS` tells an older config what a rini action it names became.
+//! `SCHEMA` is every node name each section takes, and a test decodes each entry, so it cannot list a
+//! name the decoder refuses. `NIRI` and `NIRI_ACTIONS` are the section names and actions niri has and
+//! rini does not, each with the reason, so a pasted niri snippet is told why rather than offered a
+//! lookalike. `FORMER_ACTIONS` is rini's own actions that are gone, each with what does its job now,
+//! so an older config is told where it went.
 
 use knus::ast::{Document, SpannedNode};
 use knus::span::Span;

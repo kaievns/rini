@@ -101,5 +101,6 @@
 ## Where it lives
 
 `src/app/config/` reads and applies the file: `kdl/` decodes each section and `kdl/apply.rs` lays it
-over the settings; `kdl/suggest.rs` holds the two name tables. The decisions behind the format are
-`docs/config.md`.
+over the settings; `kdl/suggest.rs` holds the name tables: the names each section takes, niri's
+names and actions rini refuses with the reason, and rini's former actions with what does their job
+now. The decisions behind the format are `docs/config.md`.
