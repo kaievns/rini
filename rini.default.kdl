@@ -20,8 +20,7 @@ input {
     mod-key "Alt"
 
     // Moving the mouse into a window focuses it. Off unless written.
-    // suspend-while-held= names a key, or modifiers alone, that pause it while held.
-    // focus-follows-mouse suspend-while-held="Fn"
+    // focus-follows-mouse
 
     // When focus changes, move the mouse to the focused window. Off unless written.
     // warp-mouse-to-focus

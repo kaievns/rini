@@ -37,11 +37,8 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         if let Some(mod_key) = input.mod_key {
             settings.mod_key = mod_key;
         }
-        if let Some(focus) = input.focus_follows_mouse {
-            settings.focus_follows_mouse = focus.on;
-            if focus.suspend_while_held.is_some() {
-                settings.focus_follows_mouse_disable_hotkey = focus.suspend_while_held;
-            }
+        if let Some(Flag(on)) = input.focus_follows_mouse {
+            settings.focus_follows_mouse = on;
         }
         if let Some(Flag(on)) = input.warp_mouse_to_focus {
             settings.mouse_follows_focus = on;

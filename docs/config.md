@@ -130,7 +130,7 @@ wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 | `float_modal_windows` | the modal rule is an ordinary `window-rule` in `rini.default.kdl` |
 | `Meta` as a modifier name | niri's `Super`, or `Cmd` |
 | `swap_windows`, `focus_window`, and window ids in binds | a config cannot know a window id; they are IPC only, as niri's `#[knuffel(skip)]` actions |
-| `config save` | it rewrote the file without its comments and could not write `focus_follows_mouse_disable_hotkey` back. The file is the config |
+| `config save` | it rewrote the file without its comments. The file is the config |
 | the typed `config set-…` setters and the JSON-path `config set` | `config set '<KDL>'` applies a fragment through the same code as the file |
 | the legacy bare `resize_window_grow` migration | it existed for TOML, and made every parse error lose its span |
 

@@ -146,7 +146,7 @@ fn input_maps_onto_focus_and_the_pointer() {
     let config = parse(concat!(
         "input {\n",
         "    mod-key \"Ctrl\"\n",
-        "    focus-follows-mouse suspend-while-held=\"Fn\"\n",
+        "    focus-follows-mouse\n",
         "    warp-mouse-to-focus\n",
         "    workspace-auto-back-and-forth\n",
         "    warp-mouse-across-stacked-outputs upper-side=\"right\" lower-top-at=0.25\n",
@@ -158,12 +158,20 @@ fn input_maps_onto_focus_and_the_pointer() {
     let s = &config.settings;
     assert_eq!(s.mod_key, ModKey::Ctrl);
     assert!(s.focus_follows_mouse && s.mouse_follows_focus && s.mouse_hides_on_focus);
-    assert!(s.focus_follows_mouse_disable_hotkey.is_some());
     assert!(config.virtual_workspaces.workspace_auto_back_and_forth);
     assert!(s.warp_cursor_between_stacked_displays);
     assert_eq!(s.stacked_display_upper_is, StackedUpperSide::Right);
     assert_eq!(s.stacked_display_lower_top_at, 0.25);
     assert_eq!(s.auto_focus_denylist, ["com.apple.Spotlight", "com.apple.dock"]);
+}
+
+#[test]
+fn focus_follows_mouse_takes_no_key_that_pauses_it() {
+    assert!(parse("input {\n    focus-follows-mouse\n}\n").settings.focus_follows_mouse);
+    assert!(
+        refused("input {\n    focus-follows-mouse suspend-while-held=\"Fn\"\n}\n")
+            .contains("suspend-while-held")
+    );
 }
 
 #[test]

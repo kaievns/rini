@@ -2,8 +2,6 @@
 //! it and hands the whole thing over as `InputSettings`.
 use serde::Serialize;
 
-use crate::input::domain::key::HotkeySpec;
-
 #[derive(Serialize, Debug, PartialEq, Clone, Copy)]
 pub struct WindowSnappingSettings {
     /// How much two windows must overlap, as intersection over union, before a drag swaps them.
@@ -19,5 +17,4 @@ impl Default for WindowSnappingSettings {
 pub struct InputSettings {
     pub mouse_hides_on_focus: bool,
     pub focus_follows_mouse: bool,
-    pub focus_follows_mouse_disable_hotkey: Option<HotkeySpec>,
 }

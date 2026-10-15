@@ -10,7 +10,7 @@ use serde::Serialize;
 use crate::app::startup::StartupCommand;
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Bind;
-use crate::input::domain::key::{HotkeySpec, ModKey};
+use crate::input::domain::key::ModKey;
 use crate::input::settings::{InputSettings, WindowSnappingSettings};
 pub use crate::layout::settings::{Edges, LayoutSettings};
 pub use crate::windows::domain::rules::{RuleMatch, WindowRule};
@@ -53,8 +53,6 @@ pub struct Settings {
     /// Fraction up the upper display's height at which the lower display's top edge sits.
     pub stacked_display_lower_top_at: f64,
     pub focus_follows_mouse: bool,
-    /// Held to suspend focus-follows-mouse; a full hotkey or a modifier-only spec.
-    pub focus_follows_mouse_disable_hotkey: Option<HotkeySpec>,
     /// Bundle ids whose activation must not switch workspaces (Spotlight-style focus stealers).
     pub auto_focus_denylist: Vec<String>,
     /// The modifier `Mod` stands for in a key.
@@ -88,7 +86,6 @@ impl Default for Settings {
             // laptop parked beside a big monitor tends to sit.
             stacked_display_lower_top_at: 0.4,
             focus_follows_mouse: false,
-            focus_follows_mouse_disable_hotkey: None,
             auto_focus_denylist: Vec::new(),
             mod_key: ModKey::default(),
             layout: LayoutSettings::default(),
@@ -165,7 +162,6 @@ impl From<&Config> for InputSettings {
         InputSettings {
             mouse_hides_on_focus: s.mouse_hides_on_focus,
             focus_follows_mouse: s.focus_follows_mouse,
-            focus_follows_mouse_disable_hotkey: s.focus_follows_mouse_disable_hotkey.clone(),
         }
     }
 }

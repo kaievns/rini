@@ -120,6 +120,12 @@ The strip is ONE group. Everything on it stacks together, and nothing off it may
   moving under it.
 - A move must not be acted on more often than the sampling interval, which is longer in low-power mode.
   Every hardware move becoming a window-server query is not acceptable.
+- MUST be on or off and nothing else: no key held pauses it, as in niri. `focus-follows-mouse` takes
+  no `suspend-while-held=`, and a file that writes one MUST be refused.
+
+> **Reported 2026-10-15.** Kai's decision: the hotkey that paused focus-follows-mouse while held goes.
+> It was rift's `focus_follows_mouse_disable_hotkey`, niri has no counterpart, and Kai leaves
+> focus-follows-mouse off. Focus-follows-mouse itself stays, as niri's.
 
 ## Crossing displays
 
