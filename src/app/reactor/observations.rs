@@ -13,10 +13,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use tracing::{debug, trace};
 
 use super::dispatch::GlobalActivation;
-use super::events::{
-    EventOutcome, app as application_workflow, drag as interaction_workflow,
-    space as topology_workflow, system as system_workflow, window as window_workflow,
-};
+use super::events::{EventOutcome, app, drag, space, system, window};
 use super::managers::QuarantineSignal;
 use super::{DragState, Event, Reactor};
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
@@ -43,7 +40,7 @@ impl Reactor {
 
     pub(super) fn on_system_woke(&mut self) -> EventOutcome {
         self.quarantine_on(QuarantineSignal::Woke);
-        let outcome = system_workflow::handle_system_woke();
+        let outcome = system::handle_system_woke();
         self.bar_clock_changed();
         outcome
     }
@@ -84,7 +81,7 @@ impl Reactor {
         WindowServerContext {
             assigned_space: tracked_window
                 .and_then(|window| self.affinity().assigned_space_for_window_id(window)),
-            last_known_user_space: topology_workflow::resolve_last_known_user_space(
+            last_known_user_space: space::resolve_last_known_user_space(
                 tracked_window.and_then(|window| self.affinity().best_space_for_window_id(window)),
                 self.space_state.iter_known_spaces().next(),
             ),
@@ -119,18 +116,18 @@ impl Reactor {
         kind: SpaceEventKind,
     ) -> anyhow::Result<EventOutcome> {
         let context = self.window_server_context(wsid);
-        let observations = topology_workflow::WindowServerDestroyedObservations {
+        let observations = space::WindowServerDestroyedObservations {
             resolved_space: self.affinity().resolve_native_space(wsid, None),
             active_spaces: self.active_spaces.clone(),
             mission_control_active: self.is_mission_control_active(),
             ordered_in: self.reads.window_server.window_ordered_in(wsid),
             assigned_space: context.assigned_space,
         };
-        topology_workflow::handle_window_server_destroyed(
+        space::handle_window_server_destroyed(
             &mut self.state,
             &self.transactions,
             &mut self.drag_manager,
-            topology_workflow::WindowServerLifecyclePayload {
+            space::WindowServerLifecyclePayload {
                 window_server_id: wsid,
                 space,
                 kind,
@@ -172,7 +169,7 @@ impl Reactor {
         let owner_pid = window_server_info.as_ref().map(|info| info.pid);
         let app_known = owner_pid.is_some_and(|pid| self.apps.contains_key(&pid));
         let running_app_info = owner_pid.filter(|_| !app_known).and_then(self.reads.running_app);
-        let observations = topology_workflow::WindowServerAppearedObservations {
+        let observations = space::WindowServerAppearedObservations {
             is_parked_by_rini: self.is_parked_by_rini(wsid, space),
             resolved_space: self.affinity().resolve_native_space(wsid, Some(space)),
             active_spaces: self.active_spaces.clone(),
@@ -183,9 +180,9 @@ impl Reactor {
             app_known,
             running_app_info,
         };
-        topology_workflow::handle_window_server_appeared(
+        space::handle_window_server_appeared(
             &mut self.state,
-            topology_workflow::WindowServerLifecyclePayload {
+            space::WindowServerLifecyclePayload {
                 window_server_id: wsid,
                 space,
                 kind,
@@ -199,27 +196,24 @@ impl Reactor {
         window: WindowId,
     ) -> anyhow::Result<EventOutcome> {
         let active_space = self.active_space_for_window(window);
-        window_workflow::handle_window_deminiaturized(
+        window::handle_window_deminiaturized(
             &mut self.state,
             &*self.reads.window_server,
-            window_workflow::WindowDeminiaturizedPayload { window, active_space },
+            window::WindowDeminiaturizedPayload { window, active_space },
         )
     }
 
     pub(super) fn on_mouse_moved(&mut self, wsid: WindowServerId) -> anyhow::Result<EventOutcome> {
         let window = self.state.windows.tracked_window_id(wsid);
         let active_space = window.and_then(|window| self.active_space_for_window(window));
-        window_workflow::handle_mouse_moved_over_window(
-            &self.apps,
-            window_workflow::MouseMovedPayload {
-                window,
-                should_sync: window.is_some_and(|window| self.should_raise_on_mouse_over(window)),
-                is_main: window.is_some_and(|window| self.main_window() == Some(window)),
-                needs_layout_sync: window
-                    .is_some_and(|window| self.layout_engine.focused_window() != Some(window)),
-                active_space,
-            },
-        )
+        window::handle_mouse_moved_over_window(&self.apps, window::MouseMovedPayload {
+            window,
+            should_sync: window.is_some_and(|window| self.should_raise_on_mouse_over(window)),
+            is_main: window.is_some_and(|window| self.main_window() == Some(window)),
+            needs_layout_sync: window
+                .is_some_and(|window| self.layout_engine.focused_window() != Some(window)),
+            active_space,
+        })
     }
 
     pub(super) fn on_window_frame_changed(
@@ -236,7 +230,7 @@ impl Reactor {
         } else {
             self.title_bar_zoom(window, new_frame)
         };
-        let mut report = window_workflow::FrameReport {
+        let mut report = window::FrameReport {
             window,
             frame: new_frame,
             last_seen,
@@ -246,7 +240,7 @@ impl Reactor {
             mission_control_active: self.is_mission_control_active(),
             zoom: zoom.is_some(),
         };
-        let disposition = window_workflow::classify_window_frame_change(
+        let disposition = window::classify_window_frame_change(
             &mut self.state,
             &self.transactions,
             &mut self.drag_manager,
@@ -256,14 +250,14 @@ impl Reactor {
         // A mouse release still has to terminate an open drag session, including on the paths the
         // reducer returns early from: frame acknowledgements and no-op geometry changes.
         let ends_a_drag = mouse_state == Some(MouseState::Up) && self.is_in_drag();
-        if matches!(disposition, window_workflow::FrameChangeDisposition::Handled) {
+        if matches!(disposition, window::FrameChangeDisposition::Handled) {
             let mut outcome = EventOutcome::no_change();
             outcome.dispatch_mouse_up = ends_a_drag;
             outcome.focused_window = raised_window;
             return Ok(outcome);
         }
         let payload = self.frame_change_payload(window, new_frame, mouse_state, zoom);
-        let mut outcome = window_workflow::handle_window_frame_changed(
+        let mut outcome = window::handle_window_frame_changed(
             &mut self.state,
             &mut self.layout_engine,
             &mut self.drag_manager,
@@ -285,7 +279,7 @@ impl Reactor {
         new_frame: CGRect,
         mouse_state: Option<MouseState>,
         zoom: Option<(SpaceId, Zoom)>,
-    ) -> window_workflow::WindowFrameChangedPayload {
+    ) -> window::WindowFrameChangedPayload {
         let (server_id, old_frame) = self
             .state
             .windows
@@ -294,7 +288,7 @@ impl Reactor {
             .unwrap_or((None, new_frame));
         let old_space = self.affinity().geometry_space_for_window(&old_frame, server_id);
         let new_space = self.affinity().geometry_space_for_window(&new_frame, server_id);
-        window_workflow::WindowFrameChangedPayload {
+        window::WindowFrameChangedPayload {
             window,
             new_frame,
             mouse_state,
@@ -372,12 +366,11 @@ impl Reactor {
 impl Reactor {
     pub(super) fn on_application_launched(
         &mut self,
-        payload: application_workflow::ApplicationLaunchedPayload,
+        payload: app::ApplicationLaunchedPayload,
         raised_window: Option<WindowId>,
     ) -> anyhow::Result<EventOutcome> {
         let pid = payload.pid;
-        let mut outcome =
-            application_workflow::handle_application_launched(&mut self.apps, payload)?;
+        let mut outcome = app::handle_application_launched(&mut self.apps, payload)?;
         if self.main_window_tracker.is_globally_frontmost(pid) {
             outcome.app_requests.push((pid, Request::ApplicationGloballyActivated(pid)));
         }
@@ -392,9 +385,8 @@ impl Reactor {
         raised_window: Option<WindowId>,
     ) -> anyhow::Result<EventOutcome> {
         self.clear_menu_state_for_non_owner(pid);
-        let mut outcome = application_workflow::handle_application_activated(
-            application_workflow::ApplicationActivatedPayload { pid, quiet },
-        )?;
+        let mut outcome =
+            app::handle_application_activated(app::ApplicationActivatedPayload { pid, quiet })?;
         if quiet == Quiet::No {
             outcome.absorb(self.handle_app_activation_workspace_switch(pid));
         }
@@ -479,7 +471,7 @@ impl Reactor {
 
     pub(super) fn on_windows_discovered(
         &mut self,
-        payload: application_workflow::WindowsDiscoveredPayload,
+        payload: app::WindowsDiscoveredPayload,
         raised_window: Option<WindowId>,
     ) -> anyhow::Result<EventOutcome> {
         if self.refreshes_blocked() {
@@ -491,17 +483,17 @@ impl Reactor {
             self.defer_visible_refresh(true);
             return Ok(EventOutcome::default());
         }
-        let mut outcome = application_workflow::handle_windows_discovered(payload)?;
+        let mut outcome = app::handle_windows_discovered(payload)?;
         outcome.focused_window = raised_window;
         Ok(outcome)
     }
 
     pub(super) fn on_window_created(
         &mut self,
-        payload: window_workflow::WindowCreatedPayload,
+        payload: window::WindowCreatedPayload,
         raised_window: Option<WindowId>,
     ) -> anyhow::Result<EventOutcome> {
-        let mut outcome = window_workflow::handle_window_created(
+        let mut outcome = window::handle_window_created(
             &mut self.state,
             &self.transactions,
             &*self.reads.window_server,
@@ -522,11 +514,11 @@ impl Reactor {
         if self.refreshes_blocked() {
             return Ok(EventOutcome::default());
         }
-        let mut outcome = window_workflow::handle_window_destroyed(
+        let mut outcome = window::handle_window_destroyed(
             &mut self.state,
             &self.transactions,
             &mut self.drag_manager,
-            window_workflow::WindowDestroyedPayload { window },
+            window::WindowDestroyedPayload { window },
         )?;
         outcome.focused_window = raised_window;
         Ok(outcome)
@@ -586,11 +578,11 @@ impl Reactor {
         .and_then(|window| {
             self.affinity().best_space_for_window_id(window).map(|space| (space, window))
         });
-        let mut outcome = interaction_workflow::handle_mouse_up(
+        let mut outcome = drag::handle_mouse_up(
             &mut self.state,
             &mut self.layout_engine,
             &mut self.drag_manager,
-            interaction_workflow::MouseUpPayload {
+            drag::MouseUpPayload {
                 pending_swap,
                 swap_space,
                 final_space,

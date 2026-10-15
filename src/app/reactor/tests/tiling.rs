@@ -21,7 +21,7 @@ use crate::layout::domain::tile::window_in;
 use crate::layout::settings::Edges;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::request::Request;
-use crate::workspaces as layout;
+use crate::workspaces;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -789,7 +789,7 @@ mod strip_regroup {
 
     use super::*;
     use crate::app::reactor::regroup::{StackedWindow, strip_group_to_lift_for};
-    use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+    use crate::windows::domain::raise::{self, RaiseRequest};
     use crate::windows::domain::raise_order::AppBatch;
     use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
 
@@ -801,7 +801,7 @@ mod strip_regroup {
     /// Two Ghostty-like strip windows side by side, a third parked off the right edge, and a floating
     /// Settings window over the middle of the screen, all one app on one workspace. The raise manager's
     /// channel is handed back so the test reads the `RaiseRequest` the reactor sends.
-    fn reactor_with_sandwich() -> (Reactor, channels::Receiver<raise_manager::Event>, SpaceId) {
+    fn reactor_with_sandwich() -> (Reactor, channels::Receiver<raise::Event>, SpaceId) {
         reactor_with_sandwich_of([1, 1, 1, 1])
     }
 
@@ -809,7 +809,7 @@ mod strip_regroup {
     /// order left, right, parked, Settings.
     fn reactor_with_sandwich_of(
         pids: [pid_t; 4],
-    ) -> (Reactor, channels::Receiver<raise_manager::Event>, SpaceId) {
+    ) -> (Reactor, channels::Receiver<raise::Event>, SpaceId) {
         let window = |idx: u32| WindowId::new(pids[idx as usize - 1], idx);
         let mut reactor = test_reactor();
         let mut raise_rx = reactor.connect_test_raises();
@@ -865,9 +865,9 @@ mod strip_regroup {
         (reactor, raise_rx, space)
     }
 
-    fn raise_request(rx: &mut channels::Receiver<raise_manager::Event>) -> Option<RaiseRequest> {
+    fn raise_request(rx: &mut channels::Receiver<raise::Event>) -> Option<RaiseRequest> {
         match rx.try_recv().ok()?.1 {
-            raise_manager::Event::RaiseRequest(request) => Some(request),
+            raise::Event::RaiseRequest(request) => Some(request),
             other => panic!("unexpected raise manager event: {other:?}"),
         }
     }
@@ -931,7 +931,7 @@ mod strip_regroup {
         reactor.state_front_to_back(&[902, 904, 901, 903]);
 
         reactor.handle_layout_response(
-            layout::EventResponse {
+            workspaces::EventResponse {
                 changed: true,
                 raise_windows: vec![WindowId::new(1, 1)],
                 focus_window: Some(WindowId::new(1, 1)),
@@ -959,7 +959,7 @@ mod strip_regroup {
             reactor.state_front_to_back(&[902, 904, 901, 903]);
 
             reactor.handle_layout_response(
-                layout::EventResponse {
+                workspaces::EventResponse {
                     changed: true,
                     raise_windows: vec![WindowId::new(left, 1)],
                     focus_window: Some(WindowId::new(left, 1)),
@@ -1057,7 +1057,7 @@ mod strip_regroup {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
         reactor.state_front_to_back(&[902, 904, 901, 903]);
         reactor.handle_layout_response(
-            layout::EventResponse {
+            workspaces::EventResponse {
                 changed: true,
                 raise_windows: vec![WindowId::new(1, 4)],
                 focus_window: Some(WindowId::new(1, 4)),
@@ -1076,7 +1076,7 @@ mod strip_regroup {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
         reactor.state_front_to_back(&[902, 901, 903, 904]);
         reactor.handle_layout_response(
-            layout::EventResponse {
+            workspaces::EventResponse {
                 changed: true,
                 raise_windows: vec![WindowId::new(1, 1)],
                 focus_window: Some(WindowId::new(1, 1)),

@@ -4,7 +4,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use crate::app::config::Config;
 use crate::app::controller::WmEvent;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
-use crate::windows::domain::raise as raise_manager;
+use crate::windows::domain::raise;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{EventResponse, LayoutEvent};
 
@@ -49,7 +49,7 @@ pub(crate) struct EventOutcome {
     pub(crate) forgotten_windows: Vec<WindowId>,
     pub(crate) confirmed_window_spaces: Vec<(WindowServerId, SpaceId)>,
     pub(crate) fullscreen_restorations: Vec<(WindowServerId, SpaceId, WindowId)>,
-    pub(crate) raise_requests: Vec<raise_manager::Event>,
+    pub(crate) raise_requests: Vec<raise::Event>,
     pub(crate) make_key_windows: Vec<(pid_t, WindowServerId)>,
     pub(crate) mouse_warps: Vec<CGPoint>,
     pub(crate) pre_layout_window_frame_writes: Vec<WindowFrameWriteRequest>,
@@ -462,7 +462,7 @@ impl EventOutcome {
         self
     }
 
-    pub(crate) fn with_raise_request(mut self, request: raise_manager::Event) -> Self {
+    pub(crate) fn with_raise_request(mut self, request: raise::Event) -> Self {
         self.raise_requests.push(request);
         self
     }

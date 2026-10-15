@@ -445,7 +445,7 @@ pub fn service_stop() -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs as unix_fs;
+    use std::os::unix::fs::symlink;
 
     use super::*;
 
@@ -458,7 +458,7 @@ mod tests {
         let real = dir.join("rini-real");
         fs::write(&real, b"#!/bin/sh\nexit 0\n").unwrap();
         let link = dir.join("rini");
-        unix_fs::symlink(&real, &link).unwrap();
+        symlink(&real, &link).unwrap();
 
         assert_eq!(agent_executable(&link), real.canonicalize().unwrap());
     }
@@ -468,7 +468,7 @@ mod tests {
     fn a_dangling_link_is_passed_through() {
         let tmp = tempfile::tempdir().unwrap();
         let link = tmp.path().join("rini");
-        unix_fs::symlink(tmp.path().join("gone"), &link).unwrap();
+        symlink(tmp.path().join("gone"), &link).unwrap();
 
         assert_eq!(agent_executable(&link), link);
     }

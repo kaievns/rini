@@ -10,7 +10,7 @@ use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::displays::domain::topology::Topology;
-use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+use crate::windows::domain::raise::{self, RaiseRequest};
 use crate::windows::domain::request::{Request, SuppressEnhancedUi};
 use crate::workspaces::{LayoutCommand, LayoutEvent, WorkspaceCommand};
 
@@ -534,7 +534,7 @@ fn auto_workspace_switch_follows_activated_window_when_same_app_is_visible_elsew
 
     let msg = raise_manager_rx.try_recv().expect("Should have sent an event").1;
     match msg {
-        raise_manager::Event::RaiseRequest(RaiseRequest { focus_window, focus_quiet, .. }) => {
+        raise::Event::RaiseRequest(RaiseRequest { focus_window, focus_quiet, .. }) => {
             assert_eq!(focus_window.map(|(wid, _)| wid), Some(activated));
             assert_eq!(focus_quiet, Quiet::Yes);
         }

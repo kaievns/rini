@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use rini_runloop::channel as channels;
+use rini_runloop::channel;
 use tracing::{debug, error, info};
 
 use crate::app::config::{Config, ConfigCommand};
 
-pub type Sender = channels::Sender<Event>;
-pub type Receiver = channels::Receiver<Event>;
+pub type Sender = channel::Sender<Event>;
+pub type Receiver = channel::Receiver<Event>;
 
 #[derive(Debug)]
 pub enum Event {
@@ -38,7 +38,7 @@ pub struct ConfigActor {
 
 impl ConfigActor {
     pub fn spawn_with_path(config: Config, on_change: OnChange, config_path: PathBuf) -> Sender {
-        let (tx, rx) = channels::channel();
+        let (tx, rx) = channel::channel();
         std::thread::Builder::new()
             .name("config".to_string())
             .spawn(move || {

@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
 use super::Reactor;
-use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+use crate::windows::domain::raise::{self, RaiseRequest};
 use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
 use crate::windows::domain::request::Quiet;
 
@@ -109,11 +109,7 @@ impl Reactor {
     }
 
     /// One quiet raise of `to_raise` in order, focusing `focused` (which is expected to be last).
-    fn regroup_raise(
-        &mut self,
-        to_raise: &[WindowId],
-        focused: WindowId,
-    ) -> Option<raise_manager::Event> {
+    fn regroup_raise(&mut self, to_raise: &[WindowId], focused: WindowId) -> Option<raise::Event> {
         let mut app_handles = HashMap::default();
         for wid in to_raise {
             self.insert_app_handle_for_window(&mut app_handles, *wid);
@@ -126,7 +122,7 @@ impl Reactor {
         }
         self.insert_app_handle_for_window(&mut app_handles, focused);
         self.regroup_raised = to_raise.to_vec();
-        Some(raise_manager::Event::RaiseRequest(RaiseRequest {
+        Some(raise::Event::RaiseRequest(RaiseRequest {
             raise_windows: batches,
             focus_window: Some((focused, None)),
             app_handles,
@@ -139,8 +135,8 @@ impl Reactor {
     ///
     /// The single place raises leave the reactor, so nothing can issue one without its echo being recorded.
     /// See [`crate::windows::domain::focus::RaiseEcho`].
-    pub(super) fn dispatch_raise(&mut self, request: raise_manager::Event) {
-        if let raise_manager::Event::RaiseRequest(details) = &request {
+    pub(super) fn dispatch_raise(&mut self, request: raise::Event) {
+        if let raise::Event::RaiseRequest(details) = &request {
             let touched: Vec<WindowId> = details
                 .raise_windows
                 .iter()

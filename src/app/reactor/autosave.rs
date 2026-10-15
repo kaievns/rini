@@ -3,7 +3,7 @@
 use tracing::{debug, trace};
 
 use super::Reactor;
-use super::events::command as command_workflow;
+use super::events::command;
 
 impl Reactor {
     /// Persist the layout after a change, at most once every AUTOSAVE_INTERVAL, so a restart or
@@ -33,7 +33,7 @@ impl Reactor {
         path: std::path::PathBuf,
     ) -> std::io::Result<()> {
         let active_space = self.active_display_space();
-        command_workflow::save_layout_before_exit(
+        command::save_layout_before_exit(
             &self.state,
             &mut self.layout_engine,
             path,

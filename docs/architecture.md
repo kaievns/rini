@@ -215,7 +215,10 @@ function and file is now; a doc that needs a size points at them.
 
 It keeps every function in `src/app` and `src/main.rs`, tests' included, under two `bool`
 parameters (`no_function_in_the_app_takes_two_bools`): a choice a call would spell `true, false` is
-an enum, or a struct naming each field.
+an enum, or a struct naming each field. And no `use` in `src/app` gives a module another name
+(`no_module_in_the_app_is_imported_under_another_name`): `crate::workspaces` imported as `layout`
+beside a real `crate::layout` sent a reader to the wrong feature. A type may still be renamed to
+tell two `Event`s apart.
 
 `cargo test -p rini-geometry` still builds plain Rust instead of linking AppKit.
 `cargo test` on the application does link it, so the win is now "this module has

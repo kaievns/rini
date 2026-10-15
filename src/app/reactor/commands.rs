@@ -13,7 +13,7 @@ use rini_ipc::protocol::{DisplaySelector, LayoutCommand};
 use tracing::{info, warn};
 
 use super::Reactor;
-use super::events::{EventOutcome, command as command_workflow};
+use super::events::{EventOutcome, command};
 use crate::displays::domain::screen::ScreenInfo;
 
 impl Reactor {
@@ -25,9 +25,9 @@ impl Reactor {
                 .and_then(|screen| screen.display_uuid_owned())
         });
         let config = self.activation_cfg();
-        command_workflow::handle_command_reactor_toggle_space_activated(
+        command::handle_command_reactor_toggle_space_activated(
             &mut self.space_activation_policy,
-            command_workflow::ToggleSpacePayload { config, space, display_uuid },
+            command::ToggleSpacePayload { config, space, display_uuid },
         )
     }
 
@@ -39,10 +39,10 @@ impl Reactor {
         let window_id = WindowId::new(window_id.pid, window_id.idx);
         let window_server_id = window_server_id.map(WindowServerId::new);
         let resolved_space = self.best_space_for_tracked_window(window_id);
-        command_workflow::handle_command_reactor_focus_window(
+        command::handle_command_reactor_focus_window(
             &self.state,
             &self.apps,
-            command_workflow::FocusWindowPayload {
+            command::FocusWindowPayload {
                 window_id,
                 window_server_id,
                 resolved_space,
@@ -62,10 +62,7 @@ impl Reactor {
     /// Which display a selector names, and the window to focus once the cursor is on it.
     ///
     /// `focus-display` and `move-mouse-to-display` differ only in what they do with this.
-    fn resolve_display_focus(
-        &self,
-        selector: &DisplaySelector,
-    ) -> command_workflow::DisplayFocusPayload {
+    fn resolve_display_focus(&self, selector: &DisplaySelector) -> command::DisplayFocusPayload {
         let screen = self.screen_for_selector(selector, None).cloned();
         let focus_window = screen.as_ref().and_then(|screen| {
             let space = screen.space?;
@@ -80,7 +77,7 @@ impl Reactor {
             .as_ref()
             .and_then(|screen| screen.space)
             .is_none_or(|space| self.is_space_active(space));
-        command_workflow::DisplayFocusPayload {
+        command::DisplayFocusPayload {
             screen,
             target_is_active,
             focus_window,
@@ -91,14 +88,14 @@ impl Reactor {
         &mut self,
         selector: DisplaySelector,
     ) -> anyhow::Result<EventOutcome> {
-        command_workflow::handle_move_mouse_to_display(self.resolve_display_focus(&selector))
+        command::handle_move_mouse_to_display(self.resolve_display_focus(&selector))
     }
 
     pub(super) fn on_focus_display(
         &mut self,
         selector: DisplaySelector,
     ) -> anyhow::Result<EventOutcome> {
-        command_workflow::handle_focus_display(self.resolve_display_focus(&selector))
+        command::handle_focus_display(self.resolve_display_focus(&selector))
     }
 
     pub(super) fn on_layout_command(
@@ -122,11 +119,11 @@ impl Reactor {
         // What a window does after a command answers rini, not a double-click before it.
         self.drag_manager.title_bar_click = None;
         let (visible_spaces, visible_space_centers) = self.visible_spaces_for_layout(false);
-        command_workflow::handle_command_layout(
+        command::handle_command_layout(
             &mut self.state,
             &mut self.layout_engine,
             &mut self.workspace_switch_manager,
-            command_workflow::LayoutCommandPayload {
+            command::LayoutCommandPayload {
                 command: command.into(),
                 command_space,
                 visible_spaces,
@@ -221,10 +218,10 @@ impl Reactor {
         if source_space == target_space {
             return Ok(EventOutcome::no_change());
         }
-        command_workflow::handle_command_reactor_move_window_to_display(
+        command::handle_command_reactor_move_window_to_display(
             &mut self.state,
             &mut self.layout_engine,
-            command_workflow::MoveWindowToDisplayPayload {
+            command::MoveWindowToDisplayPayload {
                 window,
                 window_server_id,
                 source_space,

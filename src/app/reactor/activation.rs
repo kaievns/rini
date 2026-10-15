@@ -9,7 +9,7 @@ use super::events::EventOutcome;
 use super::{Reactor, WorkspaceSwitchOrigin};
 use crate::windows::domain::focus::{Sighting, activation_focus_target};
 use crate::windows::domain::request::Quiet;
-use crate::windows::domain::{raise as raise_manager, raise_order};
+use crate::windows::domain::{raise, raise_order};
 use crate::workspaces::LayoutEvent;
 
 impl Reactor {
@@ -121,14 +121,14 @@ impl Reactor {
             app_handles.insert(target.pid, app.handle.clone());
         }
         let space = self.affinity().best_space_for_window_id(target);
-        let mut outcome = EventOutcome::default().with_raise_request(
-            raise_manager::Event::RaiseRequest(raise_manager::RaiseRequest {
+        let mut outcome = EventOutcome::default().with_raise_request(raise::Event::RaiseRequest(
+            raise::RaiseRequest {
                 raise_windows: vec![raise_order::AppBatch::new(target)],
                 focus_window: Some((target, None)),
                 app_handles,
                 focus_quiet: Quiet::No,
-            }),
-        );
+            },
+        ));
         if let Some(space) = space {
             outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, target));
         }

@@ -10,10 +10,10 @@ use crate::app::reactor::managers::{Churn, RefreshQuarantineState, Session, Visi
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::displays::domain::topology::{DisplaySet, Topology};
-use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+use crate::windows::domain::raise::{self, RaiseRequest};
 use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
-use crate::workspaces as layout;
+use crate::workspaces;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent, WorkspaceCommand};
 
 #[test]
@@ -750,7 +750,7 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
     while raise_manager_rx.try_recv().is_ok() {}
 
     reactor.handle_layout_response(
-        layout::EventResponse {
+        workspaces::EventResponse {
             changed: true,
             raise_windows: vec![
                 WindowId::new(1, 1),
@@ -765,7 +765,7 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
     );
     let msg = raise_manager_rx.try_recv().expect("Should have sent an event").1;
     match msg {
-        raise_manager::Event::RaiseRequest(RaiseRequest {
+        raise::Event::RaiseRequest(RaiseRequest {
             raise_windows, focus_window, ..
         }) => {
             let raise_windows: HashSet<Vec<WindowId>> =

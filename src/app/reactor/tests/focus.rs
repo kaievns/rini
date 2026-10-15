@@ -7,13 +7,13 @@ use rini_ipc::protocol::WorkspaceSelector;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::reactor::events::window as window_workflow;
+use crate::app::reactor::events::window;
 use crate::app::reactor::managers::QuarantineSignal;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
-use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+use crate::windows::domain::raise::{self, RaiseRequest};
 use crate::windows::domain::request::Request;
-use crate::workspaces as layout;
+use crate::workspaces;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 #[test]
@@ -147,7 +147,7 @@ fn handle_layout_response_includes_handles_for_raise_and_focus_windows() {
     let _events = apps.simulate_events();
     while raise_manager_rx.try_recv().is_ok() {}
     reactor.handle_layout_response(
-        layout::EventResponse {
+        workspaces::EventResponse {
             changed: true,
             raise_windows: vec![WindowId::new(1, 1)],
             focus_window: Some(WindowId::new(2, 1)),
@@ -158,7 +158,7 @@ fn handle_layout_response_includes_handles_for_raise_and_focus_windows() {
     );
     let msg = raise_manager_rx.try_recv().expect("Should have sent an event").1;
     match msg {
-        raise_manager::Event::RaiseRequest(RaiseRequest { app_handles, .. }) => {
+        raise::Event::RaiseRequest(RaiseRequest { app_handles, .. }) => {
             assert!(app_handles.contains_key(&1));
             assert!(app_handles.contains_key(&2));
         }
@@ -233,17 +233,15 @@ fn focus_follows_mouse_emits_focus_without_explicit_arrange() {
     let space = SpaceId::new(1);
     let window = WindowId::new(7, 1);
 
-    let outcome = window_workflow::handle_mouse_moved_over_window(
-        reactor.apps(),
-        window_workflow::MouseMovedPayload {
+    let outcome =
+        window::handle_mouse_moved_over_window(reactor.apps(), window::MouseMovedPayload {
             window: Some(window),
             should_sync: true,
             is_main: true,
             needs_layout_sync: true,
             active_space: Some(space),
-        },
-    )
-    .expect("mouse focus workflow");
+        })
+        .expect("mouse focus workflow");
 
     assert!(!outcome.arrange.requested);
     assert!(matches!(

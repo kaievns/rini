@@ -9,10 +9,10 @@ use tracing::{debug, trace};
 use super::events::ArrangeRequest;
 use super::{Reactor, RefocusState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::displays::domain::screen::order_visible_spaces_by_position;
-use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+use crate::windows::domain::raise::{self, RaiseRequest};
 use crate::windows::domain::raise_order;
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
-use crate::workspaces::{self as layout, LayoutEngine, LayoutEvent};
+use crate::workspaces::{self, LayoutEngine, LayoutEvent};
 
 impl Reactor {
     pub(super) fn send_layout_event(&mut self, event: LayoutEvent) {
@@ -73,7 +73,7 @@ impl Reactor {
 
     pub(super) fn handle_layout_response(
         &mut self,
-        response: layout::EventResponse,
+        response: workspaces::EventResponse,
         workspace_switch_space: Option<SpaceId>,
     ) {
         if self.is_in_drag() {
@@ -86,7 +86,7 @@ impl Reactor {
                 RefocusState::Pending(space) => Some(space),
                 RefocusState::None => None,
             };
-        let layout::EventResponse {
+        let workspaces::EventResponse {
             changed,
             raise_windows,
             mut focus_window,
@@ -148,7 +148,7 @@ impl Reactor {
         });
         let focus_window_with_warp = focus_window.map(|wid| (wid, self.warp_for_focus(wid)));
 
-        self.dispatch_raise(raise_manager::Event::RaiseRequest(RaiseRequest {
+        self.dispatch_raise(raise::Event::RaiseRequest(RaiseRequest {
             raise_windows: batches,
             focus_window: focus_window_with_warp,
             app_handles,
@@ -162,7 +162,7 @@ impl Reactor {
     /// would otherwise re-focus whatever sits under the cursor.
     fn bounce_at_edge(
         &mut self,
-        edge_hit: Option<layout::Direction>,
+        edge_hit: Option<workspaces::Direction>,
         workspace_switch_space: Option<SpaceId>,
         blocked: bool,
     ) -> bool {

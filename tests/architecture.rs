@@ -1655,6 +1655,94 @@ fn generic_arrow<F: Fn() -> u8>(a: bool, b: bool) {}
     ]);
 }
 
+/// Each name a `use` of `source` gives under another lowercase name, as `line: name as alias`: a
+/// module imported as something it is not called. A type renamed to tell two apart is left alone.
+fn renamed_imports(source: &str) -> Vec<String> {
+    let blanked = blank_comments(source, true);
+    let mut found = Vec::new();
+    let mut offset = 0;
+    for line in blanked.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let statement = match trimmed.strip_prefix("pub") {
+            Some(rest) if rest.starts_with('(') => rest.split_once(')').map_or(rest, |(_, r)| r),
+            Some(rest) => rest,
+            None => trimmed,
+        }
+        .trim_start();
+        if statement.starts_with("use ") {
+            let start = offset + (line.len() - statement.len());
+            let end = blanked[start..].find(';').map_or(blanked.len(), |at| start + at);
+            let words: Vec<(usize, &str)> = blanked[start..end]
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .scan(start, |at, word| {
+                    let here = *at;
+                    *at += word.len() + 1;
+                    Some((here, word))
+                })
+                .filter(|(_, word)| !word.is_empty())
+                .collect();
+            for pair in words.windows(3) {
+                let [(_, name), (at, keyword), (_, alias)] = pair else {
+                    continue;
+                };
+                if *keyword == "as"
+                    && *alias != "_"
+                    && alias.starts_with(|c: char| c.is_lowercase())
+                {
+                    let line = blanked[..*at].matches('\n').count() + 1;
+                    found.push(format!("{line}: {name} as {alias}"));
+                }
+            }
+        }
+        offset += line.len();
+    }
+    found
+}
+
+/// No module in `src/app` is imported under another name: `crate::workspaces` read as `layout`
+/// beside a real `crate::layout` sent a reader to the wrong feature.
+#[test]
+fn no_module_in_the_app_is_imported_under_another_name() {
+    let broken: Vec<String> = rust_files(Path::new("src/app"))
+        .into_iter()
+        .flat_map(|path| {
+            let source = fs::read_to_string(&path).expect("readable source");
+            renamed_imports(&source)
+                .into_iter()
+                .map(move |found| format!("{}:{found}", slash(&path)))
+        })
+        .collect();
+    assert!(
+        broken.is_empty(),
+        "import the module by its own name, or its parent and a path through it:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_module_renamed_at_import_is_found_across_lines_and_nothing_else_is() {
+    let source = r#"use crate::workspaces as layout;
+pub(crate) use crate::app::{
+    channels,
+    controller::{self as wm, WmEvent},
+};
+use rustc_hash::FxHashMap as HashMap;
+use crate::bar::Event as BarEvent;
+use std::fmt::Write as _;
+// use crate::raise as raise_manager;
+let width = height as usize;
+let text = "use a as b;";
+pub use crate::input::platform::input_tap as tap;
+    pub(super) use super::events::command as command_workflow;
+"#;
+    assert_eq!(renamed_imports(source), vec![
+        "1: workspaces as layout",
+        "4: self as wm",
+        "12: input_tap as tap",
+        "13: command as command_workflow"
+    ]);
+}
+
 /// Whether `text` names `path` whole, not as the tail of a longer path or name.
 fn names_path(text: &str, path: &str) -> bool {
     let part = |c: char| c.is_alphanumeric() || c == '_' || c == '/';

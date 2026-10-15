@@ -7,7 +7,7 @@ use rini_ipc::protocol::SwitchScope;
 use tracing::{debug, info, warn};
 
 use super::Reactor;
-use super::events::{EventOutcome, command as command_workflow};
+use super::events::{EventOutcome, command};
 use crate::input::domain::switch_session::Signal as SwitchSignal;
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
 use crate::switcher::domain::entries::{Entry, entries};
@@ -57,10 +57,10 @@ impl Reactor {
     pub(super) fn focus_window_anywhere(&mut self, window: WindowId) -> EventOutcome {
         let resolved_space = self.affinity().best_space_for_window_id(window);
         let space_is_active = resolved_space.is_some_and(|space| self.is_space_active(space));
-        match command_workflow::handle_command_reactor_focus_window(
+        match command::handle_command_reactor_focus_window(
             &self.state,
             &self.apps,
-            command_workflow::FocusWindowPayload {
+            command::FocusWindowPayload {
                 window_id: window,
                 window_server_id: self
                     .state

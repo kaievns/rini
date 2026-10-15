@@ -7,22 +7,22 @@ use rini_core::ids::{SpaceId, WindowId};
 use rini_ipc::protocol::{self, ConfigCommand};
 use rini_runloop::dispatch::block_on;
 
-use crate::app::config::actor as config_actor;
+use crate::app::config;
 use crate::app::reactor::{Event, ReactorHandle};
 
 pub struct IpcBackend {
     reactor: ReactorHandle,
-    config_tx: config_actor::Sender,
+    config_tx: config::actor::Sender,
 }
 
 impl IpcBackend {
-    pub fn new(reactor: ReactorHandle, config_tx: config_actor::Sender) -> Self {
+    pub fn new(reactor: ReactorHandle, config_tx: config::actor::Sender) -> Self {
         Self { reactor, config_tx }
     }
 
     fn ask_config<T: Send + 'static>(
         &self,
-        make_event: impl FnOnce(r#continue::Sender<T>) -> config_actor::Event,
+        make_event: impl FnOnce(r#continue::Sender<T>) -> config::actor::Event,
     ) -> Result<T, String> {
         let (tx, fut) = continuation::<T>();
         if let Err(e) = self.config_tx.try_send(make_event(tx)) {
@@ -30,8 +30,8 @@ impl IpcBackend {
             let tokio::sync::mpsc::error::SendError((_span, event)) = e;
             // A continuation sender dropped without a reply panics its receiver; leak it instead.
             match event {
-                config_actor::Event::QueryConfig(response) => std::mem::forget(response),
-                config_actor::Event::ApplyConfig { response, .. } => std::mem::forget(response),
+                config::actor::Event::QueryConfig(response) => std::mem::forget(response),
+                config::actor::Event::ApplyConfig { response, .. } => std::mem::forget(response),
             }
             return Err(format!("Failed to send config query: {msg}"));
         }
@@ -85,11 +85,11 @@ impl rini_ipc::Backend for IpcBackend {
     }
 
     fn config(&self) -> Result<serde_json::Value, String> {
-        let config = self.ask_config(config_actor::Event::QueryConfig)?;
+        let config = self.ask_config(config::actor::Event::QueryConfig)?;
         serde_json::to_value(&config).map_err(|e| format!("Failed to serialize config: {e}"))
     }
 
     fn apply_config(&self, command: ConfigCommand) -> Result<Result<(), String>, String> {
-        self.ask_config(|response| config_actor::Event::ApplyConfig { cmd: command, response })
+        self.ask_config(|response| config::actor::Event::ApplyConfig { cmd: command, response })
     }
 }

@@ -11,7 +11,7 @@ use crate::app::reactor::{AppState, WorkspaceSwitchOrigin};
 use crate::displays::domain::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
-use crate::windows::domain::raise as raise_manager;
+use crate::windows::domain::raise;
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use crate::workspaces::{EngineCommand, LayoutEngine, LayoutEvent};
 
@@ -258,7 +258,7 @@ pub fn handle_command_reactor_focus_window(
         if let Some(app) = apps.get(&window_id.pid) {
             app_handles.insert(window_id.pid, app.handle.clone());
         }
-        let request = raise_manager::Event::RaiseRequest(raise_manager::RaiseRequest {
+        let request = raise::Event::RaiseRequest(raise::RaiseRequest {
             raise_windows: Vec::new(),
             focus_window: Some((window_id, None)),
             app_handles,

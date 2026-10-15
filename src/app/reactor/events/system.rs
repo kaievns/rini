@@ -5,7 +5,7 @@ use crate::app::controller::Sender as WmSender;
 use crate::app::reactor::MenuState;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::CommunicationManager;
-use crate::windows::domain::raise as raise_manager;
+use crate::windows::domain::raise;
 use crate::windows::domain::request::RaiseSequence;
 
 pub fn handle_menu_opened(menu_state: &mut MenuState, pid: i32) -> EventOutcome {
@@ -74,11 +74,11 @@ pub fn handle_raise_completed(payload: RaiseCompletedPayload) -> EventOutcome {
         sequence: sequence_id,
     } = payload;
     EventOutcome::no_change()
-        .with_raise_request(raise_manager::Event::RaiseCompleted { window_id, sequence_id })
+        .with_raise_request(raise::Event::RaiseCompleted { window_id, sequence_id })
 }
 
 pub fn handle_raise_timeout(sequence_id: RaiseSequence) -> EventOutcome {
-    EventOutcome::no_change().with_raise_request(raise_manager::Event::RaiseTimeout { sequence_id })
+    EventOutcome::no_change().with_raise_request(raise::Event::RaiseTimeout { sequence_id })
 }
 
 pub fn handle_register_wm_sender(

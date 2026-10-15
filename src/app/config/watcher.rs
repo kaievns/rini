@@ -11,7 +11,7 @@ use notify_debouncer_mini::{
 use tracing::{debug, info, trace, warn};
 
 use crate::app::config::ConfigCommand;
-use crate::app::config::actor::{self as config_actor, Event as ConfigEvent};
+use crate::app::config::actor::{self, Event as ConfigEvent};
 
 /// Re-reads the config whenever its file changes. A version that cannot be used is reported by the
 /// actor, which keeps running on the last good one.
@@ -19,11 +19,11 @@ pub struct ConfigWatcher {
     file: PathBuf,
     real_file: Option<PathBuf>,
     real_file_id: Option<(u64, u64)>,
-    config_tx: config_actor::Sender,
+    config_tx: actor::Sender,
 }
 
 impl ConfigWatcher {
-    pub fn spawn(config_tx: config_actor::Sender, config_path: PathBuf) {
+    pub fn spawn(config_tx: actor::Sender, config_path: PathBuf) {
         thread::Builder::new()
             .name("config-watcher".to_string())
             .spawn(move || {

@@ -43,7 +43,7 @@ mod tests;
 use std::path::PathBuf;
 use std::thread;
 
-use events::{EventOutcome, WindowFrameWriteRequest, focus as focus_service};
+use events::{EventOutcome, WindowFrameWriteRequest, focus};
 use layout_pass::Pass;
 use objc2_core_foundation::CGRect;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
@@ -61,7 +61,7 @@ use crate::app::system_reads::SystemReads;
 pub use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::space_activation::SpaceActivationPolicy;
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
-use crate::input::platform::input_tap as event_tap;
+use crate::input::platform::input_tap;
 use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
@@ -549,7 +549,7 @@ pub struct ReactorParts {
     pub config: Config,
     pub layout_engine: LayoutEngine,
     pub display_memory: DisplayMemory,
-    pub event_tap_tx: event_tap::Sender,
+    pub event_tap_tx: input_tap::Sender,
     pub cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
     pub transitions_tx: Option<crate::transitions::platform::engine::Sender>,
     pub pictures: Option<crate::pictures::platform::service::Pictures>,
@@ -1105,7 +1105,7 @@ impl Reactor {
         for request in outcome.raise_requests {
             self.dispatch_raise(request);
         }
-        if let Some((space, window)) = focus_service::resolve(outcome.focused_window, |wid| {
+        if let Some((space, window)) = focus::resolve(outcome.focused_window, |wid| {
             self.affinity().best_space_for_window_id(wid)
         }) {
             self.send_layout_event(LayoutEvent::WindowFocused(space, window));

@@ -5,9 +5,9 @@ use rustc_hash::FxHashSet as HashSet;
 use super::{Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::app::{channels, controller};
 use crate::input::domain::drag_swap::DragSwap;
-use crate::input::platform::input_tap as event_tap;
+use crate::input::platform::input_tap;
 use crate::input::settings::WindowSnappingSettings;
-use crate::windows::domain::raise as raise_manager;
+use crate::windows::domain::raise;
 
 /// Manages drag operations and window swapping
 pub(super) struct DragManager {
@@ -255,11 +255,11 @@ impl RefreshQuarantineManager {
 
 /// Manages communication channels to other actors
 pub(super) struct CommunicationManager {
-    pub(super) event_tap_tx: Option<event_tap::Sender>,
+    pub(super) event_tap_tx: Option<input_tap::Sender>,
     pub(super) cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
     pub(super) transitions_tx: Option<crate::transitions::platform::engine::Sender>,
     pub(super) pictures: Option<crate::pictures::platform::service::Pictures>,
-    pub(super) raise_manager_tx: raise_manager::Sender,
+    pub(super) raise_manager_tx: raise::Sender,
     pub(super) wm_sender: Option<controller::Sender>,
     pub(super) events_tx: Option<channels::Sender<Event>>,
 }

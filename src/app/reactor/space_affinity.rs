@@ -6,7 +6,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId};
 use rini_geometry::CGRectExt;
 use rustc_hash::FxHashSet as HashSet;
 
-use super::space_resolution::{self as resolve, Candidates};
+use super::space_resolution::{self, Candidates};
 use crate::displays::domain::snapshot::SpaceKinds;
 use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::windows::domain::state::WindowState;
@@ -95,7 +95,7 @@ impl SpaceAffinity<'_> {
         frame: &CGRect,
         window_server_id: Option<WindowServerId>,
     ) -> Option<SpaceId> {
-        resolve::placement(&self.candidates_for_frame(frame, window_server_id))
+        space_resolution::placement(&self.candidates_for_frame(frame, window_server_id))
     }
 
     pub(crate) fn best_space_for_frame(&self, frame: &CGRect) -> Option<SpaceId> {
@@ -163,7 +163,8 @@ impl SpaceAffinity<'_> {
     }
 
     pub(crate) fn authoritative_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
-        self.candidates_for_window(wid).and_then(|c| resolve::authoritative(&c))
+        self.candidates_for_window(wid)
+            .and_then(|c| space_resolution::authoritative(&c))
     }
 
     /// Resolve native space ownership from the strongest available source.
@@ -204,7 +205,7 @@ impl SpaceAffinity<'_> {
     }
 
     pub(crate) fn best_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
-        self.candidates_for_window(wid).and_then(|c| resolve::best(&c))
+        self.candidates_for_window(wid).and_then(|c| space_resolution::best(&c))
     }
 
     pub(crate) fn is_window_on_known_inactive_space(&self, wid: WindowId) -> bool {
@@ -213,7 +214,7 @@ impl SpaceAffinity<'_> {
     }
 
     pub(crate) fn discovery_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
-        self.candidates_for_window(wid).and_then(|c| resolve::discovery(&c))
+        self.candidates_for_window(wid).and_then(|c| space_resolution::discovery(&c))
     }
 
     pub(crate) fn geometry_space_for_window(
@@ -221,7 +222,7 @@ impl SpaceAffinity<'_> {
         frame: &CGRect,
         window_server_id: Option<WindowServerId>,
     ) -> Option<SpaceId> {
-        resolve::geometry_only(&self.candidates_for_frame(frame, window_server_id))
+        space_resolution::geometry_only(&self.candidates_for_frame(frame, window_server_id))
     }
 
     pub(crate) fn is_known_fullscreen_window(&self, wsid: WindowServerId) -> bool {

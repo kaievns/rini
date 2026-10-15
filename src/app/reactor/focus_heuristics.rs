@@ -7,7 +7,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use tracing::{debug, instrument, trace, warn};
 
 use super::{MenuState, Reactor, RefocusState, WindowFilter};
-use crate::input::platform::input_tap as event_tap;
+use crate::input::platform::input_tap;
 use crate::windows::domain::stack::covered_by_peer_above;
 use crate::workspaces::LayoutEvent;
 
@@ -262,7 +262,7 @@ impl Reactor {
 
     fn set_focus_follows_mouse_enabled(&self, enabled: bool) {
         if let Some(event_tap_tx) = self.communication_manager.event_tap_tx.as_ref() {
-            event_tap_tx.send(event_tap::Request::SetFocusFollowsMouseEnabled(enabled));
+            event_tap_tx.send(input_tap::Request::SetFocusFollowsMouseEnabled(enabled));
         }
     }
 

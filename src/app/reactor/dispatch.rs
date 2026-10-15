@@ -4,10 +4,7 @@
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_ipc::protocol::Command;
 
-use super::events::{
-    EventOutcome, app as application_workflow, command as command_workflow,
-    space as topology_workflow, system as system_workflow, window as window_workflow,
-};
+use super::events::{EventOutcome, app, command, space, system, window};
 use super::{Event, Reactor, ReactorCommand};
 
 /// What the reducers may be handed besides their event: the window the event's focus report
@@ -148,7 +145,7 @@ impl Reactor {
                 is_frontmost: _,
                 main_window: _,
             } => self.on_application_launched(
-                application_workflow::ApplicationLaunchedPayload {
+                app::ApplicationLaunchedPayload {
                     pid,
                     info,
                     handle,
@@ -158,15 +155,11 @@ impl Reactor {
                 raised_window,
             ),
             Event::ApplicationTerminated(pid) => {
-                application_workflow::handle_application_terminated(
-                    &self.apps,
-                    &mut self.state,
-                    pid,
-                )
+                app::handle_application_terminated(&self.apps, &mut self.state, pid)
             }
             Event::ApplicationThreadTerminated(pid) => {
                 self.clear_menu_state_for_pid(pid);
-                application_workflow::handle_application_thread_terminated(
+                app::handle_application_thread_terminated(
                     &mut self.apps,
                     &mut self.state,
                     &self.transactions,
@@ -203,11 +196,11 @@ impl Reactor {
                 self.on_window_server_focus_changed(window, reported_space)
             }
             Event::WindowsDiscovered { pid, new, known_visible } => self.on_windows_discovered(
-                application_workflow::WindowsDiscoveredPayload { pid, new, known_visible },
+                app::WindowsDiscoveredPayload { pid, new, known_visible },
                 raised_window,
             ),
             Event::WindowCreated { window, info, server_info, .. } => self.on_window_created(
-                window_workflow::WindowCreatedPayload {
+                window::WindowCreatedPayload {
                     window_id: window,
                     window: info,
                     window_server_info: server_info,
@@ -221,9 +214,7 @@ impl Reactor {
             Event::WindowServerAppeared(wsid, sid, kind) => {
                 self.on_window_server_appeared(wsid, sid, kind)
             }
-            Event::WindowMinimized(wid) => {
-                window_workflow::handle_window_minimized(&mut self.state, wid)
-            }
+            Event::WindowMinimized(wid) => window::handle_window_minimized(&mut self.state, wid),
             Event::WindowDeminiaturized(wid) => self.on_window_deminiaturized(wid),
             Event::WindowFrameChanged {
                 window,
@@ -240,9 +231,9 @@ impl Reactor {
                 raised_window,
             ),
             Event::WindowTitleChanged(wid, new_title) => {
-                let mut outcome = window_workflow::handle_window_title_changed(
+                let mut outcome = window::handle_window_title_changed(
                     &mut self.state,
-                    window_workflow::WindowTitleChangedPayload { window: wid, title: new_title },
+                    window::WindowTitleChangedPayload { window: wid, title: new_title },
                 )?;
                 outcome.focused_window = raised_window;
                 Ok(outcome)
@@ -263,13 +254,13 @@ impl Reactor {
         dispatch: &Dispatch,
     ) -> anyhow::Result<EventOutcome> {
         match event {
-            Event::SpaceCreated(space) => topology_workflow::handle_space_lifecycle(
+            Event::SpaceCreated(space) => space::handle_space_lifecycle(
                 &mut self.space_activation_policy,
-                topology_workflow::SpaceLifecyclePayload { space, created: true },
+                space::SpaceLifecyclePayload { space, created: true },
             ),
-            Event::SpaceDestroyed(space) => topology_workflow::handle_space_lifecycle(
+            Event::SpaceDestroyed(space) => space::handle_space_lifecycle(
                 &mut self.space_activation_policy,
-                topology_workflow::SpaceLifecyclePayload { space, created: false },
+                space::SpaceLifecyclePayload { space, created: false },
             ),
             Event::SpaceStateChanged(space_state) => self.on_space_state_changed(space_state),
             Event::ActiveDisplayChanged { menu_bar_space, command_space } => {
@@ -277,16 +268,12 @@ impl Reactor {
                 self.space_state.command_space = command_space;
                 Ok(EventOutcome::default())
             }
-            Event::MissionControlNativeEntered => {
-                topology_workflow::handle_mission_control_native_entered(
-                    &mut self.mission_control_manager,
-                    &mut self.drag_manager,
-                )
-            }
+            Event::MissionControlNativeEntered => space::handle_mission_control_native_entered(
+                &mut self.mission_control_manager,
+                &mut self.drag_manager,
+            ),
             Event::MissionControlNativeExited => {
-                topology_workflow::handle_mission_control_native_exited(
-                    &mut self.mission_control_manager,
-                )
+                space::handle_mission_control_native_exited(&mut self.mission_control_manager)
             }
             Event::SystemWillSleep => Ok(self.on_system_will_sleep()),
             Event::SystemWoke => Ok(self.on_system_woke()),
@@ -294,7 +281,7 @@ impl Reactor {
             Event::SessionDidBecomeActive => Ok(self.on_session_did_become_active()),
             Event::DisplayChurnBegin => Ok(self.on_display_churn_begin()),
             Event::DisplayChurnEnd => Ok(self.on_display_churn_end()),
-            Event::RegisterWmSender(sender) => Ok(system_workflow::handle_register_wm_sender(
+            Event::RegisterWmSender(sender) => Ok(system::handle_register_wm_sender(
                 &mut self.communication_manager,
                 sender,
             )),
@@ -315,21 +302,15 @@ impl Reactor {
                 Ok(EventOutcome::no_change())
             }
             Event::MouseMoved(wsid) => self.on_mouse_moved(wsid),
-            Event::MenuOpened(pid) => {
-                Ok(system_workflow::handle_menu_opened(&mut self.menu_state, pid))
-            }
-            Event::MenuClosed(pid) => {
-                Ok(system_workflow::handle_menu_closed(&mut self.menu_state, pid))
-            }
-            Event::RaiseCompleted { window_id, sequence_id } => Ok(
-                system_workflow::handle_raise_completed(system_workflow::RaiseCompletedPayload {
+            Event::MenuOpened(pid) => Ok(system::handle_menu_opened(&mut self.menu_state, pid)),
+            Event::MenuClosed(pid) => Ok(system::handle_menu_closed(&mut self.menu_state, pid)),
+            Event::RaiseCompleted { window_id, sequence_id } => {
+                Ok(system::handle_raise_completed(system::RaiseCompletedPayload {
                     window: window_id,
                     sequence: sequence_id,
-                }),
-            ),
-            Event::RaiseTimeout { sequence_id } => {
-                Ok(system_workflow::handle_raise_timeout(sequence_id))
+                }))
             }
+            Event::RaiseTimeout { sequence_id } => Ok(system::handle_raise_timeout(sequence_id)),
             Event::RaisesIdle { requests_seen } => {
                 self.raise_echo.idle(requests_seen, std::time::Instant::now());
                 Ok(EventOutcome::no_change())
@@ -338,7 +319,7 @@ impl Reactor {
                 self.attention = attention;
                 Ok(EventOutcome::no_change())
             }
-            Event::ConfigUpdated(new_cfg) => command_workflow::handle_config_updated(
+            Event::ConfigUpdated(new_cfg) => command::handle_config_updated(
                 &mut self.config,
                 &mut self.layout_engine,
                 &mut self.drag_manager,
@@ -367,7 +348,7 @@ impl Reactor {
         match command {
             ReactorCommand::SaveAndExit => {
                 let saved = self.save_layout_before_exit(rini_core::paths::restore_file());
-                command_workflow::handle_command_reactor_save_and_exit(saved)
+                command::handle_command_reactor_save_and_exit(saved)
             }
             ReactorCommand::RedistributeWindows => Ok(self.redistribute_windows()),
             ReactorCommand::SwitchWindow { backward, scope } => {
@@ -375,7 +356,7 @@ impl Reactor {
             }
             ReactorCommand::ToggleSpaceActivated => self.on_toggle_space_activated(),
             ReactorCommand::CloseWindow { window_server_id } => {
-                command_workflow::handle_close_window(window_server_id.map(WindowServerId::new))
+                command::handle_close_window(window_server_id.map(WindowServerId::new))
             }
             ReactorCommand::FocusWindow { window_id, window_server_id } => {
                 self.on_focus_window(window_id, window_server_id)

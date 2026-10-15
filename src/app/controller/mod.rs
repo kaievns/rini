@@ -9,7 +9,7 @@ use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
 use rini_core::ids::pid_t;
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::app::config::actor as config;
+use crate::app::config;
 use crate::input::domain::binding::{Action, Bind};
 use crate::windows::platform::app::NSRunningApplicationExt;
 
@@ -20,7 +20,7 @@ type Receiver = channels::Receiver<WmEvent>;
 use rini_runloop::dispatch::DispatchExt;
 
 use crate::app::{channels, reactor};
-use crate::input::platform::input_tap as event_tap;
+use crate::input::platform::input_tap;
 use crate::windows::domain::app_threads::{AppThreads, Next, Readiness};
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::WindowTxStore;
@@ -62,9 +62,9 @@ impl From<crate::windows::platform::lifecycle::AppLifecycle> for WmEvent {
 
 pub struct WmController {
     config: crate::app::config::Config,
-    config_tx: config::Sender,
+    config_tx: config::actor::Sender,
     events_tx: reactor::Sender,
-    event_tap_tx: event_tap::Sender,
+    event_tap_tx: input_tap::Sender,
     window_tx_store: Option<WindowTxStore>,
     receiver: Receiver,
     sender: Sender,
@@ -75,9 +75,9 @@ pub struct WmController {
 impl WmController {
     pub fn new(
         config: crate::app::config::Config,
-        config_tx: config::Sender,
+        config_tx: config::actor::Sender,
         events_tx: reactor::Sender,
-        event_tap_tx: event_tap::Sender,
+        event_tap_tx: input_tap::Sender,
         window_tx_store: Option<WindowTxStore>,
     ) -> (Self, channels::Sender<WmEvent>) {
         let (sender, receiver) = channels::channel();
@@ -123,7 +123,7 @@ impl WmController {
                 self.events_tx.send(Event::MouseMoved(window))
             }
             AppEventsRegistered => {
-                self.event_tap_tx.send(event_tap::Request::SetEventProcessing(false));
+                self.event_tap_tx.send(input_tap::Request::SetEventProcessing(false));
 
                 if !self.hotkeys_installed {
                     self.register_hotkeys();
@@ -140,7 +140,7 @@ impl WmController {
 
                 queue::main().after_f_s(
                     Time::new_after(Time::NOW, (250 + 350) * 1000000),
-                    (event_tap_tx, event_tap::Request::SetEventProcessing(true)),
+                    (event_tap_tx, input_tap::Request::SetEventProcessing(true)),
                     |(sender, event)| sender.send(event),
                 );
             }
@@ -174,7 +174,7 @@ impl WmController {
                 self.config = *new_cfg;
 
                 let input_settings = crate::input::settings::InputSettings::from(&self.config);
-                self.event_tap_tx.send(event_tap::Request::SettingsUpdated(input_settings));
+                self.event_tap_tx.send(input_tap::Request::SettingsUpdated(input_settings));
 
                 if !self.hotkeys_installed {
                     debug!(
@@ -192,10 +192,10 @@ impl WmController {
             }
             PowerStateChanged(is_low_power_mode) => {
                 info!("Power state changed: low power mode = {}", is_low_power_mode);
-                self.event_tap_tx.send(event_tap::Request::SetLowPowerMode(is_low_power_mode));
+                self.event_tap_tx.send(input_tap::Request::SetLowPowerMode(is_low_power_mode));
             }
             KeyboardLayoutChanged => {
-                self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
+                self.event_tap_tx.send(input_tap::Request::KeyboardLayoutChanged);
             }
             ClockChanged => self.events_tx.send(Event::ClockChanged),
         }
@@ -288,15 +288,15 @@ impl WmController {
                         .ok()?;
                 Some((hotkey.modifiers, hotkey.key_code))
             });
-        self.event_tap_tx.send(event_tap::Request::SetSwitchKeys(switch_keys));
-        self.event_tap_tx.send(event_tap::Request::SetHotkeys(
+        self.event_tap_tx.send(input_tap::Request::SetSwitchKeys(switch_keys));
+        self.event_tap_tx.send(input_tap::Request::SetHotkeys(
             binds.into_iter().chain(switcher_binds).collect(),
         ));
     }
 
     fn reload_config(&self) {
         let (response, _fut) = r#continue::continuation();
-        let msg = config::Event::ApplyConfig {
+        let msg = config::actor::Event::ApplyConfig {
             cmd: crate::app::config::ConfigCommand::ReloadConfig,
             response,
         };
@@ -304,8 +304,8 @@ impl WmController {
             let error_message = e.to_string();
             let tokio::sync::mpsc::error::SendError((_span, msg)) = e;
             match msg {
-                config::Event::ApplyConfig { response, .. } => std::mem::forget(response),
-                config::Event::QueryConfig(response) => std::mem::forget(response),
+                config::actor::Event::ApplyConfig { response, .. } => std::mem::forget(response),
+                config::actor::Event::QueryConfig(response) => std::mem::forget(response),
             }
             error!("Failed to request config reload: {error_message}");
         }
