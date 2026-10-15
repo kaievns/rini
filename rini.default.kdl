@@ -52,11 +52,6 @@ input {
     // ignore-app-activation "com.apple.dock"
 }
 
-cursor {
-    // Hide the mouse cursor whenever focus moves to another window. Off unless written.
-    // hide-on-focus-change
-}
-
 layout {
     // Logical pixels between windows, and between windows and the display edge.
     gaps 0

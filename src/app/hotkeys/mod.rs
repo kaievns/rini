@@ -173,7 +173,6 @@ impl WmController {
                 self.new_app(pid, info);
             }
             AppGloballyActivated(pid) => {
-                _ = self.event_tap_tx.send(event_tap::Request::EnforceHidden);
                 self.events_tx.send(Event::ApplicationGloballyActivated(pid));
                 if self.app_threads.look_on_activation(pid) {
                     self.app_activated_without_thread(pid);

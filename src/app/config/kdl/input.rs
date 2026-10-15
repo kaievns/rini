@@ -1,4 +1,4 @@
-//! `input` and `cursor`: focus, the pointer, and the modifier `Mod` stands for.
+//! `input`: focus, the pointer, and the modifier `Mod` stands for.
 
 use knus::span::Span;
 
@@ -32,11 +32,4 @@ pub struct StackedWarpPart {
     pub upper_side: Option<StackedUpperSide>,
     #[knus(property)]
     pub lower_top_at: Option<Number<Fraction>>,
-}
-
-#[derive(knus::Decode, Debug, Default)]
-#[knus(span_type = Span)]
-pub struct CursorPart {
-    #[knus(child)]
-    pub hide_on_focus_change: Option<Flag>,
 }

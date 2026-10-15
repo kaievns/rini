@@ -51,8 +51,6 @@ const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
 #[derive(Debug)]
 pub enum Request {
     Warp(CGPoint),
-    HideOnFocus,
-    EnforceHidden,
     SetEventProcessing(bool),
     SetFocusFollowsMouseEnabled(bool),
     /// Every bind, its key free of `Mod`.
@@ -89,8 +87,6 @@ pub struct InputTap {
 unsafe impl Send for InputTap {}
 
 struct State {
-    hide_count: u32,
-    mouse_hides_on_focus: bool,
     focus_follows_mouse_config_enabled: bool,
     event_processing_enabled: bool,
     focus_follows_mouse_enabled: bool,
@@ -104,8 +100,6 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            hide_count: 0,
-            mouse_hides_on_focus: false,
             focus_follows_mouse_config_enabled: false,
             event_processing_enabled: false,
             focus_follows_mouse_enabled: true,
@@ -241,7 +235,6 @@ impl InputTap {
     ) -> Self {
         let state = State {
             low_power_mode,
-            mouse_hides_on_focus: settings.mouse_hides_on_focus,
             focus_follows_mouse_config_enabled: settings.focus_follows_mouse,
             ..State::default()
         };
@@ -289,15 +282,6 @@ impl InputTap {
             *this.tap.borrow_mut() = Some(tap);
         } else {
             return;
-        }
-
-        if this.state.borrow().mouse_hides_on_focus {
-            if let Err(e) = cursor::allow_hide_mouse() {
-                error!(
-                    "Could not enable mouse hiding: {e:?}. \
-                    mouse_hides_on_focus will have no effect."
-                );
-            }
         }
 
         // Local to the input thread on purpose: the cooldown timer is a CFRunLoop timer for THIS
@@ -375,21 +359,6 @@ impl InputTap {
                 if let Err(e) = cursor::warp_mouse(point) {
                     warn!("Failed to warp mouse: {e:?}");
                 }
-                if state.mouse_hides_on_focus && state.hide_count == 0 {
-                    debug!("Hiding mouse");
-                    state.hide_mouse();
-                }
-            }
-            Request::HideOnFocus => {
-                if state.mouse_hides_on_focus && state.hide_count == 0 {
-                    debug!("Hiding mouse after window focus changed");
-                    state.hide_mouse();
-                }
-            }
-            Request::EnforceHidden => {
-                if state.hide_count > 0 {
-                    state.hide_mouse();
-                }
             }
             Request::SetEventProcessing(enabled) => {
                 state.event_processing_enabled = enabled;
@@ -437,27 +406,10 @@ impl InputTap {
                 should_rebuild_mask = true;
             }
             Request::SettingsUpdated(settings) => {
-                let mouse_hides_on_focus = settings.mouse_hides_on_focus;
-                let focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
-                {
-                    let prev_mouse_hides_on_focus = state.mouse_hides_on_focus;
-                    let prev_focus_follows_mouse_config_enabled =
-                        state.focus_follows_mouse_config_enabled;
-                    state.mouse_hides_on_focus = mouse_hides_on_focus;
-                    state.focus_follows_mouse_config_enabled = focus_follows_mouse_config_enabled;
-                    if prev_focus_follows_mouse_config_enabled
-                        != state.focus_follows_mouse_config_enabled
-                    {
-                        self.reset_mouse_move_sampling();
-                        self.reset_mouse_window();
-                    }
-                    if prev_mouse_hides_on_focus
-                        && !state.mouse_hides_on_focus
-                        && state.hide_count > 0
-                    {
-                        debug!("Showing mouse after disabling mouse_hides_on_focus");
-                        state.show_mouse();
-                    }
+                if state.focus_follows_mouse_config_enabled != settings.focus_follows_mouse {
+                    state.focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
+                    self.reset_mouse_move_sampling();
+                    self.reset_mouse_window();
                 }
                 should_rebuild_mask = true;
             }
@@ -561,10 +513,6 @@ impl InputTap {
             return true;
         }
 
-        if state.hide_count > 0 {
-            debug!("Showing mouse");
-            state.show_mouse();
-        }
         match event_type {
             CGEventType::RightMouseUp | CGEventType::LeftMouseUp => {
                 self.events.send(Event::MouseUp);
@@ -600,16 +548,11 @@ impl InputTap {
     ///
     /// Mouse moves are usually the most frequent events delivered to this tap.
     /// In particular, do not read CGEvent flags for every hardware event: the
-    /// keyboard and flags-changed events already maintain modifier state, and
-    /// the sampled move path below is sufficient as a recovery check.
+    /// keyboard and flags-changed events already maintain modifier state.
     fn on_mouse_moved(&self, event: &CGEvent) -> bool {
-        let mut state = self.state.borrow_mut();
+        let state = self.state.borrow();
         if !state.event_processing_enabled {
             return true;
-        }
-        if state.hide_count > 0 {
-            debug!("Showing mouse");
-            state.show_mouse();
         }
         let loc = CGEvent::location(Some(event));
 
@@ -807,22 +750,6 @@ unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_vo
 }
 
 impl State {
-    fn hide_mouse(&mut self) {
-        if let Err(e) = cursor::hide_mouse() {
-            warn!("Failed to hide mouse: {e:?}");
-        }
-        self.hide_count += 1;
-    }
-
-    fn show_mouse(&mut self) {
-        while self.hide_count > 0 {
-            if let Err(e) = cursor::show_mouse() {
-                warn!("Failed to show mouse: {e:?}");
-            }
-            self.hide_count -= 1;
-        }
-    }
-
     fn note_key_down(&mut self, key_code: KeyCode) {
         self.held.key_down(key_code);
     }

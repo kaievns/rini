@@ -100,7 +100,6 @@ query asked with flag bit 0), and its owner's name from its application
 | `SLSSetWindowLevel`, `SLSSetWindowSubLevel` | writes to rini's own windows, which belong to the main connection; the window server levels only a connection's own windows |
 | `SLSFindWindowAndOwner` | waits on nothing; the owner it answers is compared to the main connection to step past rini's own windows |
 | `SLSRegisterConnectionNotifyProc`, `SLSRequestNotificationsForWindows` | the notifications belong to the connection that asks for them, and rini's arrive on its main one |
-| `CGSSetConnectionProperty` (`SetsCursorInBackground`) | a property of the connection whose cursor rini hides |
 | `SLSPackagesGetWindowConstraints`, `SLSGetCurrentCursorLocation`, `SLSGetConnectionIDForPSN`, `SLPSGetKeyFocusProcess`, `SLSGetMenuBarAutohideEnabled`, `SLSGetDockRectWithReason`, `SLSGetDisplayMenubarHeight` | wait on nothing: a port message or the process's own state |
 | `SLSCopySpacesForWindows`, `SLSSpaceGetType`, `SLSGetSpaceManagementMode`, `SLSManagedDisplaysCopyRoleWindows`, `SLSCopyActiveMenuBarDisplayIdentifier`, and the `CGS*` spaces and managed-display calls, checked under their `SLS` names | wait on nothing: the window-management bridge or a port message |
 

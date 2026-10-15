@@ -4420,11 +4420,6 @@ impl Reactor {
     }
 
     fn send_layout_event(&mut self, event: LayoutEvent) {
-        let focus_changed = matches!(
-            &event,
-            LayoutEvent::WindowFocused(_, window)
-                if self.layout_manager.layout_engine.focused_window() != Some(*window)
-        );
         let event_space = match &event {
             LayoutEvent::WindowFocused(space, _) => Some(*space),
             _ => None,
@@ -4455,9 +4450,6 @@ impl Reactor {
                 request.workspace_index,
                 request.window,
             );
-        }
-        if focus_changed && let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
-            _ = event_tap_tx.send(crate::input::platform::input_tap::Request::HideOnFocus);
         }
         let geometry_changed = response.changed;
         self.prepare_refocus_after_layout_event(&event_clone);

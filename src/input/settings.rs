@@ -15,6 +15,5 @@ impl Default for WindowSnappingSettings {
 /// Everything the session tap needs, assembled by the application from the config file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputSettings {
-    pub mouse_hides_on_focus: bool,
     pub focus_follows_mouse: bool,
 }

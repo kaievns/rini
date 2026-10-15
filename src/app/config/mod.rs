@@ -47,7 +47,6 @@ pub struct Settings {
     pub animation_duration: f64,
     pub default_disable: bool,
     pub mouse_follows_focus: bool,
-    pub mouse_hides_on_focus: bool,
     pub warp_cursor_between_stacked_displays: bool,
     pub stacked_display_upper_is: StackedUpperSide,
     /// Fraction up the upper display's height at which the lower display's top edge sits.
@@ -79,7 +78,6 @@ impl Default for Settings {
             animation_duration: BASE_ANIMATION_SECONDS,
             default_disable: true,
             mouse_follows_focus: false,
-            mouse_hides_on_focus: false,
             warp_cursor_between_stacked_displays: false,
             stacked_display_upper_is: StackedUpperSide::default(),
             // The laptop's top edge a little under halfway up the larger screen, which is where a
@@ -160,7 +158,6 @@ impl From<&Config> for InputSettings {
     fn from(config: &Config) -> Self {
         let s = &config.settings;
         InputSettings {
-            mouse_hides_on_focus: s.mouse_hides_on_focus,
             focus_follows_mouse: s.focus_follows_mouse,
         }
     }

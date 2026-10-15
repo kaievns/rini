@@ -87,7 +87,6 @@ fn an_empty_section_means_the_same_as_an_absent_one() {
     let absent = parse("");
     for section in [
         "input",
-        "cursor",
         "layout",
         "animations",
         "gestures",
@@ -153,11 +152,10 @@ fn input_maps_onto_focus_and_the_pointer() {
         "    ignore-app-activation \"com.apple.Spotlight\"\n",
         "    ignore-app-activation \"com.apple.dock\"\n",
         "}\n",
-        "cursor {\n    hide-on-focus-change\n}\n",
     ));
     let s = &config.settings;
     assert_eq!(s.mod_key, ModKey::Ctrl);
-    assert!(s.focus_follows_mouse && s.mouse_follows_focus && s.mouse_hides_on_focus);
+    assert!(s.focus_follows_mouse && s.mouse_follows_focus);
     assert!(config.virtual_workspaces.workspace_auto_back_and_forth);
     assert!(s.warp_cursor_between_stacked_displays);
     assert_eq!(s.stacked_display_upper_is, StackedUpperSide::Right);
@@ -175,9 +173,18 @@ fn focus_follows_mouse_takes_no_key_that_pauses_it() {
 }
 
 #[test]
-fn the_three_pointer_flags_are_off_unless_written() {
+fn a_cursor_section_is_refused_with_the_reason() {
+    for text in ["cursor {\n}\n", "cursor {\n    hide-on-focus-change\n}\n"] {
+        let report = refused(text);
+        assert!(report.contains("unknown section `cursor`"), "{report}");
+        assert!(report.contains("hiding it is not supported yet"), "{report}");
+    }
+}
+
+#[test]
+fn the_two_pointer_flags_are_off_unless_written() {
     let s = parse("").settings;
-    assert!(!s.focus_follows_mouse && !s.mouse_follows_focus && !s.mouse_hides_on_focus);
+    assert!(!s.focus_follows_mouse && !s.mouse_follows_focus);
 }
 
 #[test]
@@ -1112,7 +1119,7 @@ fn an_unknown_section_names_the_sections_when_nothing_is_near() {
         report.contains("unknown section `completely-different`"),
         "{report}"
     );
-    assert!(report.contains("takes: input, cursor"), "{report}");
+    assert!(report.contains("takes: input, layout"), "{report}");
 }
 
 #[test]
@@ -1253,7 +1260,6 @@ fn the_suggestion_tables_are_true() {
         use super::kdl::{bar, gestures, input, layout, window_rule};
         let result = match section {
             "input" => knus::decode::node::<input::InputPart, Span>(node).err(),
-            "cursor" => knus::decode::node::<input::CursorPart, Span>(node).err(),
             "layout" => knus::decode::node::<layout::LayoutPart, Span>(node).err(),
             "animations" => knus::decode::node::<gestures::AnimationsPart, Span>(node).err(),
             "gestures" => knus::decode::node::<gestures::GesturesPart, Span>(node).err(),

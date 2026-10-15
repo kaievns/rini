@@ -22,7 +22,7 @@ use self::bar::{BarPart, ConfigNotificationPart, RecentWindowsPart};
 use self::binds::BindsPart;
 use self::error::{ConfigError, Problem};
 use self::gestures::{AnimationsPart, GesturesPart};
-use self::input::{CursorPart, InputPart};
+use self::input::InputPart;
 use self::layout::{LayoutPart, OutputPart};
 use self::value::Flag;
 use self::window_rule::{SpawnPart, SpawnShPart, WindowRulePart, WorkspacePart};
@@ -36,7 +36,6 @@ pub const UNKNOWN_ACTION: &str = "action";
 #[derive(Debug, Default)]
 pub struct ConfigPart {
     pub input: Option<InputPart>,
-    pub cursor: Option<CursorPart>,
     pub layout: Option<LayoutPart>,
     pub animations: Option<AnimationsPart>,
     pub gestures: Option<GesturesPart>,
@@ -87,7 +86,6 @@ pub fn parse(name: &str, text: &str) -> Result<(ConfigPart, Vec<Problem>), Confi
         let d = &mut decoding;
         match &**node.node_name {
             "input" => d.once(&mut part.input, node),
-            "cursor" => d.once(&mut part.cursor, node),
             "layout" => d.once(&mut part.layout, node),
             "animations" => d.once(&mut part.animations, node),
             "gestures" => d.once(&mut part.gestures, node),

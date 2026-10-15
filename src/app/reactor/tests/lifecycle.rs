@@ -21,7 +21,6 @@ fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
     let mut updated = reactor.config.clone();
     updated.settings.focus_follows_mouse = !updated.settings.focus_follows_mouse;
     updated.settings.mouse_follows_focus = !updated.settings.mouse_follows_focus;
-    updated.settings.mouse_hides_on_focus = !updated.settings.mouse_hides_on_focus;
 
     reactor.handle_event(Event::ConfigUpdated(updated.clone()));
 
@@ -36,10 +35,6 @@ fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
     assert_eq!(
         actual.settings.mouse_follows_focus,
         updated.settings.mouse_follows_focus
-    );
-    assert_eq!(
-        actual.settings.mouse_hides_on_focus,
-        updated.settings.mouse_hides_on_focus
     );
 }
 

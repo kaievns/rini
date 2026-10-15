@@ -127,6 +127,13 @@ The strip is ONE group. Everything on it stacks together, and nothing off it may
 > It was rift's `focus_follows_mouse_disable_hotkey`, niri has no counterpart, and Kai leaves
 > focus-follows-mouse off. Focus-follows-mouse itself stays, as niri's.
 
+- A focus change MUST NOT hide the pointer. The config has no `cursor` section, since none of niri's
+  cursor options is supported, and a file that writes one MUST be refused with that reason.
+
+> **Reported 2026-10-15.** Kai's decision: rift's `mouse_hides_on_focus`, written
+> `cursor { hide-on-focus-change; }`, goes, and the whole `cursor` section with it. Kai's config left
+> it out because hiding the cursor on every focus change is jarring, and niri has no such option.
+
 ## Crossing displays
 
 - **Each display is its own strip, and this is NOT configurable.** Moving focus horizontally off the

@@ -63,8 +63,8 @@ and `RestoreSource`. The features' settings types carry no parsing.
 | An unknown node, property or argument is an error | niri's behaviour; the TOML silently accepted typos in one table |
 | Indices start at 1 | niri's `focus-workspace 1` is the first workspace (Kai's decision, `specs/input.md`) |
 
-The three pointer flags niri has off by default, `focus-follows-mouse`, `warp-mouse-to-focus` and
-cursor hiding, take niri's default: off. They were on, and a default-on flag can only be written as
+The two pointer flags niri has off by default, `focus-follows-mouse` and `warp-mouse-to-focus`,
+take niri's default: off. They were on, and a default-on flag can only be written as
 `x false`, which no niri config contains.
 
 ## Where rini differs from niri

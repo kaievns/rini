@@ -16,7 +16,6 @@ use crate::input::domain::binding::Action;
 pub const SCHEMA: &[(&str, &[&str])] = &[
     ("", &[
         "input",
-        "cursor",
         "layout",
         "animations",
         "gestures",
@@ -40,7 +39,6 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "warp-mouse-across-stacked-outputs",
         "ignore-app-activation",
     ]),
-    ("cursor", &["hide-on-focus-change"]),
     ("layout", &[
         "gaps",
         "struts",
@@ -126,6 +124,11 @@ pub const NIRI: &[(&str, &str, &str)] = &[
         "rini sets no environment; use `spawn-sh-at-startup \"VAR=value command\"`",
     ),
     ("", "clipboard", "rini does not manage the clipboard"),
+    (
+        "",
+        "cursor",
+        "macOS owns the cursor's look, and hiding it is not supported yet",
+    ),
     ("", "hotkey-overlay", "rini has no hotkey overlay"),
     ("", "blur", "rini draws no blur behind windows"),
     ("", "overview", "rini has no overview"),
@@ -154,18 +157,6 @@ pub const NIRI: &[(&str, &str, &str)] = &[
         "input",
         "mod-key-nested",
         "rini never runs nested inside another window manager",
-    ),
-    ("cursor", "xcursor-theme", "macOS owns the cursor's look"),
-    ("cursor", "xcursor-size", "macOS owns the cursor's look"),
-    (
-        "cursor",
-        "hide-when-typing",
-        "not supported yet; rini hides it on `hide-on-focus-change`",
-    ),
-    (
-        "cursor",
-        "hide-after-inactive-ms",
-        "not supported yet; rini hides it on `hide-on-focus-change`",
     ),
     ("layout", "always-center-single-column", NOT_IN_RINI),
     (

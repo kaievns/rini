@@ -60,10 +60,6 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         }
     }
 
-    if let Some(Flag(on)) = part.cursor.and_then(|cursor| cursor.hide_on_focus_change) {
-        settings.mouse_hides_on_focus = on;
-    }
-
     if let Some(mut layout) = part.layout {
         if let Some(ring) = layout.focus_ring.take() {
             apply_band(ring, &mut settings.decorations.focus_ring, &mut problems);
