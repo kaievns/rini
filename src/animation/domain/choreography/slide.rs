@@ -20,7 +20,7 @@ use crate::animation::domain::motion::easing::MOTION_CURVE;
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
 use crate::animation::domain::motion::nudge::{NUDGE_SHARE, NUDGE_STRETCH, flight_curve};
 use crate::animation::domain::motion::plan::{
-    AnimationTarget, FlightPlan, GroupKey, Member, PlanDelta, Presented, ReflowPlan,
+    AnimationTarget, FlightPlan, GroupKey, Member, OwnPath, PlanDelta, Presented, ReflowPlan,
     animation_targets, group_relative, merge_plans, on_overlay, stale_overlay_layers,
 };
 use crate::animation::domain::motion::score::{Channel, Edit, Node, SAMPLE_STEP, Score, Value};
@@ -205,8 +205,8 @@ impl Choreography for Slide {
                 group.members.iter().map(|m| (m.window, m.rel)).collect(),
             );
         }
-        let starts = |list: &[(WindowId, GroupRect, GroupRect)]| -> Vec<(WindowId, GroupRect)> {
-            list.iter().map(|&(window, from, _)| (window, from)).collect()
+        let starts = |list: &[OwnPath]| -> Vec<(WindowId, GroupRect)> {
+            list.iter().map(|path| (path.window, path.from)).collect()
         };
         let mut loose = starts(&plan.changing);
         loose.extend(starts(&plan.entrances));
@@ -542,7 +542,9 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::easing::EASE_IN_OUT;
     use crate::animation::domain::motion::nudge::nudge_track;
-    use crate::animation::domain::motion::plan::{entrance_from, installed, reflow_plan};
+    use crate::animation::domain::motion::plan::{
+        OwnPath, Resolved, entrance_from, installed, reflow_plan,
+    };
     use crate::animation::domain::motion::score::{Curve, Track};
     use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT, rect};
 
@@ -567,11 +569,11 @@ mod tests {
     }
 
     /// A strip of `count` columns stepping `dx`, from `first`.
-    fn strip(first: u32, count: u32, dx: f64) -> Vec<(WindowId, ScreenRect, ScreenRect, bool)> {
+    fn strip(first: u32, count: u32, dx: f64) -> Vec<Resolved> {
         (0..count)
             .map(|i| {
                 let from = column(i as f64, 859.0);
-                (wid(first + i), from, shifted(from, dx), false)
+                Resolved::tiled(wid(first + i), from, shifted(from, dx))
             })
             .collect()
     }
@@ -585,7 +587,7 @@ mod tests {
 
     impl Flight {
         /// `requests` posed at frame zero, every window drawn.
-        fn posed(requests: &[(WindowId, ScreenRect, ScreenRect, bool)]) -> Flight {
+        fn posed(requests: &[Resolved]) -> Flight {
             let plan = FlightPlan::from(reflow_plan(requests, DISPLAY));
             let drawn = plan.windows();
             let slide = Slide::default();
@@ -687,17 +689,16 @@ mod tests {
     }
 
     /// A strip moving, a resize, a floating window moving and one standing, and a still window.
-    fn mixed() -> Vec<(WindowId, ScreenRect, ScreenRect, bool)> {
+    fn mixed() -> Vec<Resolved> {
         let mut requests = strip(1, 2, -863.0);
-        requests.push((wid(3), column(2.0, 859.0), column(2.0, 859.0), false));
-        requests.push((wid(4), column(3.0, 400.0), column(3.0, 600.0), false));
+        requests.push(Resolved::tiled(wid(3), column(2.0, 859.0), column(2.0, 859.0)));
+        requests.push(Resolved::tiled(wid(4), column(3.0, 400.0), column(3.0, 600.0)));
         let floating = rect(224.0, 95.0, 600.0, 400.0);
-        requests.push((wid(5), floating, shifted(floating, 40.0), true));
-        requests.push((
+        requests.push(Resolved::floating(wid(5), floating, shifted(floating, 40.0)));
+        requests.push(Resolved::floating(
             wid(6),
             rect(300.0, 500.0, 300.0, 200.0),
             rect(300.0, 500.0, 300.0, 200.0),
-            true,
         ));
         requests
     }
@@ -783,9 +784,9 @@ mod tests {
     fn a_stepping_flight_runs_longer_on_the_ease_in_out_and_steps_every_strip_container() {
         let mut requests = strip(1, 2, -863.0);
         let moved = column(2.0, 859.0);
-        requests.push((wid(3), moved, shifted(moved, 863.0), false));
+        requests.push(Resolved::tiled(wid(3), moved, shifted(moved, 863.0)));
         let floating = rect(224.0, 95.0, 600.0, 400.0);
-        requests.push((wid(5), floating, floating, true));
+        requests.push(Resolved::floating(wid(5), floating, floating));
         let mut flight = Flight::posed(&requests);
         let offset = OverlayVector::new(-576.0, 0.0);
         let edits = flight.start(PLAIN, &[Accent::Step { offset, seconds: PLAIN }]);
@@ -855,7 +856,7 @@ mod tests {
     fn a_step_a_merge_brings_while_none_plays_is_taken_and_stretches_the_merge() {
         let mut requests = strip(1, 3, -863.0);
         let floating = rect(224.0, 95.0, 600.0, 400.0);
-        requests.push((wid(5), floating, floating, true));
+        requests.push(Resolved::floating(wid(5), floating, floating));
         let mut flight = Flight::posed(&requests);
         flight.start(PLAIN, &[]);
         let key = key_of(&flight.plan, wid(1));
@@ -867,7 +868,10 @@ mod tests {
         let incoming = reflow_plan(
             &strip(1, 3, -1726.0)
                 .into_iter()
-                .map(|(w, _, to, f)| (w, shifted(to, 863.0), to, f))
+                .map(|r| Resolved {
+                    start: shifted(r.end, 863.0),
+                    ..r
+                })
                 .collect::<Vec<_>>(),
             DISPLAY,
         );
@@ -913,7 +917,10 @@ mod tests {
         let incoming = reflow_plan(
             &strip(1, 3, -1726.0)
                 .into_iter()
-                .map(|(w, _, to, f)| (w, shifted(to, 863.0), to, f))
+                .map(|r| Resolved {
+                    start: shifted(r.end, 863.0),
+                    ..r
+                })
                 .collect::<Vec<_>>(),
             DISPLAY,
         );
@@ -962,13 +969,10 @@ mod tests {
             destination -= 861.0;
             let requests: Vec<_> = strip(1, 3, 0.0)
                 .into_iter()
-                .map(|(w, from, _, f)| {
-                    (
-                        w,
-                        shifted(from, destination + 861.0),
-                        shifted(from, destination),
-                        f,
-                    )
+                .map(|r| Resolved {
+                    start: shifted(r.start, destination + 861.0),
+                    end: shifted(r.start, destination),
+                    ..r
                 })
                 .collect();
             let bent = flight.merge(
@@ -1000,8 +1004,8 @@ mod tests {
     fn a_container_opened_for_a_leaving_member_keeps_its_speed() {
         let (first, second) = (column(1.0, 859.0), column(2.0, 859.0));
         let mut flight = Flight::posed(&[
-            (wid(1), first, shifted(first, -863.0), false),
-            (wid(2), second, shifted(second, -863.0), false),
+            Resolved::tiled(wid(1), first, shifted(first, -863.0)),
+            Resolved::tiled(wid(2), second, shifted(second, -863.0)),
         ]);
         flight.start(PLAIN, &[]);
         let strip_key = key_of(&flight.plan, wid(1));
@@ -1010,8 +1014,8 @@ mod tests {
         let before = flight.score.drawn(wid(2), now).expect("drawn");
         let incoming = reflow_plan(
             &[
-                (wid(1), first, shifted(first, -863.0), false),
-                (wid(2), second, shifted(second, -563.0), false),
+                Resolved::tiled(wid(1), first, shifted(first, -863.0)),
+                Resolved::tiled(wid(2), second, shifted(second, -563.0)),
             ],
             DISPLAY,
         );
@@ -1051,12 +1055,12 @@ mod tests {
     #[test]
     fn a_retargeted_tile_starts_where_the_score_draws_it() {
         let from = column(0.0, 400.0);
-        let mut flight = Flight::posed(&[(wid(1), from, column(0.0, 800.0), false)]);
+        let mut flight = Flight::posed(&[Resolved::tiled(wid(1), from, column(0.0, 800.0))]);
         flight.start(PLAIN, &[]);
         let now = BEGIN + 0.05;
         let node = Node::Tile(wid(1));
         let drawn = flight.score.sample(node, now).expect("drawn");
-        let incoming = reflow_plan(&[(wid(1), from, column(0.0, 1200.0), false)], DISPLAY);
+        let incoming = reflow_plan(&[Resolved::tiled(wid(1), from, column(0.0, 1200.0))], DISPLAY);
         let bent = flight.merge(&incoming, None, None, now);
         let track = track_on(&bent.edits, node, Channel::Base).expect("bent");
         assert_eq!(track.keys()[0].1, drawn);
@@ -1071,7 +1075,7 @@ mod tests {
     #[test]
     fn a_fold_flies_in_two_steps_as_composed_and_as_bent() {
         let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
-        let mut flight = Flight::posed(&[(wid(1), column, folded, false)]);
+        let mut flight = Flight::posed(&[Resolved::tiled(wid(1), column, folded)]);
         let edits = flight.start(PLAIN, &[]);
         let node = Node::Tile(wid(1));
         let track = track_on(&edits, node, Channel::Base).expect("a leg");
@@ -1084,7 +1088,7 @@ mod tests {
         let Some(Value::Rect(drawn)) = flight.score.sample(node, now) else {
             panic!("drawn")
         };
-        let unfolded = reflow_plan(&[(wid(1), folded, column, false)], DISPLAY);
+        let unfolded = reflow_plan(&[Resolved::tiled(wid(1), folded, column)], DISPLAY);
         let bent = flight.merge(&unfolded, None, None, now);
         let track = track_on(&bent.edits, node, Channel::Base).expect("bent");
         assert_eq!(
@@ -1109,8 +1113,9 @@ mod tests {
         let sent = |i: u32| shifted(column(i as f64, 859.0), d);
         let left = flight.score.drawn(wid(3), now).unwrap().origin.x - sent(2).origin.x;
         assert!(left > 100.0, "the strip has {left}pt to go");
-        let requests: Vec<(WindowId, ScreenRect, ScreenRect, bool)> =
-            (0..4).map(|i| (wid(1 + i), sent(i), shifted(sent(i), d), false)).collect();
+        let requests: Vec<Resolved> = (0..4)
+            .map(|i| Resolved::tiled(wid(1 + i), sent(i), shifted(sent(i), d)))
+            .collect();
         flight.drawn.push(wid(4));
         flight.merge(
             &reflow_plan(&requests, DISPLAY),
@@ -1140,7 +1145,11 @@ mod tests {
         flight.start(PLAIN, &[]);
         let slot = held(column(2.0, 859.0));
         let mut entrance = ReflowPlan::empty();
-        entrance.entrances.push((wid(9), entrance_from(slot), slot));
+        entrance.entrances.push(OwnPath {
+            window: wid(9),
+            from: entrance_from(slot),
+            to: slot,
+        });
         flight.drawn.push(wid(9));
         let now = BEGIN + 0.2;
         let pass = Pass {
@@ -1183,7 +1192,11 @@ mod tests {
         flight.start(PLAIN, &[]);
         let slot = held(column(2.0, 859.0));
         let mut entrance = ReflowPlan::empty();
-        entrance.entrances.push((wid(9), entrance_from(slot), slot));
+        entrance.entrances.push(OwnPath {
+            window: wid(9),
+            from: entrance_from(slot),
+            to: slot,
+        });
         flight.drawn.push(wid(9));
         let now = BEGIN + PLAIN + 0.1;
         let pass = Pass {
@@ -1213,7 +1226,7 @@ mod tests {
     fn a_dropped_window_and_the_container_it_emptied_leave_the_score() {
         let mut requests = strip(1, 2, -863.0);
         let alone = column(2.0, 859.0);
-        requests.push((wid(3), alone, shifted(alone, 300.0), false));
+        requests.push(Resolved::tiled(wid(3), alone, shifted(alone, 300.0)));
         let mut flight = Flight::posed(&requests);
         flight.start(PLAIN, &[]);
         let key = key_of(&flight.plan, wid(3));
@@ -1263,9 +1276,9 @@ mod tests {
         let b = rect(a.origin.x + 861.0, 32.0, 861.0, 1081.0);
         let resizing = rect(1730.4, 32.3, 400.0, 1081.0);
         let requests = [
-            (wid(1), a, shifted(a, -861.3276), false),
-            (wid(2), b, shifted(b, -861.3276), false),
-            (wid(3), resizing, rect(1730.4, 32.3, 600.5, 1081.0), false),
+            Resolved::tiled(wid(1), a, shifted(a, -861.3276)),
+            Resolved::tiled(wid(2), b, shifted(b, -861.3276)),
+            Resolved::tiled(wid(3), resizing, rect(1730.4, 32.3, 600.5, 1081.0)),
         ];
         let mut flight = Flight::posed(&requests);
         let whole = |v: f64| v == v.round();

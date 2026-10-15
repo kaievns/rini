@@ -8,8 +8,8 @@ use rini_geometry::SameAs;
 use rini_geometry::space::{GroupRect, OverlayPoint, OverlayRect, OverlayVector, Respace};
 
 use super::{
-    FlightPlan, GroupKey, GroupMember, Located, PlanDelta, Presented, ReflowPlan, RigidGroup,
-    group_relative, on_overlay, overlay_of, same_vector,
+    FlightPlan, GroupKey, GroupMember, Located, OwnPath, PlanDelta, Presented, ReflowPlan,
+    RigidGroup, group_relative, on_overlay, overlay_of, same_vector,
 };
 
 /// A rigid member's say in where its container goes: the container, the member, the place.
@@ -99,13 +99,9 @@ impl<'a> Merge<'a> {
             let p = next.position(key) + d;
             next.move_group(key, p, delta);
         }
-        for i in 0..next.changing.len() {
-            next.changing[i].2 = next.changing[i].2.translate(d.respace());
-            delta.retargeted_tiles.push((next.changing[i].0, next.changing[i].2));
-        }
-        for i in 0..next.entrances.len() {
-            next.entrances[i].2 = next.entrances[i].2.translate(d.respace());
-            delta.retargeted_tiles.push((next.entrances[i].0, next.entrances[i].2));
+        for path in next.changing.iter_mut().chain(&mut next.entrances) {
+            path.to = path.to.translate(d.respace());
+            delta.retargeted_tiles.push((path.window, path.to));
         }
     }
 
@@ -260,13 +256,17 @@ impl<'a> Merge<'a> {
         for (list_is_entrance, entries) in
             [(false, &incoming.changing), (true, &incoming.entrances)]
         {
-            for &(window, from, to) in entries {
+            for &OwnPath { window, from, to } in entries {
                 match next.locate(window) {
                     Located::Group(key, rel) => {
                         // Rigid until now: it leaves its container at the frame it is drawn at.
                         next.take_member(key, window);
                         let at = overlay_of(rel, position_in(&self.presented.drawn, key));
-                        next.changing.push((window, group_relative(at, loose), to));
+                        next.changing.push(OwnPath {
+                            window,
+                            from: group_relative(at, loose),
+                            to,
+                        });
                         delta.reparented.push((window, key, GroupKey::Loose));
                         delta.retargeted_tiles.push((window, to));
                     }
@@ -278,9 +278,9 @@ impl<'a> Merge<'a> {
                     }
                     Located::Absent => {
                         if list_is_entrance {
-                            next.entrances.push((window, from, to));
+                            next.entrances.push(OwnPath { window, from, to });
                         } else {
-                            next.changing.push((window, from, to));
+                            next.changing.push(OwnPath { window, from, to });
                         }
                         delta.joined_tiles.push((window, GroupKey::Loose));
                     }
@@ -293,7 +293,7 @@ impl<'a> Merge<'a> {
         let (next, delta, floating_before) =
             (&mut self.next, &mut self.delta, self.floating_before);
         let drawn = &self.presented.drawn;
-        for &(window, from, to) in &incoming.floating {
+        for &OwnPath { window, from, to } in &incoming.floating {
             let to_rel = group_relative(on_overlay(to), floating_before);
             match next.locate(window) {
                 Located::Floating(i) => retarget_loose(&mut next.floating, i, to_rel, delta),
@@ -301,7 +301,11 @@ impl<'a> Merge<'a> {
                     next.take_member(key, window);
                     let at = overlay_of(rel, position_in(drawn, key));
                     let from_rel = group_relative(at, position_in(drawn, GroupKey::Floating));
-                    next.floating.push((window, from_rel, to_rel));
+                    next.floating.push(OwnPath {
+                        window,
+                        from: from_rel,
+                        to: to_rel,
+                    });
                     delta.reparented.push((window, key, GroupKey::Floating));
                     delta.retargeted_tiles.push((window, to_rel));
                 }
@@ -309,7 +313,11 @@ impl<'a> Merge<'a> {
                 Located::Entrance(i) => retarget_loose(&mut next.entrances, i, to, delta),
                 Located::Absent => {
                     let from_rel = group_relative(on_overlay(from), floating_before);
-                    next.floating.push((window, from_rel, to_rel));
+                    next.floating.push(OwnPath {
+                        window,
+                        from: from_rel,
+                        to: to_rel,
+                    });
                     delta.joined_tiles.push((window, GroupKey::Floating));
                 }
             }
@@ -332,17 +340,13 @@ fn rides_out(next: &FlightPlan, key: GroupKey, to: OverlayRect, viewport: Overla
 }
 
 /// Bends one loose tile toward `to` unless it is already going there.
-fn retarget_loose(
-    list: &mut [(WindowId, GroupRect, GroupRect)],
-    index: usize,
-    to: GroupRect,
-    delta: &mut PlanDelta,
-) {
-    if list[index].2.same_as(to) {
+fn retarget_loose(list: &mut [OwnPath], index: usize, to: GroupRect, delta: &mut PlanDelta) {
+    let path = &mut list[index];
+    if path.to.same_as(to) {
         return;
     }
-    list[index].2 = to;
-    delta.retargeted_tiles.push((list[index].0, to));
+    path.to = to;
+    delta.retargeted_tiles.push((path.window, to));
 }
 
 /// The group whose remaining travel (destination less where its leg has it, `along`) matches

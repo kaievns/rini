@@ -19,7 +19,7 @@ use rini_geometry::stretch::grows;
 
 use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
-use crate::animation::domain::motion::plan::{self, entrance_from};
+use crate::animation::domain::motion::plan::{self, OwnPath, entrance_from};
 use crate::animation::domain::motion::score::{Edit, Score};
 use crate::animation::domain::motion::tile::{self, OverlayTile};
 use crate::animation::domain::motion::z_group::{Band, Stacked, focus_is_off_strip, stack};
@@ -154,7 +154,7 @@ pub(in crate::transitions) fn band_plan<P>(
     }
     if !plan.changing.is_empty() || !plan.entrances.is_empty() {
         let loose: Vec<WindowId> =
-            plan.changing.iter().chain(&plan.entrances).map(|(w, _, _)| *w).collect();
+            plan.changing.iter().chain(&plan.entrances).map(|path| path.window).collect();
         let holds_focus = focus.is_some_and(|f| loose.contains(&f));
         let shallowest = loose.iter().filter_map(|w| within.get(w)).copied().min().unwrap_or(0);
         strip.push((plan::GroupKey::Loose, holds_focus, shallowest));
@@ -590,15 +590,15 @@ impl<P: TilePicture> RunningAnimation<P> {
                 plan::group_relative(tile.from, loose),
                 plan::group_relative(tile.to, loose),
             );
-            self.plan.entrances.push((tile.window, from, to));
+            self.plan.entrances.push(OwnPath { window: tile.window, from, to });
             return None;
         }
         let mut entrance = plan::ReflowPlan::empty();
-        entrance.entrances.push((
-            tile.window,
-            plan::installed(tile.from),
-            plan::installed(tile.to),
-        ));
+        entrance.entrances.push(OwnPath {
+            window: tile.window,
+            from: plan::installed(tile.from),
+            to: plan::installed(tile.to),
+        });
         let drawn = self.drawn();
         let pass = Pass {
             plan: &entrance,
@@ -783,6 +783,7 @@ mod tests {
     use rini_geometry::{SameAs, to_overlay_space};
 
     use super::*;
+    use crate::animation::domain::motion::plan::Resolved;
     use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel, viewport};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, VIEWPORT, rect};
     use crate::decorations::domain::style::Ring;
@@ -1186,17 +1187,21 @@ mod tests {
                 )
             };
             let requests = [
-                (wid(1), a, shifted(a, -863.0), false),
-                (wid(2), b, shifted(b, -863.0), false),
+                Resolved::tiled(wid(1), a, shifted(a, -863.0)),
+                Resolved::tiled(wid(2), b, shifted(b, -863.0)),
             ];
             let mut running = flight();
             running.tiles = requests
                 .iter()
-                .map(|&(w, from, to, _)| stacked(w, on(from), on(to), Some(0), false))
+                .map(|r| stacked(r.window, on(r.start), on(r.end), Some(0), false))
                 .collect();
             running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
             pose(&mut running);
-            let again = requests.map(|(w, _, to, floating)| (w, to, shifted(to, -863.0), floating));
+            let again = requests.map(|r| Resolved {
+                start: r.end,
+                end: shifted(r.end, -863.0),
+                ..r
+            });
             (running, plan::reflow_plan(&again, DISPLAY))
         }
 
@@ -1283,11 +1288,11 @@ mod tests {
             let loose = running.plan.position_of(plan::GroupKey::Loose);
             assert_eq!(
                 running.plan.entrances.last(),
-                Some(&(
-                    wid(3),
-                    plan::group_relative(entrance_from(slot), loose),
-                    plan::group_relative(slot, loose)
-                ))
+                Some(&OwnPath {
+                    window: wid(3),
+                    from: plan::group_relative(entrance_from(slot), loose),
+                    to: plan::group_relative(slot, loose),
+                })
             );
             assert!(running.plan.destination(wid(3)).unwrap().same_as(slot));
 
@@ -1407,7 +1412,7 @@ mod tests {
                 (10.1, further, false),
                 (10.005, column, false),
             ] {
-                let requests = [(wid(1), column, folded, false)];
+                let requests = [Resolved::tiled(wid(1), column, folded)];
                 let mut running = flight();
                 running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
                 running.tiles[0].snapshot = test_picture(column.size);
@@ -1441,7 +1446,7 @@ mod tests {
                     "held through the start"
                 );
 
-                let again = plan::reflow_plan(&[(wid(1), folded, to, false)], DISPLAY);
+                let again = plan::reflow_plan(&[Resolved::tiled(wid(1), folded, to)], DISPLAY);
                 let drawn = running.drawn();
                 let pass = Pass {
                     plan: &again,
@@ -1480,7 +1485,7 @@ mod tests {
         fn a_repaint_landing_after_a_bend_waits_for_the_new_legs_corner() {
             let (column, folded) =
                 (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
-            let requests = [(wid(1), column, folded, false)];
+            let requests = [Resolved::tiled(wid(1), column, folded)];
             let mut running = flight();
             running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
             running.tiles[0].snapshot = test_picture(column.size);
@@ -1491,7 +1496,7 @@ mod tests {
             let (plan, drawn) = (running.plan.clone(), running.drawn());
             running.score.start_moving(&stage(&plan, &drawn), 10.0);
 
-            let again = plan::reflow_plan(&[(wid(1), folded, column, false)], DISPLAY);
+            let again = plan::reflow_plan(&[Resolved::tiled(wid(1), folded, column)], DISPLAY);
             let drawn = running.drawn();
             let pass = Pass {
                 plan: &again,
@@ -2029,7 +2034,12 @@ mod tests {
                 .iter()
                 .map(|t| {
                     let screen = |r| from_overlay_space(r, DISPLAY);
-                    (t.window, screen(t.from), screen(t.to), t.floating)
+                    Resolved {
+                        window: t.window,
+                        start: screen(t.from),
+                        end: screen(t.to),
+                        floating: t.floating,
+                    }
                 })
                 .collect();
             FlightPlan::from(reflow_plan(&requests, DISPLAY))

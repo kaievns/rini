@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::space::{FromCg, GroupRect, Respace, ScreenRect, SurfacePoint};
+use rini_geometry::space::{FromCg, Respace, ScreenRect, SurfacePoint};
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use tracing::debug;
 
@@ -14,7 +14,7 @@ use super::logged::Whole;
 use super::tiles::{Stacking, frames_of, live_frame};
 use crate::animation::domain::choreography::{Cue, Look};
 use crate::animation::domain::motion::accents::Accent;
-use crate::animation::domain::motion::plan;
+use crate::animation::domain::motion::plan::{self, OwnPath, Resolved};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::OverlayTile;
 use crate::pictures::domain::route::Route;
@@ -46,9 +46,9 @@ struct PassReads {
 struct PassTiles {
     tiles: Vec<OverlayTile>,
     /// Each window drawn from where its tile starts to where it ends, for the pass's plan.
-    resolved: Vec<(WindowId, ScreenRect, ScreenRect, bool)>,
+    resolved: Vec<Resolved>,
     /// Newly opened windows travelling from their spawn frame.
-    spawn_entrances: Vec<(WindowId, GroupRect, GroupRect)>,
+    spawn_entrances: Vec<OwnPath>,
     /// Windows drawn once a first picture of them is swapped in.
     entrances: Vec<PendingEntrance>,
     /// Windows with no picture, asked for the next flight.
@@ -249,7 +249,12 @@ impl FlightEngine {
             to_overlay_space(end, pass.display),
         );
         composed.tiles.push(tile.flying(path, drawn, focused));
-        composed.resolved.push((request.window, start, end, request.floating));
+        composed.resolved.push(Resolved {
+            window: request.window,
+            start,
+            end,
+            floating: request.floating,
+        });
         flies
     }
 
@@ -312,10 +317,18 @@ impl FlightEngine {
                 }
                 composed.tiles.push(tile.flying((from_o, to_o), drawn, focused));
                 if standing {
-                    composed.resolved.push((request.window, from, to, request.floating));
+                    composed.resolved.push(Resolved {
+                        window: request.window,
+                        start: from,
+                        end: to,
+                        floating: request.floating,
+                    });
                 } else {
-                    let entrance = (plan::installed(from_o), plan::installed(to_o));
-                    composed.spawn_entrances.push((request.window, entrance.0, entrance.1));
+                    composed.spawn_entrances.push(OwnPath {
+                        window: request.window,
+                        from: plan::installed(from_o),
+                        to: plan::installed(to_o),
+                    });
                 }
             }
             EntranceDecision::Reserve(reason) => {

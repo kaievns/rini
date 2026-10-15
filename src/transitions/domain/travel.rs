@@ -291,7 +291,7 @@ mod tests {
     use rini_geometry::space::{Point, Rect, ScreenPoint, ScreenSize, Size};
 
     use super::*;
-    use crate::animation::domain::motion::plan::entrance_from;
+    use crate::animation::domain::motion::plan::{Resolved, entrance_from};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
 
     /// A start asked for a window already at rest is kept: correcting that "drift" from the window
@@ -619,7 +619,9 @@ mod tests {
             let requests: Vec<_> = tiles
                 .iter()
                 .enumerate()
-                .map(|(i, (start, end))| (WindowId::new(7, i as u32 + 1), *start, *end, false))
+                .map(|(i, (start, end))| {
+                    Resolved::tiled(WindowId::new(7, i as u32 + 1), *start, *end)
+                })
                 .collect();
             let plan = reflow_plan(&requests, DISPLAY);
             assert!(plan.changing.is_empty(), "{plan:?}");
@@ -1054,11 +1056,11 @@ mod tests {
                 }
             }
             let plan = reflow_plan(
-                &drawn.iter().map(|&(w, s, e)| (w, s, e, false)).collect::<Vec<_>>(),
+                &drawn.iter().map(|&(w, s, e)| Resolved::tiled(w, s, e)).collect::<Vec<_>>(),
                 SCREEN,
             );
             assert_eq!(
-                plan.changing.iter().map(|c| c.0).collect::<Vec<_>>(),
+                plan.changing.iter().map(|path| path.window).collect::<Vec<_>>(),
                 vec![resized],
                 "{case}"
             );
@@ -1610,7 +1612,10 @@ mod tests {
             assert_eq!(a_end, shifted(a, -863.0, 0.0), "where the strip takes it");
 
             let plan = reflow_plan(
-                &[(window(1), a, a_end, false), (window(2), b, b_to, false)],
+                &[
+                    Resolved::tiled(window(1), a, a_end),
+                    Resolved::tiled(window(2), b, b_to),
+                ],
                 DISPLAY,
             );
             let groups = moving(&plan);
@@ -1634,8 +1639,8 @@ mod tests {
 
             let plan = reflow_plan(
                 &[
-                    (window(1), a, a_end, false),
-                    (window(2), still, still, false),
+                    Resolved::tiled(window(1), a, a_end),
+                    Resolved::tiled(window(2), still, still),
                 ],
                 DISPLAY,
             );

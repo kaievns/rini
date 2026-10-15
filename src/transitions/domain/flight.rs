@@ -76,6 +76,7 @@ pub(in crate::transitions) fn worth_flying<U>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::domain::motion::plan::Resolved;
 
     fn window(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
@@ -381,12 +382,12 @@ mod tests {
         fn a_close_composes_only_the_survivors_and_worth_flying_needs_a_mover() {
             let w = 863.0;
             let closed = window(2);
-            let survivors: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = [1u32, 3, 4]
+            let survivors: Vec<Resolved> = [1u32, 3, 4]
                 .iter()
                 .map(|&i| {
                     let f = column(i as f64);
                     let to = if i > 2 { shifted(f, -w, 0.0) } else { f };
-                    (window(i), f, to, false)
+                    Resolved::tiled(window(i), f, to)
                 })
                 .collect();
             let plan = reflow_plan(&survivors, DISPLAY);
@@ -396,7 +397,7 @@ mod tests {
             );
             assert_eq!(moving(&plan).len(), 1);
             assert_eq!(members(moving(&plan)[0]), vec![window(3), window(4)]);
-            let tiles = survivors.iter().map(|(_, from, to, _)| (*from, *to));
+            let tiles = survivors.iter().map(|r| (r.start, r.end));
             assert!(worth_flying(tiles, false));
             assert!(!worth_flying(NO_TILES.into_iter(), false));
             assert!(worth_flying(NO_TILES.into_iter(), true));

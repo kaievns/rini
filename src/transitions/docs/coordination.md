@@ -243,7 +243,7 @@ The two entry points feed the same `begin_group`:
   a park past the 40pt `is_off_screen` threshold (Kiro shows 41pt, Finder
   52pt, log 20:35:56), and the server may already report the slot. Judged from the server's frame
   alone, the tile flew in from, or slid into, the bottom-right corner. The
-  resolved `(start, end)` pairs become a `ReflowPlan` (`reflow_plan`): tiles
+  resolved windows (`Resolved`: start, end, floating) become a `ReflowPlan` (`reflow_plan`): tiles
   moving by the same vector within 2pt (`GROUP_TOLERANCE`) share a group,
   a resize is loose, a floating window is floating, and the still windows
   are `groups[0]`. The park rule above decides which group a displaced
