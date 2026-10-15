@@ -31,9 +31,8 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
-use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
+use crate::animation::domain::choreography::{Cue, Look, Pass};
 use crate::animation::domain::motion::accents::Accent;
-use crate::animation::domain::motion::plan;
 use crate::animation::domain::motion::score::{Edit, MediaClock};
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
@@ -57,7 +56,7 @@ use crate::transitions::domain::lifecycle::{
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::running::{
-    Composed, RunningAnimation, Shape, Took, band_plan, restack, summary,
+    Composed, RunningAnimation, Shape, Took, restack, summary,
 };
 use crate::transitions::domain::timing::*;
 use crate::transitions::platform::journal::Writer;
@@ -835,39 +834,10 @@ impl FlightEngine {
             flown = running.flown,
             "entrance admitted"
         );
-        if !running.flown {
-            let loose = running.plan.position_of(plan::GroupKey::Loose);
-            let (from, to) = (
-                plan::group_relative(tile.from, loose),
-                plan::group_relative(tile.to, loose),
-            );
-            running.plan.entrances.push((tile.window, from, to));
-            self.reinstall();
-            return;
+        match running.join(&tile, viewport, left.as_secs_f64(), at) {
+            Some(edits) => self.play(edits),
+            None => self.reinstall(),
         }
-        let mut entrance = plan::ReflowPlan::empty();
-        entrance.entrances.push((
-            tile.window,
-            plan::installed(tile.from),
-            plan::installed(tile.to),
-        ));
-        let drawn = running.drawn();
-        let pass = Pass {
-            plan: &entrance,
-            pan: None,
-            focus: running.focus,
-            viewport,
-            drawn: &drawn,
-            seconds: left.as_secs_f64(),
-            cue: Cue::Plain,
-            accent: None,
-        };
-        let merged = running.score.merge(&running.plan, &pass, at);
-        running.plan = merged.plan;
-        let banding = band_plan(&running.plan, &running.tiles, running.focus);
-        let mut edits = merged.edits;
-        edits.push(running.score.bank(banding));
-        self.play(edits);
     }
 
     /// The display the overlay covers: what a member's destination is judged against.
@@ -900,16 +870,7 @@ impl FlightEngine {
     /// waiting for the motion keep waiting.
     fn reinstall(&mut self) {
         let Some(running) = self.running.as_mut() else { return };
-        let banding = band_plan(&running.plan, &running.tiles, running.focus);
-        let drawn = running.drawn();
-        let stage = Stage {
-            plan: &running.plan,
-            drawn: &drawn,
-            seconds: 0.0,
-            cue: running.cue,
-            accents: &[],
-        };
-        let score = running.score.pose(&stage, banding).clone();
+        let score = running.pose();
         let tiles = running.tiles.clone();
         self.render(Render::Stage { score, tiles });
     }
@@ -1182,8 +1143,7 @@ impl FlightEngine {
                 logged::merged(&running.plan, running.score.score(), &delta, at);
             }
             moved = delta.moves_anything();
-            let banding = band_plan(&running.plan, &running.tiles, running.focus);
-            edits.push(running.score.bank(banding));
+            edits.push(running.bank());
             played = edits;
             // A merge that moves anything restarts the clock, over everything the score plays.
             shape.duration = running.score.clock(shape.duration, at);
@@ -1262,7 +1222,6 @@ impl FlightEngine {
         let duration = self.flights.coordinator().remaining(now).unwrap_or_default();
         let at = self.media.at(now);
         let Some(running) = self.running.as_mut() else { return };
-        running.flown = true;
         // The acceptance greps count this line against "overlay lifted".
         let flight = &running.plan;
         debug!(
@@ -1272,16 +1231,7 @@ impl FlightEngine {
             floating = flight.floating.len(),
             "flight composed"
         );
-        let drawn = running.drawn();
-        let stage = Stage {
-            plan: &running.plan,
-            drawn: &drawn,
-            seconds: duration.as_secs_f64(),
-            cue: running.cue,
-            accents: &[],
-        };
-        let edits = running.score.start_moving(&stage, at);
-        running.turn_corners(at);
+        let edits = running.start_moving(duration.as_secs_f64(), at);
         let remaining = running.score.remaining(at);
         self.play(edits);
         self.drive(lifecycle::Event::Extend(remaining));

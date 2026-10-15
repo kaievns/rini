@@ -17,10 +17,10 @@ use rini_geometry::space::{
 };
 use rini_geometry::stretch::grows;
 
-use crate::animation::domain::choreography::{Cue, Look, Pass};
+use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::plan::{self, entrance_from};
-use crate::animation::domain::motion::score::Edit;
+use crate::animation::domain::motion::score::{Edit, Score};
 use crate::animation::domain::motion::tile::{self, OverlayTile};
 use crate::animation::domain::motion::z_group::{Band, Stacked, focus_is_off_strip, stack};
 use crate::decorations::domain::shape::outset;
@@ -392,7 +392,7 @@ impl<P: TilePicture> RunningAnimation<P> {
     /// Each picture a tile holds for a corner it no longer waits for at `at`, its leg in one movement
     /// now or past its corner, made the tile's own: called as a leg is made, so a new one starts
     /// from what its tile shows.
-    pub(in crate::transitions) fn turn_corners(&mut self, at: f64) {
+    fn turn_corners(&mut self, at: f64) {
         let waiting: Vec<WindowId> = self
             .tiles
             .iter()
@@ -532,6 +532,89 @@ impl<P: TilePicture> RunningAnimation<P> {
         }
         sync_tiles_to_plan(&mut self.tiles, &self.plan);
         None
+    }
+
+    /// Frame zero posed again, its plan as it is, with the pictures the tiles hold now and banded as
+    /// they are; the accents waiting for the motion keep waiting.
+    pub(in crate::transitions) fn pose(&mut self) -> Score {
+        let banding = band_plan(&self.plan, &self.tiles, self.focus);
+        let drawn = self.drawn();
+        let stage = Stage {
+            plan: &self.plan,
+            drawn: &drawn,
+            seconds: 0.0,
+            cue: self.cue,
+            accents: &[],
+        };
+        self.score.pose(&stage, banding).clone()
+    }
+
+    /// The motion starting at `at` on the media clock, for `seconds`: the look composes it from frame
+    /// zero with the accents that waited, and each picture held for a corner no longer ahead is its
+    /// tile's own. The edits that play it.
+    pub(in crate::transitions) fn start_moving(&mut self, seconds: f64, at: f64) -> Vec<Edit> {
+        self.flown = true;
+        let drawn = self.drawn();
+        let stage = Stage {
+            plan: &self.plan,
+            drawn: &drawn,
+            seconds,
+            cue: self.cue,
+            accents: &[],
+        };
+        let edits = self.score.start_moving(&stage, at);
+        self.turn_corners(at);
+        edits
+    }
+
+    /// The tiles banded in depth as the plan and the focus have them now, as the score's edit.
+    pub(in crate::transitions) fn bank(&mut self) -> Edit {
+        let banding = band_plan(&self.plan, &self.tiles, self.focus);
+        self.score.bank(banding)
+    }
+
+    /// A reserved entrance's tile, once its first picture made it one of the flight's, joining the
+    /// motion: before it moves, laid in frame zero's loose container, and `None`, frame zero to be
+    /// posed again; once it moves, merged in as a pass holding it alone for the `seconds` left of the
+    /// flight, bent from the score at `at` and the tiles banded again, the edits that carry it out.
+    pub(in crate::transitions) fn join(
+        &mut self,
+        tile: &OverlayTile<P>,
+        viewport: OverlayRect,
+        seconds: f64,
+        at: f64,
+    ) -> Option<Vec<Edit>> {
+        if !self.flown {
+            let loose = self.plan.position_of(plan::GroupKey::Loose);
+            let (from, to) = (
+                plan::group_relative(tile.from, loose),
+                plan::group_relative(tile.to, loose),
+            );
+            self.plan.entrances.push((tile.window, from, to));
+            return None;
+        }
+        let mut entrance = plan::ReflowPlan::empty();
+        entrance.entrances.push((
+            tile.window,
+            plan::installed(tile.from),
+            plan::installed(tile.to),
+        ));
+        let drawn = self.drawn();
+        let pass = Pass {
+            plan: &entrance,
+            pan: None,
+            focus: self.focus,
+            viewport,
+            drawn: &drawn,
+            seconds,
+            cue: Cue::Plain,
+            accent: None,
+        };
+        let merged = self.score.merge(&self.plan, &pass, at);
+        self.plan = merged.plan;
+        let mut edits = merged.edits;
+        edits.push(self.bank());
+        Some(edits)
     }
 
     /// A push against `wall` reaching the flight: waiting for the motion until the flight moves, the
@@ -695,7 +778,6 @@ mod tests {
     use rini_geometry::{SameAs, to_overlay_space};
 
     use super::*;
-    use crate::animation::domain::choreography::Stage;
     use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel, viewport};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, VIEWPORT, rect};
     use crate::decorations::domain::style::Ring;
@@ -1132,6 +1214,91 @@ mod tests {
                 .find(|g| g.members.iter().any(|m| m.window == wid(1)))
                 .map(|g| g.key)
                 .expect("rigid")
+        }
+
+        /// Frame zero posed again is banded as the tiles band with the flight's focus, and the
+        /// accents waiting for the motion still wait: the motion starting takes them, and the flight
+        /// moves from then.
+        #[test]
+        fn frame_zero_posed_again_bands_its_tiles_and_leaves_the_accents_waiting() {
+            use crate::animation::domain::motion::bounce::Bounce;
+            let (mut running, _) = posed();
+            running.focus = Some(wid(2));
+            let right = OverlayVector::new(72.0, 0.0);
+            assert_eq!(running.push(&Cue::Plain, right, 0.35, 10.0), None);
+            let score = running.pose();
+            assert_eq!(
+                *score.banding(),
+                band_plan(&running.plan, &running.tiles, Some(wid(2)))
+            );
+            assert!(!running.flown);
+            let start = running.start_moving(0.35, 10.0);
+            assert!(running.flown);
+            let plays = Duration::from_secs_f64(0.35);
+            let key = strip_key(&running);
+            assert!(
+                start.contains(&Edit::Add(Bounce::from_rest(right, plays).track(key, 10.0))),
+                "the push waited through the pose"
+            );
+            assert_eq!(running.bank(), Edit::Bank(score.banding().clone()));
+        }
+
+        /// A repaint held for a corner of a leg in one movement is its tile's own as the motion
+        /// starts: there is no corner for it to wait for.
+        #[test]
+        fn the_motion_starting_turns_a_corner_no_leg_has() {
+            let (mut running, _) = posed();
+            let repaint = test_picture(ScreenSize::new(600.0, 1081.0));
+            running.tiles[0].from_corner = Some(repaint.clone());
+            running.start_moving(0.35, 10.0);
+            let tile = &running.tiles[0];
+            assert!(tile.from_corner.is_none());
+            assert_eq!(tile.snapshot.coverage, repaint.coverage);
+        }
+
+        /// A reserved entrance's tile joins frame zero's loose container before the motion, frame
+        /// zero to be posed again, and once the flight moves is merged in as a pass of its own, the
+        /// tiles banded again last.
+        #[test]
+        fn a_joining_entrance_is_laid_in_frame_zero_before_the_motion_and_merged_into_it_after() {
+            let slot = rect(1730.0, 32.0, 859.0, 1081.0);
+            let entering = |running: &mut RunningAnimation| {
+                let mut tile = stacked(wid(3), entrance_from(slot), slot, Some(0), false);
+                tile.focused = true;
+                running.tiles.push(tile.clone());
+                tile
+            };
+            let (mut running, _) = posed();
+            let tile = entering(&mut running);
+            assert_eq!(running.join(&tile, VIEWPORT, 0.3, 10.0), None);
+            let loose = running.plan.position_of(plan::GroupKey::Loose);
+            assert_eq!(
+                running.plan.entrances.last(),
+                Some(&(
+                    wid(3),
+                    plan::group_relative(entrance_from(slot), loose),
+                    plan::group_relative(slot, loose)
+                ))
+            );
+            assert!(running.plan.destination(wid(3)).unwrap().same_as(slot));
+
+            let (mut running, _) = posed();
+            running.start_moving(0.35, 10.0);
+            let tile = entering(&mut running);
+            let edits = running.join(&tile, VIEWPORT, 0.3, 10.1).expect("merged");
+            assert!(running.plan.destination(wid(3)).unwrap().same_as(slot));
+            assert!(
+                edits.iter().any(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)),
+                "{edits:?}"
+            );
+            assert_eq!(
+                edits.last(),
+                Some(&Edit::Bank(band_plan(
+                    &running.plan,
+                    &running.tiles,
+                    running.focus
+                )))
+            );
         }
 
         /// A push before the flight moves waits for the motion, the latest winning, and plays as the
