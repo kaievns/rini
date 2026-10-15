@@ -41,6 +41,46 @@ struct PassReads {
     stacking: Stacking,
 }
 
+/// A strip movement or a bounce from rest, as `start_surface` flies it: its windows travelling from
+/// `from_offset` to `to_offset`, the frames they end at, focus as the flight draws it and the key
+/// window, how long it runs and in which look.
+pub(super) struct SurfaceFlight {
+    pub(super) windows: Vec<SurfaceWindow>,
+    pub(super) from_offset: SurfacePoint,
+    pub(super) to_offset: SurfacePoint,
+    pub(super) final_frames: Vec<(WindowId, ScreenRect)>,
+    pub(super) focus: (Option<WindowId>, Option<WindowId>),
+    pub(super) key: Option<WindowId>,
+    pub(super) duration: Duration,
+    pub(super) look: Look,
+    pub(super) cue: Cue,
+    pub(super) motion: SurfaceMotion,
+}
+
+/// What a surface flight does: travel along the strip, a move's step (`accent`) stepping it, or
+/// bounce from rest against an end, with no travel of its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum SurfaceMotion {
+    Travels(Option<Accent>),
+    Bounces,
+}
+
+impl SurfaceMotion {
+    /// The kind of flight it is, `windows` travelling from `from_offset` to `to_offset`, and the step
+    /// it carries.
+    fn kind(
+        self,
+        windows: &[SurfaceWindow],
+        from_offset: SurfacePoint,
+        to_offset: SurfacePoint,
+    ) -> (Kind, Option<Accent>) {
+        match self {
+            Self::Travels(accent) => (Kind::of_surface(windows, from_offset, to_offset), accent),
+            Self::Bounces => (Kind::Bounce, None),
+        }
+    }
+}
+
 /// A layout pass's tiles as its requests are composed, one by one.
 #[derive(Default)]
 struct PassTiles {
@@ -354,25 +394,26 @@ impl FlightEngine {
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
     /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
     /// travel. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
-    pub(super) fn start_surface(
-        &mut self,
-        windows: Vec<SurfaceWindow>,
-        from_offset: SurfacePoint,
-        to_offset: SurfacePoint,
-        final_frames: Vec<(WindowId, ScreenRect)>,
-        focus: (Option<WindowId>, Option<WindowId>),
-        key: Option<WindowId>,
-        duration: Duration,
-        (look, cue, accent): (Look, Cue, Option<Accent>),
-        kind: Option<Kind>,
-    ) {
+    pub(super) fn start_surface(&mut self, flight: SurfaceFlight) {
+        let SurfaceFlight {
+            windows,
+            from_offset,
+            to_offset,
+            final_frames,
+            focus,
+            key,
+            duration,
+            look,
+            cue,
+            motion,
+        } = flight;
         let Some((display, _)) = self.display else {
             debug!("no display geometry yet; skipping animation");
             return;
         };
+        let (kind, accent) = motion.kind(&windows, from_offset, to_offset);
         let shape = Shape {
-            kind: kind.unwrap_or_else(|| Kind::of_surface(&windows, from_offset, to_offset)),
+            kind,
             start: Start::Immediate,
             duration,
             waits: Waits::default(),
@@ -494,5 +535,69 @@ impl FlightEngine {
             "surface group animation"
         );
         (tiles, waits)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rini_core::ids::WindowServerId;
+    use rini_geometry::space::OverlayVector;
+
+    use super::*;
+    use crate::animation::domain::motion::testing::rect;
+
+    fn swapped() -> SurfaceWindow {
+        let slot = rect(4.0, 32.0, 859.0, 1081.0);
+        SurfaceWindow {
+            window: WindowId::new(7, 1),
+            server_id: WindowServerId::new(1),
+            frame: slot,
+            pinned: false,
+            floating: false,
+            from: Some(slot.translate(rini_geometry::space::Vector::new(863.0, 0.0))),
+            worn: Default::default(),
+        }
+    }
+
+    /// A surface flight's kind is its travel's, carrying its step; a bounce from rest is a bounce
+    /// whatever its windows are, and carries none.
+    #[test]
+    fn a_surface_flight_is_the_kind_its_travel_makes_and_a_bounce_is_a_bounce() {
+        let step = Accent::Step {
+            offset: OverlayVector::new(12.0, 0.0),
+            seconds: 0.3,
+        };
+        let at_rest = SurfacePoint::origin();
+        let below = SurfacePoint::new(0.0, 1117.0);
+        let cases = [
+            (
+                SurfaceMotion::Travels(Some(step)),
+                vec![swapped()],
+                at_rest,
+                (Kind::Move, Some(step)),
+            ),
+            (
+                SurfaceMotion::Travels(None),
+                Vec::new(),
+                below,
+                (Kind::Switch, None),
+            ),
+            (
+                SurfaceMotion::Travels(None),
+                Vec::new(),
+                at_rest,
+                (Kind::Pan, None),
+            ),
+            (
+                SurfaceMotion::Bounces,
+                vec![swapped()],
+                at_rest,
+                (Kind::Bounce, None),
+            ),
+            (SurfaceMotion::Bounces, Vec::new(), below, (Kind::Bounce, None)),
+        ];
+        for (motion, windows, to, expected) in cases {
+            assert_eq!(motion.kind(&windows, at_rest, to), expected, "{motion:?}");
+        }
     }
 }

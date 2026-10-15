@@ -52,7 +52,7 @@ use crate::transitions::domain::journal::{
     Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures,
 };
 use crate::transitions::domain::lifecycle::{
-    self, Command, Generation, Kind, StageSummary, TileSummary, losing_focus,
+    self, Command, Generation, StageSummary, TileSummary, losing_focus,
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::running::{
@@ -69,6 +69,7 @@ mod logged;
 mod tiles;
 
 use asks::{EndWatches, on_screen, sized_targets};
+use compose::{SurfaceFlight, SurfaceMotion};
 use tiles::frames_of;
 
 /// What the engine is told.
@@ -387,17 +388,18 @@ impl FlightEngine {
                 cause,
             } => {
                 self.take_request(cause);
-                self.start_surface(
+                self.start_surface(SurfaceFlight {
                     windows,
                     from_offset,
                     to_offset,
                     final_frames,
-                    (focus, focused_before),
+                    focus: (focus, focused_before),
                     key,
                     duration,
-                    (look, cue, accent),
-                    None,
-                )
+                    look,
+                    cue,
+                    motion: SurfaceMotion::Travels(accent),
+                })
             }
             Event::Bounce {
                 windows,
@@ -1190,17 +1192,18 @@ impl FlightEngine {
         if !self.flights.coordinator().is_flying() {
             let at_rest = SurfacePoint::origin();
             // A push against an end moves no focus.
-            self.start_surface(
+            self.start_surface(SurfaceFlight {
                 windows,
-                at_rest,
-                at_rest,
+                from_offset: at_rest,
+                to_offset: at_rest,
                 final_frames,
-                (focus, None),
-                None,
+                focus: (focus, None),
+                key: None,
                 duration,
-                (look, cue, None),
-                Some(Kind::Bounce),
-            );
+                look,
+                cue,
+                motion: SurfaceMotion::Bounces,
+            });
         }
         let at = self.media.at(self.now());
         let Some(running) = self.running.as_mut() else { return };
