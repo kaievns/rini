@@ -284,7 +284,7 @@ fn stale_user_space_disappearance_does_not_restore_old_display_assignment() {
         ..
     } = reactor_with_window_moved_to_space2();
 
-    window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
+    reactor.window_server_destroyed(wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
@@ -313,7 +313,7 @@ fn stale_user_space_appearance_does_not_restore_old_display_assignment() {
         ..
     } = reactor_with_window_moved_to_space2();
 
-    window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
@@ -341,7 +341,7 @@ fn multi_active_visible_window_appearance_keeps_display_assignment_and_visibilit
         ..
     } = reactor_with_window_moved_to_space2();
 
-    window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
@@ -366,7 +366,7 @@ fn multi_active_visible_window_disappearance_does_not_reassign_between_display_s
         ..
     } = reactor_with_window_moved_to_space2();
 
-    window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
+    reactor.window_server_destroyed(wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
@@ -410,7 +410,7 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
     );
 
     reactor.window_server().set_window_spaces(wsid, vec![space2]);
-    window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, space2, SpaceEventKind::User);
 
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(
@@ -2285,7 +2285,7 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     // overlaps that display. Its space MEMBERSHIP still says built-in, which is what
     // distinguishes this from a real move.
     reactor.window_server().set_window_spaces(wsid, vec![builtin_space]);
-    window_server_appeared(&mut reactor, wsid, external_space, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, external_space, SpaceEventKind::User);
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(parked),

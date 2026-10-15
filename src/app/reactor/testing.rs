@@ -14,7 +14,7 @@ use crate::app::channels;
 use crate::app::config::{Config, LayoutSettings, Settings};
 use crate::app::reactor::state::RiniState;
 use crate::app::system_reads::SystemReads;
-use crate::displays::domain::topology::ForwardedSpaceState;
+use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
 use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{MainWindowTracker, RaiseEcho};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
@@ -64,6 +64,27 @@ impl Reactor {
     pub fn window_server(&self) -> &FakeWindowServer {
         let port: &dyn Any = &*self.reads.window_server;
         port.downcast_ref().expect("a test reactor reads a FakeWindowServer")
+    }
+
+    /// A window-server window appearing on `space`, as the reactor hears it.
+    pub fn window_server_appeared(
+        &mut self,
+        wsid: WindowServerId,
+        space: SpaceId,
+        kind: SpaceEventKind,
+    ) {
+        self.handle_event(Event::WindowServerAppeared(wsid, space, kind));
+    }
+
+    /// A window-server window destroyed on `space`, its outcome applied.
+    pub fn window_server_destroyed(
+        &mut self,
+        wsid: WindowServerId,
+        space: SpaceId,
+        kind: SpaceEventKind,
+    ) {
+        let outcome = self.on_window_server_destroyed(wsid, space, kind).unwrap();
+        self.apply_event_outcome(outcome);
     }
 
     pub fn handle_events(&mut self, events: Vec<Event>) {

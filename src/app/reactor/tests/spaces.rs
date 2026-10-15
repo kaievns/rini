@@ -141,7 +141,7 @@ fn user_space_window_server_events_preserve_hidden_window_state() {
     reactor.insert_test_window(wid, wsid, Some(space1), frame, true);
 
     reactor.window_server().set_window_ordered_in(wsid, Some(true));
-    window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
+    reactor.window_server_destroyed(wsid, space1, SpaceEventKind::User);
 
     assert!(reactor.windows().contains_window(wid));
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space1));
@@ -161,7 +161,7 @@ fn user_space_window_server_destroyed_removes_window_when_window_server_is_gone(
     reactor.windows_mut().mark_window_visible(wsid);
 
     reactor.window_server().set_window_ordered_in(wsid, Some(false));
-    window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
+    reactor.window_server_destroyed(wsid, space1, SpaceEventKind::User);
 
     assert!(!reactor.windows().contains_window(wid));
     assert_eq!(reactor.windows().tracked_window_id(wsid), None);
@@ -186,7 +186,7 @@ fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pend
     let target_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(800., 600.));
     reactor.transactions_mut().insert(wsid, txid, target_frame);
 
-    window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, space2, SpaceEventKind::User);
 
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space1));
     assert_eq!(
@@ -212,7 +212,7 @@ fn stale_user_space_appearance_is_ignored_when_authoritative_window_space_differ
     } = reactor_with_window_moved_to_space2();
     reactor.window_server().set_window_spaces(wsid, vec![space2]);
 
-    window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.windows().window_server_space(wsid), Some(space2));
     assert_eq!(

@@ -6,7 +6,6 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowServerId;
 use test_log::test;
 
-use super::fixtures::*;
 use crate::app::hotkeys::WmEvent;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
@@ -95,7 +94,7 @@ fn a_window_of_an_app_with_no_thread_reads_its_launch_from_the_running_apps() {
         })
     };
 
-    window_server_appeared(&mut reactor, wsid, space, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, space, SpaceEventKind::User);
 
     let launched: Vec<_> = std::iter::from_fn(|| wm_rx.try_recv().ok())
         .filter_map(|(_, event)| match event {

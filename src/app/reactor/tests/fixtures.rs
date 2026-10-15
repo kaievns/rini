@@ -197,32 +197,6 @@ pub fn reactor_with_floating_window() -> Floating {
     }
 }
 
-pub fn window_server_appeared(
-    reactor: &mut Reactor,
-    wsid: WindowServerId,
-    space: SpaceId,
-    kind: SpaceEventKind,
-) {
-    space_event_handler::handle_window_server_appeared(reactor, wsid, space, kind);
-}
-
-pub fn window_server_destroyed(
-    reactor: &mut Reactor,
-    wsid: WindowServerId,
-    space: SpaceId,
-    kind: SpaceEventKind,
-) {
-    space_event_handler::handle_window_server_destroyed(
-        reactor,
-        space_event_handler::WindowServerLifecyclePayload {
-            window_server_id: wsid,
-            space,
-            kind,
-        },
-    )
-    .unwrap();
-}
-
 pub fn fullscreen_startup_fixture(
     with_app_rule: bool,
     preserve_workspace: bool,

@@ -98,7 +98,7 @@ fn known_window_server_appearance_restores_layout_membership_without_reassignmen
         "temporary removal should clear active layout membership before the appearance event"
     );
 
-    window_server_appeared(&mut reactor, wsid, user_space, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, user_space, SpaceEventKind::User);
 
     assert!(
         has_window_in_layout(&mut reactor, user_space, frame, wid),

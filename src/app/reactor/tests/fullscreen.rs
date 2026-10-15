@@ -47,7 +47,7 @@ fn known_fullscreen_window_appearance_removes_window_from_layout() {
     assert!(has_window_in_layout(&mut reactor, user_space, frame, wid));
     let wsid = reactor.windows().window(wid).unwrap().info.sys_id.unwrap();
 
-    window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    reactor.window_server_appeared(wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
     assert!(
         !has_window_in_layout(&mut reactor, user_space, frame, wid),
@@ -75,10 +75,10 @@ fn known_window_server_appearance_restores_same_workspace_after_fullscreen() {
     make_active_app(&mut apps, &mut reactor, 1, make_windows(1), Some(wid));
 
     let wsid = reactor.windows().window(wid).unwrap().info.sys_id.unwrap();
-    window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    reactor.window_server_appeared(wsid, fullscreen_space, SpaceEventKind::Fullscreen);
     assert!(!has_window_in_layout(&mut reactor, user_space, frame, wid));
 
-    window_server_appeared(&mut reactor, wsid, user_space, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, user_space, SpaceEventKind::User);
 
     assert!(
         has_window_in_layout(&mut reactor, user_space, frame, wid),
@@ -104,7 +104,7 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
 
     reactor.track_test_window_server_info(wsid, pid, frame);
 
-    window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    reactor.window_server_appeared(wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
     assert!(
         reactor
@@ -122,7 +122,7 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
         "fullscreen appearance without AX tracking should still request a visible-window refresh"
     );
 
-    window_server_appeared(&mut reactor, wsid, user_space, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, user_space, SpaceEventKind::User);
 
     assert!(
         matches!(app_rx.try_recv(), Ok((_, Request::GetVisibleWindows))),
@@ -169,12 +169,7 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
     let second_wid = WindowId::new(original_wid.pid, 1002);
     let second_wsid = WindowServerId::new(10002);
 
-    window_server_appeared(
-        &mut reactor,
-        original_wsid,
-        fullscreen_space,
-        SpaceEventKind::Fullscreen,
-    );
+    reactor.window_server_appeared(original_wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
     reactor.handle_event(Event::WindowCreated(
         second_wid,
@@ -211,12 +206,7 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
     let duplicate_wsid = WindowServerId::new(27481);
     let active_workspace = reactor.layout().active_workspace(user_space).expect("active workspace");
 
-    window_server_appeared(
-        &mut reactor,
-        original_wsid,
-        fullscreen_space,
-        SpaceEventKind::Fullscreen,
-    );
+    reactor.window_server_appeared(original_wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
     reactor.add_test_window_with_manageability(
         duplicate_wid,
@@ -226,12 +216,7 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
         false,
     );
 
-    window_server_appeared(
-        &mut reactor,
-        duplicate_wsid,
-        fullscreen_space,
-        SpaceEventKind::Fullscreen,
-    );
+    reactor.window_server_appeared(duplicate_wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
     assert!(reactor.assign_test_window_to_workspace(user_space, duplicate_wid, active_workspace));
     reactor.send_layout_event(LayoutEvent::WindowAdded(user_space, duplicate_wid));
@@ -247,7 +232,7 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
     );
 
     reactor.mark_test_window_visible_in_space(duplicate_wsid, user_space);
-    window_server_appeared(&mut reactor, duplicate_wsid, user_space, SpaceEventKind::User);
+    reactor.window_server_appeared(duplicate_wsid, user_space, SpaceEventKind::User);
 
     assert!(
         !has_window_in_layout(&mut reactor, user_space, frame, duplicate_wid),
@@ -287,7 +272,7 @@ fn fullscreen_restore_uses_live_rekeyed_window_id() {
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let new_wid = WindowId::new(old_wid.pid, 1999);
 
-    window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    reactor.window_server_appeared(wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
     rekey_window(&mut reactor, old_wid, new_wid);
 
@@ -296,7 +281,7 @@ fn fullscreen_restore_uses_live_rekeyed_window_id() {
         "rekey should retire the old AX window id before fullscreen restore"
     );
 
-    window_server_appeared(&mut reactor, wsid, user_space, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, user_space, SpaceEventKind::User);
 
     assert!(has_window_in_layout(&mut reactor, user_space, frame, new_wid));
     assert!(!has_window_in_layout(&mut reactor, user_space, frame, old_wid));
@@ -677,11 +662,11 @@ fn a_window_back_from_fullscreen_is_still_offered_when_its_fullscreen_space_repo
     make_active_app(&mut apps, &mut reactor, 1, make_windows(2), Some(main));
     let wsid = reactor.test_window_server_id(call);
 
-    window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    reactor.window_server_appeared(wsid, fullscreen_space, SpaceEventKind::Fullscreen);
     apps.simulate_until_quiet(&mut reactor);
-    window_server_appeared(&mut reactor, wsid, user_space, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, user_space, SpaceEventKind::User);
     apps.simulate_until_quiet(&mut reactor);
-    window_server_destroyed(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    reactor.window_server_destroyed(wsid, fullscreen_space, SpaceEventKind::Fullscreen);
     apps.simulate_until_quiet(&mut reactor);
 
     assert!(

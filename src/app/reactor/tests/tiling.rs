@@ -94,7 +94,7 @@ fn appeared_reassigns_window_without_pending_rini_move() {
         Some(space1)
     );
 
-    window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
+    reactor.window_server_appeared(wsid, space2, SpaceEventKind::User);
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),

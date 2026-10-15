@@ -38,33 +38,6 @@ mod window_refresh;
 mod testing;
 
 #[cfg(test)]
-mod space_event_handler {
-    pub use super::events::space::WindowServerLifecyclePayload;
-
-    pub fn handle_window_server_destroyed(
-        reactor: &mut super::Reactor,
-        payload: WindowServerLifecyclePayload,
-    ) -> anyhow::Result<super::EventOutcome> {
-        let outcome = reactor.on_window_server_destroyed(
-            payload.window_server_id,
-            payload.space,
-            payload.kind,
-        )?;
-        reactor.apply_event_outcome(outcome);
-        Ok(super::EventOutcome::default())
-    }
-
-    pub fn handle_window_server_appeared(
-        reactor: &mut super::Reactor,
-        window_server_id: rini_core::ids::WindowServerId,
-        space: rini_core::ids::SpaceId,
-        kind: crate::displays::domain::topology::SpaceEventKind,
-    ) {
-        reactor.handle_event(super::Event::WindowServerAppeared(window_server_id, space, kind));
-    }
-}
-
-#[cfg(test)]
 mod tests;
 
 use std::path::PathBuf;
