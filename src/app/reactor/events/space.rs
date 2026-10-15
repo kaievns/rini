@@ -58,88 +58,126 @@ pub fn handle_window_server_destroyed(
         space: sid,
         kind,
     } = payload;
-    let WindowServerDestroyedObservations {
-        resolved_space,
-        active_spaces,
-        mission_control_active,
-        ordered_in,
-        assigned_space,
-    } = observations;
     let mut outcome = EventOutcome::default();
-    if matches!(kind, SpaceEventKind::Fullscreen) {
-        // Leaving a fullscreen space is not entering one: macOS can report it after the window is
-        // already back on its user space. The window may be closing, so its app is asked.
-        if let Some(wid) = state.windows.tracked_window_id(wsid) {
-            outcome = outcome.with_app_request(wid.pid, Request::WindowMaybeDestroyed(wid));
-        }
-        return Ok(outcome);
-    } else if matches!(kind, SpaceEventKind::User) {
-        if resolved_space.is_some_and(|space| space != sid) {
-            let current_space = resolved_space.expect("checked above");
-            state.windows.set_window_server_space(wsid, Some(current_space));
-            if active_spaces.contains(&current_space) {
-                state.windows.mark_window_visible(wsid);
-            } else {
-                state.windows.mark_window_hidden(wsid);
-            }
+    match kind {
+        SpaceEventKind::Fullscreen => {
+            // Leaving a fullscreen space is not entering one: macOS can report it after the window
+            // is already back on its user space. The window may be closing, so its app is asked.
             if let Some(wid) = state.windows.tracked_window_id(wsid) {
-                outcome = outcome
-                    .with_topology_reassignment(wid, current_space)
-                    .with_arrange_passes((!mission_control_active) as u8);
+                outcome = outcome.with_app_request(wid.pid, Request::WindowMaybeDestroyed(wid));
             }
-            debug!(
-                ?wsid,
-                reported_space = ?sid,
-                resolved_space = ?current_space,
-                "Resolved user-space disappearance to newer native membership"
-            );
-            return Ok(outcome);
         }
-
-        if let Some(wid) = state.windows.tracked_window_id(wsid) {
-            if matches!(ordered_in, Some(false)) {
-                // since the connection has dropped it wont be shown in space_windows_list
-                // so ordered in can be authorative because it doesnt consider
-                // ghost windows that sometimes remain
+        SpaceEventKind::User => {
+            if let Some(current_space) = observations.resolved_space.filter(|&space| space != sid) {
+                outcome = reassign_to_resolved_space(
+                    state,
+                    wsid,
+                    current_space,
+                    &observations.active_spaces,
+                    observations.mission_control_active,
+                    outcome,
+                );
                 debug!(
-                    ?wid,
                     ?wsid,
                     reported_space = ?sid,
-                    "Promoting WindowServer disappearance to immediate WindowDestroyed"
+                    resolved_space = ?current_space,
+                    "Resolved user-space disappearance to newer native membership"
                 );
-                if let Ok(destroyed_outcome) = window::handle_window_destroyed(
+            } else {
+                outcome = user_space_disappearance(
                     state,
                     transactions,
                     drag,
-                    window::WindowDestroyedPayload { window: wid },
-                ) {
-                    outcome.absorb(destroyed_outcome);
-                }
-                return Ok(outcome);
+                    payload,
+                    &observations,
+                    outcome,
+                );
             }
-
-            state.windows.set_window_server_space(wsid, Some(sid));
-            state.windows.mark_window_hidden(wsid);
-            let layout_changed = assigned_space == Some(sid);
-            if layout_changed {
-                outcome =
-                    outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
-            }
-            if layout_changed && !mission_control_active {
-                outcome = outcome.with_arrange_passes(1);
-            }
-            outcome = outcome.with_app_request(wid.pid, Request::WindowMaybeDestroyed(wid));
-        } else {
-            state.windows.set_window_server_space(wsid, Some(sid));
-            state.windows.mark_window_hidden(wsid);
-            debug!(
-                ?wsid,
-                "Received WindowServerDestroyed for unknown window - ignoring"
-            );
         }
-        return Ok(outcome);
     }
     Ok(outcome)
+}
+
+/// The window server's window moved to the space native membership resolves it to, visible as that
+/// space is active, and a tracked window reassigned there.
+fn reassign_to_resolved_space(
+    state: &mut RiniState,
+    wsid: WindowServerId,
+    resolved_space: SpaceId,
+    active_spaces: &HashSet<SpaceId>,
+    mission_control_active: bool,
+    outcome: EventOutcome,
+) -> EventOutcome {
+    state.windows.set_window_server_space(wsid, Some(resolved_space));
+    if active_spaces.contains(&resolved_space) {
+        state.windows.mark_window_visible(wsid);
+    } else {
+        state.windows.mark_window_hidden(wsid);
+    }
+    match state.windows.tracked_window_id(wsid) {
+        Some(wid) => outcome
+            .with_topology_reassignment(wid, resolved_space)
+            .with_arrange_passes((!mission_control_active) as u8),
+        None => outcome,
+    }
+}
+
+/// A window leaving the user space it is reported on: destroyed at once when the window server
+/// says it is ordered out, otherwise hidden, out of the layout of the space it was assigned, and
+/// its app asked whether it is gone.
+fn user_space_disappearance(
+    state: &mut RiniState,
+    transactions: &crate::windows::domain::transaction::WindowTxStore,
+    drag: &mut DragManager,
+    payload: WindowServerLifecyclePayload,
+    observations: &WindowServerDestroyedObservations,
+    mut outcome: EventOutcome,
+) -> EventOutcome {
+    let WindowServerLifecyclePayload {
+        window_server_id: wsid,
+        space: sid,
+        ..
+    } = payload;
+    let Some(wid) = state.windows.tracked_window_id(wsid) else {
+        state.windows.set_window_server_space(wsid, Some(sid));
+        state.windows.mark_window_hidden(wsid);
+        debug!(
+            ?wsid,
+            "Received WindowServerDestroyed for unknown window - ignoring"
+        );
+        return outcome;
+    };
+    if matches!(observations.ordered_in, Some(false)) {
+        // since the connection has dropped it wont be shown in space_windows_list
+        // so ordered in can be authorative because it doesnt consider
+        // ghost windows that sometimes remain
+        debug!(
+            ?wid,
+            ?wsid,
+            reported_space = ?sid,
+            "Promoting WindowServer disappearance to immediate WindowDestroyed"
+        );
+        if let Ok(destroyed_outcome) = window::handle_window_destroyed(
+            state,
+            transactions,
+            drag,
+            window::WindowDestroyedPayload { window: wid },
+        ) {
+            outcome.absorb(destroyed_outcome);
+        }
+        return outcome;
+    }
+
+    state.windows.set_window_server_space(wsid, Some(sid));
+    state.windows.mark_window_hidden(wsid);
+    let layout_changed = observations.assigned_space == Some(sid);
+    if layout_changed {
+        outcome = outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
+    }
+    if layout_changed && !observations.mission_control_active {
+        outcome = outcome.with_arrange_passes(1);
+    }
+    outcome.with_app_request(wid.pid, Request::WindowMaybeDestroyed(wid))
 }
 
 pub fn handle_window_server_appeared(
@@ -148,129 +186,22 @@ pub fn handle_window_server_appeared(
     observations: WindowServerAppearedObservations,
 ) -> anyhow::Result<EventOutcome> {
     let WindowServerLifecyclePayload {
-        window_server_id: wsid,
-        space: sid,
-        kind,
+        window_server_id: wsid, kind, ..
     } = payload;
-    let WindowServerAppearedObservations {
-        resolved_space,
-        active_spaces,
-        mission_control_active,
-        assigned_space,
-        last_known_user_space,
-        window_server_info,
-        app_known,
-        running_app_info,
-        is_parked_by_rini,
-    } = observations;
     let mut outcome = EventOutcome::default();
     if matches!(kind, SpaceEventKind::User)
-        && let Some(resolved_space) = resolved_space
+        && let Some(resolved_space) = observations.resolved_space
     {
-        // Never infer a display change for a window rini parked itself.
-        //
-        // Windows whose workspace is not the one their display is showing are moved
-        // off-screen, and macOS will not keep a window entirely outside every display —
-        // so those coordinates land inside the NEIGHBOURING display. WindowServer then
-        // reports the window as belonging to that display, rini believed it, and the
-        // window changed display. The next workspace switch parked it off the new
-        // display, and so on: a feedback loop that walked every window onto one display.
-        //
-        // Measured from the logs, the loop is exactly:
-        //   cmd=SwitchToWorkspace(1)
-        //   -> WindowServerAppeared(wsid, SpaceId(980), User)
-        //   -> reassigned to 980
-        //
-        // The old per-display workspace model contained this by accident: a window
-        // reassigned across displays landed in a DIFFERENT workspace object, which broke
-        // the cycle. Sharing workspaces between displays removed that accident, so the
-        // guard has to be explicit. This mirrors `keep_assigned_for_scrolling` on the
-        // WindowFrameChanged path, which exists for the same reason.
-        if is_parked_by_rini && Some(resolved_space) != assigned_space {
-            debug!(
-                ?wsid,
-                reported_space = ?sid,
-                ?resolved_space,
-                ?assigned_space,
-                "Ignoring appearance for a window rini parked off-screen; its position is \
-                 not evidence of a display change"
-            );
-            return Ok(outcome);
+        if let Some(settled) = user_space_appearance(state, payload, resolved_space, &observations)
+        {
+            return Ok(settled);
         }
-        if resolved_space != sid {
-            state.windows.set_window_server_space(wsid, Some(resolved_space));
-            if active_spaces.contains(&resolved_space) {
-                state.windows.mark_window_visible(wsid);
-            } else {
-                state.windows.mark_window_hidden(wsid);
-            }
-            if let Some(wid) = state.windows.tracked_window_id(wsid) {
-                outcome = outcome
-                    .with_topology_reassignment(wid, resolved_space)
-                    .with_arrange_passes((!mission_control_active) as u8);
-            }
-            debug!(
-                ?wsid,
-                reported_space = ?sid,
-                resolved_space = ?resolved_space,
-                "Resolved user-space appearance to stronger native membership"
-            );
-            return Ok(outcome);
-        }
-
-        state.windows.set_window_server_space(wsid, Some(resolved_space));
-        state.windows.mark_window_visible(wsid);
         outcome = outcome.with_confirmed_window_space(wsid, resolved_space);
     }
 
     if state.windows.knows_window_server_id(wsid) || state.windows.is_window_server_observed(wsid) {
-        if !mission_control_active {
-            match kind {
-                SpaceEventKind::User => {
-                    if let Some(wid) = state.windows.tracked_window_id(wsid) {
-                        outcome = outcome
-                            .with_fullscreen_restoration(wsid, sid, wid)
-                            .with_arrange_passes(1);
-                    } else if let Some(pid) =
-                        state.windows.pending_native_fullscreen_pid_for_window_server_id(wsid)
-                    {
-                        outcome = outcome.with_app_request(pid, Request::GetVisibleWindows);
-                    }
-                }
-                SpaceEventKind::Fullscreen => {
-                    let mut layout_changed = false;
-                    let tracked_window_id = state.windows.tracked_window_id(wsid);
-                    let owner_pid = tracked_window_id.map(|wid| wid.pid).or_else(|| {
-                        state.windows.get_window_server_info(wsid).map(|info| info.pid)
-                    });
-                    record_fullscreen_window(
-                        state,
-                        sid,
-                        owner_pid,
-                        tracked_window_id,
-                        Some(wsid),
-                        last_known_user_space,
-                    );
-                    if tracked_window_id.is_none()
-                        && let Some(pid) = owner_pid
-                    {
-                        outcome = outcome.with_app_request(pid, Request::GetVisibleWindows);
-                    }
-                    if let Some((wid, from_space)) = fullscreen_departure(
-                        tracked_window_id,
-                        assigned_space,
-                        last_known_user_space,
-                    ) {
-                        outcome = outcome
-                            .with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
-                        layout_changed =
-                            from_space.is_some_and(|space| active_spaces.contains(&space));
-                    }
-                    if layout_changed {
-                        outcome = outcome.with_arrange_passes(1);
-                    }
-                }
-            }
+        if !observations.mission_control_active {
+            outcome = known_window_appeared(state, payload, &observations, outcome);
         }
         debug!(
             ?wsid,
@@ -281,58 +212,204 @@ pub fn handle_window_server_appeared(
 
     state.windows.mark_window_server_observed(wsid);
     // A window can arrive before its application is taken on: src/windows/docs/launch-notifications.md.
-    if let Some(window_server_info) = window_server_info {
-        if window_server_info.layer != 0 {
-            trace!(
-                ?wsid,
-                layer = window_server_info.layer,
-                "Ignoring non-normal window"
-            );
-            return Ok(outcome);
-        }
+    if let Some(window_server_info) = observations.window_server_info {
+        outcome = new_window_appeared(state, payload, window_server_info, observations, outcome);
+    }
+    Ok(outcome)
+}
 
-        // Filter out very small windows (likely tooltips or similar UI elements)
-        // that shouldn't be managed by the window manager
-        const MIN_MANAGEABLE_WINDOW_SIZE: f64 = 50.0;
-        if window_server_info.frame.size.width < MIN_MANAGEABLE_WINDOW_SIZE
-            || window_server_info.frame.size.height < MIN_MANAGEABLE_WINDOW_SIZE
-        {
-            trace!(
-                ?wsid,
-                "Ignoring tiny window ({}x{}) - likely tooltip",
-                window_server_info.frame.size.width,
-                window_server_info.frame.size.height
-            );
-            return Ok(outcome);
-        }
+/// A window appearing on the user space native membership resolves it to: the outcome when that
+/// settles it, a window rini parked or one on another space; `None` once the window is confirmed
+/// on the space it is reported on.
+fn user_space_appearance(
+    state: &mut RiniState,
+    payload: WindowServerLifecyclePayload,
+    resolved_space: SpaceId,
+    observations: &WindowServerAppearedObservations,
+) -> Option<EventOutcome> {
+    let WindowServerLifecyclePayload {
+        window_server_id: wsid,
+        space: sid,
+        ..
+    } = payload;
+    let assigned_space = observations.assigned_space;
+    // Never infer a display change for a window rini parked itself.
+    //
+    // Windows whose workspace is not the one their display is showing are moved
+    // off-screen, and macOS will not keep a window entirely outside every display —
+    // so those coordinates land inside the NEIGHBOURING display. WindowServer then
+    // reports the window as belonging to that display, rini believed it, and the
+    // window changed display. The next workspace switch parked it off the new
+    // display, and so on: a feedback loop that walked every window onto one display.
+    //
+    // Measured from the logs, the loop is exactly:
+    //   cmd=SwitchToWorkspace(1)
+    //   -> WindowServerAppeared(wsid, SpaceId(980), User)
+    //   -> reassigned to 980
+    //
+    // The old per-display workspace model contained this by accident: a window
+    // reassigned across displays landed in a DIFFERENT workspace object, which broke
+    // the cycle. Sharing workspaces between displays removed that accident, so the
+    // guard has to be explicit. This mirrors `keep_assigned_for_scrolling` on the
+    // WindowFrameChanged path, which exists for the same reason.
+    if observations.is_parked_by_rini && Some(resolved_space) != assigned_space {
+        debug!(
+            ?wsid,
+            reported_space = ?sid,
+            ?resolved_space,
+            ?assigned_space,
+            "Ignoring appearance for a window rini parked off-screen; its position is \
+             not evidence of a display change"
+        );
+        return Some(EventOutcome::default());
+    }
+    if resolved_space != sid {
+        let outcome = reassign_to_resolved_space(
+            state,
+            wsid,
+            resolved_space,
+            &observations.active_spaces,
+            observations.mission_control_active,
+            EventOutcome::default(),
+        );
+        debug!(
+            ?wsid,
+            reported_space = ?sid,
+            resolved_space = ?resolved_space,
+            "Resolved user-space appearance to stronger native membership"
+        );
+        return Some(outcome);
+    }
 
-        if matches!(kind, SpaceEventKind::Fullscreen) {
-            let window_id = state.windows.tracked_window_id(wsid);
+    state.windows.set_window_server_space(wsid, Some(resolved_space));
+    state.windows.mark_window_visible(wsid);
+    None
+}
+
+/// A window rini already knows appearing: on a user space, a fullscreen window coming back or one
+/// whose app is asked for its windows; on a fullscreen space, recorded there and out of the strip.
+fn known_window_appeared(
+    state: &mut RiniState,
+    payload: WindowServerLifecyclePayload,
+    observations: &WindowServerAppearedObservations,
+    mut outcome: EventOutcome,
+) -> EventOutcome {
+    let WindowServerLifecyclePayload {
+        window_server_id: wsid,
+        space: sid,
+        kind,
+    } = payload;
+    match kind {
+        SpaceEventKind::User => {
+            if let Some(wid) = state.windows.tracked_window_id(wsid) {
+                outcome =
+                    outcome.with_fullscreen_restoration(wsid, sid, wid).with_arrange_passes(1);
+            } else if let Some(pid) =
+                state.windows.pending_native_fullscreen_pid_for_window_server_id(wsid)
+            {
+                outcome = outcome.with_app_request(pid, Request::GetVisibleWindows);
+            }
+        }
+        SpaceEventKind::Fullscreen => {
+            let last_known_user_space = observations.last_known_user_space;
+            let mut layout_changed = false;
+            let tracked_window_id = state.windows.tracked_window_id(wsid);
+            let owner_pid = tracked_window_id
+                .map(|wid| wid.pid)
+                .or_else(|| state.windows.get_window_server_info(wsid).map(|info| info.pid));
             record_fullscreen_window(
                 state,
                 sid,
-                Some(window_server_info.pid),
-                window_id,
+                owner_pid,
+                tracked_window_id,
                 Some(wsid),
                 last_known_user_space,
             );
-            outcome = outcome.with_app_request(window_server_info.pid, Request::GetVisibleWindows);
-
-            return Ok(outcome);
-        }
-
-        outcome = outcome.with_window_server_updates(vec![window_server_info]);
-
-        if !app_known {
-            if let Some(app_info) = running_app_info {
-                outcome =
-                    outcome.with_wm_event(WmEvent::AppLaunch(window_server_info.pid, app_info));
+            if tracked_window_id.is_none()
+                && let Some(pid) = owner_pid
+            {
+                outcome = outcome.with_app_request(pid, Request::GetVisibleWindows);
             }
-        } else {
-            outcome = outcome.with_app_request(window_server_info.pid, Request::GetVisibleWindows);
+            if let Some((wid, from_space)) = fullscreen_departure(
+                tracked_window_id,
+                observations.assigned_space,
+                last_known_user_space,
+            ) {
+                outcome =
+                    outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
+                layout_changed =
+                    from_space.is_some_and(|space| observations.active_spaces.contains(&space));
+            }
+            if layout_changed {
+                outcome = outcome.with_arrange_passes(1);
+            }
         }
     }
-    Ok(outcome)
+    outcome
+}
+
+/// A window the window server reports before rini knows it: a normal window big enough to manage
+/// is recorded as fullscreen on a fullscreen space and otherwise taken in, and its app launched or
+/// asked for its windows.
+fn new_window_appeared(
+    state: &mut RiniState,
+    payload: WindowServerLifecyclePayload,
+    window_server_info: crate::windows::domain::info::WindowServerInfo,
+    observations: WindowServerAppearedObservations,
+    outcome: EventOutcome,
+) -> EventOutcome {
+    let WindowServerLifecyclePayload {
+        window_server_id: wsid,
+        space: sid,
+        kind,
+    } = payload;
+    if window_server_info.layer != 0 {
+        trace!(
+            ?wsid,
+            layer = window_server_info.layer,
+            "Ignoring non-normal window"
+        );
+        return outcome;
+    }
+
+    // Filter out very small windows (likely tooltips or similar UI elements)
+    // that shouldn't be managed by the window manager
+    const MIN_MANAGEABLE_WINDOW_SIZE: f64 = 50.0;
+    if window_server_info.frame.size.width < MIN_MANAGEABLE_WINDOW_SIZE
+        || window_server_info.frame.size.height < MIN_MANAGEABLE_WINDOW_SIZE
+    {
+        trace!(
+            ?wsid,
+            "Ignoring tiny window ({}x{}) - likely tooltip",
+            window_server_info.frame.size.width,
+            window_server_info.frame.size.height
+        );
+        return outcome;
+    }
+
+    if matches!(kind, SpaceEventKind::Fullscreen) {
+        let window_id = state.windows.tracked_window_id(wsid);
+        record_fullscreen_window(
+            state,
+            sid,
+            Some(window_server_info.pid),
+            window_id,
+            Some(wsid),
+            observations.last_known_user_space,
+        );
+        return outcome.with_app_request(window_server_info.pid, Request::GetVisibleWindows);
+    }
+
+    let outcome = outcome.with_window_server_updates(vec![window_server_info]);
+    if observations.app_known {
+        return outcome.with_app_request(window_server_info.pid, Request::GetVisibleWindows);
+    }
+    match observations.running_app_info {
+        Some(app_info) => {
+            outcome.with_wm_event(WmEvent::AppLaunch(window_server_info.pid, app_info))
+        }
+        None => outcome,
+    }
 }
 
 pub fn handle_mission_control_native_entered(
@@ -485,6 +562,98 @@ mod workflow_tests {
             fullscreen_departure(None, Some(SpaceId::new(3)), Some(SpaceId::new(3))),
             None
         );
+    }
+
+    fn appearing(layer: i32, size: f64) -> crate::windows::domain::info::WindowServerInfo {
+        use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+        crate::windows::domain::info::WindowServerInfo {
+            id: WindowServerId::new(40),
+            pid: 7,
+            layer,
+            frame: CGRect::new(CGPoint::new(0., 0.), CGSize::new(size, size)),
+            min_frame: CGSize::new(0., 0.),
+            max_frame: CGSize::new(0., 0.),
+        }
+    }
+
+    fn observations(
+        info: crate::windows::domain::info::WindowServerInfo,
+        app_known: bool,
+        running_app_info: Option<AppInfo>,
+    ) -> WindowServerAppearedObservations {
+        WindowServerAppearedObservations {
+            resolved_space: None,
+            is_parked_by_rini: false,
+            active_spaces: HashSet::default(),
+            mission_control_active: false,
+            assigned_space: None,
+            last_known_user_space: None,
+            window_server_info: Some(info),
+            app_known,
+            running_app_info,
+        }
+    }
+
+    fn appeared(
+        info: crate::windows::domain::info::WindowServerInfo,
+        kind: SpaceEventKind,
+        app_known: bool,
+        running_app_info: Option<AppInfo>,
+    ) -> EventOutcome {
+        let payload = WindowServerLifecyclePayload {
+            window_server_id: info.id,
+            space: SpaceId::new(1),
+            kind,
+        };
+        handle_window_server_appeared(
+            &mut RiniState::default(),
+            payload,
+            observations(info, app_known, running_app_info),
+        )
+        .unwrap()
+    }
+
+    /// A window the window server shows before rini knows it is taken in when it is a normal
+    /// window of a manageable size, and nothing is asked of a layer above it or a tooltip.
+    #[test]
+    fn a_new_window_is_taken_in_only_on_the_normal_layer_and_at_a_manageable_size() {
+        let taken = appeared(appearing(0, 400.), SpaceEventKind::User, true, None);
+        assert_eq!(taken.window_server_updates.len(), 1);
+        assert!(matches!(taken.app_requests[..], [(
+            7,
+            Request::GetVisibleWindows
+        )]));
+
+        for ignored in [appearing(3, 400.), appearing(0, 49.)] {
+            let outcome = appeared(ignored, SpaceEventKind::User, true, None);
+            assert!(outcome.window_server_updates.is_empty());
+            assert!(outcome.app_requests.is_empty());
+        }
+    }
+
+    /// An app not yet known is launched when it is running, and asked for nothing either way; a
+    /// new window on a fullscreen space has its app asked for its windows and is not taken in.
+    #[test]
+    fn a_new_windows_app_is_launched_when_unknown_and_a_fullscreen_one_is_asked() {
+        let app = AppInfo {
+            bundle_id: Some("com.example".into()),
+            localized_name: None,
+        };
+        let launched = appeared(appearing(0, 400.), SpaceEventKind::User, false, Some(app));
+        assert!(matches!(launched.wm_events[..], [WmEvent::AppLaunch(7, _)]));
+        assert!(launched.app_requests.is_empty());
+
+        let unknown = appeared(appearing(0, 400.), SpaceEventKind::User, false, None);
+        assert!(unknown.wm_events.is_empty());
+        assert!(unknown.app_requests.is_empty());
+        assert_eq!(unknown.window_server_updates.len(), 1);
+
+        let fullscreen = appeared(appearing(0, 400.), SpaceEventKind::Fullscreen, true, None);
+        assert!(fullscreen.window_server_updates.is_empty());
+        assert!(matches!(fullscreen.app_requests[..], [(
+            7,
+            Request::GetVisibleWindows
+        )]));
     }
 
     #[test]
