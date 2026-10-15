@@ -3,35 +3,28 @@
 //! The client talks to the same bootstrap service as `rini-cli` and includes
 //! the public request and response wire types.
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_int, c_void};
 use std::mem::{size_of, zeroed};
 use std::ptr::copy_nonoverlapping;
 use std::thread;
 use std::time::Duration;
 
 pub use crate::protocol::*;
+use rini_mach_sys::{
+    KERN_SUCCESS, MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND, MACH_MSGH_BITS,
+    MACH_PORT_LIMITS_INFO, MACH_PORT_LIMITS_INFO_COUNT, MACH_PORT_QLIMIT_LARGE,
+    MACH_PORT_RIGHT_RECEIVE, MACH_RCV_MSG, MACH_SEND_MSG, MAX_MESSAGE_SIZE_USIZE,
+    TASK_BOOTSTRAP_PORT, bootstrap_look_up, kern_return_t, mach_buffer_t, mach_message_t,
+    mach_msg, mach_msg_destroy, mach_msg_header_t, mach_port_allocate, mach_port_deallocate,
+    mach_port_insert_right, mach_port_limits, mach_port_mod_refs, mach_port_set_attributes,
+    mach_port_t, mach_task_self, task_get_special_port,
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
 
-const MAX_MESSAGE_SIZE: usize = 262_144;
+const MAX_MESSAGE_SIZE: usize = MAX_MESSAGE_SIZE_USIZE;
 const DEFAULT_SERVICE_NAME: &str = "git.kaievns.rini";
-
-type KernReturn = c_int;
-type MachPort = u32;
-type MachMessageSize = u32;
-type MachMessageOption = u32;
-
-const KERN_SUCCESS: KernReturn = 0;
-const MACH_SEND_MSG: MachMessageOption = 0x0000_0001;
-const MACH_RCV_MSG: MachMessageOption = 0x0000_0002;
-const MACH_MSG_TYPE_COPY_SEND: u32 = 19;
-const MACH_MSG_TYPE_MAKE_SEND: u32 = 20;
-const MACH_PORT_RIGHT_RECEIVE: c_int = 1;
-const MACH_PORT_LIMITS_INFO: c_int = 1;
-const MACH_PORT_LIMITS_INFO_COUNT: u32 = 1;
-const MACH_PORT_QLIMIT_LARGE: u32 = 1024;
-const TASK_BOOTSTRAP_PORT: c_int = 4;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -42,7 +35,7 @@ pub enum ClientError {
     #[error("Mach operation {operation} failed with code {code}")]
     Mach {
         operation: &'static str,
-        code: KernReturn,
+        code: kern_return_t,
     },
     #[error("IPC payload exceeds the {MAX_MESSAGE_SIZE}-byte limit")]
     MessageTooLarge,
@@ -238,83 +231,17 @@ fn service_name() -> Result<CString, ClientError> {
     CString::new(name).map_err(|_| ClientError::InvalidServiceName)
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct MachMessageHeader {
-    bits: u32,
-    size: MachMessageSize,
-    remote_port: MachPort,
-    local_port: MachPort,
-    voucher_port: MachPort,
-    id: i32,
-}
-
-#[repr(C)]
-struct InlineMessage {
-    header: MachMessageHeader,
-    data: [u8; MAX_MESSAGE_SIZE],
-}
-
-#[repr(C)]
-struct ReceiveBuffer {
-    message: InlineMessage,
-    trailer: [u8; 512],
-}
-
-#[repr(C)]
-struct MachPortLimits {
-    queue_limit: u32,
-}
-
-#[link(name = "System", kind = "framework")]
-unsafe extern "C" {
-    fn mach_task_self() -> MachPort;
-    fn task_get_special_port(task: MachPort, which: c_int, port: *mut MachPort) -> KernReturn;
-    fn mach_port_allocate(task: MachPort, right: c_int, name: *mut MachPort) -> KernReturn;
-    fn mach_port_insert_right(
-        task: MachPort,
-        name: MachPort,
-        poly: MachPort,
-        disposition: c_int,
-    ) -> KernReturn;
-    fn mach_port_mod_refs(task: MachPort, name: MachPort, right: c_int, delta: c_int)
-    -> KernReturn;
-    fn mach_port_deallocate(task: MachPort, name: MachPort) -> KernReturn;
-    fn mach_port_set_attributes(
-        task: MachPort,
-        name: MachPort,
-        flavor: c_int,
-        info: *const c_void,
-        count: u32,
-    ) -> KernReturn;
-    fn mach_msg(
-        message: *mut MachMessageHeader,
-        option: MachMessageOption,
-        send_size: MachMessageSize,
-        receive_size: MachMessageSize,
-        receive_name: MachPort,
-        timeout: u32,
-        notify: MachPort,
-    ) -> KernReturn;
-    fn mach_msg_destroy(message: *mut MachMessageHeader) -> KernReturn;
-    fn bootstrap_look_up(
-        bootstrap_port: MachPort,
-        service_name: *const c_char,
-        service_port: *mut MachPort,
-    ) -> KernReturn;
-}
-
 #[derive(Debug)]
 struct ReplyPort {
-    name: MachPort,
+    name: mach_port_t,
 }
 
 struct ServicePort {
-    name: MachPort,
+    name: mach_port_t,
 }
 
 impl ServicePort {
-    fn new(name: MachPort) -> Self {
+    fn new(name: mach_port_t) -> Self {
         Self { name }
     }
 }
@@ -340,7 +267,7 @@ impl ReplyPort {
                 });
             }
 
-            let limits = MachPortLimits { queue_limit };
+            let limits = mach_port_limits { mpl_qlimit: queue_limit };
             let _ = mach_port_set_attributes(
                 task,
                 name,
@@ -373,7 +300,7 @@ impl Drop for ReplyPort {
     }
 }
 
-unsafe fn lookup_service(name: &CStr) -> Result<MachPort, ClientError> {
+unsafe fn lookup_service(name: &CStr) -> Result<mach_port_t, ClientError> {
     let mut bootstrap_port = 0;
     let result = unsafe {
         task_get_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, &mut bootstrap_port)
@@ -406,7 +333,7 @@ unsafe fn find_service_with_retry() -> Result<ServicePort, ClientError> {
 
 unsafe fn send_request(
     payload: &[u8],
-    subscription_port: Option<MachPort>,
+    subscription_port: Option<mach_port_t>,
 ) -> Result<Vec<u8>, ClientError> {
     if payload.len() > MAX_MESSAGE_SIZE {
         return Err(ClientError::MessageTooLarge);
@@ -423,11 +350,11 @@ unsafe fn send_request(
     };
 
     let aligned_len = (payload.len() + 3) & !3;
-    let mut message: InlineMessage = unsafe { zeroed() };
-    message.header.remote_port = service_port.name;
-    message.header.local_port = reply_port;
-    message.header.id = reply_port as i32;
-    message.header.bits = message_bits(
+    let mut message: mach_message_t = unsafe { zeroed() };
+    message.header.msgh_remote_port = service_port.name;
+    message.header.msgh_local_port = reply_port;
+    message.header.msgh_id = reply_port as i32;
+    message.header.msgh_bits = MACH_MSGH_BITS(
         MACH_MSG_TYPE_COPY_SEND,
         if subscription_port.is_some() {
             MACH_MSG_TYPE_COPY_SEND
@@ -435,7 +362,7 @@ unsafe fn send_request(
             MACH_MSG_TYPE_MAKE_SEND
         },
     );
-    message.header.size = (size_of::<MachMessageHeader>() + aligned_len) as u32;
+    message.header.msgh_size = (size_of::<mach_msg_header_t>() + aligned_len) as u32;
     unsafe {
         copy_nonoverlapping(payload.as_ptr(), message.data.as_mut_ptr(), payload.len());
     }
@@ -444,7 +371,7 @@ unsafe fn send_request(
         mach_msg(
             &mut message.header,
             MACH_SEND_MSG,
-            message.header.size,
+            message.header.msgh_size,
             0,
             0,
             0,
@@ -461,14 +388,14 @@ unsafe fn send_request(
     unsafe { receive_message(reply_port) }
 }
 
-unsafe fn receive_message(reply_port: MachPort) -> Result<Vec<u8>, ClientError> {
-    let mut buffer: ReceiveBuffer = unsafe { zeroed() };
+unsafe fn receive_message(reply_port: mach_port_t) -> Result<Vec<u8>, ClientError> {
+    let mut buffer: mach_buffer_t = unsafe { zeroed() };
     let result = unsafe {
         mach_msg(
             &mut buffer.message.header,
             MACH_RCV_MSG,
             0,
-            size_of::<ReceiveBuffer>() as u32,
+            size_of::<mach_buffer_t>() as u32,
             reply_port,
             0,
             0,
@@ -482,7 +409,7 @@ unsafe fn receive_message(reply_port: MachPort) -> Result<Vec<u8>, ClientError> 
     }
 
     let payload_len =
-        buffer.message.header.size.saturating_sub(size_of::<MachMessageHeader>() as u32) as usize;
+        buffer.message.header.msgh_size.saturating_sub(size_of::<mach_msg_header_t>() as u32) as usize;
     if payload_len > MAX_MESSAGE_SIZE {
         unsafe { mach_msg_destroy(&mut buffer.message.header) };
         return Err(ClientError::MessageTooLarge);
@@ -490,10 +417,6 @@ unsafe fn receive_message(reply_port: MachPort) -> Result<Vec<u8>, ClientError> 
     let payload = buffer.message.data[..payload_len].to_vec();
     unsafe { mach_msg_destroy(&mut buffer.message.header) };
     Ok(payload)
-}
-
-const fn message_bits(remote: u32, local: u32) -> u32 {
-    remote | (local << 8)
 }
 
 #[cfg(test)]
