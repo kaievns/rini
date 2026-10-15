@@ -136,9 +136,25 @@ pub enum Command {
     },
 }
 
-/// The window server on this machine, through SkyLight.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LiveWindowServer;
+/// The window server on this machine, through SkyLight. Outside `window_server`, only [`live`]
+/// builds one.
+#[derive(Debug, Clone, Copy)]
+pub struct LiveWindowServer(pub(super) ());
 
-/// The port production passes: the window server on this machine.
-pub fn live() -> Arc<dyn WindowServer> { Arc::new(LiveWindowServer) }
+/// The port production passes: the window server on this machine. A test build panics, since a
+/// test's window-server ids can name real windows on the machine running it.
+pub fn live() -> Arc<dyn WindowServer> {
+    if cfg!(test) {
+        panic!("a test passes a FakeWindowServer, never the live window server");
+    }
+    Arc::new(LiveWindowServer(()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "FakeWindowServer")]
+    fn a_test_build_never_takes_the_live_window_server() { drop(live()); }
+}

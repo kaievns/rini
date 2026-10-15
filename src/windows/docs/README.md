@@ -78,7 +78,8 @@ them. Each call, which connection it takes and why, and the measurements: `windo
 spaces, order, suitability and corners, the space lists, the depths, the window under the cursor and
 at a point, the key window and process, the listings, and the two commands, `make_key_window` and
 `take_stack_place`. A consumer holds an `Arc<dyn WindowServer>`, cloned to each thread that asks:
-production passes `window_server::live()`, which is `LiveWindowServer`, the SkyLight calls; a test
+production passes `window_server::live()`, which is `LiveWindowServer`, the SkyLight calls, and
+which panics in a test build (`a_test_build_never_takes_the_live_window_server`); a test
 passes a clone of an `Arc<FakeWindowServer>` (`platform/window_server/fake.rs`) and keeps the other
 to state answers (`set_window_ordered_in(id, Some(false))`, one `set_` per fact) and to read the
 commands it was given (`commands()`). A read the live window server answers from another read's

@@ -54,7 +54,10 @@ A test asks the window server through `FakeWindowServer`, handed to the code und
 read of the fake answers "unknown" until the test states an answer
 (`every_read_answers_unknown_with_no_setup`), and a command is recorded, never carried out
 (`make_key_window_and_take_stack_place_only_record`), so no test reads the live window server or
-makes a real window key (`a_test_never_reads_or_drives_the_live_window_server`). Before the port,
+makes a real window key (`a_test_never_reads_or_drives_the_live_window_server`). The live port is
+out of a test's reach too: `window_server::live()` panics in a test build and nothing outside
+`window_server` builds a `LiveWindowServer` (`a_test_build_never_takes_the_live_window_server`), so a
+test that builds a production reactor or actor through it fails rather than reading SkyLight. Before the port,
 `window_server.rs` answered from thread-local overrides under `cfg(test)`, and four of those fakes
 fell through to the real window server when no override was set, which made reactor tests depend
 on the windows the developer happened to have open; seven reads, `window_parent`, the stickiness

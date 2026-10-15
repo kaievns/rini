@@ -33,7 +33,7 @@ fn with_port<R>(ask: impl FnOnce(&dyn WindowServer) -> R) -> R {
     }
     #[cfg(not(test))]
     {
-        ask(&LiveWindowServer)
+        ask(&LiveWindowServer(()))
     }
 }
 
