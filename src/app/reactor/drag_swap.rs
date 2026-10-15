@@ -179,7 +179,7 @@ impl Reactor {
             ?space,
             "Resetting drag swap tracking after space change"
         );
-        self.drag_manager.drag_swap_manager.reset();
+        self.drag_manager.drag_swap.reset();
     }
 
     /// The swap target the dragged window is over, deferred to the mouse-up as a pending swap, or
@@ -189,8 +189,8 @@ impl Reactor {
 
         let previous_pending = self.get_pending_drag_swap();
         let new_candidate =
-            self.drag_manager.drag_swap_manager.on_frame_change(wid, new_frame, &candidates);
-        let active_target = self.drag_manager.drag_swap_manager.last_target();
+            self.drag_manager.drag_swap.on_frame_change(wid, new_frame, &candidates);
+        let active_target = self.drag_manager.drag_swap.last_target();
         if let Some(target_wid) = active_target {
             if new_candidate.is_some() || previous_pending != Some((wid, target_wid)) {
                 trace!(

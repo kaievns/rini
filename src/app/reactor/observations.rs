@@ -567,7 +567,7 @@ impl Reactor {
             })
             .or_else(|| {
                 self.drag_manager
-                    .drag_swap_manager
+                    .drag_swap
                     .origin_frame()
                     .and_then(|frame| self.affinity().best_space_for_frame(&frame))
             })

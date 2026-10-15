@@ -617,7 +617,7 @@ impl Reactor {
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
-                drag_swap_manager: crate::input::domain::drag_swap::DragManager::new(
+                drag_swap: crate::input::domain::drag_swap::DragSwap::new(
                     config.settings.window_snapping,
                 ),
                 skip_layout_for_window: None,
