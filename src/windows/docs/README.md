@@ -16,7 +16,7 @@ or layout: everything else depends on it and it depends on nothing.
 | **Window rules** | `domain/rules.rs` — every `window-rule` that applies to a window, folded in file order as niri does, and the one matcher (`applies`) that the rules for what a window wears (`decorations::domain::rules`) share, which reads whether a window holds focus, floats or is drawn urgent (`RuleState`) beside what it is. Resolving the result against workspaces is `workspaces::domain::app_rules` |
 | **Focus** | `domain/focus.rs` — `MainWindowTracker` and the key window it has heard of, which windows' looks a change of it turns, the raise-echo rule, and the activation-focus rule that stops cmd-tab moving a display |
 | **Raising** | `domain/raise.rs` — the raise manager |
-| **Raise order** | `domain/raise_order.rs` — which windows are worth raising, and in what order; `StackGroup`, on the strip or off it, and `regroup_tiled`, which raises the strip back in front of a window off it that sits inside it |
+| **Raise order** | `domain/raise_order.rs` — which windows are worth raising, and in what order; `AppBatch`, the windows one application's thread raises together, which no other application's window joins, batched by application and space in the order they came (`group_by_app_and_space`); `StackGroup`, on the strip or off it, and `regroup_tiled`, which raises the strip back in front of a window off it that sits inside it |
 | **Frame transactions** | `domain/transaction.rs` — txids, so a frame report can be matched to the write that caused it |
 | **Frame writes** | `domain/frame_write.rs` — which Accessibility writes a frame takes: the position alone when the window server already has the window at the desired size, size, position and size again otherwise, and again after a position written alone that read back at another size |
 | **Title-bar zoom** | `domain/zoom.rs` — which window's title bar a double-click landed on, and what that window's resizes in the next second mean: the zoom, which toggles full width once, or the rest of it, which rini overrules |
@@ -39,7 +39,10 @@ applications ask for attention.
 **One thread per application.** An AX call blocks on the owning app, so a hung
 application must not hang rini. Each app gets a thread with its own `CFRunLoop`, and
 the reactor talks to it through `Request`. An application slow to answer while it
-launches is asked again rather than given up on, and one that becomes frontmost
+launches is asked again rather than given up on, by the thread's launch loop on
+`platform/ax/ask_again.rs`'s schedule; a window it was too busy to subscribe is taken
+on at the next AXWindows refresh. The observer hands an application too busy to
+answer back as an error, and asks nothing again itself. One that becomes frontmost
 without a thread is looked at again then (`launch-notifications.md`). The thread
 ends with the application: the reactor's `Terminate` at a quit, or the first request
 that fails because the application has gone, ends its task, and a raise queued or

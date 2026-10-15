@@ -745,6 +745,7 @@ mod strip_regroup {
     use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
     use crate::app::reactor::{StackedWindow, strip_group_to_lift_for};
     use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+    use crate::windows::domain::raise_order::AppBatch;
 
     const SCREEN: CGRect = CGRect {
         origin: CGPoint { x: 0., y: 0. },
@@ -755,13 +756,27 @@ mod strip_regroup {
     /// Settings window over the middle of the screen, all one app on one workspace. The raise manager's
     /// channel is handed back so the test reads the `RaiseRequest` the reactor sends.
     fn reactor_with_sandwich() -> (Reactor, channels::Receiver<raise_manager::Event>, SpaceId) {
+        reactor_with_sandwich_of([1, 1, 1, 1])
+    }
+
+    /// The same sandwich with each of its four windows owned by the application in `pids`, in the
+    /// order left, right, parked, Settings.
+    fn reactor_with_sandwich_of(
+        pids: [pid_t; 4],
+    ) -> (Reactor, channels::Receiver<raise_manager::Event>, SpaceId) {
+        let window = |idx: u32| WindowId::new(pids[idx as usize - 1], idx);
         let mut reactor = test_reactor();
         let (raise_tx, mut raise_rx) = channels::channel();
         reactor.communication_manager.raise_manager_tx = raise_tx;
         let space = SpaceId::new(1);
         set_space_membership(&[(space, &[901, 902, 903, 904])]);
         reactor.handle_event(space_state_event(vec![SCREEN], vec![Some(space)]));
-        reactor.add_test_app(1);
+        let mut apps = pids.to_vec();
+        apps.sort_unstable();
+        apps.dedup();
+        for pid in apps {
+            reactor.add_test_app(pid);
+        }
         let workspace = reactor.test_workspace(space, 0);
         let left = CGRect::new(CGPoint::new(4., 32.), CGSize::new(859., 1081.));
         let right = CGRect::new(CGPoint::new(867., 32.), CGSize::new(859., 1081.));
@@ -773,32 +788,32 @@ mod strip_regroup {
             (3, 903, parked),
             (4, 904, settings),
         ] {
-            let window = WindowId::new(1, idx);
+            let window = window(idx);
             reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), frame);
             assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
             reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
         }
         // The strip's selection is the left column, so the layout shows the first two columns and
         // parks the third; then the fourth window floats over them.
-        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
-        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 4)));
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window(1)));
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window(4)));
         reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-        assert!(reactor.layout_manager.layout_engine.is_window_floating(WindowId::new(1, 4)));
+        assert!(reactor.layout_manager.layout_engine.is_window_floating(window(4)));
         // The frames the strip has on screen right now: two columns visible, the third parked off
         // the right edge. Set directly; the engine's scroll position is not what these tests are about.
         for (idx, frame) in [(1, left), (2, right), (3, parked), (4, settings)] {
-            if let Some(w) = reactor.state.windows.window_mut(WindowId::new(1, idx)) {
+            if let Some(w) = reactor.state.windows.window_mut(window(idx)) {
                 w.frame_monotonic = frame;
             }
         }
         for idx in [1, 2] {
             assert!(
-                !reactor.affinity().is_window_parked_offscreen(WindowId::new(1, idx)),
+                !reactor.affinity().is_window_parked_offscreen(window(idx)),
                 "setup: {idx} on screen"
             );
         }
         assert!(
-            reactor.affinity().is_window_parked_offscreen(WindowId::new(1, 3)),
+            reactor.affinity().is_window_parked_offscreen(window(3)),
             "setup: 3 parked"
         );
         while raise_rx.try_recv().is_ok() {}
@@ -887,10 +902,70 @@ mod strip_regroup {
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
-            vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]],
+            vec![AppBatch::of(&[WindowId::new(1, 2), WindowId::new(1, 1)])],
             "back to front, focused last; never the floating window, never the parked column"
         );
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
+    }
+
+    /// Strip windows of two applications go up as one batch each, in the regroup's back-to-front
+    /// order, whichever application's pid is the larger.
+    #[test]
+    fn a_regroup_across_applications_raises_their_batches_back_to_front() {
+        for (left, right) in [(2, 3), (3, 2)] {
+            let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich_of([left, right, 1, 1]);
+            crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
+                902, 904, 901, 903,
+            ]));
+
+            reactor.handle_layout_response(
+                layout::EventResponse {
+                    changed: true,
+                    raise_windows: vec![WindowId::new(left, 1)],
+                    focus_window: Some(WindowId::new(left, 1)),
+                    edge_hit: None,
+                    moved: None,
+                },
+                None,
+            );
+            crate::windows::platform::window_server::set_front_to_back_override(None);
+
+            let request = raise_request(&mut raise_rx).expect("a raise request");
+            assert_eq!(
+                request.raise_windows,
+                vec![
+                    AppBatch::of(&[WindowId::new(right, 2)]),
+                    AppBatch::of(&[WindowId::new(left, 1)]),
+                ],
+                "the right column's application first, the focused one's last"
+            );
+        }
+    }
+
+    /// A click's regroup across applications: the same back-to-front batches.
+    #[test]
+    fn a_click_regroup_across_applications_raises_their_batches_back_to_front() {
+        for (left, right) in [(2, 3), (3, 2)] {
+            let (mut reactor, mut raise_rx, space) = reactor_with_sandwich_of([left, right, 1, 1]);
+            reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 4)));
+            while raise_rx.try_recv().is_ok() {}
+            crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
+                901, 904, 902, 903,
+            ]));
+
+            reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(left, 1), space));
+            crate::windows::platform::window_server::set_front_to_back_override(None);
+
+            let request = raise_request(&mut raise_rx).expect("a raise request");
+            assert_eq!(
+                request.raise_windows,
+                vec![
+                    AppBatch::of(&[WindowId::new(right, 2)]),
+                    AppBatch::of(&[WindowId::new(left, 1)]),
+                ],
+                "the right column's application first, the clicked one's last"
+            );
+        }
     }
 
     /// A window that has just opened is frontmost, and the strip must be left behind it.
@@ -937,7 +1012,11 @@ mod strip_regroup {
 
         let request = raise_request(&mut raise_rx).expect("the sandwich is still put right");
         assert!(
-            !request.raise_windows.iter().flatten().any(|w| *w == WindowId::new(1, 4)),
+            !request
+                .raise_windows
+                .iter()
+                .flat_map(AppBatch::windows)
+                .any(|w| *w == WindowId::new(1, 4)),
             "and the floating window is never raised with the strip"
         );
     }
@@ -961,7 +1040,7 @@ mod strip_regroup {
         );
         crate::windows::platform::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
-        assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 4)]]);
+        assert_eq!(request.raise_windows, vec![AppBatch::of(&[WindowId::new(1, 4)])]);
     }
 
     /// An order that already obeys the rule costs nothing: the raise is what the layout asked for.
@@ -983,7 +1062,7 @@ mod strip_regroup {
         );
         crate::windows::platform::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
-        assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 1)]]);
+        assert_eq!(request.raise_windows, vec![AppBatch::of(&[WindowId::new(1, 1)])]);
     }
 
     /// Keyboard navigation between two windows of the same app: the layout's own raise names only
@@ -1008,7 +1087,7 @@ mod strip_regroup {
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
-            vec![vec![WindowId::new(1, 1), WindowId::new(1, 2)]],
+            vec![AppBatch::of(&[WindowId::new(1, 1), WindowId::new(1, 2)])],
             "the strip goes up as one group, the new focus last"
         );
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 2)));
@@ -1058,7 +1137,7 @@ mod strip_regroup {
         let first = raise_request(&mut raise_rx).expect("the focus move's own raise");
         assert_eq!(
             first.raise_windows,
-            vec![vec![WindowId::new(1, 3)]],
+            vec![AppBatch::of(&[WindowId::new(1, 3)])],
             "judged before the scroll"
         );
 
@@ -1072,7 +1151,7 @@ mod strip_regroup {
             .collect();
         expected.push(WindowId::new(1, 3));
         let second = raise_request(&mut raise_rx).expect("the post-layout regroup");
-        assert_eq!(second.raise_windows, vec![expected]);
+        assert_eq!(second.raise_windows, vec![AppBatch::of(&expected)]);
         assert_eq!(second.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 3)));
         assert_eq!(second.focus_quiet, Quiet::Yes);
         assert!(raise_request(&mut raise_rx).is_none(), "one regroup, not a loop");
@@ -1096,7 +1175,7 @@ mod strip_regroup {
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
-            vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]]
+            vec![AppBatch::of(&[WindowId::new(1, 2), WindowId::new(1, 1)])]
         );
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
         assert_eq!(

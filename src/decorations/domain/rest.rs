@@ -848,7 +848,7 @@ mod tests {
         RestWindow { window: ws(id), group: group(id.into()), focused, held: Held { parked, ..Held::default() }, ..ringed_window() }
     }
 
-    const LEVEL: StackLevel = StackLevel { level: Some(0), sub_level: 0 };
+    const LEVEL: StackLevel = StackLevel { level: Some(0), sub_level: Some(0) };
 
     fn intro(frame: ScreenRect) -> Introduction { Introduction { frame: Some(frame), ordered_out: false, radius: None, level: LEVEL } }
 
@@ -890,7 +890,7 @@ mod tests {
         let drawn = rest.turn(Some(first.clone()), &[], &[(ws(1), SLOT)], Vec::new(), now);
         assert_eq!(drawn, Some(Draw { orders: Vec::new(), focus: Some(ws(1)) }));
         assert!(rest.wanted().is_empty() && rest.windows.is_empty(), "not drawn before it is known");
-        let level = StackLevel { level: Some(3), sub_level: 1 };
+        let level = StackLevel { level: Some(3), sub_level: Some(1) };
         let read = Introduction { frame: Some(SLOT), ordered_out: true, radius: Some(16.0), level };
         assert!(rest.turn(None, &[(ws(1), read), (ws(9), intro(SLOT))], &[], Vec::new(), now).is_some());
         assert_eq!(rest.windows[&ws(1)], Tracked { frame: Some(SLOT), parking: Parking::new(false), ordered_out: true, radius: Some(16.0), level });
@@ -911,7 +911,7 @@ mod tests {
         let now = Instant::now();
         let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
         assert_eq!(rest.windows[&ws(1)].level, LEVEL);
-        let raised = StackLevel { level: Some(3), sub_level: 1 };
+        let raised = StackLevel { level: Some(3), sub_level: Some(1) };
         let order = |change, level| ServerOrder { window: ws(1), change, level };
         rest.turn(None, &[], &[], vec![order(OrderChange::Reordered, Some(raised)), order(OrderChange::Hidden, None)], now);
         assert_eq!(rest.windows[&ws(1)].level, raised, "a hide reads no level");
@@ -1051,7 +1051,7 @@ mod tests {
             let opened = model(vec![at(1, false, false), at(2, false, false), at(3, true, false)]);
             assert_eq!(rest.ask(&opened), vec![ws(3)]);
             assert_eq!(rest.turn(Some(opened), &[(ws(3), intro(SLOT))], &[], Vec::new(), now), None);
-            let raised = StackLevel { level: Some(3), sub_level: 1 };
+            let raised = StackLevel { level: Some(3), sub_level: Some(1) };
             let reordered = ServerOrder { window: ws(3), change: OrderChange::Reordered, level: Some(raised) };
             let came = [vec![reordered], orders].concat();
             assert_eq!(rest.turn(None, &[], &[(ws(3), written)], came, now + ms(40)), None);

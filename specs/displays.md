@@ -140,8 +140,23 @@ context is arranged differently depending on what is plugged in, and rini rememb
   on or starts every Space inactive. Kai, deleting `--one` and `--default-disable` on 2026-10-15:
   "delete".
 
+## Mission Control
+
+- rini MUST hear Mission Control open and close for the whole session, even when the Dock is too
+  busy to answer its Accessibility subscriptions when rini starts, as it can be at login. A
+  subscription the Dock does not answer MUST be asked again, every 20ms doubling to 1s for up to
+  60s, and a Dock that never answers MUST be named in the log.
+
+> **Found 2026-10-15 in review, not reported.** A Dock busy at rini's start was asked once more,
+> 10ms later, and never again after that, so Mission Control could go unseen for the session.
+
 ## Where it lives
 
 `src/displays/platform/spaces.rs` is the authority, `src/displays/domain/topology.rs` the snapshot
-rules, `src/workspaces/domain/display_memory.rs` the durable records. Measurements are in
+rules, `src/workspaces/domain/display_memory.rs` the durable records.
+`src/displays/platform/mission_control.rs` watches the Dock, and
+`a_subscription_the_dock_is_too_busy_to_answer_is_left_for_the_next_ask` there and
+`an_application_too_busy_to_answer_is_asked_again_until_it_answers` and
+`an_application_that_never_answers_is_given_up_on_at_the_deadline` in
+`src/windows/platform/ax/ask_again.rs` hold its asking again. Measurements are in
 `src/displays/docs/topology.md` and `src/workspaces/docs/workspaces-and-displays.md`.

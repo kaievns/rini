@@ -504,7 +504,7 @@ pub fn handle_mouse_moved_over_window(
         }
         outcome = outcome.with_raise_request(crate::windows::domain::raise::Event::RaiseRequest(
             crate::windows::domain::raise::RaiseRequest {
-                raise_windows: vec![vec![window]],
+                raise_windows: vec![crate::windows::domain::raise_order::AppBatch::new(window)],
                 focus_window: Some((window, None)),
                 app_handles,
                 focus_quiet: Quiet::No,

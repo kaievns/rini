@@ -36,6 +36,7 @@ use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
+use crate::windows::platform::ax::ask_again::AskAgain;
 use crate::windows::platform::ax::observer::Observer;
 use crate::windows::platform::ax::world::{AxWorld, MacAx};
 use crate::windows::platform::mouse;
@@ -355,17 +356,8 @@ impl<W: AxWorld> State<W> {
     #[instrument(skip_all, fields(?info))]
     #[must_use]
     fn init(&mut self, handle: AppThreadHandle, info: AppInfo, patience: Duration) -> bool {
-        let timeout = Instant::now() + patience;
-        let mut sleep_dur = Duration::from_millis(20);
-        let mut sleep = || {
-            let now = Instant::now();
-            let Some(remaining) = timeout.checked_duration_since(now) else {
-                return false;
-            };
-            thread::sleep(Duration::min(sleep_dur, remaining));
-            sleep_dur = Duration::min(sleep_dur * 2, Duration::from_secs(1));
-            true
-        };
+        let mut again = AskAgain::new(Instant::now(), patience);
+        let mut sleep = || again.next_wait(Instant::now()).map(thread::sleep).is_some();
         for &(kind, notif) in APP_NOTIFICATIONS {
             // App-level notifications are not tied to a specific window, but the
             // observer callback still recovers the notification kind by decoding
@@ -791,6 +783,15 @@ impl From<AxError> for RaiseError {
 }
 
 impl<W: AxWorld> State<W> {
+    /// `wids` without another application's windows, each dropped with a warning.
+    fn own_windows(&self, wids: Vec<WindowId>) -> Vec<WindowId> {
+        let (own, foreign): (Vec<_>, Vec<_>) = wids.into_iter().partition(|wid| wid.pid == self.pid);
+        if !foreign.is_empty() {
+            warn!(pid = ?self.pid, ?foreign, "dropped another application's windows from a raise");
+        }
+        own
+    }
+
     async fn handle_raise_request(
         this_ref: &RefCell<Self>,
         wids: Vec<WindowId>,
@@ -806,6 +807,7 @@ impl<W: AxWorld> State<W> {
         };
         check_cancel()?;
 
+        let wids = this_ref.borrow().own_windows(wids);
         let Some(&first) = wids.first() else {
             warn!("Got empty list of wids to raise; this might misbehave");
             return Ok(());
@@ -892,7 +894,6 @@ impl<W: AxWorld> State<W> {
         }
 
         for (i, &wid) in wids.iter().enumerate() {
-            debug_assert_eq!(wid.pid, this.pid);
             if waits_for_activation && i == 0 {
                 trace!(?wid, "Skipping duplicate raise after activation wait");
             } else {
@@ -1380,13 +1381,22 @@ impl<W: AxWorld> State<W> {
     }
 
     fn window(&self, wid: WindowId) -> Result<&AppWindowState<W::Element>, AxError> {
-        assert_eq!(wid.pid, self.pid);
+        self.check_own(wid)?;
         self.windows.get(&wid).ok_or(AxError::NotFound)
     }
 
     fn window_mut(&mut self, wid: WindowId) -> Result<&mut AppWindowState<W::Element>, AxError> {
-        assert_eq!(wid.pid, self.pid);
+        self.check_own(wid)?;
         self.windows.get_mut(&wid).ok_or(AxError::NotFound)
+    }
+
+    /// Another application's window is not found here, and says so in the log.
+    fn check_own(&self, wid: WindowId) -> Result<(), AxError> {
+        if wid.pid == self.pid {
+            return Ok(());
+        }
+        warn!(?wid, pid = ?self.pid, "asked about another application's window");
+        Err(AxError::NotFound)
     }
 
     fn id(&self, elem: &W::Element) -> Result<WindowId, AxError> {
@@ -1912,6 +1922,46 @@ mod tests {
         sink.0.borrow().iter().any(|event| matches!(event, Event::RaiseCompleted { .. }))
     }
 
+    fn completed(sink: &Sink) -> Vec<WindowId> {
+        sink.0
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                Event::RaiseCompleted { window_id, .. } => Some(*window_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A raise batch holding another application's window drops it and raises the rest, rather than
+    /// end the thread.
+    #[test]
+    fn a_raise_holding_another_applications_window_drops_it_and_raises_the_rest() {
+        let (state, sink, wid) = raisable(7);
+        let foreign = WindowId::new(PID + 1, 9);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise =
+            std::pin::pin!(State::handle_raise_request(&state, vec![foreign, wid], &token, 1, Quiet::No));
+        let done = raise
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+
+        assert!(matches!(done, std::task::Poll::Ready(Ok(()))), "the raise finished");
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7], "only its own window was raised");
+        assert_eq!(completed(&sink), [wid], "and only its own window reported raised");
+    }
+
+    #[test]
+    fn another_applications_window_is_not_found_rather_than_a_panic() {
+        let (mut state, _sink, wid) = raisable(7);
+        let foreign = WindowId::new(PID + 1, wid.idx.get());
+        assert!(matches!(state.window(foreign), Err(AxError::NotFound)));
+        assert!(matches!(state.window_mut(foreign), Err(AxError::NotFound)));
+        assert!(state.window(wid).is_ok());
+    }
+
     fn told_the_thread_ended(sink: &Sink) -> bool {
         sink.0
             .borrow()
@@ -2013,5 +2063,37 @@ mod tests {
                 "{notif} was never subscribed"
             );
         }
+    }
+
+    /// A window whose subscription the application is too busy to answer is not registered, and the
+    /// next AXWindows refresh takes it on: no window server id, so it needs no server record.
+    #[test]
+    fn a_window_too_busy_to_watch_is_taken_on_at_the_next_refresh() {
+        let window = 7;
+        let mut ax = FakeAx::with_one_window(window, rect(0., 0., 100., 100.));
+        ax.server_ids.clear();
+        ax.busy_watches.set(1);
+        let (mut state, sink) = state_with(ax);
+
+        assert!(state.register_window(window, None).is_none(), "left out while busy");
+        assert!(state.windows.is_empty());
+
+        state.handle_request(Request::GetVisibleWindows).expect("refreshed");
+
+        let wid = state.id(&window).expect("taken on at the refresh");
+        let watched = state.ax.watched.borrow();
+        for &(_, notif) in WINDOW_NOTIFICATIONS {
+            assert!(
+                watched.iter().any(|(elem, n)| *elem == window && *n == notif),
+                "{notif} was never subscribed"
+            );
+        }
+        assert!(
+            sink.0.borrow().iter().any(|event| matches!(
+                event,
+                Event::WindowsDiscovered { new, .. } if new.iter().any(|(w, _)| *w == wid)
+            )),
+            "and the reactor hears of it"
+        );
     }
 }

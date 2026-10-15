@@ -60,11 +60,11 @@ pub enum OrderChange {
 }
 
 /// A window's level and sub-level as the window server has them: what a window of rini's own takes
-/// to be ordered directly above it. `level` is none when the window server answered none.
+/// to be ordered directly above it. Each is none when the window server answered none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StackLevel {
     pub level: Option<isize>,
-    pub sub_level: i32,
+    pub sub_level: Option<i32>,
 }
 
 /// A window the window server reordered, hid, unhid or closed, as its own notifications name it,
