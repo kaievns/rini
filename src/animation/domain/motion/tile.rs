@@ -1,6 +1,7 @@
-//! How one tile fits its picture to the frame it is drawn in, how its frame interpolates, a leg in
-//! one movement or two steps, and when and how it snaps onto its window's real frame, as the score's
-//! edits. Sizes and rects only; the layers that realise these live in the overlay.
+//! One window's tile on the overlay (`OverlayTile`, over whatever picture it is drawn with), how it
+//! fits its picture to the frame it is drawn in, how its frame interpolates, a leg in one movement
+//! or two steps, and when and how it snaps onto its window's real frame, as the score's edits. Sizes
+//! and rects only; the layers that realise these live in the overlay.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{
@@ -12,9 +13,42 @@ use rini_geometry::stretch::MIN_STRETCH;
 use super::easing::CubicBezier;
 use super::plan::group_relative;
 use super::score::{Channel, Curve, Edit, Form, Node, Score, Track, Value};
+use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::coverage::fits_frame;
 use crate::pictures::domain::route::Route;
 use crate::pictures::domain::watch::{END_SLACK, near};
+
+/// One window's picture `P` inside the overlay, and where it should be drawn.
+#[derive(Clone)]
+pub struct OverlayTile<P> {
+    pub window: WindowId,
+    /// Where the window starts.
+    pub from: OverlayRect,
+    /// Where the window ends up.
+    pub to: OverlayRect,
+    pub snapshot: P,
+    /// The picture its leg in two steps flies from the corner on (`tile::two_steps`): a repaint
+    /// held for the corner, `snapshot` flown up to it. None on any other leg.
+    pub from_corner: Option<P>,
+    /// In the other z-order band from the tiled windows. See `super::z_group`.
+    pub floating: bool,
+    /// The window server's front-to-back position, 0 frontmost; `None` when unreported.
+    pub server_order: Option<usize>,
+    /// Front-to-back position in the overlay, 0 frontmost; derived once per flight by the engine.
+    pub depth: usize,
+    /// Whether the tile is drawn focused, which deepens its shadow and brightens its hairline; it
+    /// turns with the window's picture.
+    pub focused: bool,
+    /// What the window wears through the flight, and where it ends the ring it wears and whether it
+    /// holds focus, which its ring and border show from the flight's show.
+    pub worn: Worn,
+    /// The window's corner radius in points, as the window server reports it; `None` when it reports
+    /// none.
+    pub radius: Option<f64>,
+    /// Whether the overlay clips the tile's picture to its corner: a picture whose corners carry
+    /// what was behind its window, or the stand-in, which has no corners of its own.
+    pub clipped: bool,
+}
 
 /// How a tile's picture is fitted to the frame it is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq)]
