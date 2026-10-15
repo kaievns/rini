@@ -460,10 +460,9 @@ fn describe(ids: &[u32], titles: bool) -> Vec<Listed> {
     in_listed_order(ids, described)
 }
 
-/// The name a window's owner goes by, as the window server's own window list names it: the
-/// application's, or its process's when it is none. In a pool of its own: the threads that ask have
-/// none, and the application and its name are autoreleased.
-pub fn owner_name(pid: pid_t) -> String {
+/// In a pool of its own: the threads that ask have none, and the application and its name are
+/// autoreleased.
+fn application_name(pid: pid_t) -> String {
     use crate::windows::platform::app::NSRunningApplicationExt;
     let named = objc2::rc::autoreleasepool(|_| {
         objc2_app_kit::NSRunningApplication::with_process_id(pid)
@@ -769,6 +768,8 @@ impl WindowServer for LiveWindowServer {
     }
 
     fn every_window(&self) -> Vec<Listed> { describe(&window_list(false), true) }
+
+    fn owner_name(&self, pid: pid_t) -> Option<String> { Some(application_name(pid)) }
 
     fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId> {
         let uuid = CFString::from_str(display_uuid);

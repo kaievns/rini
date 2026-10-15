@@ -26,7 +26,7 @@ use crate::bar::platform::ground::{Ground, picture_ground};
 use crate::displays::screen::active_menu_bar_display_id;
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::skylight::capture_rect;
-use crate::windows::platform::window_server::{self, Listed, WindowServer, owner_name};
+use crate::windows::platform::window_server::{self, Listed, WindowServer};
 
 /// What sketchybar passes. `1 << 11` would crop each picture to its opaque bounds and lose where the
 /// icon sits.
@@ -266,7 +266,7 @@ fn status_windows(
     let pids: Vec<pid_t> = windows.iter().map(|window| window.pid).collect();
     windows
         .into_iter()
-        .zip(owners.of(&pids, owner_name))
+        .zip(owners.of(&pids, |pid| server.owner_name(pid).unwrap_or_default()))
         .map(|(window, owner)| {
             let bounds = window.bounds;
             let status = StatusWindow {

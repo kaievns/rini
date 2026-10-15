@@ -119,8 +119,8 @@ them stall 500ms the same way. Each read rini made through them is now made on t
 | read | where it ran | was | is |
 |---|---|---|---|
 | `front_to_back_depths` | `transitions`, at every flight's start; the reactor's strip regroup | on screen, desktop elements excluded | `on_screen_windows` without a window at `kCGDesktopIconWindowLevel` or below (`depths`) |
-| `desktop_backdrop_windows`, `bar_strip` | pictures, at a flight's desktop and bar | on screen, owner names and titles | `on_screen_windows` with titles, the owner's name for a desktop window |
-| the menu extras' listing | `bar-extras` | every window, owner names and titles | `every_window` with titles and owner names |
+| `desktop_backdrop_windows`, `bar_strip` | pictures, at a flight's desktop and bar | on screen, owner names and titles | `on_screen_windows` with titles, and the port's `owner_name` for a desktop window whose title names no wallpaper |
+| the menu extras' listing | `bar-extras` | every window, owner names and titles | `every_window` with titles, and the port's `owner_name` for each owner `OwnerNames` does not keep |
 | the framed spawn capture | `transitions` | `CGWindowListCreateImage`, the window alone in its frame | `capture_rect` of the window: bits 11 and 8 wholly on a display, none otherwise |
 | its composite with what is below | `transitions` | `CGWindowListCreateImage`, below and including | `capture_rect` of the window and every window listed behind it, bits 11 and 8 |
 | a handover check's screen | pictures, with `measure-handover` | `CGWindowListCreateImage`, the display | `capture_rect` of every window on screen over the display, bits 11 and 8 |

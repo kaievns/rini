@@ -63,6 +63,9 @@ pub trait WindowServer: Any + Send + Sync {
     fn on_screen_windows(&self, titles: bool) -> Vec<Listed>;
     /// Every window the window server has, on screen or not, with titles.
     fn every_window(&self) -> Vec<Listed>;
+    /// The name the owner of a window of `pid`'s goes by, as the window server's own window list
+    /// names it: the application's, or its process's when it is none.
+    fn owner_name(&self, pid: pid_t) -> Option<String>;
     /// The desktop windows the window server keeps for the display with `display_uuid`.
     fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId>;
 

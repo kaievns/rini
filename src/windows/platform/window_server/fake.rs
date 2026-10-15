@@ -49,6 +49,7 @@ struct Answers {
     key_focus_pid: Option<pid_t>,
     on_screen: Vec<Listed>,
     every: Vec<Listed>,
+    owners: HashMap<pid_t, String>,
     desktop: HashMap<String, Vec<WindowServerId>>,
     make_key_error: Option<CGError>,
 }
@@ -148,6 +149,10 @@ impl FakeWindowServer {
         self.stating(|a| a.every = listed)
     }
 
+    pub fn set_owner_name(&self, pid: pid_t, name: Option<&str>) -> &Self {
+        self.stating(|a| state(&mut a.owners, pid, name.map(str::to_owned)))
+    }
+
     pub fn set_desktop_windows(&self, display_uuid: &str, ids: Vec<WindowServerId>) -> &Self {
         self.stating(|a| {
             a.desktop.insert(display_uuid.to_owned(), ids);
@@ -244,6 +249,10 @@ impl WindowServer for FakeWindowServer {
 
     fn every_window(&self) -> Vec<Listed> { self.answer(|a| a.every.clone()) }
 
+    fn owner_name(&self, pid: pid_t) -> Option<String> {
+        self.answer(|a| a.owners.get(&pid).cloned())
+    }
+
     fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId> {
         self.answer(|a| a.desktop.get(display_uuid).cloned().unwrap_or_default())
     }
@@ -302,6 +311,7 @@ mod tests {
         assert_eq!(ws.key_focus_pid(), None);
         assert!(ws.on_screen_windows(true).is_empty());
         assert!(ws.every_window().is_empty());
+        assert_eq!(ws.owner_name(1), None);
         assert!(ws.desktop_windows("display").is_empty());
         assert!(!ws.focus_desktop("display", CGRect::new(CGPoint::ZERO, CGSize::new(10.0, 10.0))));
         assert_eq!(ws.stack_level(window), (None, None));
