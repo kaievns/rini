@@ -99,7 +99,9 @@ from the begin to the lift.
 `domain/request.rs` → `domain/pass.rs` → `domain/travel.rs` → `domain/admission.rs` →
 `domain/flight.rs` → `domain/flight_score.rs` → `domain/timing.rs` → `domain/lifecycle.rs` (`Kind`,
 then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalled::drive`) →
-`domain/drawn.rs` → `platform/engine.rs`, the actor and the largest file → `platform/journal.rs`.
+`domain/drawn.rs` → `platform/engine.rs`, the actor and the largest file →
+`platform/engine/compose.rs` (`start`, `start_surface`) → `platform/engine/tiles.rs` →
+`platform/engine/logged.rs` → `platform/journal.rs`.
 
 ## Detail
 
