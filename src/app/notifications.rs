@@ -290,7 +290,7 @@ impl NotificationCenterInner {
     }
 
     unsafe extern "C" fn display_reconfig_callback(
-        display_id: u32,
+        _display_id: u32,
         flags: u32,
         user_info: *mut c_void,
     ) {
@@ -301,13 +301,10 @@ impl NotificationCenterInner {
         let parsed = DisplayReconfigFlags::from_bits_truncate(flags);
         queue::main().after_f_s(
             Time::NOW,
-            (handler_ptr, display_id, parsed),
-            |(handler_ptr, display_id, flags)| unsafe {
+            (handler_ptr, parsed),
+            |(handler_ptr, flags)| unsafe {
                 let handler = &*handler_ptr;
-                handler.send_space_event(spaces::Notification::DisplayReconfigured {
-                    display_id,
-                    flags,
-                });
+                handler.send_space_event(spaces::Notification::DisplayReconfigured { flags });
             },
         );
     }

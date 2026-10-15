@@ -71,7 +71,7 @@ impl SpaceAffinity<'_> {
         let geometry = self.best_space_for_frame(frame);
         Candidates {
             reported: window_server_id.and_then(|wsid| self.resolve_native_space(wsid, None)),
-            parked_assignment: self.hidden_assigned_space_for_frame(window_server_id, frame),
+            parked_assignment: self.hidden_assigned_space_for_window_server_id(window_server_id),
             assignment: window_server_id
                 .and_then(|wsid| self.windows.tracked_window_id(wsid))
                 .and_then(|wid| self.assigned_space_for_window_id(wid)),
@@ -122,10 +122,9 @@ impl SpaceAffinity<'_> {
         self.best_space_for_window(&window.frame_monotonic, window.info.sys_id)
     }
 
-    pub(crate) fn hidden_assigned_space_for_frame(
+    pub(crate) fn hidden_assigned_space_for_window_server_id(
         &self,
         window_server_id: Option<WindowServerId>,
-        _frame: &CGRect,
     ) -> Option<SpaceId> {
         let wsid = window_server_id?;
         let wid = self.windows.tracked_window_id(wsid)?;
@@ -141,7 +140,7 @@ impl SpaceAffinity<'_> {
 
     pub(crate) fn hidden_assigned_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
         let window = self.windows.window(wid)?;
-        self.hidden_assigned_space_for_frame(window.info.sys_id, &window.frame_monotonic)
+        self.hidden_assigned_space_for_window_server_id(window.info.sys_id)
     }
 
     pub(crate) fn assigned_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
@@ -159,7 +158,7 @@ impl SpaceAffinity<'_> {
         let target_frame = self.transactions.get_target_frame(wsid)?;
         let assigned_space = self.assigned_space_for_window_id(wid)?;
         let target_space = self
-            .hidden_assigned_space_for_frame(Some(wsid), &target_frame)
+            .hidden_assigned_space_for_window_server_id(Some(wsid))
             .or_else(|| self.best_space_for_frame(&target_frame))?;
         (target_space == assigned_space).then_some(target_space)
     }

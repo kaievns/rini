@@ -45,7 +45,7 @@ best_space_for_window_state                    2
 pending_target_space_for_window_server_id      2
 current_reported_space_for_window_id           0   <- dead
 best_space_for_frame                           —   (frame, not window)
-hidden_assigned_space_for_frame                —   (frame, not window)
+hidden_assigned_space_for_window_server_id    —   (window-server id, not window)
 ```
 
 `current_reported_space_for_window_id` (line 112) has no callers. It is

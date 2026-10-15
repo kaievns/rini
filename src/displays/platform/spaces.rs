@@ -41,7 +41,6 @@ pub enum Notification {
     ActiveSpaceChanged,
     ScreenRefreshRequested,
     DisplayReconfigured {
-        display_id: u32,
         flags: DisplayReconfigFlags,
     },
     SpaceInventoryChanged,
@@ -382,8 +381,8 @@ impl SpacesActor {
                 }
                 self.schedule_screen_refresh();
             }
-            Notification::DisplayReconfigured { display_id, flags } => {
-                self.handle_display_reconfig_event(display_id, flags);
+            Notification::DisplayReconfigured { flags } => {
+                self.handle_display_reconfig_event(flags);
             }
             Notification::SpaceInventoryChanged => {
                 self.handle_space_inventory_changed();
@@ -1110,7 +1109,7 @@ impl SpacesActor {
         );
     }
 
-    fn handle_display_reconfig_event(&mut self, _display_id: u32, flags: DisplayReconfigFlags) {
+    fn handle_display_reconfig_event(&mut self, flags: DisplayReconfigFlags) {
         if !Self::should_begin_display_churn(flags) {
             return;
         }

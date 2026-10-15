@@ -336,7 +336,6 @@ fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_th
 
     actor.handle_event(Notification::SystemWillSleep);
     actor.handle_event(Notification::DisplayReconfigured {
-        display_id: 2,
         flags: rini_skylight_sys::DisplayReconfigFlags::ADD,
     });
     actor.handle_event(Notification::SystemDidWake);
@@ -391,7 +390,6 @@ fn quarantines_space_lifecycle_events_during_churn_until_snapshot() {
     let space = SpaceId::new(61);
 
     actor.handle_event(Notification::DisplayReconfigured {
-        display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
     });
     actor.handle_event(Notification::SpaceCreated(space));
@@ -410,7 +408,6 @@ fn display_setting_reconfig_starts_churn() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
     actor.handle_event(Notification::DisplayReconfigured {
-        display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::BEGIN_CONFIGURATION
             | rini_skylight_sys::DisplayReconfigFlags::SET_MAIN
             | rini_skylight_sys::DisplayReconfigFlags::DESKTOP_SHAPE_CHANGED,
@@ -429,7 +426,6 @@ fn benign_display_reconfig_does_not_start_churn() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
     actor.handle_event(Notification::DisplayReconfigured {
-        display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::BEGIN_CONFIGURATION,
     });
 
@@ -444,7 +440,6 @@ fn physical_display_reconfig_starts_churn() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
     actor.handle_event(Notification::DisplayReconfigured {
-        display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
     });
 
@@ -1004,7 +999,6 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
     let right = SpaceId::new(602);
 
     actor.handle_event(Notification::DisplayReconfigured {
-        display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
     });
     assert!(matches!(
