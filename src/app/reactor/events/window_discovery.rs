@@ -13,7 +13,9 @@ use crate::windows::domain::manageable::{Facts, looks_gone, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::WindowTxStore;
 use crate::windows::platform::window_server::WindowServer;
+use crate::workspaces::AppRuleResult;
 use crate::workspaces::domain::app_rules::AfterRules;
+use crate::workspaces::domain::virtual_workspace::WorkspaceError;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 
 /// Handler for window discovery events, responsible for processing newly discovered windows
@@ -305,26 +307,10 @@ pub(crate) fn process_window_list(
         // proceed to emit WindowsOnScreenUpdated so existing mappings are respected
         // without reapplying app rules.
         for window in &observed {
-            let wid = window.wid;
-            let info = &window.info;
-            if state.windows.contains_window(wid) {
-                let old_sys_id = state.windows.window(wid).and_then(|window| window.info.sys_id);
-                outcome.absorb(sync_window_server_id_mapping(
-                    state,
-                    layout,
-                    focus,
-                    wid,
-                    old_sys_id,
-                    info.sys_id,
-                    window.current_native_space,
-                ));
-                if let Ok(existing_outcome) =
-                    sync_existing_window_state(state, window_server, wid, info, window.active_space)
-                {
-                    outcome.absorb(existing_outcome);
-                }
+            if state.windows.contains_window(window.wid) {
+                outcome.absorb(sync_known_window(state, window_server, layout, focus, window));
             } else {
-                let mut window_state: WindowState = WindowState::from((*info).clone());
+                let mut window_state: WindowState = window.info.clone().into();
                 let manageable = manageable(server_facts(
                     window_server,
                     Facts::of(&window_state.info),
@@ -332,15 +318,15 @@ pub(crate) fn process_window_list(
                     |wsid| state.windows.get_window_server_info(wsid),
                 ));
                 window_state.is_manageable = manageable;
-                state.windows.insert_window(wid, window_state);
+                state.windows.insert_window(window.wid, window_state);
             }
             outcome.absorb(sync_window_server_id_mapping(
                 state,
                 layout,
                 focus,
-                wid,
+                window.wid,
                 None,
-                info.sys_id,
+                window.info.sys_id,
                 window.current_native_space,
             ));
         }
@@ -349,43 +335,54 @@ pub(crate) fn process_window_list(
 
     // Process all new windows
     for window in observed {
-        let ObservedWindow {
-            wid,
-            info,
-            current_native_space,
-            active_space,
-        } = window;
-        if state.windows.contains_window(wid) {
-            let old_sys_id = state.windows.window(wid).and_then(|window| window.info.sys_id);
-            outcome.absorb(sync_window_server_id_mapping(
-                state,
-                layout,
-                focus,
-                wid,
-                old_sys_id,
-                info.sys_id,
-                current_native_space,
-            ));
-            if let Ok(existing_outcome) =
-                sync_existing_window_state(state, window_server, wid, &info, active_space)
-            {
-                outcome.absorb(existing_outcome);
-            }
+        if state.windows.contains_window(window.wid) {
+            outcome.absorb(sync_known_window(state, window_server, layout, focus, &window));
         } else {
             outcome.absorb(sync_window_server_id_mapping(
                 state,
                 layout,
                 focus,
-                wid,
+                window.wid,
                 None,
-                info.sys_id,
-                current_native_space,
+                window.info.sys_id,
+                window.current_native_space,
             ));
-            new_windows.push((wid, info));
+            new_windows.push((window.wid, window.info));
         }
     }
 
     (new_windows, outcome)
+}
+
+/// A window rini already tracks, reported again: its window-server id mapping moved to the one now
+/// reported, and its state brought up to date.
+fn sync_known_window(
+    state: &mut crate::app::reactor::state::RiniState,
+    window_server: &dyn WindowServer,
+    layout: &mut crate::workspaces::LayoutEngine,
+    focus: &mut MainWindowTracker,
+    window: &ObservedWindow,
+) -> crate::app::reactor::events::EventOutcome {
+    let old_sys_id = state.windows.window(window.wid).and_then(|known| known.info.sys_id);
+    let mut outcome = sync_window_server_id_mapping(
+        state,
+        layout,
+        focus,
+        window.wid,
+        old_sys_id,
+        window.info.sys_id,
+        window.current_native_space,
+    );
+    if let Ok(existing_outcome) = sync_existing_window_state(
+        state,
+        window_server,
+        window.wid,
+        &window.info,
+        window.active_space,
+    ) {
+        outcome.absorb(existing_outcome);
+    }
+    outcome
 }
 
 /// Inserts the newly discovered window snapshots into domain state.
@@ -424,20 +421,102 @@ pub(crate) fn emit_layout_events(
     layout: &mut crate::workspaces::LayoutEngine,
     payload: EmitLayoutPayload<'_>,
 ) -> crate::app::reactor::events::EventOutcome {
+    let mut outcome = crate::app::reactor::events::EventOutcome::default();
+    if !state.windows.iter_windows().any(|(wid, _)| wid.pid == payload.pid) {
+        return outcome;
+    }
+    let mut app_windows = windows_to_list(state, layout, &payload);
+    // Pre-pass: update the VWM for all windows definitively assigned to a space before
+    // processing any per-space layout events. Without this, the ordering of space events
+    // determines whether a window removed from one space's tree gets re-added by the
+    // loop in sync_tiled_windows_for_app (which reads the VWM state at event time).
+    // By updating the VWM upfront, the guard logic in sync_tiled_windows_for_app can
+    // correctly identify cross-space moves regardless of event ordering.
+    let mut assignment_results =
+        assign_by_rules(state, layout, &app_windows, payload.app_info.as_ref());
+
+    let EmitLayoutPayload {
+        pid,
+        app_info,
+        active_spaces,
+        focused_window,
+        ..
+    } = payload;
+    let discovered_spaces = active_spaces.to_vec();
+    for space in active_spaces {
+        let windows_for_space = app_windows.remove(&space).unwrap_or_default();
+
+        if !windows_for_space.is_empty() {
+            for &wid in &windows_for_space {
+                let assign_result = assignment_results.remove(&(space, wid)).unwrap_or_else(|| {
+                    layout.assign_window_by_rules(
+                        &mut state.windows,
+                        &mut state.display_memory,
+                        wid,
+                        space,
+                        app_info.as_ref(),
+                    )
+                });
+                // Discovery re-lists every window below, so only the removal matters here.
+                let before = layout.before_rules(&state.windows, space, wid);
+                if layout.settle_app_rule(&mut state.windows, wid, space, before, &assign_result)
+                    == AfterRules::RemoveFromLayout
+                {
+                    outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(wid));
+                }
+            }
+        }
+
+        let windows_with_titles: Vec<OnScreenEntry> = windows_for_space
+            .iter()
+            .filter_map(|&wid| {
+                let window = state.windows.window(wid)?;
+                window
+                    .matches_filter(WindowFilter::EffectivelyManageable)
+                    .then(|| on_screen_entry(wid, Some(window)))
+            })
+            .collect();
+
+        outcome = outcome.with_layout_event(LayoutEvent::WindowsOnScreenUpdated(
+            space,
+            pid,
+            windows_with_titles,
+            app_info.clone(),
+        ));
+    }
+
+    // Matching is allowed to observe every native-space slice for this application before stale
+    // saved identities are discarded. Cleaning after an individual slice would incorrectly drop
+    // windows that are discovered on a later space in the same batch.
+    outcome = outcome.with_layout_event(LayoutEvent::WindowDiscoveryCompleted(
+        pid,
+        app_info.as_ref().and_then(|info| info.bundle_id.clone()),
+        discovered_spaces,
+    ));
+
+    if let Some((space, main_window)) = focused_window {
+        outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, main_window));
+    }
+    outcome
+}
+
+/// The application's manageable windows to list, by the space they were discovered on: those the
+/// window server shows, then those the app reports visible when the window server shows none on an
+/// active space.
+fn windows_to_list(
+    state: &crate::app::reactor::state::RiniState,
+    layout: &crate::workspaces::LayoutEngine,
+    payload: &EmitLayoutPayload<'_>,
+) -> BTreeMap<SpaceId, Vec<WindowId>> {
     let EmitLayoutPayload {
         pid,
         known_visible,
-        app_info,
         discovery_spaces,
         authoritative_spaces,
         active_spaces,
-        focused_window,
+        ..
     } = payload;
-    let mut outcome = crate::app::reactor::events::EventOutcome::default();
-    if !state.windows.iter_windows().any(|(wid, _)| wid.pid == pid) {
-        return outcome;
-    }
-
+    let pid = *pid;
     let mut app_windows: BTreeMap<SpaceId, Vec<WindowId>> = BTreeMap::new();
     let mut included: HashSet<WindowId> = HashSet::default();
     let has_visible_window_server_windows = state
@@ -508,14 +587,18 @@ pub(crate) fn emit_layout_events(
         app_windows.entry(space).or_default().push(wid);
     }
 
-    // Pre-pass: update the VWM for all windows definitively assigned to a space before
-    // processing any per-space layout events. Without this, the ordering of space events
-    // determines whether a window removed from one space's tree gets re-added by the
-    // loop in sync_tiled_windows_for_app (which reads the VWM state at event time).
-    // By updating the VWM upfront, the guard logic in sync_tiled_windows_for_app can
-    // correctly identify cross-space moves regardless of event ordering.
+    app_windows
+}
+
+/// Each window to list assigned by the app rules on the space it was discovered on.
+fn assign_by_rules(
+    state: &mut crate::app::reactor::state::RiniState,
+    layout: &mut crate::workspaces::LayoutEngine,
+    app_windows: &BTreeMap<SpaceId, Vec<WindowId>>,
+    app_info: Option<&AppInfo>,
+) -> BTreeMap<(SpaceId, WindowId), Result<AppRuleResult, WorkspaceError>> {
     let mut assignment_results = BTreeMap::new();
-    for (&space, windows_for_space) in &app_windows {
+    for (&space, windows_for_space) in app_windows {
         for &wid in windows_for_space {
             assignment_results.insert(
                 (space, wid),
@@ -524,68 +607,12 @@ pub(crate) fn emit_layout_events(
                     &mut state.display_memory,
                     wid,
                     space,
-                    app_info.as_ref(),
+                    app_info,
                 ),
             );
         }
     }
-
-    let discovered_spaces = active_spaces.to_vec();
-    for space in active_spaces {
-        let windows_for_space = app_windows.remove(&space).unwrap_or_default();
-
-        if !windows_for_space.is_empty() {
-            for &wid in &windows_for_space {
-                let assign_result = assignment_results.remove(&(space, wid)).unwrap_or_else(|| {
-                    layout.assign_window_by_rules(
-                        &mut state.windows,
-                        &mut state.display_memory,
-                        wid,
-                        space,
-                        app_info.as_ref(),
-                    )
-                });
-                // Discovery re-lists every window below, so only the removal matters here.
-                let before = layout.before_rules(&state.windows, space, wid);
-                if layout.settle_app_rule(&mut state.windows, wid, space, before, &assign_result)
-                    == AfterRules::RemoveFromLayout
-                {
-                    outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(wid));
-                }
-            }
-        }
-
-        let windows_with_titles: Vec<OnScreenEntry> = windows_for_space
-            .iter()
-            .filter_map(|&wid| {
-                let window = state.windows.window(wid)?;
-                window
-                    .matches_filter(WindowFilter::EffectivelyManageable)
-                    .then(|| on_screen_entry(wid, Some(window)))
-            })
-            .collect();
-
-        outcome = outcome.with_layout_event(LayoutEvent::WindowsOnScreenUpdated(
-            space,
-            pid,
-            windows_with_titles,
-            app_info.clone(),
-        ));
-    }
-
-    // Matching is allowed to observe every native-space slice for this application before stale
-    // saved identities are discarded. Cleaning after an individual slice would incorrectly drop
-    // windows that are discovered on a later space in the same batch.
-    outcome = outcome.with_layout_event(LayoutEvent::WindowDiscoveryCompleted(
-        pid,
-        app_info.as_ref().and_then(|info| info.bundle_id.clone()),
-        discovered_spaces,
-    ));
-
-    if let Some((space, main_window)) = focused_window {
-        outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, main_window));
-    }
-    outcome
+    assignment_results
 }
 
 #[cfg(test)]
@@ -614,6 +641,77 @@ mod tests {
             state.windows.mark_window_visible(wsid);
         }
         state
+    }
+
+    fn manageable_state_with(pid: pid_t, visible: u32, reported_only: u32) -> RiniState {
+        let mut state = state_with(pid, visible);
+        for idx in visible + 1..=visible + reported_only {
+            let wsid = WindowServerId::new(idx);
+            let info = make_window_info(frame(), Some(wsid), "w", Some("com.test"));
+            state.windows.insert_window(wid(pid, idx), WindowState::from(info));
+            state.windows.track_window_server_id(wsid, wid(pid, idx));
+        }
+        for idx in 1..=visible + reported_only {
+            state.windows.window_mut(wid(pid, idx)).unwrap().is_manageable = true;
+        }
+        state
+    }
+
+    fn listed(
+        state: &RiniState,
+        known_visible: &[WindowId],
+        authoritative: &[(WindowId, SpaceId)],
+    ) -> BTreeMap<SpaceId, Vec<WindowId>> {
+        let layout = crate::workspaces::LayoutEngine::new(
+            &crate::app::config::VirtualWorkspaceSettings::default(),
+            &crate::app::config::LayoutSettings::default(),
+        );
+        let space = SpaceId::new(1);
+        let discovery_spaces = (1..=4).map(|idx| (wid(1, idx), space)).collect::<HashMap<_, _>>();
+        windows_to_list(state, &layout, &EmitLayoutPayload {
+            pid: 1,
+            known_visible,
+            app_info: &None,
+            discovery_spaces,
+            authoritative_spaces: authoritative.iter().copied().collect(),
+            active_spaces: vec![space],
+            focused_window: None,
+        })
+    }
+
+    /// The windows the server shows are listed first; a window only the app reports visible joins
+    /// them only when the server's active-space snapshot puts it on an active space.
+    #[test]
+    fn a_window_only_the_app_reports_is_listed_only_on_an_active_space() {
+        let state = manageable_state_with(1, 2, 1);
+        let reported = [wid(1, 3)];
+        let space = SpaceId::new(1);
+
+        let sorted = |listed: BTreeMap<SpaceId, Vec<WindowId>>| {
+            let mut windows = listed[&space].clone();
+            windows.sort();
+            (listed.len(), windows)
+        };
+        assert_eq!(
+            sorted(listed(&state, &reported, &[])),
+            (1, vec![wid(1, 1), wid(1, 2)])
+        );
+        assert_eq!(
+            sorted(listed(&state, &reported, &[(wid(1, 3), space)])),
+            (1, vec![wid(1, 1), wid(1, 2), wid(1, 3)])
+        );
+    }
+
+    /// With nothing on screen for the app, what the app reports visible is listed as it is.
+    #[test]
+    fn with_no_window_on_screen_the_apps_report_is_listed() {
+        let state = manageable_state_with(1, 0, 2);
+        let reported = [wid(1, 1), wid(1, 2), wid(2, 1)];
+        assert_eq!(
+            listed(&state, &reported, &[]),
+            BTreeMap::from([(SpaceId::new(1), vec![wid(1, 1), wid(1, 2)])]),
+            "another app's window is never listed"
+        );
     }
 
     /// A window the server still knows about, at a sane frame: not gone.
