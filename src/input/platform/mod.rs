@@ -1,4 +1,3 @@
-#![allow(non_upper_case_globals)]
 //! CGEventTaps, Carbon hotkeys and the cursor.
 
 pub mod cursor;

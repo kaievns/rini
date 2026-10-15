@@ -1,3 +1,4 @@
+#![allow(non_upper_case_globals)]
 //! One actor per running app, on its own thread: observes the app through Accessibility and
 //! carries out the reactor's `Request`s (frames, raises, close). Emits `crate::windows::event::Event`.
 
@@ -319,7 +320,6 @@ impl<W: AxWorld> State<W> {
                     break;
                 }
                 Ok(false) => (),
-                #[allow(non_upper_case_globals)]
                 Err(AxError::Ax(AXError::CannotComplete)) if state.ax.app_has_quit() => {
                     warn!(?state.bundle_id, ?state.pid, "Application terminated without notification");
                     state.send_event(Event::ApplicationThreadTerminated(state.pid));
@@ -377,7 +377,6 @@ impl<W: AxWorld> State<W> {
             loop {
                 match self.ax.watch(&self.ax.app(), notif, data) {
                     Ok(()) => break,
-                    #[allow(non_upper_case_globals)]
                     Err(AxError::Ax(AXError::NotificationAlreadyRegistered)) => {
                         debug!(
                             pid = ?self.pid,

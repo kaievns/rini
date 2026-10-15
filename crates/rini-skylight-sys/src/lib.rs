@@ -1,4 +1,4 @@
-#![allow(non_upper_case_globals, non_snake_case)]
+#![allow(non_upper_case_globals)]
 //! Raw declarations for the private SkyLight / CoreGraphics Services API. Declarations only; every
 //! caller owns its own safety argument.
 // credits

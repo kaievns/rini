@@ -1,4 +1,3 @@
-#![allow(non_upper_case_globals)]
 //! Accessibility, the window server, Carbon, and the actors that drive them.
 
 pub mod app;

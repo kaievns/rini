@@ -22,9 +22,6 @@
 //! `docs/architecture.md`. `tests/architecture.rs` checks the two the tree can be
 //! read for.
 
-#![allow(stable_features)]
-#![allow(non_upper_case_globals)]
-
 pub mod animation;
 pub mod app;
 pub mod bar;
