@@ -4018,6 +4018,30 @@ mod tests {
         assert_eq!(pulled.moved, None);
     }
 
+    /// Exploding a column raises the focused window alone, so macOS keys it and focus stays on it.
+    #[test]
+    fn exploding_a_column_raises_only_the_focused_window() {
+        let (mut window_store, mut engine, mut memory, space, _, second) = two_columns();
+        let mut command = |command| {
+            engine.handle_command(
+                &mut window_store,
+                &mut memory,
+                Some(space),
+                &[space],
+                &HashMap::default(),
+                command,
+            )
+        };
+        let _ = command(LayoutCommand::MoveFocus(Direction::Right));
+        let _ = command(LayoutCommand::ToggleFold(Direction::Left));
+
+        let exploded = command(LayoutCommand::ExplodeColumn);
+
+        assert!(exploded.changed);
+        assert_eq!(exploded.raise_windows, vec![second]);
+        assert_eq!(exploded.focus_window, None);
+    }
+
     /// Moving a window down the workspace stack from the bottom one has nowhere to go: the stack
     /// never wraps. Reported as feeling stuck, because nothing moved and nothing said why.
     #[test]

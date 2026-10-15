@@ -2130,7 +2130,8 @@ impl ScrollingLayoutSystem {
     /// Each leaves by `split_out`, as an unfold does: the windows above to the left of the column,
     /// those below to its right, so the column stays the selected window's, with its width, and the
     /// others start at the default width. The selection stays on the selected window and is revealed
-    /// as a fold reveals it. A lone window changes nothing. Returns the windows that left.
+    /// as a fold reveals it. A lone window changes nothing. Returns the selected window, the one to
+    /// raise, so focus stays where it was.
     pub fn explode_column_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
@@ -2156,7 +2157,7 @@ impl ScrollingLayoutSystem {
         } else {
             state.align_scroll_to_selected();
         }
-        others
+        vec![selected]
     }
 
     pub fn parent_of_selection_is_stacked(&self, layout: LayoutId) -> bool {
@@ -3550,23 +3551,22 @@ mod tests {
 
     // ── exploding a column ──────────────────────────────────────────────────
 
-    /// Whichever row is selected, the rows become the columns in their order, the selection stays
-    /// on the window it was on, and what comes back is every window that left.
+    /// Whichever row is selected, the rows become the columns in their order, and the selection
+    /// stays on the window it was on, the one window that comes back to be raised.
     #[test]
     fn exploding_a_column_of_three_gives_three_columns_in_row_order() {
         for row in 0..3 {
             let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
             assert!(system.select_window(layout, w[row]));
 
-            let left = system.explode_column_of_selection(layout);
+            let raised = system.explode_column_of_selection(layout);
 
             assert_eq!(
                 shape(&system, layout),
                 vec![vec![w[0]], vec![w[1]], vec![w[2]]],
                 "row {row}"
             );
-            let others: Vec<WindowId> = w.iter().copied().filter(|&id| id != w[row]).collect();
-            assert_eq!(left, others, "row {row}");
+            assert_eq!(raised, vec![w[row]], "row {row}");
             assert_eq!(system.selected_window(layout), Some(w[row]), "row {row}");
         }
     }

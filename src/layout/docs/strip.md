@@ -272,7 +272,7 @@ window but the selected one leaves by `split_out`, the rows above to the column'
 the rows below to its right, so the rows become the columns in their order and the column
 itself, with its width, stays the selected window's. The others start at the default
 width, as a window folded out does, and the selection is revealed as a fold reveals it.
-It records no fold origin, so it is not a fold the keys undo: a fold key afterwards joins
+Only the selected window is raised, so macOS keys it and focus stays where it was. It records no fold origin, so it is not a fold the keys undo: a fold key afterwards joins
 a window to its neighbour at the bottom. A lone window changes nothing. It was one half of
 `toggle-stack`, whose other half, moving a lone window into the column on its left, was
 the left fold-in again; Kai kept the explode alone ("Folding" in `specs/strip.md`).
