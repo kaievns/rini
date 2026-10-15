@@ -1536,10 +1536,13 @@ fn parameter_list(lines: &[&str], index: usize, column: usize) -> String {
     let mut angle = 0i32;
     let mut paren = 0i32;
     let mut list = String::new();
+    let mut before = ' ';
     for c in text.chars() {
+        let arrow = before == '-';
+        before = c;
         match c {
             '<' if paren == 0 => angle += 1,
-            '>' if paren == 0 => angle -= 1,
+            '>' if paren == 0 && !arrow => angle -= 1,
             '(' if angle == 0 => {
                 paren += 1;
                 if paren == 1 {
@@ -1642,11 +1645,13 @@ fn closure(f: impl Fn(bool) -> bool, x: bool) {}
 fn arrow_then_two(f: fn() -> u8, a: bool, b: bool) {}
 // fn commented(a: bool, b: bool) {}
 fn by_ref(a: &bool, b: &'static str, c: bool) {}
+fn generic_arrow<F: Fn() -> u8>(a: bool, b: bool) {}
 "#;
     assert_eq!(two_bool_fns(source), vec![
         "2: two",
         "9: arrow_then_two",
-        "11: by_ref"
+        "11: by_ref",
+        "12: generic_arrow"
     ]);
 }
 
