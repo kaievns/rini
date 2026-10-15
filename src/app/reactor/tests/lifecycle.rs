@@ -217,7 +217,7 @@ fn discovery_restore_transition_readds_window_to_layout() {
 }
 
 #[test]
-fn wake_gate_waits_for_fresh_space_snapshot_before_refresh() {
+fn wake_quarantine_waits_for_fresh_space_snapshot_before_refresh() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let space = SpaceId::new(1);

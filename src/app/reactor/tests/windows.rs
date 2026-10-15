@@ -98,7 +98,7 @@ fn it_ignores_windows_on_nonzero_layers() {
 }
 
 #[test]
-fn session_gate_ignores_discovery_and_replays_one_refresh_after_unlock() {
+fn session_lock_quarantine_ignores_discovery_and_replays_one_refresh_after_unlock() {
     let (mut apps, mut reactor) = test_context_with_workspace_count(2);
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let space = SpaceId::new(1);
