@@ -8,15 +8,17 @@ belongs in a feature.
 
 | | |
 |---|---|
-| `ids.rs` | `WindowId { pid, idx }` — rini's own window identity. `WindowServerId` and `SpaceId` are macOS's, declared in `rini-skylight-sys` and re-exported from here so nothing else needs that dependency for a number. `ScreenId` is a `CGDirectDisplayID`. `BTreeExt` |
+| `ids.rs` | `WindowId { pid, idx }` — rini's own window identity. `WindowServerId` and `SpaceId` are macOS's, declared in `rini-skylight-sys` and re-exported from here so nothing else needs that dependency for a number. `ScreenId` is a `CGDirectDisplayID`. `DisplayUuid` is the display's UUID, written as the bare string, with `DisplayUuid::fallback` for a display CoreGraphics reports none for. `BTreeExt` |
 | `paths.rs` | `data_dir()`, `config_file()` (`~/.config/rini/config.kdl`), `restore_file()`, `journal_file()` (`~/Library/Logs/rini/transitions.jsonl`) — the four places rini reads and writes |
 
 ## The shape that matters
 
-**Three identities, three lifetimes.** `WindowId` dies with the process.
+**Four identities, four lifetimes.** `WindowId` dies with the process.
 `WindowServerId` survives it and is recycled, so the same number can mean a different
-window later. `SpaceId` is minted fresh on every display reconnect. Nothing durable may
-be keyed by the last two; see
+window later. `SpaceId` is minted fresh on every display reconnect. `DisplayUuid` survives
+reconnects and restarts, so it is what a display is remembered by; a fallback one is made from
+the `ScreenId` and lasts only as long as that does. Nothing durable may be keyed by
+`WindowServerId` or `SpaceId`; see
 [`src/workspaces/docs/workspaces-and-displays.md`](../../../src/workspaces/docs/workspaces-and-displays.md).
 
 **`rini-ipc` has wire twins.** The types here are internal; the protocol has its own

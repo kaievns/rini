@@ -1,7 +1,8 @@
 //! Every identity rini speaks.
 //!
 //! `WindowId` is rini's own: a pid plus a per-process index, valid for the lifetime of the owning
-//! process. `ScreenId` is the CGDirectDisplayID. `WindowServerId` (CGWindowID) and `SpaceId`
+//! process. `ScreenId` is the CGDirectDisplayID, `DisplayUuid` the display's identity across
+//! reconnects and restarts. `WindowServerId` (CGWindowID) and `SpaceId`
 //! (CGSSpaceID) are the window server's, declared with the private API that mints them and
 //! re-exported here so a feature does not reach into `rini-skylight-sys` for a number.
 
@@ -144,6 +145,66 @@ impl ScreenId {
     pub fn as_u32(&self) -> u32 { self.0 }
 }
 
+/// A display's stable identity: the UUID CoreGraphics reports for it, which survives a reconnect and
+/// a restart where the `ScreenId` and the display's native spaces do not.
+///
+/// Written to `layout.ron` and printed over IPC as the bare string. Empty means not reported yet.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct DisplayUuid(String);
+
+impl DisplayUuid {
+    pub fn new(uuid: impl Into<String>) -> Self { DisplayUuid(uuid.into()) }
+
+    /// The name a display goes by when CoreGraphics reports no UUID for it, made from its
+    /// `ScreenId`. Stable only while that id is, so not across a reconnect.
+    pub fn fallback(screen: ScreenId) -> Self {
+        DisplayUuid(format!("cgdisplay-{}", screen.as_u32()))
+    }
+
+    /// Whether this is a [`DisplayUuid::fallback`] rather than a UUID CoreGraphics reported.
+    pub fn is_fallback(&self) -> bool { self.0.starts_with("cgdisplay-") }
+
+    pub fn as_str(&self) -> &str { &self.0 }
+
+    pub fn is_empty(&self) -> bool { self.0.is_empty() }
+}
+
+impl std::fmt::Display for DisplayUuid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.0) }
+}
+
+impl PartialEq<str> for DisplayUuid {
+    fn eq(&self, other: &str) -> bool { self.0 == other }
+}
+
+impl PartialEq<&str> for DisplayUuid {
+    fn eq(&self, other: &&str) -> bool { self.0 == *other }
+}
+
+impl From<&str> for DisplayUuid {
+    fn from(uuid: &str) -> Self { DisplayUuid::new(uuid) }
+}
+
+impl From<String> for DisplayUuid {
+    fn from(uuid: String) -> Self { DisplayUuid(uuid) }
+}
+
+impl From<DisplayUuid> for String {
+    fn from(uuid: DisplayUuid) -> Self { uuid.0 }
+}
+
 pub trait BTreeExt {
     fn remove_all_for_pid(&mut self, pid: pid_t) -> Self;
 }
@@ -230,6 +291,40 @@ mod tests {
         assert_eq!(WindowServerId::new(0).as_nonzero(), None);
         assert_eq!(WindowServerId::new(9).as_nonzero().map(|n| n.get()), Some(9));
         assert_eq!(u32::from(WindowServerId::new(9)), 9);
+    }
+
+    const UUID: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+
+    #[test]
+    fn a_display_uuid_is_written_as_the_bare_string() {
+        let uuid = DisplayUuid::new(UUID);
+        assert_eq!(ron::to_string(&uuid).unwrap(), ron::to_string(UUID).unwrap());
+        assert_eq!(serde_json::to_string(&uuid).unwrap(), format!("\"{UUID}\""));
+        assert_eq!(
+            ron::from_str::<DisplayUuid>(&format!("\"{UUID}\"")).unwrap(),
+            uuid
+        );
+        assert_eq!(uuid.to_string(), UUID);
+    }
+
+    #[test]
+    fn a_display_uuid_hashes_and_orders_as_its_string() {
+        use std::hash::BuildHasher;
+        let hasher = std::hash::RandomState::new();
+        assert_eq!(
+            hasher.hash_one(DisplayUuid::new(UUID)),
+            hasher.hash_one(UUID.to_owned())
+        );
+        assert!(DisplayUuid::new("A") < DisplayUuid::new("B"));
+    }
+
+    #[test]
+    fn a_fallback_uuid_names_the_screen_and_says_it_is_one() {
+        let fallback = DisplayUuid::fallback(ScreenId::new(2));
+        assert_eq!(fallback.as_str(), "cgdisplay-2");
+        assert!(fallback.is_fallback());
+        assert!(!DisplayUuid::new(UUID).is_fallback());
+        assert!(DisplayUuid::default().is_empty());
     }
 
     fn ids() -> Vec<WindowId> {
