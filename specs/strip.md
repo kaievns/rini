@@ -357,17 +357,6 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A folded window MUST NOT be squashed to its title bar. A column's stored heights are either
   deliberate pixel heights from a vertical resize or the equal ratios a freshly folded column starts
   at, and the two MUST NOT be conflated.
-- **`explode-column` (`Mod+Shift+Comma`) MUST give every window in the focused window's column a
-  column of its own in one press**, the rows becoming columns in their order. The focused window
-  MUST keep focus and its column's width; the others start at the default width, as a window folded
-  out does. On a window alone in its column it MUST change nothing. An action MUST NOT both explode
-  a column and join a lone window to its neighbour, as `toggle-stack` did: `toggle-fold-left` joins,
-  and a bind naming `toggle-stack` MUST be refused with where both halves went.
-
-> **Asked 2026-10-15.** `toggle-stack` exploded a joined column and otherwise moved the window into
-> the column on its left, which is `toggle-fold-left`'s fold-in. Kai: "i want one press explode,
-> how that's bundled with folding/unfolding code is up to you".
-
 > **Found 2026-10-09, not reported.** Folding and full width shared one record of where a window
 > came from, and neither checked that a full-width window was alone. A window folded out of
 > [A1,A2] and maximized went back into A1 on the second `Mod+F`. One folded out of [A1,A2][B1][C1]
@@ -384,6 +373,17 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > **Reported 2026-09-22.** "Folding in/out works on the window on the left, and I want a symmetric
 > functionality that lets me do the same to the window on the right." Both directions are now one
 > operation with a side argument.
+
+- **`explode-column` (`Mod+Shift+Comma`) MUST give every window in the focused window's column a
+  column of its own in one press**, the rows becoming columns in their order. The focused window
+  MUST keep focus and its column's width; the others start at the default width, as a window folded
+  out does. On a window alone in its column it MUST change nothing. An action MUST NOT both explode
+  a column and join a lone window to its neighbour, as `toggle-stack` did: `toggle-fold-left` joins,
+  and a bind naming `toggle-stack` MUST be refused with where both halves went.
+
+> **Asked 2026-10-15.** `toggle-stack` exploded a joined column and otherwise moved the window into
+> the column on its left, which is `toggle-fold-left`'s fold-in. Kai: "i want one press explode,
+> how that's bundled with folding/unfolding code is up to you".
 
 ## Off-strip windows
 
