@@ -72,6 +72,10 @@ use crate::transitions::platform::logged::Whole;
 use crate::transitions::settings::JournalSettings;
 use crate::windows::platform::window_server::WindowServer;
 
+mod tiles;
+
+use tiles::{Stacking, entrance_tile};
+
 /// What the engine is told.
 #[derive(Debug)]
 pub enum Event {
@@ -270,30 +274,6 @@ fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
         if let Some(to) = plan.destination(tile.window) {
             tile.to = to;
         }
-    }
-}
-
-/// The tile for a reserved entrance whose picture has landed, `clipped` or whole and rounded at
-/// `radius`: frontmost and focused, since a window is raised on open and about to hold focus.
-fn entrance_tile(
-    entrance: &PendingEntrance,
-    snapshot: &Picture,
-    clipped: bool,
-    radius: Option<f64>,
-) -> OverlayTile {
-    OverlayTile {
-        window: entrance.window,
-        from: entrance_from(entrance.to),
-        to: entrance.to,
-        snapshot: snapshot.clone(),
-        from_corner: None,
-        floating: entrance.floating,
-        server_order: Some(0),
-        depth: 0,
-        focused: true,
-        worn: entrance.worn,
-        radius,
-        clipped,
     }
 }
 
@@ -1733,8 +1713,7 @@ impl FlightEngine {
         let (drawing_focus, losing) = self.drawing_focus((focus, focused_before));
 
         let ws = &*self.window_server;
-        let depths = ws.front_to_back_depths();
-        let radii = ws.corner_radii(&windows.iter().map(|r| r.server_id).collect::<Vec<_>>());
+        let stacking = Stacking::read(ws, &windows.iter().map(|r| r.server_id).collect::<Vec<_>>());
 
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
@@ -1793,20 +1772,17 @@ impl FlightEngine {
                     };
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
-                    tiles.push(OverlayTile {
-                        window: request.window,
-                        from: to_overlay_space(start, display_frame),
-                        to: to_overlay_space(end, display_frame),
-                        snapshot,
-                        from_corner: None,
-                        floating: request.floating,
-                        server_order: depths.get(&request.server_id.as_u32()).copied(),
-                        depth: 0,
-                        focused,
-                        worn: request.worn,
-                        radius: radii.get(&request.server_id).copied(),
-                        clipped,
-                    });
+                    let tile = stacking.tile_of(
+                        request.window,
+                        request.server_id,
+                        request.floating,
+                        request.worn,
+                    );
+                    let path = (
+                        to_overlay_space(start, display_frame),
+                        to_overlay_space(end, display_frame),
+                    );
+                    tiles.push(tile.flying(path, snapshot, clipped, focused));
                     resolved.push((request.window, start, end, request.floating));
                     flies
                 }
@@ -1847,24 +1823,16 @@ impl FlightEngine {
                             let standing = from.same_as(to);
                             let focused =
                                 !standing || drawn_focused(request.window, drawing_focus, losing);
-                            tiles.push(OverlayTile {
-                                window: request.window,
-                                from: from_o,
-                                to: to_o,
-                                snapshot,
-                                from_corner: None,
-                                floating: request.floating,
-                                server_order: if standing {
-                                    depths.get(&request.server_id.as_u32()).copied()
-                                } else {
-                                    Some(0)
-                                },
-                                depth: 0,
-                                focused,
-                                worn: request.worn,
-                                radius: radii.get(&request.server_id).copied(),
-                                clipped,
-                            });
+                            let mut tile = stacking.tile_of(
+                                request.window,
+                                request.server_id,
+                                request.floating,
+                                request.worn,
+                            );
+                            if !standing {
+                                tile.server_order = Some(0);
+                            }
+                            tiles.push(tile.flying((from_o, to_o), snapshot, clipped, focused));
                             if standing {
                                 resolved.push((request.window, from, to, request.floating));
                             } else {
@@ -2234,11 +2202,10 @@ impl FlightEngine {
         }
         let (drawing_focus, losing) = self.drawing_focus(focus);
 
-        let depths = self.window_server.front_to_back_depths();
         // One query for every window, not one each: a round trip per window stalled this thread
         // for 100-200ms a press. See "Rapid presses" in `specs/focus.md`.
         let ids: Vec<WindowServerId> = windows.iter().map(|w| w.server_id).collect();
-        let radii = self.window_server.corner_radii(&ids);
+        let stacking = Stacking::read(&*self.window_server, &ids);
         let real_frames = frames_of(&*self.window_server, &ids);
         let mut tiles = Vec::with_capacity(windows.len());
         let mut waits = Waits::default();
@@ -2269,20 +2236,13 @@ impl FlightEngine {
                     waits.push_strip(window.window, self.landing(window.window, to.size.respace()));
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(window.window, drawing_focus, losing);
-                    tiles.push(OverlayTile {
-                        window: window.window,
-                        from,
-                        to,
-                        snapshot,
-                        from_corner: None,
-                        floating: window.floating,
-                        server_order: depths.get(&window.server_id.as_u32()).copied(),
-                        depth: 0,
-                        focused,
-                        worn: window.worn,
-                        radius: radii.get(&window.server_id).copied(),
-                        clipped,
-                    });
+                    let tile = stacking.tile_of(
+                        window.window,
+                        window.server_id,
+                        window.floating,
+                        window.worn,
+                    );
+                    tiles.push(tile.flying((from, to), snapshot, clipped, focused));
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
                 None => missing += 1,
@@ -2668,20 +2628,14 @@ mod tests {
         server_order: Option<usize>,
         floating: bool,
     ) -> OverlayTile {
-        OverlayTile {
+        let tile = tiles::TileOf {
             window,
-            from,
-            to,
-            snapshot: test_picture(to.size),
-            from_corner: None,
             floating,
             server_order,
-            depth: 0,
-            focused: false,
             worn: Worn::default(),
             radius: None,
-            clipped: false,
-        }
+        };
+        tile.flying((from, to), test_picture(to.size), false, false)
     }
 
     /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
