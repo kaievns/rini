@@ -28,12 +28,12 @@ use rini_runloop::{channel, turns};
 use tracing::warn;
 
 use crate::decorations::domain::rest::{
-    self, Draw, Introduction, Layers, Look, Placed, Rest, RestModel, delta, display_of,
-    stack_change,
+    self, Batch, Draw, Heard, Introduction, Layers, Look, PanelOp, PanelState, Placed, Rest,
+    RestModel, Taken, Word, delta, stack_change,
 };
 use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
-use crate::displays::event::{Following, ServerFrame, ServerOrder, ServerRead, StackLevel, ToRead};
+use crate::displays::event::{Following, ServerRead, StackLevel, ToRead};
 use crate::displays::screen::primary_display_height;
 use crate::windows::platform::window_server;
 
@@ -221,7 +221,13 @@ impl Panel {
         self.drew = self.target;
     }
 
-    fn shown(&self) -> bool { self.look.is_some_and(|look| look.shown) }
+    fn state(&self) -> PanelState {
+        PanelState {
+            target: self.target,
+            drew: self.drew,
+            look: self.look,
+        }
+    }
 
     fn hide(&mut self) {
         let Some(was) = self.look else { return };
@@ -263,60 +269,24 @@ impl RestBorders {
         }
     }
 
-    /// Every event queued, taken as one turn: a flight's begin first, the latest model, each window
-    /// it names first asked of the window server, every introduction and every window's latest
-    /// frame, and each rest window ordered again at most once. From a flight's begin to its lift it
-    /// draws and makes nothing (`Rest::turn`). Turned off by the latest word, it closes every rest
-    /// window; off, it takes nothing until a model.
+    /// Every event queued, taken as one turn (`Rest::take`): each window the latest model first
+    /// names asked of the window server, the pool grown and the turn drawn; turned off by the latest
+    /// word, every rest window closed.
     fn take(&mut self, events: Vec<Event>, now: Instant) {
-        let mut orders = Vec::new();
-        let mut intros = Vec::new();
-        let mut moved: Vec<ServerFrame> = Vec::new();
-        let mut word = None;
-        let mut flight = None;
-        let mut grow = false;
-        for event in events {
-            match event {
-                Event::Flight { display, pressed } => flight = Some((display, pressed)),
-                Event::Model(next) => word = Some(Some(next)),
-                Event::Off => word = Some(None),
-                Event::Server(ServerRead::Frames(frames)) => moved.extend(frames),
-                Event::Server(ServerRead::Order(order)) => orders.push(order),
-                Event::Server(ServerRead::Intro(intro)) => {
-                    intros.push((intro.window, Introduction {
-                        frame: intro.frame.map(ScreenRect::from_cg),
-                        ordered_out: intro.ordered_in == Some(false),
-                        radius: intro.radius,
-                        level: intro.level,
-                    }))
+        match self.rest.take(Batch::of(events.into_iter().map(heard)), now) {
+            Taken::Off => self.panels.clear(),
+            Taken::On { ask, grow, draw } => {
+                for window in ask {
+                    self.following.ask(ToRead::Intro(window));
                 }
-                Event::Lifted => grow = true,
+                if grow {
+                    self.grow();
+                }
+                if let Some(draw) = draw {
+                    self.draw(&draw);
+                }
             }
         }
-        if word.as_ref().is_some_and(Option::is_none) {
-            self.rest.off();
-            self.panels.clear();
-            return;
-        }
-        if let Some((display, pressed)) = flight {
-            self.rest.fly(display, pressed, now);
-        }
-        let model = word.flatten();
-        for window in model.iter().flat_map(|model| self.rest.ask(model)) {
-            self.following.ask(ToRead::Intro(window));
-        }
-        grow |= model.is_some();
-        let moved: Vec<(WindowServerId, ScreenRect)> = moved
-            .iter()
-            .map(|frame| (frame.window, ScreenRect::from_cg(frame.frame)))
-            .collect();
-        let Some(draw) = self.rest.turn(model, &intros, &moved, orders, now) else {
-            return;
-        };
-        if grow {
-            self.grow();
-        }
-        self.draw_turn(&draw);
     }
 
     /// Rest windows made until the pool holds what the model wants, or AppKit makes none.
@@ -326,14 +296,6 @@ impl RestBorders {
                 break;
             }
         }
-    }
-
-    /// `draw`'s orders, and the rest window of the window focus came to ordered above it again.
-    fn draw_turn(&mut self, draw: &Draw) {
-        let also = draw
-            .focus
-            .and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
-        self.draw(&draw.orders, also.into_iter().collect());
     }
 
     /// The flight over `display`, the one the overlay was laid out on if any, through the press at
@@ -353,7 +315,7 @@ impl RestBorders {
                 window_server::server_frame(window).map(ScreenRect::from_cg),
             );
         }
-        self.draw_turn(&draw);
+        self.draw(&draw);
     }
 
     /// The overlay lifts off `display`: what came since the place drawn where it changed, reading
@@ -370,7 +332,7 @@ impl RestBorders {
         if !self.rest.on() {
             return false;
         }
-        self.draw_turn(&draw);
+        self.draw(&draw);
         self.rest.wants_turn(self.panels.len())
     }
 
@@ -379,104 +341,29 @@ impl RestBorders {
     fn settle(&mut self, now: Instant) {
         if let Some(draw) = self.rest.settle(now) {
             self.grow();
-            self.draw_turn(&draw);
+            self.draw(&draw);
         }
     }
 
-    /// One rest window for each window whose band shows: those `orders` and `also` name, and those
-    /// just given a window, ordered above their windows, then each one's look drawn where it changed
-    /// (`rest::delta`), the layers in one transaction, committed and flushed only when one was laid.
-    /// One showing a window afresh (`rest::afresh`) is hidden first, and takes its frame, its place
-    /// in the stack and alpha 1 only once its layers are committed.
-    fn draw(&mut self, orders: &[ServerOrder], mut also: Vec<usize>) {
-        let wanted = self.rest.wanted();
-        let pool: Vec<Option<WindowServerId>> =
-            self.panels.iter().map(|panel| panel.target).collect();
-        let drew: Vec<Option<WindowServerId>> =
-            self.panels.iter().map(|panel| panel.drew).collect();
-        let assignment = rest::assign(&pool, &drew, &wanted);
-        let mut given = Vec::new();
-        for (at, window) in assignment.retargeted {
-            self.panels[at].target = Some(window);
-            given.push(at);
-        }
-        also.extend(&given);
-        let before: Vec<(Option<WindowServerId>, bool)> =
-            self.panels.iter().map(|panel| (panel.target, panel.shown())).collect();
-        let afresh = rest::afresh(&before, &given, &wanted);
-        let targets: Vec<Option<WindowServerId>> =
-            before.iter().map(|(target, _)| *target).collect();
-        let reorder = rest::to_reorder(orders, &targets, &also);
-        for at in reorder.iter().filter(|at| !afresh.contains(at)) {
-            self.order_above_its_window(*at);
-        }
-        for at in &afresh {
-            self.panels[*at].hide();
-        }
-        for at in &assignment.released {
-            self.panels[*at].target = None;
-        }
-        let looks: Vec<Option<Look>> =
-            self.panels.iter().map(|panel| self.look_of(panel.target?, &wanted)).collect();
-        let lays: Vec<bool> = self
-            .panels
-            .iter()
-            .zip(&looks)
-            .map(|(panel, look)| look.is_some_and(|look| delta(panel.look, look).layers))
-            .collect();
-        let laying = lays.contains(&true);
-        if laying {
-            CATransaction::begin();
-            CATransaction::setDisableActions(true);
-        }
-        for at in assignment.released {
-            self.panels[at].hide();
-        }
-        let mut revealed = Vec::new();
-        for (at, ((panel, look), lays)) in self.panels.iter_mut().zip(looks).zip(lays).enumerate() {
-            if panel.target.is_none() {
-                continue;
+    /// `draw` carried out as `rest::plan_draw` orders it.
+    fn draw(&mut self, draw: &Draw) {
+        let panels: Vec<PanelState> = self.panels.iter().map(Panel::state).collect();
+        for op in rest::plan_draw(&self.rest, &panels, draw) {
+            match op {
+                PanelOp::Target { at, window } => self.panels[at].target = window,
+                PanelOp::Order { at, window, level } => self.panels[at].order_above(window, level),
+                PanelOp::Hide { at } => self.panels[at].hide(),
+                PanelOp::Begin => {
+                    CATransaction::begin();
+                    CATransaction::setDisableActions(true);
+                }
+                PanelOp::Lay { at, look } => self.panels[at].lay(&look),
+                PanelOp::Reveal { at, look } => self.panels[at].reveal(look),
+                PanelOp::Commit => {
+                    CATransaction::commit();
+                    CATransaction::flush();
+                }
             }
-            let Some(look) = look else {
-                panel.hide();
-                continue;
-            };
-            if lays {
-                panel.lay(&look);
-            }
-            if afresh.contains(&at) {
-                revealed.push((at, look));
-            } else {
-                panel.reveal(look);
-            }
-        }
-        if laying {
-            CATransaction::commit();
-            CATransaction::flush();
-        }
-        for (at, look) in revealed {
-            self.panels[at].reveal(look);
-            self.order_above_its_window(at);
-        }
-    }
-
-    /// What the rest window on `target` draws now: its bands as its window wears them where the
-    /// window server has it, or none when they show nothing.
-    fn look_of(&self, target: WindowServerId, wanted: &[WindowServerId]) -> Option<Look> {
-        let window = self.rest.model.windows.iter().find(|w| w.window == target)?;
-        let tracked = self.rest.windows.get(&target)?;
-        let frame = tracked.frame?;
-        let display = display_of(frame, &self.rest.model.displays)?;
-        Look::of(window, frame, tracked.radius, display).filter(|_| wanted.contains(&target))
-    }
-
-    fn order_above_its_window(&mut self, at: usize) {
-        let panel = &mut self.panels[at];
-        let target = panel
-            .target
-            .and_then(|target| Some((target, self.rest.windows.get(&target)?.level)));
-        if let Some((target, level)) = target {
-            panel.order_above(target, level);
         }
     }
 
@@ -495,6 +382,29 @@ impl RestBorders {
                 false
             }
         }
+    }
+}
+
+/// `event` in the domain's spaces.
+fn heard(event: Event) -> Heard {
+    match event {
+        Event::Flight { display, pressed } => Heard::Flight { display, pressed },
+        Event::Model(model) => Heard::Word(Word::Model(model)),
+        Event::Off => Heard::Word(Word::Off),
+        Event::Server(ServerRead::Frames(frames)) => Heard::Frames(
+            frames
+                .iter()
+                .map(|frame| (frame.window, ScreenRect::from_cg(frame.frame)))
+                .collect(),
+        ),
+        Event::Server(ServerRead::Order(order)) => Heard::Order(order),
+        Event::Server(ServerRead::Intro(intro)) => Heard::Intro(intro.window, Introduction {
+            frame: intro.frame.map(ScreenRect::from_cg),
+            ordered_out: intro.ordered_in == Some(false),
+            radius: intro.radius,
+            level: intro.level,
+        }),
+        Event::Lifted => Heard::Lifted,
     }
 }
 

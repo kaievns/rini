@@ -37,6 +37,12 @@ and records every call made
 the real calls can: its misshapen call is the baked one, so it yields no picture and its windows are
 opaque, as in `skylight::capture_on_screen`.
 
+A rule about which AppKit or Core Animation calls are made, in what order and with what geometry, is
+a rule too: the domain returns it, as a plan of calls or as the values the calls take, and the
+platform applies it, so a test reads it. `rest::plan_draw` in `src/decorations/domain/rest.rs`
+returns the calls of a draw in order; `placement::frames` in `src/bar/domain/placement.rs` returns
+the frames a bar draw puts, and `BarPanel::draw` still decides the order it puts and hides them in.
+
 ## Which seam to use
 
 Reach for the seam where the read is made; a rule below it takes the answers as values and needs

@@ -303,8 +303,8 @@ and which applications ask for attention, read by `src/windows/platform/attentio
 through a flight is `Worn::style` in `src/decorations/domain/style.rs`, worn by
 `src/transitions/platform/engine.rs` on the overlay (`src/animation/platform/overlay.rs`), which is holed over each band
 (`src/animation/domain/motion/holes.rs`). At rest, which windows show a band, which rest window
-draws each, how many rest windows are kept, what each changes to draw its look and which are
-ordered again are
+draws each, how many rest windows are kept, what each changes to draw its look, which are
+ordered again and the order every call of a draw goes in (`plan_draw`) are
 `src/decorations/domain/rest.rs`, carried out by the main-thread actor in
 `src/decorations/platform/rest.rs`, which the reactor tells of each flight's
 begin (`Reactor::send_flight` in `src/app/reactor/mod.rs`, `publish_rest` in
