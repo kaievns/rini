@@ -18,7 +18,7 @@ use super::FakeWindowServer;
 use super::LiveWindowServer;
 use super::{Listed, WindowServer};
 use crate::windows::domain::info::WindowServerInfo;
-use crate::windows::domain::manageable::ServerFacts;
+use crate::windows::domain::manageable::Facts;
 use crate::windows::domain::stack::{StackPlace, WindowLevel};
 
 #[cfg(test)]
@@ -125,14 +125,17 @@ pub fn stack_place(id: WindowServerId, frame: CGRect) -> StackPlace {
     with_port(|ws| ws.stack_place(id, frame))
 }
 
-/// The window server's facts about `id`, `known` the catalogue's record of a window; all unknown
-/// for a window with no window-server id.
-pub fn server_facts(
+/// `facts` with the window server's answers about `id` in, `known` the catalogue's record of a
+/// window; none asked for a window with no window-server id.
+pub fn with_server_facts(
+    facts: Facts,
     id: Option<WindowServerId>,
     known: impl FnOnce(WindowServerId) -> Option<WindowServerInfo>,
-) -> ServerFacts {
-    id.map(|id| with_port(|ws| ws.server_facts(id, known(id).as_ref())))
-        .unwrap_or_default()
+) -> Facts {
+    match id {
+        Some(id) => with_port(|ws| ws.with_server_facts(facts, id, known(id).as_ref())),
+        None => facts,
+    }
 }
 
 pub fn make_key_window(pid: pid_t, id: WindowServerId) -> Result<(), CGError> {
@@ -223,6 +226,7 @@ pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) 
 mod tests {
     use super::super::Command;
     use super::*;
+    use crate::windows::domain::manageable::ServerFacts;
 
     /// A window-server id in a test can name a real window on the machine running it, so no read
     /// through the shim reaches the live window server and no command drives it.
@@ -240,7 +244,13 @@ mod tests {
         assert_eq!(key_focus_pid(), None);
         assert_eq!(get_window_at_point(CGPoint::new(1.0, 1.0)), None);
         assert_eq!(stack_level(id), (None, None));
-        assert_eq!(server_facts(Some(id), |_| None), ServerFacts::default());
+        let asked = Facts {
+            minimized: false,
+            ax_standard: true,
+            ax_root: true,
+            server: ServerFacts::default(),
+        };
+        assert_eq!(with_server_facts(asked, Some(id), |_| None), asked);
         assert_eq!(make_key_window(std::process::id() as pid_t, id), Ok(()));
         take_stack_place(id, Some(3), Some(1));
         assert_eq!(FAKE.with(FakeWindowServer::commands), [

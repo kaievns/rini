@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::ffi::c_int;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use objc2_core_foundation::{CGPoint, CGRect};
@@ -28,6 +29,7 @@ use crate::windows::domain::stack::WindowLevel;
 pub struct FakeWindowServer {
     answers: Mutex<Answers>,
     commands: Mutex<Vec<Command>>,
+    reads: AtomicUsize,
 }
 
 #[derive(Debug, Default)]
@@ -63,12 +65,18 @@ fn state<K: Eq + Hash, V>(map: &mut HashMap<K, V>, key: K, answer: Option<V>) {
 }
 
 impl FakeWindowServer {
-    fn answer<R>(&self, read: impl FnOnce(&Answers) -> R) -> R { read(&locked(&self.answers)) }
+    fn answer<R>(&self, read: impl FnOnce(&Answers) -> R) -> R {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        read(&locked(&self.answers))
+    }
 
     fn stating(&self, write: impl FnOnce(&mut Answers)) -> &Self {
         write(&mut locked(&self.answers));
         self
     }
+
+    /// How many reads have been answered so far, each a query the live window server would make.
+    pub fn reads(&self) -> usize { self.reads.load(Ordering::Relaxed) }
 
     /// The commands given so far, in order.
     pub fn commands(&self) -> Vec<Command> { locked(&self.commands).clone() }
@@ -260,7 +268,7 @@ mod tests {
     use objc2_core_foundation::CGSize;
 
     use super::*;
-    use crate::windows::domain::manageable::ServerFacts;
+    use crate::windows::domain::manageable::{Facts, ServerFacts};
 
     fn id(n: u32) -> WindowServerId { WindowServerId::new(n) }
 
@@ -294,7 +302,10 @@ mod tests {
         assert!(ws.on_screen_windows(true).is_empty());
         assert!(ws.every_window().is_empty());
         assert_eq!(ws.stack_level(window), (None, None));
-        assert_eq!(ws.server_facts(window, None), ServerFacts::default());
+        assert_eq!(
+            ws.with_server_facts(open(), window, None).server,
+            ServerFacts::default()
+        );
         assert!(ws.commands().is_empty(), "a read gives no command");
     }
 
@@ -433,18 +444,58 @@ mod tests {
         assert_eq!(ws.window_under_cursor(), ws.get_window_at_point(CGPoint::ZERO));
     }
 
+    /// A window Accessibility calls a standard top-level one, its window-server facts unasked.
+    fn open() -> Facts {
+        Facts {
+            minimized: false,
+            ax_standard: true,
+            ax_root: true,
+            server: ServerFacts::default(),
+        }
+    }
+
     #[test]
     fn a_window_s_manageability_facts_are_its_stated_answers() {
         let ws = FakeWindowServer::default();
         ws.set_window(id(5), Some(window(5, 0)))
-            .set_window_spaces(id(5), vec![SpaceId::new(1), SpaceId::new(2)]);
+            .set_window_spaces(id(5), vec![SpaceId::new(1)]);
+        let not_standard = Facts { ax_standard: false, ..open() };
         assert_eq!(
-            ws.server_facts(id(5), ws.get_window(id(5)).as_ref()),
+            ws.with_server_facts(not_standard, id(5), Some(&window(5, 0))).server,
             ServerFacts {
                 layer: Some(0),
-                sticky: Some(true),
+                sticky: Some(false),
                 level: Some(0),
             }
+        );
+        assert_eq!(
+            ws.reads(),
+            2,
+            "a window Accessibility turns away is asked about all the same"
+        );
+    }
+
+    #[test]
+    fn no_read_is_made_once_the_facts_in_hand_turn_the_window_away() {
+        let ws = FakeWindowServer::default();
+        ws.set_window(id(5), Some(window(5, 0)))
+            .set_window_spaces(id(5), vec![SpaceId::new(1), SpaceId::new(2)]);
+        let minimized = Facts { minimized: true, ..open() };
+        let facts = ws.with_server_facts(minimized, id(5), Some(&window(5, 0)));
+        assert_eq!(
+            (facts.server.sticky, facts.server.level, ws.reads()),
+            (None, None, 0)
+        );
+        let off_layer_0 = ws.with_server_facts(open(), id(5), Some(&window(5, 3))).server;
+        assert_eq!(
+            (off_layer_0.sticky, off_layer_0.level, ws.reads()),
+            (None, None, 0)
+        );
+        let sticky = ws.with_server_facts(open(), id(5), Some(&window(5, 0))).server;
+        assert_eq!(
+            (sticky.sticky, sticky.level, ws.reads()),
+            (Some(true), None, 1),
+            "a sticky window's level is not read"
         );
     }
 

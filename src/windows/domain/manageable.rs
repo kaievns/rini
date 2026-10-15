@@ -29,13 +29,13 @@ pub struct ServerFacts {
 }
 
 impl Facts {
-    /// `info`'s Accessibility facts beside the window server's `server`.
-    pub fn of(info: &WindowInfo, server: ServerFacts) -> Self {
+    /// `info`'s Accessibility facts, with the window server's still unasked.
+    pub fn of(info: &WindowInfo) -> Self {
         Self {
             minimized: info.is_minimized,
             ax_standard: info.is_standard,
             ax_root: info.is_root,
-            server,
+            server: ServerFacts::default(),
         }
     }
 }
@@ -43,13 +43,19 @@ impl Facts {
 /// Whether rini manages a window: one that is not minimized, sits on layer 0, is on one space, at
 /// the normal level, and that Accessibility calls a standard top-level window.
 pub fn manageable(facts: Facts) -> bool {
+    !turned_away_before_accessibility(&facts) && facts.ax_standard && facts.ax_root
+}
+
+/// Whether `facts` turn the window away before Accessibility's answers are weighed: it is
+/// minimized, or a window-server fact in hand turns it away. The window server is asked nothing
+/// more about a window this turns away; Accessibility's answers come last, so one it turns away is
+/// asked about as any other.
+pub fn turned_away_before_accessibility(facts: &Facts) -> bool {
     let ServerFacts { layer, sticky, level } = facts.server;
-    !facts.minimized
-        && layer.is_none_or(|layer| layer == 0)
-        && sticky != Some(true)
-        && level.is_none_or(|level| level == NORMAL_WINDOW_LEVEL)
-        && facts.ax_standard
-        && facts.ax_root
+    facts.minimized
+        || layer.is_some_and(|layer| layer != 0)
+        || sticky == Some(true)
+        || level.is_some_and(|level| level != NORMAL_WINDOW_LEVEL)
 }
 
 /// Whether the window server's picture of a window the app no longer lists says it is gone: not a
@@ -137,6 +143,31 @@ mod tests {
     #[test]
     fn a_window_with_a_parent_is_not_managed() {
         assert!(!manageable(Facts { ax_root: false, ..managed() }));
+    }
+
+    #[test]
+    fn only_minimized_or_a_window_server_answer_turns_a_window_away_before_accessibility() {
+        assert!(!turned_away_before_accessibility(&managed()));
+        assert!(turned_away_before_accessibility(&Facts {
+            minimized: true,
+            ..managed()
+        }));
+        let sticky = ServerFacts {
+            sticky: Some(true),
+            ..managed().server
+        };
+        assert!(turned_away_before_accessibility(&Facts {
+            server: sticky,
+            ..managed()
+        }));
+        assert!(
+            !turned_away_before_accessibility(&Facts {
+                ax_standard: false,
+                ax_root: false,
+                ..managed()
+            }),
+            "Accessibility's answers are weighed after every read"
+        );
     }
 
     #[test]

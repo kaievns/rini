@@ -19,7 +19,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use super::{Listed, depths};
 use crate::windows::domain::home_space::home_space;
 use crate::windows::domain::info::WindowServerInfo;
-use crate::windows::domain::manageable::ServerFacts;
+use crate::windows::domain::manageable::{Facts, turned_away_before_accessibility};
 use crate::windows::domain::stack::{StackPlace, WindowLevel};
 
 /// The window server, as rini asks it and tells it.
@@ -101,14 +101,24 @@ pub trait WindowServer: Send + Sync {
         StackPlace { frame, level, sub_level }
     }
 
-    /// What manageability is decided on from the window server, `known` the catalogue's record of
-    /// `id`, which its layer is read from.
-    fn server_facts(&self, id: WindowServerId, known: Option<&WindowServerInfo>) -> ServerFacts {
-        ServerFacts {
-            layer: known.map(|info| info.layer),
-            sticky: self.window_is_sticky(id),
-            level: self.window_level(id),
+    /// `facts` with the window server's answers about `id` in, `known` the catalogue's record of
+    /// `id`, which its layer is read from. Each read is made only while the facts in hand do not
+    /// turn the window away (`turned_away_before_accessibility`): none for a minimized window,
+    /// neither stickiness nor level for one off layer 0, no level for a sticky one.
+    fn with_server_facts(
+        &self,
+        mut facts: Facts,
+        id: WindowServerId,
+        known: Option<&WindowServerInfo>,
+    ) -> Facts {
+        facts.server.layer = known.map(|info| info.layer);
+        if !turned_away_before_accessibility(&facts) {
+            facts.server.sticky = self.window_is_sticky(id);
         }
+        if !turned_away_before_accessibility(&facts) {
+            facts.server.level = self.window_level(id);
+        }
+        facts
     }
 }
 

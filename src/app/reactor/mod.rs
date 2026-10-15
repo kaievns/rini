@@ -91,7 +91,7 @@ use crate::switcher::domain::selection::Selection;
 use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
-use crate::windows::domain::manageable::{Facts, ServerFacts, manageable};
+use crate::windows::domain::manageable::{Facts, manageable};
 use crate::windows::domain::raise::{self as raise_manager, RaiseManager, RaiseRequest};
 use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
@@ -1814,17 +1814,17 @@ impl Reactor {
                             window.frame_monotonic = info.frame;
                         }
                         (
-                            Facts::of(&window.info, ServerFacts::default()),
+                            Facts::of(&window.info),
                             window.info.sys_id,
                             window.matches_filter(WindowFilter::EffectivelyManageable),
                         )
                     } else {
                         continue;
                     };
-                let server = window_server::server_facts(server_id, |wsid| {
-                    self.state.windows.get_window_server_info(wsid)
-                });
-                let manageable = manageable(Facts { server, ..ax });
+                let manageable =
+                    manageable(window_server::with_server_facts(ax, server_id, |wsid| {
+                        self.state.windows.get_window_server_info(wsid)
+                    }));
                 if let Some(window) = self.state.windows.window_mut(wid) {
                     window.is_manageable = manageable;
                 }

@@ -8,7 +8,7 @@ use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::{DragState, Quiet};
 use crate::layout::domain::edge_drag::Drag;
 use crate::windows::domain::info::{WindowInfo as Window, WindowServerInfo};
-use crate::windows::domain::manageable::{Facts, ServerFacts, manageable};
+use crate::windows::domain::manageable::{Facts, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::windows::domain::zoom::Zoom;
@@ -43,11 +43,10 @@ pub fn handle_window_created(
     }
 
     let mut window_state: WindowState = window.into();
-    let is_manageable = manageable(Facts::of(
-        &window_state.info,
-        window_server::server_facts(window_state.info.sys_id, |wsid| {
-            state.windows.get_window_server_info(wsid)
-        }),
+    let is_manageable = manageable(window_server::with_server_facts(
+        Facts::of(&window_state.info),
+        window_state.info.sys_id,
+        |wsid| state.windows.get_window_server_info(wsid),
     ));
     window_state.is_manageable = is_manageable;
     if let Some(wsid) = window_state.info.sys_id {
@@ -161,10 +160,7 @@ pub fn handle_window_deminiaturized(
                 return Ok(crate::app::reactor::events::EventOutcome::no_change());
             }
             window.info.is_minimized = false;
-            (
-                window.info.sys_id,
-                Facts::of(&window.info, ServerFacts::default()),
-            )
+            (window.info.sys_id, Facts::of(&window.info))
         }
         None => {
             debug!(
@@ -174,9 +170,9 @@ pub fn handle_window_deminiaturized(
             return Ok(crate::app::reactor::events::EventOutcome::no_change());
         }
     };
-    let server =
-        window_server::server_facts(server_id, |wsid| state.windows.get_window_server_info(wsid));
-    let is_manageable = manageable(Facts { server, ..ax });
+    let is_manageable = manageable(window_server::with_server_facts(ax, server_id, |wsid| {
+        state.windows.get_window_server_info(wsid)
+    }));
     if let Some(window) = state.windows.window_mut(wid) {
         window.is_manageable = is_manageable;
     }

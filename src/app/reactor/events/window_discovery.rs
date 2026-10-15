@@ -57,11 +57,10 @@ fn sync_existing_window_state(
             })?
         }
         _ => {
-            let manageable = manageable(Facts::of(
-                info,
-                window_server::server_facts(info.sys_id, |wsid| {
-                    state.windows.get_window_server_info(wsid)
-                }),
+            let manageable = manageable(window_server::with_server_facts(
+                Facts::of(info),
+                info.sys_id,
+                |wsid| state.windows.get_window_server_info(wsid),
             ));
             if let Some(existing) = state.windows.window_mut(wid) {
                 existing.info.is_minimized = info.is_minimized;
@@ -324,11 +323,10 @@ pub(crate) fn process_window_list(
                 }
             } else {
                 let mut window_state: WindowState = WindowState::from((*info).clone());
-                let manageable = manageable(Facts::of(
-                    &window_state.info,
-                    window_server::server_facts(window_state.info.sys_id, |wsid| {
-                        state.windows.get_window_server_info(wsid)
-                    }),
+                let manageable = manageable(window_server::with_server_facts(
+                    Facts::of(&window_state.info),
+                    window_state.info.sys_id,
+                    |wsid| state.windows.get_window_server_info(wsid),
                 ));
                 window_state.is_manageable = manageable;
                 state.windows.insert_window(wid, window_state);
@@ -395,11 +393,10 @@ pub(crate) fn update_window_states(
     // Update or insert window states
     for (wid, info) in new_windows {
         let mut state: WindowState = info.into();
-        let manageable = manageable(Facts::of(
-            &state.info,
-            window_server::server_facts(state.info.sys_id, |wsid| {
-                rini_state.windows.get_window_server_info(wsid)
-            }),
+        let manageable = manageable(window_server::with_server_facts(
+            Facts::of(&state.info),
+            state.info.sys_id,
+            |wsid| rini_state.windows.get_window_server_info(wsid),
         ));
         state.is_manageable = manageable;
         rini_state.windows.insert_window(wid, state);
