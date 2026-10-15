@@ -497,7 +497,7 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   override, the view a fold back returns to and the place a width key or the full-width toggle
   keeps. Now, with no drag, an axis within 1pt of the slot
   the last pass gave the window changes nothing (a lone column's height is no row's;
-  `tile::kept_axes`), and a report
+  `tile::LaidOut::kept_axes`), and a report
   that changes neither returns before its scroll request. The pass records that slot for its
   selection as it wrote it, after the windows' own limits (`Measured::slot`, measured for
   `Measured::selected`); a slot worked out again from the

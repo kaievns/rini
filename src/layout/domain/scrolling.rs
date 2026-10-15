@@ -1484,14 +1484,15 @@ impl ScrollingLayoutSystem {
             // app settling its own size nor a drag that moves neither side gives it a width.
             return;
         }
-        let stacked = state.columns[col_idx].windows.len() > 1;
         let (kind, ratio) =
             Self::laid_out_ratio(state, &state.columns[col_idx], min_ratio, max_ratio);
-        let held_to_viewport = holds_viewport(kind, ratio, tiling.size.width);
-        let slot = state.laid_out_slot_of(wid).filter(|_| drag.is_none());
-        let (width_kept, height_kept) =
-            tile::kept_axes(slot, new_frame.size, held_to_viewport, stacked);
-        if width_kept && height_kept {
+        let kept = tile::LaidOut {
+            slot: state.laid_out_slot_of(wid).filter(|_| drag.is_none()),
+            held_to_viewport: holds_viewport(kind, ratio, tiling.size.width),
+            stacked: state.columns[col_idx].windows.len() > 1,
+        }
+        .kept_axes(new_frame.size);
+        if kept.both() {
             return;
         }
         if reveals_only {
@@ -1522,11 +1523,11 @@ impl ScrollingLayoutSystem {
                 state.columns[col_idx].width = Some(GivenWidth::Unbounded(offset));
                 state.enter_full_width(wid);
             }
-        } else if !width_kept {
+        } else if !kept.width {
             state.set_column_ratio(wid, col_idx, ratio, given);
         }
 
-        if !height_kept {
+        if !kept.height {
             let height = new_frame.size.height;
             state.columns[col_idx].resize_row(
                 row_idx,

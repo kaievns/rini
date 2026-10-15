@@ -8,7 +8,7 @@ use tracing::{error, warn};
 use crate::layout::ScrollingLayoutSystem;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleDecision;
-use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
+use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult, RuleFloating};
 use crate::workspaces::domain::selector::resolve_workspace;
 use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use crate::workspaces::{Direction, WindowStore, WindowWorkspaceInfo};
@@ -749,7 +749,7 @@ impl WorkspaceStore {
         space: SpaceId,
         rule_decision: AppRuleDecision,
     ) -> Result<AppRuleResult, WorkspaceError> {
-        let prev_rule_decision = window_store.last_rule_decision(window_id);
+        let floated_by_last_rule = window_store.last_rule_decision(window_id);
 
         self.ensure_space_initialized(space);
         if self.workspace_order.is_empty() {
@@ -776,13 +776,17 @@ impl WorkspaceStore {
         {
             let target_workspace_id =
                 self.rule_workspace(space, workspace.as_ref(), existing_assignment)?;
+            let floating = if floating {
+                RuleFloating::Float
+            } else {
+                RuleFloating::unfloated(floated_by_last_rule)
+            };
             let effects = AppRuleEffects {
                 workspace_id: target_workspace_id,
                 floating,
                 position,
                 size,
                 focus,
-                prev_rule_decision,
             };
 
             if let Some(existing_assignment) = existing_assignment {
@@ -806,11 +810,10 @@ impl WorkspaceStore {
         let unruled = |workspace_id| {
             AppRuleResult::Managed(AppRuleEffects {
                 workspace_id,
-                floating: false,
+                floating: RuleFloating::unfloated(floated_by_last_rule),
                 position: None,
                 size: None,
                 focus: false,
-                prev_rule_decision,
             })
         };
 
@@ -1801,7 +1804,7 @@ mod tests {
             space1,
             app("com.example.test"),
         );
-        assert!(assignment.floating);
+        assert!(assignment.floating.floats());
 
         manager.remove_window(&mut window_store, w_float);
 
@@ -1814,7 +1817,7 @@ mod tests {
             space1,
             app("com.example.test"),
         );
-        assert!(assignment_again.floating);
+        assert!(assignment_again.floating.floats());
 
         // 2. Match by app_name
         let w_name = WindowId::new(20, 2);
@@ -1880,7 +1883,7 @@ mod tests {
                 ..app("com.example.special")
             },
         );
-        assert!(ax_assignment.floating);
+        assert!(ax_assignment.floating.floats());
 
         // 5. Workspace name resolution
         let w_named = WindowId::new(50, 6);
@@ -1924,7 +1927,7 @@ mod tests {
             space1,
             app("app.zen-browser.zen"),
         );
-        assert!(!bw_initial_assignment.floating);
+        assert!(!bw_initial_assignment.floating.floats());
         let bw_updated_assignment = assign(
             &mut manager,
             &rules,
@@ -1940,7 +1943,7 @@ mod tests {
             bw_initial_assignment.workspace_id,
             bw_updated_assignment.workspace_id
         );
-        assert!(bw_updated_assignment.floating);
+        assert!(bw_updated_assignment.floating.floats());
 
         // 8. Workspace override + floating with specific substring on different space
         let w_bw2 = WindowId::new(80, 9);
@@ -1952,7 +1955,7 @@ mod tests {
             space2,
             app("app.zen-browser.zen"),
         );
-        assert!(!bw2_initial_assignment.floating);
+        assert!(!bw2_initial_assignment.floating.floats());
         let bw2_updated_assignment = assign(
             &mut manager,
             &rules,
@@ -1968,6 +1971,6 @@ mod tests {
         let expected = manager.list_workspaces(space2).get(2).unwrap().0;
         assert_eq!(bw2_initial_assignment.workspace_id, expected);
         assert_eq!(bw2_updated_assignment.workspace_id, expected);
-        assert!(bw2_updated_assignment.floating);
+        assert!(bw2_updated_assignment.floating.floats());
     }
 }

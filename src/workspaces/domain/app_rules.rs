@@ -11,20 +11,50 @@ use crate::workspaces::VirtualWorkspaceId;
 #[derive(Debug, Clone, Copy)]
 pub struct AppRuleEffects {
     pub workspace_id: VirtualWorkspaceId,
-    pub floating: bool,
+    pub floating: RuleFloating,
     pub position: Option<FloatingPosition>,
     pub size: Option<AppRuleSize>,
     pub focus: bool,
-    pub prev_rule_decision: bool,
+}
+
+/// What the rules say about floating a window, given whether the last rule to decide it floated it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleFloating {
+    /// A rule floats it.
+    Float,
+    /// No rule floats it, and the last one floated it: it goes back to the strip.
+    Tile,
+    /// No rule floats it, nor did the last one: it stays as it is.
+    Keep,
+}
+
+impl RuleFloating {
+    /// No rule floating the window, after a last rule that `floated` it or not.
+    pub fn unfloated(floated: bool) -> Self { if floated { Self::Tile } else { Self::Keep } }
+
+    /// Floating as the window already is, `floating` or not, with no rule having floated it before.
+    pub fn as_is(floating: bool) -> Self { if floating { Self::Float } else { Self::Keep } }
+
+    /// Whether a rule floats the window, which is what the next evaluation reads as the last rule.
+    pub fn floats(self) -> bool { self == Self::Float }
+
+    /// Whether the window floats, given whether it `was_floating`.
+    pub fn should_float(self, was_floating: bool) -> bool {
+        match self {
+            Self::Float => true,
+            Self::Tile => false,
+            Self::Keep => was_floating,
+        }
+    }
 }
 
 impl AppRuleEffects {
     pub fn should_float(self, was_floating: bool) -> bool {
-        self.floating || (!self.prev_rule_decision && was_floating)
+        self.floating.should_float(was_floating)
     }
 
     pub fn floating_placement(self, window: WindowId, space: SpaceId) -> Option<AppRulePlacement> {
-        (self.floating && (self.position.is_some() || self.size.is_some())).then_some(
+        (self.floating.floats() && (self.position.is_some() || self.size.is_some())).then_some(
             AppRulePlacement {
                 window,
                 space,
@@ -232,15 +262,43 @@ mod tests {
 
     use super::*;
 
-    fn effects(floating: bool, prev_rule_decision: bool) -> AppRuleResult {
+    fn effects(floating: RuleFloating) -> AppRuleResult {
         AppRuleResult::Managed(AppRuleEffects {
             workspace_id: VirtualWorkspaceId::default(),
             floating,
             position: None,
             size: None,
             focus: false,
-            prev_rule_decision,
         })
+    }
+
+    /// Each verdict against each state the window was in, and the verdict each rule and last rule
+    /// gives.
+    #[test]
+    fn a_rule_floats_a_window_tiles_one_the_last_rule_floated_and_otherwise_keeps_it() {
+        use RuleFloating::{Float, Keep, Tile};
+        let floats = [
+            (Float, false, true),
+            (Float, true, true),
+            (Tile, false, false),
+            (Tile, true, false),
+            (Keep, false, false),
+            (Keep, true, true),
+        ];
+        for (verdict, was_floating, floating) in floats {
+            assert_eq!(
+                verdict.should_float(was_floating),
+                floating,
+                "{verdict:?} {was_floating}"
+            );
+        }
+        assert_eq!(RuleFloating::unfloated(true), Tile);
+        assert_eq!(RuleFloating::unfloated(false), Keep);
+        assert_eq!(RuleFloating::as_is(true), Float);
+        assert_eq!(RuleFloating::as_is(false), Keep);
+        assert_eq!([Float, Tile, Keep].map(RuleFloating::floats), [
+            true, false, false
+        ]);
     }
 
     fn placed(relative_to: RelativeTo) -> CGPoint {
@@ -295,21 +353,21 @@ mod tests {
             ignored: false,
         };
         assert_eq!(
-            AfterRules::for_result(settled, Ok(&effects(false, true)), true),
+            AfterRules::for_result(settled, Ok(&effects(RuleFloating::Tile)), true),
             AfterRules::Settled
         );
         assert_eq!(
-            AfterRules::for_result(settled, Ok(&effects(true, true)), true),
+            AfterRules::for_result(settled, Ok(&effects(RuleFloating::Float)), true),
             AfterRules::RefreshLayout
         );
         let unassigned = BeforeRules { assigned: false, ..settled };
         assert_eq!(
-            AfterRules::for_result(unassigned, Ok(&effects(false, true)), true),
+            AfterRules::for_result(unassigned, Ok(&effects(RuleFloating::Tile)), true),
             AfterRules::RefreshLayout
         );
         let ignored = BeforeRules { ignored: true, ..settled };
         assert_eq!(
-            AfterRules::for_result(ignored, Ok(&effects(false, true)), true),
+            AfterRules::for_result(ignored, Ok(&effects(RuleFloating::Tile)), true),
             AfterRules::RefreshLayout
         );
     }
@@ -322,11 +380,11 @@ mod tests {
             ignored: false,
         };
         assert_eq!(
-            AfterRules::for_result(floating, Ok(&effects(false, false)), true),
+            AfterRules::for_result(floating, Ok(&effects(RuleFloating::Keep)), true),
             AfterRules::Settled
         );
         assert_eq!(
-            AfterRules::for_result(floating, Ok(&effects(false, true)), true),
+            AfterRules::for_result(floating, Ok(&effects(RuleFloating::Tile)), true),
             AfterRules::RefreshLayout
         );
     }

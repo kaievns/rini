@@ -12,7 +12,7 @@ use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::{EventResponse, LayoutEngine, OnScreenEntry};
-use crate::workspaces::{AppRuleEffects, AppRuleResult, WindowStore};
+use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
 /// The layout constraints `entry` reports.
 fn constraints_of(entry: &OnScreenEntry) -> WindowLayoutConstraints {
@@ -149,11 +149,10 @@ impl LayoutEngine {
         match self.virtual_workspace_manager.auto_assign_window(window_store, wid, space) {
             Ok(ws) => Some(AppRuleResult::Managed(AppRuleEffects {
                 workspace_id: ws,
-                floating: was_floating,
+                floating: RuleFloating::as_is(was_floating),
                 position: None,
                 size: None,
                 focus: false,
-                prev_rule_decision: false,
             })),
             Err(_) => {
                 warn!(

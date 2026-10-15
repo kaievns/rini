@@ -7,7 +7,7 @@ pub mod domain;
 pub mod engine;
 pub mod settings;
 
-pub use domain::app_rules::{AppRuleEffects, AppRuleResult};
+pub use domain::app_rules::{AppRuleEffects, AppRuleResult, RuleFloating};
 pub use domain::command::{
     ArrangeCommand, EngineCommand, FloatingCommand, FocusCommand, ResizeCommand, StripCommand,
     WorkspaceCommand,
