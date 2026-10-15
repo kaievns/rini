@@ -6246,6 +6246,21 @@ mod tests {
     }
 
     #[test]
+    fn a_strip_snap_between_the_folds_folds_back_by_the_reveal() {
+        let (mut system, layout, _a, b) = a_stack_on_the_right(2);
+        assert!(system.select_window(layout, b[1]));
+        kai_s_frames(&system, layout);
+
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        kai_s_frames(&system, layout);
+        system.snap_to_nearest_column(layout);
+        kai_s_frames(&system, layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0));
+    }
+
+    #[test]
     fn a_focus_moved_by_key_between_the_folds_folds_back_by_the_reveal() {
         let (mut system, layout, _a, b) = a_stack_on_the_right(2);
         assert!(system.select_window(layout, b[1]));

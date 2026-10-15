@@ -3,8 +3,7 @@
 One horizontal strip of columns per display. A column holds one or more windows stacked vertically.
 The strip scrolls left and right under a fixed viewport; it never pans within a single column.
 
-- The strip MUST scroll only to show a column: by focus, by a width or a move, by centring or by
-  `snap-strip`. No action scrolls it by a number of columns, and a bind to `scroll-strip` MUST be
+- No action MUST scroll the strip by a number of columns, and a bind to `scroll-strip` MUST be
   refused as an unknown action.
 
 > **Reported 2026-10-15.** Kai's decision: `scroll-strip N` goes. Neither Kai's config nor the
