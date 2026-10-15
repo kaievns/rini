@@ -879,7 +879,7 @@ fn normal_refresh_retries_duplicate_user_space_snapshot_until_valid() {
     ];
     actor.state.refresh_pending = true;
 
-    actor.process_screen_refresh(0, true);
+    actor.process_screen_refresh(0);
     assert_no_wm_event(&mut wm_rx);
     assert!(
         actor.state.refresh_pending,
@@ -891,7 +891,7 @@ fn normal_refresh_retries_duplicate_user_space_snapshot_until_valid() {
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
     ];
 
-    actor.process_screen_refresh(1, true);
+    actor.process_screen_refresh(1);
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {

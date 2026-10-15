@@ -87,16 +87,16 @@ impl<S: System> ScreenCache<S> {
     }
 
     pub fn refresh(&mut self) -> Option<(Vec<ScreenInfo>, CoordinateConverter)> {
-        self.refresh_snapshot(false).map(|s| (s.screens, s.converter))
+        self.refresh_snapshot().map(|s| (s.screens, s.converter))
     }
 
-    fn refresh_snapshot(&mut self, force: bool) -> Option<ScreenState> {
+    fn refresh_snapshot(&mut self) -> Option<ScreenState> {
         if self.sleeping {
             return self.state.clone();
         }
 
         let dirty = self.pending_generation != self.processed_generation;
-        let should_rebuild = force || self.state.is_none() || dirty;
+        let should_rebuild = self.state.is_none() || dirty;
 
         if !should_rebuild {
             // Even when displays are unchanged, the active space per display can change.

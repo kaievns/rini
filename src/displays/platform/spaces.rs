@@ -442,7 +442,7 @@ impl SpacesActor {
                 }
             }
             Notification::ProcessScreenRefresh { attempt } => {
-                self.process_screen_refresh(attempt, true);
+                self.process_screen_refresh(attempt);
             }
             Notification::CheckDisplayStabilization { expected_epoch, attempt } => {
                 self.attempt_finish_display_churn(expected_epoch, attempt);
@@ -888,7 +888,7 @@ impl SpacesActor {
         // in tests where the per-space query is overridden.
         let mut visible = HashMap::default();
         for &space in &active_spaces {
-            for wsid in window_server::space_window_list_for_connection(&[space.get()], 0, false)
+            for wsid in window_server::space_window_list_for_connection(&[space.get()])
                 .into_iter()
                 .map(WindowServerId::new)
             {
@@ -998,14 +998,14 @@ impl SpacesActor {
         self.state.visible_window_spaces = current;
     }
 
-    fn process_screen_refresh(&mut self, attempt: u8, allow_retry: bool) {
+    fn process_screen_refresh(&mut self, attempt: u8) {
         if self.state.must_buffer() {
             self.state.refresh_pending = false;
             return;
         }
 
         let Some((screens, converter)) = self.collect_state() else {
-            if allow_retry && attempt < REFRESH_MAX_RETRIES {
+            if attempt < REFRESH_MAX_RETRIES {
                 self.schedule_screen_refresh_after(REFRESH_RETRY_DELAY_NS, attempt + 1);
                 return;
             }
@@ -1016,7 +1016,7 @@ impl SpacesActor {
         if !snapshot_is_committable(&Self::screen_spaces(&screens), true, |space| {
             self.state.space_kinds.is_fullscreen(space)
         }) {
-            if allow_retry && attempt < REFRESH_MAX_RETRIES {
+            if attempt < REFRESH_MAX_RETRIES {
                 self.schedule_screen_refresh_after(REFRESH_RETRY_DELAY_NS, attempt + 1);
                 return;
             }
@@ -1027,7 +1027,6 @@ impl SpacesActor {
         let spaces: Vec<Option<SpaceId>> = screens.iter().map(|screen| screen.space).collect();
         if self.state.awaiting_space_switch_confirmation
             && self.state.last_sent_spaces.as_ref() == Some(&spaces)
-            && allow_retry
             && attempt < REFRESH_MAX_RETRIES
         {
             self.schedule_screen_refresh_after(REFRESH_SPACE_SWITCH_DELAY_NS, attempt + 1);

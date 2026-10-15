@@ -156,7 +156,7 @@ impl WmController {
                 );
             }
             DiscoverRunningApps => {
-                for (pid, info) in crate::windows::platform::app::running_apps(None) {
+                for (pid, info) in crate::windows::platform::app::running_apps() {
                     self.new_app(pid, info);
                 }
                 self.app_threads.discovered();

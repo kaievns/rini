@@ -235,7 +235,7 @@ fn picture(
 /// menu bar is active cannot be read.
 fn status_windows(owners: &mut OwnerNames) -> (Vec<StatusWindow>, Vec<Placed>) {
     let display = CGDisplayBounds(active_menu_bar_display_id().unwrap_or_else(|| CGMainDisplayID()));
-    let windows: Vec<Listed> = every_window(true)
+    let windows: Vec<Listed> = every_window()
         .into_iter()
         .filter(|window| window.level as isize == NSStatusWindowLevel)
         .collect();

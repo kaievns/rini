@@ -75,7 +75,7 @@ answer another way (`nosync.txt`, `nosync-2.txt`, two runs on an `SLSNewConnecti
 | call | instead | found the same |
 |---|---|---|
 | `SLSGetOnScreenWindowList` | `SLSGetWindowListWithTags` with its on-screen flag 1, which waits on nothing (`on_screen_windows`) | the same 32 windows in the same order, both runs |
-| `SLSCopyWindowsWithOptionsAndTags` | `SLSWindowQueryRun` over the same spaces, owner 0 and `WorkspaceWindowListOptions` 0x2 or 0x7 (`space_window_list_for_connection`) | the same windows in the same order on every space, current and system, for both options, both runs; owners other than 0 are not compared |
+| `SLSCopyWindowsWithOptionsAndTags` | `SLSWindowQueryRun` over the same spaces, owner 0 and `WorkspaceWindowListOptions` 0x2 (`space_window_list_for_connection`) | the same windows in the same order on every space, current and system, both runs |
 | `SLSWindowIsOrderedIn` | the window's iterator attribute bit 1 (`window_ordered_in`) | set for exactly the 33 of 177 windows `SLSWindowIsOrderedIn` called ordered in, both runs; no other tag or attribute bit agreed |
 | `CGWindowListCopyWindowInfo`, `CGWindowListCreateImage` | the listings and `capture_rect` ("CGWindowList, replaced") | below |
 

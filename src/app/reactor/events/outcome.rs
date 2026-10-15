@@ -20,14 +20,12 @@ pub(crate) struct WindowDiscoveryRequest {
 pub(crate) struct WindowFrameWriteRequest {
     pub(crate) window: WindowId,
     pub(crate) frame: CGRect,
-    pub(crate) requested: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TopologyReassignment {
     pub(crate) window: WindowId,
     pub(crate) space: SpaceId,
-    pub(crate) preserve_workspace_ordinal: bool,
 }
 
 /// Follow-up work requested by an event workflow.
@@ -345,17 +343,8 @@ impl EventOutcome {
         self
     }
 
-    pub(crate) fn with_topology_reassignment(
-        mut self,
-        window: WindowId,
-        space: SpaceId,
-        preserve_workspace_ordinal: bool,
-    ) -> Self {
-        self.topology_reassignments.push(TopologyReassignment {
-            window,
-            space,
-            preserve_workspace_ordinal,
-        });
+    pub(crate) fn with_topology_reassignment(mut self, window: WindowId, space: SpaceId) -> Self {
+        self.topology_reassignments.push(TopologyReassignment { window, space });
         self
     }
 
@@ -402,13 +391,8 @@ impl EventOutcome {
         mut self,
         window: WindowId,
         frame: CGRect,
-        requested: bool,
     ) -> Self {
-        self.pre_layout_window_frame_writes.push(WindowFrameWriteRequest {
-            window,
-            frame,
-            requested,
-        });
+        self.pre_layout_window_frame_writes.push(WindowFrameWriteRequest { window, frame });
         self
     }
 

@@ -86,7 +86,7 @@ pub fn handle_window_server_destroyed(
             }
             if let Some(wid) = state.windows.tracked_window_id(wsid) {
                 outcome = outcome
-                    .with_topology_reassignment(wid, current_space, false)
+                    .with_topology_reassignment(wid, current_space)
                     .with_arrange_passes((!mission_control_active) as u8);
             }
             debug!(
@@ -207,7 +207,7 @@ pub fn handle_window_server_appeared(
                 }
                 if let Some(wid) = state.windows.tracked_window_id(wsid) {
                     outcome = outcome
-                        .with_topology_reassignment(wid, resolved_space, false)
+                        .with_topology_reassignment(wid, resolved_space)
                         .with_arrange_passes((!mission_control_active) as u8);
                 }
                 debug!(

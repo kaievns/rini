@@ -449,7 +449,7 @@ pub fn handle_window_frame_changed(
         }
     }
 
-    if handle_mouse_up_if_needed(drag, false, mouse_state) {
+    if handle_mouse_up_if_needed(drag, mouse_state) {
         outcome = outcome.with_mouse_up_dispatch();
     }
     Ok(outcome)
@@ -532,18 +532,7 @@ fn end_drag_of(drag: &mut DragManager, wid: WindowId) {
     }
 }
 
-fn handle_mouse_up_if_needed(
-    drag: &mut DragManager,
-    mission_control_active: bool,
-    mouse_state: Option<MouseState>,
-) -> bool {
-    if mission_control_active {
-        drag.reset();
-        drag.drag_state = DragState::Inactive;
-        drag.skip_layout_for_window = None;
-        return false;
-    }
-
+fn handle_mouse_up_if_needed(drag: &DragManager, mouse_state: Option<MouseState>) -> bool {
     if mouse_state == Some(MouseState::Up)
         && matches!(
             drag.drag_state,

@@ -266,24 +266,13 @@ fn observe_application(
     observe(unsafe { &*(raw as *const ApplicationObserver) });
 }
 
-pub fn running_apps(bundle: Option<String>) -> impl Iterator<Item = (pid_t, AppInfo)> {
+pub fn running_apps() -> impl Iterator<Item = (pid_t, AppInfo)> {
     let callback = APPLICATION_CALLBACK.lock().clone();
     NSWorkspace::sharedWorkspace()
         .runningApplications()
         .into_iter()
         .filter_map(move |app| {
-            let bundle_id_opt = app.bundle_id();
-
-            let bundle_id = bundle_id_opt.as_ref().map(|b| b.to_string());
-            if let Some(filter) = &bundle {
-                if let Some(ref bid) = bundle_id {
-                    if !bid.contains(filter) {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            }
+            let bundle_id = app.bundle_id().as_ref().map(|b| b.to_string());
 
             let info = AppInfo::from(&*app);
             let pid = app.pid();

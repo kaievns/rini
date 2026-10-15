@@ -834,7 +834,7 @@ impl Reactor {
     fn authoritative_active_space_windows(&self) -> Vec<(WindowServerId, Option<SpaceId>)> {
         let mut queried = HashMap::default();
         for space in self.iter_active_spaces() {
-            for wsid in window_server::space_window_list_for_connection(&[space.get()], 0, false)
+            for wsid in window_server::space_window_list_for_connection(&[space.get()])
                 .into_iter()
                 .map(WindowServerId::new)
             {
@@ -1669,17 +1669,7 @@ impl Reactor {
             self.apply_event_outcome(nested);
         }
         for reassignment in outcome.topology_reassignments {
-            if reassignment.preserve_workspace_ordinal {
-                self.reassign_window_to_authoritative_space_preserving_workspace_ordinal(
-                    reassignment.window,
-                    reassignment.space,
-                );
-            } else {
-                self.reassign_window_to_authoritative_space(
-                    reassignment.window,
-                    reassignment.space,
-                );
-            }
+            self.reassign_window_to_authoritative_space(reassignment.window, reassignment.space);
         }
 
         // Some transitions need to place a window on its destination display
@@ -1700,7 +1690,7 @@ impl Reactor {
                     write.window,
                     write.frame,
                     transaction,
-                    write.requested,
+                    true,
                 ))
             {
                 warn!(window = ?write.window, %error, "failed to write requested window frame");
@@ -3245,7 +3235,7 @@ impl Reactor {
             outcome.absorb(
                 EventOutcome::layout_changed(false)
                     .with_layout_response(response, None)
-                    .with_pre_layout_window_frame_write(window, target_frame, true),
+                    .with_pre_layout_window_frame_write(window, target_frame),
             );
         }
 
@@ -4378,11 +4368,7 @@ impl Reactor {
         };
 
         // The stack from the top down to the candidate; only floating windows rini tracks count.
-        let order = crate::windows::platform::window_server::space_window_list_for_connection(
-            &[space.get()],
-            0,
-            false,
-        );
+        let order = crate::windows::platform::window_server::space_window_list_for_connection(&[space.get()]);
         let candidate_u32 = candidate_wsid.as_u32();
         let above = order.into_iter().take_while(|&id| id != candidate_u32).filter_map(|id| {
             let wsid = WindowServerId::new(id);

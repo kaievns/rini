@@ -592,14 +592,13 @@ pub fn on_screen_windows(titles: bool) -> Vec<Listed> {
 }
 
 /// Every window the window server has, on screen or not. None in a test, as for `on_screen_windows`.
-pub fn every_window(titles: bool) -> Vec<Listed> {
+pub fn every_window() -> Vec<Listed> {
     #[cfg(test)]
     {
-        let _ = titles;
         Vec::new()
     }
     #[cfg(not(test))]
-    describe(&window_list(false), titles)
+    describe(&window_list(false), true)
 }
 
 /// The name a window's owner goes by, as the window server's own window list names it: the
@@ -883,40 +882,34 @@ fn iterator_window_suitable(iterator: *mut CFType) -> bool {
 ///
 /// Callers treat this as authoritative membership, so a test answers from its overrides only and gets
 /// nothing when none is set. See "A unit test must not read the live window server" in `docs/testing.md`.
-pub fn space_window_list_for_connection(
-    spaces: &[u64],
-    owner: u32,
-    include_minimized: bool,
-) -> Vec<u32> {
+pub fn space_window_list_for_connection(spaces: &[u64]) -> Vec<u32> {
     #[cfg(test)]
     {
         if spaces.len() == 1
             && let Some(override_ids) = TEST_SPACE_WINDOW_LIST_BY_SPACE_OVERRIDE
                 .with(|ids| ids.borrow().get(&spaces[0]).cloned())
         {
-            let _ = (owner, include_minimized);
             return override_ids;
         }
         if let Some(override_ids) = TEST_SPACE_WINDOW_LIST_OVERRIDE.with(|ids| ids.borrow().clone())
         {
-            let _ = (spaces, owner, include_minimized);
             return override_ids;
         }
         Vec::new()
     }
     #[cfg(not(test))]
-    space_window_list_from_window_server(spaces, owner, include_minimized)
+    space_window_list_from_window_server(spaces)
 }
 
-/// The query for the windows on `spaces` of `owner`'s or, with 0, of every connection, minimized
-/// ones as well with `include_minimized`: what `SLSCopyWindowsWithOptionsAndTags` answers, which waits
-/// on the main connection whatever it is given.
-fn space_list_filter(spaces: &[u64], owner: u32, include_minimized: bool) -> WindowQueryFilter<'_> {
+/// The query for the windows on `spaces` of every connection, minimized ones left out: what
+/// `SLSCopyWindowsWithOptionsAndTags` answers, which waits on the main connection whatever it is
+/// given.
+fn space_list_filter(spaces: &[u64]) -> WindowQueryFilter<'_> {
     WindowQueryFilter {
-        owner: owner as i32,
+        owner: 0,
         spaces,
         space_list_options: 0,
-        window_list_options: if include_minimized { 0x7 } else { 0x2 },
+        window_list_options: 0x2,
         query_flags: 0,
         include_tags: 0,
         exclude_tags: 0,
@@ -924,13 +917,8 @@ fn space_list_filter(spaces: &[u64], owner: u32, include_minimized: bool) -> Win
 }
 
 #[cfg(not(test))]
-fn space_window_list_from_window_server(
-    spaces: &[u64],
-    owner: u32,
-    include_minimized: bool,
-) -> Vec<u32> {
-    let Some(iterator) = window_query_run(&space_list_filter(spaces, owner, include_minimized))
-    else {
+fn space_window_list_from_window_server(spaces: &[u64]) -> Vec<u32> {
+    let Some(iterator) = window_query_run(&space_list_filter(spaces)) else {
         return Vec::new();
     };
     let mut windows = Vec::new();
@@ -1105,7 +1093,7 @@ mod tests {
         assert_eq!(window_ordered_in(id), None);
         assert!(window_spaces(id).is_empty());
         // Space 1 is the space every reactor test uses, and the one a real machine is most likely to have.
-        assert!(space_window_list_for_connection(&[1], 0, false).is_empty());
+        assert!(space_window_list_for_connection(&[1]).is_empty());
     }
 
     #[test]
@@ -1324,9 +1312,9 @@ mod stack_tests {
     }
 
     #[test]
-    fn a_space_list_asks_for_every_owner_and_minimized_windows_only_when_told() {
+    fn a_space_list_asks_for_every_owner_and_leaves_minimized_windows_out() {
         let spaces = [5];
-        let shown = space_list_filter(&spaces, 0, false);
+        let shown = space_list_filter(&spaces);
         assert_eq!(
             (shown.owner, shown.spaces, shown.window_list_options),
             (0, &spaces[..], 0x2)
@@ -1335,8 +1323,6 @@ mod stack_tests {
             (shown.include_tags, shown.exclude_tags, shown.space_list_options),
             (0, 0, 0)
         );
-        assert_eq!(space_list_filter(&spaces, 41, true).window_list_options, 0x7);
-        assert_eq!(space_list_filter(&spaces, 41, true).owner, 41);
     }
 
     #[test]

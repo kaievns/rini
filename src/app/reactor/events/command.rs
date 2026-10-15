@@ -409,7 +409,7 @@ pub fn handle_command_reactor_move_window_to_display(
 
     Ok(EventOutcome::layout_changed(false)
         .with_layout_response(response, None)
-        .with_pre_layout_window_frame_write(payload.window, payload.target_frame, true))
+        .with_pre_layout_window_frame_write(payload.window, payload.target_frame))
 }
 
 #[cfg(test)]
