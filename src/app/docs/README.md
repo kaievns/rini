@@ -8,7 +8,8 @@ knows the features and converts what they emit.
 | | |
 |---|---|
 | `reactor/` | The orchestrator. Holds every feature's store, reduces the events they emit, drives them back |
-| `reactor/mod.rs` | `Reactor` and its `Event`: the loop that takes each batch, `dispatch_workflow` handing each event to its reducer, and `apply_event_outcome` carrying out what the reducer left, in order |
+| `reactor/mod.rs` | `Reactor` and its `Event`: the loop that takes each batch, and `apply_event_outcome` carrying out what the reducer left, in order |
+| `reactor/dispatch.rs` | `dispatch_workflow`: the focus report an event carries taken in, then the event handed by its family (applications, windows, spaces and the system, input and the bar, commands) to its reducer |
 | `reactor/active_spaces.rs` | Which spaces rini is active on, recomputed from the screens, and each window's visibility and space reconciled against the active spaces' window lists |
 | `reactor/space_snapshot.rs` | A snapshot of the displays' spaces taken in: screens and spaces replaced, a departing display's windows given it as their home, the topology's window moves, windows back from a native fullscreen space, and the snapshot held while Mission Control is open |
 | `reactor/display_homes.rs` | Which display each window belongs on: the arrangement in force, display pins, homes observed from the live layout, windows moved back to a returning display or by the redistribute command |
@@ -75,7 +76,8 @@ reload keeps the running config and says why, in the log and with a mark on ever
 **Decisions leave, orchestration stays.** Pure feature logic has been moved out to each
 feature's `domain/` over several passes. What remains in `reactor/` reads and writes
 several stores per event, which is what the application is for: `reactor/mod.rs` is the
-loop and the dispatch, and each sibling file is one concern's `impl Reactor`.
+loop, `reactor/dispatch.rs` the dispatch, and each other sibling file is one concern's
+`impl Reactor`.
 
 **A bound action is a translation, not a side effect.** `hotkeys/lower.rs` turns an
 `Action` into a `reactor::Command`, a program to spawn, a config reload, or a named
@@ -150,8 +152,8 @@ each left this module and took their tests with them.
 
 ## Reading order
 
-`reactor/state.rs` → `reactor/events/` → `reactor/mod.rs` → the concern files beside it,
-and `main.rs` for how it is all assembled.
+`reactor/state.rs` → `reactor/events/` → `reactor/mod.rs` → `reactor/dispatch.rs` → the
+concern files beside it, and `main.rs` for how it is all assembled.
 
 ## Known debt
 

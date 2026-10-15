@@ -63,7 +63,7 @@ touches nothing outside itself.
 
 | module | what it is |
 |---|---|
-| `reactor/` | the orchestrator. Holds every feature's store, reduces the events they emit (`reactor/events/`), and drives them back. `reactor/mod.rs` is the loop and the dispatch, and each concern's `impl Reactor` is a file beside it, named in `src/app/docs/README.md`; `reactor/state.rs` is `RiniState`; `reactor/query.rs` answers from a borrowed `StateView`; `reactor/managers.rs` holds the state kept per concern in more than one field and the channels |
+| `reactor/` | the orchestrator. Holds every feature's store, reduces the events they emit (`reactor/events/`), and drives them back. `reactor/mod.rs` is the loop, `reactor/dispatch.rs` the dispatch, and each concern's `impl Reactor` is a file beside it, named in `src/app/docs/README.md`; `reactor/state.rs` is `RiniState`; `reactor/query.rs` answers from a borrowed `StateView`; `reactor/managers.rs` holds the state kept per concern in more than one field and the channels |
 | `reactor/commands.rs` | what a command means before it is carried out: which window "index 3" is, which display "next" is, what frame a move lands on |
 | `reactor/observations.rs` | the other half of the inbox: what the system reported. Gathers what a reducer needs about a window, a space or a drag, and hands it over settled |
 | `config/` | the `config.kdl` file: decoded section by section into part types (`config/kdl/`), laid over each feature's settings type with the checks that span sections, watching and reload. The format's decisions are `docs/config.md` |

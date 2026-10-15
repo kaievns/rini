@@ -233,10 +233,10 @@ Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_work
 **OPEN — deliberately. See 3.3.**
 
 `src/app/reactor/` splits `Reactor` by concern: `mod.rs` holds the struct, its `Event`, the
-loop, `dispatch_workflow` and `apply_event_outcome`, and each file beside it is one concern's
-`impl Reactor` (`src/app/docs/README.md`, "What it owns"). No in-file tests. Direct field
-reaches, as counted when this was found: `state` 112, the layout engine 61, `space_state` 43,
-`drag_manager` 18, `communication_manager` 17, `refresh_quarantine_manager` 14,
+loop and `apply_event_outcome`, `dispatch.rs` holds `dispatch_workflow`, and each other file
+beside it is one concern's `impl Reactor` (`src/app/docs/README.md`, "What it owns"). No in-file
+tests. Direct field reaches, as counted when this was found: `state` 112, the layout engine 61,
+`space_state` 43, `drag_manager` 18, `communication_manager` 17, `refresh_quarantine_manager` 14,
 `transactions` 11. The one-field wrappers are gone: the layout engine, the applications, the menu
 state, the notification ids, the pending space change and the transaction store (`WindowTxStore`)
 are plain `Reactor` fields.
@@ -247,7 +247,7 @@ Largest methods, and what each one turned out to be:
 | method | lines | verdict |
 |---|---|---|
 | `handle_layout_response` | 303 → 248 | four rules extracted, one of them a bug fix |
-| `dispatch_workflow` | 288 | a dispatch table; length is not the defect |
+| `dispatch_workflow` | 288 → 57 | a dispatch table, split by event family |
 | `apply_event_outcome` | 271 → 9 | three rules extracted; the drain split at the arrange, with no re-entry |
 | `handle_authoritative_space_snapshot` | 251 → 228 | the display-set comparison extracted |
 
@@ -276,9 +276,10 @@ the same way, where it is handed back, and returns what is left of them for
 arrange and left unused there fails the `-D warnings` build. See "Carrying out an outcome"
 in `src/app/docs/README.md`.
 
-`dispatch_workflow` is long because it is a dispatch table — one arm per event variant,
-every arm delegating. Length is not the defect there and splitting it by event family
-would add a "not handled" return for nothing.
+`dispatch_workflow` (`src/app/reactor/dispatch.rs`) is a dispatch table: one arm per event
+variant, every arm delegating. It names every variant once, so the match stays exhaustive, and
+hands each to its family's dispatcher. A family's catch-all leaves the focus report's raise,
+which is what the variants with nothing of their own to carry out left before the split.
 
 #### 3.2.1 The raise list's order was thrown away by its own batching
 

@@ -7,6 +7,7 @@ use rini_ipc::protocol::WorkspaceSelector;
 use test_log::test;
 
 use super::fixtures::*;
+use crate::app::reactor::events::window as window_workflow;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
@@ -308,6 +309,17 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
         enable,
         crate::input::platform::input_tap::Request::SetFocusFollowsMouseEnabled(true)
     ));
+    assert_eq!(reactor.menu_state, MenuState::Closed);
+}
+
+#[test]
+fn menu_open_state_is_cleared_when_owner_globally_deactivates() {
+    let mut reactor = test_reactor();
+    reactor.handle_event(Event::MenuOpened(1));
+    reactor.handle_event(Event::ApplicationGloballyDeactivated(2));
+    assert_eq!(reactor.menu_state, MenuState::Open(1));
+
+    reactor.handle_event(Event::ApplicationGloballyDeactivated(1));
     assert_eq!(reactor.menu_state, MenuState::Closed);
 }
 

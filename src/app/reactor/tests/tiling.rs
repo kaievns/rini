@@ -12,6 +12,7 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::animation::domain::motion::surface::SurfaceGeometry;
+use crate::app::reactor::events::window as window_workflow;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::input::event::LeftPress;
