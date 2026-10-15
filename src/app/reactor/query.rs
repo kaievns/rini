@@ -303,7 +303,7 @@ impl StateView<'_> {
                     if let Some(screen) = screen_info {
                         let display_uuid = screen.display_uuid_opt();
                         let gaps = self.settings.layout.gaps.effective_for_display(display_uuid);
-                        self.engine.calculate_layout_for_workspace(
+                        self.engine.preview_layout_for_workspace(
                             self.windows,
                             space,
                             *workspace_id,

@@ -2067,13 +2067,7 @@ impl LayoutEngine {
         let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
             return Vec::new();
         };
-        self.workspace_tree(ws_id).calculate_layout(
-            layout,
-            screen,
-            &self.window_layout_constraints,
-            &self.borders,
-            gaps,
-        )
+        self.lay_out_strip(ws_id, layout, screen, gaps)
     }
 
     pub fn calculate_layout_with_virtual_workspaces<F>(
@@ -2136,13 +2130,7 @@ impl LayoutEngine {
 
         if let Some(active_workspace_id) = self.virtual_workspace_manager.active_workspace(space) {
             if let Some(layout) = self.workspace_layouts.active(space, active_workspace_id) {
-                let tiled_positions = self.workspace_tree(active_workspace_id).calculate_layout(
-                    layout,
-                    screen,
-                    &self.window_layout_constraints,
-                    &self.borders,
-                    gaps,
-                );
+                let tiled_positions = self.lay_out_strip(active_workspace_id, layout, screen, gaps);
 
                 for (wid, rect) in tiled_positions {
                     // A column scrolled right off the strip is parked in a corner rather than written at
@@ -4461,6 +4449,55 @@ mod tests {
         );
 
         assert_eq!(engine.calculate_layout(space, screen, &gaps,), modified);
+    }
+
+    #[test]
+    fn a_preview_of_a_workspace_answers_its_next_pass_and_leaves_the_strip() {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
+        let space = SpaceId::new(94);
+        let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
+        let pid: pid_t = 5153;
+        let window = |idx| {
+            let size = CGSize::new(500.0, 500.0);
+            (
+                WindowId::new(pid, idx),
+                None,
+                None,
+                None,
+                false,
+                true,
+                size,
+                None,
+                None,
+            )
+        };
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, screen.size),
+        );
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![window(1), window(2)], None),
+        );
+        let gaps = engine.layout_settings.gaps.effective_for_display(None);
+        let workspace = engine.active_workspace(space).expect("an active workspace");
+        let layout = engine.workspace_layouts.active(space, workspace).expect("a layout");
+
+        let mut preview =
+            engine.preview_layout_for_workspace(&window_store, space, workspace, screen, &gaps);
+        assert_eq!(preview.len(), 2);
+        assert_eq!(engine.workspace_tree(workspace).strip_origin(layout), None);
+
+        let mut laid_out =
+            engine.calculate_layout_for_workspace(&window_store, space, workspace, screen, &gaps);
+        laid_out.sort_by_key(|(wid, _)| wid.idx);
+        preview.sort_by_key(|(wid, _)| wid.idx);
+        assert_eq!(laid_out, preview);
+        assert!(engine.workspace_tree(workspace).strip_origin(layout).is_some());
     }
 
     #[test]
