@@ -178,7 +178,7 @@ impl<W: AxWorld> State<W> {
         for elem in window_elems {
             let wsid = self.ax.window_server_id(&elem);
             let hint = wsid.and_then(|id| server_info_by_id.get(&id).copied());
-            let info = match self.ax.window_info(&elem, hint) {
+            let mut info = match self.ax.window_info(&elem, hint) {
                 Ok((info, _)) => info,
                 Err(err) => {
                     let id = self.id(&elem).ok();
@@ -191,24 +191,22 @@ impl<W: AxWorld> State<W> {
                 continue;
             }
 
-            let Some(wid) = self.id(&elem).ok().or_else(|| {
-                self.register_window(elem.clone(), hint).map(|(info, wid, _)| {
-                    if !info.is_minimized {
-                        known_visible.push(wid);
-                    }
-                    new.push((wid, info));
-                    wid
-                })
-            }) else {
-                continue;
+            let wid = if let Ok(wid) = self.id(&elem) {
+                self.complete_info(&elem, &mut info);
+                // The WindowServer id is stable across sleep/display transitions, but
+                // the corresponding AXUIElement is not. `id` intentionally resolves the
+                // fresh element to the existing wid by that stable id; refresh the actor's
+                // handle as well or subsequent frame writes keep targeting the pre-wake
+                // element and can never recover.
+                self.rebind_window_element(wid, elem, &info);
+                wid
+            } else {
+                let Some((registered, wid, _)) = self.register_window(elem, hint) else {
+                    continue;
+                };
+                info = registered;
+                wid
             };
-
-            // The WindowServer id is stable across sleep/display transitions, but
-            // the corresponding AXUIElement is not. `id` intentionally resolves the
-            // fresh element to the existing wid by that stable id; refresh the actor's
-            // handle as well or subsequent frame writes keep targeting the pre-wake
-            // element and can never recover.
-            self.rebind_window_element(wid, elem, &info);
 
             if !info.is_minimized {
                 known_visible.push(wid);
@@ -1172,17 +1170,7 @@ impl<W: AxWorld> State<W> {
             return None;
         }
 
-        if admissible::needs_title_element_to_be_standard(self.bundle_id.as_deref())
-            && self.ax.read_attribute(&elem, "AXTitleUIElement").is_err()
-        {
-            info.is_standard = false;
-        }
-
-        if let Some(wsid) = info.sys_id {
-            info.is_root = self.ax.server().window_parent(wsid).is_none();
-        } else {
-            info.is_root = true;
-        }
+        self.complete_info(&elem, &mut info);
 
         let window_server_id = info.sys_id.filter(|sid| sid.as_nonzero().is_some()).or_else(|| {
             let id = self.ax.window_server_id(&elem);
@@ -1221,6 +1209,19 @@ impl<W: AxWorld> State<W> {
             self.send_event(Event::WindowMinimized(wid));
         }
         Some((info, wid, server_info))
+    }
+
+    /// What Accessibility's own read leaves out of `info`: whether a window of an application
+    /// `admissible::needs_title_element_to_be_standard` names is standard, and whether the window
+    /// server gives it a parent.
+    fn complete_info(&self, elem: &W::Element, info: &mut WindowInfo) {
+        if admissible::needs_title_element_to_be_standard(self.bundle_id.as_deref())
+            && self.ax.read_attribute(elem, "AXTitleUIElement").is_err()
+        {
+            info.is_standard = false;
+        }
+        info.is_root =
+            info.sys_id.is_none_or(|wsid| self.ax.server().window_parent(wsid).is_none());
     }
 
     fn register_window_notifications(&self, elem: &W::Element, wid: WindowId) -> bool {
@@ -1990,11 +1991,81 @@ mod tests {
             sink.0.borrow().iter().any(|event| matches!(
                 event,
                 Event::WindowsDiscovered { new, .. }
-                    if !new.is_empty() && new.iter().all(|(w, _)| *w == reported_wid)
+                    if new.iter().map(|(w, _)| *w).eq([reported_wid])
             )),
             "{:?}",
             sink.0.borrow()
         );
+    }
+
+    /// What the refresh `GetVisibleWindows` asks for reports: each window it found, with its info,
+    /// and the ones of those not minimized.
+    fn refreshed(
+        state: &mut State<FakeAx>,
+        sink: &Sink,
+    ) -> (Vec<(WindowId, WindowInfo)>, Vec<WindowId>) {
+        sink.0.borrow_mut().clear();
+        state.handle_request(Request::GetVisibleWindows).expect("refreshed");
+        sink.0
+            .borrow()
+            .iter()
+            .find_map(|event| match event {
+                Event::WindowsDiscovered { new, known_visible, .. } => {
+                    Some((new.clone(), known_visible.clone()))
+                }
+                _ => None,
+            })
+            .expect("a refresh reports what it found")
+    }
+
+    /// A window a refresh takes on is reported once, not once as registered and again as found.
+    #[test]
+    fn a_refresh_reports_a_window_it_takes_on_once() {
+        let window = 7;
+        let frame = rect(0., 0., 100., 100.);
+        let ax = FakeAx::with_one_window(window, frame);
+        ax.server.set_window(WindowServerId::new(window), peer(window, frame));
+        let (mut state, sink) = state_with(ax);
+
+        let (new, known_visible) = refreshed(&mut state, &sink);
+
+        let wid = state.id(&window).expect("taken on");
+        assert_eq!(new.iter().map(|(w, _)| *w).collect::<Vec<_>>(), [wid]);
+        assert_eq!(known_visible, [wid]);
+    }
+
+    /// What registration decides about a window holds at every refresh after: a window of an
+    /// application that needs a title element and has none stays non-standard, and one the window
+    /// server gives a parent stays off the root.
+    #[test]
+    fn a_refresh_reports_a_known_window_as_registration_decided() {
+        let (untitled, child) = (7, 8);
+        let frame = rect(0., 0., 100., 100.);
+        let mut ax = FakeAx::with_one_window(untitled, frame);
+        ax.windows.push(child);
+        ax.describe_standard_window(child, frame);
+        ax.without_title_element.push(untitled);
+        for window in [untitled, child] {
+            ax.server.set_window(WindowServerId::new(window), peer(window, frame));
+        }
+        ax.server
+            .set_window_parent(WindowServerId::new(child), Some(WindowServerId::new(3)));
+        let (mut state, sink) = state_with(ax);
+        state.bundle_id = Some("com.googlecode.iterm2".to_owned());
+        refreshed(&mut state, &sink);
+
+        let (new, _) = refreshed(&mut state, &sink);
+
+        let info = |window| {
+            let wid = state.id(&window).expect("known");
+            new.iter()
+                .find(|(w, _)| *w == wid)
+                .map(|(_, info)| info.clone())
+                .expect("reported")
+        };
+        assert!(!info(untitled).is_standard, "no title element, not standard");
+        assert!(!info(child).is_root, "a parent, not a root window");
+        assert_eq!(new.len(), 2, "each reported once: {new:?}");
     }
 
     /// Runs the actor over `requests` with a raise of `raised` queued ahead of them, and answers
