@@ -918,7 +918,7 @@ fn authoritative_snapshot_rejects_duplicate_user_space_snapshot() {
     ];
 
     assert!(
-        !actor.try_forward_authoritative_snapshot(true, true),
+        !actor.try_forward_authoritative_snapshot(true),
         "authoritative refresh path must reject duplicate user-space snapshots"
     );
     assert_no_wm_event(&mut wm_rx);

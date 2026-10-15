@@ -299,14 +299,14 @@ impl SpacesActor {
             });
             return;
         }
-        if !self.try_forward_authoritative_snapshot(true, true) {
+        if !self.try_forward_authoritative_snapshot(true) {
             self.schedule_screen_refresh_after(0, 0);
         }
     }
 
     fn handle_active_space_changed(&mut self) {
         self.state.refresh = self.state.refresh.next(RefreshEdge::SpaceSwitched);
-        if self.state.quarantined() || !self.try_forward_authoritative_snapshot(false, true) {
+        if self.state.quarantined() || !self.try_forward_authoritative_snapshot(false) {
             self.schedule_screen_refresh_after(REFRESH_SPACE_SWITCH_DELAY_NS, 0);
         }
     }
@@ -318,7 +318,7 @@ impl SpacesActor {
         }
         // Creating or destroying a space, or moving a window between spaces, can change what a
         // display owns while every screen shows the space it showed, so the snapshot is forced.
-        if !self.try_forward_authoritative_snapshot(true, true) {
+        if !self.try_forward_authoritative_snapshot(true) {
             self.schedule_screen_refresh_after(REFRESH_RETRY_DELAY_NS, 0);
         }
     }
@@ -446,11 +446,7 @@ impl SpacesActor {
         }
     }
 
-    fn try_forward_authoritative_snapshot(
-        &mut self,
-        force: bool,
-        require_complete_spaces: bool,
-    ) -> bool {
+    fn try_forward_authoritative_snapshot(&mut self, force: bool) -> bool {
         if self.state.refresh.is_pending() || self.state.churn.is_active() {
             return false;
         }
@@ -459,9 +455,8 @@ impl SpacesActor {
         };
         let spaces = spaces_of(&screens);
         let kinds = self.state.space_kinds;
-        if !snapshot_is_committable(&spaces, require_complete_spaces, |space| {
-            kinds.is_fullscreen(space)
-        }) || (!force && self.state.last_sent_spaces.as_ref() == Some(&spaces))
+        if !snapshot_is_committable(&spaces, true, |space| kinds.is_fullscreen(space))
+            || (!force && self.state.last_sent_spaces.as_ref() == Some(&spaces))
         {
             return false;
         }
