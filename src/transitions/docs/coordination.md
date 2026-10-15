@@ -783,7 +783,7 @@ capture there (its `Parts`' `capture`, `capture_via_framed` in production, 16-24
 `Member::Entrance` from the spawn frame to the slot, crop-drawn with its spawn
 picture and the window's ground in the growth until its picture at the slot is
 swapped in: the window is
-watched until it has repainted where it ends (`StageSummary::repainting`,
+watched until it has repainted where it ends (`Waits::repainting`,
 `Settle::Repainted`) and never held for, left out of the last capture before the lift until it has
 (`Flight::final_windows`), so one not repainted by then flies its spawn picture to the lift, and its slot is written with every
 other frame as the overlay goes up. A frame off this display is not a spawn: a parked window
@@ -858,10 +858,10 @@ coalesce window, and is accepted.
 A resize runs a navigation's sequence (Kai, 2026-10-09; `specs/animation.md` "Resizing"): frame
 zero's SkyLight pictures at the press, the overlay up with them, and the real frames written as the
 overlay goes up, so the app repaints at its new size behind it. Each resized window is watched until
-it has repainted where it ends (`EndPicture::of_request`, sorted into the stage's lists by `Waits`,
-`StageSummary::repainting`, `Settle::Repainted`). A window the pass grows on either axis, judged on the request's own sizes
+it has repainted where it ends (`EndPicture::of_request`, one sort per window in the stage's `Waits`,
+`Waits::repainting`, `Settle::Repainted`). A window the pass grows on either axis, judged on the request's own sizes
 (`stretch::grows`) and a merged pass's against its tile's picture as well ("Mid-flight passes"), a fold widening a window as it shortens it included, is `EndPicture::Held`: in
-`StageSummary::awaiting` as well, so the overlay stands still at frame zero, in place of the 25ms
+`Waits::awaiting` as well, so the overlay stands still at frame zero, in place of the 25ms
 coalesce, until its repainted picture lands, up to `HOLD_CAP` from the show, or `ELSEWHERE_HOLD_CAP`
 when a window it holds for ends cut by the display's edge (below). That picture goes onto
 the tile before the motion starts, `FlightEngine::swap` posing frame zero again with it (`reinstall`),
@@ -918,7 +918,7 @@ stretched, a stand-in's with no crop grid, takes its repaint at once (`tile::con
 build that flew grows at once (journal n1 in `docs/data/2026-10-09-resize`, 6 flights)
 the motion started 56-73ms after the press and each grow's repaint landed 162-224ms after it, 135-178ms
 after the show: held, the motion starts about 160-225ms after the press. A window the pass only
-shrinks is `EndPicture::Kept`, in `StageSummary::kept` as well: never held for itself, it moves
+shrinks is `EndPicture::Kept`, in `Waits::kept` as well: never held for itself, it moves
 when its flight does, once the follow-ups are in when the pass grows no window, and with the held
 grows when it does. Its tile flies its picture from the press to the lift. Crop-drawn on the leg's
 anchors, that picture covers every frame of a shrink, so there is no ground to cut from, and neither
@@ -940,10 +940,10 @@ ground below it on the 1079-tall start, up to 422 blocks; kept, nothing is swapp
 fresh at frame zero through ScreenCaptureKit instead would spend 38-56ms a capture
 (`src/pictures/docs/capture-research.md`) of the 80ms `FRAME_ZERO_PATIENCE`, delaying the show. The
 latest pass to resize a window decides, for the hold as for the picture, judged against the picture its tile carries: a merged pass
-growing a kept window takes it out of `kept`, its landing swapped as a grow's, held for if the motion
+growing a kept window keeps it no longer (`Flight::keeps`), its landing swapped as a grow's, held for if the motion
 has not started, and held itself until the window repaints if it has ("Mid-flight passes"); one
 shrinking a held grow inside that picture takes it out of `Flight::holds_for`, so the motion stops
-waiting for it, and puts it in `kept` when the picture it starts with covers its start, while one
+waiting for it, and keeps it when the picture it starts with covers its start, while one
 ending it past that picture is a grow still; one
 only moving it leaves it as it was, unless a held pass grows it and it ends past that picture.
 
@@ -970,8 +970,8 @@ not fit at both ends, a stand-in's real picture landing on a resize, is cut onto
 keyed along the leg (`a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped`); a
 resize's repaint fits only its leg's end and stays cropped
 (`a_resizing_tile_stays_cropped_when_its_repaint_lands`). Re-keying from the presented frame over the remaining duration restarted
-the ease-out and the tile lurched at every swap. The flight keeps the windows the latest pass to
-resize each held for (`Flight::holds_for`), and holds only for those a watch can see
+the ease-out and the tile lurched at every swap. The flight holds for the windows the latest pass to
+resize each held for (`Flight::holds_for`, read from each window's `Awaited` record), and holds only for those a watch can see
 (`Flight::holdable`); a grow that missed the cap is still repainting, so it is not pictured by the
 last capture until it has landed (`Flight::final_windows`), a kept shrink never is, and one not
 repainted by the lift is not drawn:

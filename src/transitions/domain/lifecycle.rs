@@ -13,6 +13,7 @@ use rini_geometry::space::{OverlayRect, ScreenRect, SurfacePoint};
 use rini_geometry::{is_off_screen, shows_on, to_overlay_space};
 use serde::Serialize;
 
+use super::admission::{EndPicture, Waits};
 use super::request::SurfaceWindow;
 use super::timing::{
     BURST_HOLD_CAP, COALESCE_WINDOW, ELSEWHERE_HOLD_CAP, FRAME_INTERVAL, HOLD_CAP, LIFT_GRACE,
@@ -124,17 +125,15 @@ pub struct StageSummary {
     pub key: Option<WindowId>,
     /// The focus target, when its tile flies its focused look (`parked_focus`).
     pub focused_look: Option<WindowId>,
-    /// Windows this pass grows, or draws with no picture of their own, a reserved entrance or a
-    /// stand-in: watched until they repaint, and held for, overlay up, until the motion starts.
-    pub awaiting: Vec<WindowId>,
-    /// Windows this pass resizes, or opens to fly from where macOS first showed them, not painted at
-    /// their new frames yet: watched until they repaint where they end, and pictured there only once
-    /// they have, those in `kept` never. Of them, only the grows are held for, in `awaiting` as well.
-    pub repainting: Vec<WindowId>,
-    /// Of `repainting`, the windows this pass only shrinks whose tiles start with a picture covering
-    /// their start (`EndPicture::Kept`): those keep it to the lift, as it covers every frame, and no
-    /// picture of them where they end is drawn.
-    pub kept: Vec<WindowId>,
+    /// How this pass waits for each window's picture where it ends (`EndPicture`), a window that
+    /// lands left out. Its grows and the windows it draws with no picture of their own, a reserved
+    /// entrance or a stand-in, are watched until they repaint and held for, overlay up, until the
+    /// motion starts (`Waits::awaiting`). The windows it resizes, or opens to fly from where macOS
+    /// first showed them, are watched until they repaint where they end, and pictured there only once
+    /// they have (`Waits::repainting`); of them, a shrink whose tile starts with a picture covering
+    /// its start keeps that picture to the lift, as it covers every frame, and no picture of it where
+    /// it ends is drawn (`Waits::kept`).
+    pub waits: Waits,
     pub start: Start,
     /// The motion's length: the press's own, and for a merge the score's when that is longer. A merge
     /// that moves anything restarts the clock with it.
@@ -229,12 +228,12 @@ impl StageSummary {
             .collect()
     }
 
-    /// Of `awaiting`, the windows that end on screen, wholly or cut by its edge, floating or not: what
-    /// a watch can see repaint.
-    fn awaited_ends(&self, awaiting: &[WindowId]) -> Vec<(WindowId, ScreenRect)> {
+    /// Of the windows `awaits`, those that end on screen, wholly or cut by its edge, floating or not:
+    /// what a watch can see repaint.
+    fn awaited_ends(&self, awaits: impl Fn(WindowId) -> bool) -> Vec<(WindowId, ScreenRect)> {
         self.tiles
             .iter()
-            .filter(|t| awaiting.contains(&t.window) && shows_on(t.end, self.display))
+            .filter(|t| awaits(t.window) && shows_on(t.end, self.display))
             .map(|t| (t.window, t.end))
             .collect()
     }
@@ -514,18 +513,9 @@ struct Flight {
     /// earlier one was taken for another end, and one under it or later still holds, whatever merged
     /// since it was taken.
     end_since: Vec<(WindowId, Generation)>,
-    /// Every window a pass of this flight resized, opened or drew as a stand-in: watched until it
-    /// repaints.
-    awaiting: Vec<WindowId>,
-    /// Of `awaiting`, the windows resized or flying from where macOS showed them, pictured where they
-    /// end only once they have repainted there, those whose tiles keep their pictures (`keeps`) never.
-    repainting: Vec<WindowId>,
-    /// Of `awaiting`, the windows the latest pass to resize them grew, and those a pass drew with no
-    /// picture of their own: what the overlay holds for before the motion starts.
-    holds_for: Vec<WindowId>,
-    /// Of `repainting`, the windows the latest pass to resize them shrank whose tiles start with a
-    /// picture covering their start: they keep it (`keeps`).
-    kept: Vec<WindowId>,
+    /// Every window a pass of this flight resized, opened or drew as a stand-in, each once: watched
+    /// until it repaints (`Awaited`).
+    awaited: Vec<Awaited>,
     /// The awaited windows the overlay still holds for before the motion starts, or the grows a held
     /// merge waits for.
     held: Vec<WindowId>,
@@ -540,7 +530,61 @@ struct Flight {
     turned: Vec<(WindowId, ScreenRect)>,
 }
 
+/// A window a pass of a flight resized, opened or drew as a stand-in, watched until it repaints, and
+/// how the passes that sorted it wait for its picture where it ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Awaited {
+    window: WindowId,
+    /// The latest pass to sort it anything but `Lands`: what decides whether the overlay holds for
+    /// it (`EndPicture::holds`) and whether its tile keeps its picture (`EndPicture::Kept`).
+    end: EndPicture,
+    /// A pass before that one sorted it to repaint where it ends.
+    repainted_before: bool,
+}
+
+impl Awaited {
+    /// Pictured where it ends only once it has repainted there, unless its tile keeps its picture: a
+    /// pass of the flight resized it or flew it from where macOS showed it.
+    fn repaints(self) -> bool { self.repainted_before || self.end.repaints() }
+
+    /// The windows `awaited` sorted again by a pass waiting for them as `waits` says: each one it
+    /// waits for takes the pass's sort and remembers having repainted, and each new one joins.
+    fn sort_in(awaited: &mut Vec<Awaited>, waits: &Waits) {
+        for (window, end) in waits.ends() {
+            match awaited.iter_mut().find(|a| a.window == window) {
+                Some(a) => {
+                    a.repainted_before = a.repaints();
+                    a.end = end;
+                }
+                None => awaited.push(Awaited {
+                    window,
+                    end,
+                    repainted_before: false,
+                }),
+            }
+        }
+    }
+}
+
 impl Flight {
+    fn awaited(&self, window: WindowId) -> Option<Awaited> {
+        self.awaited.iter().copied().find(|a| a.window == window)
+    }
+
+    /// Whether `window` is watched until it repaints.
+    fn awaits(&self, window: WindowId) -> bool { self.awaited(window).is_some() }
+
+    /// Whether `window` is pictured where it ends only once it has repainted there.
+    fn repaints(&self, window: WindowId) -> bool {
+        self.awaited(window).is_some_and(Awaited::repaints)
+    }
+
+    /// Whether the overlay holds for `window` before the motion starts: the latest pass to resize it
+    /// grew it, or a pass drew it with no picture of its own.
+    fn holds_for(&self, window: WindowId) -> bool {
+        self.awaited(window).is_some_and(|a| a.end.holds())
+    }
+
     /// Whether a picture of `window` delivered under `generation`, taken at `frame`, may be drawn on its
     /// tile: taken for the end the tile has now, within `END_SLACK` of it.
     fn takes(&self, generation: Generation, window: WindowId, frame: ScreenRect) -> bool {
@@ -609,11 +653,11 @@ impl Flight {
             .stage
             .end_windows()
             .into_iter()
-            .filter(|(w, _)| !self.awaiting.contains(w) && elsewhere(w))
+            .filter(|(w, _)| !self.awaits(*w) && elsewhere(w))
             .collect();
         let mut awaited: Vec<_> = self
             .stage
-            .awaited_ends(&self.awaiting)
+            .awaited_ends(|w| self.awaits(w))
             .into_iter()
             .filter(|(w, _)| elsewhere(w))
             .collect();
@@ -627,7 +671,7 @@ impl Flight {
             .0
             .into_iter()
             .map(|(w, _)| w)
-            .filter(|w| self.holds_for.contains(w))
+            .filter(|w| self.holds_for(*w))
             .collect()
     }
 
@@ -647,13 +691,15 @@ impl Flight {
         self.stage
             .end_windows()
             .into_iter()
-            .filter(|(w, _)| !self.keeps(*w) && (!self.repainting.contains(w) || pictured(w)))
+            .filter(|(w, _)| !self.keeps(*w) && (!self.repaints(*w) || pictured(w)))
             .collect()
     }
 
     /// Whether `window`'s tile flies the picture it starts with to the lift, no picture of it where it
     /// ends swapped on: a shrink whose picture covers its start, and so every frame of the shrink.
-    fn keeps(&self, window: WindowId) -> bool { self.kept.contains(&window) }
+    fn keeps(&self, window: WindowId) -> bool {
+        self.awaited(window).is_some_and(|a| a.end == EndPicture::Kept)
+    }
 
     /// Snaps `window`'s tile onto `frame` once per generation, once the motion has started: until
     /// then its container stands where frame zero put it, and the start would move it again.
@@ -878,16 +924,13 @@ impl Coordinator {
         });
         let mut animated = owed;
         extend_latest(&mut animated, stage.ends());
-        let mut awaiting = stage.awaiting.clone();
-        extend_unique(&mut awaiting, stage.repainting.iter().copied());
+        let mut awaited = Vec::new();
+        Awaited::sort_in(&mut awaited, &stage.waits);
         let end_since = ended_since(&[], None, &stage, generation);
         self.state = State::Flying(Box::new(Flight {
             generation,
             began: generation,
-            awaiting,
-            repainting: stage.repainting.clone(),
-            holds_for: stage.awaiting.clone(),
-            kept: stage.kept.clone(),
+            awaited,
             stage,
             phase: Phase::Preparing {
                 deadline: now + FRAME_ZERO_PATIENCE,
@@ -923,16 +966,7 @@ impl Coordinator {
             return;
         };
         extend_latest(&mut f.animated, stage.ends());
-        extend_unique(
-            &mut f.awaiting,
-            stage.awaiting.iter().chain(&stage.repainting).copied(),
-        );
-        extend_unique(&mut f.repainting, stage.repainting.iter().copied());
-        let resized = |w: &WindowId| stage.awaiting.contains(w) || stage.repainting.contains(w);
-        f.holds_for.retain(|w| !resized(w));
-        extend_unique(&mut f.holds_for, stage.awaiting.iter().copied());
-        f.kept.retain(|w| !resized(w));
-        extend_unique(&mut f.kept, stage.kept.iter().copied());
+        Awaited::sort_in(&mut f.awaited, &stage.waits);
         let held = latest_held(&mut f.held_merge);
         // Every held pass was written as it was held: an earlier one's merge writes nothing, and keeps
         // the frames written for the latest one's to be compared with.
@@ -943,7 +977,7 @@ impl Coordinator {
             changed_frames(&f.stage.final_frames, &stage.final_frames)
         };
         let focus_moved = f.stage.focus != stage.focus;
-        let newcomers = stage.awaiting.clone();
+        let newcomers: Vec<_> = stage.waits.awaiting().collect();
         let before = std::mem::replace(&mut f.stage, stage);
         if overtaken {
             f.stage.final_frames.clone_from(&before.final_frames);
@@ -1056,7 +1090,7 @@ impl Coordinator {
         // and the last capture before the lift shows it as it lands, if its change watch ran out first.
         let handover = target
             && !f.focus_in
-            && (matches!(why, Why::FocusChanged | Why::Final) || f.awaiting.contains(&window));
+            && (matches!(why, Why::FocusChanged | Why::Final) || f.awaits(window));
         // macOS turns the window focus leaves first: the target's change waits for it a little.
         let held = handover && why == Why::FocusChanged && watched_losing(f).is_some();
         // A landing is often taken before the window repaints focused: the focused look it flies
@@ -1064,7 +1098,7 @@ impl Coordinator {
         let over_look = target
             && f.stage.focused_look == Some(window)
             && !f.focus_in
-            && !f.awaiting.contains(&window)
+            && !f.awaits(window)
             && why == Why::Landed;
         if held {
             let since = f.held_change.map_or(now, |(_, _, since)| since);
@@ -1404,10 +1438,7 @@ fn end_watch(f: &Flight, now: Instant) -> EndWatch {
 /// The focus target and its end, while a focus report is coming and its focused look is not in. A
 /// watch armed by a report that never comes would hold the background back for the whole flight.
 fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
-    let window = f
-        .stage
-        .focus
-        .filter(|w| f.focus_moving() && !f.focus_in && !f.awaiting.contains(w))?;
+    let window = f.stage.focus.filter(|w| f.focus_moving() && !f.focus_in && !f.awaits(*w))?;
     let end = f.stage.tile(window)?.end;
     (!is_off_screen(f.stage.display, end)).then_some((window, end))
 }
@@ -1421,7 +1452,7 @@ fn watched_losing(f: &Flight) -> Option<(WindowId, ScreenRect)> {
     let window = f
         .stage
         .losing_focus
-        .filter(|w| f.unfocused != Some(*w) && f.unseen != Some(*w) && !f.awaiting.contains(w))?;
+        .filter(|w| f.unfocused != Some(*w) && f.unseen != Some(*w) && !f.awaits(*w))?;
     let end = f.stage.tile(window)?.end;
     wholly_inside(end, f.stage.display).then_some((window, end))
 }
@@ -1528,11 +1559,62 @@ mod tests {
     use super::testing::{DISPLAY, PLAYS, pan, r, running, tile, w};
     use super::*;
     use crate::pictures::domain::route::Route;
-    use crate::transitions::domain::admission::{FliesOn, Landing, Waits};
+    use crate::transitions::domain::admission::{FliesOn, Landing};
     use crate::transitions::domain::request::AnimationRequest;
     use crate::transitions::domain::timing::SETTLE_BEFORE_CAPTURES;
 
     fn has(out: &[Command], f: impl Fn(&Command) -> bool) -> bool { out.iter().any(f) }
+
+    /// `windows` each waited for as `end` sorts it.
+    fn waits(windows: &[WindowId], end: EndPicture) -> Waits {
+        windows.iter().map(|window| (*window, end)).collect()
+    }
+
+    /// One window sorted by a flight's passes in turn: the latest sort to wait for anything of it
+    /// decides whether the overlay holds for it and whether its tile keeps its picture, a pass that
+    /// lands it leaves both as they were, and once a pass has it repaint it repaints to the lift.
+    #[test]
+    fn a_window_waited_for_takes_its_latest_sort_and_repaints_once_any_has_it_repaint() {
+        use EndPicture::{Awaited as A, Held as H, Kept as K, Lands as L, Repainting as R};
+        #[derive(Debug, PartialEq)]
+        struct Waited {
+            repaints: bool,
+            held_for: bool,
+            kept: bool,
+        }
+        let waited = |repaints, held_for, kept| Some(Waited { repaints, held_for, kept });
+        // The sorts, first pass first, and how the window is waited for; `None` when never.
+        let cases: &[(&[EndPicture], Option<Waited>)] = &[
+            (&[L], None),
+            (&[A], waited(false, true, false)),
+            (&[H], waited(true, true, false)),
+            (&[K], waited(true, false, true)),
+            (&[R], waited(true, false, false)),
+            (&[H, K], waited(true, false, true)),
+            (&[K, H], waited(true, true, false)),
+            (&[H, R], waited(true, false, false)),
+            (&[H, A], waited(true, true, false)),
+            (&[R, A], waited(true, true, false)),
+            (&[A, R], waited(true, false, false)),
+            (&[A, A], waited(false, true, false)),
+            (&[H, L], waited(true, true, false)),
+            (&[K, L], waited(true, false, true)),
+            (&[L, K, L, H], waited(true, true, false)),
+        ];
+        for (sorts, expected) in cases {
+            let mut awaited = Vec::new();
+            for end in *sorts {
+                Awaited::sort_in(&mut awaited, &waits(&[w(1)], *end));
+            }
+            assert!(awaited.len() <= 1, "{sorts:?}: one record per window");
+            let got = awaited.first().map(|a| Waited {
+                repaints: a.repaints(),
+                held_for: a.end.holds(),
+                kept: a.end == EndPicture::Kept,
+            });
+            assert_eq!(got, *expected, "{sorts:?}");
+        }
+    }
 
     fn writes(out: &[Command]) -> Vec<(WindowId, ScreenRect)> {
         out.iter()
@@ -1966,7 +2048,7 @@ mod tests {
             vec![Command::StartMoving]
         );
 
-        stage.awaiting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Awaited);
         let mut c = running(stage.clone(), now);
         assert!(!c.is_moving());
         let out = c.on(
@@ -1992,7 +2074,7 @@ mod tests {
     fn awaited_windows_are_watched_until_they_repaint_and_the_rest_as_soon_as_they_are_there() {
         let now = Instant::now();
         let mut stage = pan();
-        stage.awaiting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Awaited);
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let shown = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
@@ -2016,7 +2098,7 @@ mod tests {
 
         // A window drawn as a stand-in by a pass merged in flight repaints too, and joins as it lands.
         let mut stand_in = stage.clone();
-        stand_in.awaiting = vec![w(1)];
+        stand_in.waits = waits(&[w(1)], EndPicture::Awaited);
         let out = c.on(
             Event::Merge { stage: stand_in, moved: false },
             now + Duration::from_millis(50),
@@ -2031,7 +2113,7 @@ mod tests {
     fn the_overlay_holds_only_for_awaited_windows_a_watch_can_see() {
         let now = Instant::now();
         let mut stage = pan();
-        stage.awaiting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Awaited);
         let off = r(1727.0, 35.0, 860.0, 1079.0);
         stage.tiles[1].end = off;
         stage.final_frames[1].1 = off;
@@ -2107,9 +2189,8 @@ mod tests {
                     };
                     waits.push_request(request, flies, None, request.from, screen);
                 }
-                let Waits { awaiting, repainting, kept } = waits;
                 assert_eq!(
-                    awaiting.len(),
+                    waits.awaiting().count(),
                     rows as usize,
                     "{case}: the stack's windows all grow"
                 );
@@ -2126,9 +2207,7 @@ mod tests {
                     focus: Some(w(2 + maximized_row)),
                     losing_focus: None,
                     key: Some(w(2 + maximized_row)),
-                    awaiting,
-                    repainting,
-                    kept,
+                    waits,
                     display: screen,
                     ..pan()
                 };
@@ -2159,7 +2238,7 @@ mod tests {
         stage.start = Start::Coalesced;
         let mut c = running(stage.clone(), now);
         let mut opened = stage.clone();
-        opened.awaiting = vec![w(2)];
+        opened.waits = waits(&[w(2)], EndPicture::Awaited);
         c.on(
             Event::Merge { stage: opened, moved: true },
             now + Duration::from_millis(10),
@@ -2193,7 +2272,7 @@ mod tests {
         stage.kind = Kind::LayoutPass;
         stage.start = Start::Coalesced;
         let mut opened = stage.clone();
-        opened.awaiting = vec![w(2)];
+        opened.waits = waits(&[w(2)], EndPicture::Awaited);
         for lost in [false, true] {
             let mut c = running(stage.clone(), now);
             c.on(
@@ -2234,7 +2313,7 @@ mod tests {
     fn a_held_window_given_up_on_is_held_for_no_longer() {
         let now = Instant::now();
         let mut stage = pan();
-        stage.awaiting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Awaited);
         let mut c = running(stage.clone(), now);
         assert!(!c.is_moving());
         let out = c.on(
@@ -2259,7 +2338,7 @@ mod tests {
         );
         assert_eq!(focus(&out), handed_over());
 
-        stage.awaiting = vec![w(1), w(2)];
+        stage.waits = waits(&[w(1), w(2)], EndPicture::Awaited);
         let mut c = running(stage.clone(), now);
         let g = c.generation();
         assert!(
@@ -2284,7 +2363,7 @@ mod tests {
     fn a_held_window_a_merge_sends_off_the_display_is_held_for_no_longer() {
         let now = Instant::now();
         let mut stage = pan();
-        stage.awaiting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Awaited);
         let mut c = running(stage.clone(), now);
         assert!(!c.is_moving());
         let off = r(1727.0, 35.0, 860.0, 1079.0);
@@ -2305,7 +2384,7 @@ mod tests {
     fn a_window_lost_under_the_generation_before_a_merge_is_still_held_for() {
         let now = Instant::now();
         let mut stage = pan();
-        stage.awaiting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Awaited);
         let mut c = running(stage.clone(), now);
         let before = c.generation();
         c.on(
@@ -2391,7 +2470,7 @@ mod tests {
         staying.losing_focus = None;
         assert_eq!(focus_of(staying), None, "no focus report comes to arm it");
         let mut opened = pan();
-        opened.awaiting = vec![w(2)];
+        opened.waits = waits(&[w(2)], EndPicture::Awaited);
         assert_eq!(
             focus_of(opened),
             None,
@@ -2419,7 +2498,7 @@ mod tests {
         let end = pan().tiles[0].end;
         assert_eq!(losing_of(pan()), Some((w(1), end)));
         let mut opened = pan();
-        opened.awaiting = vec![w(2)];
+        opened.waits = waits(&[w(2)], EndPicture::Awaited);
         assert_eq!(losing_of(opened), None, "only beside a watched target");
         let mut clipped = pan();
         clipped.tiles[0].end = r(1300.0, 35.0, 860.0, 1079.0);
@@ -2655,7 +2734,7 @@ mod tests {
         assert_eq!(focus(&out), handed_over(), "nothing to wait for");
 
         let mut resized = pan();
-        resized.repainting = vec![w(1)];
+        resized.waits = waits(&[w(1)], EndPicture::Repainting);
         let mut c = Coordinator::default();
         c.on(Event::Begin(resized), now);
         let g = c.generation();
@@ -3416,7 +3495,7 @@ mod tests {
     fn a_window_flying_from_where_it_opened_is_watched_until_it_repaints_and_never_held_for() {
         let now = Instant::now();
         let mut stage = pan();
-        stage.repainting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Repainting);
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
@@ -3442,11 +3521,10 @@ mod tests {
 
         // Merged in while the overlay holds for another, it does not add to the hold.
         let mut standing_in = pan();
-        standing_in.awaiting = vec![w(1)];
+        standing_in.waits = waits(&[w(1)], EndPicture::Awaited);
         let mut c = running(standing_in.clone(), now);
         let mut opened = standing_in;
-        opened.awaiting.clear();
-        opened.repainting = vec![w(2)];
+        opened.waits = waits(&[w(2)], EndPicture::Repainting);
         c.on(
             Event::Merge {
                 stage: opened.clone(),
@@ -3476,8 +3554,7 @@ mod tests {
         stage.tiles[1].start = r(3.0, 35.0, 860.0, 1079.0);
         stage.tiles[1].end = grown;
         stage.final_frames[1].1 = grown;
-        stage.awaiting = vec![w(2)];
-        stage.repainting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Held);
         (stage, grown)
     }
 
@@ -3709,8 +3786,7 @@ mod tests {
         stage.focus = Some(w(1));
         stage.losing_focus = None;
         stage.key = Some(w(1));
-        stage.awaiting = vec![w(1), w(2)];
-        stage.repainting = vec![w(1), w(2)];
+        stage.waits = waits(&[w(1), w(2)], EndPicture::Held);
         (stage, whole, cut)
     }
 
@@ -3799,11 +3875,9 @@ mod tests {
     fn a_skylight_newcomer_never_shortens_a_hold_for_a_cut_end() {
         let now = Instant::now();
         let (mut first, _, _) = unfold_cut();
-        first.awaiting = vec![w(2)];
-        first.repainting = vec![w(2)];
+        first.waits = waits(&[w(2)], EndPicture::Held);
         let mut newcomer = first.clone();
-        newcomer.awaiting = vec![w(1)];
-        newcomer.repainting = vec![w(1)];
+        newcomer.waits = waits(&[w(1)], EndPicture::Held);
         let mut c = running(first, now);
         let arrives = now + Duration::from_millis(50);
         c.on(Event::Merge { stage: newcomer, moved: true }, arrives);
@@ -3833,11 +3907,9 @@ mod tests {
             let now = Instant::now();
             let at = |ms| now + Duration::from_millis(ms);
             let (mut first, _, _) = unfold_cut();
-            first.awaiting = vec![w(1)];
-            first.repainting = vec![w(1)];
+            first.waits = waits(&[w(1)], EndPicture::Held);
             let mut newcomer = first.clone();
-            newcomer.awaiting = vec![w(2)];
-            newcomer.repainting = vec![w(2)];
+            newcomer.waits = waits(&[w(2)], EndPicture::Held);
             let mut c = running(first, now);
             c.on(Event::Merge { stage: newcomer, moved: true }, at(arrival));
             assert!(
@@ -3894,8 +3966,7 @@ mod tests {
         let shrunk = r(866.0, 35.0, 860.0, 537.0);
         stage.tiles[0].end = shrunk;
         stage.final_frames[0].1 = shrunk;
-        stage.repainting.push(w(1));
-        stage.kept = vec![w(1)];
+        stage.waits.push(w(1), EndPicture::Kept);
         let mut c = running(stage, now);
         let tick = Event::Tick { settled: false, landed: false };
         assert!(c.on(tick, now + COALESCE_WINDOW).is_empty(), "held for the grow");
@@ -3922,8 +3993,7 @@ mod tests {
         stage.tiles[1].start = r(3.0, 35.0, 860.0, 1079.0);
         stage.tiles[1].end = shrunk;
         stage.final_frames[1].1 = shrunk;
-        stage.repainting = vec![w(2)];
-        stage.kept = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Kept);
         (stage, shrunk)
     }
 
@@ -3991,8 +4061,7 @@ mod tests {
         let now = Instant::now();
         let ((shrinking, shrunk), (growing, grown)) = (shrink(), grow());
         let mut moving = shrinking.clone();
-        moving.repainting.clear();
-        moving.kept.clear();
+        moving.waits = Waits::default();
         let swapped = |first: StageSummary, then: StageSummary, frame: ScreenRect| -> bool {
             let mut c = running(first, now);
             c.on(Event::Tick { settled: false, landed: false }, now + HOLD_CAP);
@@ -4166,8 +4235,7 @@ mod tests {
         let now = Instant::now();
         let (growing, _) = grow_to(860.0);
         let mut moving = growing.clone();
-        moving.awaiting.clear();
-        moving.repainting.clear();
+        moving.waits = Waits::default();
         moving.tiles[0].end = r(400.0, 35.0, 860.0, 1079.0);
         moving.final_frames[0].1 = moving.tiles[0].end;
         let mut c = running(growing, now);
@@ -4217,8 +4285,7 @@ mod tests {
             start,
             DISPLAY,
         );
-        (stage.awaiting, stage.repainting, stage.kept) =
-            (waits.awaiting, waits.repainting, waits.kept);
+        stage.waits = waits;
         (stage, shrunk)
     }
 
@@ -4276,7 +4343,7 @@ mod tests {
         let now = Instant::now();
         let (stage, shrunk) = shrink_from_off_the_display(ScreenSize::new(860.0, 1079.0));
         assert!(
-            stage.kept.is_empty() && stage.repainting == vec![w(2)],
+            stage.waits.ends().eq([(w(2), EndPicture::Repainting)]),
             "{stage:?}"
         );
         let mut c = running(stage.clone(), now);
@@ -4437,8 +4504,7 @@ mod tests {
         let mut merged = flying.clone();
         merged.tiles[1].end = grown;
         merged.final_frames[1].1 = grown;
-        merged.awaiting = vec![w(2)];
-        merged.repainting = vec![w(2)];
+        merged.waits = waits(&[w(2)], EndPicture::Held);
         (flying, grown, merged)
     }
 
@@ -4688,7 +4754,7 @@ mod tests {
         assert!(c.holds(w(2), g, wider));
         let mut merged = flying.clone();
         (merged.tiles[1].end, merged.final_frames[1].1) = (wider, wider);
-        (merged.awaiting, merged.repainting) = (vec![w(2)], vec![w(2)]);
+        merged.waits = waits(&[w(2)], EndPicture::Held);
         let out = c.on(Event::Merge { stage: merged, moved: true }, repainted);
         assert!(
             has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
@@ -4753,17 +4819,17 @@ mod tests {
         );
         let mut first = flying.clone();
         (first.tiles[1].end, first.final_frames[1].1) = (wider, wider);
-        (first.awaiting, first.repainting) = (vec![w(2)], vec![w(2)]);
+        first.waits = waits(&[w(2)], EndPicture::Held);
         let mut second = first.clone();
         (second.tiles[0].end, second.final_frames[0].1) = (neighbour, neighbour);
-        (second.awaiting, second.repainting) = (vec![w(1)], vec![w(1)]);
+        second.waits = waits(&[w(1)], EndPicture::Held);
         for (what, ends, swapped, written) in [
             ("ending it there", wider, [false, false, true], vec![]),
             ("moving it", moved, [false, false, false], vec![(w(2), moved)]),
         ] {
             let mut third = second.clone();
             (third.tiles[1].end, third.final_frames[1].1) = (ends, ends);
-            (third.awaiting, third.repainting) = (Vec::new(), Vec::new());
+            third.waits = Waits::default();
             let mut c = running(flying.clone(), now);
             let g = c.generation();
             let at = now + Duration::from_millis(100);
@@ -5191,19 +5257,11 @@ mod tests {
             };
             waits.push_request(&request, flies, landing, request.from, DISPLAY);
             let grows = waits.grows().count() > 0;
-            (stage.awaiting, stage.repainting, stage.kept) =
-                (waits.awaiting, waits.repainting, waits.kept);
+            stage.waits = waits;
             (stage, grows)
         }
 
-        fn grows(stage: &StageSummary) -> bool {
-            let waits = Waits {
-                awaiting: stage.awaiting.clone(),
-                repainting: stage.repainting.clone(),
-                kept: stage.kept.clone(),
-            };
-            waits.grows().any(|window| window == w(2))
-        }
+        fn grows(stage: &StageSummary) -> bool { stage.waits.grows().any(|window| window == w(2)) }
 
         fn case(&self) -> String {
             format!(
@@ -5381,7 +5439,7 @@ mod tests {
         let mut stage = pan();
         stage.kind = Kind::LayoutPass;
         stage.tiles[1].start = r(400.0, 300.0, 600.0, 400.0);
-        stage.repainting = vec![w(2)];
+        stage.waits = waits(&[w(2)], EndPicture::Repainting);
         let mut c = running(stage.clone(), now);
         assert!(c.is_moving(), "never held for");
 
@@ -5434,7 +5492,7 @@ mod tests {
             floating: true,
         });
         stage.final_frames.push((w(7), dialog));
-        stage.awaiting = vec![w(7)];
+        stage.waits = waits(&[w(7)], EndPicture::Awaited);
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
@@ -5637,7 +5695,7 @@ mod tests {
 
         // A window reserved or drawn as a stand-in as the focus target hands over when it has repainted.
         let mut opened = pan();
-        opened.awaiting = vec![w(2)];
+        opened.waits = waits(&[w(2)], EndPicture::Awaited);
         let mut c = running(opened, now);
         let out = c.on(
             Event::Picture {

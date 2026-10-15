@@ -219,9 +219,7 @@ pub(in crate::transitions) fn summary(
         losing_focus,
         key,
         focused_look,
-        awaiting: shape.waits.awaiting,
-        repainting: shape.waits.repainting,
-        kept: shape.waits.kept,
+        waits: shape.waits,
         start: shape.start,
         duration: shape.duration,
         display,
@@ -965,10 +963,10 @@ mod tests {
                 "drawn focused until focus hands over"
             );
             assert_eq!(stage.opaque, vec![wid(1)]);
-            assert_eq!(
-                (stage.awaiting, stage.repainting, stage.kept),
-                (vec![wid(2)], vec![wid(1)], vec![wid(1)])
-            );
+            assert_eq!(stage.waits.ends().collect::<Vec<_>>(), [
+                (wid(2), EndPicture::Awaited),
+                (wid(1), EndPicture::Kept)
+            ]);
             assert_eq!(stage.display, display);
             running.shown_focus = Some(wid(2));
             assert_eq!(
