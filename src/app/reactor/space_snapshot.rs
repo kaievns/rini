@@ -11,7 +11,7 @@ use super::events::EventOutcome;
 use super::{Reactor, RefocusState, StaleCleanupState};
 use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::{
-    DisplaySetDelta, ForwardedSpaceState, TopologyWindowDelta, display_set_delta,
+    DisplaySetDelta, ForwardedSpaceState, Topology, TopologyWindowDelta, display_set_delta,
 };
 use crate::windows::domain::request::Request;
 use crate::workspaces::LayoutEvent;
@@ -27,7 +27,7 @@ struct SnapshotSettlement {
     resized_spaces: Vec<(SpaceId, CGSize)>,
     topology_window_delta: Option<TopologyWindowDelta>,
     releases_lifecycle_refresh_quarantine: bool,
-    should_force_refresh_layout: bool,
+    topology: Topology,
 }
 
 impl Reactor {
@@ -55,8 +55,7 @@ impl Reactor {
             display_space_ids_from_screens,
             last_user_space_by_display,
             space_remaps,
-            display_set_changed,
-            should_force_refresh_layout,
+            topology,
             releases_lifecycle_refresh_quarantine,
             resized_spaces,
             topology_window_delta,
@@ -94,7 +93,7 @@ impl Reactor {
         }
 
         self.refocus_manager.stale_cleanup_state = StaleCleanupState::Enabled;
-        let display_set = self.display_set_against(&screens, display_set_changed);
+        let display_set = self.display_set_against(&screens, topology.display_set_changed());
         // Capture affinity for a departing display BEFORE anything reacts to its absence.
         //
         // This is the only moment the truth is still available. `self.state.windows` still
@@ -121,7 +120,7 @@ impl Reactor {
                 resized_spaces,
                 topology_window_delta,
                 releases_lifecycle_refresh_quarantine,
-                should_force_refresh_layout,
+                topology,
             },
             outcome,
         ))
@@ -143,7 +142,7 @@ impl Reactor {
             resized_spaces,
             topology_window_delta,
             releases_lifecycle_refresh_quarantine,
-            should_force_refresh_layout,
+            topology,
         } = settlement;
         self.remap_spaces(space_remaps);
         // Which hardware arrangement is in force. Every window record is scoped to it, so this has
@@ -193,7 +192,7 @@ impl Reactor {
         // "why did my windows not move onto the projector" has an answer — but a guard around the
         // loop would be a branch that cannot change the outcome.
         self.repatriate_arrivals(&setup_change, &display_set.arrived, &mut outcome);
-        if should_force_refresh_layout {
+        if topology.forces_refresh_layout() {
             outcome = outcome.with_force_window_refresh().with_arrange_passes(1);
         }
         outcome

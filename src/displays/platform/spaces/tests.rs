@@ -5,6 +5,7 @@ use super::schedule::Recorded;
 use super::*;
 use crate::displays::domain::settling::{DISPLAY_STABILIZE_MAX_ATTEMPTS, REFRESH_MAX_RETRIES};
 use crate::displays::domain::snapshot::TEST_FULLSCREEN_SPACE;
+use crate::displays::domain::topology::{DisplaySet, Topology};
 use crate::displays::event::Event as OutEvent;
 use crate::windows::platform::window_server::FakeWindowServer;
 
@@ -522,10 +523,7 @@ fn topology_delta_uses_last_forwarded_screens_as_diff_base() {
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
-            assert!(state.display_set_changed);
-            assert!(state.topology_changed);
-            assert!(state.allow_space_remap);
-            assert!(state.should_force_refresh_layout);
+            assert_eq!(state.topology, Topology::Remap(DisplaySet::Changed));
             assert_eq!(state.resized_spaces.len(), 1);
         }
         other => panic!("unexpected wm event: {other:?}"),
@@ -618,7 +616,7 @@ fn topology_change_emits_space_remap_from_display_history() {
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(state.space_remaps, vec![(original_space, remapped_space)]);
-            assert!(state.allow_space_remap);
+            assert!(state.topology.allows_space_remap());
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
@@ -814,9 +812,7 @@ fn display_order_change_is_topology_change_without_display_set_change() {
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
-            assert!(!state.display_set_changed);
-            assert!(state.topology_changed);
-            assert!(state.should_force_refresh_layout);
+            assert_eq!(state.topology, Topology::Remap(DisplaySet::Same));
             assert!(state.space_remaps.is_empty());
         }
         other => panic!("unexpected wm event: {other:?}"),
@@ -1066,9 +1062,7 @@ fn duplicate_visible_spaces_disable_remaps_and_layout_forcing() {
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
-            assert!(state.display_set_changed);
-            assert!(state.topology_changed);
-            assert!(!state.allow_space_remap);
+            assert_eq!(state.topology, Topology::Relayout(DisplaySet::Changed));
             assert!(state.space_remaps.is_empty());
         }
         other => panic!("unexpected wm event: {other:?}"),
@@ -1093,9 +1087,7 @@ fn resize_updates_are_treated_as_topology_changes_and_report_resized_spaces() {
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
-            assert!(!state.display_set_changed);
-            assert!(state.topology_changed);
-            assert!(state.should_force_refresh_layout);
+            assert_eq!(state.topology, Topology::Remap(DisplaySet::Same));
             assert_eq!(state.resized_spaces, vec![(space, CGSize::new(1200.0, 800.0))]);
         }
         other => panic!("unexpected wm event: {other:?}"),
@@ -1120,9 +1112,7 @@ fn display_origin_change_is_treated_as_topology_change() {
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
-            assert!(!state.display_set_changed);
-            assert!(state.topology_changed);
-            assert!(state.should_force_refresh_layout);
+            assert_eq!(state.topology, Topology::Remap(DisplaySet::Same));
             assert!(state.resized_spaces.is_empty());
         }
         other => panic!("unexpected wm event: {other:?}"),

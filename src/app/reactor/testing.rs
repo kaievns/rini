@@ -14,7 +14,7 @@ use crate::app::channels;
 use crate::app::config::{Config, LayoutSettings, Settings};
 use crate::app::reactor::state::RiniState;
 use crate::app::system_reads::SystemReads;
-use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
+use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind, Topology};
 use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{MainWindowTracker, RaiseEcho};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
@@ -791,10 +791,7 @@ pub fn forwarded_space_state(screens: Vec<ScreenInfo>) -> ForwardedSpaceState {
         display_space_ids_from_screens: false,
         last_user_space_by_display: Default::default(),
         space_remaps: Vec::new(),
-        display_set_changed: false,
-        topology_changed: false,
-        allow_space_remap: false,
-        should_force_refresh_layout: false,
+        topology: Topology::Unchanged,
         releases_lifecycle_refresh_quarantine: false,
         resized_spaces: Vec::new(),
         topology_window_delta: None,
